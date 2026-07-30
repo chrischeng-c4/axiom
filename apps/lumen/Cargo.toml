@@ -102,8 +102,11 @@ serde = { workspace = true }
 serde_json.workspace = true
 serde_path_to_error.workspace = true
 rustc-hash = "2.1"
+# Types only — `ServerConfig` / `ClientConfig` appear in `tls.rs`'s signatures.
+# Every builder, PEM loader, and client verifier lives in `libs/peer-tls`
+# (#2890 R6), which is why there is no `rustls-pemfile` here to parse anything
+# locally.
 rustls = "0.23"
-rustls-pemfile = "2"
 # Shared peer-mTLS material loading (PEM cert/key/CA + rustls builders +
 # crypto-provider install); lumen keeps a thin adapter with its
 # `LUMEN_PEER_TLS_*`/`LUMEN_PEER_MTLS` env names (#971).
@@ -203,6 +206,10 @@ wiremock = { workspace = true }
 # `ProjectedTokenFile` inspects the claims, so a fixture that is not a token
 # would only ever exercise the malformed branch.
 jsonwebtoken = { workspace = true }
+# Mints the throwaway CA + leaf certificates the peer-mTLS tests dial with
+# (#2890). Real X.509 material, not fixtures: the negative cases turn on chain
+# validation and SAN matching, which a hand-written PEM constant cannot vary.
+rcgen = "0.13"
 
 [[bench]]
 name = "bench_index"

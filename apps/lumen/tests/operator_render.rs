@@ -20,6 +20,7 @@ use lumen::operator::{Lumen, LumenSpec};
 use serde::Deserialize;
 use serde_json::Value;
 use service_k8s::service::PruneTarget;
+use service_k8s::{ConditionFact, ConditionStatus, ManagedService, ReadyFacts};
 
 /// A `Lumen` with metadata set the way a real CR (and owner references) need.
 fn lumen(name: &str, spec: LumenSpec) -> Lumen {
@@ -60,6 +61,7 @@ fn dev_spec() -> LumenSpec {
         admission: None,
         service_account_name: None,
         service_account_annotations: BTreeMap::new(),
+        peer_tls_secret: None,
     }
 }
 
@@ -92,6 +94,7 @@ fn prod_spec() -> LumenSpec {
         admission: None,
         service_account_name: None,
         service_account_annotations: BTreeMap::new(),
+        peer_tls_secret: None,
     }
 }
 
@@ -1719,5 +1722,262 @@ fn pruned_network_policy_name_matches_the_rendered_one() {
         );
         assert_eq!(Value::from(targets[0].kind), policy["kind"]);
     }
+}
+
+// ---- #2890: instance-scoped Raft peer identity -------------------------
+//
+// Raft on `:7374` carries committed index mutations between pods, and nothing
+// else on that port says who is dialing. These assert the two halves of what
+// the operator owes that port: the material reaches every member, and a
+// replicated instance that has none says so out loud instead of coming up
+// plaintext.
+
+/// A replicated instance — the only shape that owes a peer identity.
+fn replicated_spec(secret: Option<&str>) -> LumenSpec {
+    LumenSpec {
+        replicas_per_shard: 3,
+        voter_count: 3,
+        peer_tls_secret: secret.map(str::to_string),
+        ..prod_spec()
+    }
+}
+
+/// The pod template of the rendered serving StatefulSet.
+fn pod_spec(objs: &[Value]) -> Value {
+    find(objs, "StatefulSet", "search")["spec"]["template"]["spec"].clone()
+}
+
+fn env_value(container: &Value, name: &str) -> Option<String> {
+    container["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == name)
+        .map(|e| e["value"].as_str().unwrap().to_string())
+}
+
+/// AC1, the volume half: the Secret is projected read-only, with exactly the
+/// three keys the peer transport loads. `items` rather than a whole-Secret
+/// mount is the point — a fourth key added to the Secret later must not
+/// silently become part of what the container can read.
+#[test]
+fn peer_tls_secret_projects_exactly_its_three_keys_read_only() {
+    let objs = render(&lumen("search", replicated_spec(Some("search-peer-tls"))));
+    let pod = pod_spec(&objs);
+
+    let volume = pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| !v["secret"].is_null())
+        .unwrap_or_else(|| panic!("no Secret-backed volume in {pod:#}"));
+    assert_eq!(volume["secret"]["secretName"], "search-peer-tls");
+    let projected: Vec<&str> = volume["secret"]["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("peer TLS volume must project named items, got {volume:#}"))
+        .iter()
+        .map(|item| item["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        projected,
+        lumen::operator::render::PEER_TLS_KEYS.to_vec(),
+        "the projected keys must be exactly the peer transport's contract"
+    );
+
+    let mount = pod["containers"][0]["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == volume["name"])
+        .unwrap_or_else(|| panic!("the peer TLS volume is never mounted: {pod:#}"));
+    assert_eq!(
+        mount["readOnly"], true,
+        "peer identity is credential material, not state"
+    );
+    let mount_path = mount["mountPath"].as_str().unwrap();
+    assert!(
+        !mount_path.starts_with("/var/lib/lumen"),
+        "peer material must not land on the PVC that outlives the pod, got {mount_path}"
+    );
+}
+
+/// AC1, the env half: the four variables `PeerTlsConfig::from_env` reads, each
+/// pointing into the mount the same render produced. `LUMEN_PEER_MTLS=on` is
+/// what makes the listener *require* a client certificate rather than merely
+/// offer TLS, so it travels with the paths and never alone.
+#[test]
+fn peer_tls_secret_sets_the_four_peer_mtls_env_vars() {
+    let objs = render(&lumen("search", replicated_spec(Some("search-peer-tls"))));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+    let mount_path = container["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "lumen-peer-tls")
+        .unwrap()["mountPath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(env_value(container, "LUMEN_PEER_MTLS").as_deref(), Some("on"));
+    for (var, key) in [
+        ("LUMEN_PEER_TLS_CERT", "tls.crt"),
+        ("LUMEN_PEER_TLS_KEY", "tls.key"),
+        ("LUMEN_PEER_TLS_CA", "ca.crt"),
+    ] {
+        assert_eq!(
+            env_value(container, var).as_deref(),
+            Some(format!("{mount_path}/{key}").as_str()),
+            "{var} must point at the projected {key}, got env {:?}",
+            env_names(container)
+        );
+    }
+}
+
+/// The converse: a single-replica instance runs no consensus link, so it gets
+/// neither the volume nor the env. Without this, "the field is optional" and
+/// "the field is ignored" would look the same.
+#[test]
+fn an_instance_without_peer_tls_secret_renders_no_peer_volume_or_env() {
+    let objs = render(&lumen("search", dev_spec()));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+
+    assert!(
+        pod["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["name"] != "lumen-peer-tls"),
+        "unexpected peer TLS volume: {pod:#}"
+    );
+    for var in [
+        "LUMEN_PEER_MTLS",
+        "LUMEN_PEER_TLS_CERT",
+        "LUMEN_PEER_TLS_KEY",
+        "LUMEN_PEER_TLS_CA",
+    ] {
+        assert!(
+            env_value(container, var).is_none(),
+            "unexpected {var} on a single-replica instance"
+        );
+    }
+}
+
+/// `ReadyFacts` reporting `count` ready pods for `name`'s StatefulSet.
+fn ready_facts(name: &str, count: i64) -> ReadyFacts {
+    let mut ready = std::collections::HashMap::new();
+    ready.insert(name.to_string(), count);
+    ReadyFacts { ready }
+}
+
+fn condition<'a>(facts: &'a [ConditionFact], type_: &str) -> &'a ConditionFact {
+    facts
+        .iter()
+        .find(|c| c.type_ == type_)
+        .unwrap_or_else(|| panic!("expected a `{type_}` condition, got: {facts:?}"))
+}
+
+/// AC2: every replica is up, so without the peer-identity verdict this CR would
+/// report `Ready=True` — a replicated group advertising itself as healthy while
+/// having no authenticated way to replicate. The condition has to name the
+/// Secret, because "not ready" that does not say what to create is a support
+/// ticket, not a status.
+#[test]
+fn a_replicated_cr_without_peer_material_is_not_ready_and_names_the_secret() {
+    let l = lumen("search", replicated_spec(Some("search-peer-tls")));
+    let context = serde_json::json!({
+        lumen::operator::reconcile::PEER_IDENTITY_CONTEXT_KEY:
+            "Secret acme/search-peer-tls named by spec.peerTlsSecret does not exist",
+    });
+
+    // 6 shards x 3 replicas: every serving pod is up.
+    let facts = l.conditions(&ready_facts("search", 18), &context);
+
+    let ready = condition(&facts, "Ready");
+    assert_eq!(ready.status, ConditionStatus::False, "got: {facts:?}");
+    assert_eq!(ready.reason, "PeerIdentityNotConfigured");
+    assert!(
+        ready.message.contains("search-peer-tls"),
+        "the Ready message must name the Secret, got: {facts:?}"
+    );
+    let peer = condition(&facts, "PeerIdentityReady");
+    assert_eq!(peer.status, ConditionStatus::False);
+    assert_eq!(peer.reason, "PeerTlsSecretUnusable");
+    assert!(
+        peer.message.contains("search-peer-tls"),
+        "got: {facts:?}"
+    );
+}
+
+/// The satisfied case, so the condition above is a verdict rather than a
+/// constant.
+#[test]
+fn a_replicated_cr_with_peer_material_leaves_readiness_to_the_workload() {
+    let l = lumen("search", replicated_spec(Some("search-peer-tls")));
+
+    let facts = l.conditions(&ready_facts("search", 18), &serde_json::json!({}));
+
+    let peer = condition(&facts, "PeerIdentityReady");
+    assert_eq!(peer.status, ConditionStatus::True);
+    assert_eq!(peer.reason, "PeerTlsSecretProjected");
+    assert_eq!(
+        condition(&facts, "Ready").status,
+        ConditionStatus::True,
+        "got: {facts:?}"
+    );
+}
+
+/// A single-replica instance reports `True` with a reason that says why —
+/// there is no peer to authenticate — rather than one implying material was
+/// found.
+#[test]
+fn a_single_replica_cr_owes_no_peer_identity() {
+    let l = lumen("search", dev_spec());
+
+    let facts = l.conditions(&ready_facts("search", 1), &serde_json::json!({}));
+
+    let peer = condition(&facts, "PeerIdentityReady");
+    assert_eq!(peer.status, ConditionStatus::True);
+    assert_eq!(peer.reason, "NoReplicatedPeers");
+}
+
+/// AC6 / R7: the shipped profiles. A replicated profile that stayed silent
+/// about `peerTlsSecret` would render a CR whose pods refuse to start, which is
+/// a rendering bug, not an operator mistake. `dev` is single-replica and
+/// deliberately excluded.
+#[test]
+fn replicated_instance_profiles_state_their_peer_tls_secret() {
+    for profile in ["staging", "prod", "template"] {
+        let rendered = run_lumen(&["k8s", "instance", "render", "--profile", profile]);
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.trim_start().starts_with("peerTlsSecret:")),
+            "profile `{profile}` renders no `peerTlsSecret:` line:\n{rendered}"
+        );
+    }
+    let dev = run_lumen(&["k8s", "instance", "render", "--profile", "dev"]);
+    assert!(
+        !dev.contains("peerTlsSecret"),
+        "the single-replica dev profile runs no consensus link:\n{dev}"
+    );
+}
+
+/// The instance renderer lives in the binary, not the library — the same reason
+/// `cli_convention.rs` shells out for it.
+fn run_lumen(args: &[&str]) -> String {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lumen"))
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("spawn lumen {args:?}: {e}"));
+    assert!(
+        output.status.success(),
+        "lumen {args:?} failed ({:?}):\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("lumen renders UTF-8")
 }
 // CODEGEN-END

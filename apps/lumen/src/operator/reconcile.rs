@@ -686,9 +686,112 @@ fn spawn_auth_delegator_sweep_loop(client: Client) {
     });
 }
 
+/// Seam for the one read the peer-identity check needs (#2890), abstracted the
+/// same way [`AuthDelegatorControl`] abstracts the auth-delegation writes so
+/// the verdict is testable without an API server.
+#[async_trait::async_trait]
+trait PeerIdentityControl: Send + Sync {
+    /// The keys present in `namespace/name`, or `None` when no such Secret
+    /// exists. An `Err` is a genuinely unreadable Secret — RBAC, a broken
+    /// connection — which is not the same fact as "absent" and must not be
+    /// reported as one.
+    async fn secret_keys(&self, namespace: &str, name: &str) -> anyhow::Result<Option<Vec<String>>>;
+}
+
+/// Production [`PeerIdentityControl`]: a real namespaced Secret read.
+struct KubePeerIdentityControl {
+    client: Client,
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
+#[async_trait::async_trait]
+impl PeerIdentityControl for KubePeerIdentityControl {
+    async fn secret_keys(&self, namespace: &str, name: &str) -> anyhow::Result<Option<Vec<String>>> {
+        let api: Api<k8s_openapi::api::core::v1::Secret> =
+            Api::namespaced(self.client.clone(), namespace);
+        match api.get(name).await {
+            Ok(secret) => {
+                let mut keys: Vec<String> = secret
+                    .data
+                    .unwrap_or_default()
+                    .into_keys()
+                    .chain(secret.string_data.unwrap_or_default().into_keys())
+                    .collect();
+                keys.sort();
+                keys.dedup();
+                Ok(Some(keys))
+            }
+            Err(kube::Error::Api(err)) if err.code == 404 => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+/// Why this replicated instance has no usable Raft peer identity, if it has
+/// none (#2890 R4).
+///
+/// `Some(_)` is a fail-closed verdict: a `replicasPerShard > 1` instance whose
+/// `spec.peerTlsSecret` is unset, missing from the cluster, short a key, or
+/// unreadable. Every message names the Secret and, where it applies, the exact
+/// keys — an operator reading the condition should not have to guess which of
+/// the three the Secret is missing.
+///
+/// Single-replica instances run no consensus link and are always `None`: there
+/// is no peer to authenticate.
+async fn check_peer_identity(control: &dyn PeerIdentityControl, lumen: &Lumen) -> Option<String> {
+    if !lumen.spec.peer_identity_required() {
+        return None;
+    }
+    let namespace = lumen.namespace().unwrap_or_else(|| "default".to_string());
+    let Some(secret) = lumen.spec.peer_tls_secret.as_deref() else {
+        return Some(format!(
+            "replicasPerShard={} requires spec.peerTlsSecret naming a Secret with {}; \
+             replicated Raft traffic has no plaintext fallback",
+            lumen.spec.replicas_per_shard,
+            render::PEER_TLS_KEYS.join(", ")
+        ));
+    };
+    match control.secret_keys(&namespace, secret).await {
+        Ok(Some(keys)) => {
+            let missing: Vec<&str> = render::PEER_TLS_KEYS
+                .iter()
+                .copied()
+                .filter(|key| !keys.iter().any(|present| present == key))
+                .collect();
+            (!missing.is_empty()).then(|| {
+                format!(
+                    "Secret {namespace}/{secret} is missing key(s) {}",
+                    missing.join(", ")
+                )
+            })
+        }
+        Ok(None) => Some(format!(
+            "Secret {namespace}/{secret} named by spec.peerTlsSecret does not exist"
+        )),
+        Err(err) => Some(format!("read Secret {namespace}/{secret}: {err}")),
+    }
+}
+
 /// The reconcile-context key carrying [`apply_auth_delegator_binding`]'s
 /// verdict from the plan hook to the condition projection (#2876).
 const AUTH_DELEGATION_CONTEXT_KEY: &str = "authDelegationError";
+
+/// The same channel for [`check_peer_identity`]'s verdict (#2890). Same reason:
+/// the check is a Secret read, and `observe` is I/O-free by contract.
+///
+/// Public so the render-gate tests project a condition through the key the
+/// reconcile loop actually writes, rather than a string literal that would keep
+/// passing after a rename.
+pub const PEER_IDENTITY_CONTEXT_KEY: &str = "peerIdentityError";
+
+/// Read that verdict back out. Absent key = peer identity is satisfied (or not
+/// required).
+fn peer_identity_error(context: &serde_json::Value) -> Option<String> {
+    context
+        .get(PEER_IDENTITY_CONTEXT_KEY)?
+        .as_str()
+        .map(str::to_string)
+}
 
 /// Read that verdict back out. Absent key = the binding applied.
 fn auth_delegation_error(context: &serde_json::Value) -> Option<String> {
@@ -735,11 +838,25 @@ impl ManagedService for Lumen {
         let lumen = self.clone();
         async move {
             validation.map_err(|why| anyhow::anyhow!(why))?;
-            let control = KubeAuthDelegatorControl { client };
+            let control = KubeAuthDelegatorControl {
+                client: client.clone(),
+            };
             let mut context = serde_json::Map::new();
             if let Some(error) = apply_auth_delegator_binding(&control, &lumen).await {
                 context.insert(
                     AUTH_DELEGATION_CONTEXT_KEY.to_string(),
+                    serde_json::Value::String(error),
+                );
+            }
+            // #2890 R4: the same shape, one layer down — a read rather than a
+            // write, and reported rather than enforced here. Enforcement is the
+            // serving binary's: a replicated pod with no peer TLS material
+            // refuses to start. This turns that crash-loop into a status an
+            // operator can read, naming the Secret it is waiting for.
+            let peer_control = KubePeerIdentityControl { client };
+            if let Some(error) = check_peer_identity(&peer_control, &lumen).await {
+                context.insert(
+                    PEER_IDENTITY_CONTEXT_KEY.to_string(),
                     serde_json::Value::String(error),
                 );
             }
@@ -791,6 +908,9 @@ impl ManagedService for Lumen {
         // reaches the status here. It cannot come from `observe`, which is
         // I/O-free by contract and has no way to know what the apply did.
         observation.auth_delegation = auth_delegation_error(context);
+        // #2890 R4: same channel, same reason — the peer-identity verdict is a
+        // Secret read, and `observe` does no I/O.
+        observation.peer_identity = peer_identity_error(context);
         observation.conditions()
     }
 
@@ -834,6 +954,14 @@ struct Observation {
     /// the reconcile context, never from `observe` — the apply is I/O and
     /// `observe` is not allowed to do any.
     auth_delegation: Option<String>,
+    /// Why this replicated instance has no usable Raft peer identity, if it
+    /// has none (#2890). Same provenance as `auth_delegation`, and empty for
+    /// every single-replica instance.
+    peer_identity: Option<String>,
+    /// Whether this instance runs a replicated Raft group at all — the one
+    /// piece of the peer-identity story `observe` *can* derive, since it is
+    /// pure spec.
+    peer_identity_required: bool,
 }
 
 impl Observation {
@@ -854,19 +982,33 @@ impl Observation {
             .iter()
             .find(|c| RESHARD_WEDGE_CONDITIONS.contains(&c.as_str()));
 
-        let ready = match (self.auth_delegation.as_deref(), wedge, replicas_ready) {
+        let ready = match (
+            self.auth_delegation
+                .as_deref()
+                .map(|error| ("AuthDelegationNotGranted", error))
+                // #2890 R4 AC2: outranks everything below for the same reason
+                // the auth-delegation verdict does — a replicated group with no
+                // peer identity has no authenticated way to replicate, and its
+                // pods refuse to start rather than fall back to plaintext.
+                // Ordered after it only because a broken TokenReview grant
+                // fails every request, while this one fails replication.
+                .or_else(|| {
+                    self.peer_identity
+                        .as_deref()
+                        .map(|error| ("PeerIdentityNotConfigured", error))
+                }),
+            wedge,
+            replicas_ready,
+        ) {
             // #2876 AC4. This outranks everything below it: without the
             // `system:auth-delegator` binding the serving pods cannot run a
             // TokenReview, so every request fails authentication no matter how
             // many pods are Ready or how healthy the shard map is. Reporting
             // Ready here would be reporting on a data plane that answers 401
             // to its own operator.
-            (Some(error), _, _) => ConditionFact::new(
-                "Ready",
-                ConditionStatus::False,
-                "AuthDelegationNotGranted",
-                error.to_string(),
-            ),
+            (Some((reason, error)), _, _) => {
+                ConditionFact::new("Ready", ConditionStatus::False, reason, error.to_string())
+            }
             // A wedge outranks a healthy replica count: every pod can be Ready
             // while writes are fenced or a batch is unappliable.
             (None, Some(wedge), _) => ConditionFact::new(
@@ -906,6 +1048,34 @@ impl Observation {
                 ConditionStatus::True,
                 "AuthDelegatorBound",
                 "serving ServiceAccount is bound to system:auth-delegator".to_string(),
+            ),
+        };
+
+        // #2890 R4 AC2: its own condition for the same reason
+        // `AuthDelegationReady` is one — a watcher that only reads `Ready`
+        // learns nothing about peer identity once something else takes the
+        // Ready slot, and this is the condition that names the Secret.
+        let peer_identity = match &self.peer_identity {
+            Some(error) => ConditionFact::new(
+                "PeerIdentityReady",
+                ConditionStatus::False,
+                "PeerTlsSecretUnusable",
+                error.clone(),
+            ),
+            // True for a single-replica instance too, with a reason that says
+            // why rather than implying material was found: there is no peer to
+            // authenticate, so nothing is outstanding.
+            None if !self.peer_identity_required => ConditionFact::new(
+                "PeerIdentityReady",
+                ConditionStatus::True,
+                "NoReplicatedPeers",
+                "single-member shard: no Raft peer transport to authenticate".to_string(),
+            ),
+            None => ConditionFact::new(
+                "PeerIdentityReady",
+                ConditionStatus::True,
+                "PeerTlsSecretProjected",
+                "instance-scoped peer TLS material is projected onto every Raft member".to_string(),
             ),
         };
 
@@ -956,7 +1126,13 @@ impl Observation {
             )
         };
 
-        vec![ready, progressing, reshard, auth_delegation]
+        vec![
+            ready,
+            progressing,
+            reshard,
+            auth_delegation,
+            peer_identity,
+        ]
     }
 }
 
@@ -1083,6 +1259,11 @@ impl Lumen {
             // function is synchronous and I/O-free by the module's contract.
             // `conditions` fills it from the reconcile context (#2876).
             auth_delegation: None,
+            // Same for the Secret read behind this one (#2890) — but whether
+            // the instance owes peer identity at all is pure spec, so that half
+            // is derivable here.
+            peer_identity: None,
+            peer_identity_required: self.spec.peer_identity_required(),
         }
     }
 }
@@ -1230,6 +1411,7 @@ mod tests {
             admission: None,
             service_account_name: None,
             service_account_annotations: BTreeMap::new(),
+            peer_tls_secret: None,
         };
         let mut lumen = Lumen::new("search", spec);
         lumen.metadata.namespace = Some("acme".to_string());
@@ -1815,6 +1997,7 @@ mod tests {
             admission: None,
             service_account_name: None,
             service_account_annotations: std::collections::BTreeMap::new(),
+            peer_tls_secret: None,
         }
     }
 
@@ -2167,6 +2350,137 @@ mod tests {
         sweep_stale_auth_delegator_bindings(&control, &[]).await;
 
         assert!(control.deletes.lock().unwrap().is_empty());
+    }
+
+    // ---- peer TLS Secret check (#2890 R4) ----------------------------------
+
+    /// In-memory [`PeerIdentityControl`]: a `namespace/name -> keys` map, plus
+    /// a switch for the third outcome the trait exists to keep distinct — a
+    /// Secret that cannot be read at all.
+    #[derive(Default)]
+    struct FakePeerIdentityControl {
+        secrets: BTreeMap<String, Vec<String>>,
+        read_fails: bool,
+    }
+
+    impl FakePeerIdentityControl {
+        fn holding(namespace: &str, name: &str, keys: &[&str]) -> Self {
+            let mut control = Self::default();
+            control.secrets.insert(
+                format!("{namespace}/{name}"),
+                keys.iter().map(|k| (*k).to_string()).collect(),
+            );
+            control
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PeerIdentityControl for FakePeerIdentityControl {
+        async fn secret_keys(
+            &self,
+            namespace: &str,
+            name: &str,
+        ) -> anyhow::Result<Option<Vec<String>>> {
+            if self.read_fails {
+                anyhow::bail!("secrets is forbidden");
+            }
+            Ok(self.secrets.get(&format!("{namespace}/{name}")).cloned())
+        }
+    }
+
+    /// A replicated instance naming `secret`, in namespace `acme`.
+    fn peer_test_lumen(secret: Option<&str>) -> Lumen {
+        let mut lumen = hpa_test_lumen("search", "acme", 1, 3);
+        lumen.spec.peer_tls_secret = secret.map(str::to_string);
+        lumen
+    }
+
+    #[tokio::test]
+    async fn a_single_replica_instance_is_never_asked_for_peer_material() {
+        let mut lumen = peer_test_lumen(None);
+        lumen.spec.replicas_per_shard = 1;
+        // A control that fails every read: if the check consulted it at all,
+        // this would come back as an error string rather than `None`.
+        let control = FakePeerIdentityControl {
+            read_fails: true,
+            ..Default::default()
+        };
+
+        assert_eq!(check_peer_identity(&control, &lumen).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_replicated_instance_with_no_secret_named_says_which_keys_it_needs() {
+        let lumen = peer_test_lumen(None);
+        let control = FakePeerIdentityControl::default();
+
+        let error = check_peer_identity(&control, &lumen)
+            .await
+            .expect("a replicated instance owes peer identity");
+
+        assert!(error.contains("spec.peerTlsSecret"), "got: {error}");
+        for key in render::PEER_TLS_KEYS {
+            assert!(error.contains(key), "the message must name {key}: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_named_secret_that_does_not_exist_is_reported_as_absent() {
+        let lumen = peer_test_lumen(Some("search-peer-tls"));
+        let control = FakePeerIdentityControl::default();
+
+        let error = check_peer_identity(&control, &lumen).await.unwrap();
+
+        assert!(error.contains("does not exist"), "got: {error}");
+        assert!(error.contains("acme/search-peer-tls"), "got: {error}");
+    }
+
+    /// Half-populated material is its own failure: the Secret exists, so an
+    /// operator looking for a missing object would find nothing wrong.
+    #[tokio::test]
+    async fn a_secret_missing_one_key_names_the_key() {
+        let lumen = peer_test_lumen(Some("search-peer-tls"));
+        let control =
+            FakePeerIdentityControl::holding("acme", "search-peer-tls", &["tls.crt", "tls.key"]);
+
+        let error = check_peer_identity(&control, &lumen).await.unwrap();
+
+        assert!(error.contains("ca.crt"), "got: {error}");
+        assert!(
+            !error.contains("tls.crt"),
+            "the present keys are not the problem: {error}"
+        );
+    }
+
+    /// An unreadable Secret is not an absent one. Reporting RBAC failure as
+    /// "does not exist" would send an operator to create a Secret that is
+    /// already there.
+    #[tokio::test]
+    async fn an_unreadable_secret_is_reported_as_a_read_failure() {
+        let lumen = peer_test_lumen(Some("search-peer-tls"));
+        let control = FakePeerIdentityControl {
+            read_fails: true,
+            ..Default::default()
+        };
+
+        let error = check_peer_identity(&control, &lumen).await.unwrap();
+
+        assert!(error.contains("read Secret"), "got: {error}");
+        assert!(!error.contains("does not exist"), "got: {error}");
+    }
+
+    #[tokio::test]
+    async fn complete_peer_material_is_no_finding_at_all() {
+        let lumen = peer_test_lumen(Some("search-peer-tls"));
+        let control = FakePeerIdentityControl::holding(
+            "acme",
+            "search-peer-tls",
+            // A fourth key is the operator's business, not a defect: the
+            // volume projects named items, so it never reaches the pod.
+            &["tls.crt", "tls.key", "ca.crt", "note.txt"],
+        );
+
+        assert_eq!(check_peer_identity(&control, &lumen).await, None);
     }
 }
 // CODEGEN-END

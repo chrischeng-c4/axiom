@@ -2243,13 +2243,17 @@ fn profile_spec_body(body: InstanceBody, image: &str) -> String {
             yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  auth: disabled\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
         InstanceBody::Staging => {
-            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  auth: required\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
+            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  auth: required\n  peerTlsSecret: lumen-peer-tls\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
         }
         InstanceBody::Prod => {
-            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
+            // #2890 R7: `peerTlsSecret` is stated, not defaulted. A replicated
+            // profile that stayed silent about it would render a CR whose pods
+            // refuse to start — the same reasoning as `auth` above, one port
+            // over.
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  peerTlsSecret: lumen-peer-tls\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
         }
         InstanceBody::Template => {
-            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  peerTlsSecret: REPLACE_ME__PEER_TLS_SECRET\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
     }
     yaml
@@ -2862,9 +2866,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         WalBackend::Raft => {
             // Topology from the StatefulSet downward API via the shared helper
             // (node id + membership + peers — no hand-rolled ordinal/DNS math).
-            // A configured peer identity uses the dedicated authenticated Raft
-            // port. Unconfigured local/existing deployments retain the public
-            // h2c compatibility path until their TLS material is projected.
+            // Peers are always addressed on the dedicated authenticated Raft
+            // port over `https`.
             let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
                 .unwrap_or_else(|_| "lumen-headless".to_string());
             let peer_transport = lumen::tls::PeerTlsConfig::from_env()
@@ -2872,17 +2875,28 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 .map(|config| config.peer_transport())
                 .transpose()
                 .context("raft: build shared peer mTLS transport")?;
-            let (peer_port, peer_scheme) = if peer_transport.is_some() {
-                (args.raft_port, "https")
-            } else {
-                (args.port, "http")
+            // #2890 R3/R4: no plaintext fallback. This used to route peer RPCs
+            // at the *client* port over h2c whenever TLS material was absent —
+            // a replicated group replicating committed index mutations between
+            // pods with nothing on the wire saying who either end is, reachable
+            // by anything that can open a TCP connection to the Service. The
+            // failure it replaced (a pod that will not start) is loud, local,
+            // and names the field to set; the one it created was silent.
+            let Some(peer_transport) = peer_transport else {
+                anyhow::bail!(
+                    "raft: replicated mode needs peer mTLS material — set \
+                     LUMEN_PEER_TLS_CERT / LUMEN_PEER_TLS_KEY / LUMEN_PEER_TLS_CA \
+                     (+ LUMEN_PEER_MTLS=on), or under Kubernetes name a Secret with \
+                     tls.crt/tls.key/ca.crt in the Lumen CR's spec.peerTlsSecret. \
+                     Raft peer traffic has no plaintext path"
+                );
             };
             let topo = raft_runtime::ClusterTopology::from_env_with_scheme(
                 "lumen",
                 &headless,
-                peer_port,
+                args.raft_port,
                 "LUMEN_PEERS",
-                peer_scheme,
+                "https",
             )
             .context("raft: cluster topology from env")?;
             tracing::info!(
@@ -2907,26 +2921,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 snapshot: raft_runtime::SnapshotPolicy::External,
                 ..Default::default()
             };
-            let host = Arc::new(match peer_transport.clone() {
-                Some(transport) => raft_runtime::RaftHost::spawn_with_peer_transport(
-                    topo.node_id,
-                    topo.membership,
-                    topo.peers,
-                    store,
-                    sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
-                    host_config,
-                    transport,
-                ),
-                None => raft_runtime::RaftHost::spawn(
-                    topo.node_id,
-                    topo.membership,
-                    topo.peers,
-                    store,
-                    sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
-                    host_config,
-                ),
-            });
-            raft_peer_transport = peer_transport;
+            let host = Arc::new(raft_runtime::RaftHost::spawn_with_peer_transport(
+                topo.node_id,
+                topo.membership,
+                topo.peers,
+                store,
+                sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
+                host_config,
+                peer_transport.clone(),
+            ));
+            raft_peer_transport = Some(peer_transport);
 
             // Live cluster state (#1349): the same `ClusterConfig`/`RaftGroup`
             // shape `AppState::with_cluster`'s consumer (`enforce_read_consistency`,

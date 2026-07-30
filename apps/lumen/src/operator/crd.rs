@@ -73,6 +73,25 @@ pub struct LumenSpec {
     #[serde(default = "default_replicas_per_shard")]
     pub voter_count: u32,
 
+    /// Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the instance-scoped
+    /// X.509 identity every Raft member presents and verifies on the dedicated
+    /// peer listener (#2890). Same field and Secret contract Relay and Defer
+    /// already project, so one shared mechanism (`libs/peer-tls`) covers all
+    /// three.
+    ///
+    /// Required whenever `replicasPerShard > 1`: replicated Raft traffic
+    /// carries committed index mutations between pods, and Kubernetes
+    /// ServiceAccount tokens authenticate *callers*, not peers — nothing else
+    /// on that port says who is dialing. A replicated instance without it does
+    /// not fall back to plaintext; the operator reports
+    /// `PeerIdentityReady=False` naming this Secret, and `lumen serve` refuses
+    /// to start.
+    ///
+    /// Omit only for a single-replica instance, which runs no consensus link
+    /// at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_tls_secret: Option<String>,
+
     /// Log output format: `json` (prod/staging) or `pretty` (dev).
     #[serde(default)]
     pub log_format: LogFormat,
@@ -720,6 +739,18 @@ impl LumenSpec {
     /// else would not.
     pub fn validate(&self) -> Result<(), String> {
         Ok(())
+    }
+
+    /// Does this instance run a replicated Raft group, and therefore owe an
+    /// instance-scoped peer identity (#2890)?
+    ///
+    /// Not a `validate()` rule on purpose: refusing the spec would fail the
+    /// reconcile outright, and a failed reconcile writes no status. An operator
+    /// whose replicated instance is missing its Secret needs to be *told* which
+    /// Secret, which is a `PeerIdentityReady=False` condition — so the check
+    /// lives on the status path instead (see [`super::reconcile`]).
+    pub fn peer_identity_required(&self) -> bool {
+        self.replicas_per_shard > 1
     }
 
     pub fn storage_pod_count(&self) -> i32 {

@@ -108,6 +108,15 @@ spec:
                 default: false
                 description: Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
                 type: boolean
+              peerTlsSecret:
+                description: |-
+                  Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the instance-scoped X.509 identity every Raft member presents and verifies on the dedicated peer listener (#2890). Same field and Secret contract Relay and Defer already project, so one shared mechanism (`libs/peer-tls`) covers all three.
+
+                  Required whenever `replicasPerShard > 1`: replicated Raft traffic carries committed index mutations between pods, and Kubernetes ServiceAccount tokens authenticate *callers*, not peers — nothing else on that port says who is dialing. A replicated instance without it does not fall back to plaintext; the operator reports `PeerIdentityReady=False` naming this Secret, and `lumen serve` refuses to start.
+
+                  Omit only for a single-replica instance, which runs no consensus link at all.
+                nullable: true
+                type: string
               placement:
                 default: {}
                 description: Which nodes the serving pods may run on.
@@ -621,6 +630,15 @@ spec:
                     default: false
                     description: Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
                     type: boolean
+                  peerTlsSecret:
+                    description: |-
+                      Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the instance-scoped X.509 identity every Raft member presents and verifies on the dedicated peer listener (#2890). Same field and Secret contract Relay and Defer already project, so one shared mechanism (`libs/peer-tls`) covers all three.
+
+                      Required whenever `replicasPerShard > 1`: replicated Raft traffic carries committed index mutations between pods, and Kubernetes ServiceAccount tokens authenticate *callers*, not peers — nothing else on that port says who is dialing. A replicated instance without it does not fall back to plaintext; the operator reports `PeerIdentityReady=False` naming this Secret, and `lumen serve` refuses to start.
+
+                      Omit only for a single-replica instance, which runs no consensus link at all.
+                    nullable: true
+                    type: string
                   placement:
                     default: {}
                     description: Which nodes the serving pods may run on.

@@ -20,28 +20,29 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 162 |  |
-| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 444 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 590 |  |
-| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 421 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 652 |  |
+| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 181 |  |
+| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 463 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 609 |  |
+| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 440 |  |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 671 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 43 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 614 |  |
-| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 388 |  |
-| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 287 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 322 |  |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 566 |  |
-| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 543 |  |
-| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 475 |  |
-| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 259 |  |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 432 | as_env(self) -> &'static str |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 463 | as_env(self) -> &'static str |
-| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 398 | as_str(self) -> &'static str |
-| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 407 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 744 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 829 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 725 | storage_pod_count(&self) -> i32 |
-| `validate` | apps/lumen/src/operator/crd.rs | function | pub | 721 | validate(&self) -> Result<(), String> |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 633 |  |
+| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 407 |  |
+| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 306 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 341 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 585 |  |
+| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 562 |  |
+| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 494 |  |
+| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 278 |  |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 451 | as_env(self) -> &'static str |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 482 | as_env(self) -> &'static str |
+| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 417 | as_str(self) -> &'static str |
+| `peer_identity_required` | apps/lumen/src/operator/crd.rs | function | pub | 752 | peer_identity_required(&self) -> bool |
+| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 426 | progress_percent(self) -> u8 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 775 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 860 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 756 | storage_pod_count(&self) -> i32 |
+| `validate` | apps/lumen/src/operator/crd.rs | function | pub | 740 | validate(&self) -> Result<(), String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -120,6 +121,25 @@ pub struct LumenSpec {
     /// `replicasPerShard > 1`.
     #[serde(default = "default_replicas_per_shard")]
     pub voter_count: u32,
+
+    /// Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the instance-scoped
+    /// X.509 identity every Raft member presents and verifies on the dedicated
+    /// peer listener (#2890). Same field and Secret contract Relay and Defer
+    /// already project, so one shared mechanism (`libs/peer-tls`) covers all
+    /// three.
+    ///
+    /// Required whenever `replicasPerShard > 1`: replicated Raft traffic
+    /// carries committed index mutations between pods, and Kubernetes
+    /// ServiceAccount tokens authenticate *callers*, not peers — nothing else
+    /// on that port says who is dialing. A replicated instance without it does
+    /// not fall back to plaintext; the operator reports
+    /// `PeerIdentityReady=False` naming this Secret, and `lumen serve` refuses
+    /// to start.
+    ///
+    /// Omit only for a single-replica instance, which runs no consensus link
+    /// at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_tls_secret: Option<String>,
 
     /// Log output format: `json` (prod/staging) or `pretty` (dev).
     #[serde(default)]
@@ -768,6 +788,18 @@ impl LumenSpec {
     /// else would not.
     pub fn validate(&self) -> Result<(), String> {
         Ok(())
+    }
+
+    /// Does this instance run a replicated Raft group, and therefore owe an
+    /// instance-scoped peer identity (#2890)?
+    ///
+    /// Not a `validate()` rule on purpose: refusing the spec would fail the
+    /// reconcile outright, and a failed reconcile writes no status. An operator
+    /// whose replicated instance is missing its Secret needs to be *told* which
+    /// Secret, which is a `PeerIdentityReady=False` condition — so the check
+    /// lives on the status path instead (see [`super::reconcile`]).
+    pub fn peer_identity_required(&self) -> bool {
+        self.replicas_per_shard > 1
     }
 
     pub fn storage_pod_count(&self) -> i32 {

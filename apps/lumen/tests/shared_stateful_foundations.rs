@@ -33,8 +33,22 @@ fn configured_peer_identity_uses_shared_https_transport_and_dedicated_listener()
             "lumen serve is missing shared peer-transport wiring: {required}"
         );
     }
-    assert!(LUMEN_BIN.contains("(args.raft_port, \"https\")"));
-    assert!(LUMEN_BIN.contains("(args.port, \"http\")"));
+    // #2890 R3: the peer scheme stopped being a choice. This used to assert
+    // both arms of `if peer_transport.is_some() { (args.raft_port, "https") }
+    // else { (args.port, "http") }` — the second arm moved replicated Raft
+    // traffic onto the *client* port over h2c whenever TLS material was
+    // absent. It is gone, so what is locked here now is its absence plus the
+    // fail-closed message that replaced it.
+    assert!(LUMEN_BIN.contains("\"https\","));
+    assert!(
+        !LUMEN_BIN.contains("(args.port, \"http\")"),
+        "the plaintext peer fallback must not come back"
+    );
+    assert!(
+        LUMEN_BIN.contains("Raft peer traffic has no plaintext path"),
+        "a replicated group with no peer material must refuse to start, \
+         not pick a scheme"
+    );
 }
 
 #[test]

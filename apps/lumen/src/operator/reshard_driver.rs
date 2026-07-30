@@ -2536,6 +2536,7 @@ mod tests {
             admission: None,
             service_account_name: None,
             service_account_annotations: BTreeMap::new(),
+            peer_tls_secret: None,
         }
     }
 

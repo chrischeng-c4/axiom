@@ -57,12 +57,13 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `auth_delegator_binding` | apps/lumen/src/operator/render.rs | function | pub | 295 | auth_delegator_binding(lumen: &Lumen) -> Value |
-| `auth_delegator_binding_name` | apps/lumen/src/operator/render.rs | function | pub | 233 | auth_delegator_binding_name(lumen: &Lumen) -> String |
-| `auth_delegator_labels` | apps/lumen/src/operator/render.rs | function | pub | 251 | auth_delegator_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
-| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 112 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
-| `render` | apps/lumen/src/operator/render.rs | function | pub | 137 | render(lumen: &Lumen) -> Vec<Value> |
-| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 101 | wants_hpa(_lumen: &Lumen) -> bool |
+| `PEER_TLS_KEYS` | apps/lumen/src/operator/render.rs | constant | pub | 65 |  |
+| `auth_delegator_binding` | apps/lumen/src/operator/render.rs | function | pub | 308 | auth_delegator_binding(lumen: &Lumen) -> Value |
+| `auth_delegator_binding_name` | apps/lumen/src/operator/render.rs | function | pub | 246 | auth_delegator_binding_name(lumen: &Lumen) -> String |
+| `auth_delegator_labels` | apps/lumen/src/operator/render.rs | function | pub | 264 | auth_delegator_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 125 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `render` | apps/lumen/src/operator/render.rs | function | pub | 150 | render(lumen: &Lumen) -> Vec<Value> |
+| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 114 | wants_hpa(_lumen: &Lumen) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -122,6 +123,16 @@ const HEADLESS_ENV_KEY: &str = "LUMEN_HEADLESS_SERVICE";
 // both can coexist on the one `raft` PVC mount across a `replicasPerShard`
 // change without colliding.
 const EMBEDDED_DATA_DIR: &str = "/var/lib/lumen/data";
+/// Where `spec.peerTlsSecret` is projected into every Raft member (#2890).
+/// Lumen-specific and disjoint from `/var/lib/lumen`: peer identity is
+/// read-only credential material, not index state, and must not land on the
+/// PVC that survives a pod.
+const PEER_TLS_MOUNT_PATH: &str = "/var/run/secrets/lumen-peer";
+/// The pod-local volume carrying it.
+const PEER_TLS_VOLUME: &str = "lumen-peer-tls";
+/// The three keys the Secret must carry — the same contract Relay and Defer
+/// project, and exactly what `peer_tls::PeerTlsConfig` loads.
+pub const PEER_TLS_KEYS: [&str; 3] = ["tls.crt", "tls.key", "ca.crt"];
 
 /// Resolve the instance name (defaults to `lumen` only when metadata is absent,
 /// which never happens for a real CR).
@@ -551,8 +562,29 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
     let s = &lumen.spec.serving;
     let sa_name = serving_service_account_name(lumen);
     let res = render::requested_resources(&s.cpu, &s.memory);
-    let volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
-    let volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
+    let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
+    let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
+    // #2890 R2: the instance's Raft identity, projected read-only. `items`
+    // rather than a whole-Secret mount so the three keys the peer transport
+    // loads are the three keys that reach the pod — an extra key added to the
+    // Secret later cannot silently become part of what the container sees.
+    if let Some(secret) = lumen.spec.peer_tls_secret.as_deref() {
+        volumes.push(json!({
+            "name": PEER_TLS_VOLUME,
+            "secret": {
+                "secretName": secret,
+                "items": PEER_TLS_KEYS
+                    .iter()
+                    .map(|key| json!({ "key": key, "path": key }))
+                    .collect::<Vec<_>>(),
+            },
+        }));
+        volume_mounts.push(json!({
+            "name": PEER_TLS_VOLUME,
+            "mountPath": PEER_TLS_MOUNT_PATH,
+            "readOnly": true,
+        }));
+    }
     let spread = |key: &str| {
         json!({
             "maxSkew": 1,
@@ -728,6 +760,16 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
                 "value": limit.to_string(),
             }));
         }
+    }
+    // #2890 R2: the four env vars `lumen::tls::PeerTlsConfig::from_env` reads,
+    // pointing at the projected Secret. `LUMEN_PEER_MTLS=on` is what makes the
+    // peer listener *require* a client certificate rather than merely offer
+    // TLS, so it is set alongside the paths and never on its own.
+    if lumen.spec.peer_tls_secret.is_some() {
+        env.push(json!({ "name": "LUMEN_PEER_MTLS", "value": "on" }));
+        env.push(json!({ "name": "LUMEN_PEER_TLS_CERT", "value": format!("{PEER_TLS_MOUNT_PATH}/tls.crt") }));
+        env.push(json!({ "name": "LUMEN_PEER_TLS_KEY", "value": format!("{PEER_TLS_MOUNT_PATH}/tls.key") }));
+        env.push(json!({ "name": "LUMEN_PEER_TLS_CA", "value": format!("{PEER_TLS_MOUNT_PATH}/ca.crt") }));
     }
     // #1387: `LUMEN_WAL=auto` above resolves to `Embedded` (`MemWal::new()`,
     // RAM-only) whenever `resolve_wal_backend` sees no raft cluster context —
