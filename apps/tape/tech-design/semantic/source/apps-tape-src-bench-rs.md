@@ -22,6 +22,13 @@ models named real-service replay wins such as the NATS JetStream local backlog
 gate. Other replay-log peer wins stay unclaimed until their own real-service
 peer runs are added.
 
+WI #3052 AC1 adds `run_durable_benchmark`: a second, independent benchmark
+entry point that drives the real `WalStore` + `CommitCoordinator` group-commit
+durable path over real HTTP (a real `127.0.0.1:0` socket, not an in-memory
+journal call) at varying connection counts, proving durable append throughput
+rises with connection count instead of staying flat at the pre-#3052 85-89
+ops/s line. It never touches or weakens `run_benchmark`'s in-memory numbers.
+
 ## Logic
 <!-- type: logic lang: mermaid -->
 
@@ -40,6 +47,11 @@ flowchart TD
     ratio --> gate{"ratio >= required_ratio?"}
     gate -->|yes| win["allow named real-service peer win"]
     gate -->|no| fail["fail named peer win"]
+
+    durable["run_durable_benchmark(events_per_connection, payload_bytes, connection_counts)"] --> sample["per connection count: fresh TempDir -> WalStore::open -> CommitCoordinator::spawn -> AppState::with_wal -> router -> bind 127.0.0.1:0"]
+    sample --> drive["N concurrent client tasks, each POSTing events_per_connection sequential /topics/{topic}/append requests"]
+    drive --> measure["ops_per_sec = events / elapsed"]
+    measure --> ratio2["scaling_ratio = ops_per_sec(max conns) / ops_per_sec(min conns)"]
 ```
 
 ## Unit Test
@@ -52,6 +64,7 @@ id: tape-td-flow
 flowchart TD
     test["cargo test -p tape --test tape_perf_gate -- --nocapture"] --> budget["local regression budgets pass"]
     test --> ledger["external broker wins remain unclaimed"]
+    test --> durable["durable_append_throughput_rises_with_connection_count asserts scaling_ratio >= 4.0x (16 vs 1 connections)"]
 ```
 
 ## Changes
@@ -74,4 +87,9 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: "Benchmark verification is exercised through the tape_perf_gate integration test."
+  - path: apps/tape/src/bench.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "WI #3052 AC1: run_durable_benchmark drives the real WalStore/CommitCoordinator group-commit path over real HTTP at varying connection counts, reporting per-connection ops/s and the scaling ratio."
 ```
