@@ -100,6 +100,7 @@ def _capability(
     heading: str = "####",
     status: str = "verified",
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
+    multi_item: bool = False,
 ) -> str:
     if work_root_cells is None:
         rows = "\n".join(
@@ -122,22 +123,38 @@ def _capability(
     # an empty field instead would be a different document -- an author who
     # declared nothing, versus one who declared a blank.
     class_field = "" if feature_class is None else f"Feature Class: {feature_class}\n"
+    # Every other document declares exactly one item per list, which leaves an
+    # implementation that renders only the first element of each byte-identical
+    # to one that renders all of them.
+    surface_items = [_member_surface_item(title, surface, promise)]
+    dimension_items = [_member_ec_dimension_item(title, cap_id)]
+    gate_items = [f"tech-design/{cap_id}.md"]
+    if multi_item:
+        surface_items.append(MULTI_ITEM_SURFACE_ITEM)
+        dimension_items.append(MULTI_ITEM_EC_DIMENSION_ITEM)
+        gate_items.append(MULTI_ITEM_GATE_INVENTORY_ITEM)
+    surfaces_field = "".join(f"- {item}\n" for item in surface_items)
+    dimensions_field = "".join(f"- {item}\n" for item in dimension_items)
+    gates_field = "".join(f"- {item}\n" for item in gate_items)
+    dependencies = _member_dependencies(title)
+    dependencies_field = (
+        ""
+        if not dependencies
+        else "Dependencies:\n" + "".join(f"- {dep}\n" for dep in dependencies)
+    )
     return f"""{heading} {title}
 
 ID: {cap_id}
 Type: {_member_type(title)}
 {class_field}Surfaces:
-- CLI: `{surface}` - {promise.lower().rstrip('.')}.
-EC Dimensions:
-- behavior: `{_member_ec_runner(title)}` - {cap_id} behavior gate.
-Root WI: -
+{surfaces_field}EC Dimensions:
+{dimensions_field}{dependencies_field}Root WI: -
 Status: {status}
 Required Verification: {_member_required_verification(title)}
 Promise:
 {promise}
 Gate Inventory:
-- tech-design/{cap_id}.md
-
+{gates_field}
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 {rows}
@@ -194,10 +211,17 @@ _NON_CORE_MEMBERS = (
     # capability up by id would find no roots and report nothing. The second
     # work root, because it is what keeps the per-class claim counts unequal
     # once the retired member is excluded.
+    # This member's promise deliberately contains a `|`. It is the one field
+    # that reaches `markdown_cell` (`capability.rs:9244-9250`) as free author
+    # text: the Capability Index's `Notes` column falls back to the promise when
+    # the input carries no index of its own (`capability.rs:8970-8974`), which is
+    # every relocation shape here. Without the escape the row gains a column and
+    # the index stops parsing, so the escape is what keeps a promise from
+    # corrupting the table around it -- and no other fixture cell contains one.
     (
         "Contract Gate Wiring",
         "ec-gates-configured",
-        "Carry configured external-contract gates.",
+        "Carry configured external-contract gates | one inventory entry per gate.",
         "lumen verify",
         ("gate-configuration", "gate-inventory-sync"),
     ),
@@ -295,12 +319,73 @@ MEMBER_EC_RUNNER = {
     "Observability": "true",
 }
 
+#: Per-capability surface *kind*, keyed by title.
+#:
+#: `render_surface_field_items` (`capability.rs:9154-9175`) rebuilds the item as
+#: `kind: commands - summary`, three sub-fields from three separate reads. Every
+#: member used to declare `CLI`, so the kind read was satisfiable by the literal
+#: `"CLI"` while the varying command text alone kept the *whole item* pairwise
+#: distinct -- a guard on the assembled item cannot see a constant sub-field.
+MEMBER_SURFACE_KIND = {
+    "Search Core": "HTTP",
+    "Lexical Search": "CLI",
+    "Standard Operational Endpoints": "Probe",
+    "Kubernetes-Native Deployment": "Kubernetes",
+    "Security Hardening": "Identity",
+    "Contract Gate Wiring": "MCP",
+    "Observability": "OTLP",
+}
+
+#: Per-capability EC dimension *kind*, keyed by title. Same sub-field shape as
+#: `MEMBER_SURFACE_KIND`: the rendered item is `dimension: \`runner\` - summary`
+#: and every member declared `behavior`, so that read was a constant even after
+#: the runner half was varied.
+#:
+#: `CapabilityEcDimensionKind` (`capability.rs:654-669`) is a closed four-value
+#: enum, so six members cannot be pairwise distinct. The guard below asserts the
+#: fixture exercises the *whole* vocabulary instead, which is the same rule the
+#: work-root enum columns are held to.
+MEMBER_EC_DIMENSION = {
+    "Search Core": "behavior",
+    "Lexical Search": "efficiency",
+    "Standard Operational Endpoints": "stability",
+    "Kubernetes-Native Deployment": "behavior",
+    "Security Hardening": "security",
+    "Contract Gate Wiring": "stability",
+    "Observability": "behavior",
+}
+assert {
+    MEMBER_EC_DIMENSION[member[0]] for member in _CORE_MEMBERS + _NON_CORE_MEMBERS
+} == {"behavior", "efficiency", "security", "stability"}, (
+    "MEMBER_EC_DIMENSION must exercise every CapabilityEcDimensionKind, or the "
+    "unused arms of the enum's as_str are unfalsifiable"
+)
+
+#: Per-capability `Dependencies:`, keyed by title; members absent from this map
+#: declare no such field at all.
+#:
+#: No fixture capability declared one, so the whole `Dependencies:` block
+#: (`capability.rs:9055-9060`) could be deleted without failing anything --
+#: while the product's own doc comment (`capability.rs:8490-8492`) names product
+#: dependencies as carried through untouched, and the only assertion of that was
+#: a colocated Rust `--lib` invariant.
+#:
+#: Both dependencies point at a capability in the same class as the one
+#: declaring them, so this fixture adds no cross-class dependency edge to
+#: whatever the readiness rules make of one.
+MEMBER_DEPENDENCIES = {
+    "Lexical Search": ("search-core",),
+    "Contract Gate Wiring": ("standard-operational-endpoints",),
+}
+
 #: Defaults for the synthetic members some fixtures splice in (registry-spanning
 #: probes and the like). Those documents are built to falsify a different rule and
 #: never have these fields read back, so they keep the historical values.
 _DEFAULT_TYPE = "Service"
 _DEFAULT_REQUIRED_VERIFICATION = "smoke"
 _DEFAULT_EC_RUNNER = "true"
+_DEFAULT_SURFACE_KIND = "CLI"
+_DEFAULT_EC_DIMENSION = "behavior"
 
 
 def _member_type(title: str) -> str:
@@ -313,6 +398,52 @@ def _member_required_verification(title: str) -> str:
 
 def _member_ec_runner(title: str) -> str:
     return MEMBER_EC_RUNNER.get(title, _DEFAULT_EC_RUNNER)
+
+
+def _member_surface_kind(title: str) -> str:
+    return MEMBER_SURFACE_KIND.get(title, _DEFAULT_SURFACE_KIND)
+
+
+def _member_ec_dimension(title: str) -> str:
+    return MEMBER_EC_DIMENSION.get(title, _DEFAULT_EC_DIMENSION)
+
+
+def _member_dependencies(title: str) -> tuple[str, ...]:
+    return MEMBER_DEPENDENCIES.get(title, ())
+
+
+def _member_surface_item(title: str, surface: str, promise: str) -> str:
+    """The exact `Surfaces:` item a member declares, and must get back.
+
+    Restated here rather than in the fixture text so the authored document and
+    the expectation cannot drift apart into an assertion that pins the oracle to
+    itself.
+    """
+    return f"{_member_surface_kind(title)}: `{surface}` - {promise.lower().rstrip('.')}."
+
+
+def _member_ec_dimension_item(title: str, cap_id: str) -> str:
+    """The exact `EC Dimensions:` item a member declares, and must get back."""
+    dimension = _member_ec_dimension(title)
+    return f"{dimension}: `{_member_ec_runner(title)}` - {cap_id} {dimension} gate."
+
+
+#: The second item of each list field on the one member that declares two.
+#:
+#: Kept in its own document (`MULTI_ITEM_SECTION_README`) rather than added to
+#: every member: the EC dimensions a capability declares become gates in the
+#: report, so widening them everywhere would move the claim arithmetic the
+#: per-class counts are pinned to. Each value differs from that member's first
+#: item in the sub-field the truncation would hide -- kind, dimension, and path.
+MULTI_ITEM_TITLE = "Kubernetes-Native Deployment"
+MULTI_ITEM_SURFACE_ITEM = (
+    "CLI: `lumen deploy --dry-run` - render the manifests without applying them."
+)
+MULTI_ITEM_EC_DIMENSION_ITEM = (
+    "security: `lumen deploy --verify-signatures` - "
+    "kubernetes-native-deployment security gate."
+)
+MULTI_ITEM_GATE_INVENTORY_ITEM = "tech-design/kubernetes-native-deployment-rollout.md"
 
 
 _TITLE_BY_ID = {
@@ -336,6 +467,8 @@ for _map_name, _member_map in (
     ("MEMBER_TYPE", MEMBER_TYPE),
     ("MEMBER_REQUIRED_VERIFICATION", MEMBER_REQUIRED_VERIFICATION),
     ("MEMBER_EC_RUNNER", MEMBER_EC_RUNNER),
+    ("MEMBER_SURFACE_KIND", MEMBER_SURFACE_KIND),
+    ("MEMBER_EC_DIMENSION", MEMBER_EC_DIMENSION),
 ):
     assert {
         member[0] for member in _CORE_MEMBERS + _NON_CORE_MEMBERS
@@ -352,6 +485,7 @@ def _section(
     heading: str = "####",
     status: str = "verified",
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
+    multi_item: bool = False,
 ) -> str:
     title, cap_id, promise, surface, work_roots = member
     return _capability(
@@ -364,6 +498,7 @@ def _section(
         heading=heading,
         status=status,
         work_root_cells=work_root_cells,
+        multi_item=multi_item,
     )
 
 
@@ -1657,6 +1792,13 @@ def _index_rows_parsed(migrated: str) -> list[list[str]]:
 
     Bounded to the index table itself: rows are taken from `### Capability
     Index` up to the next `###` heading, which is the first feature root.
+
+    Splits on unescaped `|` only, and unescapes `\\|` back to `|`. That is not a
+    convenience: one fixture promise contains a pipe and reaches this table
+    through the `Notes` fallback, so a renderer that skipped
+    `markdown_cell`'s escaping would produce a row with one column too many.
+    Reading it with a naive `split("|")` would silently absorb that extra column
+    and the corrupted table would still parse.
     """
     start = migrated.index("### Capability Index")
     rest = migrated[start + len("### Capability Index") :]
@@ -1667,11 +1809,38 @@ def _index_rows_parsed(migrated: str) -> list[list[str]]:
         line = raw.strip()
         if not line.startswith("|") or set(line) <= set("|-: "):
             continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        cells = _split_escaped_row(line)
         if cells and cells[0] == "Capability":
             continue
         rows.append(cells)
     return rows
+
+
+def _split_escaped_row(line: str) -> list[str]:
+    """One Markdown table row's cells, honouring `\\|` as literal content."""
+    body = line.strip()
+    if body.startswith("|"):
+        body = body[1:]
+    if body.endswith("|") and not body.endswith("\\|"):
+        body = body[:-1]
+    cells: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "\\" and index + 1 < len(body) and body[index + 1] == "|":
+            current.append("|")
+            index += 2
+            continue
+        if char == "|":
+            cells.append("".join(current).strip())
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    cells.append("".join(current).strip())
+    return cells
 
 
 def _index_titles(migrated: str) -> list[str]:
@@ -1858,11 +2027,11 @@ assert len(set(MEMBER_PROMISE.values())) == len(_ALL_MEMBERS), (
 #: `kind: commands - summary` and `dimension: \`runner\` - summary`, and
 #: `capability_raw_gate_inventory` returns the declared inventory verbatim.
 MEMBER_SURFACE_ITEM = {
-    member[0]: f"CLI: `{member[3]}` - {member[2].lower().rstrip('.')}."
+    member[0]: _member_surface_item(member[0], member[3], member[2])
     for member in _ALL_MEMBERS
 }
 MEMBER_EC_DIMENSION_ITEM = {
-    member[0]: f"behavior: `{MEMBER_EC_RUNNER[member[0]]}` - {member[1]} behavior gate."
+    member[0]: _member_ec_dimension_item(member[0], member[1])
     for member in _ALL_MEMBERS
 }
 MEMBER_GATE_INVENTORY_ITEM = {
@@ -1877,6 +2046,12 @@ for _field_name, _field_map in (
         f"{_field_name} must be pairwise distinct across members, or a renderer "
         f"that emitted one capability's value for all of them still passes"
     )
+#: Distinctness of the assembled item is not enough: `kind`, `commands` and
+#: `summary` are three separate reads, and varying only the command text leaves
+#: the kind read satisfiable by a literal. Asserted on the sub-field itself.
+assert len({MEMBER_SURFACE_KIND[member[0]] for member in _ALL_MEMBERS}) == len(
+    _ALL_MEMBERS
+), "MEMBER_SURFACE_KIND must be pairwise distinct across members"
 
 
 def assert_sections_carry_their_own_contract(
@@ -1901,12 +2076,37 @@ def assert_sections_carry_their_own_contract(
     - `Gate Inventory:` (`capability.rs:9039-9042`), which was read back for one
       capability only, so "every capability claims `search-core`'s inventory"
       passed
+    - `Dependencies:` (`capability.rs:9055-9060`), which no capability declared
+      at all, so the whole block was deletable
 
     Asserted per capability against pairwise-distinct values, so a renderer that
-    copies one capability's field into all of them is a different document.
+    copies one capability's field into all of them is a different document. The
+    surface and EC dimension items are asserted whole rather than by their
+    varying half, because each is assembled from separate reads of its kind, its
+    command, and its summary, and a guard on the assembled item alone cannot see
+    a constant sub-field.
+
+    `Dependencies:` is asserted in both directions -- present with its own value
+    for the two members that declare one, absent for the four that do not --
+    because a renderer that emitted the block unconditionally would attribute a
+    dependency edge to capabilities that never claimed one.
     """
     for title in titles:
         body = _capability_section_body(migrated, title)
+        dependencies = _member_dependencies(title)
+        if dependencies:
+            expected_dependencies = "Dependencies:\n" + "".join(
+                f"- {dep}\n" for dep in dependencies
+            )
+            assert expected_dependencies in body, (
+                f"section {title!r} did not carry its own dependencies "
+                f"{expected_dependencies!r}; section was:\n{body}"
+            )
+        else:
+            assert "Dependencies:" not in body, (
+                f"section {title!r} declared no dependencies, so rendering the "
+                f"field at all invents an edge; section was:\n{body}"
+            )
         for label, expected in (
             ("promise", f"Promise:\n{MEMBER_PROMISE[title]}\n"),
             ("type", f"Type: {_member_type(title)}\n"),
@@ -1937,6 +2137,7 @@ def _section_readme(
     statuses: tuple[str, ...] | None = None,
     preludes: tuple[str | None, ...] | None = None,
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
+    multi_item_title: str | None = None,
 ) -> str:
     """A README whose capability contract is canonical `###` sections.
 
@@ -1954,7 +2155,12 @@ def _section_readme(
     for index, (member, declared) in enumerate(zip(members, classes)):
         status = "verified" if statuses is None else statuses[index]
         section = _section(
-            member, declared, "###", status=status, work_root_cells=work_root_cells
+            member,
+            declared,
+            "###",
+            status=status,
+            work_root_cells=work_root_cells,
+            multi_item=member[0] == multi_item_title,
         ).replace(
             "Root WI: -", f"Root WI: {SECTION_RELOCATION_WI[member[0]]}"
         )
@@ -2151,6 +2357,60 @@ VARIED_WORK_ROOT_SECTION_README = _section_readme(
 )
 
 
+#: Relocation input where one capability declares *two* of every list field.
+#:
+#: Every other document here declares exactly one Surface, one EC Dimension and
+#: one Gate Inventory entry per capability, which makes list arity unobservable:
+#: an implementation rendering only the first element of each produces the
+#: byte-identical document, while silently dropping contract content from any
+#: real two-surface capability.
+MULTI_ITEM_SECTION_README = _section_readme(
+    _ALL_MEMBERS,
+    (None,) * len(_ALL_MEMBERS),
+    "Lumen README-resident capability contract, one capability declaring two of each.",
+    multi_item_title=MULTI_ITEM_TITLE,
+)
+assert MULTI_ITEM_SECTION_README.count(MULTI_ITEM_SURFACE_ITEM) == 1, (
+    "the multi-item document must actually declare the second surface, or its "
+    "assertion pins nothing"
+)
+
+
+def assert_relocation_carries_every_list_item(migrated: str) -> None:
+    """A capability's list fields keep *every* item, in order, not just the first.
+
+    The three list renderers (`capability.rs:9039-9054`) each map over their
+    whole vector. With one item per list everywhere else, `.take(1)` on any of
+    them was indistinguishable from rendering all of them.
+
+    Asserted as the two items adjacent and in declaration order, so an
+    implementation that renders both but reorders or interleaves them is a
+    different document too.
+    """
+    body = _capability_section_body(migrated, MULTI_ITEM_TITLE)
+    for label, expected in (
+        (
+            "surfaces",
+            f"Surfaces:\n- {MEMBER_SURFACE_ITEM[MULTI_ITEM_TITLE]}\n"
+            f"- {MULTI_ITEM_SURFACE_ITEM}\n",
+        ),
+        (
+            "EC dimensions",
+            f"EC Dimensions:\n- {MEMBER_EC_DIMENSION_ITEM[MULTI_ITEM_TITLE]}\n"
+            f"- {MULTI_ITEM_EC_DIMENSION_ITEM}\n",
+        ),
+        (
+            "gate inventory",
+            f"Gate Inventory:\n- tech-design/kubernetes-native-deployment.md\n"
+            f"- {MULTI_ITEM_GATE_INVENTORY_ITEM}\n",
+        ),
+    ):
+        assert expected in body, (
+            f"relocated section {MULTI_ITEM_TITLE!r} lost the second item of its "
+            f"{label} {expected!r}; section was:\n{body}"
+        )
+
+
 def assert_relocation_carries_every_work_root_cell(migrated: str) -> None:
     """Each work-root row survives relocation cell by cell, not row by row.
 
@@ -2275,6 +2535,17 @@ def assert_relocation_carries_per_capability_status(migrated: str) -> None:
             f"index row {title!r} Verification column: expected "
             f"{verification!r} for its status, got {row[3]!r}"
         )
+        # The Maturity column's fallback is `capability_maturity_summary`
+        # (`capability.rs:8951`, `capability.rs:9826-9840`), which is the
+        # capability's own `Required Verification` list joined. Reachable on
+        # every relocation shape -- and unasserted on all of them until now,
+        # because the varied-index document was the only place Maturity was read
+        # back and its own docstring wrongly claimed this branch could not
+        # produce a varying value.
+        assert row[4] == _member_required_verification(title), (
+            f"index row {title!r} Maturity column: expected its own required "
+            f"verification {_member_required_verification(title)!r}, got {row[4]!r}"
+        )
         assert row[6] == MEMBER_PROMISE[title], (
             f"index row {title!r} Notes column must fall back to that "
             f"capability's own promise, got {row[6]!r}"
@@ -2349,10 +2620,14 @@ def _varied_index_document() -> str:
     Format migration, not relocation: this input already carries a `Capability
     Index`, so every capability gets an `index_summary` and the renderer takes
     the carried-through branch rather than the derived-from-status fallback.
-    `Maturity` and `Production` are reachable *only* on this branch -- the
-    fallback derives them from a verification contract this fixture's
-    capabilities do not declare and from `release_scope`, which is false for
-    every capability in a document with no index table.
+    `Production` is reachable *only* on this branch: the fallback derives it
+    from `release_scope`, which `parse` sets true only from an index summary and
+    which is therefore false for every capability in a document with no index
+    table. `Maturity` is not -- its fallback is the capability's own
+    `Required Verification`, which this fixture varies per member, so the
+    relocation shapes render six different Maturity cells through the other
+    branch. `assert_relocation_carries_per_capability_status` binds those; this
+    document binds only the carried-through form.
     """
     rows = "\n".join(
         "| {title} | - | {impl} | {verification} | {maturity} | {production} | {notes} |".format(
@@ -2689,10 +2964,20 @@ def assert_section_relocation_empties_the_readme(
     README's whole capability contract in place -- producing two divergent copies
     of it, which is exactly what relocation exists to prevent -- passed.
 
-    Asserted in both directions: the pointer arrives, and the sections leave.
+    Asserted in three directions: the pointer arrives, the sections leave, and
+    everything that was never part of the capability contract stays. The third
+    is what separates "moved the contract out" from "truncated the README": the
+    residue is built by splicing a pointer into the surviving prefix and suffix
+    (`render_readme_capability_migration_residue`), and discarding the prefix
+    outright still satisfies both of the other two directions.
     """
     assert README_CONTRACT_POINTER in readme, readme
     assert "CAPABILITIES.md" in readme, readme
+    for landmark in ("# Lumen", "## Brief", "## Contributing", "See CONTRIBUTING.md."):
+        assert landmark in readme, (
+            f"relocation must keep {landmark!r}, which was never part of the "
+            f"capability contract it moved; README was:\n{readme}"
+        )
     for title in titles:
         assert f"### {title}" not in readme, (
             f"relocation must remove {title!r}'s section from the README it "
