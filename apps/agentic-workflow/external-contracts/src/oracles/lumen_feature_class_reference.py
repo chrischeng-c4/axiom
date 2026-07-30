@@ -1536,42 +1536,65 @@ def assert_baseline_placed_core_is_rejected(
     assert by_id[cap_id].get("feature_class") is None, by_id[cap_id]
 
 
-#: The `Feature Class` spellings a human writes, each mapped to the class it must
-#: resolve to. Backticks, hyphens, camel case and case folding are all accepted
-#: by the parser; this pins that acceptance as product behavior rather than
-#: leaving it to a colocated unit test.
-HUMAN_CLASS_SPELLINGS = (
-    ("`Core`", "core"),
-    ("non-core", "non_core"),
-    ("NonCore", "non_core"),
-    ("Non-Core", "non_core"),
-    ("noncore", "non_core"),
+#: The `Feature Class` spellings a human writes. The parser normalizes by
+#: trimming backticks, case-folding, mapping `-` and space to `_`, and then
+#: stripping a trailing `_features` -- so the *root headings themselves*
+#: (`Core Features`, `Non-Core Features`) are accepted field values, which is
+#: how an author who copies the heading into the field gets away with it.
+#:
+#: An earlier revision listed only four non-core spellings and omitted the whole
+#: suffix family, while the case's declared oracle claimed *every* human spelling
+#: was asserted. That was an overclaim, and the round-13 review proved it: a
+#: mutation that made `parse_feature_class_cell` reject any value ending in
+#: `_features` left the gate at exit 0.
+CORE_CLASS_SPELLINGS = ("`Core`", "CORE", "Core Features", "`core_features`")
+NON_CORE_CLASS_SPELLINGS = (
+    "non-core",
+    "NonCore",
+    "Non-Core",
+    "noncore",
+    "Non-Core Features",
+    "noncore features",
+    "`non_core_features`",
+    "NON_CORE FEATURES",
+)
+
+#: One document cannot exercise more spellings than it has capabilities, so the
+#: spellings are partitioned into waves and the case reports each wave. Deriving
+#: the wave count rather than hardcoding it means adding a spelling is a
+#: one-line change that cannot silently go unexercised.
+assert len(CORE_CLASS_SPELLINGS) % len(CORE_IDS) == 0, CORE_CLASS_SPELLINGS
+assert len(NON_CORE_CLASS_SPELLINGS) % len(NON_CORE_IDS) == 0, NON_CORE_CLASS_SPELLINGS
+HUMAN_SPELLING_WAVES = len(CORE_CLASS_SPELLINGS) // len(CORE_IDS)
+assert HUMAN_SPELLING_WAVES == len(NON_CORE_CLASS_SPELLINGS) // len(NON_CORE_IDS), (
+    "each wave must consume one spelling per capability in both classes"
 )
 
 
-def human_spelling_document() -> str:
+def human_spelling_document(wave: int) -> str:
     """The reference document with every class restated the way a human types it.
 
-    Each declaration is replaced with a *different* accepted spelling, so the
-    document exercises the whole accepting set in one report rather than one
-    representative. Core stays core and non-core stays non-core, so the
-    attribution assertion is the same one the canonical document satisfies -- a
-    parser that resolved an accepted spelling to the wrong class, or refused it,
-    fails here and nowhere else.
+    Each declaration is replaced with a *different* accepted spelling, so a wave
+    exercises several distinct spellings in one report rather than one
+    representative, and the waves together exercise the whole accepting set.
+    Core stays core and non-core stays non-core, so the attribution assertion is
+    the same one the canonical document satisfies -- a parser that resolved an
+    accepted spelling to the wrong class, or refused it, fails here and nowhere
+    else.
     """
+    assert 0 <= wave < HUMAN_SPELLING_WAVES, wave
     document = REFERENCE_DOCUMENT
-    core_spelling = HUMAN_CLASS_SPELLINGS[0][0]
     assert document.count("Feature Class: core") == len(CORE_IDS)
-    document = document.replace("Feature Class: core", f"Feature Class: {core_spelling}")
-    non_core_spellings = [
-        spelling for spelling, expected in HUMAN_CLASS_SPELLINGS if expected == "non_core"
-    ]
     assert document.count("Feature Class: non_core") == len(NON_CORE_IDS)
-    assert len(non_core_spellings) == len(NON_CORE_IDS), non_core_spellings
-    for spelling in non_core_spellings:
-        document = document.replace(
-            "Feature Class: non_core", f"Feature Class: {spelling}", 1
-        )
+    for spellings, ids, canonical in (
+        (CORE_CLASS_SPELLINGS, CORE_IDS, "core"),
+        (NON_CORE_CLASS_SPELLINGS, NON_CORE_IDS, "non_core"),
+    ):
+        start = wave * len(ids)
+        for spelling in spellings[start : start + len(ids)]:
+            document = document.replace(
+                f"Feature Class: {canonical}", f"Feature Class: {spelling}", 1
+            )
     assert "Feature Class: core\n" not in document
     assert "Feature Class: non_core\n" not in document
     return document
@@ -1587,6 +1610,299 @@ def assert_human_class_spellings_are_accepted(report: dict[str, Any]) -> None:
     containing root and raise a blocker -- neither can pass quietly.
     """
     assert_feature_class_attribution(report)
+
+
+def _field_less_reference() -> str:
+    """`REFERENCE_DOCUMENT` with every `Feature Class` field deleted.
+
+    Not blanked -- deleted. A blank field is an author who declared nothing in
+    particular; a missing field is an author who has not begun classifying, and
+    only the second reaches the rules below.
+    """
+    document = REFERENCE_DOCUMENT
+    for line in ("Feature Class: core\n", "Feature Class: non_core\n"):
+        assert line in document
+        document = document.replace(line, "")
+    assert "Feature Class:" not in document
+    return document
+
+
+#: A baseline moved under `Core Features` in a document that declares no class
+#: field anywhere. `baseline_placed_core_document` covers placement while *other*
+#: capabilities still declare fields, so the document is classified either way.
+#: Here the roots are the only evidence of classification that exists.
+_PLACED_BASELINE_MEMBER = _NON_CORE_MEMBERS[2]
+PLACED_BASELINE_ID = _PLACED_BASELINE_MEMBER[1]
+
+
+def _roots_only_document() -> str:
+    document = _field_less_reference()
+    section = _section(_PLACED_BASELINE_MEMBER, None, "####")
+    assert document.count(section) == 1, document.count(section)
+    document = document.replace(section, "")
+    return document.replace("### Non-Core Features", section + "### Non-Core Features")
+
+
+ROOTS_ONLY_DOCUMENT = _roots_only_document()
+
+#: The same field-less document with both canonical roots renamed out of the
+#: closed pair, so the *only* evidence that classification has begun is a pair of
+#: unknown roots.
+UNKNOWN_ROOTS_ONLY_DOCUMENT = (
+    _field_less_reference()
+    .replace("### Core Features", "### Optional Features")
+    .replace("### Non-Core Features", "### Legacy Features")
+)
+
+
+def assert_roots_alone_classify_the_document(report: dict[str, Any]) -> None:
+    """Feature roots are evidence of classification even with no field anywhere.
+
+    `validate_capability_feature_roots` returns early unless the document
+    "declares any class", and that test is a three-way disjunction: any
+    capability carrying a field, **or** any canonical root present, **or** any
+    unknown root present. Every other document in this fixture satisfies the
+    first arm, which masks the other two entirely -- deleting the root arm left
+    the whole case green.
+
+    Here no capability declares anything, so the roots carry the whole decision:
+    a baseline sits under `Core Features` and must be rejected for it. The
+    per-capability assertion is the other half -- every capability is still
+    *attributed* to the non-core default, because placement classifies the
+    document without populating the field.
+    """
+    assert document_blockers(report) == [
+        f"trait-derived baseline capability `{PLACED_BASELINE_ID}` is classified "
+        f"`core`; archetype baselines are always `non_core` and belong under "
+        f"`Non-Core Features`"
+    ], report["blockers"]
+    classes = {item["id"]: item.get("feature_class") for item in report["capabilities"]}
+    assert set(classes.values()) == {None}, classes
+    assert report["core_capability_count"] == 0, report
+    assert report["non_core_capability_count"] == len(CORE_IDS) + len(NON_CORE_IDS), report
+
+
+def assert_unknown_roots_alone_classify_the_document(report: dict[str, Any]) -> None:
+    """An unknown root is evidence of classification too, and is diagnosed as one.
+
+    The third arm of the same disjunction. With no field and no canonical root,
+    a document carrying only unknown roots must still be diagnosed rather than
+    waved through as pre-migration -- an author who invented their own root
+    names has begun classifying and got it wrong, which is exactly the case the
+    early return is not meant to cover.
+
+    The whole ordered blocker set is asserted, not a membership test: this shape
+    raises both missing-root findings *and* both unknown-root findings, and an
+    implementation that reported only one kind would pass a weaker assertion.
+    """
+    assert document_blockers(report) == [
+        "capability document declares feature classes but is missing the "
+        "`### Core Features` root; add it under `## Capabilities` so both "
+        "canonical roots exist",
+        "capability document declares feature classes but is missing the "
+        "`### Non-Core Features` root; add it under `## Capabilities` so both "
+        "canonical roots exist",
+        "unknown feature root `Optional Features`; the closed pair is "
+        "`Core Features` and `Non-Core Features` — move its capabilities "
+        "under one of those two",
+        "unknown feature root `Legacy Features`; the closed pair is "
+        "`Core Features` and `Non-Core Features` — move its capabilities "
+        "under one of those two",
+    ], report["blockers"]
+
+
+#: The reference document with a non-root heading at the feature roots' own
+#: level, carrying a nested heading that repeats a capability title. A root must
+#: be closed by any heading at or above its level; if it were closed only by a
+#: strictly shallower one, `Search Core` would be read as a member of the
+#: non-core root as well as the core root and the document would be falsely
+#: rejected for being under both.
+SIBLING_HEADING_DOCUMENT = (
+    REFERENCE_DOCUMENT + "\n\n### Appendix\n\n#### Search Core\n\nSee above.\n"
+)
+
+
+def assert_sibling_heading_closes_the_root(report: dict[str, Any]) -> None:
+    """A heading at the root's own level ends that root's membership scope.
+
+    This is the only assertion in the case that is falsified by an
+    *over*-reporting implementation rather than an under-reporting one, which is
+    why it exists: every other document here is asserted against the blockers it
+    should raise, so a containment rule that swallowed too much of the document
+    would go unnoticed. Tightening the scope test by one comparison makes this
+    document raise a capability-under-both-roots finding that is simply untrue.
+    """
+    assert document_blockers(report) == [], report["blockers"]
+    assert_feature_class_attribution(report)
+
+
+#: The three capability-contract *reading* forms other than the canonical
+#: field-style section. Each has its own `Feature Class` parser, and binding one
+#: binds none of the others -- the round-13 review killed all three
+#: independently while the case stayed green.
+ALTERNATE_FORM_MEMBERS = (
+    ("Search Core", "search-core", "core", "query-planner-boolean-eval"),
+    ("Lexical Search", "lexical-search", "core", "bm25-ranking"),
+    ("Security Hardening", "security-hardening", "non_core", "transport-and-identity-hardening"),
+)
+#: Deliberately unequal, so a form whose parser transposed the two classes fails.
+ALTERNATE_FORM_CORE_COUNT = 2
+ALTERNATE_FORM_NON_CORE_COUNT = 1
+assert ALTERNATE_FORM_CORE_COUNT != ALTERNATE_FORM_NON_CORE_COUNT
+assert ALTERNATE_FORM_CORE_COUNT == sum(
+    1 for member in ALTERNATE_FORM_MEMBERS if member[2] == "core"
+)
+assert ALTERNATE_FORM_NON_CORE_COUNT == sum(
+    1 for member in ALTERNATE_FORM_MEMBERS if member[2] == "non_core"
+)
+
+
+def _alternate_form_document(render: Any) -> str:
+    index = "\n".join(
+        f"| {title} | - | implemented | verified | smoke | ready | verified; form |"
+        for title, _cap_id, _cls, _root in ALTERNATE_FORM_MEMBERS
+    )
+    core = "".join(render(*m) for m in ALTERNATE_FORM_MEMBERS if m[2] == "core")
+    non_core = "".join(render(*m) for m in ALTERNATE_FORM_MEMBERS if m[2] == "non_core")
+    return f"""# Lumen
+
+## Brief
+
+Lumen reference fixture rendered in an alternative capability-contract form.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+{index}
+
+### Core Features
+
+{core}### Non-Core Features
+
+{non_core}"""
+
+
+def _field_value_contract(title: str, cap_id: str, feature_class: str, work_root: str) -> str:
+    return f"""#### {title}
+
+| Field | Value |
+|---|---|
+| ID | {cap_id} |
+| Type | Service |
+| Feature Class | {feature_class} |
+| Status | verified |
+| Root WI | - |
+| Required Verification | smoke |
+| Promise | Promise for {cap_id}. |
+| Surfaces | - CLI: `lumen serve` - {cap_id}. |
+| EC Dimensions | - behavior: `true` - {cap_id} behavior gate. |
+| Gate Inventory | - tech-design/{cap_id}.md |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| {work_root} | change | - | implemented | verified | smoke | `true` |
+
+"""
+
+
+def _contract_table(title: str, cap_id: str, feature_class: str, work_root: str) -> str:
+    return f"""#### {title}
+
+| ID | Root WI | Status | Type | Feature Class | Surfaces | EC Dimensions | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|---|---|---|---|
+| {cap_id} | - | verified | Service | {feature_class} | - CLI: `lumen serve` - {cap_id}. | - behavior: `true` - gate. | Promise for {cap_id}. | smoke | - tech-design/{cap_id}.md |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| {work_root} | change | - | implemented | verified | smoke | `true` |
+
+"""
+
+
+#: `| Field | Value |` contracts: the class is read by `value_for`, through the
+#: alias set `featureclass` / `capabilityfeatureclass` / `featureroot`.
+FIELD_VALUE_CONTRACT_DOCUMENT = _alternate_form_document(_field_value_contract)
+
+#: One-row contract tables: the class is read by `find_table_column`, a
+#: different lookup over the same alias set.
+CONTRACT_TABLE_DOCUMENT = _alternate_form_document(_contract_table)
+
+
+def _yaml_contract(title: str, cap_id: str, feature_class: str) -> str:
+    return f"""## Capability: {title}
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: {cap_id}
+status: candidate
+feature_class: {feature_class}
+capability_type: Service
+promise: "Promise for {cap_id}."
+current_state: "Implemented."
+surfaces:
+  - kind: CLI
+    commands: ["lumen serve"]
+    summary: "{cap_id} surface."
+ec_dimensions:
+  - dimension: behavior
+    gate: "true"
+    summary: "{cap_id} behavior gate."
+```
+
+"""
+
+
+#: YAML-fenced contracts: the class is carried straight through from the
+#: deserialized struct. These sections are `## Capability: <Title>` headings,
+#: which sit *outside* both feature roots -- so for this form the declared field
+#: is the only thing that can classify a capability at all, with no placement to
+#: fall back on.
+YAML_CONTRACT_DOCUMENT = (
+    "# Lumen\n\n## Brief\n\nLumen reference fixture in YAML-fenced contract "
+    "form.\n\n## Capabilities\n\n### Core Features\n\n### Non-Core Features\n\n"
+    + "".join(
+        _yaml_contract(title, cap_id, feature_class)
+        for title, cap_id, feature_class, _root in ALTERNATE_FORM_MEMBERS
+    )
+)
+
+#: The one finding the YAML form legitimately raises: it is a pre-canonical
+#: authoring shape, and saying so is not a classification failure.
+YAML_CONTRACT_BLOCKER = (
+    "YAML capability sections detected; migrate README to canonical field-style "
+    "capability contracts under ## Capabilities"
+)
+
+
+def assert_alternate_form_reads_the_class(
+    report: dict[str, Any], *, form: str, expected_blockers: list[str]
+) -> None:
+    """The `Feature Class` declaration is honoured in this contract-reading form.
+
+    The capability's promise is that canonical capability contracts parse from
+    Markdown, and the product ships four reading forms for them. Binding the
+    field-style section binds none of the other three: each has its own class
+    lookup, and each was independently mutable to "never read the class" with
+    the whole case still green.
+
+    Asserted per capability *and* per class count. The per-capability check
+    catches a form that dropped the field; the counts catch one that read it
+    into the wrong class, and they are unequal so a transposition cannot pass.
+    """
+    assert document_blockers(report) == expected_blockers, (form, report["blockers"])
+    classes = {item["id"]: item.get("feature_class") for item in report["capabilities"]}
+    assert classes == {
+        cap_id: feature_class
+        for _title, cap_id, feature_class, _root in ALTERNATE_FORM_MEMBERS
+    }, (form, classes)
+    assert report["core_capability_count"] == ALTERNATE_FORM_CORE_COUNT, (form, report)
+    assert report["non_core_capability_count"] == ALTERNATE_FORM_NON_CORE_COUNT, (
+        form,
+        report,
+    )
 
 
 def assert_verified_split_is_non_degenerate(report: dict[str, Any]) -> None:
