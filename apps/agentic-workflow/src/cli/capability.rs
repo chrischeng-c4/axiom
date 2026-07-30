@@ -8297,6 +8297,8 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
         }
     }
 
+    findings.extend(validate_capability_feature_roots(body, &capabilities));
+
     Ok(CapabilityDocument {
         cap_path: cap_path.to_path_buf(),
         format,
@@ -9680,6 +9682,192 @@ fn humanize_id(id: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Which feature roots a document declares, and which capability titles are
+/// nested under each. Built by walking headings in document order, so it
+/// reflects containment rather than a per-capability field.
+#[derive(Debug, Default)]
+struct FeatureRootScan {
+    /// Occurrence count per canonical root, so a duplicated root is visible.
+    root_counts: BTreeMap<CapabilityFeatureClass, usize>,
+    /// Headings that read as a feature root but are outside the closed pair.
+    unknown_roots: Vec<String>,
+    /// Capability title slug -> the roots that contain it.
+    members: BTreeMap<String, BTreeSet<CapabilityFeatureClass>>,
+}
+
+/// Does this heading title read as a feature root?
+///
+/// Only the trailing `Features` word is treated as the root marker, so
+/// `## Capabilities` and `### Capability Index` are never mistaken for one.
+fn feature_root_title(title: &str) -> Option<Option<CapabilityFeatureClass>> {
+    let trimmed = title.trim();
+    if !trimmed.to_ascii_lowercase().ends_with("features") {
+        return None;
+    }
+    Some(CapabilityFeatureClass::from_cli_str(trimmed).ok())
+}
+
+/// Walk headings in document order and record feature-root structure.
+fn scan_feature_roots(body: &str) -> FeatureRootScan {
+    let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let mut scan = FeatureRootScan::default();
+    let mut current: Option<(CapabilityFeatureClass, usize)> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        if fenced[idx] {
+            continue;
+        }
+        let Some((level, title)) = parse_heading(line) else {
+            continue;
+        };
+        match feature_root_title(&title) {
+            Some(Some(class)) => {
+                *scan.root_counts.entry(class).or_insert(0) += 1;
+                current = Some((class, level));
+                continue;
+            }
+            Some(None) => {
+                scan.unknown_roots.push(title.trim().to_string());
+                current = None;
+                continue;
+            }
+            None => {}
+        }
+        match current {
+            // A heading at or above the root's own level closes the root.
+            Some((_, root_level)) if level <= root_level => current = None,
+            Some((class, _)) => {
+                scan.members
+                    .entry(slugify(&title))
+                    .or_default()
+                    .insert(class);
+            }
+            None => {}
+        }
+    }
+    scan
+}
+
+/// Every capability id that exists because an archetype trait or capability
+/// family demands it. The source of truth is `doc_mirror`, not this module.
+fn trait_derived_baseline_ids() -> BTreeSet<&'static str> {
+    doc_mirror::CAPABILITY_FAMILIES
+        .iter()
+        .flat_map(|family| family.baseline_caps.iter().copied())
+        .chain(
+            doc_mirror::TRAITS
+                .iter()
+                .flat_map(|def| def.baseline_caps.iter().copied()),
+        )
+        .collect()
+}
+
+/// Diagnose the feature-root structure of a capability document.
+///
+/// Each diagnostic names the concrete authoring fix, because the reader is an
+/// author or an agent about to edit the document.
+///
+/// A wholly unclassified document is *not* diagnosed here: it has not begun
+/// migration, and turning it into an error before a migration command exists
+/// would only tell every project to do something it cannot yet do. What this
+/// rejects is a document that has begun classifying and got it wrong.
+fn validate_capability_feature_roots(
+    body: &str,
+    capabilities: &[CapabilitySection],
+) -> Vec<String> {
+    let scan = scan_feature_roots(body);
+    let mut findings = Vec::new();
+
+    let declares_any_class = capabilities
+        .iter()
+        .any(|capability| capability.feature_class.is_some())
+        || !scan.root_counts.is_empty()
+        || !scan.unknown_roots.is_empty();
+    if !declares_any_class {
+        return findings;
+    }
+
+    // (1) A root is absent.
+    for class in [
+        CapabilityFeatureClass::Core,
+        CapabilityFeatureClass::NonCore,
+    ] {
+        if !scan.root_counts.contains_key(&class) {
+            findings.push(format!(
+                "capability document declares feature classes but is missing the `### {}` root; add it under `## Capabilities` so both canonical roots exist",
+                class.root_heading()
+            ));
+        }
+    }
+
+    // (2) A root is duplicated.
+    for (class, count) in &scan.root_counts {
+        if *count > 1 {
+            findings.push(format!(
+                "duplicate `### {}` root ({} occurrences); merge them into one root under `## Capabilities`",
+                class.root_heading(),
+                count
+            ));
+        }
+    }
+
+    // (3) A root is outside the closed pair.
+    for unknown in &scan.unknown_roots {
+        findings.push(format!(
+            "unknown feature root `{}`; the closed pair is `{}` and `{}` — move its capabilities under one of those two",
+            unknown,
+            CapabilityFeatureClass::Core.root_heading(),
+            CapabilityFeatureClass::NonCore.root_heading()
+        ));
+    }
+
+    for capability in capabilities {
+        let slug = slugify(&capability.title);
+        let roots = scan.members.get(&slug);
+
+        // (4) The same capability sits under both roots, or its declared class
+        // contradicts the root that contains it.
+        if let Some(roots) = roots {
+            if roots.len() > 1 {
+                findings.push(format!(
+                    "capability `{}` is classified under both `{}` and `{}`; keep exactly one root",
+                    capability.id,
+                    CapabilityFeatureClass::Core.root_heading(),
+                    CapabilityFeatureClass::NonCore.root_heading()
+                ));
+            } else if let (Some(declared), Some(root)) =
+                (capability.feature_class, roots.iter().next().copied())
+            {
+                if declared != root {
+                    findings.push(format!(
+                        "capability `{}` declares `Feature Class: {}` but is nested under `{}`; make the field and the root agree",
+                        capability.id,
+                        declared.as_str(),
+                        root.root_heading()
+                    ));
+                }
+            }
+        }
+
+        // (5) A trait-derived baseline claims to be core.
+        let effective = capability
+            .feature_class
+            .or_else(|| roots.and_then(|roots| roots.iter().next().copied()));
+        if effective == Some(CapabilityFeatureClass::Core)
+            && trait_derived_baseline_ids().contains(capability.id.as_str())
+        {
+            findings.push(format!(
+                "trait-derived baseline capability `{}` is classified `core`; archetype baselines are always `{}` and belong under `{}`",
+                capability.id,
+                CapabilityFeatureClass::NonCore.as_str(),
+                CapabilityFeatureClass::NonCore.root_heading()
+            ));
+        }
+    }
+
+    findings
 }
 
 fn validate_capability_contract(capability: &CapabilitySection) -> Result<Vec<String>> {
@@ -16401,6 +16589,199 @@ out_of_scope:
   - "registry service"
 ```
 "##
+    }
+
+    /// One canonical field-style capability contract at heading `level`.
+    /// `extra_fields` is spliced verbatim so a fixture can add or omit
+    /// `Feature Class`.
+    fn capability_block(level: usize, title: &str, id: &str, extra_fields: &str) -> String {
+        format!(
+            "{} {title}\n\nID: {id}\nRoot WI: #1\nStatus: auditing\nType: Service\n{extra_fields}Required Verification: smoke\nPromise:\n{title} promise.\nGate Inventory:\n- `cargo test -p demo {id}`\n\n",
+            "#".repeat(level)
+        )
+    }
+
+    /// A document whose `## Capabilities` body is exactly `sections`.
+    fn feature_root_document(sections: &str) -> String {
+        format!("# demo\n\n## Brief\n\nfixture.\n\n## Capabilities\n\n{sections}")
+    }
+
+    /// The feature-root diagnostics for a document, as parsed.
+    fn feature_root_findings(body: &str) -> Vec<String> {
+        let document = cap_doc(body);
+        validate_capability_feature_roots(body, &document.capabilities)
+    }
+
+    /// Assert exactly one diagnostic matches `needle`, and return it.
+    fn one_finding_matching(findings: &[String], needle: &str) -> String {
+        let matched = findings
+            .iter()
+            .filter(|finding| finding.contains(needle))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matched.len(),
+            1,
+            "expected exactly one diagnostic containing `{needle}`, got {findings:#?}"
+        );
+        matched[0].clone()
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_document_missing_a_feature_root() {
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n")
+        ));
+        let findings = feature_root_findings(&body);
+        let finding = one_finding_matching(&findings, "missing the `### Non-Core Features` root");
+        assert!(finding.contains("## Capabilities"), "{finding}");
+        // The present root is not also reported missing.
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.contains("missing the `### Core Features` root")),
+            "{findings:#?}"
+        );
+        // Wired through the parser, not only reachable by direct call.
+        assert!(
+            cap_doc(&body).findings.iter().any(|f| f == &finding),
+            "diagnostic did not reach document findings: {:#?}",
+            cap_doc(&body).findings
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_duplicated_feature_root() {
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{}### Core Features\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n"),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+            capability_block(4, "Querying", "querying", "Feature Class: core\n"),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "duplicate `### Core Features` root",
+        );
+        assert!(finding.contains("2 occurrences"), "{finding}");
+        assert!(finding.contains("merge them into one root"), "{finding}");
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_an_unknown_feature_root() {
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{}### Optional Features\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n"),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+            capability_block(4, "Tracing", "tracing", ""),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "unknown feature root `Optional Features`",
+        );
+        // The diagnostic names the closed pair, so the fix needs no lookup.
+        assert!(finding.contains("`Core Features`"), "{finding}");
+        assert!(finding.contains("`Non-Core Features`"), "{finding}");
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_multiply_classified_capability() {
+        // `Indexing` is contracted under Core and listed again under Non-Core.
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n#### Indexing\n\nSee above.\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n"),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "is classified under both `Core Features` and `Non-Core Features`",
+        );
+        assert!(finding.contains("`indexing`"), "{finding}");
+        assert!(finding.contains("keep exactly one root"), "{finding}");
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_feature_class_contradicting_its_root() {
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: non_core\n"),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "declares `Feature Class: non_core` but is nested under `Core Features`",
+        );
+        assert!(
+            finding.contains("make the field and the root agree"),
+            "{finding}"
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_trait_derived_baseline_classified_core() {
+        // `http2-api-list` is a `doc_mirror` trait baseline, not a product core.
+        assert!(trait_derived_baseline_ids().contains("http2-api-list"));
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{}",
+            capability_block(
+                4,
+                "HTTP/2 API List",
+                "http2-api-list",
+                "Feature Class: core\n"
+            ),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "trait-derived baseline capability `http2-api-list` is classified `core`",
+        );
+        assert!(finding.contains("always `non_core`"), "{finding}");
+        assert!(finding.contains("`Non-Core Features`"), "{finding}");
+    }
+
+    #[test]
+    fn markdown_capability_tables_allow_adopting_a_libs_owned_non_core_mechanism() {
+        // AC12: the adopter declares adoption of a mechanism owned by a `libs/*`
+        // project. That must not be read as the adopter owning the mechanism,
+        // and must not force the capability into Core.
+        let adopter = "#### HTTP/2 API List\n\nID: http2-api-list\nRoot WI: #1\nStatus: auditing\nType: Service\nFeature Class: non_core\nRequired Verification: smoke\nPromise:\nAdopt the h2c manager owned by `libs/h2c`; this project consumes it and does not own it.\nGate Inventory:\n- `cargo test -p h2c ping_pong`\n\n";
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{adopter}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n"),
+        ));
+
+        assert_eq!(
+            feature_root_findings(&body),
+            Vec::<String>::new(),
+            "adoption of a libs-owned mechanism must produce no diagnostic"
+        );
+
+        let document = cap_doc(&body);
+        let adopted = document
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == "http2-api-list")
+            .expect("adopter capability parsed");
+        assert_eq!(adopted.feature_class, Some(CapabilityFeatureClass::NonCore));
+        // The declared adoption survives parsing: the owner stays named, and the
+        // gate stays pointed at the owning project's own test.
+        assert!(
+            adopted.promise.contains("libs/h2c"),
+            "{:?}",
+            adopted.promise
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_stay_silent_for_a_wholly_unclassified_document() {
+        // A document that has not begun migrating has nothing to contradict, and
+        // telling it to fix roots before a migration command exists would be
+        // noise. Requiring a class is a later gate.
+        for body in [
+            one_markdown_capability().to_string(),
+            feature_root_document(&capability_block(3, "Indexing", "indexing", "")),
+        ] {
+            assert_eq!(feature_root_findings(&body), Vec::<String>::new(), "{body}");
+        }
     }
 
     fn one_markdown_capability() -> &'static str {
