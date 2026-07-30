@@ -588,10 +588,12 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         migrated_text = cap_path.read_text(encoding="utf-8")
         lumen_reference.assert_migration_derives_the_split(migrated_text)
         # Deriving the class is not the whole rewrite. Every section is
-        # re-rendered from the parsed capability, and the promise -- the field
-        # the product's own doc comment names as carried through untouched --
-        # was rewritable to one literal for every capability in the document.
-        lumen_reference.assert_sections_carry_their_own_promise(
+        # re-rendered from the parsed capability, and of the fields the product's
+        # own doc comment names as carried through untouched, only `ID:` was
+        # bound: the promise, type, required verification, surfaces, EC
+        # dimensions and gate inventory were each rewritable to one literal for
+        # every capability in the document.
+        lumen_reference.assert_sections_carry_their_own_contract(
             migrated_text, lumen_reference.UNCLASSIFIED_SECTION_TITLES
         )
         migrated_report = final_json(
@@ -760,6 +762,12 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 False,
                 lumen_reference.UNCLASSIFIED_SECTION_TITLES,
             ),
+            (
+                "varied_work_root",
+                lumen_reference.VARIED_WORK_ROOT_SECTION_README,
+                False,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
+            ),
         ):
             with project_fixture() as section_root:
                 section_readme = section_root / "README.md"
@@ -800,12 +808,26 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 lumen_reference.assert_relocation_renders_every_capability_section(
                     section_text, relocated_sections[name], expected_order=expected_order
                 )
-                # Relocation re-renders every section, so the promise is at risk
-                # on this path too -- and on a different call site from the
-                # format-migration one above.
-                lumen_reference.assert_sections_carry_their_own_promise(
+                # Relocation re-renders every section, so the whole carried-
+                # through field block is at risk on this path too -- and on a
+                # different call site from the format-migration one above.
+                lumen_reference.assert_sections_carry_their_own_contract(
                     section_text, expected_order
                 )
+                # Relocation is a move, not a copy. Only the legacy-table shape
+                # ever re-read the README it emptied, so on every section-shaped
+                # input the residue write was unobservable and leaving the whole
+                # contract behind in the README passed.
+                lumen_reference.assert_section_relocation_empties_the_readme(
+                    section_readme.read_text(encoding="utf-8"), expected_order
+                )
+                if name == "varied_work_root":
+                    # Every other document writes one constant work-root row for
+                    # all eight roots, which leaves five of the row's seven cells
+                    # replaceable by that constant.
+                    lumen_reference.assert_relocation_carries_every_work_root_cell(
+                        section_text
+                    )
                 if name == "varied_status":
                     # Every other document in this case is uniformly
                     # `Status: verified`, which makes the section's own status
@@ -1001,7 +1023,9 @@ def verify(case_id: str) -> list[str]:
                 "aw capability migrate emits the two canonical feature roots exactly when its input classified something, asserted in both directions across relocation shapes that differ in that one property, so neither an unconditional renderer nor one that never emits them can pass",
                 "a retired capability is excluded from the verified capability and verified claim counts as well, asserted under --verify where those two accumulators are populated and the classes differ in both, which is the half of the retired filter an unverified report holds vacuously",
                 "each legacy row's own Current State, Gaps, and Evidence land in the capability section it becomes, asserted per row against pairwise-distinct cells, so migration cannot turn three distinct legacy capabilities into three sections describing the same thing",
-                "every rendered capability section carries its own promise text rather than a shared one, asserted on both re-rendering paths -- format migration and README relocation -- against pairwise-distinct promises",
+                "every rendered capability section carries its own Promise, Type, Required Verification, Surfaces, EC Dimensions, and Gate Inventory rather than a shared one, asserted on both re-rendering paths -- format migration and README relocation -- against values made pairwise distinct per capability",
+                "every cell of every work-root row survives relocation, asserted on the one input whose eight rows differ in Kind, Impl, Verification, Maturity, and Gate / Evidence, so none of those five cells can be the constant the other inputs all happen to write",
+                "the README a section-shaped capability contract was relocated out of keeps only a forwarding pointer, asserted on every section-shaped relocation, so relocation cannot silently leave a second divergent copy of the contract behind",
                 "every Capability Index cell a capability arrived with is carried through per capability, asserted across all five non-identity columns on an input that differs in every column and every row, which is also the only branch on which Maturity and Production are reachable at all",
                 "a relocated capability keeps its own Status, the prose prelude above its fields, and the Impl and Verification columns derived from that status, asserted on the one input whose capabilities are not uniformly verified -- three distinct derived pairs across four statuses, so neither column can be a constant",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",

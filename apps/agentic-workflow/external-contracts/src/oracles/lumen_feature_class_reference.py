@@ -99,11 +99,25 @@ def _capability(
     work_roots: tuple[str, ...],
     heading: str = "####",
     status: str = "verified",
+    work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
 ) -> str:
-    rows = "\n".join(
-        f"| {root} | change | - | implemented | verified | smoke | `true` |"
-        for root in work_roots
-    )
+    if work_root_cells is None:
+        rows = "\n".join(
+            f"| {root} | change | - | implemented | verified | smoke | `true` |"
+            for root in work_roots
+        )
+    else:
+        rows = "\n".join(
+            "| {root} | {kind} | - | {impl} | {verification} | {maturity} | {gate} |".format(
+                root=root,
+                kind=work_root_cells[root][0],
+                impl=work_root_cells[root][1],
+                verification=work_root_cells[root][2],
+                maturity=work_root_cells[root][3],
+                gate=work_root_cells[root][4],
+            )
+            for root in work_roots
+        )
     # `feature_class=None` is the pre-migration shape: no field at all. Emitting
     # an empty field instead would be a different document -- an author who
     # declared nothing, versus one who declared a blank.
@@ -111,14 +125,14 @@ def _capability(
     return f"""{heading} {title}
 
 ID: {cap_id}
-Type: Service
+Type: {_member_type(title)}
 {class_field}Surfaces:
 - CLI: `{surface}` - {promise.lower().rstrip('.')}.
 EC Dimensions:
-- behavior: `true` - {cap_id} behavior gate.
+- behavior: `{_member_ec_runner(title)}` - {cap_id} behavior gate.
 Root WI: -
 Status: {status}
-Required Verification: smoke
+Required Verification: {_member_required_verification(title)}
 Promise:
 {promise}
 Gate Inventory:
@@ -228,11 +242,116 @@ _CONFLICT_MEMBER = (
 )
 
 
+#: Per-capability `Type:`, keyed by title.
+#:
+#: Every member used to declare `Type: Service`, which made
+#: `render_markdown_capability_section_at_level`'s type field
+#: (`capability.rs:9026-9028`) unfalsifiable: a renderer that ignored
+#: `capability.capability_type` and printed the literal `Service` produced the
+#: byte-identical document. Varying it is safe as well as necessary --
+#: `required_ec_dimensions` (`capability_type.rs:116-126`) makes every other
+#: variant's production-required dimension set a *subset* of `Service`'s, so no
+#: member becomes harder to satisfy than it was.
+MEMBER_TYPE = {
+    "Search Core": "Service",
+    "Lexical Search": "DeveloperTool",
+    "Standard Operational Endpoints": "Devops",
+    "Kubernetes-Native Deployment": "RuntimeTool",
+    "Security Hardening": "SecurityTool",
+    "Contract Gate Wiring": "AgentFirst",
+    "Observability": "Devops",
+}
+
+#: Per-capability `Required Verification:`, keyed by title.
+#:
+#: Uniformly `smoke` before, which left `capability_maturity_summary`
+#: (`capability.rs:9826-9840`) and the field that renders it
+#: (`capability.rs:9032-9035`) both satisfiable by a constant. One member
+#: declares two maturities, because the field parses as a list
+#: (`parse_maturity_list`, `capability.rs:11786-11790`) and a renderer that
+#: printed only the first would otherwise be indistinguishable.
+MEMBER_REQUIRED_VERIFICATION = {
+    "Search Core": "conformance",
+    "Lexical Search": "smoke, conformance",
+    "Standard Operational Endpoints": "smoke",
+    "Kubernetes-Native Deployment": "corpus",
+    "Security Hardening": "negative",
+    "Contract Gate Wiring": "dogfood",
+    "Observability": "smoke",
+}
+
+#: Per-capability EC-dimension runner, keyed by title. The runner is its own
+#: sub-field of the rendered `EC Dimensions:` item
+#: (`render_ec_dimension_field_items`, `capability.rs:9177-9198`); when every
+#: member declared `` `true` `` the runner half was a constant even though the
+#: summary half differed.
+MEMBER_EC_RUNNER = {
+    "Search Core": "true",
+    "Lexical Search": "lumen-bench --suite ranking",
+    "Standard Operational Endpoints": "curl -fsS localhost:8080/readyz",
+    "Kubernetes-Native Deployment": "kubectl apply --dry-run=server -k deploy",
+    "Security Hardening": "lumen auth --self-test",
+    "Contract Gate Wiring": "aw ec verify --project lumen",
+    "Observability": "true",
+}
+
+#: Defaults for the synthetic members some fixtures splice in (registry-spanning
+#: probes and the like). Those documents are built to falsify a different rule and
+#: never have these fields read back, so they keep the historical values.
+_DEFAULT_TYPE = "Service"
+_DEFAULT_REQUIRED_VERIFICATION = "smoke"
+_DEFAULT_EC_RUNNER = "true"
+
+
+def _member_type(title: str) -> str:
+    return MEMBER_TYPE.get(title, _DEFAULT_TYPE)
+
+
+def _member_required_verification(title: str) -> str:
+    return MEMBER_REQUIRED_VERIFICATION.get(title, _DEFAULT_REQUIRED_VERIFICATION)
+
+
+def _member_ec_runner(title: str) -> str:
+    return MEMBER_EC_RUNNER.get(title, _DEFAULT_EC_RUNNER)
+
+
+_TITLE_BY_ID = {
+    member[1]: member[0]
+    for member in _CORE_MEMBERS + _NON_CORE_MEMBERS + (_CONFLICT_MEMBER,)
+}
+
+
+def _member_type_for_id(cap_id: str) -> str:
+    """The `Type:` a section for `cap_id` renders with.
+
+    Documents built by rewriting a rendered section have to address the type by
+    the same rule that wrote it; hardcoding `Service` here is what made those
+    rewrites silently no-op once the fixture stopped declaring one type
+    everywhere.
+    """
+    return _member_type(_TITLE_BY_ID.get(cap_id, ""))
+
+
+for _map_name, _member_map in (
+    ("MEMBER_TYPE", MEMBER_TYPE),
+    ("MEMBER_REQUIRED_VERIFICATION", MEMBER_REQUIRED_VERIFICATION),
+    ("MEMBER_EC_RUNNER", MEMBER_EC_RUNNER),
+):
+    assert {
+        member[0] for member in _CORE_MEMBERS + _NON_CORE_MEMBERS
+    } <= set(_member_map), f"{_map_name} must cover every document member"
+    assert len({_member_map[member[0]] for member in _CORE_MEMBERS + _NON_CORE_MEMBERS}) > 1, (
+        f"{_map_name} must not be a singleton across the six document members, "
+        f"or the field it feeds is satisfiable by a constant"
+    )
+
+
 def _section(
     member: tuple[Any, ...],
     feature_class: str | None,
     heading: str = "####",
     status: str = "verified",
+    work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
 ) -> str:
     title, cap_id, promise, surface, work_roots = member
     return _capability(
@@ -244,6 +363,7 @@ def _section(
         work_roots=work_roots,
         heading=heading,
         status=status,
+        work_root_cells=work_root_cells,
     )
 
 
@@ -668,13 +788,20 @@ def registry_spanning_baseline_core_document(cap_id: str) -> str:
 #: Falsifier 2 -- the field and the containing root disagree. An implementation
 #: that reads only the field, or only the root, accepts this. The capability is
 #: not a baseline, so falsifier 1's rule cannot be what rejects it.
+_CONFLICT_TYPE = _member_type_for_id(CONFLICT_ID)
+_CONFLICT_MARKER = f"ID: {CONFLICT_ID}\nType: {_CONFLICT_TYPE}\nFeature Class: core"
 ROOT_FIELD_CONFLICT_DOCUMENT = _document(
     _CORE_MEMBERS + (_CONFLICT_MEMBER,),
     _NON_CORE_MEMBERS,
     core_class="core",
-).replace(
-    f"ID: {CONFLICT_ID}\nType: Service\nFeature Class: core",
-    f"ID: {CONFLICT_ID}\nType: Service\nFeature Class: non_core",
+)
+assert ROOT_FIELD_CONFLICT_DOCUMENT.count(_CONFLICT_MARKER) == 1, (
+    "the conflict rewrite must find exactly one declared-core section for "
+    f"{CONFLICT_ID}"
+)
+ROOT_FIELD_CONFLICT_DOCUMENT = ROOT_FIELD_CONFLICT_DOCUMENT.replace(
+    _CONFLICT_MARKER,
+    f"ID: {CONFLICT_ID}\nType: {_CONFLICT_TYPE}\nFeature Class: non_core",
 )
 
 
@@ -1721,27 +1848,86 @@ assert len(set(MEMBER_PROMISE.values())) == len(_ALL_MEMBERS), (
 )
 
 
-def assert_sections_carry_their_own_promise(
+#: The rest of each member's rendered contract, keyed by title: the exact
+#: `Surfaces:`, `EC Dimensions:` and `Gate Inventory:` list items the renderers
+#: must produce for it.
+#:
+#: These are the *input* items round-tripped, which is the contract:
+#: `render_surface_field_items` (`capability.rs:9154-9175`) and
+#: `render_ec_dimension_field_items` (`capability.rs:9177-9198`) re-emit
+#: `kind: commands - summary` and `dimension: \`runner\` - summary`, and
+#: `capability_raw_gate_inventory` returns the declared inventory verbatim.
+MEMBER_SURFACE_ITEM = {
+    member[0]: f"CLI: `{member[3]}` - {member[2].lower().rstrip('.')}."
+    for member in _ALL_MEMBERS
+}
+MEMBER_EC_DIMENSION_ITEM = {
+    member[0]: f"behavior: `{MEMBER_EC_RUNNER[member[0]]}` - {member[1]} behavior gate."
+    for member in _ALL_MEMBERS
+}
+MEMBER_GATE_INVENTORY_ITEM = {
+    member[0]: f"tech-design/{member[1]}.md" for member in _ALL_MEMBERS
+}
+for _field_name, _field_map in (
+    ("MEMBER_SURFACE_ITEM", MEMBER_SURFACE_ITEM),
+    ("MEMBER_EC_DIMENSION_ITEM", MEMBER_EC_DIMENSION_ITEM),
+    ("MEMBER_GATE_INVENTORY_ITEM", MEMBER_GATE_INVENTORY_ITEM),
+):
+    assert len(set(_field_map.values())) == len(_ALL_MEMBERS), (
+        f"{_field_name} must be pairwise distinct across members, or a renderer "
+        f"that emitted one capability's value for all of them still passes"
+    )
+
+
+def assert_sections_carry_their_own_contract(
     migrated: str, titles: tuple[str, ...]
 ) -> None:
-    """Every rendered capability section carries its own promise text.
+    """Every rendered capability section carries its *own* contract fields.
 
-    `render_markdown_capability_section_at_level` (`capability.rs:9036-9038`)
-    writes `Promise:` and then the capability's own promise. The product's own
-    doc comment says everything constituting the promise is carried through
-    untouched; the id, type, surfaces, EC dimensions and gate inventory halves of
-    that were bound, and the promise itself -- the part the sentence is named
-    after -- was not. Replacing that line with a single literal left the gate
-    green while `aw capability migrate` rewrote every capability in the document
-    to say the same thing.
+    `render_markdown_capability_section_at_level` (`capability.rs:9007-9061`)
+    re-emits a capability's whole field block, and the product's own doc comment
+    says everything constituting the promise is carried through untouched. Of
+    that list only `ID:` was actually bound; six further fields were each
+    replaceable by a single literal without failing anything:
+
+    - `Promise:` (`capability.rs:9037-9039`)
+    - `Type:` (`capability.rs:9026-9028`), because every member declared
+      `Service`
+    - `Required Verification:` (`capability.rs:9032-9035`), because every member
+      declared `smoke`
+    - `Surfaces:` (`capability.rs:9043-9048`) and `EC Dimensions:`
+      (`capability.rs:9049-9054`), which differed per member but were never read
+      back
+    - `Gate Inventory:` (`capability.rs:9039-9042`), which was read back for one
+      capability only, so "every capability claims `search-core`'s inventory"
+      passed
+
+    Asserted per capability against pairwise-distinct values, so a renderer that
+    copies one capability's field into all of them is a different document.
     """
     for title in titles:
         body = _capability_section_body(migrated, title)
-        expected = f"Promise:\n{MEMBER_PROMISE[title]}\n"
-        assert expected in body, (
-            f"section {title!r} did not carry its own promise "
-            f"{MEMBER_PROMISE[title]!r}; section was:\n{body}"
-        )
+        for label, expected in (
+            ("promise", f"Promise:\n{MEMBER_PROMISE[title]}\n"),
+            ("type", f"Type: {_member_type(title)}\n"),
+            (
+                "required verification",
+                f"Required Verification: {_member_required_verification(title)}\n",
+            ),
+            ("surfaces", f"Surfaces:\n- {MEMBER_SURFACE_ITEM[title]}\n"),
+            (
+                "EC dimensions",
+                f"EC Dimensions:\n- {MEMBER_EC_DIMENSION_ITEM[title]}\n",
+            ),
+            (
+                "gate inventory",
+                f"Gate Inventory:\n- {MEMBER_GATE_INVENTORY_ITEM[title]}\n",
+            ),
+        ):
+            assert expected in body, (
+                f"section {title!r} did not carry its own {label} "
+                f"{expected!r}; section was:\n{body}"
+            )
 
 
 def _section_readme(
@@ -1750,6 +1936,7 @@ def _section_readme(
     brief: str,
     statuses: tuple[str, ...] | None = None,
     preludes: tuple[str | None, ...] | None = None,
+    work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
 ) -> str:
     """A README whose capability contract is canonical `###` sections.
 
@@ -1766,7 +1953,9 @@ def _section_readme(
     body = ""
     for index, (member, declared) in enumerate(zip(members, classes)):
         status = "verified" if statuses is None else statuses[index]
-        section = _section(member, declared, "###", status=status).replace(
+        section = _section(
+            member, declared, "###", status=status, work_root_cells=work_root_cells
+        ).replace(
             "Root WI: -", f"Root WI: {SECTION_RELOCATION_WI[member[0]]}"
         )
         prelude = None if preludes is None else preludes[index]
@@ -1835,6 +2024,156 @@ MIXED_SECTION_README = _section_readme(
     MIXED_SECTION_CLASSES,
     "Lumen README-resident capability contract, all three render groups.",
 )
+
+
+#: Per-work-root table cells for the one relocation shape that varies them.
+#:
+#: Every other document here writes `| <root> | change | - | implemented |
+#: verified | smoke | \`true\` |` for all eight work roots, so five of the seven
+#: cells the work-root renderer emits (`capability.rs:9064-9076`) were each
+#: replaceable by a constant: only `Work Root` and `WI` differed between rows.
+#:
+#: `Kind` has only three legal non-empty tokens (`validate_work_root_kind`,
+#: `capability.rs:11816-11824`) against eight rows, so it is asserted as "all
+#: three appear" rather than pairwise-distinct; the other four columns are
+#: pairwise distinct across every row.
+#:
+#: This variation is confined to its own document on purpose. `Impl` and
+#: `Verification` feed `capability_gap_status_from_table`
+#: (`capability.rs:11866-11885`), which feeds `capability_impl_summary`
+#: (`capability.rs:9273-9295`), which is what the varied-status shape pins its
+#: index columns to -- varying these globally would make that leg's expectation
+#: a function of two inputs instead of the status alone.
+VARIED_WORK_ROOT_CELLS = {
+    "query-planner-boolean-eval": (
+        "change",
+        "implemented",
+        "verified",
+        "conformance",
+        "`lumen-planner-suite`",
+    ),
+    "bm25-ranking": ("epic", "partial", "passing", "smoke", "`lumen-bm25-suite`"),
+    "analyzer-pipeline": (
+        "subepic",
+        "planned",
+        "planned",
+        "corpus",
+        "`lumen-analyzer-suite`",
+    ),
+    "operational-endpoint-set": (
+        "change",
+        "out_of_scope",
+        "none",
+        "none",
+        "`lumen-probe-suite`",
+    ),
+    "manifest-packaging": (
+        "epic",
+        "blocked",
+        "failing",
+        "negative",
+        "`lumen-manifest-suite`",
+    ),
+    "transport-and-identity-hardening": (
+        "subepic",
+        "implemented",
+        "blocked",
+        "dogfood",
+        "`lumen-identity-suite`",
+    ),
+    "gate-configuration": (
+        "change",
+        "partial",
+        "verified",
+        "smoke",
+        "`lumen-gate-config-suite`",
+    ),
+    "gate-inventory-sync": (
+        "epic",
+        "planned",
+        "passing",
+        "conformance",
+        "`lumen-gate-sync-suite`",
+    ),
+}
+assert set(VARIED_WORK_ROOT_CELLS) == {
+    work_root for member in _ALL_MEMBERS for work_root in member[4]
+}, sorted(VARIED_WORK_ROOT_CELLS)
+#: Every legal non-empty token each enum-valued work-root column accepts,
+#: restated from the validators (`capability.rs:11816-11864`). Four of the five
+#: varied columns have fewer legal tokens than there are rows, so "pairwise
+#: distinct" is unachievable for them; the stronger property available is that
+#: each column exercises its whole vocabulary, which no single constant can.
+_WORK_ROOT_COLUMN_VOCABULARY = {
+    (0, "Kind"): {"epic", "subepic", "change"},
+    (1, "Impl"): {"planned", "partial", "implemented", "blocked", "out_of_scope"},
+    (2, "Verification"): {
+        "none",
+        "planned",
+        "failing",
+        "passing",
+        "verified",
+        "blocked",
+    },
+    (3, "Maturity"): {
+        "none",
+        "smoke",
+        "conformance",
+        "corpus",
+        "negative",
+        "dogfood",
+    },
+}
+for (_cell_column, _cell_label), _vocabulary in _WORK_ROOT_COLUMN_VOCABULARY.items():
+    assert {
+        cells[_cell_column] for cells in VARIED_WORK_ROOT_CELLS.values()
+    } == _vocabulary, (
+        f"work-root column {_cell_label} must exercise every legal token, or the "
+        f"tokens it omits are indistinguishable from a constant"
+    )
+assert len({cells[4] for cells in VARIED_WORK_ROOT_CELLS.values()}) == len(
+    VARIED_WORK_ROOT_CELLS
+), "the Gate / Evidence column has no closed vocabulary and must be pairwise distinct"
+#: The rows *within* one capability must differ too. Cross-capability distinctness
+#: alone would leave "every row of a capability gets that capability's first row"
+#: passing on the four members that declare only one work root.
+for _member in _ALL_MEMBERS:
+    _member_rows = [VARIED_WORK_ROOT_CELLS[work_root] for work_root in _member[4]]
+    assert len(set(_member_rows)) == len(_member_rows), (
+        f"{_member[0]!r} must not repeat a work-root row shape"
+    )
+
+VARIED_WORK_ROOT_SECTION_README = _section_readme(
+    _ALL_MEMBERS,
+    (None,) * len(_ALL_MEMBERS),
+    "Lumen README-resident capability contract, work-root rows all different.",
+    work_root_cells=VARIED_WORK_ROOT_CELLS,
+)
+
+
+def assert_relocation_carries_every_work_root_cell(migrated: str) -> None:
+    """Each work-root row survives relocation cell by cell, not row by row.
+
+    The row is re-rendered from seven separate `markdown_cell` reads. With one
+    constant row shape in every other fixture document, five of those reads were
+    unbound at once: `Kind`, `Impl`, `Verification`, `Maturity` and
+    `Gate / Evidence` could each be replaced by the literal the fixture happened
+    to use everywhere.
+    """
+    for member in _ALL_MEMBERS:
+        body = _capability_section_body(migrated, member[0])
+        for work_root in member[4]:
+            kind, implementation, verification, maturity, gate = VARIED_WORK_ROOT_CELLS[
+                work_root
+            ]
+            row = (
+                f"| {work_root} | {kind} | - | "
+                f"{implementation} | {verification} | {maturity} | {gate} |"
+            )
+            assert row in body, (
+                f"relocated section {member[0]!r} lost work-root row {row!r}; "
+                f"section was:\n{body}"
+            )
 
 
 #: Relocation input where the capabilities do not all share one status.
@@ -2337,6 +2676,35 @@ def assert_relocation_renders_the_three_groups_in_order(migrated: str) -> None:
     )
 
 
+def assert_section_relocation_empties_the_readme(
+    readme: str, titles: tuple[str, ...]
+) -> None:
+    """The README a section-shaped contract was relocated *out of* gives it up.
+
+    `apply_readme_capability_relocation_tick` (`capability.rs:13088-13090`)
+    rewrites the source README to a forwarding pointer through
+    `render_readme_capability_migration_residue`. Only the legacy-table shape
+    ever re-read the README afterwards; on all five section-shaped relocations
+    the residue write was unobservable, so an implementation that left the
+    README's whole capability contract in place -- producing two divergent copies
+    of it, which is exactly what relocation exists to prevent -- passed.
+
+    Asserted in both directions: the pointer arrives, and the sections leave.
+    """
+    assert README_CONTRACT_POINTER in readme, readme
+    assert "CAPABILITIES.md" in readme, readme
+    for title in titles:
+        assert f"### {title}" not in readme, (
+            f"relocation must remove {title!r}'s section from the README it "
+            f"moved the contract out of; README was:\n{readme}"
+        )
+    for member in _ALL_MEMBERS:
+        assert f"ID: {member[1]}" not in readme, (
+            f"relocation left {member[1]!r}'s contract fields in the README; "
+            f"README was:\n{readme}"
+        )
+
+
 def assert_relocation_root_emission(
     migrated: str, *, declares_any_class: bool
 ) -> None:
@@ -2448,12 +2816,13 @@ def baseline_placed_core_document(cap_id: str) -> str:
     half: nothing is declared, and the placement is what makes it core.
     """
     document = baseline_declared_core_document(cap_id)
-    marker = f"ID: {cap_id}\nType: Service\nFeature Class: core\n"
+    capability_type = _member_type_for_id(cap_id)
+    marker = f"ID: {cap_id}\nType: {capability_type}\nFeature Class: core\n"
     assert document.count(marker) == 1, (
         f"expected exactly one declared-core section for {cap_id}; "
         f"found {document.count(marker)}"
     )
-    return document.replace(marker, f"ID: {cap_id}\nType: Service\n")
+    return document.replace(marker, f"ID: {cap_id}\nType: {capability_type}\n")
 
 
 def assert_baseline_placed_core_is_rejected(
