@@ -3,10 +3,14 @@ project = "service-http"
 ir_kind = "ec"
 ec_path = "libs/service-http/external-contracts"
 inventory_path = "libs/service-http/aw.toml"
-generated_at = "2026-07-17T16:55:31.661663+00:00"
-ir_digest = "sha256:10c0fdc6ddb61fc0a05d6277a7e4c23469754f890d89ccd89750198fbe3206dd"
-source_digest = "sha256:387145c0fe25debfc4762ccb5b891e56bb609559e5b137f5328fb5a2d7e4c8e6"
+generated_at = "2026-07-23T00:27:09.361469+00:00"
+ir_digest = "sha256:c6f8db773991efa6c86550021be0436e6a27927921b04bc1ebb6d76bc7a1d455"
+source_digest = "sha256:e00c0162bd001fbb89d528fa398f6906197872dc6fd6822fb47c0dc4d9043e6b"
 tool_contracts = []
+
+[[sources]]
+path = "libs/service-http/external-contracts/behavior/2420.md"
+digest = "sha256:ca1028ac62c180238eacb93aa8230593c9f98d5683480b25116d4afbbe2f94be"
 
 [[sources]]
 path = "libs/service-http/external-contracts/behavior/shared-http-service-scaffold-contract.md"
@@ -31,3 +35,23 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:9f7860236f08691f077338f67bfbcb69313bdfb3efaee56fad632c7103f10012"
+
+[[cases]]
+id = "shared-w3c-request-completion-event"
+capability_id = "shared-http-service-scaffold"
+claim_id = "shared-http-service-scaffold-contract"
+contract_id = "service-http-request-completion-event"
+dimension = "behavior"
+source_ref = "libs/service-http/external-contracts/behavior/2420.md#shared-w3c-request-completion-event"
+test_path = "libs/service-http/tests/behavior_shared_w3c_request_completion_event.rs"
+command = "cargo test -p service-http --test request_completion_event"
+required_for_production = true
+assertions = [
+    "One completed HTTP request produces exactly one decoded axiom.service.log.v1 INFO record whose event is http_request_complete and whose attributes contain method, uri, status, and non-negative latency_ms.",
+    "The same decoded completion record preserves a valid inbound W3C trace_id, parent_span_id, and trace_flags while using a distinct non-zero local span_id.",
+    "A missing or malformed traceparent produces a fresh valid trace_id and span_id with no parent_span_id, while still emitting one completion record.",
+    "The public trace_layer API takes no collector endpoint, credential, routing, storage, or Sift-specific configuration; collector ownership remains outside service-http.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4c16915fd42e7aea6103faee31d92d042824c2229bea793b16fd3b4b04be8d7d"

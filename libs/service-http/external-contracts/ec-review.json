@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "service-http",
-  "source_digest": "sha256:99ba75bc881c0a623e22261217c070b402e4753c8daf5ddab3ab2e50c7aaf4fb",
+  "source_digest": "sha256:3009e3c6551b3c268558c989ca5b3093fb35dda2650c86a5a3710dce6b1b5981",
   "decision": "accepted",
-  "reviewer_kind": "human",
-  "reviewed_by": "chrischeng",
-  "reviewed_at": "2026-07-17T16:55:13.663973+00:00",
-  "summary": "Human semantic approval supplied after the shared structured-stdout and W3C trace-context architecture review; the service-http EC cases cover the agreed transport boundary with independent request-level oracles.",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer:/root/service_http_ec_review",
+  "reviewed_at": "2026-07-23T00:26:48.811534+00:00",
+  "summary": "Accepted for issue #2420's scoped behavior claim: the EC requires exactly one independently decoded axiom.service.log.v1 INFO completion record, pins its HTTP and W3C correlation fields for valid and fallback contexts, and preserves the collector-ownership boundary. Pre-existing DeveloperTool efficiency/stability debt remains outside this claim and is separately tracked by #2422.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
