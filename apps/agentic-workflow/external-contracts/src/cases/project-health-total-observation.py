@@ -4,7 +4,11 @@ CASE_ID = "project-health-total-observation"
 CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
 USE_CASE_ID = "two-cell-ec-and-td-semantic-health"
 DIMENSION = "behavior"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case project-health-total-observation"
+)
 ASSERTIONS = (
     "matching TD-applicable EC evidence makes ec_accepts_td pass",
     "explicit failing EC evidence rejects TD with exact case counts",

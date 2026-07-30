@@ -14,17 +14,19 @@ from wi_contract_fixture import (
     AW_BINARY,
     _ensure_aw_binary,
     final_json,
+    git_commit_fixture,
     project_fixture,
     run_aw,
+    write_python_artifact_lock,
 )
 
 
 CASE_IDS = {
-    "td-cb-lifecycle-automation-self-ec-fixture-loop-gate",
-    "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec",
-    "terminal-ec-cross-process-single-flight-real-cli",
-    "terminal-ec-no-child-wrapper-real-cli",
-    "terminal-ec-retry-transition-lease-real-cli",
+    "self-ec-fixture-loop-gate-python-contract",
+    "ec-gated-terminal-check-unification-python-contract",
+    "terminal-ec-cross-process-single-flight-python-contract",
+    "terminal-ec-wrapper-timeout-teardown-python-contract",
+    "terminal-ec-retry-transition-lease-python-contract",
     "td-cb-lifecycle-automation-operational-efficiency",
     "td-cb-lifecycle-automation-operational-stability",
 }
@@ -62,10 +64,29 @@ raise SystemExit(0 if mode.endswith("green") or mode == "green" else 1)
 """
 
 
+TD_PYPROJECT = """\
+[project]
+name = "terminal-tech-design"
+version = "0.1.0"
+requires-python = ">=3.11"
+"""
+
+
+TD_MODULE = '''\
+__aw_artifact_id__ = "artifact:demo/terminal-gate"
+__aw_public_contract__ = True
+
+
+def terminal_gate_contract() -> str:
+    return "red blocks terminal progress and green emits the exact close continuation"
+'''
+
+
 PYPROJECT = """\
 [project]
 name = "terminal-ec"
 version = "0.1.0"
+requires-python = ">=3.11"
 
 [tool.aw.python-artifact]
 protocol = "aw.python-artifact.v1"
@@ -90,7 +111,7 @@ test_path = "src/gate.py"
 promise = "red blocks terminal progress and green emits the exact close continuation"
 oracle = "native Python process and lifecycle assertions"
 target = "python"
-command = "python3 gate.py"
+command = "uv run --frozen --offline --project external-contracts python gate.py"
 evidence_paths = ["evidence/gate.json"]
 required_for_production = true
 """
@@ -115,8 +136,14 @@ def _terminal_fixture(mode: str) -> Iterator[dict[str, Any]]:
         (ec / "evidence").mkdir()
         (ec / "src/gate.py").write_text("CASE_ID = 'terminal-gate'\n", encoding="utf-8")
         (ec / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
+        write_python_artifact_lock(ec, name="terminal-ec")
+        td = root / "tech-design"
+        (td / "src").mkdir(parents=True)
+        (td / "pyproject.toml").write_text(TD_PYPROJECT, encoding="utf-8")
+        (td / "src/terminal_gate.py").write_text(TD_MODULE, encoding="utf-8")
         (root / "gate.py").write_text(GATE_SOURCE, encoding="utf-8")
         (root / "mode").write_text(mode, encoding="utf-8")
+        git_commit_fixture(root)
         created = final_json(
             run_aw(
                 root,
@@ -242,7 +269,7 @@ def verify(case_id: str) -> list[str]:
         raise AssertionError(f"case is not owned by td-terminal: {case_id}")
     started = time.monotonic()
 
-    if case_id == "td-cb-lifecycle-automation-self-ec-fixture-loop-gate":
+    if case_id == "self-ec-fixture-loop-gate-python-contract":
         snapshot = _red_green_snapshot()
         assert snapshot["red"]["summary"]["passed_count"] == 0
         assert snapshot["green"]["summary"]["passed_count"] == 1
@@ -250,16 +277,14 @@ def verify(case_id: str) -> list[str]:
             "a required Python EC refuses terminal progress while red",
             "green verification records the consulted case and emits the exact WI close command",
         ]
-    if case_id.startswith(
-        "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal"
-    ):
+    if case_id == "ec-gated-terminal-check-unification-python-contract":
         snapshot = _red_green_snapshot()
         assert snapshot["red"]["next"] != snapshot["green"]["next"]
         return [
             "the public Python EC seam routes red back to bounded CB regeneration",
             "the same WI converges to one exact terminal close continuation when green",
         ]
-    if case_id == "terminal-ec-cross-process-single-flight-real-cli":
+    if case_id == "terminal-ec-cross-process-single-flight-python-contract":
         snapshot = _single_flight(with_wi=True, mode="slow_red")
         assert snapshot["second"]["summary"]["results"][-1]["failure_kind"] == "single_flight"
         assert snapshot["second"]["next"].endswith(f"--wi {snapshot['slug']}")
@@ -267,7 +292,7 @@ def verify(case_id: str) -> list[str]:
             "two real AW processes contend on one project EC lease",
             "the duplicate returns promptly and exactly one Python EC process launches",
         ]
-    if case_id == "terminal-ec-no-child-wrapper-real-cli":
+    if case_id == "terminal-ec-wrapper-timeout-teardown-python-contract":
         _ensure_aw_binary()
         with _terminal_fixture("no_child") as fixture:
             root = fixture["root"]
@@ -296,7 +321,7 @@ def verify(case_id: str) -> list[str]:
             "a childless stalled Python EC wrapper is bounded by the configured timeout",
             "AW tears down the wrapper process group and reports a typed timeout",
         ]
-    if case_id == "terminal-ec-retry-transition-lease-real-cli":
+    if case_id == "terminal-ec-retry-transition-lease-python-contract":
         snapshot = _single_flight(with_wi=True, mode="slow_green")
         assert snapshot["first"]["next"] == f"aw wi close {snapshot['slug']} --push"
         assert snapshot["second"]["next"].endswith(f"--wi {snapshot['slug']}")

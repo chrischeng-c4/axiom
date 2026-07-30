@@ -15,7 +15,8 @@ CAPABILITY_ID = "work-item-planning"
 USE_CASE_ID = "terminology-first-four-type-wi-taxonomy"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case work-item-four-type-taxonomy"
 )
 ASSERTIONS = (

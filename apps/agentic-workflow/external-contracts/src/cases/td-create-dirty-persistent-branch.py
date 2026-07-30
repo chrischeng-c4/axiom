@@ -14,13 +14,14 @@ CAPABILITY_ID = "td-cb-lifecycle-automation"
 USE_CASE_ID = "dirty-persistent-branch-td-activation"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case td-create-dirty-persistent-branch"
 )
 ASSERTIONS = (
     "dirty persistent branch initializes TD in place",
     "unrelated modified deleted and untracked paths remain byte-identical",
-    "successful TD initialization advances HEAD with exactly the emitted tracked TD source",
+    "successful TD initialization advances HEAD with exactly the emitted tracked TD source, manifest, and lock",
     "dirty main fails before branch activation or TD source creation",
 )
 
@@ -98,7 +99,12 @@ def verify() -> list[str]:
             ).splitlines()
             if path
         )
-        assert committed_paths == [source_path]
+        # TD activation bootstraps the canonical Python TD project, so the commit
+        # is the emitted source plus its manifest and lock — and nothing else. No
+        # dirty user path may be swept in.
+        assert committed_paths == sorted(
+            {source_path, "tech-design/pyproject.toml", "tech-design/uv.lock"}
+        ), committed_paths
         assert (persistent / "tracked.txt").read_text(encoding="utf-8") == "user edit\n"
         assert (
             persistent / "untracked.txt"

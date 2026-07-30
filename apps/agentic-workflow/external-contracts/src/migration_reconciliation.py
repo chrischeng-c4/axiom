@@ -488,9 +488,12 @@ def _guidance(manifest: dict[str, Any]) -> dict[str, Any]:
             "there is no app-level Rust EC wrapper tree",
         ),
         "apps/agentic-workflow/CAPABILITIES.md": (
-            "canonical 45-case inventory",
-            "37 migrated Python cases",
-            "75 separately retained Rust invariants",
+            # Structural phrases, not absolute counts: the executable
+            # projection gate measures the case totals, so pinning them here
+            # too only guarantees the prose goes stale as cases are added.
+            "canonical native Python EC inventory",
+            "migrated Python case",
+            "separately retained Rust invariant",
         ),
     }
     missing_fragments = sorted(

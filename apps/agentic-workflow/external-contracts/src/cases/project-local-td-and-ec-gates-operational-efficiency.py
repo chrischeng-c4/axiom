@@ -4,7 +4,11 @@ CASE_ID = "project-local-td-and-ec-gates-operational-efficiency"
 CAPABILITY_ID = "project-local-td-and-ec-gates"
 USE_CASE_ID = "project-local-td-and-ec-gates-operational-efficiency"
 DIMENSION = "efficiency"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-efficiency"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case project-local-td-and-ec-gates-operational-efficiency"
+)
 ASSERTIONS = ("the native Python project-local TD and EC producer scenario completes within 120 seconds without cargo delegation",)
 
 

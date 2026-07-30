@@ -30,6 +30,18 @@ workflow and verification live in its `CONTRIBUTING.md`.
 - AGY consumes the canonical `.agents/rules` workspace tree.
 - `.codex/rules/*.rules` is command-approval policy, never instruction content.
 
+## External Contract Boundaries
+
+- Externally observable product behavior belongs in a project-local Python
+  external-contract project; Agentic Workflow's own lives under
+  `apps/agentic-workflow/external-contracts/`, where `pyproject.toml` is the
+  inventory and `src/cases/*.py` holds one black-box verifier per case.
+- Rules observable only inside the Rust implementation are
+  colocated Rust invariants under their semantic `src/**` owner, and run
+  separately with `cargo test -p agentic-workflow --lib`.
+- Never wrap a Python external contract in an app-level Rust tree and never
+  delegate one to `cargo test`.
+
 <!-- aw:start -->
 ## Agentic Workflow CLI Surface
 

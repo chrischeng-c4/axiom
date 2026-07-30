@@ -7,13 +7,19 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from wi_contract_fixture import (
+    write_python_artifact_lock,
+    write_python_artifact_unit_test,
+)
+
 
 CASE_ID = "capability-scoped-dependency-verification"
 CAPABILITY_ID = "capability-control-plane"
 USE_CASE_ID = "scoped-dependency-closed-verification"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case capability-scoped-dependency-verification"
 )
 ASSERTIONS = (
@@ -224,35 +230,39 @@ def _goal(
     )
 
 
-def _write_td_links(fixture_root: Path) -> None:
-    td_root = fixture_root / "tech-design"
-    for capability_id in ("leaf", "middle", "root", "unrelated"):
-        claim_id = f"{capability_id}-root"
-        (td_root / f"{capability_id}.md").write_text(
-            f"""---
-id: {capability_id}-td
-capability_refs:
-  - id: {capability_id}
-    role: primary
-    gap: {claim_id}
-    claim: {claim_id}
-    coverage: full
-    rationale: "Fixture TD links the executable capability claim."
----
-
-# {capability_id.title()} fixture TD
-""",
-            encoding="utf-8",
-        )
+CAPABILITY_IDS = ("leaf", "middle", "root", "unrelated")
 
 
 def _write_python_artifacts(fixture_root: Path) -> None:
-    td_source = fixture_root / "tech-design" / "src"
+    """Write the canonical Python TD and EC pair the capability scan consumes.
+
+    Claim linkage for a `python-v1` project is derived, not authored: a claim is
+    linked when an EC case names `(capability_id, use_case_id, artifact_id)` and
+    a public Python TD module exposes a public behavior of the same name. The
+    fixture therefore has to declare both sides for every fixture capability.
+    """
+    td_root = fixture_root / "tech-design"
+    td_source = td_root / "src"
     td_source.mkdir()
-    (td_source / "design.py").write_text(
-        '__aw_artifact_id__ = "artifact:demo/scoped-capability-fixture"\n',
+    (td_root / "pyproject.toml").write_text(
+        """[project]
+name = "scoped-capability-tech-design"
+version = "0.1.0"
+requires-python = ">=3.11"
+""",
         encoding="utf-8",
     )
+    write_python_artifact_lock(td_root, name="scoped-capability-tech-design")
+    for capability_id in CAPABILITY_IDS:
+        (td_source / f"{capability_id}.py").write_text(
+            f'__aw_artifact_id__ = "artifact:demo/{capability_id}"\n'
+            "__aw_public_contract__ = True\n"
+            "\n"
+            "\n"
+            f"def {capability_id}_root() -> str:\n"
+            f'    return "{capability_id} fixture claim"\n',
+            encoding="utf-8",
+        )
 
     ec_root = fixture_root / "external-contracts"
     case_root = ec_root / "src" / "cases"
@@ -263,11 +273,17 @@ def _write_python_artifacts(fixture_root: Path) -> None:
         'print("fixture runner")\n',
         encoding="utf-8",
     )
-    (case_root / "demo.py").write_text(
-        'def verify() -> list[str]:\n    return ["fixture"]\n',
-        encoding="utf-8",
-    )
-    (evidence_root / "demo.json").write_text('{"status":"passed"}\n', encoding="utf-8")
+    for capability_id in CAPABILITY_IDS:
+        (case_root / f"{capability_id}.py").write_text(
+            f"def verify_{capability_id}() -> list[str]:\n"
+            f'    return ["{capability_id} fixture"]\n',
+            encoding="utf-8",
+        )
+        (evidence_root / f"{capability_id}.json").write_text(
+            '{"status":"passed"}\n', encoding="utf-8"
+        )
+    write_python_artifact_lock(ec_root, name="demo-external-contracts")
+    write_python_artifact_unit_test(ec_root, "scoped_capability")
     (ec_root / "pyproject.toml").write_text(
         """[project]
 name = "demo-external-contracts"
@@ -286,20 +302,25 @@ protocol = "aw.python-ec.v1"
 author = "fixture:external"
 efficiency_policy = "not-applicable"
 
+"""
+        + "".join(
+            f"""
 [[tool.aw.python-ec.cases]]
-id = "demo-behavior"
-artifact_id = "artifact:demo/scoped-capability-fixture"
-capability_id = "root"
-use_case_id = "scoped-verification"
+id = "{capability_id}-behavior"
+artifact_id = "artifact:demo/{capability_id}"
+capability_id = "{capability_id}"
+use_case_id = "{capability_id}-root"
 dimension = "behavior"
 applicability = "td"
-test_path = "src/cases/demo.py"
-promise = "the fixture has one structurally valid behavior case"
+test_path = "src/cases/{capability_id}.py"
+promise = "the {capability_id} fixture claim has one structurally valid behavior case"
 oracle = "the outer EC independently checks the real aw process"
 target = "python"
 command = "true"
-evidence_paths = ["evidence/demo.json"]
-""",
+evidence_paths = ["evidence/{capability_id}.json"]
+"""
+            for capability_id in CAPABILITY_IDS
+        ),
         encoding="utf-8",
     )
 
@@ -381,7 +402,6 @@ test_cmd = "touch {workspace_marker}"
         )
         migrated = _migrate(tmp, cap_path)
         assert migrated.returncode == 0, (migrated.stdout, migrated.stderr)
-        _write_td_links(tmp)
         _write_python_artifacts(tmp)
 
         completed = _run(tmp, cap_path, "root")

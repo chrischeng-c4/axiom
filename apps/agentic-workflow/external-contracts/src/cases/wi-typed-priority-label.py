@@ -5,7 +5,8 @@ CAPABILITY_ID = "work-item-planning"
 USE_CASE_ID = "typed-priority-label-authoring"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case wi-typed-priority-label"
 )
 ASSERTIONS = (

@@ -4,7 +4,11 @@ CASE_ID = "aw-core-client-operational-efficiency"
 CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
 USE_CASE_ID = "aw-core-client-operational-efficiency"
 DIMENSION = "efficiency"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case aw-core-client-operational-efficiency"
+)
 ASSERTIONS = ("the native Python prompt and runner scenario completes within 120 seconds with representative assertions and no cargo delegation",)
 
 

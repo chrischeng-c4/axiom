@@ -11,7 +11,8 @@ from pathlib import Path
 EC_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = Path(__file__).with_name("migration_reconciliation_manifest.json")
 RUNNER_PREFIX = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py --case "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py --case "
 )
 
 

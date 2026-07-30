@@ -14,7 +14,8 @@ CAPABILITY_ID = "workflow-root-runner"
 USE_CASE_ID = "aw-only-coordination-authority"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case coordination-authority"
 )
 ASSERTIONS = (

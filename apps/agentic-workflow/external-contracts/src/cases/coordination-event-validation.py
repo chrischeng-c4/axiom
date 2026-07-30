@@ -14,7 +14,8 @@ CAPABILITY_ID = "workflow-root-runner"
 USE_CASE_ID = "fail-closed-coordination-event-validation"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case coordination-event-validation"
 )
 ASSERTIONS = (

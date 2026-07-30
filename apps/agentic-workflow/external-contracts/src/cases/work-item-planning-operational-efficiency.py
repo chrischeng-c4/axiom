@@ -4,7 +4,11 @@ CASE_ID = "work-item-planning-operational-efficiency"
 CAPABILITY_ID = "work-item-planning"
 USE_CASE_ID = "work-item-planning-operational-efficiency"
 DIMENSION = "efficiency"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case work-item-planning-operational-efficiency"
+)
 ASSERTIONS = ("the native Python planning scenario completes within 120 seconds and passes every representative assertion",)
 
 

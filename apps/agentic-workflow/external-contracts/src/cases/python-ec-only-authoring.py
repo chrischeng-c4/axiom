@@ -5,7 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from wi_contract_fixture import final_json, project_fixture, run_aw
+from wi_contract_fixture import (
+    final_json,
+    project_fixture,
+    run_aw,
+    write_python_artifact_lock,
+    write_python_artifact_unit_test,
+)
 
 
 CASE_ID = "python-ec-only-authoring"
@@ -13,7 +19,8 @@ CAPABILITY_ID = "project-local-td-and-ec-gates"
 USE_CASE_ID = "python-only-ec-authoring-lifecycle"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case python-ec-only-authoring"
 )
 ASSERTIONS = (
@@ -90,11 +97,13 @@ test_path = "src/python_only.py"
 promise = "The public EC lifecycle executes only the project-local Python contract."
 oracle = "An independent black-box fixture checks CLI help, artifact paths, review evidence, and runner output."
 target = "rust"
-command = "python3 external-contracts/src/runner.py"
+command = "uv run --frozen --offline --project external-contracts python external-contracts/src/runner.py"
 evidence_paths = ["evidence/python-only.json"]
 """,
         encoding="utf-8",
     )
+    write_python_artifact_lock(ec_root, name="python-only-external-contracts")
+    write_python_artifact_unit_test(ec_root, "python_only_authoring")
 
 
 def _accept_review(root: Path, pending: dict[str, object]) -> dict[str, object]:
@@ -217,11 +226,15 @@ Gate Inventory:
             )
         )
         assert draft["action"] == "python_ec_scaffold_created"
+        packaging = {
+            "external-contracts/pyproject.toml",
+            "external-contracts/uv.lock",
+        }
         assert all(
-            path == "external-contracts/pyproject.toml"
-            or path.endswith(".py")
+            path in packaging or path.endswith(".py")
             for path in draft["artifacts"]
-        )
+        ), draft["artifacts"]
+        assert packaging <= set(draft["artifacts"]), draft["artifacts"]
         assert not list((root / "external-contracts").rglob("*.md"))
 
         for retired in ("fill", "gen"):

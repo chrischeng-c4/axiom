@@ -6,7 +6,13 @@ import subprocess
 from pathlib import Path
 
 from migration_clusters.work_item_planning import BOUNDED_BODY
-from wi_contract_fixture import create, final_json, project_fixture, run_aw
+from wi_contract_fixture import (
+    create,
+    final_json,
+    project_fixture,
+    run_aw,
+    write_python_artifact_unit_test,
+)
 
 
 CASE_ID = "td-existing-workspace-dirty-persistent-branch"
@@ -14,7 +20,8 @@ CAPABILITY_ID = "td-cb-lifecycle-automation"
 USE_CASE_ID = "dirty-persistent-branch-existing-td-activation"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case td-existing-workspace-dirty-persistent-branch"
 )
 ASSERTIONS = (
@@ -240,6 +247,15 @@ def verify() -> list[str]:
             persistent / "untracked.txt"
         ).read_text(encoding="utf-8") == "user scratch\n"
         assert not (persistent / "deleted.txt").exists()
+
+        # TD activation bootstraps the manifest and lock but leaves unit tests to
+        # the author, and `aw td check` requires at least one. Committing it here
+        # keeps the later generation snapshots clean.
+        unit_test = write_python_artifact_unit_test(
+            persistent / "tech-design", "existing_workspace"
+        )
+        _git(persistent, "add", str(unit_test.relative_to(persistent)))
+        _git(persistent, "commit", "-m", "author fixture TD unit test")
 
         run_aw(
             persistent,
