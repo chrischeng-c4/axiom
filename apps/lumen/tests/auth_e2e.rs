@@ -14,13 +14,13 @@ use lumen::storage::Engine;
 
 fn auth_server(required: bool, tokens: Vec<(&str, TokenClaims)>) -> TestServer {
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig {
+    let cfg = AuthConfig::with_tokens(
         required,
-        tokens: tokens
+        tokens
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect(),
-    };
+    );
     let app = router(AppState::new(engine, Arc::new(cfg)));
     TestServer::new(app).expect("test server")
 }
@@ -82,10 +82,7 @@ async fn write_can_index_but_not_drop() {
     ]);
     let s = TestServer::new(router(AppState::new(
         Arc::new(Engine::new()),
-        Arc::new(AuthConfig {
-            required: true,
-            tokens,
-        }),
+        Arc::new(AuthConfig::with_tokens(true, tokens)),
     )))
     .unwrap();
     // Admin creates the collection.

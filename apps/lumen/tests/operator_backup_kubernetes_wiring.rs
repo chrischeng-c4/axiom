@@ -14,6 +14,7 @@ fn lumen_with_backup() -> Lumen {
     let mut spec = LumenSpec {
         image: "asia-east1-docker.pkg.dev/example/lumen:sha".into(),
         image_pull_policy: Some("Always".into()),
+        placement: Default::default(),
         shard_count: 1,
         shard_map: ShardMapSpec::default(),
         replicas_per_shard: 1,
@@ -27,6 +28,7 @@ fn lumen_with_backup() -> Lumen {
         serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy::default(),
         observability: false,
+        network_policy: false,
         admission: None,
         service_account_name: None,
     };
@@ -164,6 +166,89 @@ fn operator_rbac_can_reconcile_cronjobs_and_read_reshard_secrets() {
         vec!["get"],
         "reshard requires read-only Secret access; mutation is unnecessary"
     );
+
+    // #2603: without this grant the operator renders a NetworkPolicy it cannot
+    // apply, and the only symptom is a Forbidden buried in reconcile logs.
+    let policy_verbs = verbs_for(&role, "networking.k8s.io", "networkpolicies");
+    for verb in [
+        "get", "list", "watch", "create", "update", "patch", "delete",
+    ] {
+        assert!(
+            policy_verbs.iter().any(|candidate| candidate == verb),
+            "NetworkPolicy rule is missing `{verb}`: {policy_verbs:?}"
+        );
+    }
+}
+
+/// #2603: the client API and the Raft port have different audiences. A policy
+/// that admits the cluster to 7374 is worse than no policy — it reads as
+/// isolation while leaving the consensus protocol open to every pod.
+#[test]
+fn rendered_network_policy_is_opt_in_and_never_exposes_the_raft_port() {
+    let mut lumen = lumen_with_backup();
+    assert!(
+        !lumen.spec.network_policy,
+        "isolation must stay opt-in: a NetworkPolicy is inert without an \
+         enforcing CNI, and defaulting it on would silently drop traffic on \
+         clusters whose clients sit outside the pod network"
+    );
+    assert!(
+        render::render(&lumen)
+            .iter()
+            .all(|object| object["kind"] != "NetworkPolicy"),
+        "no policy may be rendered while the field is false"
+    );
+
+    lumen.spec.network_policy = true;
+    let objects = render::render(&lumen);
+    let policy = find(&objects, "NetworkPolicy", "search");
+    assert_eq!(policy["apiVersion"], "networking.k8s.io/v1");
+    assert_eq!(policy["metadata"]["namespace"], "lumen-acceptance");
+    assert_eq!(policy["metadata"]["ownerReferences"][0]["kind"], "Lumen");
+
+    // The pods it selects are exactly the serving pods of THIS instance.
+    let selected = &policy["spec"]["podSelector"]["matchLabels"];
+    assert_eq!(selected["app.kubernetes.io/instance"], "search");
+    assert_eq!(selected["app.kubernetes.io/component"], "server");
+
+    let ingress = policy["spec"]["ingress"]
+        .as_array()
+        .expect("ingress rules")
+        .clone();
+    let from_cluster = ingress
+        .iter()
+        .find(|rule| !rule["from"][0]["namespaceSelector"].is_null())
+        .expect("a rule admitting the cluster to the client API");
+    let cluster_ports: Vec<i64> = from_cluster["ports"]
+        .as_array()
+        .expect("ports")
+        .iter()
+        .map(|port| port["port"].as_i64().expect("numeric port"))
+        .collect();
+    assert_eq!(
+        cluster_ports,
+        vec![7373],
+        "only the search API may be cluster-reachable; 7374 carries Raft"
+    );
+
+    let from_peers = ingress
+        .iter()
+        .find(|rule| !rule["from"][0]["podSelector"].is_null())
+        .expect("a rule admitting sibling pods to Raft");
+    assert_eq!(from_peers["ports"][0]["port"], 7374);
+    assert_eq!(
+        from_peers["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/instance"], "search",
+        "a second Lumen sharing this namespace must not reach these Raft ports"
+    );
+
+    // The backup CronJob runs under its own component label and needs egress
+    // the serving posture does not grant, so it must fall outside the selector.
+    let cron_labels = &find(&objects, "CronJob", "search-backup")["spec"]["jobTemplate"]["spec"]
+        ["template"]["metadata"]["labels"];
+    assert_ne!(
+        cron_labels["app.kubernetes.io/component"], selected["app.kubernetes.io/component"],
+        "the backup job must not be selected by the serving pods' policy"
+    );
 }
 
 #[test]
@@ -202,5 +287,531 @@ fn operator_cli_renders_requested_immutable_image_and_preserves_default() {
         .expect("run lumen operator render with invalid image");
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("whitespace-free OCI image"));
+}
+
+/// Every document the `k8s/operator` kustomization installs, parsed.
+fn operator_manifest_documents() -> Vec<serde_yaml::Value> {
+    [
+        include_str!("../k8s/operator/deployment.yaml"),
+        include_str!("../k8s/operator/pdb.yaml"),
+    ]
+    .iter()
+    .flat_map(|source| {
+        serde_yaml::Deserializer::from_str(source)
+            .map(|document| {
+                serde_yaml::Value::deserialize(document).expect("operator document parses")
+            })
+            .collect::<Vec<_>>()
+    })
+    .collect()
+}
+
+fn document_of_kind<'a>(documents: &'a [serde_yaml::Value], kind: &str) -> &'a serde_yaml::Value {
+    documents
+        .iter()
+        .find(|document| document["kind"] == kind)
+        .unwrap_or_else(|| panic!("missing operator {kind}"))
+}
+
+/// #2602 AC1: the control plane is HA by default. `replicas: 1` meant any node
+/// drain, eviction, or rollout left every Lumen CR in the cluster unreconciled
+/// for its duration, even though leader election (`libs/service-k8s/src/lease.rs`)
+/// had been in place and unused the whole time.
+#[test]
+fn operator_deployment_runs_two_leader_elected_replicas() {
+    let documents = operator_manifest_documents();
+    let deployment = document_of_kind(&documents, "Deployment");
+    assert_eq!(deployment["spec"]["replicas"], 2);
+
+    // The standby is only safe because each pod has a distinct election
+    // identity and knows which namespace holds the Lease.
+    let env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        .as_sequence()
+        .expect("operator container env");
+    for required in ["POD_NAME", "POD_NAMESPACE"] {
+        assert!(
+            env.iter().any(|entry| entry["name"] == required),
+            "leader election needs {required}; have {env:?}"
+        );
+    }
+
+    // Soft, not hard: a single-node kind/minikube cluster must still schedule
+    // both replicas rather than park one Pending forever.
+    let anti_affinity = &deployment["spec"]["template"]["spec"]["affinity"]["podAntiAffinity"];
+    assert!(
+        anti_affinity["requiredDuringSchedulingIgnoredDuringExecution"].is_null(),
+        "required anti-affinity would make the two-replica floor unschedulable on one node"
+    );
+    assert_eq!(
+        anti_affinity["preferredDuringSchedulingIgnoredDuringExecution"][0]["podAffinityTerm"]
+            ["topologyKey"],
+        "kubernetes.io/hostname"
+    );
+}
+
+/// #2602 AC1: the replica floor only survives a node drain if evictions are
+/// serialized — otherwise both pods can go at once and the cluster is left
+/// without a reconciler until a replacement becomes ready and takes the Lease.
+#[test]
+fn operator_pdb_serializes_eviction_across_the_replicas() {
+    let documents = operator_manifest_documents();
+    let pdb = document_of_kind(&documents, "PodDisruptionBudget");
+    let deployment = document_of_kind(&documents, "Deployment");
+
+    assert_eq!(pdb["apiVersion"], "policy/v1");
+    assert_eq!(pdb["spec"]["maxUnavailable"], 1);
+    assert_eq!(
+        pdb["metadata"]["namespace"],
+        deployment["metadata"]["namespace"]
+    );
+    // A selector that does not match the Deployment's pods is a silently
+    // inert PDB — the exact failure this assertion exists to catch.
+    assert_eq!(
+        pdb["spec"]["selector"]["matchLabels"],
+        deployment["spec"]["selector"]["matchLabels"]
+    );
+}
+
+/// #2602 R3: kustomize consumers (`kubectl apply -k k8s/operator`) and render
+/// consumers (`lumen k8s operator render`) install the same operator layer.
+/// A replica floor or a PDB that exists in only one of the two is a divergence
+/// an integrator discovers in production.
+#[test]
+fn operator_render_and_static_manifest_agree_on_the_ha_shape() {
+    let rendered = Command::new(env!("CARGO_BIN_EXE_lumen"))
+        .args(["k8s", "operator", "render"])
+        .output()
+        .expect("run lumen operator render");
+    assert!(
+        rendered.status.success(),
+        "operator render failed: {}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let yaml = String::from_utf8(rendered.stdout).expect("operator YAML is utf8");
+    let documents: Vec<serde_yaml::Value> = serde_yaml::Deserializer::from_str(&yaml)
+        .map(|document| serde_yaml::Value::deserialize(document).expect("rendered document parses"))
+        .collect();
+
+    let deployment = document_of_kind(&documents, "Deployment");
+    assert_eq!(deployment["spec"]["replicas"], 2);
+    let pdb = document_of_kind(&documents, "PodDisruptionBudget");
+    assert_eq!(pdb["spec"]["maxUnavailable"], 1);
+
+    // `--namespace` moves the whole layer, PDB included; a PDB left in
+    // `lumen-system` would not cover pods rendered elsewhere.
+    let relocated = Command::new(env!("CARGO_BIN_EXE_lumen"))
+        .args(["k8s", "operator", "render", "--namespace", "lumen-live"])
+        .output()
+        .expect("run lumen operator render --namespace");
+    let relocated_yaml = String::from_utf8(relocated.stdout).expect("operator YAML is utf8");
+    let relocated_documents: Vec<serde_yaml::Value> =
+        serde_yaml::Deserializer::from_str(&relocated_yaml)
+            .map(|document| {
+                serde_yaml::Value::deserialize(document).expect("rendered document parses")
+            })
+            .collect();
+    assert_eq!(
+        document_of_kind(&relocated_documents, "PodDisruptionBudget")["metadata"]["namespace"],
+        "lumen-live"
+    );
+
+    // The kustomization must actually install what render emits, or the two
+    // consumer paths silently diverge again the next time one side changes.
+    let kustomization = include_str!("../k8s/operator/kustomization.yaml");
+    assert!(
+        kustomization.contains("- pdb.yaml"),
+        "k8s/operator/kustomization.yaml does not install pdb.yaml"
+    );
+}
+
+/// #2532: the operator manifest pinned `0.4.24` while the workspace shipped
+/// `0.4.25` — the handout deployed one release behind, the same defect already
+/// fixed in `k8s/base/deployment.yaml`. The render path now derives the pin it
+/// expects from `CARGO_PKG_VERSION`, so a release bump that misses this file
+/// fails the render instead of silently handing out a stale image.
+#[test]
+fn operator_manifest_pins_this_workspaces_version() {
+    let deployment = include_str!("../k8s/operator/deployment.yaml");
+    assert!(
+        deployment.contains(&format!(
+            "image: ghcr.io/chrischeng-c4/lumen:{}",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "k8s/operator/deployment.yaml must pin {}; the release bump missed it",
+        env!("CARGO_PKG_VERSION")
+    );
+    // The comment is the human half of the same guard: it names the literal a
+    // release bump greps for. Assert the backticked token rather than the prose
+    // around it, so reflowing the comment does not break the test but deleting
+    // the bump instruction does.
+    assert!(
+        deployment.contains("grep target") && deployment.contains("`ghcr.io/chrischeng-c4/lumen:`"),
+        "the bump procedure's grep target comment must survive edits to this file"
+    );
+}
+
+/// Run `lumen k8s operator render` and parse every emitted document.
+fn rendered_operator_documents(extra: &[&str]) -> Vec<serde_yaml::Value> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lumen"));
+    command.args(["k8s", "operator", "render"]);
+    command.args(extra);
+    let output = command.output().expect("run lumen operator render");
+    assert!(
+        output.status.success(),
+        "operator render failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let yaml = String::from_utf8(output.stdout).expect("operator YAML is utf8");
+    serde_yaml::Deserializer::from_str(&yaml)
+        .map(|document| serde_yaml::Value::deserialize(document).expect("rendered document parses"))
+        .collect()
+}
+
+fn optional_document_of_kind<'a>(
+    documents: &'a [serde_yaml::Value],
+    kind: &str,
+) -> Option<&'a serde_yaml::Value> {
+    documents.iter().find(|document| document["kind"] == kind)
+}
+
+/// #2621 R2/R6: the metrics endpoint #2620 opens inside the pod is only
+/// reachable if something selects it. The Service carries no CRD dependency, so
+/// it is unconditional on both consumer paths — a cluster with no monitoring
+/// stack still gets the target, and turning monitoring on later never has to
+/// come back and add it.
+#[test]
+fn operator_metrics_service_selects_the_pods_on_the_port_they_publish() {
+    let documents = rendered_operator_documents(&[]);
+    let service = document_of_kind(&documents, "Service");
+    let deployment = document_of_kind(&documents, "Deployment");
+
+    assert_eq!(service["metadata"]["name"], "lumen-operator-metrics");
+    assert_eq!(
+        service["metadata"]["namespace"],
+        deployment["metadata"]["namespace"]
+    );
+
+    // A selector that does not match the pod template is a Service with no
+    // Endpoints — it applies cleanly and scrapes nothing.
+    let selector = &service["spec"]["selector"];
+    let pod_labels = &deployment["spec"]["template"]["metadata"]["labels"];
+    for (key, value) in selector.as_mapping().expect("service selector") {
+        assert_eq!(
+            &pod_labels[key], value,
+            "service selector {key:?}={value:?} does not match the operator pod labels"
+        );
+    }
+
+    // targetPort is the container port's *name*, so the two must agree by name
+    // and the container must actually declare it.
+    let port = &service["spec"]["ports"][0];
+    assert_eq!(port["port"], 9090);
+    let container_ports = deployment["spec"]["template"]["spec"]["containers"][0]["ports"]
+        .as_sequence()
+        .expect("operator container declares ports");
+    assert!(
+        container_ports
+            .iter()
+            .any(|declared| declared["name"] == port["targetPort"] && declared["containerPort"] == port["port"]),
+        "Service targetPort {:?} matches no container port: {container_ports:?}",
+        port["targetPort"]
+    );
+
+    // Both consumer paths install it, or they diverge again.
+    assert!(
+        include_str!("../k8s/operator/kustomization.yaml").contains("- service.yaml"),
+        "k8s/operator/kustomization.yaml does not install service.yaml"
+    );
+}
+
+/// #2621 R3/R6: the ServiceMonitor and PrometheusRule are
+/// `monitoring.coreos.com/v1` CRDs. Emitting them unconditionally would make
+/// `kubectl apply` of the whole render fail on any cluster without
+/// prometheus-operator — taking the operator down along with the alerts — so
+/// they sit behind `--monitoring`, mirroring the opt-in kustomize component.
+#[test]
+fn monitoring_objects_are_opt_in_on_both_consumer_paths() {
+    let default_documents = rendered_operator_documents(&[]);
+    for crd_dependent in ["ServiceMonitor", "PrometheusRule"] {
+        assert!(
+            optional_document_of_kind(&default_documents, crd_dependent).is_none(),
+            "{crd_dependent} must not be rendered without --monitoring; it needs CRDs a vanilla cluster lacks"
+        );
+    }
+
+    let documents = rendered_operator_documents(&["--monitoring"]);
+    let monitor = document_of_kind(&documents, "ServiceMonitor");
+    let rule = document_of_kind(&documents, "PrometheusRule");
+    // The gate must not drop the CRD-free layer on the way through.
+    document_of_kind(&documents, "Service");
+    document_of_kind(&documents, "Deployment");
+
+    // The ServiceMonitor must select the Service that exists, in the namespace
+    // that Service is in; either mismatch discovers nothing and reports no error.
+    let service = document_of_kind(&documents, "Service");
+    assert_eq!(
+        monitor["spec"]["namespaceSelector"]["matchNames"][0],
+        service["metadata"]["namespace"]
+    );
+    let monitor_selector = &monitor["spec"]["selector"]["matchLabels"];
+    for (key, value) in monitor_selector.as_mapping().expect("monitor selector") {
+        assert_eq!(
+            &service["metadata"]["labels"][key], value,
+            "ServiceMonitor selector {key:?}={value:?} does not match the Service labels"
+        );
+    }
+    // Scraping by port *name* is what makes the endpoint survive a port-number
+    // change; a numeric mismatch here would silently produce zero targets.
+    assert_eq!(
+        monitor["spec"]["endpoints"][0]["port"],
+        service["spec"]["ports"][0]["name"]
+    );
+    assert_eq!(monitor["spec"]["endpoints"][0]["path"], "/metrics");
+
+    assert!(
+        include_str!("../k8s/components/operator-monitoring/kustomization.yaml")
+            .contains("- servicemonitor.yaml"),
+        "the operator-monitoring component does not install servicemonitor.yaml"
+    );
+    assert_eq!(rule["apiVersion"], "monitoring.coreos.com/v1");
+}
+
+/// #2621 R4: the two alerts, and specifically *what they are written against*.
+///
+/// The absence alert is the one that is easy to get wrong: a threshold on any
+/// `lumen_operator_*` counter cannot fire when the pod is gone, because the
+/// series stops existing. It has to read the scrape target's `up`, and it needs
+/// an `absent()` arm for the scale-to-zero case where `up` itself disappears
+/// and a plain comparison returns an empty vector forever.
+#[test]
+fn the_absence_alert_reads_up_and_survives_the_series_disappearing() {
+    let documents = rendered_operator_documents(&["--monitoring"]);
+    let rule = document_of_kind(&documents, "PrometheusRule");
+    let rules = rule["spec"]["groups"][0]["rules"]
+        .as_sequence()
+        .expect("alert rules");
+
+    let absent = rules
+        .iter()
+        .find(|entry| entry["alert"] == "LumenOperatorAbsent")
+        .expect("LumenOperatorAbsent alert");
+    let expr = absent["expr"].as_str().expect("absence expr");
+    assert!(
+        expr.contains("up{"),
+        "the absence alert must read the scrape target's `up`, not a lumen counter: {expr}"
+    );
+    assert!(
+        !expr.contains("lumen_operator_"),
+        "a lumen_operator_* series cannot report its own process's death: {expr}"
+    );
+    assert!(
+        expr.contains("absent("),
+        "without an absent() arm, a scale-to-zero removes the `up` series and this alert \
+         silently stops evaluating instead of firing: {expr}"
+    );
+
+    let error_rate = rules
+        .iter()
+        .find(|entry| entry["alert"] == "LumenOperatorReconcileErrorRate")
+        .expect("LumenOperatorReconcileErrorRate alert");
+    let expr = error_rate["expr"].as_str().expect("error-rate expr");
+    assert!(
+        expr.contains("lumen_operator_reconcile_errors_total")
+            && expr.contains("lumen_operator_reconcile_total"),
+        "the error alert must be a ratio, so a low-traffic operator does not page on one \
+         transient failure: {expr}"
+    );
+    // The denominator floor is also what keeps 0/0 (NaN) out of the comparison
+    // and stops this alert double-paging with LumenOperatorAbsent when the
+    // attempt rate has gone to zero because the operator is dead.
+    assert!(
+        expr.contains("and"),
+        "the ratio needs a denominator floor: {expr}"
+    );
+}
+
+/// #2621 R5/AC5: a runbook link that 404s is worse than none. Every
+/// `runbook_url` names a path in this repository, asserted here rather than
+/// discovered by an on-call at 3am.
+#[test]
+fn every_runbook_url_resolves_to_a_file_in_this_repository() {
+    let documents = rendered_operator_documents(&["--monitoring"]);
+    let rule = document_of_kind(&documents, "PrometheusRule");
+    let rules = rule["spec"]["groups"][0]["rules"]
+        .as_sequence()
+        .expect("alert rules");
+    assert!(!rules.is_empty());
+
+    // tests/ -> apps/lumen -> apps -> repo root.
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+
+    for entry in rules {
+        let annotations = &entry["annotations"];
+        let url = annotations["runbook_url"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{:?} has no runbook_url", entry["alert"]));
+        let path = url.split('#').next().expect("runbook path");
+        assert!(
+            repo_root.join(path).is_file(),
+            "{:?} points at {path}, which does not exist",
+            entry["alert"]
+        );
+        // The operational half of the same requirement: lumen's house
+        // convention is an inline recipe, because a link is one more hop
+        // during an incident.
+        assert!(
+            annotations["runbook"].as_str().is_some_and(|r| r.contains("kubectl")),
+            "{:?} has no inline kubectl recipe",
+            entry["alert"]
+        );
+        assert!(annotations["summary"].as_str().is_some());
+        assert!(annotations["description"].as_str().is_some());
+    }
+}
+
+/// #2621 AC4: a malformed PromQL expression does not fail an apply — the
+/// PrometheusRule is accepted and the alert simply never fires, which is
+/// indistinguishable from "nothing is wrong". `promtool` is the only thing
+/// that reads the expressions the way Prometheus will.
+///
+/// Skips when promtool is not installed (`brew install prometheus`), following
+/// the repo's real-services testing convention; the content assertions above
+/// hold regardless.
+#[test]
+fn promtool_accepts_the_rendered_expressions_and_annotation_templates() {
+    if Command::new("promtool").arg("--version").output().is_err() {
+        eprintln!("promtool not installed; skipping (brew install prometheus)");
+        return;
+    }
+
+    // promtool reads a bare rules file, not the CRD wrapper — unwrap `spec`,
+    // which is exactly what prometheus-operator hands the Prometheus pod.
+    let rule: serde_yaml::Value = serde_yaml::from_str(include_str!(
+        "../k8s/components/operator-monitoring/prometheusrule.yaml"
+    ))
+    .expect("PrometheusRule parses");
+    let path = std::env::temp_dir().join("lumen-operator-rules-2621.yaml");
+    std::fs::write(
+        &path,
+        serde_yaml::to_string(&rule["spec"]).expect("rules serialize"),
+    )
+    .expect("write rules file");
+
+    let output = Command::new("promtool")
+        .arg("check")
+        .arg("rules")
+        .arg(&path)
+        .output()
+        .expect("run promtool check rules");
+    assert!(
+        output.status.success(),
+        "promtool rejected the operator alert rules:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// #2621 AC4, the half promtool does *not* cover. An alert's `labels` become
+/// labels on the fired alert series, so their keys are Prometheus label names
+/// and must match `[a-zA-Z_][a-zA-Z0-9_]*` — while the surrounding
+/// `metadata.labels` are Kubernetes label keys, where `app.kubernetes.io/name`
+/// is not only legal but conventional. Writing the Kubernetes style in the
+/// alert block is therefore a natural mistake sitting six lines from a place
+/// it is correct.
+///
+/// It was caught by a kind cluster, not by the gate above: promtool 3.x
+/// accepts UTF-8 label names, while prometheus-operator's rule validator
+/// enforces the legacy regex and rejects the whole PrometheusRule — so the
+/// apply fails and *no* alert is installed, including the healthy one. This
+/// test exists because the tool we would reach for cannot see it.
+#[test]
+fn alert_label_keys_are_prometheus_label_names_not_kubernetes_ones() {
+    fn legal(key: &str) -> bool {
+        let mut chars = key.chars();
+        chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    let documents = rendered_operator_documents(&["--monitoring"]);
+    let rule = document_of_kind(&documents, "PrometheusRule");
+
+    // The metadata block is the contrast case: Kubernetes keys belong here.
+    assert!(
+        rule["metadata"]["labels"]
+            .as_mapping()
+            .expect("metadata labels")
+            .keys()
+            .any(|k| k.as_str() == Some("app.kubernetes.io/name")),
+        "metadata should keep the Kubernetes-style labels"
+    );
+
+    let rules = rule["spec"]["groups"][0]["rules"]
+        .as_sequence()
+        .expect("alert rules");
+    assert!(!rules.is_empty());
+    for entry in rules {
+        let labels = entry["labels"].as_mapping().unwrap_or_else(|| {
+            panic!("{:?} has no labels", entry["alert"]);
+        });
+        for key in labels.keys() {
+            let key = key.as_str().expect("label key is a string");
+            assert!(
+                legal(key),
+                "{:?} carries alert label {key:?}, which prometheus-operator \
+                 will reject — the whole PrometheusRule fails to apply, so \
+                 neither alert gets installed",
+                entry["alert"]
+            );
+        }
+        assert!(
+            labels.get("severity").is_some(),
+            "{:?} has no severity",
+            entry["alert"]
+        );
+    }
+}
+
+/// #2621 R6: `--namespace` has to move the *whole* control plane. The shared
+/// `replace_kubernetes_namespace` helper only rewrites `name:`/`namespace:`
+/// keys, so the monitoring layer's other three shapes — the ServiceMonitor's
+/// `namespaceSelector`, the PromQL `namespace="..."` matchers, and the `-n`
+/// in the runbook commands — need explicit handling. Each one fails silently
+/// if missed: a selector that discovers nothing, an expression that can never
+/// fire, and a recipe that runs against the wrong namespace.
+#[test]
+fn relocating_the_operator_relocates_its_monitoring_too() {
+    let documents = rendered_operator_documents(&["--namespace", "lumen-live", "--monitoring"]);
+    let monitor = document_of_kind(&documents, "ServiceMonitor");
+    let rule = document_of_kind(&documents, "PrometheusRule");
+
+    assert_eq!(monitor["metadata"]["namespace"], "lumen-live");
+    assert_eq!(
+        monitor["spec"]["namespaceSelector"]["matchNames"][0], "lumen-live",
+        "a ServiceMonitor pointed at the old namespace discovers no target and reports no error"
+    );
+    assert_eq!(rule["metadata"]["namespace"], "lumen-live");
+
+    for entry in rule["spec"]["groups"][0]["rules"]
+        .as_sequence()
+        .expect("alert rules")
+    {
+        let expr = entry["expr"].as_str().expect("expr");
+        assert!(
+            !expr.contains("lumen-system"),
+            "{:?} still matches the default namespace after relocation, so it can never fire: {expr}",
+            entry["alert"]
+        );
+        let runbook = entry["annotations"]["runbook"].as_str().expect("runbook");
+        assert!(
+            !runbook.contains("-n lumen-system"),
+            "{:?}'s runbook sends the on-call to the wrong namespace",
+            entry["alert"]
+        );
+    }
 }
 // HANDWRITE-END

@@ -181,6 +181,9 @@ spec:
   replicasPerShard: ${REPLICAS_PER_SHARD}
   voterCount: ${VOTER_COUNT}
   logFormat: pretty
+  # #2678: `auth` defaults to `required`, so this local-only rig opts out
+  # explicitly rather than shipping a data plane that never goes Ready.
+  auth: disabled
   serving:
     cpu: "${SERVING_CPU}"
     memory: "${SERVING_MEMORY}"

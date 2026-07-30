@@ -10,12 +10,14 @@ use std::collections::BTreeMap;
 
 use kube::api::ObjectMeta;
 use lumen::operator::crd::{
-    AuthMode, Autoscaling, LogFormat, ReshardPhase, ReshardPolicy, ReshardWorkflowSpec,
-    ServingBootstrapSpec, ServingSpec, ShardMapSpec,
+    AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase, ReshardPolicy,
+    ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
-use lumen::operator::render::render;
+use lumen::operator::render::{prunes, render};
 use lumen::operator::{Lumen, LumenSpec};
+use serde::Deserialize;
 use serde_json::Value;
+use service_k8s::service::PruneTarget;
 
 /// A `Lumen` with metadata set the way a real CR (and owner references) need.
 fn lumen(name: &str, spec: LumenSpec) -> Lumen {
@@ -34,6 +36,7 @@ fn dev_spec() -> LumenSpec {
     LumenSpec {
         image: "lumen:latest".into(),
         image_pull_policy: None,
+        placement: PlacementSpec::default(),
         shard_count: 1,
         shard_map: ShardMapSpec::default(),
         replicas_per_shard: 1,
@@ -54,6 +57,7 @@ fn dev_spec() -> LumenSpec {
         },
         reshard_policy: ReshardPolicy::default(),
         observability: false,
+        network_policy: false,
         admission: None,
         service_account_name: None,
     }
@@ -63,6 +67,7 @@ fn prod_spec() -> LumenSpec {
     LumenSpec {
         image: "registry.example.com/lumen:1.2.3".into(),
         image_pull_policy: Some("Always".into()),
+        placement: PlacementSpec::default(),
         shard_count: 6,
         shard_map: ShardMapSpec::default(),
         replicas_per_shard: 1,
@@ -86,6 +91,7 @@ fn prod_spec() -> LumenSpec {
         },
         reshard_policy: ReshardPolicy::default(),
         observability: true,
+        network_policy: true,
         admission: None,
         service_account_name: None,
     }
@@ -160,6 +166,9 @@ fn dev_renders_full_managed_set() {
     // No observability when the flag is off.
     assert!(!has(&objs, "ServiceMonitor", "search"));
     assert!(!has(&objs, "PrometheusRule", "search"));
+    // Nor isolation: a NetworkPolicy only enforces where the CNI supports it,
+    // so #2603 keeps it opt-in and this fixture leaves it off.
+    assert!(!has(&objs, "NetworkPolicy", "search"));
 
     // Everything lands in the CR's namespace and carries the owner reference.
     for o in &objs {
@@ -360,8 +369,10 @@ fn statefulset_wires_serving_contract_single_member() {
             "unexpected raft env {absent} at replicasPerShard:1; have {names:?}"
         );
     }
-    // auth=off and no log level → those env vars are absent.
-    assert!(!names.contains(&"LUMEN_TOKENS".to_string()));
+    // auth=off and no log level → those env vars are absent. There is no
+    // inline-credential env var to check for any more: #2678 deleted the one
+    // that existed, because a credential in the environment is a credential in
+    // `kubectl describe pod`.
     assert!(!names.contains(&"LUMEN_TOKEN_REGISTRY_FILE".to_string()));
     assert!(!names.contains(&"LUMEN_LOG_LEVEL".to_string()));
     // #1384 AC4: default spec has no shard-map assignments yet, so the
@@ -554,6 +565,38 @@ fn prod_wires_auth_and_observability() {
     // observability=true → monitoring objects present.
     assert!(has(&objs, "ServiceMonitor", "lumen"));
     assert!(has(&objs, "PrometheusRule", "lumen"));
+
+    // networkPolicy=true → isolation present, and the client API stays open to
+    // the whole cluster while the Raft port never appears in a rule sourced
+    // from `namespaceSelector` (#2603). The namespace/ownerReference sweep
+    // below covers this object too, so it is GC'd with the CR.
+    let np = find(&objs, "NetworkPolicy", "lumen");
+    let cluster_facing = np["spec"]["ingress"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["from"][0]["namespaceSelector"].is_object())
+        .expect("a cluster-facing ingress rule");
+    let open_ports: Vec<i64> = cluster_facing["ports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["port"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        open_ports,
+        vec![7373],
+        "only the client API is cluster-open"
+    );
+
+    for o in &objs {
+        assert_eq!(
+            o["metadata"]["namespace"], "acme",
+            "wrong ns for {}",
+            o["kind"]
+        );
+        assert_eq!(o["metadata"]["ownerReferences"][0]["kind"], "Lumen");
+    }
 }
 
 /// #2475: the rendered PrometheusRule covers more than just the
@@ -1098,6 +1141,29 @@ fn raft_ha_renders_serving_statefulset() {
     assert_eq!(vcts[0]["metadata"]["name"], "raft");
 }
 
+/// `crd_yaml()` ships every custom resource as ONE multi-document file, so a
+/// single `kubectl apply -f` installs the whole API. The schema assertions
+/// below are about the `Lumen` CRD specifically, so they must say so: parsing
+/// the file as a single document stopped compiling the moment `LumenFleet`
+/// joined it ("deserializing from YAML containing more than one document is not
+/// supported"), and picking document [0] would silently start asserting against
+/// whichever CRD happens to be serialized first.
+fn crd_document(name: &str) -> serde_yaml::Value {
+    let yaml = lumen::operator::crd_yaml();
+    let mut found = serde_yaml::Deserializer::from_str(&yaml).filter_map(|doc| {
+        let value = serde_yaml::Value::deserialize(doc).expect("each CRD document parses as YAML");
+        (value["metadata"]["name"] == name).then_some(value)
+    });
+    let doc = found
+        .next()
+        .unwrap_or_else(|| panic!("crd_yaml() has no document named `{name}`"));
+    assert!(
+        found.next().is_none(),
+        "crd_yaml() has more than one document named `{name}`"
+    );
+    doc
+}
+
 #[test]
 fn crd_yaml_emits_lumen_definition() {
     let yaml = lumen::operator::crd_yaml();
@@ -1130,10 +1196,130 @@ fn crd_yaml_emits_lumen_definition() {
     }
 }
 
+/// The checked-in `k8s/operator/crd.yaml` is what a kustomize user applies —
+/// the library's `crd_yaml()` is what the tests above assert against. Nothing
+/// held the two together, and they had come apart: at the commit before
+/// #2678's render the file carried the pre-R4 `default: disabled` and no
+/// `x-kubernetes-validations` at all, so R7's mutual-exclusion rule existed in
+/// `crd.rs`, passed its own test, and still shipped a CRD that accepted both
+/// token sources. Every other manifest under `k8s/operator/` is already
+/// `include_str!`-gated; this closes the one that was not.
+#[test]
+fn checked_in_crd_yaml_matches_the_renderer() {
+    let rendered = lumen::operator::crd_yaml();
+    let checked_in = include_str!("../k8s/operator/crd.yaml");
+    assert_eq!(
+        checked_in, rendered,
+        "apps/lumen/k8s/operator/crd.yaml is stale — regenerate with \
+         `lumen k8s crd render --out apps/lumen/k8s/operator/crd.yaml`"
+    );
+}
+
+/// A stateful search workload wants a dedicated node pool — local SSD, high
+/// memory — and until `spec.placement` existed there was no way to ask for one:
+/// the StatefulSet is operator-rendered, so a `kubectl patch` adding a
+/// `nodeSelector` is reverted on the next reconcile.
+///
+/// The second half is the assertion that matters. Naming a pool must not cost
+/// the pod anti-affinity, which is what keeps two replicas of one shard off the
+/// same host. A spec that exposed the whole `affinity` block instead would let a
+/// deployer replace that constraint while asking only for a pool, rendering a
+/// StatefulSet that still reads as correct and loses both replicas of a shard to
+/// the first node failure.
+#[test]
+fn placement_names_a_node_pool_without_replacing_the_anti_affinity() {
+    let mut spec = prod_spec();
+    spec.replicas_per_shard = 3;
+    spec.voter_count = 3;
+    spec.placement = PlacementSpec {
+        node_selector: BTreeMap::from([(
+            "cloud.google.com/gke-nodepool".to_string(),
+            "lumen-ssd".to_string(),
+        )]),
+        tolerations: vec![Toleration {
+            key: Some("dedicated".into()),
+            operator: Some("Equal".into()),
+            value: Some("lumen".into()),
+            effect: Some("NoSchedule".into()),
+            toleration_seconds: None,
+        }],
+    };
+    let objs = render(&lumen("search", spec));
+    let pod = &find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"];
+
+    assert_eq!(
+        pod["nodeSelector"]["cloud.google.com/gke-nodepool"],
+        "lumen-ssd"
+    );
+    assert_eq!(pod["tolerations"][0]["key"], "dedicated");
+    assert_eq!(pod["tolerations"][0]["operator"], "Equal");
+    assert_eq!(pod["tolerations"][0]["value"], "lumen");
+    assert_eq!(pod["tolerations"][0]["effect"], "NoSchedule");
+    // Unset fields are omitted, not rendered as explicit `null`, so the
+    // toleration is byte-identical to what a hand-written pod spec carries and
+    // repeated applies produce no diff.
+    assert!(pod["tolerations"][0].get("tolerationSeconds").is_none());
+
+    assert_eq!(
+        pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+            ["topologyKey"],
+        "kubernetes.io/hostname",
+        "naming a node pool must not cost the one-replica-per-host constraint"
+    );
+}
+
+/// Placement is additive: a CR that does not ask for a pool renders the pod spec
+/// it rendered before, so every existing instance adopts the new operator
+/// without a rolling restart it did not ask for.
+#[test]
+fn no_placement_leaves_the_pod_spec_as_it_was() {
+    let objs = render(&lumen("search", prod_spec()));
+    let pod = &find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"];
+    assert!(pod.get("nodeSelector").is_none(), "{pod}");
+    assert!(pod.get("tolerations").is_none(), "{pod}");
+}
+
+/// A renderer that accepts `spec.placement` is worth nothing if the CRD the API
+/// server validates against prunes it — the exact failure #2678 found in
+/// `x-kubernetes-validations`. `checked_in_crd_yaml_matches_the_renderer` holds
+/// the file to the renderer; this holds the schema to the field.
+#[test]
+fn the_crd_accepts_placement() {
+    let doc = crd_document("lumens.lumen.dev");
+    let placement = &doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]
+        ["properties"]["placement"];
+
+    // `default: {}` is what keeps every CR written before this field valid.
+    assert!(
+        placement["default"].is_mapping(),
+        "placement must default to empty so existing CRs still validate: {placement:?}"
+    );
+    let props = &placement["properties"];
+    assert_eq!(props["nodeSelector"]["type"], "object");
+    assert_eq!(props["nodeSelector"]["additionalProperties"]["type"], "string");
+    assert_eq!(props["tolerations"]["type"], "array");
+    for field in ["key", "operator", "value", "effect", "tolerationSeconds"] {
+        assert!(
+            props["tolerations"]["items"]["properties"]
+                .get(field)
+                .is_some(),
+            "toleration schema must carry `{field}`"
+        );
+    }
+
+    // The whole point of the narrow surface: `affinity` stays operator-owned,
+    // so there is no CR field that can replace the anti-affinity.
+    assert!(
+        doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]
+            .get("affinity")
+            .is_none(),
+        "exposing spec.affinity would let a deployer drop the anti-affinity"
+    );
+}
+
 #[test]
 fn crd_backup_schema_flattens_shared_policy() {
-    let yaml = lumen::operator::crd_yaml();
-    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("CRD parses as YAML");
+    let doc = crd_document("lumens.lumen.dev");
     let backup_props = &doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
         ["spec"]["properties"]["serving"]["properties"]["backup"]["properties"];
     for field in [
@@ -1163,8 +1349,7 @@ fn crd_schema_reshard_recommendation_only_default_matches_runtime_default() {
         "runtime default: recommendationOnly should be true when maxShardBytes is unset"
     );
 
-    let yaml = lumen::operator::crd_yaml();
-    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("valid CRD yaml");
+    let doc = crd_document("lumens.lumen.dev");
     let versions = doc["spec"]["versions"].as_sequence().expect("versions");
     let v1alpha1 = versions
         .iter()
@@ -1175,7 +1360,7 @@ fn crd_schema_reshard_recommendation_only_default_matches_runtime_default() {
     assert_eq!(
         recommendation_only["default"],
         serde_yaml::Value::Bool(true),
-        "declared schema default must match the runtime default: {yaml}"
+        "declared schema default must match the runtime default: {recommendation_only:?}"
     );
 }
 
@@ -1381,6 +1566,81 @@ fn admission_spec_absent_renders_no_admission_env() {
                 "no spec.admission must render no {absent}: {names:?}"
             );
         }
+    }
+}
+
+/// #2603: turning `networkPolicy` off must *remove* the policy, not merely stop
+/// rendering it.
+///
+/// Server-side apply reconciles fields, never object lifetime, so a child that
+/// drops out of `render` keeps running until the CR is deleted. For a
+/// NetworkPolicy that made the field opt-in only: enforcement started and could
+/// never be stopped. `prunes` is the inverse of the render branch, and this
+/// pins both directions.
+#[test]
+fn network_policy_off_prunes_the_policy_render_no_longer_emits() {
+    let mut spec = prod_spec();
+    spec.network_policy = true;
+    let on = lumen("search", spec.clone());
+    assert!(
+        has(&render(&on), "NetworkPolicy", "search"),
+        "networkPolicy=true must render the policy"
+    );
+    assert!(
+        prunes(&on).is_empty(),
+        "a CR that still wants the policy must never nominate it for deletion"
+    );
+
+    spec.network_policy = false;
+    let off = lumen("search", spec);
+    assert!(
+        !has(&render(&off), "NetworkPolicy", "search"),
+        "networkPolicy=false must stop rendering the policy"
+    );
+    assert_eq!(
+        prunes(&off),
+        vec![PruneTarget {
+            api_version: "networking.k8s.io/v1",
+            kind: "NetworkPolicy",
+            name: "search".to_string(),
+        }],
+        "networkPolicy=false must nominate exactly the policy for deletion"
+    );
+}
+
+/// #2603 anti-drift: the pruned name is the rendered name.
+///
+/// The prune target is built from the CR name independently of
+/// `serving_network_policy`, so a future change to how the policy is named
+/// would silently orphan every policy already in a cluster — render would emit
+/// the new name while prune kept deleting the old one, and neither side would
+/// fail to compile. Deriving both from a real render and comparing is what
+/// makes that a test failure instead of a production surprise.
+#[test]
+fn pruned_network_policy_name_matches_the_rendered_one() {
+    for name in ["search", "lumen", "a-much-longer-instance-name"] {
+        let mut spec = prod_spec();
+        spec.network_policy = true;
+        let rendered = render(&lumen(name, spec.clone()));
+        let policy = rendered
+            .iter()
+            .find(|o| o["kind"] == "NetworkPolicy")
+            .expect("networkPolicy=true renders one");
+
+        spec.network_policy = false;
+        let targets = prunes(&lumen(name, spec));
+        assert_eq!(targets.len(), 1);
+        assert_eq!(
+            Value::from(targets[0].name.clone()),
+            policy["metadata"]["name"],
+            "prune must target the name render actually uses"
+        );
+        assert_eq!(
+            Value::from(targets[0].api_version),
+            policy["apiVersion"],
+            "prune must target the apiVersion render actually uses"
+        );
+        assert_eq!(Value::from(targets[0].kind), policy["kind"]);
     }
 }
 // CODEGEN-END

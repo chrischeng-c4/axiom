@@ -19,7 +19,10 @@ Standard GKE operator acceptance evidence for Tape (epic #2434 ordered
 service 2, after Lumen run `0723041614`). The machine-readable capability
 contract currently lives in `apps/tape/README.md` (`cap_path`); this section
 records real-cloud proof runs until the #1848 cap_path relocation lands.
-Harness: `benchmarks/gcp-operator-acceptance` (`ACCEPTANCE_APPS=tape`).
+Harness: `acceptance/gcp` (`ACCEPTANCE_APPS=tape`). Runs recorded below that
+predate #2705 executed the same harness at its former path
+`benchmarks/gcp-operator-acceptance`; the relocation is a rename with no
+behaviour change.
 
 ### Release tape@0.4.11 (2026-07-25, published — binaries + digest-pinned multi-arch GHCR image)
 

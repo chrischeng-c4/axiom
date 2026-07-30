@@ -35,7 +35,7 @@ Public API manifest for `apps/lumen/src/config.rs` generated from AST during Sco
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Runtime config — sourced from env so it can be wired through the K8s
@@ -113,6 +113,15 @@ impl ClusterConfig {
 
     pub fn is_voter(&self) -> Result<bool> {
         raft_runtime::cluster::ClusterDims::from(self.clone()).is_voter()
+    }
+
+    /// This pod's StatefulSet name — the peer-DNS prefix. Delegated for the
+    /// same reason as the ordinal math (#1002): one derivation, so
+    /// `RaftGroup`'s peer names cannot drift from `ClusterTopology`'s.
+    pub fn pod_prefix(&self) -> Result<String> {
+        raft_runtime::cluster::ClusterDims::from(self.clone())
+            .pod_prefix()
+            .map(str::to_string)
     }
 }
 
@@ -768,7 +777,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

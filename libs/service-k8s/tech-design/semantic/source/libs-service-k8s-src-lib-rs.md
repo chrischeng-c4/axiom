@@ -26,6 +26,8 @@ Public API manifest for `libs/service-k8s/src/lib.rs` captured during libs codeg
 | `llm` | libs/service-k8s/src/lib.rs | module | pub | 17 | pub mod llm; |
 | `render` | libs/service-k8s/src/lib.rs | module | pub | 18 | pub mod render; |
 | `resize` | libs/service-k8s/src/lib.rs | module | pub | 19 | pub mod resize; |
+| `metrics` | libs/service-k8s/src/lib.rs | module | pub | — | pub mod metrics; |
+| `ControllerMetrics` | libs/service-k8s/src/lib.rs | re-export | pub | — | pub use metrics::ControllerMetrics; |
 | `service` | libs/service-k8s/src/lib.rs | module | pub | 20 | pub mod service; |
 | `run` | libs/service-k8s/src/lib.rs | re-export | pub | 22 | pub use controller::{run, Error}; |
 | `Error` | libs/service-k8s/src/lib.rs | re-export | pub | 22 | pub use controller::{run, Error}; |
@@ -41,7 +43,9 @@ Public API manifest for `libs/service-k8s/src/lib.rs` captured during libs codeg
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-//! `service-k8s` — the ecosystem's shared k8s operator scaffold.
+// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
+//! `service-k8s` — the ecosystem's shared Kubernetes operator scaffold.
 //!
 //! Every axiom service that ships a CRD reconciles the same way: a controller
 //! that watches the CR cluster-wide, server-side-applies the rendered child
@@ -56,8 +60,10 @@ Public API manifest for `libs/service-k8s/src/lib.rs` captured during libs codeg
 //! `service-backup` + `cli-std` + this).
 
 pub mod controller;
+pub mod crd;
 pub mod lease;
 pub mod llm;
+pub mod metrics;
 pub mod render;
 pub mod resize;
 pub mod service;
@@ -65,13 +71,18 @@ pub mod stateful;
 
 pub use controller::{run, Error};
 pub use lease::Election;
-pub use service::{ClusterSpec, ManagedService, ReadinessTarget, ReadyFacts, ResourceSpec};
+pub use metrics::ControllerMetrics;
+pub use service::{
+    ClusterSpec, Condition, ConditionFact, ConditionStatus, ManagedService, ReadinessTarget,
+    ReadyFacts, ResourceSpec,
+};
 pub use stateful::{
     plan_replica_layer, plan_shard_split, ObservedShardUsage, ObservedUtilization,
     ReplicaLayerError, ReplicaLayerPlan, ReplicaLayerPolicy, ShardSplitError, ShardSplitPlan,
     ShardSplitPolicy, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST,
     DEFAULT_SHARD_SPLIT_THRESHOLD_BYTES,
 };
+// CODEGEN-END
 ````
 
 ## Changes

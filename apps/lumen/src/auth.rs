@@ -15,13 +15,23 @@
 //!
 //! - `LUMEN_AUTH=off|required` — default `off` (dev). `required` rejects
 //!   requests without a bearer token.
-//! - `LUMEN_TOKEN_REGISTRY_FILE` — production registry file mounted from a
-//!   Kubernetes Secret / Secret Manager projection. JSON: `{ "<token>":
-//!   { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`.
-//! - `LUMEN_TOKENS` — legacy inline JSON with the same shape:
-//!   `{ "<token>": { "subject": "...", "roles":
-//!   { "<collection_id>|*": "read|write|admin" } } }`. The wildcard
-//!   collection `*` grants the role on every collection.
+//! - `LUMEN_TOKEN_REGISTRY_FILE` — the registry file, mounted from a
+//!   Kubernetes Secret or a Secret Manager CSI projection. The operator sets
+//!   it from `spec.tokensSecret` or `spec.tokensSecretProviderClass`; it is
+//!   the *only* way to supply credentials, because a credential passed inline
+//!   in the environment is a credential in `kubectl describe pod`. JSON, with
+//!   two disjoint namespaces (#2678):
+//!
+//!   ```json
+//!   { "tokens":     { "<secret>":  { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } },
+//!     "identities": { "<email>":   { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } } }
+//!   ```
+//!
+//!   `tokens` is keyed by the bearer secret; `identities` by a Google email an
+//!   identity provider has verified. They never share a key namespace, so a
+//!   bearer secret spelled like an email cannot reach an identity's grants.
+//!   A flat `{ "<secret>": {...} }` document still parses as `tokens`. The
+//!   wildcard collection `*` grants the role on every collection.
 //!
 //! ## Role precedence
 //!
@@ -33,7 +43,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
@@ -41,7 +51,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use service_auth::{
-    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, AuthEvent, AuthEventSink,
+    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, AuthEvent, AuthEventSink, Registry,
     ReloadableRoleMapVerifier, RoleMapDenied, TracingAuthEventSink, Verifier,
 };
 
@@ -54,13 +64,12 @@ use crate::types::ApiError;
 /// The serving adapter watches this exact file after successful startup so a
 /// validated replacement updates the live request verifier without a restart.
 pub const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
-const LEGACY_TOKENS_ENV: &str = "LUMEN_TOKENS";
 
 #[derive(Debug, Clone)]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub struct AuthConfig {
     pub required: bool,
-    pub tokens: HashMap<String, TokenClaims>,
+    pub registry: Registry,
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
@@ -68,7 +77,15 @@ impl AuthConfig {
     pub fn open() -> Self {
         Self {
             required: false,
-            tokens: HashMap::new(),
+            registry: Registry::default(),
+        }
+    }
+
+    /// A bearer-only config, the shape most tests want.
+    pub fn with_tokens(required: bool, tokens: HashMap<String, TokenClaims>) -> Self {
+        Self {
+            required,
+            registry: Registry::from_tokens(tokens),
         }
     }
 
@@ -84,14 +101,24 @@ impl AuthConfig {
             Err(std::env::VarError::NotPresent) => false,
             Err(e) => bail!("LUMEN_AUTH must be valid UTF-8: {e}"),
         };
-        let tokens = service_auth::load_registry(
+        // The env var is what this process reads, but it is not what the
+        // operator set — naming only `LUMEN_TOKEN_REGISTRY_FILE` sends whoever
+        // reads this line looking for an env var they cannot edit. The two CR
+        // fields that produce it are named here so the message points at
+        // something actionable (#2678, R5).
+        let registry = service_auth::load_registry_file(
             required,
             TOKEN_REGISTRY_FILE_ENV,
             std::env::var(TOKEN_REGISTRY_FILE_ENV).ok().as_deref(),
-            LEGACY_TOKENS_ENV,
-            std::env::var(LEGACY_TOKENS_ENV).ok().as_deref(),
-        )?;
-        Ok(Self { required, tokens })
+        )
+        .with_context(|| {
+            format!(
+                "{TOKEN_REGISTRY_FILE_ENV} comes from the Lumen resource's `spec.tokensSecret` \
+                 (a Kubernetes Secret) or `spec.tokensSecretProviderClass` (a Secret Manager CSI \
+                 projection); set exactly one of them when `spec.auth: required`"
+            )
+        })?;
+        Ok(Self { required, registry })
     }
 }
 
@@ -104,9 +131,9 @@ pub struct LumenVerifier(Arc<ReloadableRoleMapVerifier>);
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
 impl LumenVerifier {
     pub fn new(cfg: Arc<AuthConfig>) -> Self {
-        Self(Arc::new(ReloadableRoleMapVerifier::with_sink(
+        Self(Arc::new(ReloadableRoleMapVerifier::with_registry_and_sink(
             cfg.required,
-            cfg.tokens.clone(),
+            cfg.registry.clone(),
             Arc::new(TracingAuthEventSink),
         )))
     }
@@ -119,9 +146,9 @@ impl LumenVerifier {
     /// production caller; test call sites keep using `Self::new`, which
     /// has no metrics side effect.
     pub fn with_metrics(cfg: Arc<AuthConfig>, engine: Arc<Engine>) -> Self {
-        Self(Arc::new(ReloadableRoleMapVerifier::with_sink(
+        Self(Arc::new(ReloadableRoleMapVerifier::with_registry_and_sink(
             cfg.required,
-            cfg.tokens.clone(),
+            cfg.registry.clone(),
             Arc::new(LumenAuthEventSink::new(engine)),
         )))
     }
@@ -289,7 +316,6 @@ mod tests {
         unsafe {
             std::env::remove_var("LUMEN_AUTH");
             std::env::remove_var(TOKEN_REGISTRY_FILE_ENV);
-            std::env::remove_var(LEGACY_TOKENS_ENV);
         }
     }
 
@@ -297,26 +323,26 @@ mod tests {
     fn auth_config_open_has_no_tokens() {
         let cfg = AuthConfig::open();
         assert!(!cfg.required);
-        assert!(cfg.tokens.is_empty());
-        assert!(cfg.tokens.get("anything").is_none());
+        assert!(cfg.registry.is_empty());
+        assert!(cfg.registry.tokens.get("anything").is_none());
     }
 
     #[test]
     fn auth_config_construction_holds_tokens_by_map_key() {
-        let cfg = AuthConfig {
-            required: true,
-            tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
-        };
-        assert!(cfg.tokens.get("abc").is_some());
-        assert!(cfg.tokens.get("xyz").is_none());
+        let cfg = AuthConfig::with_tokens(
+            true,
+            HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
+        );
+        assert!(cfg.registry.tokens.get("abc").is_some());
+        assert!(cfg.registry.tokens.get("xyz").is_none());
     }
 
     #[test]
     fn lumen_verifier_delegates_to_shared_reloadable_role_map_verifier() {
-        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
-            required: true,
-            tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
-        }));
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig::with_tokens(
+            true,
+            HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
+        )));
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::AUTHORIZATION,
@@ -353,10 +379,10 @@ mod tests {
 
     #[test]
     fn registry_handle_reloads_the_live_lumen_verifier() {
-        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
-            required: true,
-            tokens: HashMap::from([("old".to_string(), token(&[("u", Role::Read)]))]),
-        }));
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig::with_tokens(
+            true,
+            HashMap::from([("old".to_string(), token(&[("u", Role::Read)]))]),
+        )));
         verifier
             .registry_verifier()
             .reload_json(r#"{"rotated":{"subject":"next","roles":{"u":"admin"}}}"#)
@@ -374,10 +400,10 @@ mod tests {
 
     #[test]
     fn auth_context_ensure_forbidden_maps_resource_to_collection_id() {
-        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
-            required: true,
-            tokens: HashMap::from([("abc".to_string(), token(&[("users", Role::Read)]))]),
-        }));
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig::with_tokens(
+            true,
+            HashMap::from([("abc".to_string(), token(&[("users", Role::Read)]))]),
+        )));
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::AUTHORIZATION,
@@ -412,7 +438,7 @@ mod tests {
         clear_auth_env();
         let cfg = AuthConfig::from_env().unwrap();
         assert!(!cfg.required);
-        assert!(cfg.tokens.is_empty());
+        assert!(cfg.registry.is_empty());
     }
 
     #[test]
@@ -429,46 +455,62 @@ mod tests {
         unsafe {
             std::env::set_var("LUMEN_AUTH", "required");
             std::env::set_var(TOKEN_REGISTRY_FILE_ENV, &path);
-            std::env::set_var(
-                LEGACY_TOKENS_ENV,
-                r#"{"env-token": {"subject": "env", "roles": {"*": "admin"}}}"#,
-            );
         }
         let cfg = AuthConfig::from_env().unwrap();
         assert!(cfg.required);
-        assert_eq!(cfg.tokens.len(), 1);
-        assert_eq!(cfg.tokens.get("file-token").unwrap().subject, "alice");
-        assert!(cfg.tokens.get("env-token").is_none());
+        assert_eq!(cfg.registry.len(), 1);
+        assert_eq!(
+            cfg.registry.tokens.get("file-token").unwrap().subject,
+            "alice"
+        );
         clear_auth_env();
     }
 
+    /// #2678: the registry file is the only credential source, and it carries
+    /// both namespaces. Identity entries survive the load rather than being
+    /// dropped as unresolvable, because lumen has a Google verifier for them.
     #[test]
-    fn auth_config_from_env_with_tokens() {
+    fn auth_config_from_env_loads_both_namespaces() {
         let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_auth_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token-registry.json");
+        std::fs::write(
+            &path,
+            r#"{"tokens":{"s3cret":{"subject":"svc","roles":{"u":"write"}}},
+                "identities":{"dev@example.com":{"subject":"dev","roles":{"u":"read"}}}}"#,
+        )
+        .unwrap();
         unsafe {
             std::env::set_var("LUMEN_AUTH", "required");
-            std::env::set_var(
-                LEGACY_TOKENS_ENV,
-                r#"{"t1": {"subject": "alice", "roles": {"u": "write"}}}"#,
-            );
+            std::env::set_var(TOKEN_REGISTRY_FILE_ENV, &path);
         }
         let cfg = AuthConfig::from_env().unwrap();
-        assert!(cfg.required);
-        assert_eq!(cfg.tokens.len(), 1);
-        assert_eq!(cfg.tokens.get("t1").unwrap().subject, "alice");
+        assert_eq!(cfg.registry.tokens.len(), 1);
+        assert_eq!(cfg.registry.identities.len(), 1);
+        // The namespaces stay disjoint all the way through lumen's loader.
+        assert!(cfg.registry.tokens.get("dev@example.com").is_none());
         clear_auth_env();
     }
 
+    /// R5: `spec.auth: required` with neither token source set must fail
+    /// startup naming the *CR fields* an operator can act on, not only the
+    /// env var the operator never sets by hand.
     #[test]
-    fn auth_config_required_without_tokens_fails_fast() {
+    fn auth_config_required_without_tokens_fails_fast_naming_the_cr_fields() {
         let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_auth_env();
         unsafe {
             std::env::set_var("LUMEN_AUTH", "required");
         }
         let err = AuthConfig::from_env().unwrap_err();
-        assert!(err.to_string().contains(TOKEN_REGISTRY_FILE_ENV));
+        let message = format!("{err:#}");
+        assert!(message.contains(TOKEN_REGISTRY_FILE_ENV), "{message}");
+        assert!(message.contains("spec.tokensSecret"), "{message}");
+        assert!(
+            message.contains("spec.tokensSecretProviderClass"),
+            "{message}"
+        );
         clear_auth_env();
     }
 
@@ -492,10 +534,10 @@ mod tests {
     fn with_metrics_records_reload_failures_and_successes_on_engine() {
         let engine = Arc::new(crate::storage::Engine::new());
         let verifier = LumenVerifier::with_metrics(
-            Arc::new(AuthConfig {
-                required: true,
-                tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
-            }),
+            Arc::new(AuthConfig::with_tokens(
+                true,
+                HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
+            )),
             engine.clone(),
         );
         assert_eq!(
@@ -523,11 +565,14 @@ mod tests {
     fn auth_config_from_env_rejects_bad_json() {
         let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_auth_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token-registry.json");
+        std::fs::write(&path, "not-json").unwrap();
         unsafe {
-            std::env::set_var(LEGACY_TOKENS_ENV, "not-json");
+            std::env::set_var(TOKEN_REGISTRY_FILE_ENV, &path);
         }
         let err = AuthConfig::from_env().unwrap_err();
-        assert!(err.to_string().contains(LEGACY_TOKENS_ENV));
+        assert!(err.to_string().contains(TOKEN_REGISTRY_FILE_ENV));
         clear_auth_env();
     }
 }

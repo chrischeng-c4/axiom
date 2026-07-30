@@ -27,13 +27,13 @@ fn server() -> TestServer {
 
 fn auth_server(tokens: Vec<(&str, TokenClaims)>) -> TestServer {
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig {
-        required: true,
-        tokens: tokens
+    let cfg = AuthConfig::with_tokens(
+        true,
+        tokens
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect(),
-    };
+    );
     let app = router(AppState::new(engine, Arc::new(cfg)));
     TestServer::new(app).expect("test server")
 }

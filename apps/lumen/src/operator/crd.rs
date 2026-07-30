@@ -32,6 +32,10 @@ use serde::{Deserialize, Serialize};
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Ready","type":"integer","jsonPath":".status.servingReadyReplicas"}"#,
     printcolumn = r#"{"name":"Shards","type":"integer","jsonPath":".status.shardCount"}"#,
+    // #2601: the `Ready` condition's status. Named `Converged` because the
+    // `Ready` column above is already the ready *pod count*; renaming that
+    // would change what every existing operator's `kubectl get lumen` prints.
+    printcolumn = r#"{"name":"Converged","type":"string","jsonPath":".status.conditions[?(@.type==\"Ready\")].status"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
 #[serde(rename_all = "camelCase")]
@@ -77,18 +81,32 @@ pub struct LumenSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Auth mode: `off` (dev) or `required` (token registry supplied via
-    /// `tokensSecret` or `tokensSecretProviderClass`).
+    /// Auth mode: `required` (the default — supply a token registry via
+    /// `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+    ///
+    /// `required` is the default because the other way round, forgetting this
+    /// field ships an open cluster and nothing says so; forgetting it now
+    /// fails startup with a message naming the field to set. `disabled`
+    /// remains a one-word opt-out for local development (#2678, R4).
+    ///
+    /// Spelled `disabled`, not `off`: YAML 1.1 reads a bare `off` as the
+    /// boolean `false`. (`off` is what the serving process's own `LUMEN_AUTH`
+    /// env var takes — the two spellings are not interchangeable.)
     #[serde(default)]
     pub auth: AuthMode,
 
     /// Name of a Secret whose `token-registry.json` key is mounted at
     /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
     /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
-    /// `token-registry.json` is a JSON object of
-    /// `{ "<token>": { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`.
-    /// Ignored when `auth: off`. See also `tokensSecretProviderClass` for a
-    /// Secret-free alternative; if both are set, this field wins.
+    /// `token-registry.json` is a JSON object with two disjoint namespaces —
+    /// `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`,
+    /// each claims object being
+    /// `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }`
+    /// — and a flat `{ "<secret>": {…} }` document still reads as `tokens`.
+    /// Ignored when `auth: disabled`. See also `tokensSecretProviderClass`
+    /// for a Secret-free alternative; setting **both** is rejected by the CRD
+    /// schema (#2678, R7), because silently preferring one leaves an operator
+    /// reading credentials that are not the ones being served.
     #[serde(default)]
     pub tokens_secret: Option<String>,
 
@@ -100,9 +118,10 @@ pub struct LumenSpec {
     /// materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The
     /// referenced `SecretProviderClass` must project a file named
     /// `token-registry.json` (same schema as `tokensSecret`'s Secret key).
-    /// Ignored when `auth: off`. Mutual exclusion with `tokensSecret` is by
-    /// precedence, not schema enforcement: if `tokensSecret` is also set, it
-    /// wins (backward compatible) and this field is ignored. Rotation
+    /// Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is
+    /// enforced by the CRD schema (`x-kubernetes-validations`), so setting
+    /// both is rejected at `kubectl apply` rather than resolved by a
+    /// precedence rule nothing surfaces (#2678, R7). Rotation
     /// caveat: lumen polls the mounted registry file every 15s and hot-swaps
     /// the live verifier on change — no rolling restart needed on lumen's
     /// side. The remaining caveat is entirely at the CSI layer: a
@@ -133,6 +152,10 @@ pub struct LumenSpec {
     #[serde(default)]
     pub serving: ServingSpec,
 
+    /// Which nodes the serving pods may run on.
+    #[serde(default)]
+    pub placement: PlacementSpec,
+
     /// Operator-owned storage reshard policy. HPA never changes storage
     /// ownership; this policy only prepares/recommends explicit shard topology
     /// changes.
@@ -143,6 +166,21 @@ pub struct LumenSpec {
     /// CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
     #[serde(default)]
     pub observability: bool,
+
+    /// Emit a NetworkPolicy isolating this instance (#2603): the client API
+    /// (`7373`) stays reachable from any namespace, while the Raft port
+    /// (`7374`) is reachable only from this instance's own pods, and egress is
+    /// narrowed to DNS, TLS, and sibling Raft.
+    ///
+    /// Opt-in rather than default-on for one reason: a NetworkPolicy is inert
+    /// unless the cluster runs a CNI that enforces it. On GKE that means
+    /// Dataplane V2 or the Calico add-on; on a plain kind cluster (default
+    /// kindnet) the object applies cleanly and enforces nothing, which would
+    /// otherwise read as "isolation is on" when it is not. Defaulting it on
+    /// would also break any cluster whose scrapers or clients live outside the
+    /// pod network, with no signal beyond dropped packets.
+    #[serde(default)]
+    pub network_policy: bool,
 
     /// Optional in-process request admission (bounded token-bucket rate
     /// limiting per endpoint class), mirroring the `LUMEN_ADMISSION_*` env
@@ -184,6 +222,74 @@ pub struct AdmissionSpec {
     /// `AdmissionConfig::DEFAULT_MAX_KEYS` (1024).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_keys: Option<u32>,
+}
+
+/// Where the serving pods are allowed to run.
+///
+/// Deliberately narrower than Kubernetes' `affinity`: `nodeSelector` and
+/// `tolerations` together express "which node pool" completely, while the
+/// operator keeps sole ownership of `podAntiAffinity` — the constraint that
+/// keeps two replicas of one shard off the same host. Exposing the whole
+/// `affinity` block would let a deployer replace that constraint while asking
+/// only for a node pool, silently degrading a raft-HA instance into two copies
+/// on one machine; the rendered StatefulSet would still look correct, and the
+/// first node failure would take both replicas of the shard.
+///
+/// A dedicated node pool for a stateful search workload is not an exotic
+/// request — local SSD and high-memory pools are the normal shape on GKE — and
+/// until this existed there was no way to ask for one: the StatefulSet is
+/// operator-rendered, so a manual `kubectl patch` is reverted on the next
+/// reconcile.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct PlacementSpec {
+    /// `spec.template.spec.nodeSelector` for the serving pods, e.g.
+    /// `{ "cloud.google.com/gke-nodepool": "lumen-ssd" }`. Empty means the
+    /// scheduler picks from every node, as before.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_selector: BTreeMap<String, String>,
+
+    /// Taint tolerations for the serving pods, so a dedicated node pool can
+    /// carry a taint that keeps every other workload off it. Note this covers
+    /// the serving StatefulSet only: the optional backup CronJob is a
+    /// short-lived pod that reads over the network and is left schedulable on
+    /// the cluster's general pool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tolerations: Vec<Toleration>,
+}
+
+/// One entry of [`PlacementSpec::tolerations`], mirroring the Kubernetes
+/// `v1.Toleration` fields.
+///
+/// Declared here rather than reused from `k8s-openapi` because the CRD schema
+/// is derived with `schemars`, which `k8s-openapi`'s types do not implement.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct Toleration {
+    /// The taint key this tolerates. Empty with `operator: Exists` tolerates
+    /// every taint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+
+    /// `Exists` or `Equal`. Unset means `Equal` (the Kubernetes default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator: Option<String>,
+
+    /// The taint value to match. Only meaningful with `operator: Equal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+
+    /// `NoSchedule`, `PreferNoSchedule`, or `NoExecute`. Unset tolerates every
+    /// effect of the matching taint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+
+    /// How long the pod stays bound after the node gains a matching taint.
+    /// Only meaningful with `effect: NoExecute`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toleration_seconds: Option<i64>,
 }
 
 /// Versioned virtual-bucket map control-plane metadata.
@@ -376,14 +482,17 @@ impl LogFormat {
 #[serde(rename_all = "lowercase")]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub enum AuthMode {
-    /// Open API (dev / trusted network). Serialized as `disabled` — NOT `off`,
-    /// which YAML 1.1 (kubectl / go-yaml) would parse as the boolean `false`
-    /// and corrupt the CRD enum/default.
-    #[default]
+    /// Open API (dev / trusted network) — an explicit opt-out, never the
+    /// default (#2678, R4). Serialized as `disabled` — NOT `off`, which YAML
+    /// 1.1 (kubectl / go-yaml) would parse as the boolean `false` and corrupt
+    /// the CRD enum/default.
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token required; the token registry file comes from
-    /// `tokensSecret` or `tokensSecretProviderClass`.
+    /// Bearer-token or verified-identity required; the registry file comes
+    /// from `tokensSecret` or `tokensSecretProviderClass`. The default, so a
+    /// `Lumen` that omits `spec.auth` fails startup asking for credentials
+    /// instead of serving an open API silently.
+    #[default]
     Required,
 }
 
@@ -500,7 +609,7 @@ pub struct ServingBackupSpec {
     /// Name of a Secret whose `token` key holds a bearer token with
     /// `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`.
     /// Needed when `spec.auth: required`; ignored (the admin API needs no
-    /// token) when `spec.auth: off`.
+    /// token) when `spec.auth: disabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_token_secret: Option<String>,
 }
@@ -565,6 +674,16 @@ pub struct LumenStatus {
     /// Last human-readable reconcile message.
     #[serde(default)]
     pub message: String,
+    /// Kubernetes-convention convergence conditions (#2601): `Ready`,
+    /// `Progressing`, `ReshardInProgress`. This is the surface
+    /// `kubectl wait --for=condition=Ready`, Argo CD health assessment, and Flux
+    /// readiness gates read; `phase` and `reshard.blockingConditions` are
+    /// unchanged and still populated, so nothing already consuming them breaks.
+    ///
+    /// `lastTransitionTime` is stamped by the reconcile loop, not here — see
+    /// [`super::reconcile`]'s no-I/O `status_patch` contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<service_k8s::Condition>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -628,6 +747,27 @@ pub struct LumenReshardStatus {
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl LumenSpec {
+    /// Cross-field invariants the structural schema cannot express (#2678, R7).
+    ///
+    /// The CRD carries the same rule as CEL, so a fresh cluster rejects this at
+    /// `kubectl apply`. This is the second line: a cluster still running an
+    /// older CRD, or an object written before the rule existed, must not
+    /// silently serve one of two credential sets. Naming **both** fields
+    /// matters — an operator who set `tokensSecretProviderClass` and got a
+    /// message about `tokensSecret` has no idea what to remove.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.tokens_secret.is_some() && self.tokens_secret_provider_class.is_some() {
+            return Err(format!(
+                "spec.tokensSecret (`{}`) and spec.tokensSecretProviderClass (`{}`) are both set; \
+                 remove one — with both present there is no way to tell which registry is \
+                 actually being served",
+                self.tokens_secret.as_deref().unwrap_or_default(),
+                self.tokens_secret_provider_class.as_deref().unwrap_or_default(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn storage_pod_count(&self) -> i32 {
         if self.replicas_per_shard > 1 {
             (self.shard_count * self.replicas_per_shard) as i32

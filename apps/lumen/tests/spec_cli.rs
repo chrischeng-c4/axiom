@@ -179,15 +179,52 @@ fn json_schema_emits_token_registry_operational_schema() {
         schema["type"], "object",
         "TokenRegistry is an object schema"
     );
+
+    // #2678: the published schema describes two disjoint namespaces, plus the
+    // pre-#2678 flat form it still accepts. Before, `additionalProperties` sat
+    // at the top level and described a claims object — a schema that now
+    // rejects the very shape the product recommends.
+    let branches = schema["anyOf"]
+        .as_array()
+        .expect("TokenRegistry publishes its accepted shapes as `anyOf`");
+    assert_eq!(branches.len(), 2, "sectioned + flat: {schema}");
+    let sectioned = &branches[0];
+    for half in ["tokens", "identities"] {
+        assert_eq!(
+            sectioned["properties"][half]["additionalProperties"]["properties"]["roles"]
+                ["additionalProperties"]["enum"],
+            json!(["read", "write", "admin"]),
+            "`{half}` publishes the exact role enum"
+        );
+    }
     assert_eq!(
-        schema["additionalProperties"]["properties"]["roles"]["additionalProperties"]["enum"],
+        branches[1]["additionalProperties"]["properties"]["roles"]["additionalProperties"]["enum"],
         json!(["read", "write", "admin"]),
-        "TokenRegistry publishes the exact role enum"
+        "the flat compatibility shape publishes the exact role enum"
     );
-    assert!(
-        schema["examples"][0]["admin-token"]["roles"]["*"] == "admin",
+
+    assert_eq!(
+        schema["examples"][0]["tokens"]["admin-token"]["roles"]["*"],
+        "admin",
         "TokenRegistry example includes wildcard admin role: {schema}"
     );
+
+    // The oracle that matters: every published example has to be something the
+    // real loader accepts. A schema example the product rejects is worse than
+    // no example — an integrator copies it and gets a pod that never starts.
+    for (i, example) in schema["examples"]
+        .as_array()
+        .expect("TokenRegistry publishes examples")
+        .iter()
+        .enumerate()
+    {
+        let parsed = service_auth::Registry::parse(&example.to_string())
+            .unwrap_or_else(|e| panic!("example {i} is rejected by the real loader: {e}\n{example}"));
+        assert!(
+            !parsed.is_empty(),
+            "example {i} parses to an empty registry: {example}"
+        );
+    }
 }
 
 #[test]

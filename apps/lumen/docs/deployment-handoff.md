@@ -145,10 +145,27 @@ kubectl apply -f /tmp/lumen-k8s/lumen.yaml             # 3. CR last
 | Sharding/storage | `SHARD_COUNT`, `LUMEN_DATA_DIR`, `LUMEN_PERSISTENCE` (cbor\|segment), `LUMEN_SNAPSHOT_SECS` | `1`, unset, `cbor`, `300` |
 | Shutdown | `LUMEN_GRACE_SECS` | `30` |
 | Tracing | `LUMEN_OTLP_ENDPOINT` (OTLP/gRPC; traces off when unset) | unset |
-| **Auth** | `LUMEN_AUTH` (`off`\|`required`), `LUMEN_TOKENS` (JSON: `{token:{subject,roles:{collection|*:read\|write\|admin}}}`) | `off`, empty |
+| **Auth** | `LUMEN_AUTH` (`off`\|`required`), `LUMEN_TOKEN_REGISTRY_FILE` (path to the credential registry JSON) | `off`, unset |
 
-> **Production:** set `LUMEN_AUTH=required` + `LUMEN_TOKENS`, `LUMEN_LOG_FORMAT=json`,
-> and an OTLP endpoint. The prod overlay already sets auth required.
+The registry file holds two disjoint namespaces — `tokens` keys **are** bearer
+secrets, `identities` keys are provider-verified emails, and a presented string
+is only ever matched against `tokens` (#2678):
+
+```json
+{
+  "tokens":     { "s3cret": { "subject": "ingest", "roles": { "*": "write" } } },
+  "identities": { "dev@example.com": { "subject": "dev", "roles": { "products": "read" } } }
+}
+```
+
+A flat `{secret: {subject, roles}}` document is still read as bearer secrets only.
+
+> **Production:** set `LUMEN_AUTH=required` + `LUMEN_TOKEN_REGISTRY_FILE`,
+> `LUMEN_LOG_FORMAT=json`, and an OTLP endpoint. Under the operator you set
+> `spec.auth: required` (the CRD default) plus exactly one of `spec.tokensSecret`
+> or `spec.tokensSecretProviderClass`, and the registry file path is wired for
+> you. There is no inline-credential env var: a credential passed in the
+> environment is a credential in `kubectl describe pod`.
 
 ---
 

@@ -57,7 +57,7 @@ agent integration remain first-class domain roots.
 | Competitive Search Feature Parity | - | implemented | verified | conformance | ready | mandatory baseline: search-side replacement breadth vs pg/OpenSearch/MongoDB |
 | Competitive Search Performance | - | implemented | verified | conformance | ready | mandatory baseline: Lumen-only perf regression passes in vat against retained pg/OpenSearch-calibrated floors |
 | Long-Running Stability | - | implemented | verified | dogfood | ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
-| Security Hardening | - | implemented | verified | negative | ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist |
+| Security Hardening | - | implemented | verified | negative | ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist, plus disjoint bearer-secret and verified-identity registry namespaces, auth required unless a CR opts out, and one token-registry source enforced at apply time |
 | HTTP/2 API List | 4143 | implemented | verified | conformance | ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
 | Standard Operational Endpoints | 1166 | implemented | verified | conformance | ready | mandatory baseline: one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` surface plus offline `lumen spec` evidence |
 | EC Gates Configured | 1165 | implemented | verified | conformance | ready | mandatory baseline: aw.toml, vat runners, claim tests, and external-contract claim closure stay wired together |
@@ -73,8 +73,8 @@ agent integration remain first-class domain roots.
 | Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
 | Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Primary Replicas | - | implemented | verified | conformance, dogfood | ready | trait baseline: per-shard raft group — leader-applied writes, `replicasPerShard`/`voterCount` follower/voter selection, replica-loss and failover survival |
-| Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
-| Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator; current GKE Lumen-only operator acceptance is recorded below |
+| Observability | - | implemented | verified | conformance, dogfood | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP, plus control-plane self-observability — the operator's own metrics, Events, scrape target, and absence/error-rate alerts |
+| Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator, with `status.conditions[]` as the convergence API, a two-replica leader-elected operator behind a PDB, and an opt-in default-deny network-policy component; current GKE Lumen-only operator acceptance is recorded below |
 | Stateful Service Workload | #2144 | implemented | verified | smoke | ready | mandatory stateful profile: active TD verification linkage #2144 composes durable index/checkpoint state, PVC identity, raft topology, backup/bootstrap, observability, security, and StatefulSet lifecycle without duplicating those domain roots; original projection #1553 remains closed historical provenance |
 | Developer & Agent Experience | 4143 | implemented | verified | conformance | ready | domain: installed binary teaches offline (spec/llm topics, committed OpenAPI contract) and interactive (connect/query) integration, with client-visible contracts test-asserted against drift |
 | Agent Task Navigation | 1683 | verified | passing | conformance | ready | non-domain DX baseline: typed offline task manifest and runbooks generated from the DX contract, runtime field capabilities, and canonical OpenAPI surface |
@@ -229,7 +229,7 @@ Gate Inventory:
 
 ID: security-hardening
 Type: SecurityTool
-Surfaces: HTTP: lumen API - bearer-token auth, RBAC, and query boundary.; Peer transport: rustls/mTLS config - long-running cluster transport security.; Guard: future negative security inventory.
+Surfaces: HTTP: lumen API - bearer-token auth, RBAC, and query boundary.; HTTP: `Authorization: Bearer` resolved against the registry's `tokens` namespace and a provider-verified identity against its disjoint `identities` namespace (#2678).; Peer transport: rustls/mTLS config - long-running cluster transport security.; CRD: `spec.auth` defaults to `required`, and naming both `tokensSecret` and `tokensSecretProviderClass` is rejected at `kubectl apply` by an `x-kubernetes-validations` rule rather than resolved by a silent precedence.; Guard: future negative security inventory.
 EC Dimensions: security: `guard` - auth/RBAC/query-safety/security findings gate; behavior: `cargo test -p lumen --test auth_e2e --test authz_matrix_e2e` - security behavior conformance
 Root WI: -
 Status: verified
@@ -237,9 +237,15 @@ Required Verification: conformance, negative
 Promise:
 Keep the long-running search service safe by enforcing API auth/RBAC, preserving
 collection/result confidentiality, rejecting unsafe query shapes, and keeping
-TLS/mTLS transport configuration testable.
+TLS/mTLS transport configuration testable. The permission table is readable
+without being a credential: bearer secrets and provider-verified identities live
+in two disjoint key namespaces, so a registry carrying only `identities` is
+ordinary reviewable configuration, and a bearer secret whose text happens to be
+a valid email can never inherit that email's grants. Authentication is on unless
+a CR asks for it to be off, and there is exactly one place a token registry can
+come from.
 Gate Inventory:
-- apps/lumen/tests/auth_e2e.rs; apps/lumen/tests/authz_matrix_e2e.rs; apps/lumen/tests/coverage_gaps_e2e.rs; apps/lumen/src/tls.rs
+- apps/lumen/tests/auth_e2e.rs; apps/lumen/tests/authz_matrix_e2e.rs; apps/lumen/tests/coverage_gaps_e2e.rs; apps/lumen/src/tls.rs; apps/lumen/src/auth.rs; libs/service-auth/src/role_map.rs; libs/service-auth/src/gcp.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -248,6 +254,9 @@ Gate Inventory:
 | adversarial-query-safety | epic | - | implemented | passing | negative | apps/lumen/tests/coverage_gaps_e2e.rs |
 | score-confidentiality | epic | - | implemented | passing | negative | apps/lumen/tests/coverage_gaps_e2e.rs |
 | tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen --lib tls`<br>`cargo test -p lumen --test shared_stateful_foundations`<br>apps/lumen/src/tls.rs |
+| identity-keyed-registry-namespaces | change | 2678 | implemented | passing | conformance | `cargo test -p service-auth`<br>`cargo test -p cli-std --features k8s --lib connect::`<br>libs/service-auth/src/gcp.rs |
+| auth-required-by-default | change | 2678 | implemented | passing | conformance | `cargo test -p lumen --features operator --test operator_render`<br>apps/lumen/src/auth.rs |
+| single-token-registry-source | change | 2678 | implemented | passing | conformance | `cargo test -p lumen --features operator --test operator_render`<br>`cargo test -p service-k8s`<br>apps/lumen/k8s/operator/crd.yaml |
 
 ### HTTP/2 API List
 
@@ -726,14 +735,24 @@ export via the shared observability/service HTTP libraries. Server-Timing
 per-response latency attribution (the shared `service-http::server_timing`
 contract) is wired into lumen's HTTP stack: every response carries a
 `Server-Timing: app;dur=<ms>` baseline (#2490).
+A data-plane metric cannot report a control plane that stopped reconciling —
+every data-plane alert reading green is exactly what a wedged operator looks
+like. The operator therefore publishes its own scrape surface (reconcile
+attempts, failures, duration, and leader state, prefixed from the manager name
+so all six services share one Prometheus without colliding), emits Kubernetes
+`Event`s for reconcile decisions and failures so `kubectl describe` can say why
+nothing happened, and ships its own ServiceMonitor plus absence and
+error-rate alerts (#2620, #2621).
 Gate Inventory:
-- apps/lumen/tests/api_e2e.rs; apps/lumen/k8s/components/observability; apps/lumen/compose.yaml
+- apps/lumen/tests/api_e2e.rs; apps/lumen/k8s/components/observability; apps/lumen/k8s/components/operator-monitoring; apps/lumen/k8s/operator/service.yaml; apps/lumen/compose.yaml; libs/service-k8s/src/metrics.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | prometheus-metrics-endpoint | epic | - | implemented | passing | smoke | apps/lumen/tests/api_e2e.rs |
 | servicemonitor-prometheusrule-bundle | epic | - | implemented | passing | smoke | apps/lumen/k8s/components/observability |
 | otlp-traces-and-metrics | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/compose.yaml<br>apps/lumen/tests/shared_stateful_foundations.rs |
+| control-plane-self-observability | change | 2620 | implemented | passing | conformance | `cargo test -p service-k8s`<br>libs/service-k8s/src/metrics.rs |
+| operator-scrape-target-and-alerts | change | 2621 | implemented | passing | dogfood | `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`<br>apps/lumen/k8s/components/operator-monitoring |
 
 ### Kubernetes-Native Deployment
 
@@ -751,8 +770,18 @@ storage topology, reshard phases, and status conditions for Lumen instances in
 that namespace; cluster-wide operation is an optional platform mode. HPA may
 scale stateless or near-stateless query/read workers, but never changes shard
 ownership.
+A deployer can ask "is it converged?" without reading logs: `status` carries
+`observedGeneration`, printer columns, and a `metav1.Condition` array
+(`Ready`, `Progressing`, and Lumen's own `ReshardInProgress`), so
+`kubectl wait --for=condition=Ready` and Argo/Flux health assessment have
+something to read (#2601). The rendered operator Deployment defaults to two
+leader-elected replicas behind a PDB, so a node drain does not stop
+reconciliation (#2602), and every instance can compose a default-deny
+`network-policy` kustomize component — a component and not a base resource, so
+a cluster whose CNI does not enforce NetworkPolicy opts out instead of
+silently believing it is isolated (#2603).
 Gate Inventory:
-- apps/lumen/k8s; apps/lumen/src/operator; apps/lumen/src/operator/render.rs; apps/lumen/tests/operator_render.rs; apps/lumen/scripts/kind-e2e.sh; benchmarks/gcp-operator-acceptance/scripts/run.sh
+- apps/lumen/k8s; apps/lumen/k8s/components/network-policy; apps/lumen/k8s/operator/pdb.yaml; apps/lumen/src/operator; apps/lumen/src/operator/render.rs; apps/lumen/tests/operator_render.rs; apps/lumen/tests/operator_backup_kubernetes_wiring.rs; apps/lumen/scripts/kind-e2e.sh; acceptance/gcp/scripts/run.sh
 
 Verified GKE evidence (2026-07-23, run `0723041614`, source `f4762759d8`):
 the persistent Standard GKE cluster reconciled a fresh 1×1 Lumen instance,
@@ -762,7 +791,7 @@ disk-pressure 1→2 shard split with two serving pods and PVCs. The harness
 created only the run-scoped bucket, backup GSA, bucket writer binding, and
 `lumen/lumen-backup` Workload Identity binding; all four were destroyed and
 the cleanup verifier reported `clean`. Reproduce with an immutable Lumen image:
-`PROJECT_ID=<project> LUMEN_ONLY=1 LUMEN_IMAGE=<image@sha256:...> bash benchmarks/gcp-operator-acceptance/scripts/run.sh`.
+`PROJECT_ID=<project> LUMEN_ONLY=1 LUMEN_IMAGE=<image@sha256:...> bash acceptance/gcp/scripts/run.sh`.
 This proof deliberately excludes Sift collection, CPU/memory actuation, live
 replica membership, and cold restore from GCS; each has its own gate.
 
@@ -778,6 +807,10 @@ schema-pruning lesson), and the binary/CRD rollback contract are documented in
 | operator-owned-storage-topology-and-reshard-status | epic | 1180 | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
 | single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | apps/lumen/src/operator/render.rs<br>apps/lumen/scripts/kind-e2e.sh |
 | topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | apps/lumen/src/operator<br>apps/lumen/scripts/kind-e2e.sh |
+| status-conditions-convergence-api | change | 2601 | implemented | passing | dogfood | `cargo test -p service-k8s`<br>`cargo test -p lumen --features operator --test operator_render` |
+| operator-ha-replicas-and-pdb | change | 2602 | implemented | passing | dogfood | `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`<br>apps/lumen/k8s/operator/pdb.yaml |
+| per-instance-network-isolation | change | 2603 | implemented | passing | dogfood | `cargo test -p service-k8s`<br>apps/lumen/k8s/components/network-policy |
+| checked-in-crd-matches-the-renderer | change | 2678 | implemented | passing | conformance | `cargo test -p lumen --features operator --test operator_render`<br>apps/lumen/k8s/operator/crd.yaml |
 
 ### Stateful Service Workload
 
@@ -1409,7 +1442,7 @@ LUMEN_AUTH=required
 LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
 ```
 
-The registry file is a JSON map of bearer token to subject/roles, mounted from a
+The registry file maps each principal to its subject and roles, mounted from a
 Kubernetes Secret. On GKE, keep GCP Secret Manager as the source of truth and
 materialize that file through External Secrets Operator or Secret Store CSI.
 Lumen's adapter delegates validation and atomic last-known-good replacement to
@@ -1422,19 +1455,38 @@ external Secret-reloader controller required. Invalid replacements are
 rejected and the process stays on its last-known-good registry, emitting a
 redacted auth audit event.
 
-`token-registry.json` shape:
+`token-registry.json` has two **disjoint** namespaces (#2678). `tokens` keys
+are bearer secrets; `identities` keys are emails an external provider verified.
+A presented bearer token is only ever looked up in `tokens`, so a secret that
+happens to be spelled like an email can never inherit that email's grants:
 
 ```json
 {
-  "admin-token": {
-    "subject": "platform-admin",
-    "roles": { "*": "admin" }
+  "tokens": {
+    "admin-token": {
+      "subject": "platform-admin",
+      "roles": { "*": "admin" }
+    },
+    "product-reader-token": {
+      "subject": "products-reader",
+      "roles": { "products": "read" }
+    }
   },
-  "product-reader-token": {
-    "subject": "products-reader",
-    "roles": { "products": "read" }
+  "identities": {
+    "data-team@example.com": {
+      "subject": "data-team",
+      "roles": { "products": "read" }
+    }
   }
 }
+```
+
+Only the `tokens` half is a credential, so a registry that carries `identities`
+alone is ordinary configuration — versionable, diffable, reviewable. A flat
+document with no sections is still accepted and read entirely as `tokens`:
+
+```json
+{ "admin-token": { "subject": "platform-admin", "roles": { "*": "admin" } } }
 ```
 
 Role values are `read`, `write`, and `admin`; `*` grants across all collections.

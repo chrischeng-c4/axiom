@@ -72,9 +72,9 @@ use std::time::Duration;
 use kube::api::{Api, ApiResource, DeleteParams, DynamicObject};
 use kube::{Client, ResourceExt};
 use serde_json::json;
-use service_k8s::{ManagedService, ReadinessTarget, ReadyFacts};
+use service_k8s::{ConditionFact, ConditionStatus, ManagedService, ReadinessTarget, ReadyFacts};
 
-use crate::operator::crd::Lumen;
+use crate::operator::crd::{Lumen, LumenReshardStatus, ReshardPhase};
 use crate::operator::render;
 
 /// The client-facing port lumen's serving Service/StatefulSet expose
@@ -455,6 +455,37 @@ impl ManagedService for Lumen {
         render::render(self)
     }
 
+    /// #2678 R7: reject a spec that names two credential sources before any
+    /// child object is applied.
+    ///
+    /// `render` is infallible by contract — six services share that signature —
+    /// so the refusal lives here, the one hook on the reconcile path that can
+    /// return an error. Failing here means the reconcile fails and the CR does
+    /// not converge; the alternative, picking one source by precedence, leaves
+    /// an operator reading the credentials they deployed while lumen serves the
+    /// other ones. The CRD carries the same rule as CEL, so on a current
+    /// cluster this never fires — it is the backstop for an older CRD or an
+    /// object written before the rule existed.
+    fn reconcile_plan(
+        &self,
+        _client: kube::Client,
+    ) -> impl std::future::Future<Output = anyhow::Result<service_k8s::service::ReconcilePlan>> + Send
+    {
+        let validation = self.spec.validate();
+        let children = render::render(self);
+        async move {
+            validation.map_err(|why| anyhow::anyhow!(why))?;
+            Ok(service_k8s::service::ReconcilePlan {
+                children,
+                context: serde_json::Value::Null,
+            })
+        }
+    }
+
+    fn prunes(&self) -> Vec<service_k8s::service::PruneTarget> {
+        render::prunes(self)
+    }
+
     fn readiness_targets(&self) -> Vec<ReadinessTarget> {
         // The serving fleet is always a StatefulSet (render::render), whether
         // or not raft consensus (`replicasPerShard > 1`) is active.
@@ -466,6 +497,164 @@ impl ManagedService for Lumen {
     }
 
     fn status_patch(&self, ready: &ReadyFacts) -> serde_json::Value {
+        let obs = self.observe(ready);
+        json!({ "status": {
+            "phase": obs.phase,
+            "observedGeneration": self.metadata.generation.unwrap_or(0),
+            "servingReadyReplicas": obs.serving_ready,
+            "desiredReplicas": obs.desired,
+            "shardCount": self.spec.shard_count,
+            "reshard": obs.reshard,
+            "message": format!("{}/{} serving pods ready", obs.serving_ready, obs.desired),
+        }})
+    }
+
+    /// #2601: the Kubernetes-convention convergence surface, derived from the
+    /// same [`Observation`] [`Self::status_patch`] projects — so the flat
+    /// fields and the conditions can never disagree about whether this CR has
+    /// converged.
+    ///
+    /// Clock-free by construction: the caller stamps `lastTransitionTime`, which
+    /// is what keeps this side of the projection deterministic (see the module
+    /// doc's no-I/O `status_patch` contract).
+    fn conditions(&self, ready: &ReadyFacts, _context: &serde_json::Value) -> Vec<ConditionFact> {
+        self.observe(ready).conditions()
+    }
+
+    /// #2601: the conditions already persisted on this object, so the shared
+    /// projection can carry each `lastTransitionTime` forward. `Patch::Merge`
+    /// replaces arrays wholesale, so nothing survives server-side unless it is
+    /// read back off the watched object and re-sent.
+    fn observed_conditions(&self) -> Vec<service_k8s::Condition> {
+        self.status
+            .as_ref()
+            .map(|status| status.conditions.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// The reshard blocking conditions that mean *wedged*, as opposed to the policy
+/// states [`crate::operator::crd::LumenSpec::reshard_status`] reports at plain
+/// defaults (#2601).
+///
+/// `maxShardBytesUnset` is present on every CR that has not opted into
+/// auto-splitting, and `maxShardsReached` is a configured ceiling rather than a
+/// fault; gating `Ready` on the raw `blockingConditions` list would therefore
+/// report every default install as permanently not-ready.
+const RESHARD_WEDGE_CONDITIONS: [&str; 2] =
+    ["reshardOversizedDocument", "topologyConvergenceStalled"];
+
+/// One reconcile's worth of observed facts about a `Lumen` (#2601).
+///
+/// Both status surfaces — the flat legacy fields and `status.conditions[]` —
+/// project from this single computation rather than each re-deriving the
+/// reshard state, so they cannot drift apart.
+struct Observation {
+    serving_ready: i32,
+    desired: i32,
+    reshard: LumenReshardStatus,
+    /// The post-cutover write-pause fence is still armed (#1458 R1).
+    awaiting_convergence: bool,
+    phase: &'static str,
+}
+
+impl Observation {
+    /// Is a reshard workflow actually in flight? Either a non-`Complete` phase,
+    /// or the post-cutover fence still waiting to clear — the latter happens
+    /// *at* phase `Complete`, which is why it is a separate disjunct.
+    fn reshard_active(&self) -> bool {
+        self.reshard.phase != ReshardPhase::Complete.as_str() || self.awaiting_convergence
+    }
+
+    /// The clock-free condition facts for this observation, in printed order.
+    fn conditions(&self) -> Vec<ConditionFact> {
+        let replicas = format!("{}/{} serving pods ready", self.serving_ready, self.desired);
+        let replicas_ready = self.serving_ready >= self.desired;
+        let wedge = self
+            .reshard
+            .blocking_conditions
+            .iter()
+            .find(|c| RESHARD_WEDGE_CONDITIONS.contains(&c.as_str()));
+
+        let ready = match (wedge, replicas_ready) {
+            // A wedge outranks a healthy replica count: every pod can be Ready
+            // while writes are fenced or a batch is unappliable.
+            (Some(wedge), _) => ConditionFact::new(
+                "Ready",
+                ConditionStatus::False,
+                "ReshardWedged",
+                format!("{wedge}: {}", self.reshard.message),
+            ),
+            (None, true) => ConditionFact::new(
+                "Ready",
+                ConditionStatus::True,
+                "AllReplicasReady",
+                replicas.clone(),
+            ),
+            (None, false) => ConditionFact::new(
+                "Ready",
+                ConditionStatus::False,
+                "ReplicasNotReady",
+                replicas.clone(),
+            ),
+        };
+
+        let progressing = if !replicas_ready {
+            ConditionFact::new(
+                "Progressing",
+                ConditionStatus::True,
+                "ReplicasConverging",
+                replicas,
+            )
+        } else if self.reshard_active() {
+            ConditionFact::new(
+                "Progressing",
+                ConditionStatus::True,
+                "ReshardInFlight",
+                self.reshard.message.clone(),
+            )
+        } else {
+            ConditionFact::new(
+                "Progressing",
+                ConditionStatus::False,
+                "Converged",
+                "spec is fully reconciled".to_string(),
+            )
+        };
+
+        let reshard = if self.reshard_active() {
+            // Reason tracks the workflow's own vocabulary so a watcher can read
+            // the phase straight off the condition; the fence-only case has no
+            // phase of its own to report.
+            let reason = if self.reshard.phase == ReshardPhase::Complete.as_str() {
+                "AwaitingTopologyConvergence".to_string()
+            } else {
+                self.reshard.phase.clone()
+            };
+            ConditionFact::new(
+                "ReshardInProgress",
+                ConditionStatus::True,
+                reason,
+                self.reshard.message.clone(),
+            )
+        } else {
+            ConditionFact::new(
+                "ReshardInProgress",
+                ConditionStatus::False,
+                "Complete",
+                self.reshard.message.clone(),
+            )
+        };
+
+        vec![ready, progressing, reshard]
+    }
+}
+
+impl Lumen {
+    /// Compute this reconcile's [`Observation`] — the single source both status
+    /// surfaces project from (#2601). Synchronous and I/O-free, per the module
+    /// doc's contract; the live usage read is a cache lookup, not a scrape.
+    fn observe(&self, ready: &ReadyFacts) -> Observation {
         let name = self.name_any();
         let serving_ready = ready.ready.get(&name).copied().unwrap_or(0) as i32;
         let desired = self.spec.storage_pod_count();
@@ -574,15 +763,13 @@ impl ManagedService for Lumen {
         } else {
             "Pending"
         };
-        json!({ "status": {
-            "phase": phase,
-            "observedGeneration": self.metadata.generation.unwrap_or(0),
-            "servingReadyReplicas": serving_ready,
-            "desiredReplicas": desired,
-            "shardCount": self.spec.shard_count,
-            "reshard": reshard,
-            "message": format!("{serving_ready}/{desired} serving pods ready"),
-        }})
+        Observation {
+            serving_ready,
+            desired,
+            reshard,
+            awaiting_convergence,
+            phase,
+        }
     }
 }
 
@@ -593,19 +780,22 @@ impl ManagedService for Lumen {
 /// reshard phase driver (#1319 R2, #1381; independently leader-gated — see
 /// [`crate::operator::reshard_driver::spawn_reshard_driver_loop`]), and the
 /// HPA topology-transition handoff loop (#1385; independently leader-gated —
-/// see [`spawn_hpa_handoff_loop`]).
+/// see [`spawn_hpa_handoff_loop`]), and the fleet materialization loop
+/// (independently leader-gated — see
+/// [`crate::operator::fleet::spawn_fleet_loop`]).
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     match Client::try_default().await {
         Ok(client) => {
             spawn_shard_usage_loop(client.clone());
             crate::operator::reshard_driver::spawn_reshard_driver_loop(client.clone());
+            crate::operator::fleet::spawn_fleet_loop(client.clone());
             spawn_hpa_handoff_loop(client);
         }
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                "reshard live-usage measurement + phase-driver + HPA-handoff loops disabled: could not build a kube client"
+                "reshard live-usage measurement + phase-driver + fleet + HPA-handoff loops disabled: could not build a kube client"
             );
         }
     }
@@ -707,6 +897,7 @@ mod tests {
         let spec = LumenSpec {
             image: "lumen:latest".into(),
             image_pull_policy: None,
+            placement: Default::default(),
             shard_count: 2,
             shard_map: ShardMapSpec::default(),
             replicas_per_shard: 3,
@@ -720,6 +911,7 @@ mod tests {
             serving: ServingSpec::default(),
             reshard_policy: Default::default(),
             observability: false,
+            network_policy: false,
             admission: None,
             service_account_name: None,
         };
@@ -1040,6 +1232,206 @@ mod tests {
         );
     }
 
+    // ---- #2601: metav1.Condition convergence surface -----------------------
+
+    /// `ReadyFacts` reporting `count` ready pods for `name`'s StatefulSet.
+    fn ready_facts(name: &str, count: i64) -> ReadyFacts {
+        let mut ready = std::collections::HashMap::new();
+        ready.insert(name.to_string(), count);
+        ReadyFacts { ready }
+    }
+
+    fn condition<'a>(facts: &'a [ConditionFact], type_: &str) -> &'a ConditionFact {
+        facts
+            .iter()
+            .find(|c| c.type_ == type_)
+            .unwrap_or_else(|| panic!("expected a `{type_}` condition, got: {facts:?}"))
+    }
+
+    #[test]
+    fn a_fully_ready_default_cr_reports_ready_true() {
+        // The load-bearing case: at plain defaults `reshard_status` always
+        // reports `maxShardBytesUnset` in `blockingConditions`. Gating `Ready`
+        // on that list would leave every install that never opted into
+        // auto-splitting permanently not-ready.
+        let lumen = hpa_test_lumen("search", "acme-cond-ready", 2, 1);
+        let facts = lumen.conditions(&ready_facts("search", 2), &serde_json::Value::Null);
+
+        let ready = condition(&facts, "Ready");
+        assert_eq!(ready.status, ConditionStatus::True, "got: {facts:?}");
+        assert_eq!(ready.reason, "AllReplicasReady");
+        assert_eq!(
+            condition(&facts, "Progressing").status,
+            ConditionStatus::False,
+            "a settled CR is not progressing, got: {facts:?}"
+        );
+        assert_eq!(
+            condition(&facts, "ReshardInProgress").status,
+            ConditionStatus::False,
+            "no reshard workflow is in flight, got: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn short_replicas_report_ready_false_and_progressing_true() {
+        let lumen = hpa_test_lumen("search", "acme-cond-short", 2, 1);
+        let facts = lumen.conditions(&ready_facts("search", 1), &serde_json::Value::Null);
+
+        let ready = condition(&facts, "Ready");
+        assert_eq!(ready.status, ConditionStatus::False, "got: {facts:?}");
+        assert_eq!(ready.reason, "ReplicasNotReady");
+        assert!(
+            ready.message.contains("1/2"),
+            "the message must name the counts, got: {ready:?}"
+        );
+
+        let progressing = condition(&facts, "Progressing");
+        assert_eq!(progressing.status, ConditionStatus::True);
+        assert_eq!(progressing.reason, "ReplicasConverging");
+    }
+
+    #[test]
+    fn a_reshard_wedge_outranks_a_healthy_replica_count() {
+        // Every pod Ready, but writes are unappliable: `Ready=True` here would
+        // tell `kubectl wait` the CR converged while it is in fact stuck.
+        let namespace = "acme-cond-wedged";
+        let name = "search";
+        let lumen = hpa_test_lumen(name, namespace, 2, 1);
+        crate::operator::reshard_driver::record_oversize_block(
+            namespace,
+            name,
+            "",
+            crate::operator::reshard_driver::OversizedDocumentBlock {
+                collection: "widgets".to_string(),
+                external_id: "doc-42".to_string(),
+                bytes: 9_000_000,
+            },
+        );
+
+        let facts = lumen.conditions(&ready_facts(name, 2), &serde_json::Value::Null);
+        crate::operator::reshard_driver::clear_oversize_block(namespace, name);
+
+        let ready = condition(&facts, "Ready");
+        assert_eq!(ready.status, ConditionStatus::False, "got: {facts:?}");
+        assert_eq!(ready.reason, "ReshardWedged");
+        assert!(
+            ready.message.contains("reshardOversizedDocument") && ready.message.contains("doc-42"),
+            "the message must name the wedge and its remediation detail, got: {ready:?}"
+        );
+    }
+
+    #[test]
+    fn the_post_cutover_fence_reports_reshard_in_progress_at_phase_complete() {
+        // `awaitingTopologyConvergence` happens *at* phase `Complete`, which is
+        // why `reshard_active` cannot be a phase comparison alone.
+        let lumen = cutover_pending_convergence_lumen("search", "acme-cond-fence", 1);
+        let facts = lumen.conditions(&ready_facts("search", 2), &serde_json::Value::Null);
+
+        let reshard = condition(&facts, "ReshardInProgress");
+        assert_eq!(reshard.status, ConditionStatus::True, "got: {facts:?}");
+        assert_eq!(reshard.reason, "AwaitingTopologyConvergence");
+        assert_eq!(
+            condition(&facts, "Progressing").reason,
+            "ReshardInFlight",
+            "got: {facts:?}"
+        );
+        assert_eq!(
+            condition(&facts, "Ready").status,
+            ConditionStatus::True,
+            "an armed fence is expected mid-reshard, not a wedge — only a stall is, \
+             got: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn a_stalled_fence_is_a_wedge() {
+        let mut lumen = cutover_pending_convergence_lumen("search", "acme-cond-stalled", 1);
+        let stall_budget = crate::operator::reshard_driver::convergence_stall_budget_secs();
+        lumen
+            .spec
+            .reshard_policy
+            .workflow
+            .convergence_wait_started_at =
+            Some(test_now_epoch_secs().saturating_sub(stall_budget + 1));
+
+        let facts = lumen.conditions(&ready_facts("search", 2), &serde_json::Value::Null);
+        let ready = condition(&facts, "Ready");
+        assert_eq!(ready.status, ConditionStatus::False, "got: {facts:?}");
+        assert_eq!(ready.reason, "ReshardWedged");
+    }
+
+    #[test]
+    fn conditions_are_a_pure_function_of_spec_and_observed_facts() {
+        // The determinism the clock-free split exists to preserve: no wall
+        // clock is read here, so repeated projection is byte-identical.
+        let lumen = hpa_test_lumen("search", "acme-cond-deterministic", 2, 1);
+        let ready = ready_facts("search", 1);
+        assert_eq!(
+            lumen.conditions(&ready, &serde_json::Value::Null),
+            lumen.conditions(&ready, &serde_json::Value::Null)
+        );
+    }
+
+    #[test]
+    fn the_flat_status_and_the_conditions_agree_on_readiness() {
+        // Both surfaces project from one `Observation`; this pins that they
+        // cannot drift as either side grows.
+        let lumen = hpa_test_lumen("search", "acme-cond-agree", 2, 1);
+        for count in [0i64, 1, 2] {
+            let ready = ready_facts("search", count);
+            let phase = lumen.status_patch(&ready)["status"]["phase"]
+                .as_str()
+                .expect("phase")
+                .to_string();
+            let ready_condition =
+                condition(&lumen.conditions(&ready, &serde_json::Value::Null), "Ready").status;
+            assert_eq!(
+                phase == "Ready",
+                ready_condition == ConditionStatus::True,
+                "phase {phase:?} disagrees with the Ready condition at {count} ready pods"
+            );
+        }
+    }
+
+    #[test]
+    fn observed_conditions_round_trip_through_the_projection() {
+        // The `Patch::Merge` array-replacement trap: unless prior conditions
+        // are read back off the watched object, every reconcile would restamp
+        // `lastTransitionTime` and every watcher would see the 30s requeue as
+        // a state change.
+        let mut lumen = hpa_test_lumen("search", "acme-cond-transition", 2, 1);
+        let ready = ready_facts("search", 2);
+        let first = service_k8s::service::project(
+            &lumen.observed_conditions(),
+            lumen.conditions(&ready, &serde_json::Value::Null),
+            1,
+            "2026-07-25T00:00:00Z",
+        );
+        assert!(lumen.observed_conditions().is_empty());
+
+        lumen.status = Some(crate::operator::crd::LumenStatus {
+            conditions: first.clone(),
+            ..Default::default()
+        });
+        assert_eq!(lumen.observed_conditions(), first);
+
+        let second = service_k8s::service::project(
+            &lumen.observed_conditions(),
+            lumen.conditions(&ready, &serde_json::Value::Null),
+            2,
+            "2026-07-25T01:00:00Z",
+        );
+        assert_eq!(
+            second[0].last_transition_time, "2026-07-25T00:00:00Z",
+            "an unchanged status must keep its original transition time"
+        );
+        assert_eq!(
+            second[0].observed_generation,
+            Some(2),
+            "observedGeneration tracks every reconcile, unlike lastTransitionTime"
+        );
+    }
+
     // ---- HPA topology-transition handoff (#1385, AC1) ----------------------
 
     /// In-memory [`HpaControl`]: a `(namespace, name) -> labels` map plus a
@@ -1092,6 +1484,7 @@ mod tests {
         LumenSpec {
             image: "lumen:latest".into(),
             image_pull_policy: None,
+            placement: Default::default(),
             shard_count,
             shard_map: ShardMapSpec::default(),
             replicas_per_shard,
@@ -1105,6 +1498,7 @@ mod tests {
             serving: ServingSpec::default(),
             reshard_policy: Default::default(),
             observability: false,
+            network_policy: false,
             admission: None,
             service_account_name: None,
         }

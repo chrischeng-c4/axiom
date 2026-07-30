@@ -53,6 +53,8 @@ Public API manifest for `libs/service-k8s/src/render.rs` captured during libs co
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The sharded-HA render toolkit: a [`RenderCtx`] carrying the per-service
 //! identity (app/manager/GVK/name/ns/owner) plus helpers that emit the common
 //! k8s objects — labels/selector/meta, ServiceAccount, headless + client
@@ -66,6 +68,8 @@ Public API manifest for `libs/service-k8s/src/render.rs` captured during libs co
 
 use serde_json::{json, Value};
 
+use crate::stateful::{resource_request_or_default, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST};
+
 // The downward-API env keys a sharded-HA StatefulSet injects. These MUST match
 // `raft_runtime::cluster::ClusterTopology::from_env` (the consumer) — duplicated
 // here (rather than depending on raft-runtime) to keep this kube-only lib free of
@@ -77,7 +81,14 @@ pub const ENV_SHARD_COUNT: &str = "SHARD_COUNT";
 pub const ENV_REPLICAS_PER_SHARD: &str = "REPLICAS_PER_SHARD";
 pub const ENV_VOTER_COUNT: &str = "VOTER_COUNT";
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1849" reason="Expose semantic common and Deployment submodules while preserving the monolithic root compatibility surface for existing StatefulSet consumers in this first landing.">
+/// Workload-neutral Pod composition and ordinary Kubernetes child helpers.
+pub mod common;
+/// Stateless `apps/v1` Deployment composition.
+pub mod deployment;
+
 /// Per-service render identity, threaded through the helpers.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct RenderCtx<'a> {
     pub app: &'a str,
     pub manager: &'a str,
@@ -87,7 +98,9 @@ pub struct RenderCtx<'a> {
     pub ns: &'a str,
     pub owner: Option<Value>,
 }
+// </HANDWRITE>
 
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 impl RenderCtx<'_> {
     /// Recommended labels common to every child object.
     pub fn labels(&self, component: &str) -> Value {
@@ -122,6 +135,7 @@ impl RenderCtx<'_> {
 
 /// The owner reference that ties a child to its CR (cascading GC). `uid` comes
 /// from the live CR's metadata.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn owner_ref(api_version: &str, kind: &str, name: &str, uid: &str) -> Value {
     json!({
         "apiVersion": api_version,
@@ -134,6 +148,7 @@ pub fn owner_ref(api_version: &str, kind: &str, name: &str, uid: &str) -> Value 
 }
 
 /// Guaranteed-QoS CPU/memory resources (`requests == limits`).
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn guaranteed_resources(cpu: &str, memory: &str) -> Value {
     json!({
         "requests": { "cpu": cpu, "memory": memory },
@@ -141,7 +156,61 @@ pub fn guaranteed_resources(cpu: &str, memory: &str) -> Value {
     })
 }
 
+/// Request-only resources for a long-running data pod. Empty inputs use the
+/// shared `1` CPU / `4Gi` baseline; no limit is emitted, allowing the one-pod-
+/// per-node workload to consume otherwise-idle node capacity.
+pub fn requested_resources(cpu: &str, memory: &str) -> Value {
+    let cpu = resource_request_or_default(cpu, DEFAULT_CPU_REQUEST);
+    let memory = resource_request_or_default(memory, DEFAULT_MEMORY_REQUEST);
+    json!({
+        "requests": { "cpu": cpu, "memory": memory },
+    })
+}
+
+/// Required hostname anti-affinity for a dedicated stateful data plane. This
+/// is the scheduler-level one-pod-per-node contract; Cluster Autoscaler can
+/// react to the Pending pods without the operator inspecting provider-specific
+/// node-pool APIs.
+pub fn dedicated_node_affinity(selector: Value) -> Value {
+    json!({
+        "podAntiAffinity": {
+            "requiredDuringSchedulingIgnoredDuringExecution": [{
+                "labelSelector": { "matchLabels": selector },
+                "topologyKey": "kubernetes.io/hostname",
+            }],
+        },
+    })
+}
+
+/// Pod-level Kubernetes restricted-profile baseline for long-running service
+/// workloads. The matching container-level restrictions come from
+/// [`restricted_container_security_context`].
+pub fn restricted_pod_security_context() -> Value {
+    json!({
+        "runAsNonRoot": true,
+        "runAsUser": 65532,
+        "runAsGroup": 65532,
+        "fsGroup": 65532,
+        "seccompProfile": { "type": "RuntimeDefault" },
+    })
+}
+
+/// Container-level Kubernetes restricted-profile baseline for a service
+/// workload. Services still add explicit writable `emptyDir` mounts for paths
+/// such as `/tmp` when their process needs them.
+pub fn restricted_container_security_context() -> Value {
+    json!({
+        "runAsNonRoot": true,
+        "runAsUser": 65532,
+        "runAsGroup": 65532,
+        "allowPrivilegeEscalation": false,
+        "readOnlyRootFilesystem": true,
+        "capabilities": { "drop": ["ALL"] },
+    })
+}
+
 /// A rendered PVC template plus the container mount path it should back.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct WorkloadVolumeClaim<'a> {
     pub name: String,
     pub template: Value,
@@ -149,7 +218,75 @@ pub struct WorkloadVolumeClaim<'a> {
     pub read_only: bool,
 }
 
+/// The Secrets Store CSI driver name registered by the vanilla/community
+/// installation (the `secrets-store-csi-driver` upstream project). Cloud-managed
+/// add-ons can register a different driver name — see
+/// [`TokenRegistrySource::Csi`].
+pub const DEFAULT_TOKEN_REGISTRY_CSI_DRIVER: &str = "secrets-store.csi.k8s.io";
+
+/// Source for a bearer-token registry projection. A service can use a normal
+/// Kubernetes Secret or delegate material delivery to the Secrets Store CSI
+/// driver without re-implementing the volume shape in every operator.
+pub enum TokenRegistrySource<'a> {
+    Secret {
+        name: &'a str,
+        key: &'a str,
+    },
+    Csi {
+        provider_class: &'a str,
+        /// CSI driver name to register on the volume. `None` uses
+        /// [`DEFAULT_TOKEN_REGISTRY_CSI_DRIVER`], the vanilla community
+        /// driver name. GKE's managed Secrets Store add-on registers
+        /// `secrets-store-gke.csi.k8s.io` instead, so GKE instances must
+        /// override this (refs #2456/#2457).
+        driver: Option<&'a str>,
+    },
+}
+
+/// One read-only token-registry volume and its corresponding container mount.
+/// Services retain their external env names and mount paths; this helper owns
+/// the common Kubernetes projection contract.
+pub struct TokenRegistryProjection<'a> {
+    pub volume_name: &'a str,
+    pub mount_path: &'a str,
+    pub source: TokenRegistrySource<'a>,
+}
+
+/// Render the read-only container mount for a token registry projection.
+pub fn token_registry_mount(projection: &TokenRegistryProjection<'_>) -> Value {
+    json!({
+        "name": projection.volume_name,
+        "mountPath": projection.mount_path,
+        "readOnly": true,
+    })
+}
+
+/// Render the Kubernetes volume backing a token registry projection.
+pub fn token_registry_volume(projection: &TokenRegistryProjection<'_>) -> Value {
+    let mut volume = json!({ "name": projection.volume_name });
+    match &projection.source {
+        TokenRegistrySource::Secret { name, key } => {
+            volume["secret"] = json!({
+                "secretName": name,
+                "items": [{ "key": key, "path": key }],
+            });
+        }
+        TokenRegistrySource::Csi {
+            provider_class,
+            driver,
+        } => {
+            volume["csi"] = json!({
+                "driver": driver.unwrap_or(DEFAULT_TOKEN_REGISTRY_CSI_DRIVER),
+                "readOnly": true,
+                "volumeAttributes": { "secretProviderClass": provider_class },
+            });
+        }
+    }
+    volume
+}
+
 /// A ServiceAccount for the workload pods.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn service_account(cx: &RenderCtx, component: &str) -> Value {
     json!({
         "apiVersion": "v1",
@@ -189,6 +326,7 @@ fn service(
 }
 
 /// A headless Service with caller-supplied ports.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn headless_service_with_ports(
     cx: &RenderCtx,
     name: &str,
@@ -199,6 +337,7 @@ pub fn headless_service_with_ports(
 }
 
 /// A headless Service (stable per-pod DNS for a StatefulSet's peers).
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn headless_service(cx: &RenderCtx, name: &str, component: &str, port: i32) -> Value {
     headless_service_with_ports(
         cx,
@@ -209,6 +348,7 @@ pub fn headless_service(cx: &RenderCtx, name: &str, component: &str, port: i32) 
 }
 
 /// A ClusterIP Service with caller-supplied ports.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn client_service_with_ports(
     cx: &RenderCtx,
     name: &str,
@@ -219,6 +359,7 @@ pub fn client_service_with_ports(
 }
 
 /// A ClusterIP client Service.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn client_service(cx: &RenderCtx, name: &str, component: &str, port: i32) -> Value {
     client_service_with_ports(
         cx,
@@ -229,6 +370,7 @@ pub fn client_service(cx: &RenderCtx, name: &str, component: &str, port: i32) ->
 }
 
 /// A PodDisruptionBudget.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn pdb(cx: &RenderCtx, name: &str, component: &str, max_unavailable: i32) -> Value {
     json!({
         "apiVersion": "policy/v1",
@@ -239,6 +381,7 @@ pub fn pdb(cx: &RenderCtx, name: &str, component: &str, max_unavailable: i32) ->
 }
 
 /// Parameters for [`horizontal_pod_autoscaler`].
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct HorizontalPodAutoscaler<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -253,6 +396,7 @@ pub struct HorizontalPodAutoscaler<'a> {
 }
 
 /// A HorizontalPodAutoscaler targeting a rendered service workload.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn horizontal_pod_autoscaler(p: HorizontalPodAutoscaler) -> Value {
     let HorizontalPodAutoscaler {
         cx,
@@ -288,6 +432,7 @@ pub fn horizontal_pod_autoscaler(p: HorizontalPodAutoscaler) -> Value {
 }
 
 /// Parameters for [`cron_job`].
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct CronJob<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -312,6 +457,7 @@ pub struct CronJob<'a> {
 ///
 /// Operators schedule and wire the runner; the service or runner still owns the
 /// actual domain bytes. This helper deliberately stays manifest-only.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn cron_job(p: CronJob) -> Value {
     let cx = p.cx;
     let mut container = json!({
@@ -392,6 +538,7 @@ fn ensure_named_template_metadata(mut template: Value, name: &str, labels: &Valu
 }
 
 /// Parameters for [`service_statefulset`].
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct ServiceStatefulSet<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -422,6 +569,19 @@ pub struct ServiceStatefulSet<'a> {
     pub startup_probe: Option<Value>,
     pub volumes: Vec<Value>,
     pub volume_mounts: Vec<Value>,
+    /// Pod affinity/anti-affinity. Stateful data-plane callers should use
+    /// [`dedicated_node_affinity`].
+    pub affinity: Option<Value>,
+    /// `spec.template.spec.nodeSelector` — which node pool the workload runs
+    /// on. A field of its own rather than something a caller expresses through
+    /// [`Self::affinity`]: naming a node pool must not require restating the
+    /// operator-owned pod anti-affinity, because a caller that restates it
+    /// wrongly loses the constraint keeping two replicas of one shard off the
+    /// same host, and the resulting StatefulSet looks correct.
+    pub node_selector: Option<Value>,
+    /// `spec.template.spec.tolerations` — the taints this workload may land
+    /// on, so a dedicated node pool can repel every other workload.
+    pub tolerations: Vec<Value>,
     pub topology_spread_constraints: Vec<Value>,
     pub revision_history_limit: Option<i32>,
     pub update_strategy: Option<Value>,
@@ -433,6 +593,7 @@ pub struct ServiceStatefulSet<'a> {
 /// workloads. It preserves the exact raft-runtime env contract while letting a
 /// service supply its own probes, security hardening, storage path, extra
 /// volumes, and rollout details.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
     let ServiceStatefulSet {
         cx,
@@ -461,6 +622,9 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
         startup_probe,
         volumes,
         volume_mounts,
+        affinity,
+        node_selector,
+        tolerations,
         topology_spread_constraints,
         revision_history_limit,
         update_strategy,
@@ -544,6 +708,15 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
     if !volumes.is_empty() {
         pod_spec["volumes"] = json!(volumes);
     }
+    if let Some(affinity) = affinity {
+        pod_spec["affinity"] = affinity;
+    }
+    if let Some(node_selector) = node_selector {
+        pod_spec["nodeSelector"] = node_selector;
+    }
+    if !tolerations.is_empty() {
+        pod_spec["tolerations"] = json!(tolerations);
+    }
     if !topology_spread_constraints.is_empty() {
         pod_spec["topologySpreadConstraints"] = json!(topology_spread_constraints);
     }
@@ -577,6 +750,7 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
 }
 
 /// Parameters for [`sharded_statefulset`].
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct ShardedStatefulSet<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -606,6 +780,7 @@ pub struct ShardedStatefulSet<'a> {
 /// (`POD_NAME`/`POD_NAMESPACE`/`SHARD_COUNT`/`REPLICAS_PER_SHARD`/`VOTER_COUNT`)
 /// together with `<headless_env_key>`, which `raft_runtime::cluster::ClusterTopology::from_env`
 /// reads to derive node id / membership / peers.
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
     let volume_claim = p.volume_claim.map(|template| {
         let name = template["metadata"]["name"]
@@ -641,7 +816,7 @@ pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
         service_account_name: Some(p.cx.name),
         env: p.extra_env,
         env_from: vec![],
-        resources: guaranteed_resources(p.cpu, p.memory),
+        resources: requested_resources(p.cpu, p.memory),
         pod_annotations: None,
         pod_security_context: None,
         container_security_context: None,
@@ -651,6 +826,9 @@ pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
         startup_probe: None,
         volumes: vec![],
         volume_mounts: vec![],
+        affinity: Some(dedicated_node_affinity(p.cx.selector(p.component))),
+        node_selector: None,
+        tolerations: vec![],
         topology_spread_constraints: vec![],
         revision_history_limit: None,
         update_strategy: None,
@@ -706,6 +884,75 @@ mod tests {
         assert_eq!(
             cx.labels("server")["app.kubernetes.io/managed-by"],
             "svc-operator"
+        );
+        assert_eq!(restricted_pod_security_context()["runAsNonRoot"], true);
+        assert_eq!(
+            restricted_pod_security_context()["seccompProfile"]["type"],
+            "RuntimeDefault"
+        );
+        assert_eq!(
+            restricted_container_security_context()["readOnlyRootFilesystem"],
+            true
+        );
+        assert_eq!(
+            restricted_container_security_context()["capabilities"]["drop"][0],
+            "ALL"
+        );
+
+        let secret = TokenRegistryProjection {
+            volume_name: "registry",
+            mount_path: "/var/run/secrets/svc",
+            source: TokenRegistrySource::Secret {
+                name: "svc-registry",
+                key: "token-registry.json",
+            },
+        };
+        assert_eq!(token_registry_mount(&secret)["readOnly"], true);
+        assert_eq!(
+            token_registry_volume(&secret)["secret"]["secretName"],
+            "svc-registry"
+        );
+
+        let csi = TokenRegistryProjection {
+            volume_name: "registry",
+            mount_path: "/var/run/secrets/svc",
+            source: TokenRegistrySource::Csi {
+                provider_class: "svc-registry",
+                driver: None,
+            },
+        };
+        assert_eq!(
+            token_registry_volume(&csi)["csi"]["volumeAttributes"]["secretProviderClass"],
+            "svc-registry"
+        );
+    }
+
+    #[test]
+    fn token_registry_volume_csi_driver_defaults_to_vanilla_and_can_be_overridden() {
+        let default_csi = TokenRegistryProjection {
+            volume_name: "registry",
+            mount_path: "/var/run/secrets/svc",
+            source: TokenRegistrySource::Csi {
+                provider_class: "svc-registry",
+                driver: None,
+            },
+        };
+        assert_eq!(
+            token_registry_volume(&default_csi)["csi"]["driver"],
+            "secrets-store.csi.k8s.io"
+        );
+
+        let gke_csi = TokenRegistryProjection {
+            volume_name: "registry",
+            mount_path: "/var/run/secrets/svc",
+            source: TokenRegistrySource::Csi {
+                provider_class: "svc-registry",
+                driver: Some("secrets-store-gke.csi.k8s.io"),
+            },
+        };
+        assert_eq!(
+            token_registry_volume(&gke_csi)["csi"]["driver"],
+            "secrets-store-gke.csi.k8s.io"
         );
     }
 
@@ -817,6 +1064,9 @@ mod tests {
             startup_probe: None,
             volumes: vec![],
             volume_mounts: vec![],
+            affinity: None,
+            node_selector: None,
+            tolerations: vec![],
             topology_spread_constraints: vec![],
             revision_history_limit: None,
             update_strategy: None,
@@ -889,7 +1139,7 @@ mod tests {
                 json!({ "name": "LUMEN_TOKEN_REGISTRY_FILE", "value": "/var/run/secrets/lumen/token-registry.json" }),
             ],
             env_from: vec![json!({ "configMapRef": { "name": "s-config" } })],
-            resources: guaranteed_resources("2", "4Gi"),
+            resources: requested_resources("2", "4Gi"),
             pod_annotations: Some(json!({
                 "prometheus.io/scrape": "true",
                 "prometheus.io/port": "7373",
@@ -937,6 +1187,9 @@ mod tests {
                 json!({ "name": "tmp", "mountPath": "/tmp" }),
                 json!({ "name": "token-registry", "mountPath": "/var/run/secrets/lumen", "readOnly": true }),
             ],
+            affinity: Some(dedicated_node_affinity(cx.selector("server"))),
+            node_selector: None,
+            tolerations: vec![],
             topology_spread_constraints: vec![
                 spread("topology.kubernetes.io/zone"),
                 spread("kubernetes.io/hostname"),
@@ -972,6 +1225,12 @@ mod tests {
             2
         );
         assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
+        assert!(container["resources"].get("limits").is_none());
+        assert_eq!(
+            pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+                ["topologyKey"],
+            "kubernetes.io/hostname"
+        );
         assert_eq!(container["envFrom"][0]["configMapRef"]["name"], "s-config");
         assert_eq!(container["readinessProbe"]["httpGet"]["path"], "/readyz");
         assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
@@ -1003,18 +1262,29 @@ mod tests {
             replicas_per_shard: 1,
             voter_count: 1,
             headless_env_key: "SVC_HEADLESS_SERVICE",
-            cpu: "1",
-            memory: "1Gi",
+            cpu: "",
+            memory: "",
             extra_env: vec![],
             volume_claim: Some(json!({ "metadata": { "name": "data" }, "spec": {} })),
         });
         assert!(ss["spec"]["volumeClaimTemplates"].is_array());
+        let pod = &ss["spec"]["template"]["spec"];
+        let resources = &pod["containers"][0]["resources"];
+        assert_eq!(resources["requests"]["cpu"], "1");
+        assert_eq!(resources["requests"]["memory"], "4Gi");
+        assert!(resources.get("limits").is_none());
+        assert_eq!(
+            pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+                ["topologyKey"],
+            "kubernetes.io/hostname"
+        );
         assert_eq!(
             ss["spec"]["template"]["spec"]["containers"][0]["volumeMounts"][0]["mountPath"],
             "/data"
         );
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

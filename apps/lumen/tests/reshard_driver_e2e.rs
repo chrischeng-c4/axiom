@@ -215,6 +215,7 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
     let spec = LumenSpec {
         image: "lumen:latest".into(),
         image_pull_policy: None,
+        placement: Default::default(),
         shard_count: 1,
         shard_map: ShardMapSpec {
             version: 0,
@@ -235,6 +236,7 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
             ..Default::default()
         },
         observability: false,
+        network_policy: false,
         admission: None,
         service_account_name: None,
     };

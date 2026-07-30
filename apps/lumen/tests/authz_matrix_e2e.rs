@@ -30,10 +30,7 @@ fn auth_server() -> TestServer {
     tokens.insert(READER.to_string(), claims(&[("users", Role::Read)]));
     tokens.insert(WRITER.to_string(), claims(&[("users", Role::Write)]));
     tokens.insert(ADMIN.to_string(), claims(&[("*", Role::Admin)]));
-    let auth = AuthConfig {
-        required: true,
-        tokens,
-    };
+    let auth = AuthConfig::with_tokens(true, tokens);
     let engine = Arc::new(Engine::new());
     TestServer::new(router(AppState::new(engine, Arc::new(auth)))).expect("server")
 }

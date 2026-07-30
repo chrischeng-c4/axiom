@@ -274,9 +274,41 @@ pub fn resolve_token(
     };
     let secret_json = kubectl_get_json(context, "secret", secret, namespace)?;
     let bytes = secret_data_bytes(&secret_json, TOKEN_REGISTRY_SECRET_KEY)?;
-    let registry: HashMap<String, TokenClaims> =
-        serde_json::from_slice(&bytes).context("parse token-registry.json")?;
+    let registry = bearer_secrets(&bytes)?;
     Ok(select_token(&registry, role, collection))
+}
+
+/// The bearer-secret half of a token-registry document, whichever shape it is
+/// written in.
+///
+/// A registry may be namespaced — `{"tokens": {…}, "identities": {…}}` — or the
+/// older flat map of secret to claims. Only `tokens` is a presentable
+/// credential: an `identities` entry names an email an external provider
+/// vouches for, and a CLI cannot present an email as a bearer token.
+///
+/// The discriminator has to match `service_auth::Registry::parse` exactly, or a
+/// registry the server reads one way is read the other way here. It is
+/// duplicated rather than shared because `service-auth` depends on `cli-std`,
+/// not the reverse; the two are pinned together by
+/// `both_registry_shapes_resolve_the_same_token`.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
+fn bearer_secrets(bytes: &[u8]) -> Result<HashMap<String, TokenClaims>> {
+    let doc: serde_json::Value =
+        serde_json::from_slice(bytes).context("parse token-registry.json")?;
+    let map = doc
+        .as_object()
+        .context("token-registry.json must be a JSON object")?;
+    // Namespaced only when every key is a section name AND no top-level value
+    // is itself a claims object — otherwise a flat registry whose single secret
+    // is literally spelled `tokens` would be misread as a section.
+    let namespaced = map.keys().all(|key| key == "tokens" || key == "identities")
+        && !map.values().any(|value| value.get("subject").is_some());
+    let tokens = if namespaced {
+        map.get("tokens").cloned().unwrap_or(serde_json::json!({}))
+    } else {
+        doc
+    };
+    serde_json::from_value(tokens).context("parse token-registry.json bearer secrets")
 }
 
 #[cfg(test)]
@@ -329,6 +361,42 @@ mod tests {
             },
         );
         assert!(select_token(&narrow, Role::Read, Some("products")).is_none());
+    }
+
+    /// #2678. The dev path — `port-forward` + read the Secret + pick a token —
+    /// has to keep working when a cluster's registry moves to the namespaced
+    /// shape. Both documents grant the same thing, so both must resolve the
+    /// same token; and `identities` must never be offered as a bearer secret,
+    /// since presenting an email is not proving an identity.
+    #[test]
+    fn both_registry_shapes_resolve_the_same_token() {
+        let flat = br#"{"admin-token":{"subject":"ops","roles":{"*":"admin"}}}"#;
+        let sectioned = br#"{"tokens":{"admin-token":{"subject":"ops","roles":{"*":"admin"}}},
+                             "identities":{"dev@example.com":{"subject":"dev","roles":{"*":"admin"}}}}"#;
+
+        for (label, bytes) in [("flat", &flat[..]), ("sectioned", &sectioned[..])] {
+            let registry = bearer_secrets(bytes).unwrap_or_else(|e| panic!("{label}: {e}"));
+            assert_eq!(
+                select_token(&registry, Role::Admin, None).as_deref(),
+                Some("admin-token"),
+                "{label} registry resolves the admin token"
+            );
+            assert_eq!(registry.len(), 1, "{label}: identities are not bearer secrets");
+        }
+
+        // A flat registry whose only secret is spelled `tokens` stays flat —
+        // the discriminator's second clause, shared with `service-auth`.
+        let literal = br#"{"tokens":{"subject":"ops","roles":{"*":"admin"}}}"#;
+        let registry = bearer_secrets(literal).unwrap();
+        assert_eq!(
+            select_token(&registry, Role::Admin, None).as_deref(),
+            Some("tokens")
+        );
+
+        // An identities-only registry has no presentable credential at all.
+        let identities_only =
+            br#"{"identities":{"dev@example.com":{"subject":"dev","roles":{"*":"admin"}}}}"#;
+        assert!(bearer_secrets(identities_only).unwrap().is_empty());
     }
 
     #[test]

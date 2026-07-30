@@ -18,7 +18,7 @@ use axum::http::HeaderMap;
 use serde::Serialize;
 
 use crate::middleware::bearer_token;
-use crate::role_map::{Role, RoleMapDenied, RoleMapPrincipal, TokenClaims};
+use crate::role_map::{Registry, Role, RoleMapDenied, RoleMapPrincipal, TokenClaims};
 use crate::{AuthError, Verifier};
 
 /// Production poll cadence for a Secret/CSI-projected token registry. The
@@ -218,7 +218,7 @@ impl AuthEventSink for TracingAuthEventSink {
 #[derive(Clone)]
 struct RegistrySnapshot {
     revision: u64,
-    tokens: HashMap<String, TokenClaims>,
+    registry: Registry,
 }
 
 /// A principal carrying the shared audit sink used by its verifier.
@@ -303,11 +303,25 @@ impl ReloadableRoleMapVerifier {
         tokens: HashMap<String, TokenClaims>,
         sink: Arc<dyn AuthEventSink>,
     ) -> Self {
+        Self::with_registry_and_sink(required, Registry::from_tokens(tokens), sink)
+    }
+
+    /// Seed from a two-namespace [`Registry`] (#2678), for a service that also
+    /// resolves provider-verified identities.
+    pub fn with_registry(required: bool, registry: Registry) -> Self {
+        Self::with_registry_and_sink(required, registry, Arc::new(NoopAuthEventSink))
+    }
+
+    pub fn with_registry_and_sink(
+        required: bool,
+        registry: Registry,
+        sink: Arc<dyn AuthEventSink>,
+    ) -> Self {
         Self {
             required,
             snapshot: Arc::new(RwLock::new(RegistrySnapshot {
                 revision: 0,
-                tokens,
+                registry,
             })),
             sink,
         }
@@ -321,20 +335,51 @@ impl ReloadableRoleMapVerifier {
         self.read_snapshot().revision
     }
 
+    /// Entries across both namespaces in the currently adopted snapshot.
     pub fn entry_count(&self) -> usize {
-        self.read_snapshot().tokens.len()
+        self.read_snapshot().registry.len()
+    }
+
+    /// Look a **bearer secret** up in the currently adopted snapshot.
+    ///
+    /// For verifiers that reach the registry outside [`Verifier::authenticate`]
+    /// — [`crate::gcp::GoogleVerifier`] checks a pre-shared secret here before
+    /// spending a network round trip on introspection. Routing it through the
+    /// snapshot, instead of holding a separate map, is what keeps such a
+    /// verifier subject to the same atomic rotation and last-known-good
+    /// guarantees as `authenticate`.
+    ///
+    /// The returned value is cloned so the caller cannot hold the read lock
+    /// across its own work.
+    pub fn lookup_secret(&self, token: &str) -> Option<TokenClaims> {
+        self.read_snapshot().registry.tokens.get(token).cloned()
+    }
+
+    /// Look a **provider-verified identity** up in the currently adopted
+    /// snapshot: [`crate::gcp::GoogleVerifier`] turns a Google credential into
+    /// a verified email and lands here.
+    ///
+    /// Deliberately a different map from [`Self::lookup_secret`] (#2678, R1):
+    /// sharing one would let a bearer secret whose text happens to be a valid
+    /// email match an identity entry and silently inherit its grants.
+    pub fn lookup_identity(&self, identity: &str) -> Option<TokenClaims> {
+        self.read_snapshot()
+            .registry
+            .identities
+            .get(identity)
+            .cloned()
     }
 
     /// Parse, validate, and atomically adopt an inline registry document.
     pub fn reload_json(&self, json: &str) -> Result<u64> {
-        let tokens = match serde_json::from_str::<HashMap<String, TokenClaims>>(json) {
-            Ok(tokens) => tokens,
+        let registry = match Registry::parse(json) {
+            Ok(registry) => registry,
             Err(error) => {
                 self.record_reload_failure(ReloadFailure::Parse);
-                return Err(error).context("replacement token registry must be JSON");
+                return Err(error).context("replacement credential registry rejected");
             }
         };
-        self.reload_registry(tokens)
+        self.reload_registry(registry)
     }
 
     /// Read, parse, validate, and atomically adopt a registry file.
@@ -351,8 +396,8 @@ impl ReloadableRoleMapVerifier {
     }
 
     /// Validate and atomically adopt an already-parsed replacement.
-    pub fn reload_registry(&self, tokens: HashMap<String, TokenClaims>) -> Result<u64> {
-        if let Err(error) = validate_registry(self.required, &tokens) {
+    pub fn reload_registry(&self, registry: Registry) -> Result<u64> {
+        if let Err(error) = validate_registry(self.required, &registry) {
             self.record_reload_failure(ReloadFailure::Invalid);
             return Err(error);
         }
@@ -360,8 +405,8 @@ impl ReloadableRoleMapVerifier {
         let (revision, entries) = {
             let mut current = self.write_snapshot();
             let revision = current.revision.saturating_add(1);
-            *current = RegistrySnapshot { revision, tokens };
-            (revision, current.tokens.len())
+            *current = RegistrySnapshot { revision, registry };
+            (revision, current.registry.len())
         };
         self.sink.record(&AuthEvent::RegistryReload {
             applied: true,
@@ -377,7 +422,7 @@ impl ReloadableRoleMapVerifier {
         self.sink.record(&AuthEvent::RegistryReload {
             applied: false,
             revision: current.revision,
-            entries: current.tokens.len(),
+            entries: current.registry.len(),
             failure: Some(failure),
         });
     }
@@ -412,11 +457,11 @@ impl Verifier for ReloadableRoleMapVerifier {
     fn authenticate(&self, headers: &HeaderMap) -> std::result::Result<Self::Principal, AuthError> {
         let principal = match (self.required, bearer_token(headers)) {
             (false, None) => RoleMapPrincipal::Open,
+            // Bearer secrets resolve against `tokens` only. A secret that
+            // happens to be a valid email must not reach an identity entry
+            // (#2678, R1) — presenting a string is not proving an identity.
             (_, Some(token)) => self
-                .read_snapshot()
-                .tokens
-                .get(token)
-                .cloned()
+                .lookup_secret(token)
                 .map(RoleMapPrincipal::Token)
                 .ok_or_else(|| self.denied(AuthorizationReason::UnknownBearer))?,
             (true, None) => return Err(self.denied(AuthorizationReason::MissingBearer)),
@@ -432,13 +477,27 @@ impl Verifier for ReloadableRoleMapVerifier {
     }
 }
 
-fn validate_registry(required: bool, tokens: &HashMap<String, TokenClaims>) -> Result<()> {
-    if required && tokens.is_empty() {
+fn validate_registry(required: bool, registry: &Registry) -> Result<()> {
+    if required && registry.is_empty() {
         bail!("auth required but replacement registry is empty");
     }
-    for (token, claims) in tokens {
-        if token.trim().is_empty() {
-            bail!("replacement registry contains an empty token key");
+    validate_entries(&registry.tokens, "token")?;
+    validate_entries(&registry.identities, "identity")?;
+    // An identity key is an email an identity provider vouched for. Rejecting
+    // anything else keeps a bearer secret pasted into the wrong section from
+    // being adopted as a grant nobody can trace back to a person (#2678, R2).
+    for identity in registry.identities.keys() {
+        if !identity.contains('@') {
+            bail!("replacement registry identity key is not an email address");
+        }
+    }
+    Ok(())
+}
+
+fn validate_entries(entries: &HashMap<String, TokenClaims>, kind: &str) -> Result<()> {
+    for (key, claims) in entries {
+        if key.trim().is_empty() {
+            bail!("replacement registry contains an empty {kind} key");
         }
         if claims.subject.trim().is_empty() {
             bail!("replacement registry contains an empty subject");
@@ -519,6 +578,65 @@ mod tests {
         assert_eq!(verifier.revision(), 0);
         assert_eq!(verifier.entry_count(), 1);
         assert!(verifier.authenticate(&headers("old")).is_ok());
+    }
+
+    // -- #2678 AC5: rotation covers both namespaces ------------------------
+
+    /// A rotation that adds an identity is visible to `lookup_identity` and
+    /// stays invisible to the bearer path — the reload-time half of the same
+    /// disjointness the verifier enforces per request.
+    #[test]
+    fn rotation_can_add_identities_without_widening_the_bearer_namespace() {
+        let verifier = ReloadableRoleMapVerifier::new(
+            true,
+            HashMap::from([("s3cret".to_owned(), claims("svc", Role::Admin))]),
+        );
+
+        verifier
+            .reload_json(
+                r#"{"tokens":{"s3cret":{"subject":"svc","roles":{"*":"admin"}}},
+                    "identities":{"a@b.com":{"subject":"dev","roles":{"*":"read"}}}}"#,
+            )
+            .unwrap();
+
+        assert_eq!(verifier.entry_count(), 2);
+        assert_eq!(verifier.lookup_identity("a@b.com").unwrap().subject, "dev");
+        assert!(verifier.lookup_secret("a@b.com").is_none());
+        assert!(
+            verifier.authenticate(&headers("a@b.com")).is_err(),
+            "presenting the email as a bearer secret must not authenticate"
+        );
+    }
+
+    /// AC5. A malformed identity-keyed rotation is rejected whole — the
+    /// previous registry keeps serving rather than half-applying. An identity
+    /// key that is not an email address is the specific malformation an
+    /// operator hits by pasting a bearer secret into the wrong section.
+    #[test]
+    fn a_malformed_identity_rotation_leaves_the_previous_registry_serving() {
+        let verifier = ReloadableRoleMapVerifier::with_registry(
+            true,
+            Registry {
+                tokens: HashMap::from([("s3cret".to_owned(), claims("svc", Role::Admin))]),
+                identities: HashMap::from([("a@b.com".to_owned(), claims("dev", Role::Read))]),
+            },
+        );
+
+        for bad in [
+            // an identity key that is not an email — a pasted bearer secret
+            r#"{"identities":{"not-an-email":{"subject":"dev","roles":{"*":"read"}}}}"#,
+            // an identity entry with no subject to audit
+            r#"{"identities":{"a@b.com":{"subject":"","roles":{"*":"read"}}}}"#,
+            // the section is present but is not a map of claims
+            r#"{"identities":["a@b.com"]}"#,
+        ] {
+            assert!(verifier.reload_json(bad).is_err(), "accepted `{bad}`");
+        }
+
+        assert_eq!(verifier.revision(), 0);
+        assert_eq!(verifier.entry_count(), 2);
+        assert_eq!(verifier.lookup_identity("a@b.com").unwrap().subject, "dev");
+        assert!(verifier.authenticate(&headers("s3cret")).is_ok());
     }
 
     #[test]

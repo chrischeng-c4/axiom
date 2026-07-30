@@ -18,6 +18,7 @@ pub mod controller;
 pub mod crd;
 pub mod lease;
 pub mod llm;
+pub mod metrics;
 pub mod render;
 pub mod resize;
 pub mod service;
@@ -25,7 +26,11 @@ pub mod stateful;
 
 pub use controller::{run, Error};
 pub use lease::Election;
-pub use service::{ClusterSpec, ManagedService, ReadinessTarget, ReadyFacts, ResourceSpec};
+pub use metrics::ControllerMetrics;
+pub use service::{
+    ClusterSpec, Condition, ConditionFact, ConditionStatus, ManagedService, ReadinessTarget,
+    ReadyFacts, ResourceSpec,
+};
 pub use stateful::{
     plan_replica_layer, plan_shard_split, ObservedShardUsage, ObservedUtilization,
     ReplicaLayerError, ReplicaLayerPlan, ReplicaLayerPolicy, ShardSplitError, ShardSplitPlan,

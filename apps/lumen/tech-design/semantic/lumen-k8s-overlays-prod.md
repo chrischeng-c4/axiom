@@ -52,8 +52,10 @@ deployment:
           - ../../base
         
         # prod runs the prometheus-operator, so pull in the ServiceMonitor +
-        # PrometheusRule SLO alerts.
+        # PrometheusRule SLO alerts, and isolates the serving pod with a NetworkPolicy
+        # (enforced only where the CNI supports it — see components/network-policy).
         components:
+          - ../../components/network-policy
           - ../../components/observability
         
         # The ServiceMonitor's own metadata.namespace already follows the `namespace:`
@@ -104,8 +106,8 @@ deployment:
               # Strict auth: a Secret named `lumen-tokens` with key
               # `token-registry.json` must be supplied out-of-band, commonly from GCP
               # Secret Manager via External Secrets Operator / Secret Store CSI. Lumen
-              # reads only the mounted file path at startup, so rotate by rolling pods
-              # or running a Secret reloader controller.
+              # watches its mounted registry and atomically adopts a valid replacement
+              # without a pod restart.
               - op: add
                 path: /spec/template/spec/containers/0/env/-
                 value:

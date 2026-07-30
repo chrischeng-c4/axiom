@@ -27,21 +27,36 @@ registry loading, and principal injection. Each service owns its public env
 prefix, resource names, route exemptions, and handler-level authorization.
 
 ## token registry shape
-The registry is a JSON object keyed by exact bearer token. Each token maps to a
-subject plus resource-role grants:
+The registry is a JSON object with two **disjoint** namespaces: `tokens` is
+keyed by exact bearer secret, `identities` by an email an external provider
+verified. Each key maps to a subject plus resource-role grants:
 
 ```json
 {
-  "admin-token": {
-    "subject": "ops",
-    "roles": { "*": "admin" }
+  "tokens": {
+    "admin-token": {
+      "subject": "ops",
+      "roles": { "*": "admin" }
+    },
+    "reader-token": {
+      "subject": "reader",
+      "roles": { "products": "read" }
+    }
   },
-  "reader-token": {
-    "subject": "reader",
-    "roles": { "products": "read" }
+  "identities": {
+    "data-team@example.com": {
+      "subject": "data-team",
+      "roles": { "products": "read" }
+    }
   }
 }
 ```
+
+A presented bearer token resolves against `tokens` only, so a secret whose text
+happens to be a valid email can never inherit that email's grants. Only the
+`tokens` half is a credential — a registry carrying `identities` alone is
+ordinary configuration. A flat document with neither section is still accepted
+and read entirely as `tokens`.
 
 Roles are `read`, `write`, or `admin`; `admin` covers `write` and `read`, and
 `write` covers `read`. The literal resource key `*` grants across all

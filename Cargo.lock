@@ -7397,6 +7397,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "serde_yaml",
  "service-auth",
  "service-backup",
@@ -12140,9 +12141,12 @@ name = "service-auth"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum 0.8.9",
  "cli-std",
  "http-body-util",
+ "jsonwebtoken",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
@@ -12205,12 +12209,14 @@ name = "service-k8s"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum 0.8.9",
  "chrono",
  "cli-std",
  "futures",
  "http 1.4.0",
  "k8s-openapi",
  "kube",
+ "metrics-prometheus",
  "schemars",
  "serde",
  "serde_json",

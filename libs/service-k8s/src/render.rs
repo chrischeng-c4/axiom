@@ -517,6 +517,16 @@ pub struct ServiceStatefulSet<'a> {
     /// Pod affinity/anti-affinity. Stateful data-plane callers should use
     /// [`dedicated_node_affinity`].
     pub affinity: Option<Value>,
+    /// `spec.template.spec.nodeSelector` — which node pool the workload runs
+    /// on. A field of its own rather than something a caller expresses through
+    /// [`Self::affinity`]: naming a node pool must not require restating the
+    /// operator-owned pod anti-affinity, because a caller that restates it
+    /// wrongly loses the constraint keeping two replicas of one shard off the
+    /// same host, and the resulting StatefulSet looks correct.
+    pub node_selector: Option<Value>,
+    /// `spec.template.spec.tolerations` — the taints this workload may land
+    /// on, so a dedicated node pool can repel every other workload.
+    pub tolerations: Vec<Value>,
     pub topology_spread_constraints: Vec<Value>,
     pub revision_history_limit: Option<i32>,
     pub update_strategy: Option<Value>,
@@ -558,6 +568,8 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
         volumes,
         volume_mounts,
         affinity,
+        node_selector,
+        tolerations,
         topology_spread_constraints,
         revision_history_limit,
         update_strategy,
@@ -643,6 +655,12 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
     }
     if let Some(affinity) = affinity {
         pod_spec["affinity"] = affinity;
+    }
+    if let Some(node_selector) = node_selector {
+        pod_spec["nodeSelector"] = node_selector;
+    }
+    if !tolerations.is_empty() {
+        pod_spec["tolerations"] = json!(tolerations);
     }
     if !topology_spread_constraints.is_empty() {
         pod_spec["topologySpreadConstraints"] = json!(topology_spread_constraints);
@@ -754,6 +772,8 @@ pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
         volumes: vec![],
         volume_mounts: vec![],
         affinity: Some(dedicated_node_affinity(p.cx.selector(p.component))),
+        node_selector: None,
+        tolerations: vec![],
         topology_spread_constraints: vec![],
         revision_history_limit: None,
         update_strategy: None,
@@ -990,6 +1010,8 @@ mod tests {
             volumes: vec![],
             volume_mounts: vec![],
             affinity: None,
+            node_selector: None,
+            tolerations: vec![],
             topology_spread_constraints: vec![],
             revision_history_limit: None,
             update_strategy: None,
@@ -1111,6 +1133,8 @@ mod tests {
                 json!({ "name": "token-registry", "mountPath": "/var/run/secrets/lumen", "readOnly": true }),
             ],
             affinity: Some(dedicated_node_affinity(cx.selector("server"))),
+            node_selector: None,
+            tolerations: vec![],
             topology_spread_constraints: vec![
                 spread("topology.kubernetes.io/zone"),
                 spread("kubernetes.io/hostname"),

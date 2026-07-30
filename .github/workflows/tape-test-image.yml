@@ -204,6 +204,6 @@ jobs:
             echo "PROJECT_ID=<disposable-gcp-project> \\"
             echo "ACCEPTANCE_APPS=tape \\"
             echo "TAPE_IMAGE='${image}' \\"
-            echo "  benchmarks/gcp-operator-acceptance/scripts/run.sh"
+            echo "  acceptance/gcp/scripts/run.sh"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

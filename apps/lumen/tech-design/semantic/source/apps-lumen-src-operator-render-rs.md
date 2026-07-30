@@ -57,9 +57,9 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 124 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
-| `render` | apps/lumen/src/operator/render.rs | function | pub | 149 | render(lumen: &Lumen) -> Vec<Value> |
-| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 113 | wants_hpa(_lumen: &Lumen) -> bool |
+| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 130 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `render` | apps/lumen/src/operator/render.rs | function | pub | 155 | render(lumen: &Lumen) -> Vec<Value> |
+| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 119 | wants_hpa(_lumen: &Lumen) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -87,6 +87,7 @@ use serde_json::{json, Value};
 
 use super::crd::Lumen;
 use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
+use service_k8s::service::PruneTarget;
 
 const APP: &str = "lumen";
 const MANAGER: &str = "lumen-operator";
@@ -149,7 +150,12 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
 }
 
 /// Which shared projection source (if any) supplies the token registry file.
-/// `tokensSecret` wins over `tokensSecretProviderClass` when both are set.
+///
+/// The two are mutually exclusive by schema and by
+/// [`LumenSpec::validate`](super::crd::LumenSpec::validate), so at most one is
+/// ever set on a spec that reaches here (#2678, R7). The order below is not a
+/// precedence rule to rely on — it is what a spec that slipped past both gates
+/// happens to render, and that spec's reconcile has already failed.
 fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_>> {
     if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
         return None;
@@ -240,6 +246,9 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
     ]);
     out.push(render::pdb(&cx, &name, COMPONENT, 1));
+    if lumen.spec.network_policy {
+        out.push(serving_network_policy(&cx, &name));
+    }
     if lumen.spec.observability {
         out.push(service_monitor(&cx));
         out.push(prometheus_rule(&cx));
@@ -249,6 +258,59 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         out.push(cj);
     }
     out
+}
+
+/// Children a previous spec rendered that this one no longer wants (#2603).
+///
+/// Only the NetworkPolicy qualifies today, and it qualifies because it is the
+/// one conditional child whose *presence* changes runtime behavior rather than
+/// just adding an object. Leaving a stale ServiceMonitor around scrapes a
+/// metric nobody reads; leaving a stale NetworkPolicy around keeps dropping
+/// traffic the spec has stopped asking to drop. Flipping `networkPolicy` to
+/// `false` therefore has to actively remove it, or the field is opt-in only.
+///
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn prunes(lumen: &Lumen) -> Vec<PruneTarget> {
+    if lumen.spec.network_policy {
+        return Vec::new();
+    }
+    vec![PruneTarget {
+        api_version: "networking.k8s.io/v1",
+        kind: "NetworkPolicy",
+        // Resolved through the same `instance` helper `render` uses, so this is
+        // the exact inverse of the branch that creates it rather than an
+        // independent guess at the name.
+        name: instance(lumen),
+    }]
+}
+
+/// The optional per-instance NetworkPolicy (#2603), rendered only when
+/// `spec.networkPolicy` is set.
+///
+/// Lumen's two ports have genuinely different audiences: `7373` is the search
+/// API any workload may call, `7374` carries Raft — append entries, vote
+/// requests, snapshot transfer — and must be reachable only from this
+/// instance's own pods. The shared helper expresses exactly that split, so the
+/// isolation posture is one contract across every service that adopts it
+/// rather than six hand-written policies that drift.
+///
+/// The backup CronJob is deliberately *not* selected: it runs under its own
+/// `<instance>-backup` component label, calls the client Service like any other
+/// in-cluster client, and needs egress to object storage — the serving pods'
+/// posture would be wrong for it in both directions.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+fn serving_network_policy(cx: &RenderCtx<'_>, name: &str) -> Value {
+    render::common::network_policy(render::common::NetworkPolicy {
+        cx,
+        name,
+        component: COMPONENT,
+        client_ports: vec![CLIENT_PORT],
+        peer_ports: vec![RAFT_PORT],
+        // Lumen's operator path never configures the NATS WAL relay; backups
+        // reach object storage over TLS, which the shared baseline already
+        // allows.
+        extra_egress: vec![],
+    })
 }
 
 /// A stable, per-instance identity for scheduled backup jobs.
@@ -429,6 +491,18 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         volumes,
         volume_mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
+        // `spec.placement` names the node pool; the anti-affinity above stays
+        // operator-owned so asking for a pool can never cost the constraint
+        // that keeps two replicas of a shard off one host.
+        node_selector: (!lumen.spec.placement.node_selector.is_empty())
+            .then(|| json!(lumen.spec.placement.node_selector)),
+        tolerations: lumen
+            .spec
+            .placement
+            .tolerations
+            .iter()
+            .map(|t| json!(t))
+            .collect(),
         topology_spread_constraints: vec![
             spread("topology.kubernetes.io/zone"),
             spread("kubernetes.io/hostname"),
