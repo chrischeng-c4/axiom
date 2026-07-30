@@ -921,7 +921,7 @@ fn render_block(target_name: &str, producer: &MetaDocProducer) -> String {
             "## Brief\n\nProject-local contribution contract for {name}.\n\n## Authoritative Inputs\n\n- Product promises and work roots: [CAPABILITIES.md](CAPABILITIES.md)\n- Project orientation: [README.md](README.md)\n\n## Local Workflow\n\nFollow repository-level agent guidance and keep project-specific rules here.\n\n## Verification\n\nList the narrow commands that prove changes to {name}."
         ),
         ProducerKind::ProjectCapabilities => format!(
-            "## Brief\n\nMachine-readable capability contract for {name}.\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|"
+            "## Brief\n\nMachine-readable capability contract for {name}.\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n\n### Core Features\n\nPromises this project exists to keep. Declare each one as an H4 contract here.\n\n### Non-Core Features\n\nBaselines every service of this archetype carries. Empty is a valid answer."
         ),
         ProducerKind::RepoClaude
         | ProducerKind::RepoAgents
@@ -1153,6 +1153,7 @@ pub(crate) fn sync_repository_product_docs(root: &Path) -> Result<Vec<MetaDocCha
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::meta_docs::validate_meta_doc_layout;
     use std::collections::BTreeSet;
 
     fn args_for(path: &str, repository_product: bool) -> MetaScopeArgs {
@@ -1254,6 +1255,44 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.code == "project_brief_placeholder"));
+    }
+
+    #[test]
+    fn meta_doc_ownership_init_capability_skeleton_satisfies_its_own_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = args_for("apps/demo", false);
+        let scope = resolve_scope(temp.path(), &args).unwrap();
+        execute(temp.path(), &scope, &args, ApplyMode::Init).unwrap();
+
+        let skeleton = fs::read_to_string(temp.path().join("apps/demo/CAPABILITIES.md")).unwrap();
+        let contract = meta_doc_contract(MetaDocLayer::Project, "CAPABILITIES.md")
+            .expect("project CAPABILITIES.md contract");
+        // The initializer is the only way a new project gets a document, so it
+        // has to satisfy every heading its own matrix row demands.
+        for heading in contract.required_headings {
+            assert!(
+                skeleton.lines().any(|line| line.trim_end() == *heading),
+                "init skeleton is missing required heading `{heading}`:\n{skeleton}"
+            );
+        }
+        let core = skeleton.find("### Core Features").expect("core root");
+        let non_core = skeleton
+            .find("### Non-Core Features")
+            .expect("non-core root");
+        assert!(
+            core < non_core,
+            "core root must precede non-core:\n{skeleton}"
+        );
+
+        let report = validate_meta_doc_layout(temp.path(), false, &[PathBuf::from("apps/demo")]);
+        assert!(
+            !report.findings.iter().any(|finding| {
+                finding.code == "meta_doc_section_missing"
+                    && finding.path == "apps/demo/CAPABILITIES.md"
+            }),
+            "{:#?}",
+            report.findings
+        );
     }
 
     #[test]

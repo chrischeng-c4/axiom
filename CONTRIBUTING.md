@@ -1029,7 +1029,7 @@ META-doc projector.
 | repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
 | project | `<project>/README.md` | project identity and brief projections linking local contribution and goal contracts | `## Brief`<br>`## Contributing`<br>`## Capability Contract` | repo README + CONTRIBUTING |
 | project | `<project>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules | `## Brief`<br>`## Authoritative Inputs`<br>`## Local Workflow`<br>`## Verification` | repo CONTRIBUTING |
-| project | `<project>/CAPABILITIES.md` | project product promises, work roots, and required verification | `## Brief`<br>`## Capabilities`<br>`### Capability Index` | repo capability schema policy |
+| project | `<project>/CAPABILITIES.md` | project product promises, work roots, and required verification | `## Brief`<br>`## Capabilities`<br>`### Capability Index`<br>`### Core Features`<br>`### Non-Core Features` | repo capability schema policy |
 <!-- aw:meta-doc-matrix:end -->
 
 The repo/global layer applies across the repository and teaches an agent how

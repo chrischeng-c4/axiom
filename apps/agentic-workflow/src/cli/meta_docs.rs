@@ -55,8 +55,16 @@ const PROJECT_CONTRIBUTING_HEADINGS: &[&str] = &[
     "## Local Workflow",
     "## Verification",
 ];
-const PROJECT_CAPABILITIES_HEADINGS: &[&str] =
-    &["## Brief", "## Capabilities", "### Capability Index"];
+/// The two feature roots are required headings, not a convention: a document
+/// that omits them declares promises the readiness split cannot attribute, and
+/// a project that has no non-core promise still has to say so.
+const PROJECT_CAPABILITIES_HEADINGS: &[&str] = &[
+    "## Brief",
+    "## Capabilities",
+    "### Capability Index",
+    "### Core Features",
+    "### Non-Core Features",
+];
 
 /// One fact-ownership row per META-doc and layer.
 ///
@@ -592,6 +600,80 @@ mod tests {
                 && finding.path == "projects/demo/CONTRIBUTING.md"
                 && finding.message.contains("## Verification")
         }));
+    }
+
+    #[test]
+    fn meta_doc_ownership_capabilities_row_requires_both_feature_roots() {
+        let contract = meta_doc_contract(MetaDocLayer::Project, "CAPABILITIES.md")
+            .expect("project CAPABILITIES.md contract");
+
+        // Ordered and exhaustive on purpose: a capability document that omits a
+        // feature root declares promises the readiness split cannot attribute,
+        // and a project with no non-core promise still has to say so.
+        assert_eq!(
+            contract.required_headings,
+            [
+                "## Brief",
+                "## Capabilities",
+                "### Capability Index",
+                "### Core Features",
+                "### Non-Core Features",
+            ]
+        );
+    }
+
+    #[test]
+    fn meta_doc_ownership_flat_capabilities_document_names_each_missing_feature_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let projects = vec![PathBuf::from("apps/demo")];
+        write_valid_layout(temp.path(), false, &projects);
+        // The pre-#3064 shape: canonical index, no feature roots.
+        fs::write(
+            temp.path().join("apps/demo/CAPABILITIES.md"),
+            "# Demo Capabilities\n\n## Brief\n\nBrief.\n\n## Capabilities\n\n### Capability Index\n\n| Capability |\n|---|\n\n#### Lexical Search\n\nPromise.\n",
+        )
+        .unwrap();
+
+        let report = validate_meta_doc_layout(temp.path(), false, &projects);
+        let missing = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.code == "meta_doc_section_missing"
+                    && finding.path == "apps/demo/CAPABILITIES.md"
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(missing.len(), 2, "{:#?}", report.findings);
+        for (finding, heading) in missing
+            .iter()
+            .zip(["### Core Features", "### Non-Core Features"])
+        {
+            assert_eq!(finding.severity, MetaFindingSeverity::Blocker);
+            assert!(
+                finding.message.contains(heading),
+                "finding must name the exact missing heading, got {}",
+                finding.message
+            );
+            assert!(
+                finding.remediation.contains(heading)
+                    && finding.remediation.contains("apps/demo/CAPABILITIES.md"),
+                "remediation must name heading and path, got {}",
+                finding.remediation
+            );
+        }
+    }
+
+    #[test]
+    fn meta_doc_ownership_projection_row_names_both_feature_roots() {
+        let table = render_meta_doc_ownership_table();
+        let row = table
+            .lines()
+            .find(|line| line.contains("`<project>/CAPABILITIES.md`"))
+            .expect("project CAPABILITIES.md projection row");
+
+        assert!(row.contains("`### Core Features`"), "{row}");
+        assert!(row.contains("`### Non-Core Features`"), "{row}");
     }
 
     #[test]

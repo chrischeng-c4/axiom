@@ -189,6 +189,14 @@ validation inventories and external contracts.
   an `ID`, surfaces, EC dimensions, a promise, and a work-root table.
   README-resident capability structure is migration input only --
   `aw capability migrate` relocates it.
+- Every capability lives under one of two required feature roots:
+  `### Core Features` for the promises the project exists to keep, and
+  `### Non-Core Features` for the archetype baselines every service of its kind
+  carries. Both roots are always present; an empty non-core root is a valid
+  answer. `Feature Class: core | non_core` is the per-capability field, and
+  `aw capability migrate` classifies a flat document into the two roots.
+- Readiness is reported per class as well as in total, so a project cannot look
+  ready on the strength of its baselines alone.
 - Each work-root row is a gap to close and a claim to verify. Its slug is the
   `gap` / `claim` id that TD frontmatter references.
 - Readiness is measured, not asserted: a capability is `verified` only when
@@ -473,6 +481,37 @@ mod tests {
         assert!(outline.contains("aw issue"));
         assert!(outline.contains("`model`"));
         assert!(outline.contains("`capability`"));
+    }
+
+    #[test]
+    fn meta_doc_ownership_llm_capability_topic_names_both_feature_roots() {
+        let md = cli_std::llm::render(
+            "aw",
+            env!("AW_BUILD_VERSION"),
+            TOPICS,
+            "capability",
+            cli_std::llm::Format::Md,
+        )
+        .unwrap();
+
+        // Offline orientation is how an agent learns the document shape before
+        // it writes one; if it omits the roots, the agent authors a flat
+        // document that `aw meta check` then rejects as a blocker.
+        for fragment in [
+            "### Core Features",
+            "### Non-Core Features",
+            "Feature Class",
+            "aw capability migrate",
+        ] {
+            assert!(
+                md.contains(fragment),
+                "capability orientation must name `{fragment}`"
+            );
+        }
+        assert!(
+            md.contains("per class"),
+            "orientation must say readiness is reported per feature class"
+        );
     }
 
     // @spec aw-llm-offline-agent-orientation-command.md R2
