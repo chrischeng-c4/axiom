@@ -229,6 +229,22 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         )
         lumen_reference.assert_duplicate_root_is_rejected(duplicate_root)
 
+        # A bare duplicate heading is enough to put one capability under both
+        # roots, so this rule is a single-message falsifier like the three above
+        # rather than something needing a co-occurring-set assertion.
+        multiply_classified = _lumen_report(
+            root, cap_path, lumen_reference.MULTIPLY_CLASSIFIED_DOCUMENT
+        )
+        lumen_reference.assert_capability_under_both_roots_is_rejected(
+            multiply_classified
+        )
+
+        # The other branch of the default-class rule: a legacy table parses to
+        # zero capability sections, so the count comes from the rows and has to
+        # be attributed from there. Nothing else in this fixture reaches it.
+        legacy = _lumen_report(root, cap_path, lumen_reference.LEGACY_TABLE_DOCUMENT)
+        lumen_reference.assert_legacy_rows_are_attributed_to_non_core(legacy)
+
         # Migration is the only path that has to *derive* the class instead of
         # reading one. Without this leg the derivation rule could be inverted
         # and every other assertion here would still pass, because every other
@@ -277,6 +293,8 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "baseline_core": baseline_core,
         "conflict": conflict,
         "duplicate_root": duplicate_root,
+        "multiply_classified": multiply_classified,
+        "legacy": legacy,
         "unclassified": unclassified,
         "migrated": migrated_report,
         "preserved": preserved_text,
@@ -354,7 +372,9 @@ def verify(case_id: str) -> list[str]:
                 "a Feature Class field contradicting its containing feature root is rejected as a blocker",
                 "no document raises a blocker the fixture did not name, because document findings are separated from the scratch environment by subtraction rather than by a whitelist of wordings",
                 "a feature root declared twice is rejected as a blocker whose message names neither the field nor the class, which is what the subtractive filter is required to see",
+                "one capability listed under both feature roots is rejected as a blocker naming that exact capability, with every capability still parsing",
                 "a document that declares no feature class at all raises no blocker and is attributed wholly to non-core, capabilities and claims alike, which is the default rule no self-describing document can exercise",
+                "a legacy capability table is diagnosed as legacy and its rows are attributed wholly to non-core rather than falling out of both classes, which is the branch of that default rule where no capability section parses at all",
                 "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
                 "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",

@@ -23,14 +23,21 @@ contract is never opened for writing, and the caller proves that by digesting it
 before and after.
 
 What this fixture does *not* assert, so it is not read as proving more than it
-does: `validate_capability_feature_roots` also rejects a missing root, an unknown
-root, and a capability nested under both roots. None of the three is falsified
-here. They cannot be added as single-message falsifiers -- deleting
-`### Non-Core Features` yields the missing-root finding plus one field/root
-contradiction per capability stranded under the surviving root, and renaming it
-yields unknown-root plus missing-root -- so they need co-occurring-set assertions
-and belong in their own slice. `document_blockers` is nonetheless total, so if
-any of the three fires on a document this fixture *does* run, the run fails.
+does: `validate_capability_feature_roots` also rejects a missing root and an
+unknown root. Neither is falsified here, and neither can be a single-message
+falsifier -- deleting `### Non-Core Features` yields the missing-root finding
+plus one field/root contradiction per capability stranded under the surviving
+root, and renaming it yields unknown-root plus missing-root -- so they need
+co-occurring-set assertions and belong in their own slice. `document_blockers`
+is nonetheless total, so if either fires on a document this fixture *does* run,
+the run fails.
+
+That constraint is specific to those two rules. An earlier revision of this
+docstring generalized it over a third, a capability nested under both roots, and
+that was false: appending one bare `#### Search Core` heading inside the non-core
+root yields exactly one blocker with all six capabilities still parsing, because
+`scan_feature_roots` records root membership from headings alone. It is now
+falsified directly as `MULTIPLY_CLASSIFIED_DOCUMENT` rather than excused.
 """
 
 from __future__ import annotations
@@ -306,6 +313,50 @@ DUPLICATE_ROOT_DOCUMENT = REFERENCE_DOCUMENT.replace(
 )
 assert DUPLICATE_ROOT_DOCUMENT.count("### Core Features") == 2
 
+#: Falsifier 4 -- one capability listed under both roots. A bare heading is
+#: enough: `scan_feature_roots` records root membership from headings alone, so
+#: this yields a single blocker with all six capabilities still parsing, which is
+#: the same shape as the three falsifiers above. Duplicating the whole section
+#: instead would collapse the document to "no capability sections found", a
+#: different defect and not this rule.
+MULTIPLY_CLASSIFIED_DOCUMENT = (
+    REFERENCE_DOCUMENT.rstrip("\n") + f"\n\n#### {_CORE_MEMBERS[0][0]}\n"
+)
+MULTIPLY_CLASSIFIED_ID = _CORE_MEMBERS[0][1]
+
+#: A legacy capability table: the shape every adopter document had before the
+#: canonical field style. It parses to zero capability sections and N legacy
+#: rows, which is the *other* branch of the default-class rule -- `report`
+#: attributes the row count wholly to non-core instead of letting the rows fall
+#: out of both classes. The columns are the legacy header the parser recognizes.
+_LEGACY_ROWS = (
+    ("Search Core", "shipped", "none", "#1", "`lumen serve`"),
+    ("Lexical Search", "shipped", "none", "#2", "`lumen serve`"),
+    ("Security Hardening", "partial", "audit coverage", "#3", "`lumen auth`"),
+)
+LEGACY_ROW_COUNT = len(_LEGACY_ROWS)
+LEGACY_TABLE_DOCUMENT = """# Lumen
+
+## Brief
+
+Lumen reference fixture, legacy shape: a pre-canonical capability table.
+
+## Capabilities
+
+| Capability | Current State | Gaps | Active WI | Evidence |
+|---|---|---|---|---|
+""" + "".join(
+    f"| {name} | {state} | {gaps} | {wi} | {evidence} |\n"
+    for name, state, gaps, wi, evidence in _LEGACY_ROWS
+)
+
+#: The blocker a legacy table is expected to raise. Asserted exactly, so the
+#: shape is proven to be *diagnosed* rather than silently accepted.
+LEGACY_TABLE_BLOCKER = (
+    "legacy capability table detected; migrate rows to canonical field-style "
+    "capability contracts under ## Capabilities"
+)
+
 #: `observability` is a real Lumen capability and *not* a trait-derived
 #: baseline, so migration's derivation would call it core. Declaring it
 #: `non_core` before migration therefore puts the declaration and the derivation
@@ -358,6 +409,9 @@ _ENVIRONMENT_BLOCKER_PREFIXES = (
     "td capability scan unavailable:",
 )
 
+#: The subset that every report carries no matter what the document contains.
+_UNCONDITIONAL_ENVIRONMENT_PREFIXES = frozenset(_ENVIRONMENT_BLOCKER_PREFIXES[:2])
+
 
 def document_blockers(report: dict[str, Any]) -> list[str]:
     """Every blocker the *document* caused, with the scratch environment removed.
@@ -372,9 +426,24 @@ def document_blockers(report: dict[str, Any]) -> list[str]:
         for blocker in blockers
         if blocker.startswith(_ENVIRONMENT_BLOCKER_PREFIXES)
     ]
-    assert len(environment) == len(_ENVIRONMENT_BLOCKER_PREFIXES), (
-        f"scratch-environment blockers changed shape; expected one per "
-        f"{_ENVIRONMENT_BLOCKER_PREFIXES}, got {environment}"
+    matched = {
+        prefix
+        for prefix in _ENVIRONMENT_BLOCKER_PREFIXES
+        for blocker in environment
+        if blocker.startswith(prefix)
+    }
+    # One blocker per matched prefix, never two, so the subtraction cannot
+    # quietly absorb a repeat of an environment message.
+    assert len(environment) == len(matched), (
+        f"scratch-environment blockers repeated a prefix; got {environment}"
+    )
+    # The two inventory blockers are unconditional. The td scan is not: `report`
+    # only scans TD refs when the document parsed at least one capability
+    # section (capability.rs:6158), so a legacy-only document structurally
+    # cannot emit it. Requiring all three here would fail on that shape for a
+    # reason that has nothing to do with feature classes.
+    assert matched.issuperset(_UNCONDITIONAL_ENVIRONMENT_PREFIXES), (
+        f"expected the inventory blockers to be present; got {environment}"
     )
     return [blocker for blocker in blockers if blocker not in environment]
 
@@ -489,6 +558,52 @@ def assert_duplicate_root_is_rejected(report: dict[str, Any]) -> None:
         "duplicate `### Core Features` root (2 occurrences); "
         "merge them into one root under `## Capabilities`"
     ], report["blockers"]
+
+
+def assert_capability_under_both_roots_is_rejected(report: dict[str, Any]) -> None:
+    """One capability under both roots is a blocker, and the only one.
+
+    The negative half matters as much as the positive: every capability must
+    still parse, so this cannot pass by the document having collapsed into
+    something the parser gave up on.
+    """
+    assert len(report["capabilities"]) == len(CORE_IDS) + len(NON_CORE_IDS), report
+    assert document_blockers(report) == [
+        f"capability `{MULTIPLY_CLASSIFIED_ID}` is classified under both "
+        "`Core Features` and `Non-Core Features`; keep exactly one root"
+    ], report["blockers"]
+
+
+def assert_legacy_rows_are_attributed_to_non_core(report: dict[str, Any]) -> None:
+    """A legacy table's rows land wholly in non-core rather than nowhere.
+
+    This is the second branch of the default-class rule. `UNCLASSIFIED_DOCUMENT`
+    covers the branch where capability sections parse and each one defaults;
+    this covers the branch where none parse at all and the count comes from
+    `legacy_rows` instead (`apply_feature_class_totals`, capability.rs:1287).
+    Neutering that branch leaves every other assertion in this fixture green
+    while three capabilities sit in neither class.
+
+    The shape under test is asserted rather than assumed -- `capabilities` empty
+    with a non-zero `capability_count` is what routes through the branch, so if a
+    future change makes legacy rows parse into sections this fails loudly instead
+    of silently testing the other branch twice.
+    """
+    assert report["capabilities"] == [], report["capabilities"]
+    assert report["capability_count"] == LEGACY_ROW_COUNT, report
+
+    assert report["core_capability_count"] == 0, report
+    assert report["core_claim_count"] == 0, report
+
+    # The discriminating assertion: the row count is attributed, not dropped.
+    # (`claim_count` is 0 in this shape -- legacy rows carry no work roots -- so
+    # the claim pair-sum below is real but not what catches the mutation.)
+    assert report["non_core_capability_count"] == report["capability_count"], report
+    assert report["non_core_claim_count"] == report["claim_count"], report
+    assert report["non_core_verified_count"] == report["verified_count"], report
+
+    # Diagnosed, not silently accepted.
+    assert document_blockers(report) == [LEGACY_TABLE_BLOCKER], report["blockers"]
 
 
 def assert_migration_preserves_declared_class(migrated: str) -> None:
