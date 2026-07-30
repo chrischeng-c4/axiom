@@ -88,7 +88,7 @@ pub struct Project {
     /// EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the generated EC case command in the aw.toml inventory. Declared before `workspaces`: contract before implementation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ec: BTreeMap<String, EcBinding>,
-    /// Per-project EC review-backing policy: `human` (default when absent), `agent`, or `either`. Controls which reviewer_kind values in the durable EC review record satisfy the production-required EC review gate (#1829).
+    /// Per-project EC review-backing policy: `either` (agent-first; the default when absent, per #1859), `agent`, or `human`. Controls which reviewer_kind values in the durable EC review record satisfy the production-required EC review gate (#1829).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ec_review_backing: Option<String>,
     /// Per-project EC review-timing policy: `blocking` (default when absent) or `deferred`. In `deferred` mode a pending human EC review is recorded as `deferred_pending_human` and does not block `aw ec gen --verify`/the terminal code-check gate or the `aw wi run`/`aw capability run` runner; the pending review is instead surfaced as an advisory queue entry in `aw ec` and `aw health` until a post-hoc `aw ec review` finalizes it (#1828).
