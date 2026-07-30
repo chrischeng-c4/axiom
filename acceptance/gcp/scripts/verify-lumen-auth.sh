@@ -204,9 +204,40 @@ spec:
     raftStorage: ${main_cr_raft_storage}
 EOF
 
+# A serving process under `auth: required` refuses to start when the delegated
+# review probe fails, so "never reached Ready" is the expected shape of an auth
+# wiring defect -- and the pod that holds the reason dies with the namespace the
+# cleanup trap tears down seconds later. Capture the diagnosis before failing,
+# or the only artifact of the failure is the sentence "never reached Ready".
+capture_unready_evidence() {
+  kubectl -n "$AUTH_NS" get lumen/"$INSTANCE" -o json \
+    > "$AUTH_EVIDENCE/cr-unready.json" 2>&1 || true
+  kubectl -n "$AUTH_NS" describe pod "${INSTANCE}-0" \
+    > "$AUTH_EVIDENCE/pod-unready-describe.txt" 2>&1 || true
+  kubectl -n "$AUTH_NS" logs "${INSTANCE}-0" --tail=200 \
+    > "$AUTH_EVIDENCE/pod-unready.log" 2>&1 || true
+  kubectl -n "$AUTH_NS" logs "${INSTANCE}-0" --previous --tail=200 \
+    > "$AUTH_EVIDENCE/pod-unready-previous.log" 2>&1 || true
+  kubectl get clusterrolebinding "lumen.${AUTH_NS}.${INSTANCE}.auth-delegator" -o json \
+    > "$AUTH_EVIDENCE/auth-delegator-binding-unready.json" 2>&1 || true
+}
+
 auth_ready_deadline=$((SECONDS + 600))
 until [[ "$(kubectl -n "$AUTH_NS" get lumen/"$INSTANCE" -o jsonpath='{.status.phase}' 2>/dev/null || true)" == "Ready" ]]; do
-  (( SECONDS < auth_ready_deadline )) || fail "$INSTANCE never reached Ready"
+  # A container that has already died twice is not slow, it is broken, and the
+  # backoff only grows from here. Waiting out the full deadline would add ten
+  # minutes to a verdict the second restart already settled.
+  restarts="$(kubectl -n "$AUTH_NS" get pod "${INSTANCE}-0" \
+    -o jsonpath='{.status.containerStatuses[?(@.name=="server")].restartCount}' 2>/dev/null || true)"
+  if [[ "${restarts:-0}" =~ ^[0-9]+$ ]] && (( restarts >= 2 )); then
+    capture_unready_evidence
+    fail "${INSTANCE}-0 restarted ${restarts} times without serving \
+(see $AUTH_EVIDENCE/pod-unready-previous.log)"
+  fi
+  if (( SECONDS >= auth_ready_deadline )); then
+    capture_unready_evidence
+    fail "$INSTANCE never reached Ready (see $AUTH_EVIDENCE/pod-unready*.log)"
+  fi
   sleep 5
 done
 kubectl -n "$AUTH_NS" get lumen/"$INSTANCE" -o json > "$AUTH_EVIDENCE/cr-after-apply.json"
