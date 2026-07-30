@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:bfdc7475" tracker="pending-tracker" reason="TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (closed AuthMode enum disabled|required, defaulting to required) + tokensSecret (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
+// HANDWRITE-BEGIN gap="missing-generator:logic:bfdc7475" tracker="pending-tracker" reason="TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (closed AuthMode enum disabled|required, defaulting to required) + tokensSecret (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message, conditions }."
 //! The `Tape` custom resource (`tape.dev/v1alpha1`).
 //!
 //! One `Tape` object declares a tape deployment's HA topology. The spec
@@ -231,6 +231,16 @@ pub struct TapeStatus {
     /// Last human-readable reconcile message.
     #[serde(default)]
     pub message: String,
+    /// Kubernetes-convention convergence conditions (#3054): `Ready`,
+    /// `Progressing`, `StorageHealthy`, `BackupConfigured`. This is the
+    /// surface `kubectl wait --for=condition=Ready`, Argo CD health
+    /// assessment, and Flux readiness gates read; `phase` is unchanged and
+    /// still populated, so nothing already consuming it breaks.
+    ///
+    /// `lastTransitionTime` is stamped by the reconcile loop, not here — see
+    /// [`super::reconcile`]'s no-I/O `status_patch` contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<service_k8s::Condition>,
 }
 
 fn default_storage() -> String {

@@ -173,6 +173,24 @@ requirements:
     kind: functional
     risk: medium
     verify: tests/operator.rs::status_patch_reports_pending_reconciling_ready
+  prunes_inverts_conditional_render:
+    id: R11
+    text: "ManagedService::prunes for Tape names the batch/v1 CronJob at <name>-backup when spec.backup is unset, and nothing else. Across every combination of spec.observability and spec.backup it is disjoint from render() -- no identity is both rendered and pruned, which would make the controller delete an object it re-applies on the next pass -- and total for the CronJob, which appears in exactly one of the two sets. Server-Side Apply reconciles fields on the objects it is given and never deletes one that stopped being rendered, so without this a CR that drops spec.backup keeps taking backups on schedule forever. Every prune target must sit in an API group a vanilla cluster serves: a PruneTarget costs a GET per requeue, and a group the cluster does not serve answers with a plain-text 404 that get_opt cannot parse as NotFound, failing the entire reconcile -- apply and status write included -- on a 15s loop that never converges. The spec.observability ServiceMonitor and PrometheusRule are therefore not prune targets: both are monitoring.coreos.com/v1, and spec.observability is default-off precisely so a cluster without the Prometheus Operator CRDs stays installable, so pruning on the false branch would reach for that group in exactly the vanilla case the default protects (blocked on #3079; caught by the Kind gate, the only place a missing API group is real). The always-rendered <name>-backup ServiceAccount is likewise never a prune target -- it is a stable Workload Identity binding subject whose lifecycle is decoupled from the schedule toggle. Ownership scoping is not reimplemented here: libs/service-k8s/src/controller.rs::prune_object GETs the live object and deletes only on a matching controller ownerReference UID (proven by controller::tests::prune_leaves_an_object_this_cr_does_not_own)."
+    kind: functional
+    risk: high
+    verify: tests/operator.rs::prunes_is_the_exact_inverse_of_the_conditional_render_branches
+  prunes_only_names_built_in_api_groups:
+    id: R13
+    text: "Every PruneTarget ManagedService::prunes returns, under every combination of spec.observability and spec.backup, sits in an API group a conformant apiserver serves with no CRD or add-on installed. A missing object returns a structured NotFound that get_opt maps to Ok(None); a missing API group returns a plain-text '404 page not found' that kube cannot parse into an ErrorResponse, so get_opt's reason == NotFound arm never matches, the error propagates, and the whole reconcile fails on a 15s retry loop -- presenting as an operator that writes no status at all rather than as anything mentioning pruning. The guard is an allow-list of built-in groups rather than a denial of specific vendor groups, so a future target in any add-on group fails here instead of in a cluster. Widening it is gated on #3079."
+    kind: functional
+    risk: high
+    verify: tests/operator.rs::prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve
+  conditions_project_from_one_observation:
+    id: R12
+    text: "ManagedService::conditions for Tape emits Ready, Progressing, StorageHealthy and BackupConfigured, each with a non-empty reason and message, projected from the same Observation status_patch projects from -- Observation::replicas_ready reads status.phase rather than re-testing readyReplicas >= desiredReplicas, so the flat phase and the Ready condition cannot disagree. conditions() is a pure function of (spec, ready facts, context), which is what makes observed_conditions() safe to diff: the shared projection preserves lastTransitionTime only when the recomputed fact equals the observed one, and Patch::Merge replaces arrays wholesale. StorageHealthy reports Unknown/NotObserved rather than a fabricated False: the sticky ENOSPC flag (#2573) lives in the server process, /readyz stays green while degraded by design, and tape implements no reconcile_plan, so no observation path reaches it -- #3071 adds one."
+    kind: functional
+    risk: medium
+    verify: tests/operator.rs::conditions_is_a_pure_function_of_spec_and_observed_facts
 ---
 flowchart TD
     r1[R1 dockerfile render reproduces fixtures] --> tests_deploy_cli_rs_dockerfile_render_reproduces_committed_fixtures[tests/deploy_cli.rs::dockerfile_render_reproduces_committed_fixtures]
@@ -186,6 +204,9 @@ flowchart TD
     r8[R8 operator feature default off] --> cargo_build_p_tape_cargo_test_p_tape[cargo build -p tape && cargo test -p tape]
     r9[R9 operator feature build green] --> cargo_test_p_tape_features_operator[cargo test -p tape --features operator]
     r10[R10 llm topic names deploy verbs] --> tests_deploy_cli_rs_llm_topic_names_deploy_verbs[tests/deploy_cli.rs::llm_topic_names_deploy_verbs]
+    r11[R11 prunes inverts conditional render] --> tests_operator_rs_prunes_is_the_exact_inverse_of_the_conditional_render_branches[tests/operator.rs::prunes_is_the_exact_inverse_of_the_conditional_render_branches]
+    r12[R12 conditions project from one observation] --> tests_operator_rs_conditions_is_a_pure_function_of_spec_and_observed_facts[tests/operator.rs::conditions_is_a_pure_function_of_spec_and_observed_facts]
+    r13[R13 prunes only names built in api groups] --> tests_operator_rs_prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve[tests/operator.rs::prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve]
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -236,7 +257,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth: AuthMode (closed enum disabled|required, #[default] Required; spelled 'disabled' because YAML 1.1 reads a bare 'off' as boolean false, while AuthMode::as_env() still yields the 'off' the serving process's TAPE_AUTH takes) + mutually exclusive tokensSecret / tokensSecretProviderClass (+ tokensSecretCsiDriver) (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
+    description: "TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth: AuthMode (closed enum disabled|required, #[default] Required; spelled 'disabled' because YAML 1.1 reads a bare 'off' as boolean false, while AuthMode::as_env() still yields the 'off' the serving process's TAPE_AUTH takes) + mutually exclusive tokensSecret / tokensSecretProviderClass (+ tokensSecretCsiDriver) (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message, conditions }."
   - path: apps/tape/src/operator/render.rs
     action: create
     section: logic
@@ -246,7 +267,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "impl ManagedService for Tape: MANAGER tape-operator (SSA field manager + leader-election Lease name); render() -> render::render; readiness_targets = [StatefulSet {name}]; status_patch = Pending|Reconciling|Ready from readyReplicas vs desiredReplicas (replicasPerShard, shard pinned 1) + observedGeneration + message; pub async fn run() = service_k8s::run::<Tape>()."
+    description: "impl ManagedService for Tape: MANAGER tape-operator (SSA field manager + leader-election Lease name); render() -> render::render; prunes() -> render::prunes; readiness_targets = [StatefulSet {name}]; status_patch + conditions() both project from one Observation (Ready/Progressing/StorageHealthy/BackupConfigured) so the flat phase and the conditions can never disagree; observed_conditions() round-trips status.conditions for lastTransitionTime; pub async fn run() = service_k8s::run::<Tape>()."
   - path: apps/tape/src/lib.rs
     action: modify
     section: logic
