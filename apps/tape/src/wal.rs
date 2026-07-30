@@ -33,9 +33,10 @@
 //! takes the journal lock to apply the commands in order. The lock is never
 //! held across the fsync. If any append or the sync fails, the batch fails
 //! closed: no command in it is applied, and the caller gets the error back
-//! with its [`std::io::ErrorKind`] preserved (mirroring
-//! `apps/tape/src/server.rs`'s `flatten_atomic_write_error`) so a future
-//! caller can distinguish ENOSPC/EIO from an ordinary failure. That single
+//! with both its [`std::io::ErrorKind`] and its `errno` intact (see
+//! [`DurabilityFailure`] -- the kind alone carries ENOSPC but not EIO), so
+//! `AppState::apply_mutation` can tell a durability failure that must latch
+//! degraded read-only mode from an ordinary one. That single
 //! failed batch is not the only thing at risk: a failure can still have
 //! landed some of its frames on disk (an `append` cannot be undone), so a
 //! later batch reusing the same starting seq would produce a duplicate
@@ -56,9 +57,10 @@
 //! not logic this module reimplements.
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use storage_durable::{FramedLogReader, FramedLogWriter, FsyncPolicy, SnapshotFileStore};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::raft::{apply_command, TapeCommand, TapeOutcome};
 use crate::TapeJournal;
@@ -79,6 +81,70 @@ const SNAPSHOT_EXTENSION: &str = "snap";
 /// are just its first consumer, using a small value so they don't need to
 /// drive a thousand real fsyncs to exercise snapshot + truncate.
 pub const DEFAULT_SNAPSHOT_THRESHOLD: u64 = 1024;
+
+/// The legacy whole-file JSON journal name a pre-WI-#3052 `tape serve
+/// --data-dir` wrote (`resolve_journal_store` in `apps/tape/src/bin/tape.rs`
+/// used to join this onto `--data-dir` before the WAL existed).
+const LEGACY_JOURNAL_FILE_NAME: &str = "journal.json";
+
+/// One-time upgrade path for a `--data-dir` that already has state from
+/// before WI #3052: seed a WAL-store snapshot from the old whole-file
+/// `journal.json` so [`WalStore::open`] (called right after this) recovers
+/// the pre-existing journal instead of starting empty.
+///
+/// Migrates ONLY when it is unambiguous that this `dir` predates the WAL:
+/// no `journal.wal` yet, no `journal-*.snap` yet, and a `journal.json` that
+/// does exist. Any other combination is a no-op (`Ok(false)`) -- in
+/// particular, a directory that already has a WAL or a snapshot is treated
+/// as already migrated (or a from-scratch WAL deployment that happens to
+/// share a `--data-dir` with an old file for unrelated reasons), never
+/// re-migrated.
+///
+/// Deliberately never deletes `journal.json`: it is the rollback path if the
+/// operator needs to downgrade back to a pre-#3052 build. This function is
+/// purely additive -- it writes one new WAL-store snapshot file and touches
+/// nothing else.
+///
+/// Returns `Ok(true)` when a migration snapshot was written, `Ok(false)`
+/// when no migration was needed (including "nothing to migrate" and
+/// "already migrated").
+pub fn migrate_legacy_journal_file(dir: &Path) -> std::io::Result<bool> {
+    let wal_path = dir.join(WAL_FILE_NAME);
+    if wal_path.exists() {
+        return Ok(false);
+    }
+
+    let legacy_path = dir.join(LEGACY_JOURNAL_FILE_NAME);
+    if !legacy_path.exists() {
+        return Ok(false);
+    }
+
+    let snapshots = SnapshotFileStore::new(
+        dir,
+        SNAPSHOT_PREFIX,
+        SNAPSHOT_EXTENSION,
+        FsyncPolicy::Always,
+    )
+    .map_err(flatten_io_error)?;
+    if !snapshots.snapshots().map_err(flatten_io_error)?.is_empty() {
+        return Ok(false);
+    }
+
+    let bytes = std::fs::read(&legacy_path)?;
+    // Round-trip through `TapeJournal` (rather than copying raw bytes) so a
+    // malformed legacy file surfaces as a decode error here, at startup,
+    // instead of silently seeding a snapshot `WalStore::open` cannot parse
+    // later.
+    let journal: TapeJournal = serde_json::from_slice(&bytes).map_err(json_err)?;
+    let snapshot_bytes = serde_json::to_vec(&journal).map_err(json_err)?;
+    // Seed at seq 0: no WAL frames exist yet (checked above), so replay
+    // after this snapshot starts from an empty WAL, exactly like a normal
+    // fresh `WalStore::open` with one prior snapshot.
+    snapshots
+        .save(0, &snapshot_bytes)
+        .map_err(flatten_io_error)?;
+    Ok(true)
+}
 
 /// Single-node durable commit coordinator for one `--data-dir`'s journal.
 ///
@@ -345,9 +411,75 @@ impl WalStore {
 /// ENOSPC/EIO from an ordinary failure, which a bare `anyhow` chain loses.
 fn flatten_io_error(error: anyhow::Error) -> std::io::Error {
     match error.downcast_ref::<std::io::Error>() {
-        Some(source) => std::io::Error::new(source.kind(), format!("{error:#}")),
+        Some(source) => std::io::Error::new(
+            source.kind(),
+            DurabilityFailure {
+                message: format!("{error:#}"),
+                errno: source.raw_os_error(),
+            },
+        ),
         None => std::io::Error::other(format!("{error:#}")),
     }
+}
+
+/// Test-only: build the exact [`std::io::Error`] shape the WAL path hands
+/// `AppState::apply_mutation`, so `server`'s degraded-mode test exercises the
+/// real carrier rather than a hand-rolled look-alike that could stay green
+/// while the production path lost the errno.
+#[cfg(test)]
+pub fn flatten_io_error_for_test(source: std::io::Error) -> std::io::Error {
+    flatten_io_error(anyhow::Error::from(source))
+}
+
+/// Error payload that keeps a durable-write failure's `errno` reachable after
+/// its [`std::io::Error`] has been rebuilt.
+///
+/// Rebuilding is unavoidable on this path: `storage_durable` returns
+/// `anyhow::Error`, and [`CommitCoordinator`] has to hand one failure to every
+/// waiter in a failed batch while `std::io::Error` is not `Clone`. Both
+/// rebuilds go through `std::io::Error::new`, which erases `raw_os_error()` --
+/// so an errno not already reflected in a *stable* [`std::io::ErrorKind`] is
+/// lost. That is not hypothetical. ENOSPC survives, because it has
+/// [`std::io::ErrorKind::StorageFull`]. EIO does not: it maps to
+/// `ErrorKind::Uncategorized`, which is unstable and therefore unnameable in
+/// stable Rust, so errno 5 is recoverable only if carried explicitly.
+/// `AppState::apply_mutation`'s degraded-mode predicate (WI #3052 R6, and the
+/// accepted TD's `should_enter_storage_degraded_mode`) needs exactly that.
+#[derive(Debug, Clone)]
+pub struct DurabilityFailure {
+    message: String,
+    errno: Option<i32>,
+}
+
+impl std::fmt::Display for DurabilityFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for DurabilityFailure {}
+
+/// The `errno` behind a durability failure, when [`flatten_io_error`] recorded
+/// one and every rebuild since has preserved it. Returns `None` for errors
+/// that never came from an OS call.
+pub fn durability_errno(error: &std::io::Error) -> Option<i32> {
+    error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<DurabilityFailure>())
+        .and_then(|failure| failure.errno)
+}
+
+/// Rebuild an [`std::io::Error`] preserving both its [`std::io::ErrorKind`]
+/// and any errno [`durability_errno`] can read back, since `std::io::Error`
+/// is not `Clone` and one failed batch has many waiters.
+fn clone_io_error(error: &std::io::Error) -> std::io::Error {
+    std::io::Error::new(
+        error.kind(),
+        DurabilityFailure {
+            message: error.to_string(),
+            errno: durability_errno(error),
+        },
+    )
 }
 
 /// A `serde_json` encode/decode failure is corruption or a programmer error,
@@ -355,6 +487,133 @@ fn flatten_io_error(error: anyhow::Error) -> std::io::Error {
 /// so it is at least distinguishable from an I/O failure.
 fn json_err(error: serde_json::Error) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+}
+
+/// How many pending [`TapeCommand`]s [`CommitCoordinator`]'s loop drains into
+/// one [`WalStore::commit`] batch before it stops accepting more for that
+/// round. A cap rather than "drain everything queued" bounds worst-case
+/// batch latency and memory under a request storm; `WalStore::commit`'s
+/// group-commit fsync amortization does not need an unbounded batch to pay
+/// off.
+const MAX_COMMIT_BATCH: usize = 256;
+
+/// One caller's pending mutation, queued for the next group-commit batch.
+struct CommitRequest {
+    command: TapeCommand,
+    reply: oneshot::Sender<std::io::Result<TapeOutcome>>,
+}
+
+/// Single-node durable commit coordinator: the async-facing handle onto a
+/// dedicated OS thread that owns the [`WalStore`] and drives its group
+/// commit.
+///
+/// # Why a dedicated `std::thread`, not a `tokio::task`
+///
+/// [`WalStore::commit`] fsyncs -- a blocking syscall. Spawning it as an
+/// ordinary `tokio::task` (even via `spawn_blocking`, which still borrows
+/// from a bounded blocking-pool) would let the durable write path compete
+/// with -- and under sustained load, starve -- the async runtime's request
+/// handling, defeating the whole point of WI #3052 (replacing a serialized
+/// per-request fsync with amortized group commit, not smuggling the same
+/// blocking cost back into the runtime that serves HTTP). A `std::thread`
+/// dedicated to exactly one `--data-dir`'s WAL is the coordinator's entire
+/// job for the life of the process: one thread, one `WalStore`, one
+/// `Mutex<TapeJournal>`.
+///
+/// # Wiring
+///
+/// [`Self::submit`] sends a [`CommitRequest`] down an unbounded
+/// [`mpsc::Sender`] and awaits its [`oneshot::Receiver`] for the reply -- both
+/// sides are safe to use from async code on any tokio worker. The dedicated
+/// thread's loop blocks on [`mpsc::Receiver::blocking_recv`] for the first
+/// request of a round, then drains up to [`MAX_COMMIT_BATCH`] more with
+/// non-blocking `try_recv` so a request storm amortizes over one
+/// `WalStore::commit` call instead of committing one command at a time.
+/// `oneshot::Sender::send` never blocks and can be called from any thread,
+/// so replying from the dedicated thread back to whichever tokio worker is
+/// awaiting `submit` requires no additional synchronization.
+pub struct CommitCoordinator {
+    tx: mpsc::Sender<CommitRequest>,
+}
+
+impl CommitCoordinator {
+    /// Spawn the dedicated commit thread and return the handle callers
+    /// `submit` through. `store` and `journal` are moved onto the new thread
+    /// (`journal` stays an `Arc` so callers -- e.g. `AppState` -- keep a
+    /// handle to read from it directly; the coordinator thread is simply
+    /// another `Arc` owner that also mutates it via `WalStore::commit`).
+    pub fn spawn(mut store: WalStore, journal: Arc<Mutex<TapeJournal>>) -> Self {
+        // Bounded at one batch's worth: a queue deeper than one
+        // `WalStore::commit` batch cannot help throughput (the dedicated
+        // thread only ever drains `MAX_COMMIT_BATCH` per round) and instead
+        // just hides backpressure from callers. `submit`'s `.send().await`
+        // naturally yields the calling tokio worker back to the runtime
+        // while the channel is full, rather than busy-waiting.
+        let (tx, mut rx) = mpsc::channel::<CommitRequest>(MAX_COMMIT_BATCH);
+        std::thread::spawn(move || {
+            // `blocking_recv` parks this dedicated OS thread (not a tokio
+            // worker) until the first request of a round arrives.
+            while let Some(first) = rx.blocking_recv() {
+                let mut batch = vec![first];
+                while batch.len() < MAX_COMMIT_BATCH {
+                    match rx.try_recv() {
+                        Ok(request) => batch.push(request),
+                        Err(_) => break,
+                    }
+                }
+                let (commands, replies): (Vec<TapeCommand>, Vec<_>) = batch
+                    .into_iter()
+                    .map(|request| (request.command, request.reply))
+                    .unzip();
+                match store.commit(commands, &journal) {
+                    Ok(outcomes) => {
+                        for (reply, outcome) in replies.into_iter().zip(outcomes) {
+                            // A dropped receiver (the submitting task was
+                            // cancelled) is not this coordinator's problem --
+                            // the command is already durably committed and
+                            // applied either way.
+                            let _ = reply.send(Ok(outcome));
+                        }
+                    }
+                    Err(error) => {
+                        // `std::io::Error` is not `Clone`: rebuild one per
+                        // waiter so every caller in the failed batch can still
+                        // discriminate ENOSPC/EIO from an ordinary failure --
+                        // the property `AppState::apply_mutation`'s
+                        // degraded-mode mapping depends on. `kind()` alone is
+                        // not enough to carry that; see [`DurabilityFailure`].
+                        for reply in replies {
+                            let _ = reply.send(Err(clone_io_error(&error)));
+                        }
+                    }
+                }
+            }
+            // The sender half (and every clone of it) has been dropped --
+            // e.g. process shutdown -- so this dedicated thread exits.
+        });
+        CommitCoordinator { tx }
+    }
+
+    /// Submit one command and await its durably-committed [`TapeOutcome`].
+    /// Safe to call from any tokio worker; the actual fsync runs on the
+    /// dedicated commit thread, never on the calling task's worker.
+    pub async fn submit(&self, command: TapeCommand) -> std::io::Result<TapeOutcome> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(CommitRequest {
+                command,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| {
+                std::io::Error::other("wal commit coordinator thread is no longer running")
+            })?;
+        reply_rx.await.map_err(|_| {
+            std::io::Error::other(
+                "wal commit coordinator dropped this request's reply before answering",
+            )
+        })?
+    }
 }
 
 #[cfg(test)]
@@ -548,6 +807,141 @@ mod tests {
         let (store, journal) = WalStore::open(dir.path()).unwrap();
         drop(store);
         assert_eq!(journal, TapeJournal::default());
+    }
+
+    /// Pins the reason [`DurabilityFailure`] exists at all. The obvious way to
+    /// recover an errno from a flattened durability failure --
+    /// `error.raw_os_error()` -- returns `None`, because
+    /// `std::io::Error::new` erases it; and the obvious way to recognize EIO
+    /// by kind fails too, because EIO is `Uncategorized`, not `Other`. Both
+    /// naive forms are asserted here so that deleting the carrier as
+    /// "redundant" turns this test red instead of silently disabling
+    /// `AppState::apply_mutation`'s EIO branch.
+    #[test]
+    fn flatten_io_error_carries_the_errno_a_rebuilt_io_error_would_lose() {
+        const EIO: i32 = 5;
+        let flattened = flatten_io_error(
+            anyhow::Error::from(std::io::Error::from_raw_os_error(EIO))
+                .context("syncing the write-ahead log"),
+        );
+
+        assert_eq!(durability_errno(&flattened), Some(EIO));
+        assert_eq!(flattened.raw_os_error(), None);
+        assert_ne!(flattened.kind(), std::io::ErrorKind::Other);
+        assert!(flattened
+            .to_string()
+            .contains("syncing the write-ahead log"));
+
+        // ENOSPC needs no carrier -- it has a stable `ErrorKind` -- but the
+        // carrier must not break it, since that is the path #2573 already
+        // depends on.
+        let enospc = flatten_io_error(anyhow::Error::from(std::io::Error::from(
+            std::io::ErrorKind::StorageFull,
+        )));
+        assert_eq!(enospc.kind(), std::io::ErrorKind::StorageFull);
+    }
+
+    /// The commit coordinator fans one failure out to every waiter in the
+    /// batch, and `std::io::Error` is not `Clone`. Both the kind and the errno
+    /// have to survive that fan-out or the last waiter is told something
+    /// different from the first.
+    #[test]
+    fn clone_io_error_preserves_both_kind_and_errno_across_the_fan_out() {
+        const EIO: i32 = 5;
+        let original =
+            flatten_io_error(anyhow::Error::from(std::io::Error::from_raw_os_error(EIO)));
+        let cloned = clone_io_error(&original);
+
+        assert_eq!(cloned.kind(), original.kind());
+        assert_eq!(durability_errno(&cloned), Some(EIO));
+        assert_eq!(cloned.to_string(), original.to_string());
+
+        // An error that never came from an OS call reports no errno rather
+        // than a misleading zero.
+        let plain = std::io::Error::other("coordinator thread is gone");
+        assert_eq!(durability_errno(&plain), None);
+        assert_eq!(durability_errno(&clone_io_error(&plain)), None);
+    }
+
+    #[test]
+    fn migrate_legacy_journal_seeds_a_snapshot_wal_open_then_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut legacy = TapeJournal::default();
+        legacy.append("orders", None, serde_json::json!({ "n": 1 }), Some(100));
+        legacy.append("orders", None, serde_json::json!({ "n": 2 }), Some(100));
+        let legacy_path = dir.path().join(LEGACY_JOURNAL_FILE_NAME);
+        std::fs::write(&legacy_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let migrated = migrate_legacy_journal_file(dir.path()).unwrap();
+        assert!(migrated, "a fresh dir with only journal.json must migrate");
+
+        // journal.json is never deleted -- it is the rollback path.
+        assert!(legacy_path.exists());
+
+        let (store, recovered) = WalStore::open(dir.path()).unwrap();
+        drop(store);
+        assert_eq!(recovered.end_offset("orders"), 2);
+        assert_eq!(recovered.replay("orders", None, None, None).len(), 2);
+    }
+
+    #[test]
+    fn migrate_legacy_journal_is_a_noop_without_a_legacy_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!migrate_legacy_journal_file(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn migrate_legacy_journal_is_a_noop_once_a_wal_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        // Open (and immediately drop) a WalStore to establish journal.wal.
+        let (store, _journal) = WalStore::open(dir.path()).unwrap();
+        drop(store);
+        // Even with a legacy file also present, an existing WAL wins -- do
+        // not re-migrate over live WAL state.
+        std::fs::write(
+            dir.path().join(LEGACY_JOURNAL_FILE_NAME),
+            serde_json::to_vec(&TapeJournal::default()).unwrap(),
+        )
+        .unwrap();
+        assert!(!migrate_legacy_journal_file(dir.path()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn commit_coordinator_submit_round_trips_through_the_dedicated_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, journal) = WalStore::open(dir.path()).unwrap();
+        let journal = Arc::new(Mutex::new(journal));
+        let coordinator = CommitCoordinator::spawn(store, Arc::clone(&journal));
+
+        let outcome = coordinator
+            .submit(append_cmd("orders", 1, 100))
+            .await
+            .unwrap();
+        assert!(matches!(outcome, TapeOutcome::Appended(_)));
+        assert_eq!(journal.lock().unwrap().end_offset("orders"), 1);
+    }
+
+    #[tokio::test]
+    async fn commit_coordinator_batches_concurrent_submissions_in_submission_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, journal) = WalStore::open(dir.path()).unwrap();
+        let journal = Arc::new(Mutex::new(journal));
+        let coordinator = Arc::new(CommitCoordinator::spawn(store, Arc::clone(&journal)));
+
+        let mut handles = Vec::new();
+        for n in 0..32u64 {
+            let coordinator = Arc::clone(&coordinator);
+            handles.push(tokio::spawn(async move {
+                coordinator
+                    .submit(append_cmd("orders", n, 100))
+                    .await
+                    .unwrap()
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        assert_eq!(journal.lock().unwrap().end_offset("orders"), 32);
     }
 }
 // </HANDWRITE>

@@ -32,12 +32,43 @@ use service_http::{ApiErr, MetricsProvider};
 use utoipa::ToSchema;
 
 use crate::metrics::TapeMetrics;
-use crate::raft::{TapeOutcome, TapeRaft};
+use crate::raft::{apply_command, TapeCommand, TapeOutcome, TapeRaft};
+use crate::wal::CommitCoordinator;
 use crate::{
     ConsumerCheckpoint, PullSubscriptionBatch, RetentionPolicy, Subscription, SubscriptionAckError,
     SubscriptionError, TapeError, TapeEvent, TapeJournal,
 };
 use metrics_prometheus::{escape_label_value, Label, LabeledSample, SampleGroup};
+
+/// Which durable backend a single-node `AppState` mutates through. `Raft`
+/// mode (`AppState::raft` is `Some`) bypasses this enum entirely -- it is
+/// only consulted by [`AppState::apply_mutation`] on the non-replicated
+/// path.
+///
+/// #3052: `Wal` is `tape serve --data-dir`'s new group-commit path;
+/// `LegacyFile` is the unchanged whole-file JSON `--store <file>` path used
+/// by both the CLI's offline verbs and any caller that still passes an
+/// explicit `--store`; `None` matches today's "no journal store configured"
+/// case (durability-free, e.g. tests or an ephemeral run).
+///
+/// Deliberately NOT plumbed through [`AppState::new`] / [`AppState::
+/// with_auth`]'s signatures: those two constructors have dozens of existing
+/// call sites across this crate's tests, and widening their `Option<PathBuf>`
+/// parameter would force every one of them to learn about a WAL they don't
+/// use. [`AppState::with_wal`] is the one additional seam `tape serve
+/// --data-dir` opts into.
+#[derive(Clone)]
+enum Durability {
+    Wal(Arc<CommitCoordinator>),
+    // The path itself is never read back off this variant -- `persist` still
+    // reads `AppState::store` directly -- so this only records which kind of
+    // backend is configured. Kept as `PathBuf` (not unit) so a future reader
+    // of `apply_mutation`'s match arms can see the path is the same one
+    // `store` holds, without needing a second field name to reach for.
+    #[allow(dead_code)]
+    LegacyFile(PathBuf),
+    None,
+}
 
 /// Shared application state: the journal (behind a `std::sync::Mutex` — an
 /// in-memory `BTreeMap` core with no async internal awaits), the per-op
@@ -55,6 +86,11 @@ pub struct AppState {
     metrics: Arc<TapeMetrics>,
     draining: Arc<AtomicBool>,
     store: Option<PathBuf>,
+    /// #3052: which durable backend [`AppState::apply_mutation`] mutates
+    /// through on the non-Raft path. Derived from `store` by every
+    /// constructor (`LegacyFile`/`None`); [`AppState::with_wal`] is the only
+    /// way to move a state into `Wal` mode.
+    durability: Durability,
     verifier: Arc<ReloadableRoleMapVerifier>,
     raft: Option<Arc<TapeRaft>>,
     body_limit_bytes: usize,
@@ -76,17 +112,35 @@ impl AppState {
     /// through [`AppState::with_auth`]. The `body_limit_bytes` parameter
     /// configures the data-plane request body size limit (#2484).
     pub fn new(journal: TapeJournal, store: Option<PathBuf>, body_limit_bytes: usize) -> Self {
+        let durability = match &store {
+            Some(path) => Durability::LegacyFile(path.clone()),
+            None => Durability::None,
+        };
         Self {
             journal: Arc::new(Mutex::new(journal)),
             metrics: Arc::new(TapeMetrics::new()),
             draining: Arc::new(AtomicBool::new(false)),
             store,
+            durability,
             verifier: Arc::new(ReloadableRoleMapVerifier::open()),
             raft: None,
             body_limit_bytes,
             #[cfg(test)]
             inject_storage_full: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// #3052: move this state onto the WAL group-commit path for `tape serve
+    /// --data-dir`. Deliberately a post-construction step (not a
+    /// constructor parameter) so `AppState::new`/`AppState::with_auth`'s
+    /// existing call sites -- dozens of them across this crate's tests --
+    /// never need to learn about `CommitCoordinator`.
+    ///
+    /// Consuming and returning `self` matches `tape.rs`'s `serve_main`
+    /// builder-style setup (`with_auth(..).with_wal(..)`-shaped call chain).
+    pub fn with_wal(mut self, coordinator: Arc<CommitCoordinator>) -> Self {
+        self.durability = Durability::Wal(coordinator);
+        self
     }
 
     /// #2573: arm/disarm the next [`AppState::persist`] call on THIS state to
@@ -178,23 +232,18 @@ impl AppState {
     /// re-serialized in full on every mutation, so the fsync is not the term
     /// that dominates this write.
     ///
-    /// Failures are reported to the caller. A failure that reports
-    /// [`std::io::ErrorKind::StorageFull`] additionally flips this node into
-    /// sticky degraded read-only mode (#2573) before returning, so the *next*
-    /// mutating request is fast-failed by [`enforce_storage_writable`] instead
-    /// of re-attempting a write the disk cannot accept. This is the only place
-    /// degraded mode is entered: a serving tape node has exactly one durable
-    /// write path, and it is this function.
+    /// Failures are reported to the caller. #3052 moved the actual
+    /// degraded-mode latch out of this function and into
+    /// [`AppState::apply_mutation`], which now sits in front of every
+    /// durable backend (this legacy whole-file path, and the WAL group-commit
+    /// path); see that function's doc comment for the merged ENOSPC/EIO
+    /// predicate. This function still preserves the failure's
+    /// [`std::io::ErrorKind`] end to end (#2572) -- that is what makes the
+    /// caller's discrimination possible at all.
     fn persist(&self, journal: &TapeJournal) -> std::io::Result<()> {
         let Some(path) = &self.store else {
             return Ok(());
         };
-        #[cfg(test)]
-        if self.inject_storage_full.load(Ordering::SeqCst) {
-            let injected = std::io::Error::from(std::io::ErrorKind::StorageFull);
-            self.metrics.mark_storage_degraded();
-            return Err(injected);
-        }
         let bytes = serde_json::to_vec_pretty(journal)?;
         let result =
             storage_durable::atomic_write(path, &bytes, storage_durable::FsyncPolicy::Always)
@@ -208,14 +257,87 @@ impl AppState {
                 tracing::error!(
                     error = %error,
                     path = %path.display(),
-                    "journal persist hit ENOSPC — entering degraded read-only mode; \
-                     mutating requests will be fast-failed with 507 until a re-probe succeeds"
+                    "journal persist hit ENOSPC; AppState::apply_mutation will latch \
+                     degraded read-only mode"
                 );
-                self.metrics.mark_storage_degraded();
             }
         }
         result
     }
+
+    /// Apply one mutating [`TapeCommand`] through whichever durable backend
+    /// this state is configured with on the non-Raft path -- WAL group
+    /// commit, the legacy whole-file `persist`, or no local store at all --
+    /// and report the same [`TapeOutcome`] vocabulary
+    /// [`crate::raft::apply_command`] produces for the Raft-replicated path,
+    /// so every serving path (Raft propose, WAL commit, legacy persist)
+    /// shares one mutation semantics.
+    ///
+    /// A domain-level rejection -- e.g. `TapeOutcome::Checkpoint(Err(TapeError
+    /// ::StaleCheckpoint))` -- is NOT a durability failure and is reported as
+    /// `Ok(TapeOutcome::Checkpoint(Err(..)))`, never this function's own
+    /// `Err`. The command is applied (and, in WAL mode, already durably
+    /// written) exactly as if it had succeeded -- mirroring the Raft path,
+    /// whose `TapeStateMachine::apply` always returns `Ok(())` regardless of
+    /// the wrapped `TapeOutcome`. Do not "validate before writing" to route
+    /// around this asymmetry; that would silently re-diverge the single-node
+    /// and Raft-replicated apply semantics #3052 unified. This function's own
+    /// `Err` is reserved for durability failures only (fsync/rename/write
+    /// errors on the legacy path; the coordinator's `Err` on the WAL path).
+    async fn apply_mutation(&self, command: TapeCommand) -> std::io::Result<TapeOutcome> {
+        // #2573 test seam (#3052: hoisted out of `persist` to here so it
+        // fires identically ahead of EVERY backend, including WAL mode, not
+        // only the legacy whole-file path `persist` used to gate alone). See
+        // `AppState::set_inject_storage_full`.
+        #[cfg(test)]
+        if self.inject_storage_full.load(Ordering::SeqCst) {
+            self.metrics.mark_storage_degraded();
+            return Err(std::io::Error::from(std::io::ErrorKind::StorageFull));
+        }
+
+        let result = match &self.durability {
+            Durability::Wal(coordinator) => coordinator.submit(command).await,
+            Durability::LegacyFile(_) | Durability::None => {
+                let mut journal = self.journal.lock().expect("journal mutex poisoned");
+                let outcome = apply_command(&mut journal, command);
+                self.persist(&journal).map(|()| outcome)
+            }
+        };
+
+        if let Err(error) = &result {
+            // WI #3052 R6: an ENOSPC OR EIO durability failure latches sticky
+            // degraded mode -- narrowing this to ENOSPC alone would route a
+            // durable EIO into a plain per-request failure, exactly the
+            // "durability failure treated as an ordinary retryable request"
+            // R6 forbids. Matches the accepted TD's
+            // `should_enter_storage_degraded_mode` predicate. A failure that
+            // is neither still fails this one request closed without
+            // flipping the server into sticky read-only degraded mode.
+            let is_enospc = error.kind() == std::io::ErrorKind::StorageFull;
+            if is_enospc || is_eio(error) {
+                self.metrics.mark_storage_degraded();
+            }
+        }
+
+        result
+    }
+}
+
+/// EIO on both platforms this crate builds for (Linux and macOS), named here
+/// rather than pulled in via a `libc` dependency for one constant.
+const EIO: i32 = 5;
+
+/// Detect an underlying EIO that a durable write path reported.
+///
+/// This cannot be written as `error.kind() == ErrorKind::Other &&
+/// error.raw_os_error() == Some(EIO)`, which is the obvious form and is dead
+/// code in both halves: EIO maps to `ErrorKind::Uncategorized` (not `Other`,
+/// and unnameable in stable Rust), and every rebuild through
+/// `std::io::Error::new` -- which both the WAL flattener and the commit
+/// coordinator's per-waiter fan-out must do -- erases `raw_os_error()`. The
+/// errno is therefore carried explicitly; see [`crate::wal::DurabilityFailure`].
+fn is_eio(error: &std::io::Error) -> bool {
+    crate::wal::durability_errno(error) == Some(EIO)
 }
 
 /// #2573: sticky ENOSPC degraded read-only mode. Called by every mutating
@@ -645,6 +767,11 @@ pub async fn append(
     // follows via `TapeJournal::append`'s own `Option<u64>` -> `now_ms()`
     // fallback, just hoisted here so the proposed command carries it.
     let timestamp_ms = req.timestamp_ms.unwrap_or_else(crate::now_ms);
+    // #3052 D3: stamp `applied_at_ms` here, in the handler, exactly like
+    // `propose_append` does for the raft path -- passing `0` through would
+    // make `apply_command`'s Append-branch fallback treat the CLIENT-
+    // supplied `timestamp_ms` as the applied time, a silent behavior change.
+    let applied_at_ms = crate::now_ms();
 
     if let Some(raft) = st.raft() {
         // append is NOT idempotent (unlike a message_id-keyed publish), so an
@@ -678,12 +805,18 @@ pub async fn append(
         };
     }
 
-    let mut journal = st.journal.lock().expect("journal mutex poisoned");
-    let event = journal.append(topic, req.key, req.payload, Some(timestamp_ms));
-    if let Err(e) = st.persist(&journal) {
-        return persist_failure(e);
+    let command = TapeCommand::Append {
+        topic,
+        key: req.key,
+        payload: req.payload,
+        timestamp_ms,
+        applied_at_ms,
+    };
+    match st.apply_mutation(command).await {
+        Ok(TapeOutcome::Appended(event)) => (StatusCode::OK, Json(event)).into_response(),
+        Ok(_) => outcome_mismatch("append"),
+        Err(e) => persist_failure(e),
     }
-    (StatusCode::OK, Json(event)).into_response()
 }
 
 /// `GET /topics/{topic}/replay` — replay topic history by offset or
@@ -819,8 +952,11 @@ pub async fn checkpoint_put(
         }
     };
 
+    // Hoisted before both branches (raft AND the unified apply_mutation
+    // path below) so both apply the identical `updated_at_ms` (#1327's rule,
+    // now also required by #3052's shared `TapeCommand::CheckpointPut`).
+    let updated_at_ms = crate::now_ms();
     if let Some(raft) = st.raft() {
-        let updated_at_ms = crate::now_ms();
         return match raft
             .propose_checkpoint(topic, consumer, req.offset, updated_at_ms)
             .await
@@ -856,20 +992,24 @@ pub async fn checkpoint_put(
         };
     }
 
-    let mut journal = st.journal.lock().expect("journal mutex poisoned");
-    match journal.put_checkpoint(topic, consumer, req.offset) {
-        Ok(checkpoint) => {
-            if let Err(e) = st.persist(&journal) {
-                return persist_failure(e);
-            }
+    let command = TapeCommand::CheckpointPut {
+        topic,
+        consumer,
+        offset: req.offset,
+        updated_at_ms,
+    };
+    match st.apply_mutation(command).await {
+        Ok(TapeOutcome::Checkpoint(Ok(checkpoint))) => {
             (StatusCode::OK, Json(checkpoint)).into_response()
         }
-        Err(e @ TapeError::StaleCheckpoint { .. }) => {
+        Ok(TapeOutcome::Checkpoint(Err(e @ TapeError::StaleCheckpoint { .. }))) => {
             ApiErr::new(StatusCode::CONFLICT, "conflict", e.to_string()).into_response()
         }
-        Err(e @ TapeError::CheckpointBeyondEnd { .. }) => {
+        Ok(TapeOutcome::Checkpoint(Err(e @ TapeError::CheckpointBeyondEnd { .. }))) => {
             ApiErr::new(StatusCode::CONFLICT, "conflict", e.to_string()).into_response()
         }
+        Ok(_) => outcome_mismatch("checkpoint_put"),
+        Err(e) => persist_failure(e),
     }
 }
 
@@ -915,15 +1055,17 @@ pub async fn subscription_create(
             Err(error) => raft_unavailable(error),
         };
     }
-    let mut journal = st.journal.lock().expect("journal mutex poisoned");
-    match journal.create_subscription(topic, req.name) {
-        Ok(subscription) => {
-            if let Err(error) = st.persist(&journal) {
-                return persist_failure(error);
-            }
+    let command = TapeCommand::SubscriptionCreate {
+        topic,
+        name: req.name,
+    };
+    match st.apply_mutation(command).await {
+        Ok(TapeOutcome::SubscriptionCreated(Ok(subscription))) => {
             (StatusCode::CREATED, Json(subscription)).into_response()
         }
-        Err(error) => subscription_error(error),
+        Ok(TapeOutcome::SubscriptionCreated(Err(error))) => subscription_error(error),
+        Ok(_) => outcome_mismatch("subscription_create"),
+        Err(error) => persist_failure(error),
     }
 }
 
@@ -1022,15 +1164,14 @@ pub async fn subscription_delete(
             Err(error) => raft_unavailable(error),
         };
     }
-    let mut journal = st.journal.lock().expect("journal mutex poisoned");
-    match journal.delete_subscription(&topic, &name) {
-        Ok(subscription) => {
-            if let Err(error) = st.persist(&journal) {
-                return persist_failure(error);
-            }
+    let command = TapeCommand::SubscriptionDelete { topic, name };
+    match st.apply_mutation(command).await {
+        Ok(TapeOutcome::SubscriptionDeleted(Ok(subscription))) => {
             (StatusCode::OK, Json(subscription)).into_response()
         }
-        Err(error) => subscription_error(error),
+        Ok(TapeOutcome::SubscriptionDeleted(Err(error))) => subscription_error(error),
+        Ok(_) => outcome_mismatch("subscription_delete"),
+        Err(error) => persist_failure(error),
     }
 }
 
@@ -1107,9 +1248,13 @@ pub async fn subscription_ack(
                 .into_response()
         }
     };
+    // Hoisted before both branches, same rule as checkpoint_put above:
+    // raft and the unified apply_mutation path must apply the identical
+    // `updated_at_ms`.
+    let updated_at_ms = crate::now_ms();
     if let Some(raft) = st.raft() {
         return match raft
-            .propose_subscription_ack(topic, name, req.offset, crate::now_ms())
+            .propose_subscription_ack(topic, name, req.offset, updated_at_ms)
             .await
         {
             Ok((_, Some(TapeOutcome::SubscriptionAcked(Ok(checkpoint))))) => {
@@ -1123,15 +1268,19 @@ pub async fn subscription_ack(
             Err(error) => raft_unavailable(error),
         };
     }
-    let mut journal = st.journal.lock().expect("journal mutex poisoned");
-    match journal.ack_subscription(&topic, &name, req.offset) {
-        Ok(checkpoint) => {
-            if let Err(error) = st.persist(&journal) {
-                return persist_failure(error);
-            }
+    let command = TapeCommand::SubscriptionAck {
+        topic,
+        name,
+        offset: req.offset,
+        updated_at_ms,
+    };
+    match st.apply_mutation(command).await {
+        Ok(TapeOutcome::SubscriptionAcked(Ok(checkpoint))) => {
             (StatusCode::OK, Json(checkpoint)).into_response()
         }
-        Err(error) => subscription_ack_error(error),
+        Ok(TapeOutcome::SubscriptionAcked(Err(error))) => subscription_ack_error(error),
+        Ok(_) => outcome_mismatch("subscription_ack"),
+        Err(error) => persist_failure(error),
     }
 }
 
@@ -1246,12 +1395,18 @@ pub async fn retention_put(
             Err(error) => raft_unavailable(error),
         };
     }
-    let mut journal = st.journal.lock().expect("journal mutex poisoned");
-    let outcome = journal.put_retention(topic, policy, now_ms);
-    if let Err(error) = st.persist(&journal) {
-        return persist_failure(error);
+    let command = TapeCommand::RetentionPut {
+        topic,
+        policy,
+        now_ms,
+    };
+    match st.apply_mutation(command).await {
+        Ok(TapeOutcome::RetentionUpdated(outcome)) => {
+            (StatusCode::OK, Json(outcome)).into_response()
+        }
+        Ok(_) => outcome_mismatch("retention_put"),
+        Err(error) => persist_failure(error),
     }
-    (StatusCode::OK, Json(outcome)).into_response()
 }
 
 /// `GET /admin/backup` — a consistent snapshot of the whole journal for
@@ -1679,6 +1834,26 @@ mod tests {
     /// #2572 is what makes the seam faithful — it preserves the ErrorKind
     /// through `atomic_write`'s context chain, so the real path reaches this
     /// same branch with the same kind.
+    /// `apply_mutation` latches degraded mode on ENOSPC *or* EIO (WI #3052
+    /// R6). ENOSPC is covered end to end by the injection-seam test below;
+    /// this pins the EIO half of the predicate, which is the half with no
+    /// stable `ErrorKind` to ride on and which was silently unreachable
+    /// before `wal::DurabilityFailure` carried the errno explicitly.
+    #[test]
+    fn eio_is_recognized_through_the_durability_error_the_wal_path_actually_produces() {
+        const EIO: i32 = 5;
+        let from_wal_path =
+            crate::wal::flatten_io_error_for_test(std::io::Error::from_raw_os_error(EIO));
+        assert!(is_eio(&from_wal_path));
+
+        // A plain failure must NOT latch degraded mode: it fails one request
+        // closed and leaves the node writable.
+        assert!(!is_eio(&std::io::Error::other("transient")));
+        assert!(!is_eio(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+    }
+
     #[tokio::test]
     async fn enospc_latches_degraded_mode_fast_fails_mutations_and_keeps_reads_serving() {
         let dir = tempfile::tempdir().unwrap();

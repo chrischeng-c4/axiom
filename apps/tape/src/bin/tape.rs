@@ -979,16 +979,35 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // still wins, and replica mode continues to keep journal durability in
     // the Raft state machine instead of a second local store.
     let replica_mode = raft_runtime::cluster::replica_mode();
-    let store = resolve_journal_store(args.store.clone(), args.data_dir.as_deref(), replica_mode);
-    let journal = match &store {
-        Some(path) => load_journal(path)?,
-        None => TapeJournal::default(),
+    let store_kind =
+        resolve_journal_store(args.store.clone(), args.data_dir.as_deref(), replica_mode);
+    // #3052: the WAL arm additionally needs a `probe_dir` for the periodic
+    // ENOSPC re-probe and a `CommitCoordinator` wired in after the `AppState`
+    // exists (its dedicated commit thread must share the exact
+    // `Arc<Mutex<TapeJournal>>` the state reads through, which only exists
+    // once the state is constructed).
+    let (journal, legacy_store_path, wal_dir) = match &store_kind {
+        JournalStoreKind::LegacyFile(path) => (load_journal(path)?, Some(path.clone()), None),
+        JournalStoreKind::Wal(dir) => {
+            // Never touches/deletes journal.json -- see `migrate_legacy_journal_file`'s
+            // own docs for the exact no-op/rollback conditions.
+            tape::wal::migrate_legacy_journal_file(dir)?;
+            let (wal_store, journal) = tape::wal::WalStore::open(dir)?;
+            (journal, None, Some((dir.clone(), wal_store)))
+        }
+        JournalStoreKind::None => (TapeJournal::default(), None, None),
     };
-    let probe_dir = store
-        .as_deref()
-        .and_then(|path| path.parent())
-        .map(std::path::Path::to_path_buf);
-    let mut state = tape::server::AppState::with_auth(journal, store, auth, args.body_limit_bytes);
+    let probe_dir = match &store_kind {
+        JournalStoreKind::LegacyFile(path) => path.parent().map(std::path::Path::to_path_buf),
+        JournalStoreKind::Wal(dir) => Some(dir.clone()),
+        JournalStoreKind::None => None,
+    };
+    let mut state =
+        tape::server::AppState::with_auth(journal, legacy_store_path, auth, args.body_limit_bytes);
+    if let Some((_dir, wal_store)) = wal_dir {
+        let coordinator = tape::wal::CommitCoordinator::spawn(wal_store, state.journal_handle());
+        state = state.with_wal(std::sync::Arc::new(coordinator));
+    }
     spawn_storage_full_reprobe(state.metrics(), probe_dir);
     if let Some(path) = args.token_registry_file.as_deref() {
         // `AppState` owns this exact verifier instance, so a Secret/CSI file
@@ -1228,21 +1247,45 @@ fn spawn_storage_full_reprobe(
 }
 
 // <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="#1805" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">
-/// Resolve the local journal path for a serving process. Replica mode owns
-/// durability through Raft; only a single-node process derives a store from
-/// its mounted data directory.
+/// Which durable backend a single-node serving process resolves to, given
+/// `--store`, `--data-dir`, and replica mode. #3052: `--data-dir` (only
+/// `serve` has this flag) now resolves to the WAL group-commit store rather
+/// than the old whole-file `journal.json` under that directory; an explicit
+/// `--store` keeps every offline CLI verb (and any caller that still passes
+/// one to `serve`) on the unchanged legacy whole-file path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JournalStoreKind {
+    /// `tape serve --data-dir <dir>`: the WAL + snapshot directory.
+    Wal(PathBuf),
+    /// An explicit `--store <file>` (any verb) or a serving process with
+    /// neither `--store` nor `--data-dir`... this variant always carries a
+    /// concrete file path; see `None` for "no journal store at all".
+    LegacyFile(PathBuf),
+    /// Replica mode (Raft owns durability), or neither `--store` nor
+    /// `--data-dir` was given.
+    None,
+}
+
+/// Resolve the local journal store for a serving process. Priority: an
+/// explicit `--store` always wins (legacy whole-file path, unchanged
+/// semantics); replica mode owns durability through Raft and never gets a
+/// local store; otherwise `--data-dir`, when present, resolves to the WAL
+/// group-commit store; absent all three, there is no local durable store.
 fn resolve_journal_store(
     explicit_store: Option<PathBuf>,
     data_dir: Option<&std::path::Path>,
     replica_mode: bool,
-) -> Option<PathBuf> {
-    explicit_store.or_else(|| {
-        if replica_mode {
-            None
-        } else {
-            data_dir.map(|dir| dir.join("journal.json"))
-        }
-    })
+) -> JournalStoreKind {
+    if let Some(path) = explicit_store {
+        return JournalStoreKind::LegacyFile(path);
+    }
+    if replica_mode {
+        return JournalStoreKind::None;
+    }
+    match data_dir {
+        Some(dir) => JournalStoreKind::Wal(dir.to_path_buf()),
+        None => JournalStoreKind::None,
+    }
 }
 
 /// Reuse the public listener's host portion for the dedicated peer port.
@@ -1800,11 +1843,13 @@ mod tests {
     }
 
     #[test]
-    fn single_node_data_dir_resolves_to_the_pvc_journal_store() {
+    fn single_node_data_dir_resolves_to_the_wal_journal_store() {
         let data_dir = PathBuf::from("/data");
         assert_eq!(
             resolve_journal_store(None, Some(&data_dir), false),
-            Some(PathBuf::from("/data/journal.json"))
+            JournalStoreKind::Wal(PathBuf::from("/data")),
+            "#3052: --data-dir alone now resolves to the WAL group-commit store, not the \
+             old whole-file journal.json"
         );
         assert_eq!(
             resolve_journal_store(
@@ -1812,13 +1857,19 @@ mod tests {
                 Some(&data_dir),
                 false,
             ),
-            Some(PathBuf::from("/tmp/override.json")),
-            "an explicit --store must keep precedence over TAPE_DATA_DIR"
+            JournalStoreKind::LegacyFile(PathBuf::from("/tmp/override.json")),
+            "an explicit --store must keep precedence over --data-dir, and stays on the \
+             unchanged legacy whole-file path"
         );
         assert_eq!(
             resolve_journal_store(None, Some(&data_dir), true),
-            None,
-            "replica mode persists through Raft rather than a parallel journal file"
+            JournalStoreKind::None,
+            "replica mode persists through Raft rather than a parallel local store"
+        );
+        assert_eq!(
+            resolve_journal_store(None, None, false),
+            JournalStoreKind::None,
+            "no --store and no --data-dir means no local durable store"
         );
     }
 
