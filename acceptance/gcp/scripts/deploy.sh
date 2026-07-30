@@ -55,8 +55,30 @@ wait_ready_cr() {
   return 1
 }
 
+wait_crd_established() {
+  local name="$1"
+  local deadline=$((SECONDS + 180))
+  local established
+  while (( SECONDS < deadline )); do
+    established="$(kubectl get customresourcedefinition "$name" \
+      -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null || true)"
+    [[ "$established" == "True" ]] && return 0
+    sleep 3
+  done
+  echo "CRD $name was never Established" >&2
+  kubectl get customresourcedefinition "$name" -o yaml >&2 || true
+  return 1
+}
+
 kubectl apply -f "$MANIFEST_DIR/$app/crd.yaml"
-kubectl wait --for=condition=Established "customresourcedefinition/$crd" --timeout=120s
+# Not `kubectl wait --for=condition=Established`: between the apply returning
+# and the apiextensions controller first writing status, `.status.conditions`
+# does not exist, and `kubectl wait` treats an absent field as an error
+# ("<nil> is of the type <nil>, expected []interface{}") rather than as a
+# condition that has not been met yet. It aborts instantly instead of waiting
+# out its own --timeout, so a momentarily slow control plane kills the run
+# before a single instance is deployed. Poll for the condition instead.
+wait_crd_established "$crd"
 kubectl apply -f "$MANIFEST_DIR/$app/operator.bundle.yaml"
 kubectl wait -n "$operator_namespace" --for=condition=Available "deployment/$operator_deployment" --timeout=600s
 kubectl apply -f "$MANIFEST_DIR/$app/instance.bundle.yaml"
