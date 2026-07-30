@@ -885,6 +885,18 @@ impl CapabilityDocument {
         ) || self.needs_canonicalization
     }
 
+    /// A document that already uses the canonical Markdown format but still
+    /// declares capabilities outside the two feature roots. `migrate` converts
+    /// it; `check` deliberately does not fail on it, because every adopter
+    /// document is flat until its own migration lands.
+    pub fn requires_feature_class_migration(&self) -> bool {
+        !self.capabilities.is_empty()
+            && self
+                .capabilities
+                .iter()
+                .any(|capability| capability.feature_class.is_none())
+    }
+
     pub fn format_version(&self) -> u8 {
         match self.format {
             CapabilityDocumentFormat::Empty => 0,
@@ -8445,12 +8457,86 @@ fn parse_capability_document_repairing_previous_migration(
     }
 }
 
+/// The class migration assigns to a capability the document never classified.
+///
+/// Deterministic and one-way. A trait-derived baseline is always non-core, so
+/// migration can never manufacture a core promise out of an archetype
+/// obligation. Everything else is a promise the project authored itself, which
+/// is what `Core Features` means.
+///
+/// Nothing here reads [`CapabilityType`], maturity, or production requirement:
+/// those axes are orthogonal to the class, and deriving one from another is
+/// exactly the conflation the two roots exist to prevent.
+fn migration_feature_class(id: &str) -> CapabilityFeatureClass {
+    if trait_derived_baseline_ids().contains(id) {
+        CapabilityFeatureClass::NonCore
+    } else {
+        CapabilityFeatureClass::Core
+    }
+}
+
+/// Normalize a parsed document into the canonical two-root shape.
+///
+/// Two operations, both total and both order-independent, which together make
+/// the migration deterministic and idempotent:
+///
+/// 1. Classify every *unclassified* capability via [`migration_feature_class`].
+///    An explicit class is never overwritten — rewriting a class the author
+///    stated would be the lossy automatic rewriting migration exists to avoid.
+///    A trait-derived baseline wrongly declared `core` stays declared `core`
+///    here and is rejected by the checker, where the author can see and fix it.
+/// 2. Erase document-stored tracker state. Delivery provenance is one-way: a
+///    work item references capability and claim IDs, never the reverse.
+///
+/// Everything that constitutes the promise itself — capability IDs, claim IDs,
+/// product dependencies, gates, evidence, maturity, status, type, surfaces, EC
+/// dimensions, and production requirement — is carried through untouched.
+fn migrated_capability_document(document: &CapabilityDocument) -> CapabilityDocument {
+    let mut migrated = document.clone();
+    for capability in &mut migrated.capabilities {
+        if capability.feature_class.is_none() {
+            capability.feature_class = Some(migration_feature_class(&capability.id));
+        }
+        clear_document_stored_tracker_state(capability);
+    }
+    for row in &mut migrated.legacy_rows {
+        row.active_wi = EMPTY_TABLE_VALUE.to_string();
+    }
+    migrated
+}
+
+/// Drop every work-item reference a canonical capability contract must not
+/// store, leaving the neutral placeholder the parser already accepts.
+fn clear_document_stored_tracker_state(capability: &mut CapabilitySection) {
+    capability.current_state = current_state_without_root_wi(&capability.current_state);
+    for gap in &mut capability.gaps {
+        gap.active_wi = None;
+    }
+    for work_root in &mut capability.work_roots {
+        work_root.wi = EMPTY_TABLE_VALUE.to_string();
+    }
+}
+
+/// Blank the `Root WI` segment of a synthesized `current_state` while keeping
+/// the gate-inventory segment beside it, which is contract and not provenance.
+fn current_state_without_root_wi(current_state: &str) -> String {
+    let trimmed = current_state.trim();
+    let Some(rest) = trimmed.strip_prefix("Root WI:") else {
+        return current_state.to_string();
+    };
+    match rest.split_once(';') {
+        Some((_, tail)) => format!("Root WI: {EMPTY_TABLE_VALUE}; {}", tail.trim()),
+        None => format!("Root WI: {EMPTY_TABLE_VALUE}"),
+    }
+}
+
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn render_capability_markdown_migration(
     original_body: &str,
     document: &CapabilityDocument,
     project: &str,
 ) -> String {
+    let document = &migrated_capability_document(document);
     let mut prefix = collapse_markdown_blank_runs_outside_fences(
         &strip_migrated_capability_sources(original_body),
     );
@@ -8499,29 +8585,54 @@ pub(crate) fn render_capability_markdown_migration(
 fn render_capability_registry(document: &CapabilityDocument, project: &str) -> String {
     let mut out = render_capability_index(document, project);
     if document.capabilities.is_empty() {
-        for row in &document.legacy_rows {
-            out.push_str(&render_legacy_capability_section(row));
+        // A legacy table row has no contract to read a class from, so its class
+        // is derived from the same one-way rule migration applies everywhere
+        // else. Rows are grouped rather than left flat: the whole point of
+        // migrating a legacy table is to land in the canonical shape.
+        for class in [
+            CapabilityFeatureClass::Core,
+            CapabilityFeatureClass::NonCore,
+        ] {
+            if document.legacy_rows.is_empty() {
+                break;
+            }
+            out.push_str(&format!("### {}\n\n", class.root_heading()));
+            for row in document
+                .legacy_rows
+                .iter()
+                .filter(|row| migration_feature_class(&slugify(&row.capability)) == class)
+            {
+                out.push_str(&render_legacy_capability_section(row, class));
+            }
         }
     } else {
         // Classified capabilities render under their canonical feature root, one
         // heading level deeper. Unclassified ones keep their current top-level
         // position: choosing a root for them would be a silent classification,
         // and rejecting them is #3061's gate, not this one's.
-        for class in [
-            CapabilityFeatureClass::Core,
-            CapabilityFeatureClass::NonCore,
-        ] {
-            let members = document
-                .capabilities
-                .iter()
-                .filter(|capability| capability.feature_class == Some(class))
-                .collect::<Vec<_>>();
-            if members.is_empty() {
-                continue;
-            }
-            out.push_str(&format!("### {}\n\n", class.root_heading()));
-            for capability in members {
-                out.push_str(&render_markdown_capability_section_at_level(capability, 4));
+        //
+        // Once *any* capability is classified the document is committed to the
+        // two-root shape, so both roots are emitted even when one has no
+        // members. An absent root is a structural defect the checker reports;
+        // emitting only the populated root would make a correct document look
+        // half-migrated.
+        let declares_any_class = document
+            .capabilities
+            .iter()
+            .any(|capability| capability.feature_class.is_some());
+        if declares_any_class {
+            for class in [
+                CapabilityFeatureClass::Core,
+                CapabilityFeatureClass::NonCore,
+            ] {
+                out.push_str(&format!("### {}\n\n", class.root_heading()));
+                for capability in document
+                    .capabilities
+                    .iter()
+                    .filter(|capability| capability.feature_class == Some(class))
+                {
+                    out.push_str(&render_markdown_capability_section_at_level(capability, 4));
+                }
             }
         }
         for capability in &document.capabilities {
@@ -8794,6 +8905,32 @@ fn next_heading_at_or_above(lines: &[&str], start: usize, level: usize) -> Optio
     })
 }
 
+/// The order the whole registry renders in: `Core Features` members, then
+/// `Non-Core Features` members, then anything still unclassified, each group
+/// keeping its relative document order.
+///
+/// The index and the capability sections must share this order. If the index
+/// followed raw document order while sections were grouped by root, migrating a
+/// document whose first capability is non-core would reorder the sections,
+/// re-parse into a different document order, and render a *different* index the
+/// next time — a migration that never reaches a fixed point.
+fn capabilities_in_render_order(document: &CapabilityDocument) -> Vec<&CapabilitySection> {
+    let mut ordered = Vec::with_capacity(document.capabilities.len());
+    for class in [
+        Some(CapabilityFeatureClass::Core),
+        Some(CapabilityFeatureClass::NonCore),
+        None,
+    ] {
+        ordered.extend(
+            document
+                .capabilities
+                .iter()
+                .filter(|capability| capability.feature_class == class),
+        );
+    }
+    ordered
+}
+
 fn render_capability_index(document: &CapabilityDocument, project: &str) -> String {
     let mut out = String::new();
     out.push_str("### Capability Index\n\n");
@@ -8810,7 +8947,7 @@ fn render_capability_index(document: &CapabilityDocument, project: &str) -> Stri
             ));
         }
     } else {
-        for capability in &document.capabilities {
+        for capability in capabilities_in_render_order(document) {
             let fallback_maturity = capability_maturity_summary(capability);
             let implementation = capability
                 .index_summary
@@ -9069,11 +9206,15 @@ fn capability_efficiency_slot(
         .and_then(|dimension| dimension.efficiency_backfill.as_ref())
 }
 
-fn render_legacy_capability_section(row: &LegacyCapabilityRow) -> String {
+fn render_legacy_capability_section(
+    row: &LegacyCapabilityRow,
+    class: CapabilityFeatureClass,
+) -> String {
     let id = slugify(&row.capability);
     format!(
-        "### {title}\n\nID: {id}\nRoot WI: {wi}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- {evidence}\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {gap} | epic | {wi} | planned | planned | smoke | {evidence} |\n\n",
+        "#### {title}\n\nID: {id}\nRoot WI: {wi}\nStatus: candidate\nFeature Class: {class}\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- {evidence}\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {gap} | epic | {wi} | planned | planned | smoke | {evidence} |\n\n",
         title = markdown_cell(&row.capability),
+        class = class.as_str(),
         wi = markdown_cell(&row.active_wi),
         promise = markdown_cell(&row.current_state),
         evidence = markdown_cell(&row.evidence),
@@ -11811,6 +11952,11 @@ fn normalize_table_token(cell: &str) -> String {
         .collect::<String>()
 }
 
+/// The canonical rendering of a cell or field that holds no value. Writing this
+/// is how migration says "there is deliberately nothing here" rather than
+/// leaving a value the parser would read back.
+const EMPTY_TABLE_VALUE: &str = "-";
+
 fn is_empty_table_value(cell: &str) -> bool {
     let trimmed = cell.trim();
     trimmed.is_empty() || matches!(trimmed, "-" | "n/a" | "N/A")
@@ -12860,7 +13006,7 @@ fn apply_capability_format_migration_tick(
             }
             Err(err) => return Err(err),
         };
-        if !document.requires_format_migration() {
+        if !document.requires_format_migration() && !document.requires_feature_class_migration() {
             return Ok(format!(
                 "{} already uses canonical Markdown capability format",
                 resolved.display()
@@ -16832,9 +16978,9 @@ generated_at: 2026-06-18T00:00:00Z
         assert!(doc.capabilities.is_empty());
     }
 
-    #[test]
-    fn capability_init_registry_groups_classified_capabilities_under_feature_roots() {
-        let body = r#"# demo
+    /// One core and one non-core capability, both explicitly classified.
+    fn two_class_capability_body() -> &'static str {
+        r#"# demo
 
 ## Capabilities
 
@@ -16863,7 +17009,12 @@ Promise:
 Scan for vulnerabilities.
 Gate Inventory:
 - `cargo test -p lumen scan`
-"#;
+"#
+    }
+
+    #[test]
+    fn capability_init_registry_groups_classified_capabilities_under_feature_roots() {
+        let body = two_class_capability_body();
         let document = canonical_doc(body);
         let rendered = render_capability_registry(&document, "demo");
 
@@ -16916,6 +17067,37 @@ Gate Inventory:
         assert_eq!(
             cap_doc(&format!("# demo\n\n{rendered}")).capabilities[0].feature_class,
             None
+        );
+    }
+
+    #[test]
+    fn capability_init_registry_keeps_partially_classified_capabilities_in_the_index() {
+        // The index and the sections are rendered from one order. A capability
+        // that order forgets is silently missing from the index while its
+        // section is still present, which reads as a shrinking product contract
+        // rather than an authoring error.
+        let body = format!(
+            "{}\n### Unclassified Thing\n\nID: unclassified-thing\nRoot WI: -\nStatus: auditing\nRequired Verification: smoke\nPromise:\nDo something.\nGate Inventory:\n- `cargo test -p demo thing`\n",
+            two_class_capability_body()
+        );
+        let document = canonical_doc(&body);
+        let rendered = render_capability_registry(&document, "demo");
+
+        for title in ["Indexing", "Static Security Scan", "Unclassified Thing"] {
+            assert!(
+                rendered.contains(&format!("| {title} |")),
+                "`{title}` missing from the index:\n{rendered}"
+            );
+        }
+        assert_eq!(
+            rendered.matches("| Unclassified Thing |").count(),
+            1,
+            "{rendered}"
+        );
+        // Its section still stays outside the roots, at the top level.
+        assert!(
+            rendered.contains("\n### Unclassified Thing\n"),
+            "{rendered}"
         );
     }
 
@@ -18755,7 +18937,7 @@ Gate Inventory:
     }
 
     #[test]
-    fn one_row_contract_table_migration_renders_canonical_field_style_h3() {
+    fn one_row_contract_table_migration_renders_canonical_field_style_contract() {
         let body = r#"# Jet
 
 Legacy intro.
@@ -18780,7 +18962,7 @@ Legacy intro.
         assert!(migrated.contains("## Brief"));
         assert!(migrated.contains("## Capabilities"));
         assert!(migrated.contains("\n### Capability Index\n"));
-        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\n#### Package Manager\n"));
         assert!(migrated.contains("\nID: package-manager\n"));
         assert!(migrated.contains("\nPromise:\nReplace package manager flows."));
         assert!(!migrated.contains(
@@ -18872,7 +19054,7 @@ Gate Inventory:
         assert!(migrated.contains("## Brief"));
         assert!(migrated.contains("## Capabilities"));
         assert!(migrated.contains("\n### Capability Index\n"));
-        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\n#### Package Manager\n"));
         assert!(migrated.contains("\nID: package-manager\n"));
         assert!(migrated.contains("\nPromise:\nReplace package manager flows."));
         assert!(!migrated.contains("| Field | Value |"));
@@ -18913,7 +19095,7 @@ Jet is a Rust-native frontend toolchain.
         assert!(migrated.contains("| Build | `jet build` | Production artifacts. |"));
         assert!(!migrated.contains("TODO: Add the human-confirmed project brief"));
         assert!(migrated.contains("\n### Capability Index\n"));
-        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\n#### Package Manager\n"));
     }
 
     #[test]
@@ -18970,9 +19152,9 @@ Benchmark reference stays after the registry.
         assert!(migrated.contains("Ingestion is the caller's own pub/sub."));
         assert!(migrated.contains("Benchmark reference stays after the registry."));
         assert!(migrated.contains("\n### Capability Index\n"));
-        assert!(migrated.contains("\n### Search\n"));
+        assert!(migrated.contains("\n#### Search\n"));
         assert!(
-            migrated.find("\n### Search\n").unwrap() < migrated.find("\n## Benchmarks\n").unwrap()
+            migrated.find("\n#### Search\n").unwrap() < migrated.find("\n## Benchmarks\n").unwrap()
         );
         assert!(!migrated.contains(CAPABILITY_MIGRATION_INSERT_MARKER));
     }
@@ -19079,7 +19261,9 @@ Gate Inventory:
         let migrated = render_capability_markdown_migration(body, &doc, "lumen");
 
         assert!(migrated.contains("| Lexical | - | partial | auditing | conformance | not_ready | WAND/block-max remains open |"));
-        assert!(migrated.contains("| Agentic Integration | 4143 | implemented | passing | conformance | ready | offline CLI contract |"));
+        assert!(migrated.contains("| Agentic Integration | - | implemented | passing | conformance | ready | offline CLI contract |"));
+        // The index table carries no work-item id after migration either.
+        assert!(!migrated.contains("4143"));
         assert!(!migrated.contains("**Pillar — agent-first**"));
         assert!(!migrated.contains("**Pillar — serve / search**"));
     }
@@ -19150,14 +19334,14 @@ Gate Inventory:
         let doc = cap_doc(body);
         let migrated = render_capability_markdown_migration(body, &doc, "lumen");
         let k8s = migrated
-            .find("\n### Kubernetes-Native Deployment\n")
+            .find("\n#### Kubernetes-Native Deployment\n")
             .unwrap();
         let code = migrated.find("# 1. build").unwrap();
-        let http = migrated.find("\n### HTTP / REST Integration\n").unwrap();
+        let http = migrated.find("\n#### HTTP / REST Integration\n").unwrap();
 
         assert!(k8s < code && code < http);
         assert!(migrated.contains(
-            "```bash\n# 1. build\nkubectl apply -k k8s/overlays/myenv\n```\n\n### HTTP / REST Integration"
+            "```bash\n# 1. build\nkubectl apply -k k8s/overlays/myenv\n```\n\n#### HTTP / REST Integration"
         ));
     }
 
@@ -19205,6 +19389,455 @@ Cube: apps/lumen/.aw/ec/efficiency/search.cube.json
         assert!(migrated.contains(
             "\n#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n\nOperating point: 1M docs, qps=100, metric=p99_ms\nCube: apps/lumen/.aw/ec/efficiency/search.cube.json\n"
         ));
+    }
+
+    /// A representative flat document: canonical field-style contracts, no
+    /// feature roots, and a work-item id in every place a document can store
+    /// one — the index row, the `Root WI` field, and the work-root table.
+    ///
+    /// One capability (`search-lexical`) is a promise the project authored, and
+    /// one (`kubernetes-native-deployment`) is a trait-derived baseline, so the
+    /// two arms of the classification rule are both exercised by one fixture.
+    fn flat_migration_fixture() -> &'static str {
+        r#"# Lumen
+
+## Brief
+
+A K8s-native search specialist.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Lexical Search | #4101 | implemented | passing | conformance | ready | BM25 evidence |
+| Kubernetes-Native Deployment | #4102 | partial | auditing | smoke | not_ready | operator pending |
+
+### Lexical Search
+
+ID: search-lexical
+Root WI: #4101
+Status: verified
+Type: Service
+Surfaces: CLI: `lumen search` - lexical query.
+EC Dimensions: behavior: `cargo test -p lumen search` - ranking behavior.
+Required Verification: smoke, conformance
+Promise:
+BM25 ranking over text.
+Gate Inventory:
+- `cargo test -p lumen search`
+Dependencies:
+- kubernetes-native-deployment
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| BM25 ranking | epic | #4103 | implemented | passing | conformance | `cargo test -p lumen search::bm25` |
+
+### Kubernetes-Native Deployment
+
+ID: kubernetes-native-deployment
+Root WI: #4102
+Status: auditing
+Type: Devops
+Required Verification: smoke
+Promise:
+Ship a Kubernetes operator.
+Gate Inventory:
+- apps/lumen/k8s/kustomization.yaml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Operator rollout | epic | #4104 | partial | auditing | smoke | apps/lumen/k8s/kustomization.yaml |
+"#
+    }
+
+    fn migrate_fixture(body: &str) -> String {
+        render_capability_markdown_migration(body, &cap_doc(body), "lumen")
+    }
+
+    fn migrated_class_of(body: &str, id: &str) -> Option<CapabilityFeatureClass> {
+        cap_doc(body)
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == id)
+            .unwrap_or_else(|| panic!("`{id}` missing from migrated document:\n{body}"))
+            .feature_class
+    }
+
+    fn claim_ids_and_maturities(capability: &CapabilitySection) -> Vec<(String, String)> {
+        capability
+            .verification_contract
+            .as_ref()
+            .map(|contract| {
+                contract
+                    .claims
+                    .iter()
+                    .map(|claim| (claim.id.clone(), claim.maturity.as_str().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn markdown_migration_classifies_trait_derived_baselines_non_core_and_authored_promises_core() {
+        let body = flat_migration_fixture();
+        let document = cap_doc(body);
+
+        // The premise: the input classifies nothing, and the two ids really do
+        // sit on opposite sides of the trait-derived boundary.
+        assert!(document
+            .capabilities
+            .iter()
+            .all(|capability| capability.feature_class.is_none()));
+        assert!(trait_derived_baseline_ids().contains("kubernetes-native-deployment"));
+        assert!(!trait_derived_baseline_ids().contains("search-lexical"));
+
+        let migrated = migrate_fixture(body);
+
+        assert_eq!(
+            migrated_class_of(&migrated, "search-lexical"),
+            Some(CapabilityFeatureClass::Core)
+        );
+        assert_eq!(
+            migrated_class_of(&migrated, "kubernetes-native-deployment"),
+            Some(CapabilityFeatureClass::NonCore)
+        );
+
+        // Containment, not only the field: each capability is nested under the
+        // root that matches its class.
+        let core_root = migrated.find("### Core Features").unwrap();
+        let non_core_root = migrated.find("### Non-Core Features").unwrap();
+        let lexical = migrated.find("#### Lexical Search").unwrap();
+        let k8s = migrated.find("#### Kubernetes-Native Deployment").unwrap();
+        assert!(
+            core_root < lexical && lexical < non_core_root && non_core_root < k8s,
+            "capabilities did not land under their roots:\n{migrated}"
+        );
+
+        // The migrated document is structurally clean by the checker's own
+        // judgement, so migration output cannot be a half-migrated document.
+        assert_eq!(feature_root_findings(&migrated), Vec::<String>::new());
+    }
+
+    #[test]
+    fn markdown_migration_preserves_capability_identity_gates_evidence_and_maturity() {
+        let body = flat_migration_fixture();
+        let before = cap_doc(body);
+        let migrated = migrate_fixture(body);
+        let after = cap_doc(&migrated);
+
+        assert_eq!(after.capability_ids(), before.capability_ids());
+        assert_eq!(after.capability_ids().len(), 2);
+
+        for id in before.capability_ids() {
+            let find = |document: &CapabilityDocument| {
+                document
+                    .capabilities
+                    .iter()
+                    .find(|capability| capability.id == id)
+                    .unwrap()
+                    .clone()
+            };
+            let (old, new) = (find(&before), find(&after));
+            assert_eq!(new.status, old.status, "{id}: status");
+            assert_eq!(new.capability_type, old.capability_type, "{id}: type");
+            assert_eq!(new.dependencies, old.dependencies, "{id}: dependencies");
+            assert_eq!(
+                new.release_scope, old.release_scope,
+                "{id}: production state"
+            );
+            assert_eq!(new.surfaces, old.surfaces, "{id}: surfaces");
+            assert_eq!(new.ec_dimensions, old.ec_dimensions, "{id}: EC dimensions");
+            assert_eq!(new.evidence, old.evidence, "{id}: evidence");
+            assert_eq!(new.promise.trim(), old.promise.trim(), "{id}: promise");
+            assert_eq!(
+                capability_gate_inventory(&new),
+                capability_gate_inventory(&old),
+                "{id}: gate inventory"
+            );
+            assert_eq!(
+                capability_maturity_summary(&new),
+                capability_maturity_summary(&old),
+                "{id}: maturity"
+            );
+            assert_eq!(
+                claim_ids_and_maturities(&new),
+                claim_ids_and_maturities(&old),
+                "{id}: claim ids and maturities"
+            );
+        }
+
+        // The preserved values are non-trivial, so equality above is not two
+        // empty sets agreeing with each other.
+        let lexical = after
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == "search-lexical")
+            .unwrap();
+        assert!(lexical.release_scope);
+        assert_eq!(lexical.dependencies, vec!["kubernetes-native-deployment"]);
+        assert_eq!(
+            claim_ids_and_maturities(lexical),
+            vec![("bm25-ranking".to_string(), "conformance".to_string())]
+        );
+        assert!(capability_gate_inventory(lexical).contains("cargo test -p lumen search"));
+    }
+
+    #[test]
+    fn markdown_migration_emits_no_document_stored_work_item_reference() {
+        let body = flat_migration_fixture();
+        for wi in ["4101", "4102", "4103", "4104"] {
+            assert!(body.contains(wi), "fixture lost its work-item id {wi}");
+        }
+
+        let migrated = migrate_fixture(body);
+
+        for wi in ["4101", "4102", "4103", "4104"] {
+            assert!(
+                !migrated.contains(wi),
+                "work-item id {wi} survived migration:\n{migrated}"
+            );
+        }
+        for capability in &cap_doc(&migrated).capabilities {
+            assert!(
+                capability
+                    .work_roots
+                    .iter()
+                    .all(|work_root| is_empty_table_value(&work_root.wi)),
+                "{}: work-root WI survived",
+                capability.id
+            );
+            assert!(
+                capability.gaps.iter().all(|gap| gap.active_wi.is_none()),
+                "{}: gap WI survived",
+                capability.id
+            );
+            assert_eq!(
+                root_wi_for_capability(capability),
+                "-",
+                "{}: root WI survived",
+                capability.id
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_migration_is_deterministic_and_idempotent() {
+        let body = flat_migration_fixture();
+        let once = migrate_fixture(body);
+
+        // Deterministic: the same input renders the same bytes.
+        assert_eq!(once, migrate_fixture(body));
+
+        // Idempotent: migrating the output changes nothing, so a repeated
+        // migration cannot drift the document.
+        assert_eq!(once, migrate_fixture(&once));
+    }
+
+    #[test]
+    fn markdown_migration_reaches_a_fixed_point_when_a_non_core_capability_comes_first() {
+        // Grouping reorders sections, so a document whose first capability is
+        // non-core is where index order and section order can disagree. If they
+        // do, re-parsing the output yields a different document order and the
+        // next migration renders a different index — a migration with no fixed
+        // point. The fixture in `flat_migration_fixture` is core-first and
+        // cannot expose this.
+        let body = flat_migration_fixture();
+        let (head, tail) = body.split_once("### Lexical Search").unwrap();
+        let (lexical, k8s) = tail.split_once("### Kubernetes-Native Deployment").unwrap();
+        let swapped = format!(
+            "{}{}{}{}{}",
+            head.replace(
+                "| Lexical Search | #4101 | implemented | passing | conformance | ready | BM25 evidence |\n| Kubernetes-Native Deployment | #4102 | partial | auditing | smoke | not_ready | operator pending |",
+                "| Kubernetes-Native Deployment | #4102 | partial | auditing | smoke | not_ready | operator pending |\n| Lexical Search | #4101 | implemented | passing | conformance | ready | BM25 evidence |",
+            ),
+            "### Kubernetes-Native Deployment",
+            k8s,
+            "### Lexical Search",
+            lexical,
+        );
+        assert!(
+            swapped.find("ID: kubernetes-native-deployment").unwrap()
+                < swapped.find("ID: search-lexical").unwrap(),
+            "fixture is not non-core-first:\n{swapped}"
+        );
+
+        let once = migrate_fixture(&swapped);
+        assert_eq!(once, migrate_fixture(&once));
+
+        // The fixed point is the canonical order, not merely a stable one.
+        assert!(
+            once.find("| Lexical Search |").unwrap()
+                < once.find("| Kubernetes-Native Deployment |").unwrap(),
+            "index did not follow the render order:\n{once}"
+        );
+        assert!(
+            once.find("#### Lexical Search").unwrap()
+                < once.find("#### Kubernetes-Native Deployment").unwrap(),
+            "sections did not follow the render order:\n{once}"
+        );
+    }
+
+    #[test]
+    fn markdown_migration_rewrites_a_canonical_document_that_is_still_flat() {
+        // #3063: every adopter README already uses the canonical Markdown
+        // format, so a migration keyed only off `requires_format_migration`
+        // would report "already canonical" and never emit the feature roots.
+        // `aw capability migrate` is the verb the requirement names, so it has
+        // to convert a flat canonical document too.
+        let tmp = tempfile::tempdir().unwrap();
+        let cap_path = tmp.path().join("CAPABILITIES.md");
+        std::fs::write(&cap_path, flat_migration_fixture()).unwrap();
+
+        let document =
+            parse_capability_document(&flat_migration_fixture(), Path::new("CAPABILITIES.md"))
+                .unwrap();
+        assert!(
+            !document.requires_format_migration(),
+            "fixture must already be canonical or this proves nothing"
+        );
+        assert!(document.requires_feature_class_migration());
+
+        let action = CapabilityAction {
+            kind: CapabilityActionKind::FormatMigrationRequired,
+            capability_id: None,
+            gap_id: None,
+            claim_id: None,
+            target: cap_path.display().to_string(),
+            command: "aw capability migrate --project demo".to_string(),
+            reason: "test".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        };
+        let first =
+            apply_capability_format_migration_tick(1, tmp.path(), "demo", Some(&cap_path), &action);
+        assert_eq!(first.status, "pass", "{first:?}");
+        let migrated = std::fs::read_to_string(&cap_path).unwrap();
+        assert!(migrated.contains("### Core Features"), "{migrated}");
+        assert!(migrated.contains("### Non-Core Features"), "{migrated}");
+        assert!(migrated.contains("#### Lexical Search"), "{migrated}");
+
+        // A converted document is a fixed point: the second run has nothing
+        // left to do and says so instead of rewriting the file again.
+        let second =
+            apply_capability_format_migration_tick(2, tmp.path(), "demo", Some(&cap_path), &action);
+        assert_eq!(second.status, "pass", "{second:?}");
+        assert!(
+            second
+                .stdout
+                .as_deref()
+                .unwrap_or_default()
+                .contains("already uses canonical Markdown capability format"),
+            "{second:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&cap_path).unwrap(), migrated);
+    }
+
+    #[test]
+    fn markdown_migration_emits_both_feature_roots_when_one_has_no_members() {
+        // Every capability here is trait-derived, so `Core Features` has no
+        // members. It is still emitted: an absent root is a structural defect,
+        // and a correctly migrated document must not look half-migrated.
+        let body = r#"# Lumen
+
+## Brief
+
+A K8s-native search specialist.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Kubernetes-Native Deployment | - | partial | auditing | smoke | not_ready | operator pending |
+
+### Kubernetes-Native Deployment
+
+ID: kubernetes-native-deployment
+Root WI: -
+Status: auditing
+Type: Devops
+Required Verification: smoke
+Promise:
+Ship a Kubernetes operator.
+Gate Inventory:
+- apps/lumen/k8s/kustomization.yaml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Operator rollout | epic | - | partial | auditing | smoke | apps/lumen/k8s/kustomization.yaml |
+"#;
+        let migrated = migrate_fixture(body);
+
+        assert!(migrated.contains("### Core Features"), "{migrated}");
+        assert!(migrated.contains("### Non-Core Features"), "{migrated}");
+        assert_eq!(feature_root_findings(&migrated), Vec::<String>::new());
+        assert_eq!(
+            migrated_class_of(&migrated, "kubernetes-native-deployment"),
+            Some(CapabilityFeatureClass::NonCore)
+        );
+    }
+
+    #[test]
+    fn markdown_migration_never_rewrites_an_explicit_feature_class() {
+        // A trait-derived baseline wrongly declared `core` keeps its declared
+        // class. Migration classifies what the author left unclassified; it does
+        // not overrule a claim the author made, because that would be the lossy
+        // automatic rewriting a migration command exists to avoid. The checker
+        // reports it instead, where the author can see and fix it.
+        let body = flat_migration_fixture().replace(
+            "ID: kubernetes-native-deployment\nRoot WI: #4102\nStatus: auditing",
+            "ID: kubernetes-native-deployment\nRoot WI: #4102\nStatus: auditing\nFeature Class: core",
+        );
+        assert!(body.contains("Feature Class: core"));
+
+        let migrated = migrate_fixture(&body);
+
+        assert_eq!(
+            migrated_class_of(&migrated, "kubernetes-native-deployment"),
+            Some(CapabilityFeatureClass::Core)
+        );
+        let findings = feature_root_findings(&migrated);
+        one_finding_matching(
+            &findings,
+            "trait-derived baseline capability `kubernetes-native-deployment` is classified `core`",
+        );
+    }
+
+    #[test]
+    fn markdown_migration_classifies_legacy_table_rows_without_carrying_their_work_items() {
+        let body = r#"# Lumen
+
+## Capability Map
+
+| Capability | Current State | Gaps | Active WI | Evidence |
+|------------|---------------|------|-----------|----------|
+| Lexical search | exists | audit pending | #4200 | apps/lumen/tests/search.rs |
+| Security hardening | partial | scan pending | #4201 | apps/lumen/deny.toml |
+"#;
+        let document = cap_doc(body);
+        assert!(document.is_legacy_only());
+        assert_eq!(document.legacy_rows.len(), 2);
+
+        let migrated = migrate_fixture(body);
+
+        for wi in ["4200", "4201"] {
+            assert!(
+                !migrated.contains(wi),
+                "legacy work-item id {wi} survived migration:\n{migrated}"
+            );
+        }
+        assert_eq!(
+            migrated_class_of(&migrated, "lexical-search"),
+            Some(CapabilityFeatureClass::Core)
+        );
+        assert_eq!(
+            migrated_class_of(&migrated, "security-hardening"),
+            Some(CapabilityFeatureClass::NonCore)
+        );
+        assert_eq!(feature_root_findings(&migrated), Vec::<String>::new());
     }
 
     #[test]
