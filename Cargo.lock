@@ -10387,8 +10387,16 @@ name = "peer-tls"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rcgen",
  "rustls 0.23.40",
  "rustls-pemfile",
+ "sha2 0.10.9",
+ "tempfile",
+ "time",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tracing",
+ "x509-parser 0.17.0",
 ]
 
 [[package]]
@@ -13433,9 +13441,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
+ "bytes",
+ "http 1.4.0",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "peer-tls",
+ "rcgen",
+ "rustls 0.23.40",
  "server-lifecycle",
  "server-tcp",
+ "sha2 0.10.9",
+ "time",
  "tokio",
+ "tokio-rustls 0.26.4",
  "tower-http 0.5.2",
  "tracing",
  "transport-h2c",

@@ -90,6 +90,35 @@ impl PeerTlsConfig {
         let config = peer_tls::PeerTlsConfig::from(self.clone());
         raft_runtime::PeerTransport::from_config(&config)
     }
+
+    /// Bind this member's projected peer material to the shared reloadable
+    /// seam (#3112 R2).
+    ///
+    /// Lumen contributes the only two things the library cannot know — where
+    /// the Secret is projected, and which identity *this* member must present —
+    /// and nothing else. Validation, last-known-good retention, trust overlap
+    /// during issuer rotation, and atomic activation all stay in
+    /// [`peer_tls::reload`]; there is deliberately no Lumen-side reload engine
+    /// for them to diverge from.
+    ///
+    /// Fails when no valid material exists at startup, which is the intended
+    /// posture: a member that cannot prove who it is has no business joining
+    /// the group.
+    pub fn reloadable(
+        &self,
+        dns_names: impl IntoIterator<Item = String>,
+        spiffe_uris: impl IntoIterator<Item = String>,
+    ) -> Result<peer_tls::ReloadableTls> {
+        peer_tls::ReloadableTls::required(
+            peer_tls::TlsRuntimeProfile::peer(dns_names, spiffe_uris),
+            std::sync::Arc::new(peer_tls::FileMaterialSource::new(
+                &self.cert,
+                &self.key,
+                &self.ca,
+            )),
+        )
+        .map_err(anyhow::Error::from)
+    }
 }
 
 pub use peer_tls::install_default_crypto_provider;
@@ -176,6 +205,28 @@ LkjT2UdpFBDZGWHwqDRhXX8k
             ca: dir.join("ca.pem"),
             required: true,
         }
+    }
+
+    #[test]
+    fn reloadable_refuses_to_start_on_material_that_is_no_longer_valid() {
+        // The fixture leaf's validity window closed in July 2026, so this is
+        // exactly the shape of a projected Secret nobody renewed. Startup must
+        // refuse it (#3112 R7) rather than join the group with an identity
+        // peers would reject — and the refusal must come from the shared seam,
+        // which is the point of the adapter being three lines long.
+        let cfg = write_tls_fixture("reloadable");
+        let err = cfg
+            .reloadable(["lumen-peer".to_string()], std::iter::empty())
+            .expect_err("expired material must not activate");
+        let message = err.to_string();
+        assert!(
+            message.contains("expired"),
+            "the refusal should name the reason: {message}"
+        );
+        assert!(
+            !message.contains("PRIVATE KEY") && !message.contains("cert.pem"),
+            "a refusal must not carry key material or projection paths: {message}"
+        );
     }
 
     #[test]

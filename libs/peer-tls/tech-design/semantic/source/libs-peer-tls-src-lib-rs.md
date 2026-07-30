@@ -21,11 +21,13 @@ Public API manifest for `libs/peer-tls/src/lib.rs` captured during libs codegen 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `PeerTlsConfig` | libs/peer-tls/src/lib.rs | struct | pub | 24 | pub struct PeerTlsConfig { |
-| `from_env` | libs/peer-tls/src/lib.rs | function | pub | 37 | pub fn from_env(prefix: &str) -> Result<Option<Self>> { |
-| `rustls_server_config` | libs/peer-tls/src/lib.rs | function | pub | 78 | pub fn rustls_server_config(&self) -> Result<rustls::ServerConfig> { |
-| `rustls_client_config` | libs/peer-tls/src/lib.rs | function | pub | 97 | pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> { |
-| `install_default_crypto_provider` | libs/peer-tls/src/lib.rs | function | pub | 109 | pub fn install_default_crypto_provider() { |
+| `material` | libs/peer-tls/src/lib.rs | module | pub | 17 | pub mod material; |
+| `reload` | libs/peer-tls/src/lib.rs | module | pub | 18 | pub mod reload; |
+| `PeerTlsConfig` | libs/peer-tls/src/lib.rs | struct | pub | 35 | pub struct PeerTlsConfig { |
+| `from_env` | libs/peer-tls/src/lib.rs | function | pub | 48 | pub fn from_env(prefix: &str) -> Result<Option<Self>> { |
+| `rustls_server_config` | libs/peer-tls/src/lib.rs | function | pub | 89 | pub fn rustls_server_config(&self) -> Result<rustls::ServerConfig> { |
+| `rustls_client_config` | libs/peer-tls/src/lib.rs | function | pub | 110 | pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> { |
+| `install_default_crypto_provider` | libs/peer-tls/src/lib.rs | function | pub | 124 | pub fn install_default_crypto_provider() { |
 
 
 ## Source
@@ -47,6 +49,17 @@ Public API manifest for `libs/peer-tls/src/lib.rs` captured during libs codegen 
 //! Lifted verbatim from lumen's `tls.rs` (#971): lumen keeps a thin adapter
 //! over this crate with its `LUMEN_PEER_TLS_*`/`LUMEN_PEER_MTLS` env names
 //! and pub API unchanged. keep/relay/beam adoption is out of scope here.
+
+pub mod material;
+pub mod reload;
+
+pub use material::{
+    validate, IdentityExpectation, MaterialPem, Rejection, RejectionReason, ValidatedMaterial,
+};
+pub use reload::{
+    spawn_material_watcher, FileMaterialSource, MaterialSource, MemoryMaterialSource,
+    ReloadableTls, TlsReloadStatus, TlsRuntimeProfile, DEFAULT_MATERIAL_POLL_INTERVAL,
+};
 
 use std::io::BufReader;
 use std::path::{Path, PathBuf};

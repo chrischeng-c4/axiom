@@ -28,17 +28,16 @@ Public API manifest for `apps/lumen/src/tls.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `PeerTlsConfig` | apps/lumen/src/tls.rs | struct | pub | 37 |  |
-| `from_env` | apps/lumen/src/tls.rs | function | pub | 72 | from_env() -> Result<Option<Self>> |
-| `peer_transport` | apps/lumen/src/tls.rs | function | pub | 89 | peer_transport(&self) -> Result<raft_runtime::PeerTransport> |
-| `rustls_client_config` | apps/lumen/src/tls.rs | function | pub | 82 | rustls_client_config(&self) -> Result<rustls::ClientConfig> |
-| `rustls_server_config` | apps/lumen/src/tls.rs | function | pub | 77 | rustls_server_config(&self) -> Result<rustls::ServerConfig> |
+| `PeerTlsConfig` | apps/lumen/src/tls.rs | struct | pub | 34 |  |
+| `from_env` | apps/lumen/src/tls.rs | function | pub | 66 | from_env() -> Result<Option<Self>> |
+| `peer_transport` | apps/lumen/src/tls.rs | function | pub | 83 | peer_transport(&self) -> Result<raft_runtime::PeerTransport> |
+| `reloadable` | apps/lumen/src/tls.rs | function | pub | 101 | reloadable(&self, dns_names: impl IntoIterator<Item = String>, spiffe_uris: impl IntoIterator<Item = String>) -> Result<peer_tls::ReloadableTls> |
+| `rustls_client_config` | apps/lumen/src/tls.rs | function | pub | 76 | rustls_client_config(&self) -> Result<rustls::ClientConfig> |
+| `rustls_server_config` | apps/lumen/src/tls.rs | function | pub | 71 | rustls_server_config(&self) -> Result<rustls::ServerConfig> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#rust-source-unit
-// CODEGEN-BEGIN
 //! mTLS configuration for the peer (`:8082`) transport.
 //!
 //! v1 ships the configuration surface — paths to cert / key / CA bundle
@@ -72,7 +71,6 @@ use anyhow::Result;
 const ENV_PREFIX: &str = "LUMEN_PEER";
 
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 pub struct PeerTlsConfig {
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -80,7 +78,6 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     fn from(cfg: peer_tls::PeerTlsConfig) -> Self {
         Self {
@@ -92,7 +89,6 @@ impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
@@ -104,7 +100,6 @@ impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
@@ -128,6 +123,35 @@ impl PeerTlsConfig {
     pub fn peer_transport(&self) -> Result<raft_runtime::PeerTransport> {
         let config = peer_tls::PeerTlsConfig::from(self.clone());
         raft_runtime::PeerTransport::from_config(&config)
+    }
+
+    /// Bind this member's projected peer material to the shared reloadable
+    /// seam (#3112 R2).
+    ///
+    /// Lumen contributes the only two things the library cannot know — where
+    /// the Secret is projected, and which identity *this* member must present —
+    /// and nothing else. Validation, last-known-good retention, trust overlap
+    /// during issuer rotation, and atomic activation all stay in
+    /// [`peer_tls::reload`]; there is deliberately no Lumen-side reload engine
+    /// for them to diverge from.
+    ///
+    /// Fails when no valid material exists at startup, which is the intended
+    /// posture: a member that cannot prove who it is has no business joining
+    /// the group.
+    pub fn reloadable(
+        &self,
+        dns_names: impl IntoIterator<Item = String>,
+        spiffe_uris: impl IntoIterator<Item = String>,
+    ) -> Result<peer_tls::ReloadableTls> {
+        peer_tls::ReloadableTls::required(
+            peer_tls::TlsRuntimeProfile::peer(dns_names, spiffe_uris),
+            std::sync::Arc::new(peer_tls::FileMaterialSource::new(
+                &self.cert,
+                &self.key,
+                &self.ca,
+            )),
+        )
+        .map_err(anyhow::Error::from)
     }
 }
 
@@ -215,6 +239,28 @@ LkjT2UdpFBDZGWHwqDRhXX8k
             ca: dir.join("ca.pem"),
             required: true,
         }
+    }
+
+    #[test]
+    fn reloadable_refuses_to_start_on_material_that_is_no_longer_valid() {
+        // The fixture leaf's validity window closed in July 2026, so this is
+        // exactly the shape of a projected Secret nobody renewed. Startup must
+        // refuse it (#3112 R7) rather than join the group with an identity
+        // peers would reject — and the refusal must come from the shared seam,
+        // which is the point of the adapter being three lines long.
+        let cfg = write_tls_fixture("reloadable");
+        let err = cfg
+            .reloadable(["lumen-peer".to_string()], std::iter::empty())
+            .expect_err("expired material must not activate");
+        let message = err.to_string();
+        assert!(
+            message.contains("expired"),
+            "the refusal should name the reason: {message}"
+        );
+        assert!(
+            !message.contains("PRIVATE KEY") && !message.contains("cert.pem"),
+            "a refusal must not carry key material or projection paths: {message}"
+        );
     }
 
     #[test]
@@ -537,7 +583,6 @@ LkjT2UdpFBDZGWHwqDRhXX8k
         );
     }
 }
-// CODEGEN-END
 ````
 
 ## Changes
