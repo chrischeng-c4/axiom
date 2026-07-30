@@ -318,6 +318,55 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         )
         lumen_reference.assert_human_report_renders_the_split(human.stdout, verified)
 
+        # A third rendering of the same split, on a third surface. `aw capability
+        # next` builds its `coverage` object from its own JSON literal rather
+        # than from the report serializer, so it can zero or transpose a field
+        # while every report-reading leg above stays green -- which is the exact
+        # argument the `--human` leg makes, left unapplied here until now. The
+        # reference document is still at `cap_path` from the verified leg.
+        next_coverage = final_json(
+            run_aw(
+                root,
+                "capability",
+                "next",
+                "--project",
+                "demo",
+                "--skip-issue-inventory",
+            )
+        )["coverage"]
+        unverified_reference = _lumen_report(
+            root, cap_path, lumen_reference.REFERENCE_DOCUMENT
+        )
+        lumen_reference.assert_next_coverage_matches_the_report(
+            next_coverage, unverified_reference
+        )
+
+        # The second half of the effective-class rule. Every baseline leg above
+        # states `Feature Class: core` and is rejected on the field; the class is
+        # resolved as the field *or else* the containing root, and placement
+        # alone must be enough. Without this the `or_else` half is unexercised
+        # and a report that only ever read the field would pass every leg here.
+        # Driven for every baseline, on the same reasoning as the declared-core
+        # loop above: the claim is about archetype baselines as a set.
+        placed_core = {}
+        for cap_id in lumen_reference.NON_CORE_IDS:
+            placed_core[cap_id] = _lumen_report(
+                root, cap_path, lumen_reference.baseline_placed_core_document(cap_id)
+            )
+            lumen_reference.assert_baseline_placed_core_is_rejected(
+                placed_core[cap_id], cap_id
+            )
+
+        # The accepting half of the `Feature Class` parser. The mistyped-value
+        # leg above binds only the refusal; the spellings a human actually writes
+        # -- backticked, hyphenated, camel-cased -- must resolve to the canonical
+        # pair, and that acceptance is observable product behavior of `aw
+        # capability report` rather than an implementation-internal rule.
+        human_spellings = _lumen_report(
+            root, cap_path, lumen_reference.human_spelling_document()
+        )
+        lumen_reference.assert_human_class_spellings_are_accepted(human_spellings)
+
         # The other branch of the default-class rule: a legacy table parses to
         # zero capability sections, so the count comes from the rows and has to
         # be attributed from there. Nothing else in this fixture reaches it.
@@ -454,6 +503,83 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 relocated_report
             )
 
+        # Relocation again, from the *other* input shape. A legacy table parses
+        # to zero capability sections, so the leg above drives only
+        # `render_capability_registry`'s legacy branch. A README whose contract
+        # is canonical `###` sections parses into `document.capabilities` and
+        # takes the other branch -- the one that renders the sections themselves
+        # and that resolves each `Root WI` through `root_wi_for_capability` on
+        # live, unblanked tracker state. Format migration cannot reach it either,
+        # because it blanks that state before rendering. Three shapes, because
+        # the branch has three distinguishable behaviors: nothing classified,
+        # partially classified, and one class empty.
+        relocated_sections = {}
+        for name, readme_document in (
+            ("unclassified", lumen_reference.UNCLASSIFIED_SECTION_README),
+            ("partially_classified", lumen_reference.PARTIALLY_CLASSIFIED_SECTION_README),
+        ):
+            with project_fixture() as section_root:
+                section_readme = section_root / "README.md"
+                section_cap = section_root / "CAPABILITIES.md"
+                section_readme.write_text(readme_document, encoding="utf-8")
+                assert not section_cap.exists(), (
+                    "the relocation branch fires only when no CAPABILITIES.md "
+                    "exists; this fixture must not be initialized first"
+                )
+                final_json(
+                    run_aw(section_root, "capability", "migrate", "--project", "demo")
+                )
+                assert section_cap.exists(), (
+                    "migration must create the relocated capability contract"
+                )
+                section_text = section_cap.read_text(encoding="utf-8")
+                relocated_sections[name] = final_json(
+                    run_aw(
+                        section_root,
+                        "capability",
+                        "report",
+                        "--project",
+                        "demo",
+                        "--skip-issue-inventory",
+                    )
+                )
+                lumen_reference.assert_relocation_preserves_section_tracker_state(
+                    section_text
+                )
+                lumen_reference.assert_relocation_renders_every_capability_section(
+                    section_text, relocated_sections[name]
+                )
+
+        # One canonical class with no members at all. Both roots must still be
+        # emitted: a document missing a root is rejected by the product's own
+        # checker, so "emit the roots that have members" would make migration
+        # produce documents `aw capability report` refuses. No other input in
+        # this fixture populates only one class.
+        with project_fixture() as empty_class_root:
+            empty_class_readme = empty_class_root / "README.md"
+            empty_class_cap = empty_class_root / "CAPABILITIES.md"
+            empty_class_readme.write_text(
+                lumen_reference.ALL_CORE_SECTION_README, encoding="utf-8"
+            )
+            assert not empty_class_cap.exists()
+            final_json(
+                run_aw(empty_class_root, "capability", "migrate", "--project", "demo")
+            )
+            empty_class_text = empty_class_cap.read_text(encoding="utf-8")
+            empty_class_report = final_json(
+                run_aw(
+                    empty_class_root,
+                    "capability",
+                    "report",
+                    "--project",
+                    "demo",
+                    "--skip-issue-inventory",
+                )
+            )
+            lumen_reference.assert_relocation_emits_both_roots_when_one_is_empty(
+                empty_class_text, empty_class_report
+            )
+
     after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
     lumen_reference.assert_production_contract_unmutated(before, after)
     return {
@@ -473,6 +599,11 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "preserved": preserved_text,
         "verified": verified,
         "relocated": relocated_report,
+        "next_coverage": next_coverage,
+        "placed_core": placed_core,
+        "human_spellings": human_spellings,
+        "relocated_sections": relocated_sections,
+        "empty_class": empty_class_report,
     }
 
 
@@ -561,7 +692,13 @@ def verify(case_id: str) -> list[str]:
                 "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
                 "aw capability migrate reaches a fixed point on a non-core-first document: the migrated Capability Index and the migrated capability sections list the same capabilities in the same core-then-non-core order, so re-parsing the migrated document cannot render a different index again",
                 "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
-                "aw capability migrate relocating a README-resident legacy table into a project with no CAPABILITIES.md preserves each row's tracker state as its Root WI in both the index column and the section field, derives the same core/non-core split, and leaves the README a forwarding pointer instead of the table, which is the second entry point of migrate and the only one where the rendered tracker cell is non-empty and therefore falsifiable",
+                "aw capability migrate relocating a README-resident legacy table into a project with no CAPABILITIES.md preserves each row's tracker state as its Root WI in both the index column and the section field, derives the same core/non-core split, and leaves the README a forwarding pointer instead of the table",
+                "aw capability migrate relocating a README whose contract is canonical capability sections preserves each capability's own declared Root WI into both the index column and the section field, which is the branch that resolves it through root_wi_for_capability on live tracker state rather than through the legacy row or through format migration's pre-blanked input",
+                "aw capability migrate renders one capability section per capability on that same branch, asserted through both the relocated text and a re-report of it, so a relocation emitting a complete-looking Capability Index over no contract at all cannot pass",
+                "aw capability migrate emits both canonical feature roots when one class has no members, asserted on the only input shape where a populated-roots-only renderer differs from a both-roots renderer, and the emitted document is accepted by a follow-up report",
+                "aw capability next renders the same core/non-core split its own report computes, through a coverage object built by a separate JSON literal, with the four populated operands non-zero and pairwise distinct",
+                "each trait-derived baseline nested under Core Features while declaring no Feature Class at all is rejected by that exact blocker, which is the half of the effective-class rule that resolves the class from the containing root rather than from the field",
+                "aw capability report resolves every human spelling of Feature Class -- backticked, hyphenated, camel-cased, case-folded -- to its canonical class with the same per-class counts and no blocker, which is the accepting half of the parser the mistyped-value assertion only binds the refusal of",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
