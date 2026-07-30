@@ -405,6 +405,16 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         )
         lumen_reference.assert_sibling_heading_closes_the_root(sibling_heading)
 
+        # Fenced headings. The root scan masks lines inside code fences before
+        # it parses any heading, and no other document here contains a fence at
+        # all -- so deleting the mask left every leg green while a README that
+        # merely *documents* the canonical shape would be reported as having a
+        # duplicate root. Real Lumen and template READMEs carry exactly that.
+        fenced_root = _lumen_report(
+            root, cap_path, lumen_reference.FENCED_ROOT_DOCUMENT
+        )
+        lumen_reference.assert_fenced_headings_are_not_read_as_structure(fenced_root)
+
         # The product reads capability contracts in four Markdown forms and each
         # has its own `Feature Class` lookup. The canonical field-style section
         # is the only one every leg above drives; the other three were each
@@ -461,6 +471,27 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
             root, cap_path, lumen_reference.RETIRED_MEMBER_DOCUMENT
         )
         lumen_reference.assert_retired_capability_is_excluded_from_both_classes(retired)
+
+        # The same document under `--verify`. The leg above can only see two of
+        # the four accumulators the retired filter guards: without gate
+        # execution both verified counts are zero, so counting a retired item
+        # into them was invisible. This is the same vacuity the `--verify` leg
+        # fixed for the reference document, applied to the one document that
+        # actually retires something.
+        retired_verified = final_json(
+            run_aw(
+                root,
+                "capability",
+                "report",
+                "--project",
+                "demo",
+                "--skip-issue-inventory",
+                "--verify",
+            )
+        )
+        lumen_reference.assert_retired_is_excluded_from_the_verified_counts_too(
+            retired_verified
+        )
 
         # Migration is the only path that has to *derive* the class instead of
         # reading one. Without this leg the derivation rule could be inverted
@@ -571,9 +602,18 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         # the branch has three distinguishable behaviors: nothing classified,
         # partially classified, and one class empty.
         relocated_sections = {}
-        for name, readme_document in (
-            ("unclassified", lumen_reference.UNCLASSIFIED_SECTION_README),
-            ("partially_classified", lumen_reference.PARTIALLY_CLASSIFIED_SECTION_README),
+        for name, readme_document, declares_any_class in (
+            ("unclassified", lumen_reference.UNCLASSIFIED_SECTION_README, False),
+            (
+                "partially_classified",
+                lumen_reference.PARTIALLY_CLASSIFIED_SECTION_README,
+                True,
+            ),
+            (
+                "work_root_wi",
+                lumen_reference.WORK_ROOT_WI_SECTION_README,
+                False,
+            ),
         ):
             with project_fixture() as section_root:
                 section_readme = section_root / "README.md"
@@ -600,11 +640,25 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                         "--skip-issue-inventory",
                     )
                 )
-                lumen_reference.assert_relocation_preserves_section_tracker_state(
-                    section_text
-                )
+                if name == "work_root_wi":
+                    # No capability declares a `Root WI`, so the renderer has to
+                    # fall back to the first work root's WI. Every other shape
+                    # here declares one, which leaves that branch unreachable.
+                    lumen_reference.assert_relocation_falls_back_to_the_first_work_root_wi(
+                        section_text
+                    )
+                else:
+                    lumen_reference.assert_relocation_preserves_section_tracker_state(
+                        section_text
+                    )
                 lumen_reference.assert_relocation_renders_every_capability_section(
                     section_text, relocated_sections[name]
+                )
+                # The roots are emitted exactly when the input classified
+                # something. Two of these shapes classify nothing and one
+                # classifies its domain promises, so both directions are pinned.
+                lumen_reference.assert_relocation_root_emission(
+                    section_text, declares_any_class=declares_any_class
                 )
 
         # One canonical class with no members at all. Both roots must still be
@@ -650,6 +704,8 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "legacy": legacy,
         "legacy_migrated": legacy_migrated_report,
         "retired": retired,
+        "retired_verified": retired_verified,
+        "fenced_root": fenced_root,
         "unclassified": unclassified,
         "migrated": migrated_report,
         "fixed_point": fixed_point_text,
@@ -764,6 +820,10 @@ def verify(case_id: str) -> list[str]:
                 "a document whose only feature roots are outside the closed pair is diagnosed rather than waved through as pre-migration, asserted as the whole ordered set of two missing-root and two unknown-root blockers, which is the third arm of that same test",
                 "a heading at a feature root's own level closes that root, so a capability title repeated under a later sibling heading is not read as a member of both roots -- the one assertion here falsified by an implementation that reports too much rather than too little",
                 "each of the three capability-contract reading forms other than the canonical field-style section -- the Field/Value contract, the one-row contract table, and the YAML-fenced section -- honours its Feature Class declaration, asserted per capability and by unequal per-class counts, because each form has its own class lookup and binding one binds none of the others",
+                "a heading inside a Markdown code fence is neither a feature root nor a member of one, asserted on a document whose fenced appendix would otherwise duplicate a root and place one capability under both, which is the shape real project READMEs carry",
+                "a relocated capability with no declared Root WI falls back to its first work root's WI in both the index column and the section field, with the second work root's WI appearing nowhere, which is the branch of that resolution every Root-WI-declaring input leaves unreachable",
+                "aw capability migrate emits the two canonical feature roots exactly when its input classified something, asserted in both directions across relocation shapes that differ in that one property, so neither an unconditional renderer nor one that never emits them can pass",
+                "a retired capability is excluded from the verified capability and verified claim counts as well, asserted under --verify where those two accumulators are populated and the classes differ in both, which is the half of the retired filter an unverified report holds vacuously",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
