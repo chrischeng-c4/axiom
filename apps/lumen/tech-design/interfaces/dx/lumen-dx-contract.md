@@ -153,6 +153,24 @@ llm_protocol:
       instruction: "Render an instance manifest for the chosen profile."
       command_template: "lumen k8s instance render --profile {profile} --out {out}"
       verification: ["Confirm the rendered artifact corresponds to exactly one deployment layer."]
+    - id: grant-access
+      use_when: "give a Google account, Google service account, or any other Kubernetes user access to a Lumen instance"
+      requires: ["kubectl access to the Lumen namespace and the username kubectl auth whoami prints for the principal."]
+      reads: ["kubectl auth whoami", "lumen k8s access render --help"]
+      produces: ["client access bundle"]
+      risk: local_write
+      purpose: "Render the two-hop identity handoff: RBAC that lets named Kubernetes users mint one client ServiceAccount's token, and RBAC that tells Lumen what that ServiceAccount may do."
+      preconditions: ["Resolve the external principal's Kubernetes username with kubectl auth whoami.", "Decide which collections the client reads or writes before rendering."]
+      inputs:
+        - { name: namespace, type: string, description: "namespace holding the Lumen instance", required: true }
+        - { name: client_sa, type: string, description: "client ServiceAccount name every request is made as", required: true }
+        - { name: issuer, type: string, description: "Kubernetes username allowed to mint that ServiceAccount's token", required: true }
+        - { name: grant, type: string, description: "collection grant, <collection-id>=read|write|admin", required: true }
+        - { name: out, type: path, description: "rendered bundle path", required: true }
+      constraints: ["The external principal is bound only to the token-issuer role; the Lumen role is bound only to the client ServiceAccount, never to the principal.", "The rendered bundle contains no token, no Secret, and no wildcard grant; a Google credential is never sent to Lumen."]
+      instruction: "Render the client access bundle, then apply it with kubectl."
+      command_template: "lumen k8s access render --namespace {namespace} --client-sa {client_sa} --issuer {issuer} --grant {grant} --out {out}"
+      verification: ["Confirm the issuer Role names the client ServiceAccount in resourceNames and grants only create on serviceaccounts/token.", "Confirm kubectl auth can-i --as the client ServiceAccount matches the intended collection grants."]
     - id: backup-restore
       use_when: "create or restore an administrative Lumen snapshot"
       requires: ["An admin-reachable Lumen URL and a supported backup destination."]

@@ -1102,7 +1102,7 @@ fn openapi_exposes_native_offset_prefix_and_search_all_contracts() {
 #[test]
 fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
     let protocol = dx::llm_protocol();
-    assert_eq!(protocol.topics().len(), 10);
+    assert_eq!(protocol.topics().len(), 11);
     for topic in protocol.topics() {
         let json = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Json).unwrap();
         let value: Value = serde_json::from_str(&json).expect("runbook JSON parses");

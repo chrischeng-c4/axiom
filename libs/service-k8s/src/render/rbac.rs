@@ -1,8 +1,12 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:cluster-scoped-rbac" tracker="#2876" reason="Own the cluster-scoped ClusterRoleBinding shape — a child that deliberately carries no owner reference and accepts only ServiceAccount subjects — independent of any one service's policy for when it is required."
-//! Cluster-scoped RBAC child objects.
+// HANDWRITE-BEGIN gap="missing-generator:logic:rbac-children" tracker="#2876,#2889" reason="Own the RBAC child shapes whose failure modes are structural — a cluster-scoped binding that must carry no owner reference and no group subject, and a namespaced Role whose every rule has to name the objects it covers — independent of any one service's policy for when they are required."
+//! RBAC child objects: the cluster-scoped binding a control plane needs for
+//! itself, and the namespaced Role/RoleBinding pair a service renders to hand
+//! one caller a bounded grant.
 //!
-//! Two things make these different from every other helper in
-//! [`crate::render`], and both are encoded in the types rather than left to
+//! ## Cluster-scoped ([`ClusterRoleBinding`])
+//!
+//! Two things make it different from every other helper in
+//! [`crate::render`], and both are encoded in the type rather than left to
 //! each caller to remember.
 //!
 //! **No owner reference.** [`crate::render::RenderCtx::meta`] attaches one, and
@@ -20,6 +24,24 @@
 //! which are the two subjects that turn a targeted grant into a cluster-wide
 //! one. A service that genuinely needs a group subject should add it here with
 //! its own reviewed constructor rather than reach it by passing a string.
+//!
+//! ## Namespaced ([`Role`] / [`RoleBinding`])
+//!
+//! These render a grant a service hands *out*, so the shape has to make the
+//! narrow version the easy one.
+//!
+//! **Every rule names its objects.** [`NamedRule::resource_names`] is a
+//! required field, not an `Option`. The difference between "create a token for
+//! this one ServiceAccount" and "create a token for every ServiceAccount in
+//! the namespace" is the presence of that list, and RBAC spells the second one
+//! by *omission* — the dangerous grant is the one you get by not typing
+//! anything. Making the field mandatory means a caller who wants the wide
+//! grant has to pass an empty slice and say so.
+//!
+//! **A wildcard is findable.** [`first_wildcard`] walks a rendered object for
+//! any string carrying a `*`, so a service can refuse to emit a grant it did
+//! not mean rather than discover it in a cluster. RBAC has no other guard:
+//! `verbs: ["*"]` is as valid as `verbs: ["get"]` and reads almost the same.
 
 use serde_json::{json, Value};
 
@@ -67,6 +89,143 @@ pub fn cluster_role_binding(binding: ClusterRoleBinding<'_>) -> Value {
             "namespace": s.namespace,
         })).collect::<Vec<_>>(),
     })
+}
+
+/// A subject of a namespaced [`RoleBinding`].
+///
+/// [`RoleSubject::User`] is an opaque authenticated-username string — whatever
+/// the API server's authenticator resolved the caller to, exactly as
+/// `kubectl auth whoami` prints it. Nothing here parses it or cares which
+/// provider issued it: to RBAC a Google account, an OIDC subject, and a client
+/// certificate's CN are the same kind of thing, and a renderer that tried to
+/// tell them apart would be inventing a distinction the authorizer does not
+/// make.
+pub enum RoleSubject<'a> {
+    User(&'a str),
+    ServiceAccount(ServiceAccountSubject<'a>),
+}
+
+/// One rule of a namespaced [`Role`].
+///
+/// See the module doc on why `resource_names` is required rather than
+/// optional.
+pub struct NamedRule<'a> {
+    pub api_groups: &'a [&'a str],
+    pub resources: &'a [&'a str],
+    /// The object names this rule is confined to.
+    ///
+    /// Empty renders no `resourceNames` key, which RBAC reads as *every*
+    /// object of `resources` in the namespace. That is correct only when the
+    /// resource is a singleton — a virtual resource standing for one
+    /// namespace-wide surface — and wrong for everything else.
+    pub resource_names: &'a [&'a str],
+    pub verbs: &'a [&'a str],
+}
+
+impl NamedRule<'_> {
+    fn render(&self) -> Value {
+        let mut rule = json!({
+            "apiGroups": self.api_groups,
+            "resources": self.resources,
+            "verbs": self.verbs,
+        });
+        if !self.resource_names.is_empty() {
+            rule["resourceNames"] = json!(self.resource_names);
+        }
+        rule
+    }
+}
+
+/// A namespaced set of rules.
+pub struct Role<'a> {
+    pub name: &'a str,
+    pub namespace: &'a str,
+    pub labels: Value,
+    pub rules: &'a [NamedRule<'a>],
+}
+
+/// Render `role` as a `rbac.authorization.k8s.io/v1` Role.
+pub fn role(role: Role<'_>) -> Value {
+    json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "Role",
+        "metadata": {
+            "name": role.name,
+            "namespace": role.namespace,
+            "labels": role.labels,
+        },
+        "rules": role.rules.iter().map(NamedRule::render).collect::<Vec<_>>(),
+    })
+}
+
+/// A namespaced binding from a [`Role`] in the same namespace to `subjects`.
+pub struct RoleBinding<'a> {
+    pub name: &'a str,
+    pub namespace: &'a str,
+    pub labels: Value,
+    /// Name of a `Role` in `namespace`. This builder cannot bind a
+    /// `ClusterRole`: doing so grants the role's rules in this namespace, and
+    /// the reason to reach for it is almost always that a built-in
+    /// cluster-wide role happened to contain the one verb you wanted.
+    pub role: &'a str,
+    pub subjects: &'a [RoleSubject<'a>],
+}
+
+/// Render `binding` as a `rbac.authorization.k8s.io/v1` RoleBinding.
+pub fn role_binding(binding: RoleBinding<'_>) -> Value {
+    json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {
+            "name": binding.name,
+            "namespace": binding.namespace,
+            "labels": binding.labels,
+        },
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": binding.role,
+        },
+        "subjects": binding.subjects.iter().map(|subject| match subject {
+            RoleSubject::User(name) => json!({
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "User",
+                "name": name,
+            }),
+            RoleSubject::ServiceAccount(sa) => json!({
+                "kind": "ServiceAccount",
+                "name": sa.name,
+                "namespace": sa.namespace,
+            }),
+        }).collect::<Vec<_>>(),
+    })
+}
+
+/// The path of the first string in `object` carrying a `*`, or `None`.
+///
+/// The path is a slash-joined trail of keys and indices (`rules/0/verbs/1`) so
+/// a rejection message can name the field instead of dumping the manifest.
+///
+/// Deliberately a scan of the whole object rather than of the fields RBAC
+/// treats as wildcards: `resources: ["pods/*"]`, `apiGroups: ["*"]`, and a
+/// subject named `*` are three different mistakes, and a checker that
+/// enumerated the fields it knew about would keep passing the one nobody
+/// thought of.
+pub fn first_wildcard(object: &Value) -> Option<String> {
+    fn walk(value: &Value, path: &str) -> Option<String> {
+        match value {
+            Value::String(text) if text.contains('*') => Some(path.to_string()),
+            Value::Array(items) => items
+                .iter()
+                .enumerate()
+                .find_map(|(index, item)| walk(item, &format!("{path}/{index}"))),
+            Value::Object(fields) => fields
+                .iter()
+                .find_map(|(key, field)| walk(field, &format!("{path}/{key}"))),
+            _ => None,
+        }
+    }
+    walk(object, "").map(|path| path.trim_start_matches('/').to_string())
 }
 
 #[cfg(test)]
@@ -149,6 +308,190 @@ mod tests {
         assert!(
             obj.get("rules").is_none(),
             "this builder binds an existing role; it never defines one"
+        );
+    }
+
+    // ---- namespaced Role / RoleBinding ----------------------------------
+
+    /// The narrow grant is the one the type makes you write: naming the
+    /// objects is a field you cannot skip, and it renders as `resourceNames`.
+    #[test]
+    fn a_rule_that_names_its_objects_renders_them() {
+        let rules = [NamedRule {
+            api_groups: &[""],
+            resources: &["serviceaccounts/token"],
+            resource_names: &["client"],
+            verbs: &["create"],
+        }];
+        let obj = role(Role {
+            name: "client-token-issuer",
+            namespace: "team-a",
+            labels: labels(),
+            rules: &rules,
+        });
+        assert_eq!(obj["apiVersion"], "rbac.authorization.k8s.io/v1");
+        assert_eq!(obj["kind"], "Role");
+        assert_eq!(obj["metadata"]["namespace"], "team-a");
+        assert_eq!(
+            obj["rules"],
+            json!([{
+                "apiGroups": [""],
+                "resources": ["serviceaccounts/token"],
+                "verbs": ["create"],
+                "resourceNames": ["client"],
+            }])
+        );
+    }
+
+    /// RBAC spells "every object of this resource" by leaving `resourceNames`
+    /// out, so an empty slice has to render as an absent key — not as an empty
+    /// list, which the apiserver reads as a rule matching nothing.
+    #[test]
+    fn an_empty_name_list_omits_the_key_rather_than_emitting_an_empty_one() {
+        let rules = [NamedRule {
+            api_groups: &["example.dev"],
+            resources: &["singletons"],
+            resource_names: &[],
+            verbs: &["get"],
+        }];
+        let obj = role(Role {
+            name: "r",
+            namespace: "team-a",
+            labels: labels(),
+            rules: &rules,
+        });
+        let rule = obj["rules"][0].as_object().expect("a rule is an object");
+        assert!(
+            !rule.contains_key("resourceNames"),
+            "an empty resourceNames list matches no object at all: `{rule:?}`"
+        );
+    }
+
+    /// The two subject kinds render differently on purpose: a `User` needs the
+    /// RBAC API group and no namespace, a ServiceAccount needs a namespace and
+    /// no API group. Swapping either is accepted by the apiserver and then
+    /// silently matches nobody.
+    #[test]
+    fn a_user_subject_and_a_service_account_subject_render_their_own_shapes() {
+        let subjects = [
+            RoleSubject::User("someone@example.com"),
+            RoleSubject::ServiceAccount(ServiceAccountSubject {
+                namespace: "team-a",
+                name: "client",
+            }),
+        ];
+        let obj = role_binding(RoleBinding {
+            name: "b",
+            namespace: "team-a",
+            labels: labels(),
+            role: "client-token-issuer",
+            subjects: &subjects,
+        });
+        assert_eq!(obj["roleRef"]["kind"], "Role");
+        assert_eq!(obj["roleRef"]["name"], "client-token-issuer");
+        assert_eq!(
+            obj["subjects"],
+            json!([
+                {
+                    "apiGroup": "rbac.authorization.k8s.io",
+                    "kind": "User",
+                    "name": "someone@example.com",
+                },
+                { "kind": "ServiceAccount", "name": "client", "namespace": "team-a" },
+            ])
+        );
+    }
+
+    /// A username is opaque here. This one is an email, but so is a Google
+    /// service account, and so are strings this renderer has never seen; the
+    /// point is that none of them are parsed.
+    #[test]
+    fn a_user_name_is_passed_through_untouched() {
+        let subjects = [RoleSubject::User(
+            "lumen-client@example.iam.gserviceaccount.com",
+        )];
+        let obj = role_binding(RoleBinding {
+            name: "b",
+            namespace: "team-a",
+            labels: labels(),
+            role: "r",
+            subjects: &subjects,
+        });
+        assert_eq!(
+            obj["subjects"][0]["name"],
+            "lumen-client@example.iam.gserviceaccount.com"
+        );
+    }
+
+    #[test]
+    fn a_wildcard_is_reported_with_the_field_that_carries_it() {
+        let rules = [
+            NamedRule {
+                api_groups: &[""],
+                resources: &["serviceaccounts/token"],
+                resource_names: &["client"],
+                verbs: &["create"],
+            },
+            NamedRule {
+                api_groups: &["example.dev"],
+                resources: &["things"],
+                resource_names: &["one"],
+                verbs: &["get", "*"],
+            },
+        ];
+        let obj = role(Role {
+            name: "r",
+            namespace: "team-a",
+            labels: labels(),
+            rules: &rules,
+        });
+        assert_eq!(first_wildcard(&obj).as_deref(), Some("rules/1/verbs/1"));
+    }
+
+    /// `pods/*` is a wildcard that no equality check against `"*"` would see,
+    /// and it is the spelling a reviewer is least likely to notice.
+    #[test]
+    fn a_wildcard_inside_a_longer_string_is_still_a_wildcard() {
+        let rules = [NamedRule {
+            api_groups: &[""],
+            resources: &["pods/*"],
+            resource_names: &["one"],
+            verbs: &["get"],
+        }];
+        let obj = role(Role {
+            name: "r",
+            namespace: "team-a",
+            labels: labels(),
+            rules: &rules,
+        });
+        assert_eq!(first_wildcard(&obj).as_deref(), Some("rules/0/resources/0"));
+    }
+
+    #[test]
+    fn a_grant_with_no_wildcard_reports_none() {
+        let rules = [NamedRule {
+            api_groups: &[""],
+            resources: &["serviceaccounts/token"],
+            resource_names: &["client"],
+            verbs: &["create"],
+        }];
+        let obj = role(Role {
+            name: "r",
+            namespace: "team-a",
+            labels: labels(),
+            rules: &rules,
+        });
+        assert_eq!(first_wildcard(&obj), None);
+        let subjects = [RoleSubject::User("someone@example.com")];
+        assert_eq!(
+            first_wildcard(&role_binding(RoleBinding {
+                name: "b",
+                namespace: "team-a",
+                labels: labels(),
+                role: "r",
+                subjects: &subjects,
+            })),
+            None
         );
     }
 }

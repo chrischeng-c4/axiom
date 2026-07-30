@@ -40,7 +40,7 @@ docker run --rm -p 7373:7373 lumen:0.4.5            # serves by default
 | `lumen spec` | Print the machine-readable contract (OpenAPI 3 / JSON-schema) — offline, no server. |
 | `lumen llm` | Print agent-facing integration topics — offline. |
 | `lumen dockerfile` | Render source/release Dockerfiles for compose, kind, or a registry build. |
-| `lumen k8s` | Render Kubernetes layers: `crd render`, `operator render|run`, and `instance render`. |
+| `lumen k8s` | Render Kubernetes layers: `crd render`, `operator render|run`, `instance render`, and `access render` (client RBAC). |
 | `lumen upgrade` | Self-update from the published GitHub release. |
 | `lumen issue` | Search / view / file Lumen issues through the standard `issue search`, `issue view`, and `issue create` group. |
 
@@ -141,6 +141,69 @@ kubectl apply -f /tmp/lumen-k8s/lumen.yaml             # 3. CR last
 | Binary/image downgrade | Supported. Same-minor rollback (e.g. 0.4.25 → 0.4.24) is expected safe; cross-minor rollback is untested — no compatibility matrix is published for the WAL (`WAL_FORMAT_VERSION`) or segment (`FORMAT_VER`) on-disk formats, so treat it as unverified rather than assumed-safe. |
 | CRD downgrade | Not recommended once CRs use newer-version fields — reverting/removing the CRD is destructive (the API server re-validates stored objects against the reverted schema and can reject or prune them). Leave the newer CRD in place across a binary rollback; only the workload image needs to move back. |
 
+### 3g. Client access — the two-hop grant (#2889)
+
+A caller's identity is a Kubernetes identity, and it changes hands once on the
+way in:
+
+1. a human Google account or a Google service account authenticates to
+   kube-apiserver through its kubeconfig credential plugin, and RBAC decides
+   whether that principal may create a **TokenRequest** for one named client
+   ServiceAccount;
+2. the short-lived, audience-bound ServiceAccount token that comes back is the
+   only credential Lumen ever sees, and Lumen authorizes **that ServiceAccount**
+   through SubjectAccessReview.
+
+`lumen k8s access render` renders both halves as one bundle. It reads names and
+writes YAML: it never calls `gcloud`, never applies anything, and never handles
+material.
+
+```bash
+kubectl auth whoami                       # the username RBAC will match
+lumen k8s access render \
+  --namespace search --client-sa app-client \
+  --issuer alice@example.com \
+  --issuer lumen-client@my-project.iam.gserviceaccount.com \
+  --grant docs=read --grant orders=write --instance-admin \
+  --out /tmp/lumen-k8s
+kubectl apply -f /tmp/lumen-k8s/access.yaml
+```
+
+Five objects: the client `ServiceAccount`; `<sa>-token-issuer` Role +
+RoleBinding (hop 1); `<sa>-lumen-access` Role + RoleBinding (hop 2).
+
+**The subject kinds are not interchangeable.** The issuer binding names
+`kind: User` — the people who authenticate to the API server. The Lumen binding
+names `kind: ServiceAccount` — the identity that arrives at Lumen. Binding the
+Google principal to the Lumen Role authorizes a caller that never appears, and
+the cluster accepts it without complaint; the request is simply denied at
+runtime.
+
+**The issuer grant is deliberately narrow.** `create` on
+`serviceaccounts/token` *without* `resourceNames` mints a token for every
+ServiceAccount in the namespace, including the operator's — so the rendered
+Role always names exactly the one client ServiceAccount, and the renderer
+refuses to emit a wildcard anywhere in the bundle.
+
+Grants map to the verbs Lumen's SubjectAccessReview asks for, and are
+cumulative: `read` → `get`; `write` → `get`, `update`; `admin` → `get`,
+`update`, `delete`. `--instance-admin` adds the instance-wide `lumenadmin`
+resource, and only when asked for.
+
+Then mint a token — nothing is stored, so a client repeats this when the old
+one expires:
+
+```bash
+kubectl create token app-client -n search --audience lumen.axiom.dev --duration 10m
+```
+
+Verified on GKE v1.35.6 against an impersonated issuer: the bound principal
+mints `app-client`'s token and is refused a sibling ServiceAccount's in the
+same namespace and the operator's in `lumen-system`; the client ServiceAccount
+is allowed `get` on `docs` and denied `update`, `delete`, an ungranted
+collection, and `lumenadmin`; and the Google principal itself is denied
+everything on the Lumen side.
+
 ---
 
 ## 4. Environment variables
@@ -179,13 +242,14 @@ still sets one is rejected by the API server rather than applied and ignored.
 > lookup behind either (#2873). `lumen connect` hands its child `LUMEN_URL`
 > and nothing more.
 >
-> **Where identity comes back.** Client identity will come from the cluster —
-> your kubeconfig authenticates you to kube-apiserver, an RBAC-authorized
+> **Where identity comes back.** Client identity comes from the cluster — your
+> kubeconfig authenticates you to kube-apiserver, an RBAC-authorized
 > `TokenRequest` mints a short-lived, audience-bound token for one explicitly
 > named client ServiceAccount, and Lumen resolves *that* through TokenReview
 > and SubjectAccessReview. A Google access token, ID token, ADC credential,
-> GSA key, or metadata-server token is never a Lumen credential. Serving-side
-> verification is #2869; the CLI's TokenRequest call is #2878.
+> GSA key, or metadata-server token is never a Lumen credential. Render both
+> RBAC halves with `lumen k8s access render` — see §3g; the CLI's TokenRequest
+> call is #2878.
 >
 > Still set `LUMEN_LOG_FORMAT=json` and an OTLP endpoint in production.
 

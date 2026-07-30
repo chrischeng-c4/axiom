@@ -141,8 +141,8 @@ fn llm_outline_advertised_topic_commands_parse() {
     let commands = outline_llm_topic_commands();
     assert_eq!(
         commands.len(),
-        10,
-        "outline should advertise the ten DX task topics: {commands:?}"
+        11,
+        "outline should advertise the eleven DX task topics: {commands:?}"
     );
 
     for command in commands {
