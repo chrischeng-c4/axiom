@@ -48,14 +48,18 @@ rules:
     resources: ["deployments", "statefulsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Serving Service/ConfigMap/ServiceAccount plus the dedicated backup
-  # ServiceAccount. Secret reads are required by the reshard driver to resolve
-  # the admin token registry; the operator never creates or mutates Secrets.
+  # ServiceAccount.
+  #
+  # No Secret grant, deliberately (#2877). The reshard driver used to read one
+  # to resolve the admin token registry; it now presents its own projected
+  # ServiceAccount token, which the kubelet mounts and rotates without the
+  # operator ever holding a Secret-shaped credential. A cluster-wide
+  # `secrets: get` on a controller that watches every namespace is the single
+  # most valuable grant in this file to an attacker who reaches the operator,
+  # and nothing here needs it any more.
   - apiGroups: [""]
     resources: ["services", "configmaps", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get"]
   # Optional scheduled object-storage backups are rendered as CronJobs.
   - apiGroups: ["batch"]
     resources: ["cronjobs"]

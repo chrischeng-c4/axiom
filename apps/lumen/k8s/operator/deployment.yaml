@@ -29,6 +29,33 @@ spec:
     spec:
       serviceAccountName: lumen-operator
       terminationGracePeriodSeconds: 15
+      volumes:
+        # The operator's own credential for calling a serving instance's admin
+        # API (#2877) — the reshard driver's only way to authenticate. It is
+        # deliberately NOT the default
+        # `/var/run/secrets/kubernetes.io/serviceaccount` token: that one is
+        # minted for the API server's audience, and Lumen rejects it. Asking
+        # the kubelet for an audience-bound projection instead means the
+        # operator holds exactly one credential, scoped to one callee, that the
+        # API server will not accept and that expires in ten minutes.
+        #
+        # The kubelet rewrites this file in place at ~80% of its lifetime with
+        # no restart and no notification, which is why the reader in
+        # `libs/service-auth` opens it per call rather than caching it.
+        - name: lumen-admin-token
+          projected:
+            # 0444. Written as decimal on purpose: YAML 1.1 reads `0444` as
+            # octal 292 and YAML 1.2 reads it as decimal 444, so the leading
+            # zero means different things to the API server and to a strict
+            # parser reading this same file in a test.
+            defaultMode: 292
+            sources:
+              - serviceAccountToken:
+                  audience: lumen.axiom.dev
+                  # The API server's own floor. A smaller number is not a
+                  # tighter token, it is a Deployment whose pods never start.
+                  expirationSeconds: 600
+                  path: token
       affinity:
         podAntiAffinity:
           # Preferred, not required: co-located replicas still survive a drain
@@ -78,6 +105,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+          volumeMounts:
+            - name: lumen-admin-token
+              mountPath: /var/run/secrets/lumen.axiom.dev
+              readOnly: true
           resources:
             requests:
               cpu: 100m

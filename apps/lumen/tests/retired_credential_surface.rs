@@ -86,7 +86,7 @@ struct Allowance {
 const ALLOWANCES: &[Allowance] = &[
     Allowance {
         path: "apps/lumen/tech-design/semantic/source/",
-        lines: 7,
+        lines: 6,
         reason: "SPEC-MANAGED mirrors. They reproduce their source file byte for byte, so they \
                  carry exactly the retirement notes the source carries; their fidelity is #2806's \
                  gate and duplicating it here would let each check look like it covers the other.",
@@ -104,13 +104,6 @@ const ALLOWANCES: &[Allowance] = &[
         reason: "Negative assertions. The fleet is the one path that takes free-form spec JSON, \
                  so a platform team's stale defaults would otherwise be merged in and dropped \
                  without a word. This test feeds each retired field in and requires a rejection.",
-    },
-    Allowance {
-        path: "apps/lumen/src/operator/reshard_driver.rs",
-        lines: 1,
-        reason: "Migration note on the one function that used to read the retired audience. It \
-                 records why the function now fails loudly instead of degrading to an \
-                 unauthenticated admin call, and names the item that will give it a real token.",
     },
     Allowance {
         path: "apps/lumen/src/spec.rs",

@@ -98,6 +98,18 @@ lumen k8s instance render --profile staging --namespace search --name catalog --
 kubectl apply -f /tmp/lumen-k8s/lumen.yaml
 ```
 
+**How the control plane authenticates itself (#2877).** When a CR sets
+`spec.auth: required`, the operator and the backup CronJob call the fleet's
+admin API as themselves. Neither holds a credential you supply: each pod
+mounts a `serviceAccountToken` projection with audience `lumen.axiom.dev` at
+`/var/run/secrets/lumen.axiom.dev/token`, and the kubelet rotates that file in
+place. The two workloads use **distinct** ServiceAccounts — `lumen-operator`
+in `lumen-system` and `<name>-backup` in the CR's namespace — and neither uses
+the serving ServiceAccount, so revoking one caller's access does not touch the
+other. There is no admin-token Secret to create and no token environment
+variable to set; if either caller is denied, grant its ServiceAccount the
+`lumenadmin` role rather than looking for material to install.
+
 ### 3f. CRD versioning & upgrade order
 
 **Versioning.** The CRD ships one version, `v1alpha1`. Additive `spec`/`status`

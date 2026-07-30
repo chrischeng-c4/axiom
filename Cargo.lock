@@ -8102,6 +8102,7 @@ dependencies = [
  "futures",
  "hnsw_rs",
  "jieba-rs",
+ "jsonwebtoken",
  "k8s-openapi",
  "kube",
  "libc",

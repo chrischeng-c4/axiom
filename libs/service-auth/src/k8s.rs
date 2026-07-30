@@ -25,6 +25,9 @@
 //! ## The module boundary
 //!
 //! - [`principal`] decides what a reviewed identity is *allowed to be*.
+//! - [`projected`] is the *calling* side of the same story: reading the
+//!   audience-bound token this workload was given, per request, so rotation
+//!   works and a token minted for someone else never leaves the pod.
 //! - [`review`] is the transport seam and its value types — no I/O, just the
 //!   trait every backend implements.
 //! - [`cache`] holds the TTL and stale-window policy, which is where the
@@ -43,6 +46,7 @@
 pub mod cache;
 pub mod delegated;
 pub mod principal;
+pub mod projected;
 pub mod review;
 
 #[cfg(feature = "k8s")]
@@ -53,6 +57,7 @@ pub use delegated::{
     fingerprint, AuthRejection, DelegatedAuthConfig, DelegatedAuthError, DelegatedAuthMetrics,
     DelegatedAuthenticator, MissingAudience,
 };
+pub use projected::{ProjectedToken, ProjectedTokenError, ProjectedTokenFile};
 pub use principal::{
     PrincipalRejection, ReviewedIdentity, ServiceAccountPrincipal, ServiceAccountRef,
     SERVICE_ACCOUNT_PREFIX,

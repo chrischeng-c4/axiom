@@ -238,7 +238,6 @@ fn no_llm_topic_or_help_page_directs_a_google_credential_at_lumen() {
         &["k8s", "--help"],
     ];
     let forbidden = [
-        needle(&["--", "token"]),
         needle(&["LUMEN_", "TOKEN"]),
         needle(&["gcloud auth print-access-", "token"]),
         needle(&["GOOGLE_APPLICATION_", "CREDENTIALS"]),
@@ -257,12 +256,31 @@ fn no_llm_topic_or_help_page_directs_a_google_credential_at_lumen() {
         pages.push((format!("lumen {}", args.join(" ")), text));
     }
 
+    let bare_token_flag = needle(&["--", "token"]);
     for (label, text) in &pages {
         for f in &forbidden {
             assert!(
                 !text.contains(f.as_str()),
                 "#2873 AC3: `{label}` still names `{f}`:\n{text}"
             );
+        }
+        // The flag itself, not every flag that starts with it. `--token-file`
+        // (#2877) takes a *path* to a projected ServiceAccount token; `--token`
+        // takes the material. The difference is the whole point — an argument
+        // is visible in the pod spec, in `ps`, and in shell history — so the
+        // one safe spelling is allowed by name and everything else that starts
+        // `--token` is refused, including a bare `--token` and any new suffix
+        // nobody reviewed.
+        let mut from = 0;
+        while let Some(rel) = text[from..].find(&bare_token_flag) {
+            let end = from + rel + bare_token_flag.len();
+            assert!(
+                text[end..].starts_with("-file"),
+                "#2873 AC3: `{label}` names a `{bare_token_flag}…` flag that is not \
+                 `{bare_token_flag}-file`, the only spelling that takes a path instead of \
+                 a credential:\n{text}"
+            );
+            from = end;
         }
     }
 }

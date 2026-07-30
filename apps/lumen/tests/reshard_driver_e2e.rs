@@ -447,7 +447,7 @@ impl ClusterControl for FakeControl {
         &self,
         _namespace: &str,
         _lumen: &Lumen,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Option<service_auth::k8s::ProjectedToken>> {
         Ok(None)
     }
 

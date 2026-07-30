@@ -458,6 +458,14 @@ struct BackupArgs {
     /// put. Omit to keep everything.
     #[arg(long)]
     retention_secs: Option<u64>,
+    /// File holding this runner's own audience-bound ServiceAccount token,
+    /// read fresh for this run (#2877). In-cluster this is the projected
+    /// volume the operator's backup CronJob mounts. A path, never the token:
+    /// a credential passed as an argument is visible in the pod spec, in
+    /// `ps`, and in every shell history that ever typed it. Omit against a
+    /// fleet whose `spec.auth` is `disabled` — it rejects a presented bearer.
+    #[arg(long, value_name = "PATH")]
+    token_file: Option<std::path::PathBuf>,
 }
 
 /// `lumen connect` flags (#1321): manage a `kubectl port-forward` around a
@@ -1266,7 +1274,27 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
         Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
         None => service_backup::RetentionPolicy::default(),
     };
-    let result = lumen::backup::run_backup(&args.url, None, &dest, &retention).await?;
+    // Read here, not at parse time: one backup run is one read of the
+    // projected file, so a CronJob pod that starts minutes after the kubelet
+    // last rotated the token still presents the current one (#2877 R3).
+    // Missing, empty, expired, or minted for the wrong audience all fail the
+    // run before any bytes move, with a message naming the path rather than
+    // the material (#2877 R5).
+    let token = match args.token_file.as_deref() {
+        Some(path) => Some(
+            service_auth::k8s::ProjectedTokenFile::new(path, lumen::auth::AUDIENCE)
+                .read()
+                .with_context(|| "the backup runner cannot authenticate to this Lumen fleet")?,
+        ),
+        None => None,
+    };
+    let result = lumen::backup::run_backup(
+        &args.url,
+        token.as_ref().map(service_auth::k8s::ProjectedToken::expose),
+        &dest,
+        &retention,
+    )
+    .await?;
     // Chainable output (#963): `lumen backup` always emits a single JSON
     // object, so the contract's "next" is a top-level field, not a text tail
     // line. `service_backup::BackupRunResult` stays untouched (shared type) —

@@ -89,6 +89,8 @@ pub mod deployment;
 /// Cluster-scoped RBAC children — bindings that cannot carry an owner
 /// reference and must not accept a group subject (#2876).
 pub mod rbac;
+/// Audience-bound, short-lived ServiceAccount tokens mounted as a file (#2877).
+pub mod projected_token;
 
 /// Per-service render identity, threaded through the helpers.
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source

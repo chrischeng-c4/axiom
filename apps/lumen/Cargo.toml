@@ -198,6 +198,11 @@ libc = "0.2"
 # Mock HTTP server for the `backup` feature's unit tests (stands in for the
 # admin API's `/admin/backup`).
 wiremock = { workspace = true }
+# Mints the projected ServiceAccount tokens the control-plane identity tests
+# rotate, expire, and mis-audience (#2877). Real JWTs, not stand-in strings:
+# `ProjectedTokenFile` inspects the claims, so a fixture that is not a token
+# would only ever exercise the malformed branch.
+jsonwebtoken = { workspace = true }
 
 [[bench]]
 name = "bench_index"

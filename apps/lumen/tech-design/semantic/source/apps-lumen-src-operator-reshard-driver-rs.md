@@ -257,6 +257,8 @@ use kube::api::{Api, ApiResource, DynamicObject, Patch, PatchParams};
 use kube::{Client, ResourceExt};
 use serde_json::json;
 
+use service_auth::k8s::{ProjectedToken, ProjectedTokenFile};
+
 use crate::operator::crd::{AuthMode, Lumen, ReshardPhase};
 use crate::operator::lease::{self, Election};
 use crate::reshard::{
@@ -650,9 +652,23 @@ pub trait ClusterControl: Send + Sync {
         self.trigger_rolling_restart(namespace, name).await
     }
 
-    /// A bearer token carrying wildcard `Role::Admin`, if `lumen.spec.auth`
-    /// requires one. `Ok(None)` when auth is off.
-    async fn admin_token(&self, namespace: &str, lumen: &Lumen) -> Result<Option<String>>;
+    /// The credential this driver presents on its admin calls, if
+    /// `lumen.spec.auth` requires one. `Ok(None)` when auth is off — an
+    /// instance that requires no identity rejects a *presented* bearer
+    /// (#2871), so "no auth" has to mean sending nothing, not sending
+    /// something harmless.
+    ///
+    /// Returning [`ProjectedToken`] rather than `String` is the point of the
+    /// signature: the material cannot reach a log through a derived `Debug`
+    /// on any struct that happens to hold one, because the only rendering it
+    /// has is `<redacted>` and the only way to the bytes is an explicit
+    /// [`ProjectedToken::expose`] at the call that builds the header.
+    ///
+    /// Implementations read per call. The kubelet rewrites the projected file
+    /// in place partway through its lifetime with no notification, so a value
+    /// cached across ticks would authenticate for a few minutes and then fail
+    /// forever (#2877 R3).
+    async fn admin_token(&self, namespace: &str, lumen: &Lumen) -> Result<Option<ProjectedToken>>;
 
     /// The client-facing admin API base URL for one shard's serving pod.
     /// [`KubeClusterControl`] resolves the real per-shard headless-Service
@@ -721,12 +737,31 @@ pub trait ClusterControl: Send + Sync {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub struct KubeClusterControl {
     client: Client,
+    /// Where this process finds its own audience-bound ServiceAccount token
+    /// (#2877). A field rather than a constant so a test can point it at a
+    /// temp file and drive the missing/expired/wrong-audience branches; the
+    /// default is the path the operator Deployment actually projects, so
+    /// production never depends on the seam being set.
+    token_file: ProjectedTokenFile,
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 impl KubeClusterControl {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            token_file: crate::auth::control_plane_token_file(),
+        }
+    }
+
+    /// Read the operator's credential from somewhere else. Test seam only —
+    /// deliberately not an environment variable, because an env var is a
+    /// production-reachable way to redirect a control-plane credential at a
+    /// file an attacker chose.
+    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
+    pub fn with_token_file(mut self, token_file: ProjectedTokenFile) -> Self {
+        self.token_file = token_file;
+        self
     }
 }
 
@@ -792,23 +827,24 @@ impl ClusterControl for KubeClusterControl {
         Ok(())
     }
 
-    async fn admin_token(&self, _namespace: &str, lumen: &Lumen) -> Result<Option<String>> {
+    async fn admin_token(&self, _namespace: &str, lumen: &Lumen) -> Result<Option<ProjectedToken>> {
         if !matches!(lumen.spec.auth, AuthMode::Required) {
             return Ok(None);
         }
-        // The audience this used to read (`spec.identityAudiences`) is gone
-        // with the rest of the registry model (#2872), and the credential it
-        // named it for — a metadata-server ID token — is one the serving side
-        // will refuse anyway. There is no silent degradation available here:
-        // returning `Ok(None)` would send the driver's admin calls out
-        // unauthenticated against an instance that requires an identity, so
-        // the reshard fails loudly instead. #2877 gives the operator its own
-        // projected ServiceAccount token and this becomes a token request.
-        bail!(
-            "auth is required but the operator has no credential to present: \
-             the identity-registry audience was retired with #2872 and the \
-             operator's own projected ServiceAccount token is not wired yet (#2877)"
-        )
+        // Read on every call, never held (#2877 R3). The kubelet replaces this
+        // file partway through the token's lifetime; a value cached across
+        // reshard ticks would work for minutes and then fail permanently, at
+        // an hour nobody is watching.
+        //
+        // A failure here stops the reshard rather than degrading it: sending
+        // the admin calls out unauthenticated against an instance that
+        // requires an identity would turn a credential problem into a wall of
+        // 401s from four different verbs. The error names the path and the
+        // audience and never the material (#2877 R5).
+        self.token_file
+            .read()
+            .map(Some)
+            .with_context(|| "the operator cannot authenticate to this Lumen instance".to_string())
     }
 
     fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String {
@@ -1229,7 +1265,7 @@ async fn set_write_fence(
         if let Err(err) = reshard_fence_call(
             http,
             &url,
-            token.as_deref(),
+            token.as_ref().map(ProjectedToken::expose),
             current.virtual_bucket_count(),
             buckets,
             ttl_secs,
@@ -1241,7 +1277,7 @@ async fn set_write_fence(
                     if let Err(clear_err) = reshard_fence_call(
                         http,
                         armed_url,
-                        token.as_deref(),
+                        token.as_ref().map(ProjectedToken::expose),
                         current.virtual_bucket_count(),
                         &BTreeSet::new(),
                         0,
@@ -1394,7 +1430,7 @@ async fn checkpoint_shards(
         )
         .await?;
         let url = control.shard_base_url(namespace, name, shard);
-        checkpoint_shard(http, &url, token.as_deref()).await?;
+        checkpoint_shard(http, &url, token.as_ref().map(ProjectedToken::expose)).await?;
     }
     Ok(())
 }
@@ -1548,7 +1584,7 @@ async fn run_migration_pass_impl(
         let snapshot = fetch_scoped_backup(
             http,
             &source_url,
-            token.as_deref(),
+            token.as_ref().map(ProjectedToken::expose),
             current.virtual_bucket_count(),
             &buckets,
         )
@@ -1562,7 +1598,7 @@ async fn run_migration_pass_impl(
         )?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
-            if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_deref(), batch).await {
+            if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_ref().map(ProjectedToken::expose), batch).await {
                 // #1444 R2: record the wedge distinctly before propagating, so
                 // callers that turn this `Err` into `DriveOutcome::Blocked`
                 // still leave a structured trace behind for `status.reshard`
@@ -1601,7 +1637,7 @@ async fn run_migration_pass_impl(
         // collection a batch of deletes emptied out of these buckets still
         // gets an (empty) keep scope instead of being silently skipped.
         if final_pass {
-            let collection_ids = fetch_all_collection_ids(http, &source_url, token.as_deref())
+            let collection_ids = fetch_all_collection_ids(http, &source_url, token.as_ref().map(ProjectedToken::expose))
                 .await
                 .context("fetch source shard's full collection list for the final reshard pass")?;
             maybe_rearm_fence(
@@ -1630,7 +1666,7 @@ async fn run_migration_pass_impl(
                     );
                 };
                 let dest_url = control.shard_base_url(namespace, name, to_shard);
-                apply_reshard_prune_chunk(http, &dest_url, token.as_deref(), chunk).await?;
+                apply_reshard_prune_chunk(http, &dest_url, token.as_ref().map(ProjectedToken::expose), chunk).await?;
                 maybe_rearm_fence(
                     control,
                     http,
@@ -1694,7 +1730,7 @@ async fn evict_old_shards(
         evict_shard(
             http,
             &url,
-            token.as_deref(),
+            token.as_ref().map(ProjectedToken::expose),
             shard,
             target.version(),
             &assignments,
@@ -2809,7 +2845,7 @@ mod tests {
             Ok(())
         }
 
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
+        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<ProjectedToken>> {
             Ok(None)
         }
 
@@ -2847,7 +2883,7 @@ mod tests {
         async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
             unreachable!("not used by set_write_fence")
         }
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
+        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<ProjectedToken>> {
             Ok(None)
         }
         fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {
@@ -2943,7 +2979,7 @@ mod tests {
         async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
             unreachable!("not used by evict_old_shards")
         }
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
+        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<ProjectedToken>> {
             Ok(None)
         }
         fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {

@@ -19,8 +19,11 @@
 
 use serde_json::{json, Value};
 
-use super::crd::Lumen;
-use service_k8s::render::{self, rbac, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
+use super::crd::{AuthMode, Lumen};
+use service_k8s::render::{
+    self, projected_token::ProjectedServiceAccountToken, rbac, RenderCtx, ServiceStatefulSet,
+    WorkloadVolumeClaim,
+};
 use service_k8s::service::PruneTarget;
 
 const APP: &str = "lumen";
@@ -374,6 +377,23 @@ fn backup_service_account(cx: &RenderCtx<'_>) -> Value {
     })
 }
 
+/// The credential a Lumen control-plane workload presents to a serving
+/// instance (#2877): the operator's reshard driver and the backup runner.
+///
+/// One definition, two consumers, and the mount path is the same constant
+/// [`crate::auth::control_plane_token_file`] reads — a renderer that invented
+/// its own path would produce a pod with a token mounted somewhere the client
+/// never looks, and the symptom would be an authentication failure rather than
+/// a missing file.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub(crate) fn control_plane_token() -> ProjectedServiceAccountToken<'static> {
+    ProjectedServiceAccountToken::new(
+        crate::auth::CONTROL_PLANE_TOKEN_VOLUME,
+        crate::auth::CONTROL_PLANE_TOKEN_MOUNT,
+        crate::auth::AUDIENCE,
+    )
+}
+
 /// The optional backup CronJob (#808): rendered only when
 /// `spec.serving.backup` is set. Lumen already produces a consistent
 /// point-in-time snapshot over HTTP (`GET /admin/backup`, see
@@ -404,6 +424,25 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         args.push("--retention-secs".to_string());
         args.push(secs.to_string());
     }
+    // The runner's own credential (#2877): a token minted for the backup
+    // ServiceAccount, bound to Lumen's audience, expiring in ten minutes, and
+    // rotated in place by the kubelet. The projection itself is
+    // unconditional — one pod shape whatever `spec.auth` says — because a
+    // mounted file nobody reads costs nothing, while a manifest that changes
+    // shape with an auth toggle is a second thing to get wrong.
+    //
+    // Presenting it is conditional. A fleet with `auth: disabled` rejects a
+    // *presented* bearer (#2871), so the flag that makes the runner read the
+    // file only appears when the fleet actually requires an identity.
+    //
+    // What travels on the CronJob is the path, not the token: the material
+    // never appears in the pod spec, in `kubectl describe`, or in whatever
+    // pipeline ships that manifest to the cluster.
+    let projection = control_plane_token();
+    if matches!(lumen.spec.auth, AuthMode::Required) {
+        args.push("--token-file".to_string());
+        args.push(projection.file_path());
+    }
     let env: Vec<serde_json::Value> = Vec::new();
     let image_pull_policy = lumen
         .spec
@@ -421,8 +460,8 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         args,
         env,
         env_from: vec![],
-        volumes: vec![],
-        volume_mounts: vec![],
+        volumes: vec![projection.volume()],
+        volume_mounts: vec![projection.mount()],
         service_account_name: Some(&cron_name),
         cpu: "100m",
         memory: "128Mi",
