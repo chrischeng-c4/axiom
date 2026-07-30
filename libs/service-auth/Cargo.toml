@@ -22,7 +22,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true, features = ["rt", "time"] }
+# `net` is the loopback proxy's listener (k8s::loopback_proxy); `rt`/`time`
+# carry the delegated cache and the token refresh clock.
+tokio = { workspace = true, features = ["net", "rt", "time"] }
 # `AsyncVerifier` carries an async method behind a `dyn`-usable trait.
 async-trait = { workspace = true }
 # Offline verification of Google ID tokens against the published JWKS.

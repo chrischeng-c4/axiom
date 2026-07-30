@@ -118,7 +118,7 @@ llm_protocol:
       purpose: "Read the canonical security scheme: Lumen accepts a short-lived, audience-bound Kubernetes ServiceAccount identity and nothing else."
       preconditions: ["Know which serving instance's auth mode you are targeting."]
       inputs: []
-      constraints: ["The CLI carries no credential — no flag, no environment variable, no Secret lookup — and a Google user, service-account, or metadata credential is refused outright."]
+      constraints: ["The CLI stores no credential and finds none: there is no credential flag, no environment variable, and no Secret lookup. Pass --client-sa to mint a short-lived audience-bound ServiceAccount token through the caller's own kubeconfig; the caller's Google user, service-account, or metadata credential authenticates to kube-apiserver only and is never sent to Lumen."]
       instruction: "Read the canonical security scheme from the OpenAPI document."
       command: "lumen spec --format openapi"
       verification: ["Confirm the security scheme names a Kubernetes ServiceAccount identity and no other credential type."]
@@ -128,16 +128,17 @@ llm_protocol:
       reads: ["lumen connect --help"]
       produces: ["local connection"]
       risk: remote_write
-      purpose: "Use lumen connect so the port-forward lifecycle is bounded to one command; the wrapped command is handed a URL and nothing else."
-      preconditions: ["Resolve the target namespace and service name."]
+      purpose: "Use lumen connect so the port-forward lifecycle is bounded to one command; the wrapped command is handed a URL and nothing else, and with --client-sa a loopback proxy attaches the minted ServiceAccount token on its behalf."
+      preconditions: ["Resolve the target namespace and service name.", "Decide which client ServiceAccount to act as; it is never inferred."]
       inputs:
         - { name: namespace, type: string, description: "Kubernetes namespace", required: true }
         - { name: service, type: string, description: "Lumen service name", required: true }
+        - { name: client_sa, type: string, description: "client ServiceAccount to mint a token for", required: true }
         - { name: command, type: command, description: "wrapped local command", required: true }
-      constraints: ["The wrapped command is explicit; LLM navigation does not execute it automatically.", "The forwarded connection carries no credential; the wrapped command receives LUMEN_URL and no identity."]
-      instruction: "Run an explicit client command through the temporary port-forward."
-      command_template: "lumen connect --namespace {namespace} --service {service} -- {command}"
-      verification: ["Confirm the wrapped command observes LUMEN_URL and terminates with the port-forward."]
+      constraints: ["The wrapped command is explicit; LLM navigation does not execute it automatically.", "The wrapped command receives LUMEN_URL and no credential: the minted token stays in the lumen process and is attached by a loopback-only proxy, never placed in the child's environment, argv, or a file.", "Omitting --client-sa forwards with no identity at all, which only reaches a fleet whose auth is disabled."]
+      instruction: "Run an explicit client command through the temporary authenticated port-forward."
+      command_template: "lumen connect --namespace {namespace} --service {service} --client-sa {client_sa} -- {command}"
+      verification: ["Confirm the wrapped command observes LUMEN_URL and terminates with the port-forward.", "Confirm the wrapped command's environment contains no token — only the loopback URL."]
     - id: deploy-kubernetes
       use_when: "render image, CRD, operator, or Lumen instance manifests"
       requires: ["A deployment profile and output path."]

@@ -28,6 +28,12 @@
 //! - [`projected`] is the *calling* side of the same story: reading the
 //!   audience-bound token this workload was given, per request, so rotation
 //!   works and a token minted for someone else never leaves the pod.
+//! - [`token_request`] is the calling side for everyone who was not given one:
+//!   a client with a kubeconfig asks the apiserver to mint an audience-bound
+//!   token for a named ServiceAccount, and forwards that instead of its own
+//!   credential.
+//! - [`loopback_proxy`] is how such a client lends that token to a program it
+//!   wraps without handing the program the token.
 //! - [`review`] is the transport seam and its value types — no I/O, just the
 //!   trait every backend implements.
 //! - [`cache`] holds the TTL and stale-window policy, which is where the
@@ -45,9 +51,11 @@
 
 pub mod cache;
 pub mod delegated;
+pub mod loopback_proxy;
 pub mod principal;
 pub mod projected;
 pub mod review;
+pub mod token_request;
 
 #[cfg(feature = "k8s")]
 pub mod kube_backend;
@@ -57,16 +65,23 @@ pub use delegated::{
     fingerprint, AuthRejection, DelegatedAuthConfig, DelegatedAuthError, DelegatedAuthMetrics,
     DelegatedAuthenticator, MissingAudience,
 };
-pub use projected::{ProjectedToken, ProjectedTokenError, ProjectedTokenFile};
+pub use loopback_proxy::LoopbackProxy;
 pub use principal::{
     PrincipalRejection, ReviewedIdentity, ServiceAccountPrincipal, ServiceAccountRef,
     SERVICE_ACCOUNT_PREFIX,
 };
+pub use projected::{ProjectedToken, ProjectedTokenError, ProjectedTokenFile};
 pub use review::{
     AccessReviewOutcome, ExtraFields, ResourceAttributes, ReviewBackend, ReviewError,
     TokenReviewOutcome,
 };
+pub use token_request::{
+    MintedToken, TokenMinter, TokenRequestError, TokenRequestTarget, TokenSource,
+    DEFAULT_EXPIRATION_SECONDS, MIN_EXPIRATION_SECONDS,
+};
 
 #[cfg(feature = "k8s")]
 pub use kube_backend::KubeReviewBackend;
+#[cfg(feature = "k8s")]
+pub use token_request::KubeTokenMinter;
 // HANDWRITE-END

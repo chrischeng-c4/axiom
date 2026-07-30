@@ -549,6 +549,22 @@ struct ConnectArgs {
     /// Remote (Service) port.
     #[arg(long, default_value_t = 7373)]
     remote_port: u16,
+    /// ServiceAccount to authenticate as (#2878). Named, never inferred: this
+    /// CLI will not pick one by listing the namespace or by falling back to
+    /// `default`, because a token minted for an account nobody chose is
+    /// exactly as authorized as one somebody did choose.
+    ///
+    /// With it, a short-lived audience-bound token is minted through your
+    /// kubeconfig and held in this process, and the wrapped command talks to a
+    /// loopback proxy that attaches it — so the token is in no environment
+    /// variable, no argument list, and no file. Without it the port-forward
+    /// carries no credential at all, which only works against a fleet whose
+    /// `spec.auth` is `disabled`.
+    ///
+    /// You need `create` on this ServiceAccount's `token` subresource; `lumen
+    /// k8s access render` emits that grant.
+    #[arg(long, value_name = "NAME")]
+    client_sa: Option<String>,
     /// The command to run with `LUMEN_URL` set to the local end of the
     /// port-forward — and nothing else. Everything after `--`, e.g. `lumen
     /// connect --namespace prod --cr search -- lumen query collections list`.
@@ -556,12 +572,18 @@ struct ConnectArgs {
     command: Vec<String>,
 }
 
-/// Where `lumen query *` sends its request. Reachability, and only
-/// reachability: #2873 removed the bearer flag, the environment variable
-/// behind it, and the kubectl Secret lookup behind that, so this struct no
-/// longer carries a credential — or the `--context`/`--namespace`/`--secret`
-/// triple whose only purpose was to find one. The Kubernetes TokenRequest
-/// call that replaces them is #2878's.
+/// Where `lumen query *` sends its request, and whose token it carries.
+///
+/// #2873 removed the bearer flag, the environment variable behind it, and the
+/// kubectl Secret lookup behind that — every mechanism whose job was to *find*
+/// a credential lying around. #2878 restores a `--context`/`--namespace` pair
+/// that looks superficially similar and is not the same thing: nothing here
+/// reads a stored credential. `--client-sa` names a ServiceAccount, and the
+/// token is minted for it, in memory, for this one command, through the
+/// identity already in your kubeconfig.
+///
+/// There is deliberately no environment variable for `--client-sa`. Which
+/// account you act as is a decision each invocation makes out loud.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[derive(clap::Args, Clone)]
 struct QueryTarget {
@@ -569,6 +591,18 @@ struct QueryTarget {
     /// — what `lumen connect` sets for the wrapped command.
     #[arg(long, env = "LUMEN_URL")]
     url: Option<String>,
+    /// kubeconfig context to mint the token through. Omit for the current one.
+    #[arg(long)]
+    context: Option<String>,
+    /// Namespace of the ServiceAccount named by `--client-sa`.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// ServiceAccount to authenticate as (#2878). Named, never inferred.
+    /// Omit to send no credential at all — correct only against a fleet whose
+    /// `spec.auth` is `disabled`, and what `lumen connect --client-sa` already
+    /// arranges for its wrapped command.
+    #[arg(long, value_name = "NAME", requires = "namespace")]
+    client_sa: Option<String>,
 }
 
 /// `lumen query <index|search|duplicates|collections>` flags (#1321): thin
@@ -1532,14 +1566,16 @@ fn resolve_base_url(target: &QueryTarget) -> Result<String> {
 /// exits — regardless of its exit status — so no port-forward process is left
 /// for the caller to track.
 ///
-/// Reachability is the whole contract in phase 1 (#2873). The child's
-/// environment gains exactly one variable, and it is a URL. It used to also
-/// gain a bearer token, which meant every descendant of the wrapped command —
-/// and anything that could read `/proc/<pid>/environ` — inherited a bearer
-/// nobody had scoped to them. #2878 replaces that with a loopback proxy: the
-/// token is minted by `TokenRequest`, kept in this process's memory, and
-/// attached to the child's requests as they pass through, so the child never
-/// holds it.
+/// The child's environment gains exactly one variable, and it is a URL. It
+/// used to also gain a bearer token, which meant every descendant of the
+/// wrapped command — and anything that could read `/proc/<pid>/environ` —
+/// inherited a bearer nobody had scoped to them. #2873 deleted that token;
+/// #2878 gives the credential back without giving it to the child: with
+/// `--client-sa`, the token is minted by `TokenRequest` through the caller's
+/// own kubeconfig, held in this process, and attached to the child's requests
+/// as they pass through a loopback proxy. The URL the child gets points at the
+/// proxy rather than at the port-forward, and that is the only difference the
+/// child can observe.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 async fn connect(args: ConnectArgs) -> Result<()> {
     let service = args
@@ -1571,32 +1607,189 @@ async fn connect(args: ConnectArgs) -> Result<()> {
 
     cli_std::connect::wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
 
-    let base_url = format!("http://127.0.0.1:{local_port}");
-    // R4: say out loud that this connection is unauthenticated, on stderr so
-    // the wrapped command's own stdout stays machine-readable. A caller who
-    // used to get a working token and now gets a 401 deserves to be told why
-    // here, not left to infer it from the server's response.
-    eprintln!(
-        "lumen connect: forwarding {base_url} -> svc/{service}:{} in {} with no credential. \
-         Kubernetes ServiceAccount TokenRequest support arrives in phase 2 (#2878); until then a \
-         serving instance with `auth: required` refuses every request, and `auth: disabled` \
-         accepts them all.",
-        args.remote_port, args.namespace
-    );
+    let upstream = format!("http://127.0.0.1:{local_port}");
+
+    // Mint before spawning anything. A missing RBAC grant is the most common
+    // way this command fails, and it should fail here — where the error can
+    // name the account and the check — rather than three layers down inside
+    // the child's first HTTP response (R6).
+    let mut proxy = match &args.client_sa {
+        Some(client_sa) => Some(start_client_proxy(&args, client_sa, &upstream).await?),
+        None => None,
+    };
+
+    let child_url = match &proxy {
+        Some(proxy) => {
+            eprintln!(
+                "lumen connect: forwarding {} -> {upstream} -> svc/{service}:{} in {}, \
+                 authenticating as serviceaccount {}/{}. The token is held here; the wrapped \
+                 command sees only the local URL.",
+                proxy.local_url(),
+                args.remote_port,
+                args.namespace,
+                args.namespace,
+                args.client_sa.as_deref().unwrap_or_default(),
+            );
+            proxy.local_url()
+        }
+        None => {
+            // R4: say out loud that this connection is unauthenticated, on
+            // stderr so the wrapped command's own stdout stays
+            // machine-readable. A caller who gets a 401 deserves to be told
+            // why here, not left to infer it from the server's response.
+            eprintln!(
+                "lumen connect: forwarding {upstream} -> svc/{service}:{} in {} with no \
+                 credential. Pass --client-sa <NAME> to authenticate as a ServiceAccount; \
+                 without it a serving instance with `auth: required` refuses every request, and \
+                 `auth: disabled` accepts them all.",
+                args.remote_port, args.namespace
+            );
+            upstream.clone()
+        }
+    };
+
     let (program, rest) = args
         .command
         .split_first()
         .context("wrapped command is empty")?;
-    let mut child_cmd = std::process::Command::new(program);
+    let mut child_cmd = tokio::process::Command::new(program);
     child_cmd.args(rest);
-    child_cmd.env("LUMEN_URL", &base_url);
-    let status = child_cmd.status().context("run wrapped command")?;
-    // `_forward` drops here (end of scope), tearing the port-forward down
-    // whether the wrapped command succeeded or not (AC1).
-    if !status.success() {
-        anyhow::bail!("wrapped command exited with {status}");
+    child_cmd.env("LUMEN_URL", &child_url);
+    let mut child = child_cmd.spawn().context("run wrapped command")?;
+
+    // Three ways this ends, and all three must tear down the port-forward and
+    // the proxy (R7). The child exiting is the ordinary one. A token refresh
+    // that fails means the grant was revoked mid-session: keeping the child
+    // alive would leave it talking to a proxy that can only answer 503, so we
+    // end it. Ctrl-C is the caller ending it.
+    enum Ending {
+        Child(std::process::ExitStatus),
+        Refresh(String),
+        Interrupted,
     }
-    Ok(())
+    let ending = tokio::select! {
+        status = child.wait() => Ending::Child(status.context("wait for the wrapped command")?),
+        fatal = next_fatal(proxy.as_mut()) => Ending::Refresh(fatal),
+        signal = tokio::signal::ctrl_c() => {
+            signal.context("listen for interrupt")?;
+            Ending::Interrupted
+        }
+    };
+
+    // `_forward` and `proxy` drop at the end of this scope on every path, so
+    // the port-forward process and the loopback listener go with them.
+    match ending {
+        Ending::Child(status) if status.success() => Ok(()),
+        Ending::Child(status) => anyhow::bail!("wrapped command exited with {status}"),
+        Ending::Refresh(detail) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            anyhow::bail!(
+                "the wrapped command was stopped because its token could not be renewed: {detail}"
+            )
+        }
+        Ending::Interrupted => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            anyhow::bail!("interrupted")
+        }
+    }
+}
+
+/// The proxy's fatal-error arm of `connect`'s `select!`. Without a proxy there
+/// is nothing to wait for, and a future that never resolves is the honest way
+/// to say so — `select!` then simply has one fewer way to finish.
+async fn next_fatal(proxy: Option<&mut service_auth::k8s::LoopbackProxy>) -> String {
+    match proxy {
+        Some(proxy) => match proxy.next_fatal().await {
+            Some(error) => error.to_string(),
+            None => std::future::pending().await,
+        },
+        None => std::future::pending().await,
+    }
+}
+
+/// Mint a token for `client_sa` and stand up the loopback proxy that lends it
+/// to the wrapped command (#2878, R1/R2/R4).
+///
+/// The first mint happens here rather than lazily on the first proxied
+/// request, so `lumen connect --client-sa` fails immediately and legibly when
+/// the caller lacks the grant.
+#[cfg(feature = "delegated-auth")]
+async fn start_client_proxy(
+    args: &ConnectArgs,
+    client_sa: &str,
+    upstream: &str,
+) -> Result<service_auth::k8s::LoopbackProxy> {
+    let tokens = client_token_source(args.context.as_deref(), &args.namespace, client_sa).await?;
+    first_mint(&tokens, &args.namespace, client_sa).await?;
+    service_auth::k8s::LoopbackProxy::start(upstream, tokens)
+        .await
+        .context("start the local authenticated proxy")
+}
+
+/// The first mint, with Lumen's own remediation attached (#2878, R6).
+///
+/// `service-auth` already names the caller, the ServiceAccount, and the
+/// `kubectl auth can-i` question — everything a provider-neutral library can
+/// know. What it cannot know is that this repository ships a command that
+/// writes the missing grant, so the CLI adds that here rather than teaching the
+/// library about Lumen.
+#[cfg(feature = "delegated-auth")]
+async fn first_mint(
+    tokens: &service_auth::k8s::TokenSource,
+    namespace: &str,
+    client_sa: &str,
+) -> Result<service_auth::k8s::ProjectedToken> {
+    match tokens.token().await {
+        Ok(token) => Ok(token),
+        Err(error @ service_auth::k8s::TokenRequestError::Forbidden { .. }) => {
+            anyhow::bail!(
+                "{error}. `lumen k8s access render --namespace {namespace} --client-sa \
+                 {client_sa} --issuer <you>` emits exactly that grant"
+            )
+        }
+        Err(other) => Err(other.into()),
+    }
+}
+
+/// Same signature, no minter: a build without `delegated-auth` has no
+/// TokenRequest client linked in, and pretending otherwise would mean either
+/// running unauthenticated behind the caller's back or inventing a credential.
+/// Naming the missing feature is the only honest answer.
+#[cfg(not(feature = "delegated-auth"))]
+async fn start_client_proxy(
+    _args: &ConnectArgs,
+    _client_sa: &str,
+    _upstream: &str,
+) -> Result<service_auth::k8s::LoopbackProxy> {
+    anyhow::bail!(
+        "--client-sa needs the `delegated-auth` feature (rebuild with \
+         `cargo build -p lumen --features delegated-auth`); this binary cannot mint a \
+         ServiceAccount token"
+    )
+}
+
+/// One short-lived audience-bound token, minted for an explicitly named
+/// ServiceAccount through whatever identity the kubeconfig already holds
+/// (#2878, R1/R3).
+///
+/// The audience is `lumen`'s own, not a parameter: a token a serving node will
+/// accept is exactly a token minted for that audience, and letting a flag
+/// choose otherwise would only produce credentials that fail at the far end.
+#[cfg(feature = "delegated-auth")]
+async fn client_token_source(
+    context: Option<&str>,
+    namespace: &str,
+    client_sa: &str,
+) -> Result<std::sync::Arc<service_auth::k8s::TokenSource>> {
+    let target =
+        service_auth::k8s::TokenRequestTarget::new(namespace, client_sa, lumen::auth::AUDIENCE)?;
+    let minter = service_auth::k8s::KubeTokenMinter::from_context(context).await?;
+    Ok(std::sync::Arc::new(service_auth::k8s::TokenSource::new(
+        std::sync::Arc::new(minter),
+        target,
+    )))
 }
 
 /// Parse a CLI-supplied value into a `FieldValue`: JSON first (so
@@ -1708,19 +1901,25 @@ fn build_duplicates_body(args: &QueryDuplicatesArgs) -> Result<(String, serde_js
     Ok((format!("/collections/{}/duplicates", args.collection), body))
 }
 
-/// No `token` parameter, by construction (#2873). A parameter that is always
-/// `None` is an invitation to find something to put in it; leaving it out
-/// means `lumen query` cannot grow an `Authorization` header back without the
-/// change being visible in this signature.
+/// The `token` parameter is the whole of `lumen query`'s credential handling
+/// (#2878). It is a value passed in, minted moments earlier for this one
+/// command: there is no environment variable, no file, and no Secret lookup
+/// behind it. #2873 removed all three, and the parameter is deliberately
+/// explicit rather than ambient so that a future change which starts sending a
+/// credential from somewhere else has to say so in this signature.
 #[cfg(feature = "backup")]
 async fn http_post_json(
     base_url: &str,
     path: &str,
     body: serde_json::Value,
+    token: Option<&service_auth::k8s::ProjectedToken>,
 ) -> Result<serde_json::Value> {
     let url = format!("{}{path}", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    let req = client.post(&url).json(&body);
+    let mut req = client.post(&url).json(&body);
+    if let Some(token) = token {
+        req = req.bearer_auth(token.expose());
+    }
     let resp = req.send().await.with_context(|| format!("POST {url}"))?;
     let status = resp.status();
     let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -1731,10 +1930,17 @@ async fn http_post_json(
 }
 
 #[cfg(feature = "backup")]
-async fn http_get_json(base_url: &str, path: &str) -> Result<serde_json::Value> {
+async fn http_get_json(
+    base_url: &str,
+    path: &str,
+    token: Option<&service_auth::k8s::ProjectedToken>,
+) -> Result<serde_json::Value> {
     let url = format!("{}{path}", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    let req = client.get(&url);
+    let mut req = client.get(&url);
+    if let Some(token) = token {
+        req = req.bearer_auth(token.expose());
+    }
     let resp = req.send().await.with_context(|| format!("GET {url}"))?;
     let status = resp.status();
     let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -1744,42 +1950,87 @@ async fn http_get_json(base_url: &str, path: &str) -> Result<serde_json::Value> 
     Ok(payload)
 }
 
+/// Mint the token `lumen query` will carry, if the caller named an account to
+/// mint it for (#2878, R3/R4).
+///
+/// The token is returned by value and lives only as long as the command that
+/// asked for it. It is never written anywhere: not to a cache file, not to an
+/// environment variable, not to stdout.
+#[cfg(all(feature = "backup", feature = "delegated-auth"))]
+async fn query_token(target: &QueryTarget) -> Result<Option<service_auth::k8s::ProjectedToken>> {
+    let Some(client_sa) = target.client_sa.as_deref() else {
+        return Ok(None);
+    };
+    // clap's `requires = "namespace"` already guarantees this pair arrives
+    // together; the message is for the code path, not for the user.
+    let namespace = target
+        .namespace
+        .as_deref()
+        .context("--client-sa requires --namespace")?;
+    let tokens = client_token_source(target.context.as_deref(), namespace, client_sa).await?;
+    Ok(Some(first_mint(&tokens, namespace, client_sa).await?))
+}
+
+/// Without `delegated-auth` there is no TokenRequest client to mint with, so
+/// `--client-sa` is refused rather than silently ignored. Sending an
+/// unauthenticated request in response to an explicit request to authenticate
+/// is the one behaviour that must not happen.
+#[cfg(all(feature = "backup", not(feature = "delegated-auth")))]
+async fn query_token(target: &QueryTarget) -> Result<Option<service_auth::k8s::ProjectedToken>> {
+    if target.client_sa.is_some() {
+        anyhow::bail!(
+            "--client-sa needs the `delegated-auth` feature (rebuild with \
+             `cargo build -p lumen --features delegated-auth`); this binary cannot mint a \
+             ServiceAccount token"
+        );
+    }
+    Ok(None)
+}
+
 /// `lumen query` dispatch (#1321, R3): resolves `--url` via `QueryTarget`,
 /// assembles the exact wire body, and POSTs/GETs it. No REPL, no new HTTP
-/// endpoint — and, since #2873, no credential resolution: the request goes out
-/// as whoever the network says it is, and a serving instance under `auth:
-/// required` answers 401. That failure is the honest one (AC4). The silent
-/// alternative — quietly reaching into a Secret for a shared token — is what
-/// was removed.
+/// endpoint.
+///
+/// Credential resolution is a single line and it is not a lookup (#2878): with
+/// `--client-sa`, a token is minted for the named account, carried in memory
+/// for this one request, and dropped with the command. Without it the request
+/// goes out as whoever the network says it is and a serving instance under
+/// `auth: required` answers 401 — the honest failure (AC4). What #2873 removed
+/// and did not come back is the silent path: quietly reaching into a Secret
+/// for a shared token nobody named.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[cfg(feature = "backup")]
 async fn dispatch_query(args: QueryArgs) -> Result<()> {
     match args.command {
         QueryCommand::Index(args) => {
             let base = resolve_base_url(&args.target)?;
+            let token = query_token(&args.target).await?;
             let (path, body) = build_index_body(&args.collection, &args.items)?;
-            let resp = http_post_json(&base, &path, body).await?;
+            let resp = http_post_json(&base, &path, body, token.as_ref()).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Search(args) => {
             let base = resolve_base_url(&args.target)?;
+            let token = query_token(&args.target).await?;
             let (path, body) = build_search_body(&args)?;
-            let resp = http_post_json(&base, &path, body).await?;
+            let resp = http_post_json(&base, &path, body, token.as_ref()).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Duplicates(args) => {
             let base = resolve_base_url(&args.target)?;
+            let token = query_token(&args.target).await?;
             let (path, body) = build_duplicates_body(&args)?;
-            let resp = http_post_json(&base, &path, body).await?;
+            let resp = http_post_json(&base, &path, body, token.as_ref()).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Collections(args) => match args.command {
             QueryCollectionsCommand::List(args) => {
                 let base = resolve_base_url(&args.target)?;
-                let resp = http_get_json(&base, "/collections").await?;
+                let token = query_token(&args.target).await?;
+                let resp = http_get_json(&base, "/collections", token.as_ref()).await?;
                 println!("{}", serde_json::to_string_pretty(&resp)?);
                 Ok(())
             }
@@ -3718,7 +3969,12 @@ mod tests {
     // -----------------------------------------------------------------
 
     fn test_query_target() -> QueryTarget {
-        QueryTarget { url: None }
+        QueryTarget {
+            url: None,
+            context: None,
+            namespace: None,
+            client_sa: None,
+        }
     }
 
     #[test]

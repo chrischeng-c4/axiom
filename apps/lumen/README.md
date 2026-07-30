@@ -661,12 +661,13 @@ KSA. `lumen query` keeps the token in memory. `lumen connect` gives its child
 only a loopback URL and injects the header in a local proxy; it does not expose
 the token through environment, argv, files, clipboard, or stdout.
 
-Today the CLI is at the "no credential" half of that: the token flag, the token
-environment variable, and the Kubernetes Secret lookup behind them are removed,
-and nothing has replaced them yet. `lumen connect` is a port-forward that hands
-its child a URL; `lumen query` sends no `Authorization` header. Against a
-serving instance with `auth: disabled` that works, and `auth: required` does
-not start at all.
+The account is named per invocation and never inferred: `--client-sa` has no
+environment fallback and the CLI does not pick a ServiceAccount by listing the
+namespace. Omit it and the connection carries no identity at all, which is
+correct only against a fleet with `auth: disabled`. Minting needs `create` on
+that ServiceAccount's `token` subresource; `lumen k8s access render` emits the
+grant, and a refusal names the Kubernetes username the cluster saw, the target
+account, and the `kubectl auth can-i` that answers "may I?".
 
 Serving, operator/reshard, backup, and external-client ServiceAccounts are
 separate identities with least-privilege bindings. TokenRequest permission is

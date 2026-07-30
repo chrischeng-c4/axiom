@@ -161,21 +161,32 @@ fn no_credential_env_var_or_google_identity_source_ships_in_lumen() {
     );
 }
 
-/// AC1, second half: the CLI binary itself holds no credential *mechanism*.
+/// AC1, second half: the CLI binary has no way to *discover* a credential.
 ///
-/// Scoped to `src/bin/lumen.rs` because that is the only file that could
-/// attach an identity to an outbound Lumen request. A header name written as
-/// a literal, a `bearer_auth` builder call, or a call into the shared
-/// module's Secret resolver would each be a live path; none may exist. The
-/// needles are the *code* forms — a quoted header name, the constant — so
-/// that prose explaining why the header is absent stays legal.
+/// This assertion changed shape in #2878 and it is worth saying why, because
+/// the change looks from a distance like a gate being relaxed.
+///
+/// #2873's version forbade attaching an identity at all — no header literal,
+/// no `bearer_auth` call. That was the right assertion while the CLI had no
+/// legitimate way to obtain one: any credential it could attach was a
+/// credential it had found lying around. #2878 gives it a legitimate way, and
+/// the property worth defending is no longer "attaches nothing" but "attaches
+/// only what it just minted, for an account the caller named".
+///
+/// So the discovery paths stay banned outright, and the attachment is pinned
+/// instead of forbidden: every call site must take the value from the `token`
+/// parameter, whose type only a `TokenSource` can produce. A future edit that
+/// reads a credential from anywhere else has to either name a banned symbol or
+/// change the pinned call form — both visible in review, neither silent.
 #[test]
-fn the_cli_binary_holds_no_credential_mechanism() {
+fn the_cli_binary_can_only_attach_a_credential_it_minted() {
     let body = read(&lumen_dir().join("src/bin/lumen.rs"));
+
+    // The discovery paths. Each of these found a credential somebody else had
+    // stored; none may come back under any name.
     let forbidden = [
         needle(&["\"Authoriz", "ation\""]),
         needle(&["AUTHORIZ", "ATION"]),
-        needle(&["bearer_", "auth"]),
         needle(&["resolve_token", "("]),
         needle(&["resolve_cr_tokens_secret", "("]),
         needle(&["\"get\", \"secret", "\""]),
@@ -184,9 +195,54 @@ fn the_cli_binary_holds_no_credential_mechanism() {
         assert!(
             !body.contains(f.as_str()),
             "#2873 AC1: `src/bin/lumen.rs` still contains `{f}` — the CLI must have no way to \
-             attach or resolve a request credential"
+             find a request credential it did not mint"
         );
     }
+
+    // The attachment. Pinned to the one legal form: the minted token, arriving
+    // as a parameter.
+    let attach = needle(&["bearer_", "auth("]);
+    let legal = format!("{attach}token.expose())");
+    let mut sites = 0usize;
+    let mut from = 0usize;
+    while let Some(rel) = body[from..].find(&attach) {
+        let at = from + rel;
+        sites += 1;
+        assert!(
+            body[at..].starts_with(&legal),
+            "#2878 AC1: `src/bin/lumen.rs` attaches a credential at byte {at} in a form other \
+             than `{legal}`; the only value the CLI may send is the one it minted through \
+             TokenRequest:\n{}",
+            body[at..].lines().next().unwrap_or_default()
+        );
+        from = at + attach.len();
+    }
+    assert!(
+        sites > 0,
+        "#2878 AC1: `src/bin/lumen.rs` no longer attaches a minted credential at all — if the \
+         TokenRequest path was removed, this gate and #2878's tests should go with it rather \
+         than passing vacuously"
+    );
+
+    // R3: the account is named per invocation. An `env =` on this flag would
+    // make "which identity am I acting as" ambient again, which is the same
+    // defect #2873 removed wearing different clothes.
+    let flag = needle(&["client_", "sa: Option<String>"]);
+    let decl = body
+        .find(&flag)
+        .unwrap_or_else(|| panic!("#2878 R3: `src/bin/lumen.rs` declares no `{flag}` field"));
+    // The doc comment above the flag is prose with em dashes in it, so a fixed
+    // byte offset can land inside a character; walk forward to a boundary.
+    let mut start = decl.saturating_sub(400);
+    while start < decl && !body.is_char_boundary(start) {
+        start += 1;
+    }
+    let window = &body[start..decl];
+    assert!(
+        !window.contains("env ="),
+        "#2878 R3: a `--client-sa` flag with an environment fallback lets the caller act as an \
+         account nobody named in the command:\n{window}"
+    );
 }
 
 // ---------------------------------------------------------------------------
