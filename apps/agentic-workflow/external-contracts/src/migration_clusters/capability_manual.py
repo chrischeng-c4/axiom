@@ -245,6 +245,37 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         legacy = _lumen_report(root, cap_path, lumen_reference.LEGACY_TABLE_DOCUMENT)
         lumen_reference.assert_legacy_rows_are_attributed_to_non_core(legacy)
 
+        # Migration groups legacy *rows* through a branch separate from the one
+        # that handles capability sections, so the derivation rule the section
+        # legs bind could be inverted here unnoticed. The document is already
+        # written, so migrate it in place.
+        final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
+        legacy_migrated = cap_path.read_text(encoding="utf-8")
+        lumen_reference.assert_legacy_migration_derives_the_split(legacy_migrated)
+        # The negative half: migration must emit a document the checker accepts,
+        # not merely one containing the right substrings.
+        legacy_migrated_report = final_json(
+            run_aw(
+                root,
+                "capability",
+                "report",
+                "--project",
+                "demo",
+                "--skip-issue-inventory",
+            )
+        )
+        lumen_reference.assert_migrated_legacy_document_is_accepted(
+            legacy_migrated_report
+        )
+
+        # A retired capability leaves both classes and both totals. Without this
+        # the word "retained" in every pair-sum assertion above is unearned:
+        # nothing else the fixture runs carries a retired member.
+        retired = _lumen_report(
+            root, cap_path, lumen_reference.RETIRED_MEMBER_DOCUMENT
+        )
+        lumen_reference.assert_retired_capability_is_excluded_from_both_classes(retired)
+
         # Migration is the only path that has to *derive* the class instead of
         # reading one. Without this leg the derivation rule could be inverted
         # and every other assertion here would still pass, because every other
@@ -295,6 +326,8 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "duplicate_root": duplicate_root,
         "multiply_classified": multiply_classified,
         "legacy": legacy,
+        "legacy_migrated": legacy_migrated_report,
+        "retired": retired,
         "unclassified": unclassified,
         "migrated": migrated_report,
         "preserved": preserved_text,
@@ -375,6 +408,8 @@ def verify(case_id: str) -> list[str]:
                 "one capability listed under both feature roots is rejected as a blocker naming that exact capability, with every capability still parsing",
                 "a document that declares no feature class at all raises no blocker and is attributed wholly to non-core, capabilities and claims alike, which is the default rule no self-describing document can exercise",
                 "a legacy capability table is diagnosed as legacy and its rows are attributed wholly to non-core rather than falling out of both classes, which is the branch of that default rule where no capability section parses at all",
+                "aw capability migrate derives the split for the rows of a legacy table through its own branch, placing the authored promises under Core Features and the trait-derived baseline under Non-Core Features, and the migrated document is accepted by a follow-up report with no blocker",
+                "a retired capability is excluded from both per-class counts and from the retained totals alike, so each per-class pair still sums against a total that genuinely excludes something",
                 "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
                 "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
