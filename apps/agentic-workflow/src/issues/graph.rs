@@ -438,6 +438,15 @@ fn resolve_parents(
     diagnostics: &mut Vec<GraphDiagnostic>,
 ) -> ParentResolution {
     let source = issue_key(issue);
+    // Only open changes gate the project graph, matching the `unowned_change`,
+    // `multiple_epic_owners`, and `missing_epic_priority` gating in
+    // `build_work_item_graph`. A terminal change is history: when its parent
+    // epic is closed too, the parent falls outside the live inventory window
+    // and the resulting diagnostic has no reachable remediation, so it would
+    // permanently invalidate the graph and dead-end `aw wi plan`. Parent
+    // resolution itself stays unconditional so closed-child rollup keeps its
+    // normalized parent.
+    let report_parent_diagnostics = issue.state == IssueState::Open;
     let explicit = declared_parent_references(issue);
     let mut raw = explicit.clone();
     for reference in issue.related.iter().chain(issue.implements.iter()) {
@@ -454,9 +463,10 @@ fn resolve_parents(
     for reference in raw {
         let normalized = normalize_reference(&reference);
         let Some(target) = resolve_issue(&normalized, indexed, aliases) else {
-            if explicit
-                .iter()
-                .any(|value| normalize_reference(value) == normalized)
+            if report_parent_diagnostics
+                && explicit
+                    .iter()
+                    .any(|value| normalize_reference(value) == normalized)
             {
                 diagnostics.push(diagnostic(
                     "missing_epic_parent",
@@ -470,25 +480,29 @@ fn resolve_parents(
         };
         let target_id = issue_key(target);
         if target.issue_type != IssueType::Epic {
-            diagnostics.push(diagnostic(
-                "change_cannot_parent",
-                &source,
-                Some(target_id.clone()),
-                format!("change `{source}` names non-epic `{target_id}` as its parent"),
-                format!("epic parent replacing {target_id} on {source}"),
-            ));
+            if report_parent_diagnostics {
+                diagnostics.push(diagnostic(
+                    "change_cannot_parent",
+                    &source,
+                    Some(target_id.clone()),
+                    format!("change `{source}` names non-epic `{target_id}` as its parent"),
+                    format!("epic parent replacing {target_id} on {source}"),
+                ));
+            }
             continue;
         }
         if !target.labels.iter().any(|label| label == project_label) {
-            diagnostics.push(diagnostic(
-                "cross_project_epic_parent",
-                &source,
-                Some(target_id.clone()),
-                format!(
-                    "change `{source}` belongs to `{project_label}` but parent epic `{target_id}` does not"
-                ),
-                format!("same-project epic parent for {source}"),
-            ));
+            if report_parent_diagnostics {
+                diagnostics.push(diagnostic(
+                    "cross_project_epic_parent",
+                    &source,
+                    Some(target_id.clone()),
+                    format!(
+                        "change `{source}` belongs to `{project_label}` but parent epic `{target_id}` does not"
+                    ),
+                    format!("same-project epic parent for {source}"),
+                ));
+            }
             continue;
         }
         valid.push(target_id);
@@ -976,6 +990,54 @@ mod tests {
             diagnostic.remediation_target,
             "existing epic target for epic:2600 on 2601"
         );
+    }
+
+    #[test]
+    fn terminal_changes_referencing_absent_epic_parents_do_not_invalidate_the_graph() {
+        let graph = build_work_item_graph(
+            "demo",
+            "app:demo",
+            &[
+                issue(
+                    1,
+                    "epic",
+                    "open",
+                    &["type:epic", "app:demo", "priority:p2"],
+                    "",
+                ),
+                // Closed change whose closed parent epic fell outside the live
+                // inventory window: terminal history must not gate the graph.
+                issue(
+                    2,
+                    "change",
+                    "closed",
+                    &["type:change", "app:demo", "epic:404"],
+                    "",
+                ),
+                issue(3, "change", "open", &["type:change", "app:demo", "epic:1"], ""),
+            ],
+        );
+
+        assert!(graph.valid, "{:#?}", graph.diagnostics);
+        assert!(graph.diagnostics.is_empty(), "{:#?}", graph.diagnostics);
+
+        // The same reference on an open change still fails closed.
+        let open_graph = build_work_item_graph(
+            "demo",
+            "app:demo",
+            &[issue(
+                2,
+                "change",
+                "open",
+                &["type:change", "app:demo", "epic:404"],
+                "",
+            )],
+        );
+        assert!(!open_graph.valid);
+        assert!(open_graph
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing_epic_parent"));
     }
 
     #[test]
