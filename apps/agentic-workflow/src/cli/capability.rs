@@ -18578,6 +18578,11 @@ requires-python = ">=3.11"
 "#,
         )
         .unwrap();
+        std::fs::write(
+            td_root.join("uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
         std::fs::write(ec_root.join("src/runner.py"), "print('fixture runner')\n").unwrap();
         std::fs::write(
             ec_root.join("src/cases/lockfile.py"),
@@ -18595,7 +18600,7 @@ requires-python = ">=3.11"
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src"]
-dependency_files = ["pyproject.toml"]
+dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
 [tool.aw.python-ec]
@@ -18614,7 +18619,7 @@ test_path = "src/cases/lockfile.py"
 promise = "lockfile installs remain deterministic"
 oracle = "the external fixture observes the generated install result"
 target = "python"
-command = "python3 -m demo.verify"
+command = "uv run --frozen --offline --project projects/demo/external-contracts python -m demo.verify"
 evidence_paths = ["evidence/lockfile.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -18628,9 +18633,14 @@ test_path = "src/cases/lockfile.py"
 promise = "a non-claim EC case remains external behavior only"
 oracle = "the external fixture observes the legacy compatibility result"
 target = "python"
-command = "python3 -m demo.verify"
+command = "uv run --frozen --offline --project projects/demo/external-contracts python -m demo.verify"
 evidence_paths = ["evidence/legacy-alias.json"]
 "#,
+        )
+        .unwrap();
+        std::fs::write(
+            ec_root.join("uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
         )
         .unwrap();
 

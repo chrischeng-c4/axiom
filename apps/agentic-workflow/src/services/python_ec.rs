@@ -309,6 +309,21 @@ fn validate_execution_contract(case: &PythonEcCase, label: &str, findings: &mut 
             case.test_path
         ));
     }
+    let command = case.command.trim_start();
+    if command.starts_with("python ")
+        || command.starts_with("python3 ")
+        || command.starts_with("pytest ")
+    {
+        findings.push(format!(
+            "{label} invokes ambient Python; use `uv run --frozen --offline --project <ec-root> python ...`"
+        ));
+    } else if command.starts_with("uv run")
+        && (!command.contains(" --frozen") || !command.contains(" --offline"))
+    {
+        findings.push(format!(
+            "{label} invokes uv without the frozen offline contract; add both `--frozen` and `--offline`"
+        ));
+    }
 }
 
 fn validate_stable_id(value: &str, field: &str, label: &str, findings: &mut Vec<String>) {

@@ -2,10 +2,14 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-29T08:45:24.093048+00:00"
-digest = "sha256:6e9478f742ab3a9f46e0726033c600deff5d54165faad78365fc6f09eaeb8f1c"
-source_digest = "sha256:6e9478f742ab3a9f46e0726033c600deff5d54165faad78365fc6f09eaeb8f1c"
-ir_digest = "sha256:1e50766c9c6badcd8976c92ae2fa9cd92ecaec4956429f3a6fb6943fcc7183ac"
+generated_at = "2026-07-29T13:35:15.426354+00:00"
+digest = "sha256:b2189c23236087b4860177a64a1d3a76a82bb1f67a555bd7d4cf731241207df9"
+source_digest = "sha256:b2189c23236087b4860177a64a1d3a76a82bb1f67a555bd7d4cf731241207df9"
+ir_digest = "sha256:f09a74d2878dae10e22897a3d13217b1e0cad63dc6ceb139a469643c2831e0d7"
+
+[[files]]
+path = "pyproject.toml"
+digest = "sha256:a3f02fadde42ce46eee0ddf0e4b61756038e8106333aed8499eec67fb56319cb"
 
 [[files]]
 path = "src/agentic_workflow/health/project_health_total_observation.py"
@@ -4054,3 +4058,7 @@ digest = "sha256:c4f1dfea4b5abebdf7a87aefd0f19982e2c704653dc5ec0a31734bce3ac9bae
 [[files]]
 path = "tests/unit/test_project_health_contract.py"
 digest = "sha256:17e3b906d0434602496da7a02801cb29ff1527b87924b3ba8c22ef2a49aa5881"
+
+[[files]]
+path = "uv.lock"
+digest = "sha256:c77fb62b01bc0dcc1518872fea76ab32620830729e1ef13064a32e99e8e58728"

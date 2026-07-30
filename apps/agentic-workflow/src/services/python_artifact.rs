@@ -69,6 +69,7 @@ pub struct PythonArtifactInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PythonArtifactRunOptions {
+    pub uv_executable: PathBuf,
     pub python_executable: PathBuf,
     pub timeout: Duration,
 }
@@ -76,7 +77,8 @@ pub struct PythonArtifactRunOptions {
 impl Default for PythonArtifactRunOptions {
     fn default() -> Self {
         Self {
-            python_executable: PathBuf::from("python3"),
+            uv_executable: PathBuf::from("uv"),
+            python_executable: PathBuf::from("python"),
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -161,15 +163,17 @@ pub fn discover_python_artifact_project(project_root: &Path) -> Result<PythonArt
     if config.source_roots.is_empty() {
         bail!("Python artifact protocol requires at least one source_roots entry");
     }
-    if config.dependency_files.is_empty() {
-        bail!("Python artifact protocol requires dependency_files including pyproject.toml");
-    }
-    if !config
-        .dependency_files
-        .iter()
-        .any(|path| Path::new(path) == Path::new("pyproject.toml"))
-    {
-        bail!("Python artifact dependency_files must include pyproject.toml");
+    for required in ["pyproject.toml", "uv.lock"] {
+        if !config
+            .dependency_files
+            .iter()
+            .any(|path| Path::new(path) == Path::new(required))
+        {
+            bail!(
+                "Python artifact dependency_files must include {required}; run `uv lock --project {}` after updating pyproject.toml",
+                root.display()
+            );
+        }
     }
 
     let entrypoint = resolve_project_path(&root, &config.entrypoint, "entrypoint")?;
@@ -203,7 +207,14 @@ pub fn discover_python_artifact_project(project_root: &Path) -> Result<PythonArt
         require_regular_file(&dependency_file, "dependency_files")?;
         dependency_files.insert(dependency_file);
     }
-    let dependency_lock_digest = digest_files(&root, &dependency_files)?;
+    let lock_path = root.join("uv.lock").canonicalize().with_context(|| {
+        format!(
+            "Python artifact requires uv.lock; run `uv lock --project {}`",
+            root.display()
+        )
+    })?;
+    require_regular_file(&lock_path, "dependency lock")?;
+    let dependency_lock_digest = digest_files(&root, &BTreeSet::from([lock_path]))?;
     let input_files = normalized_input_files(&source_files, &dependency_files)?;
 
     Ok(PythonArtifactProject {
@@ -233,10 +244,13 @@ pub fn run_python_artifact_project(
     if options.timeout.is_zero() {
         bail!("Python artifact timeout must be greater than zero");
     }
-    ensure_cpython(options)?;
+    ensure_uv_lock_current(&project.root, &options.uv_executable)?;
+    ensure_cpython(project, options)?;
 
-    let mut process = Command::new(&options.python_executable);
+    let mut process = Command::new(&options.uv_executable);
     process
+        .args(["run", "--frozen", "--offline"])
+        .arg(&options.python_executable)
         .arg("-I")
         .arg(&project.entrypoint)
         .arg(command)
@@ -327,17 +341,24 @@ pub fn run_python_artifact_project(
     })
 }
 
-fn ensure_cpython(options: &PythonArtifactRunOptions) -> Result<()> {
-    let output = Command::new(&options.python_executable)
+fn ensure_cpython(
+    project: &PythonArtifactProject,
+    options: &PythonArtifactRunOptions,
+) -> Result<()> {
+    let output = Command::new(&options.uv_executable)
+        .args(["run", "--frozen", "--offline"])
+        .arg(&options.python_executable)
         .arg("-I")
         .arg("-c")
         .arg(CPYTHON_IMPLEMENTATION_PROBE)
+        .current_dir(&project.root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
         .with_context(|| {
             format!(
-                "run CPython implementation probe via {}",
+                "run CPython implementation probe via {} run --frozen {}",
+                options.uv_executable.display(),
                 options.python_executable.display()
             )
         })?;
@@ -355,6 +376,105 @@ fn ensure_cpython(options: &PythonArtifactRunOptions) -> Result<()> {
             implementation.trim()
         );
     }
+    Ok(())
+}
+
+pub(crate) fn ensure_uv_lock_current(root: &Path, uv_executable: &Path) -> Result<()> {
+    let pyproject = root.join("pyproject.toml");
+    require_regular_file(&pyproject, "project manifest").with_context(|| {
+        format!(
+            "Python artifact requires pyproject.toml below {}",
+            root.display()
+        )
+    })?;
+    let lock = root.join("uv.lock");
+    require_regular_file(&lock, "dependency lock").with_context(|| {
+        format!(
+            "Python artifact requires uv.lock; run `uv lock --project {}`",
+            root.display()
+        )
+    })?;
+    let output = Command::new(uv_executable)
+        .args(["lock", "--check", "--offline"])
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| {
+            format!(
+                "check Python artifact lock via {} below {}",
+                uv_executable.display(),
+                root.display()
+            )
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "Python artifact uv.lock is missing or stale below {}; run `uv lock --project {}`: {}",
+            root.display(),
+            root.display(),
+            stderr.trim()
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn refresh_uv_lock(root: &Path, uv_executable: &Path) -> Result<()> {
+    let lock = root.join("uv.lock");
+    if lock.is_file() {
+        return Ok(());
+    }
+    let pyproject_path = root.join("pyproject.toml");
+    let content = fs::read_to_string(&pyproject_path)
+        .with_context(|| format!("read Python artifact manifest {}", pyproject_path.display()))?;
+    let document: toml::Value = toml::from_str(&content).with_context(|| {
+        format!(
+            "parse Python artifact manifest {}",
+            pyproject_path.display()
+        )
+    })?;
+    let project = document
+        .get("project")
+        .and_then(toml::Value::as_table)
+        .context("Python artifact pyproject.toml requires a [project] table")?;
+    let dependency_count = project
+        .get("dependencies")
+        .and_then(toml::Value::as_array)
+        .map_or(0, Vec::len);
+    if dependency_count != 0
+        || project.contains_key("optional-dependencies")
+        || document.get("dependency-groups").is_some()
+    {
+        bail!(
+            "cannot synthesize uv.lock for dependency-bearing Python artifact below {}; run `{} lock --project {}`",
+            root.display(),
+            uv_executable.display(),
+            root.display()
+        );
+    }
+    let name = project
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .context("Python artifact [project] requires name before uv.lock creation")?;
+    let version = project
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .context("Python artifact [project] requires version before uv.lock creation")?;
+    let requires_python = project
+        .get("requires-python")
+        .and_then(toml::Value::as_str)
+        .context("Python artifact [project] requires requires-python before uv.lock creation")?;
+    let literal = |value: &str| toml::Value::String(value.to_string()).to_string();
+    fs::write(
+        &lock,
+        format!(
+            "version = 1\nrevision = 3\nrequires-python = {}\n\n[[package]]\nname = {}\nversion = {}\nsource = {{ virtual = \".\" }}\n",
+            literal(requires_python),
+            literal(name),
+            literal(version),
+        ),
+    )
+    .with_context(|| format!("write Python artifact lock {}", lock.display()))?;
     Ok(())
 }
 
@@ -562,8 +682,8 @@ fn resolve_evidence_paths(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_python_sources, digest_files};
-    use std::fs;
+    use super::{collect_python_sources, digest_files, discover_python_artifact_project};
+    use std::{fs, path::Path};
 
     /// @spec #2774
     #[test]
@@ -600,6 +720,61 @@ mod tests {
         for (relative, bytes) in artifacts {
             assert_eq!(fs::read(source_root.join(relative)).unwrap(), bytes);
         }
+    }
+
+    fn write_artifact_fixture(root: &Path, dependency_files: &str) {
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("evidence")).unwrap();
+        fs::write(root.join("src/runner.py"), "print('fixture')\n").unwrap();
+        fs::write(
+            root.join("pyproject.toml"),
+            format!(
+                r#"[project]
+name = "fixture"
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = {dependency_files}
+evidence_dir = "evidence"
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn python_artifact_requires_uv_lock_in_dependency_inventory() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_artifact_fixture(tmp.path(), "[\"pyproject.toml\"]");
+
+        let error = discover_python_artifact_project(tmp.path())
+            .expect_err("uv.lock declaration is mandatory")
+            .to_string();
+        assert!(
+            error.contains("dependency_files must include uv.lock"),
+            "{error}"
+        );
+        assert!(error.contains("uv lock --project"), "{error}");
+    }
+
+    #[test]
+    fn dependency_lock_digest_is_the_uv_lock_digest() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_artifact_fixture(tmp.path(), "[\"pyproject.toml\", \"uv.lock\"]");
+        fs::write(tmp.path().join("uv.lock"), "version = 1\nrevision = 3\n").unwrap();
+        let first = discover_python_artifact_project(tmp.path()).unwrap();
+        fs::write(tmp.path().join("uv.lock"), "version = 1\nrevision = 4\n").unwrap();
+        let second = discover_python_artifact_project(tmp.path()).unwrap();
+
+        assert_eq!(first.source_digest(), second.source_digest());
+        assert_ne!(
+            first.dependency_lock_digest(),
+            second.dependency_lock_digest()
+        );
     }
 }
 // HANDWRITE-END

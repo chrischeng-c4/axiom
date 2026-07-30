@@ -1019,13 +1019,23 @@ test_cmd = "python3 -m unittest discover -s projects/demo/tests/unit"
         )
         .unwrap();
         fs::write(
+            root.join("projects/demo/tech-design/pyproject.toml"),
+            "[project]\nname = \"demo-td\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = []\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/demo/tech-design/uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("projects/demo/external-contracts/pyproject.toml"),
             r#"
 [tool.aw.python-artifact]
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src"]
-dependency_files = ["pyproject.toml"]
+dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
 [tool.aw.python-ec]
@@ -1091,6 +1101,11 @@ target = "python"
 command = "true"
 evidence_paths = ["evidence/efficiency.json"]
 "#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/demo/external-contracts/uv.lock"),
+            "version = 1\nrevision = 3\n",
         )
         .unwrap();
         for name in ["runner", "behavior", "security", "stability", "efficiency"] {

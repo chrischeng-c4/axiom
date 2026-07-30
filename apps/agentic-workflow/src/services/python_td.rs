@@ -228,8 +228,54 @@ pub struct PythonTdModule {
     pub role: PythonTdRole,
     pub imports: Vec<String>,
     pub declarations: Vec<PythonTdDeclaration>,
+    /// Target-neutral CLI grammar compiled from the constrained Typer
+    /// authoring subset. Compilation is syntax-only and never imports Typer or
+    /// executes module registration code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cli: Option<PythonTdCli>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codegen: Option<PythonTdCodegen>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PythonTdCli {
+    pub framework: &'static str,
+    pub app_symbol: String,
+    pub configuration: String,
+    pub commands: Vec<PythonTdCliCommand>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PythonTdCliCommand {
+    pub function: String,
+    pub name: String,
+    pub kind: PythonTdCliCommandKind,
+    pub configuration: String,
+    pub parameters: Vec<PythonTdCliParameter>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PythonTdCliCommandKind {
+    Callback,
+    Command,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PythonTdCliParameter {
+    pub name: String,
+    pub kind: PythonTdCliParameterKind,
+    pub annotation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    pub binding: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PythonTdCliParameterKind {
+    Argument,
+    Option,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -268,6 +314,10 @@ pub struct PythonTdDeclaration {
     pub is_async: bool,
     pub annotations: Vec<String>,
     pub decorators: Vec<String>,
+    /// Digest of the executable class/function body. Python TD is a runnable
+    /// reference implementation, so behavior changes are semantic changes
+    /// even when the public signature stays fixed.
+    pub implementation_digest: String,
     pub span: PythonTdSpan,
 }
 
@@ -444,7 +494,7 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
                 let mut inner = child.walk();
                 for item in child.named_children(&mut inner) {
                     if item.kind() == "decorator" {
-                        decorators.push(normalize(node_text(item, &source)));
+                        decorators.push(normalize_python_expression(node_text(item, &source)));
                     }
                     if item.kind() == "function_definition"
                         || item.kind() == "async_function_definition"
@@ -473,14 +523,39 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
     imports.dedup();
     declarations.sort_by(|left, right| left.id.cmp(&right.id));
     let public_behaviors = if public_contract {
-        let behaviors = declarations
+        let declared_functions = declarations
             .iter()
             .filter(|declaration| {
                 declaration.kind == PythonTdDeclarationKind::Function
                     && !declaration.name.starts_with('_')
             })
-            .map(|declaration| declaration.name.replace('_', "-"))
-            .collect::<Vec<_>>();
+            .map(|declaration| declaration.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let explicit =
+            explicit_public_behaviors(tree.root_node(), &source, path)?.unwrap_or_default();
+        let behaviors = if explicit.is_empty() {
+            declared_functions
+                .iter()
+                .map(|name| name.replace('_', "-"))
+                .collect::<Vec<_>>()
+        } else {
+            let missing = explicit
+                .iter()
+                .filter(|name| !declared_functions.contains(name.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                bail!(
+                    "Python TD diagnostic [unknown-public-behavior] {}: __aw_public_behaviors__ references missing public functions: {}",
+                    path.display(),
+                    missing.join(", ")
+                );
+            }
+            explicit
+                .into_iter()
+                .map(|name| name.replace('_', "-"))
+                .collect::<Vec<_>>()
+        };
         if behaviors.is_empty() {
             bail!(
                 "Python TD diagnostic [public-contract-without-behavior] {}: __aw_public_contract__ = True requires at least one public top-level function",
@@ -500,6 +575,7 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
     } else {
         Vec::new()
     };
+    let cli = compile_typer_cli(path, tree.root_node(), &source, &imports, &declarations)?;
     let codegen = compile_codegen_contract(root, path, &declarations)?;
     Ok(PythonTdModule {
         id,
@@ -510,8 +586,545 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
         role: role_for_path(&rel),
         imports,
         declarations,
+        cli,
         codegen,
     })
+}
+
+fn explicit_public_behaviors(
+    root: Node<'_>,
+    source: &str,
+    path: &Path,
+) -> Result<Option<Vec<String>>> {
+    let mut values = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        let Some(assignment) = direct_named_child(child, "assignment") else {
+            continue;
+        };
+        let Some(left) = assignment.child_by_field_name("left") else {
+            continue;
+        };
+        if node_text(left, source) != "__aw_public_behaviors__" {
+            continue;
+        }
+        let Some(right) = assignment.child_by_field_name("right") else {
+            continue;
+        };
+        if !matches!(right.kind(), "tuple" | "list") {
+            return diagnostic(
+                path,
+                right,
+                "invalid-public-behaviors",
+                "declare __aw_public_behaviors__ as one literal tuple/list of public function names",
+            );
+        }
+        let mut items = right.walk();
+        for item in right.named_children(&mut items) {
+            if item.kind() != "string" {
+                return diagnostic(
+                    path,
+                    item,
+                    "invalid-public-behaviors",
+                    "use only quoted public function names in __aw_public_behaviors__",
+                );
+            }
+            let value = quoted_literal(node_text(item, source)).with_context(|| {
+                format!(
+                    "Python TD diagnostic [invalid-public-behaviors] {}: behavior names must be simple quoted strings",
+                    path.display()
+                )
+            })?;
+            values.push(value.to_string());
+        }
+    }
+    if values.is_empty() {
+        return Ok(None);
+    }
+    values.sort();
+    if values.windows(2).any(|pair| pair[0] == pair[1]) {
+        bail!(
+            "Python TD diagnostic [duplicate-public-behavior] {}: __aw_public_behaviors__ must not repeat function names",
+            path.display()
+        );
+    }
+    Ok(Some(values))
+}
+
+fn compile_typer_cli(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    imports: &[String],
+    declarations: &[PythonTdDeclaration],
+) -> Result<Option<PythonTdCli>> {
+    let mut app_assignments = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        let Some(assignment) = direct_named_child(child, "assignment") else {
+            continue;
+        };
+        let Some(right) = assignment.child_by_field_name("right") else {
+            continue;
+        };
+        let right_text = normalize_python_expression(node_text(right, source));
+        if !right_text.starts_with("typer.Typer(") || !right_text.ends_with(')') {
+            continue;
+        }
+        let Some(left) = assignment.child_by_field_name("left") else {
+            return diagnostic(
+                path,
+                assignment,
+                "invalid-typer-app",
+                "assign typer.Typer(...) to one plain top-level identifier",
+            );
+        };
+        if left.kind() != "identifier" {
+            return diagnostic(
+                path,
+                left,
+                "invalid-typer-app",
+                "assign typer.Typer(...) to one plain top-level identifier",
+            );
+        }
+        app_assignments.push((
+            node_text(left, source).to_string(),
+            canonical_argument_list(
+                right_text
+                    .trim_start_matches("typer.Typer(")
+                    .trim_end_matches(')'),
+            ),
+            assignment,
+        ));
+    }
+    if app_assignments.is_empty() {
+        if imports.iter().any(|import| import == "importtyper")
+            || normalize(source).contains("typer.Typer(")
+        {
+            reject_dynamic_typer_registration(path, root, source, None)?;
+        }
+        return Ok(None);
+    }
+    if app_assignments.len() != 1 {
+        return diagnostic(
+            path,
+            app_assignments[1].2,
+            "multiple-typer-apps",
+            "declare exactly one top-level `app = typer.Typer(...)` per CLI TD module",
+        );
+    }
+    if !imports.iter().any(|import| import == "importtyper") {
+        return diagnostic(
+            path,
+            app_assignments[0].2,
+            "invalid-typer-import",
+            "use the explicit `import typer` form for the static CLI authoring subset",
+        );
+    }
+
+    let (app_symbol, configuration, _) = &app_assignments[0];
+    reject_dynamic_typer_registration(path, root, source, Some(app_symbol))?;
+    let mut commands = Vec::new();
+    for declaration in declarations
+        .iter()
+        .filter(|declaration| declaration.kind == PythonTdDeclarationKind::Function)
+    {
+        for decorator in &declaration.decorators {
+            let Some((kind, binding_configuration)) =
+                parse_typer_decorator(path, decorator, app_symbol)?
+            else {
+                continue;
+            };
+            let name = match kind {
+                PythonTdCliCommandKind::Callback => declaration.name.clone(),
+                PythonTdCliCommandKind::Command => first_quoted_positional(&binding_configuration)
+                    .unwrap_or_else(|| declaration.name.replace('_', "-")),
+            };
+            if !identity_slug(&name.as_str()) {
+                bail!(
+                    "Python TD diagnostic [invalid-typer-command-name] {}:{}:{}: command `{name}` must be lowercase kebab-case",
+                    path.display(),
+                    declaration.span.line,
+                    declaration.span.column
+                );
+            }
+            let signature = declaration
+                .annotations
+                .iter()
+                .find(|annotation| annotation.starts_with('('))
+                .map(String::as_str)
+                .unwrap_or("()");
+            validate_typer_command_body(path, root, source, declaration)?;
+            commands.push(PythonTdCliCommand {
+                function: declaration.name.clone(),
+                name,
+                kind,
+                configuration: binding_configuration,
+                parameters: parse_typer_parameters(path, declaration, signature)?,
+            });
+        }
+    }
+    if commands.is_empty() {
+        bail!(
+            "Python TD diagnostic [typer-app-without-command] {}: one `typer.Typer(...)` app requires at least one `@{app_symbol}.command(...)` binding",
+            path.display()
+        );
+    }
+    commands.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then(left.function.cmp(&right.function))
+    });
+    let duplicates = commands
+        .windows(2)
+        .filter(|pair| pair[0].name == pair[1].name && pair[0].kind == pair[1].kind)
+        .map(|pair| pair[0].name.clone())
+        .collect::<Vec<_>>();
+    if !duplicates.is_empty() {
+        bail!(
+            "Python TD diagnostic [duplicate-typer-command] {}: duplicate command identities: {}",
+            path.display(),
+            duplicates.join(", ")
+        );
+    }
+    Ok(Some(PythonTdCli {
+        framework: "typer",
+        app_symbol: app_symbol.clone(),
+        configuration: configuration.clone(),
+        commands,
+    }))
+}
+
+fn validate_typer_command_body(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    declaration: &PythonTdDeclaration,
+) -> Result<()> {
+    let Some(function) =
+        root.descendant_for_byte_range(declaration.span.byte_start, declaration.span.byte_end)
+    else {
+        bail!(
+            "Python TD diagnostic [missing-typer-command-body] {}:{}:{}: cannot resolve executable body for `{}`",
+            path.display(),
+            declaration.span.line,
+            declaration.span.column,
+            declaration.name
+        );
+    };
+    let Some(body) = function.child_by_field_name("body") else {
+        bail!(
+            "Python TD diagnostic [missing-typer-command-body] {}:{}:{}: command `{}` has no executable body",
+            path.display(),
+            declaration.span.line,
+            declaration.span.column,
+            declaration.name
+        );
+    };
+    let mut cursor = body.walk();
+    let statements = body.named_children(&mut cursor).collect::<Vec<_>>();
+    let executable = statements.iter().enumerate().any(|(index, statement)| {
+        let text = normalize_python_expression(node_text(*statement, source));
+        let docstring = index == 0
+            && statement.kind() == "expression_statement"
+            && statement
+                .named_child(0)
+                .is_some_and(|child| child.kind() == "string");
+        !docstring
+            && statement.kind() != "pass_statement"
+            && text != "..."
+            && text != "return"
+            && text != "returnNone"
+    });
+    if !executable {
+        bail!(
+            "Python TD diagnostic [non-executable-typer-command] {}:{}:{}: command `{}` is only a placeholder; a TD command must execute the reference-product behavior",
+            path.display(),
+            declaration.span.line,
+            declaration.span.column,
+            declaration.name
+        );
+    }
+    Ok(())
+}
+
+fn direct_named_child<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
+    if node.kind() == kind {
+        return Some(node);
+    }
+    let mut cursor = node.walk();
+    let found = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == kind);
+    found
+}
+
+fn reject_dynamic_typer_registration(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    app_symbol: Option<&str>,
+) -> Result<()> {
+    fn walk(
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+        app_symbol: Option<&str>,
+        inside_decorator: bool,
+    ) -> Result<()> {
+        let inside_decorator = inside_decorator || node.kind() == "decorator";
+        if node.kind() == "call" && !inside_decorator {
+            if let Some(function) = node.child_by_field_name("function") {
+                let function = normalize(node_text(function, source));
+                let dynamic = function.ends_with(".add_typer")
+                    || function.ends_with(".command")
+                    || function.ends_with(".callback");
+                if dynamic
+                    && app_symbol.is_none_or(|app| {
+                        function == format!("{app}.add_typer")
+                            || function == format!("{app}.command")
+                            || function == format!("{app}.callback")
+                    })
+                {
+                    return diagnostic(
+                        path,
+                        node,
+                        "dynamic-typer-registration",
+                        "use only top-level `@app.command(...)` and `@app.callback(...)` decorators; runtime registration is outside the static subset",
+                    );
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            walk(path, child, source, app_symbol, inside_decorator)?;
+        }
+        Ok(())
+    }
+    walk(path, root, source, app_symbol, false)
+}
+
+fn parse_typer_decorator(
+    path: &Path,
+    decorator: &str,
+    app_symbol: &str,
+) -> Result<Option<(PythonTdCliCommandKind, String)>> {
+    let prefix = format!("@{app_symbol}.");
+    if !decorator.starts_with(&prefix) {
+        if decorator.contains(".command") || decorator.contains(".callback") {
+            bail!(
+                "Python TD diagnostic [ambiguous-typer-app] {}: bind every Typer command to the single `{app_symbol}` app",
+                path.display()
+            );
+        }
+        return Ok(None);
+    }
+    let tail = &decorator[prefix.len()..];
+    let (kind, arguments) = if let Some(arguments) = tail
+        .strip_prefix("command(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
+        (PythonTdCliCommandKind::Command, arguments)
+    } else if let Some(arguments) = tail
+        .strip_prefix("callback(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
+        (PythonTdCliCommandKind::Callback, arguments)
+    } else {
+        bail!(
+            "Python TD diagnostic [invalid-typer-decorator] {}: use exactly `@{app_symbol}.command(...)` or `@{app_symbol}.callback(...)`",
+            path.display()
+        );
+    };
+    Ok(Some((kind, canonical_argument_list(arguments))))
+}
+
+fn parse_typer_parameters(
+    path: &Path,
+    declaration: &PythonTdDeclaration,
+    signature: &str,
+) -> Result<Vec<PythonTdCliParameter>> {
+    let inner = signature
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+        .unwrap_or(signature);
+    let mut parameters = Vec::new();
+    for raw in split_top_level(inner, ',') {
+        if raw.is_empty() || raw == "/" || raw == "*" {
+            continue;
+        }
+        if raw.starts_with('*') {
+            bail!(
+                "Python TD diagnostic [unsupported-typer-parameter] {}:{}:{}: variadic CLI parameters are outside the static subset",
+                path.display(),
+                declaration.span.line,
+                declaration.span.column
+            );
+        }
+        let colon = top_level_character(&raw, ':').with_context(|| {
+            format!(
+                "Python TD diagnostic [untyped-typer-parameter] {}:{}:{}: every CLI parameter requires an explicit annotation",
+                path.display(),
+                declaration.span.line,
+                declaration.span.column
+            )
+        })?;
+        let equals = top_level_character(&raw, '=');
+        let name = raw[..colon].to_string();
+        let annotation_end = equals.unwrap_or(raw.len());
+        let annotation = raw[colon + 1..annotation_end].to_string();
+        let default = equals.map(|index| raw[index + 1..].to_string());
+        let (kind, binding) = if let Some(binding) =
+            typer_binding_expression(&annotation, "typer.Argument").or_else(|| {
+                default
+                    .as_deref()
+                    .and_then(|value| typer_binding_expression(value, "typer.Argument"))
+            }) {
+            (PythonTdCliParameterKind::Argument, binding)
+        } else if let Some(binding) =
+            typer_binding_expression(&annotation, "typer.Option").or_else(|| {
+                default
+                    .as_deref()
+                    .and_then(|value| typer_binding_expression(value, "typer.Option"))
+            })
+        {
+            (PythonTdCliParameterKind::Option, binding)
+        } else {
+            bail!(
+                "Python TD diagnostic [implicit-typer-parameter] {}:{}:{}: parameter `{name}` must declare `typer.Argument(...)` or `typer.Option(...)` explicitly",
+                path.display(),
+                declaration.span.line,
+                declaration.span.column
+            );
+        };
+        parameters.push(PythonTdCliParameter {
+            name,
+            kind,
+            annotation,
+            default,
+            binding,
+        });
+    }
+    Ok(parameters)
+}
+
+fn typer_binding_expression(value: &str, binding: &str) -> Option<String> {
+    let start = value.find(binding)?;
+    let suffix = &value[start..];
+    let open = suffix.find('(')?;
+    let end = matching_delimiter(suffix, open, '(', ')')?;
+    Some(suffix[..=end].to_string())
+}
+
+fn split_top_level(value: &str, separator: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut stack = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in value.char_indices() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' => quote = Some(character),
+            '(' | '[' | '{' => stack.push(character),
+            ')' | ']' | '}' => {
+                stack.pop();
+            }
+            _ if character == separator && stack.is_empty() => {
+                parts.push(value[start..index].to_string());
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(value[start..].to_string());
+    parts
+}
+
+fn canonical_argument_list(value: &str) -> String {
+    split_top_level(value, ',')
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn top_level_character(value: &str, wanted: char) -> Option<usize> {
+    let mut stack = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in value.char_indices() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' => quote = Some(character),
+            '(' | '[' | '{' => stack.push(character),
+            ')' | ']' | '}' => {
+                stack.pop();
+            }
+            _ if character == wanted && stack.is_empty() => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn matching_delimiter(value: &str, open_index: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in value
+        .char_indices()
+        .filter(|(index, _)| *index >= open_index)
+    {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' => quote = Some(character),
+            _ if character == open => depth += 1,
+            _ if character == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn first_quoted_positional(value: &str) -> Option<String> {
+    let first = split_top_level(value, ',').into_iter().next()?;
+    if first.contains('=') {
+        return None;
+    }
+    quoted_literal(&first).map(str::to_string)
 }
 
 fn compile_codegen_contract(
@@ -788,7 +1401,12 @@ fn function_declaration(
         .unwrap_or_else(|| "<anonymous>".to_string());
     let mut annotations = Vec::new();
     if let Some(parameters) = node.child_by_field_name("parameters") {
-        annotations.push(normalize(node_text(parameters, source)));
+        let normalized = normalize_python_expression(node_text(parameters, source));
+        let inner = normalized
+            .strip_prefix('(')
+            .and_then(|value| value.strip_suffix(')'))
+            .unwrap_or(&normalized);
+        annotations.push(format!("({})", canonical_argument_list(inner)));
     }
     if let Some(return_type) = node.child_by_field_name("return_type") {
         annotations.push(format!(
@@ -804,6 +1422,7 @@ fn function_declaration(
         annotations,
         decorators,
         node,
+        source,
     )
 }
 
@@ -829,6 +1448,7 @@ fn class_declaration(
         annotations,
         decorators,
         node,
+        source,
     )
 }
 
@@ -840,10 +1460,15 @@ fn declaration(
     mut annotations: Vec<String>,
     mut decorators: Vec<String>,
     node: Node<'_>,
+    source: &str,
 ) -> PythonTdDeclaration {
     annotations.sort();
     decorators.sort();
     let point = node.start_position();
+    let implementation = node
+        .child_by_field_name("body")
+        .map(|body| normalize_python_expression(node_text(body, source)))
+        .unwrap_or_default();
     PythonTdDeclaration {
         id: format!(
             "{module}:{}:{name}",
@@ -857,6 +1482,7 @@ fn declaration(
         is_async,
         annotations,
         decorators,
+        implementation_digest: format!("sha256:{:x}", Sha256::digest(implementation.as_bytes())),
         span: PythonTdSpan {
             line: point.row + 1,
             column: point.column + 1,
@@ -932,6 +1558,33 @@ fn normalize(value: &str) -> String {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect()
+}
+fn normalize_python_expression(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut quote = None;
+    let mut escaped = false;
+    for character in value.chars() {
+        if let Some(active) = quote {
+            output.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' => {
+                quote = Some(character);
+                output.push(character);
+            }
+            _ if character.is_whitespace() => {}
+            _ => output.push(character),
+        }
+    }
+    output
 }
 fn first_error<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
     if node.kind() == "ERROR" {
@@ -1066,5 +1719,176 @@ mod tests {
 
         compile_python_td_project(root.path())
             .expect("module path remains importable even when identity is artifact-based");
+    }
+
+    #[test]
+    fn typer_cli_compiles_into_target_neutral_ir_without_importing_module() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("cli.py"),
+            r#"from typing import Annotated
+import typer
+
+__aw_artifact_id__ = "artifact:demo/cli"
+
+raise RuntimeError("the static compiler must never import this module")
+
+app = typer.Typer(name="demo", no_args_is_help=True)
+
+@app.callback()
+def root(verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False) -> None:
+    typer.echo("verbose" if verbose else "normal")
+
+@app.command("scan", help="Scan one path.")
+def scan(
+    path: Annotated[str, typer.Argument(help="Path to scan")],
+    strict: Annotated[bool, typer.Option("--strict")] = False,
+) -> None:
+    typer.echo(f"{path}:{strict}")
+"#,
+        )
+        .unwrap();
+
+        let ir = compile_python_td_project(root.path()).unwrap();
+        let cli = ir.modules[0].cli.as_ref().expect("Typer CLI IR");
+        assert_eq!(cli.framework, "typer");
+        assert_eq!(cli.app_symbol, "app");
+        assert_eq!(cli.configuration, "name=\"demo\",no_args_is_help=True");
+        assert_eq!(cli.commands.len(), 2);
+        let scan = cli
+            .commands
+            .iter()
+            .find(|command| command.name == "scan")
+            .unwrap();
+        assert_eq!(scan.kind, PythonTdCliCommandKind::Command);
+        assert!(scan.configuration.contains("help=\"Scan one path.\""));
+        assert_eq!(scan.parameters.len(), 2);
+        assert_eq!(scan.parameters[0].kind, PythonTdCliParameterKind::Argument);
+        assert_eq!(scan.parameters[0].name, "path");
+        assert!(scan.parameters[0].binding.contains("Path to scan"));
+        assert_eq!(scan.parameters[1].kind, PythonTdCliParameterKind::Option);
+        assert_eq!(scan.parameters[1].default.as_deref(), Some("False"));
+    }
+
+    #[test]
+    fn typer_cli_formatting_does_not_change_semantic_digest() {
+        let write_fixture = |root: &Path, source: &str| {
+            let src = root.join("src");
+            fs::create_dir_all(&src).unwrap();
+            fs::write(src.join("cli.py"), source).unwrap();
+        };
+        let compact = tempfile::tempdir().unwrap();
+        write_fixture(
+            compact.path(),
+            "import typer\napp=typer.Typer(name=\"demo\")\n@app.command()\ndef run(path:typer.Argument(...))->None:\n typer.echo(path)\n",
+        );
+        let formatted = tempfile::tempdir().unwrap();
+        write_fixture(
+            formatted.path(),
+            "import typer\n\napp = typer.Typer(\n    name = \"demo\",\n)\n\n@app.command()\ndef run(\n    path: typer.Argument(...),\n) -> None:\n    typer.echo(path)\n",
+        );
+
+        let compact = compile_python_td_project(compact.path()).unwrap();
+        let formatted = compile_python_td_project(formatted.path()).unwrap();
+        assert_eq!(compact.semantic_digest, formatted.semantic_digest);
+    }
+
+    #[test]
+    fn typer_cli_rejects_dynamic_registration() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("cli.py"),
+            "import typer\napp = typer.Typer(name=\"demo\")\ndef run() -> None:\n    pass\napp.command()(run)\n",
+        )
+        .unwrap();
+
+        let error = compile_python_td_project(root.path())
+            .expect_err("runtime command registration must fail")
+            .to_string();
+        assert!(error.contains("[dynamic-typer-registration]"), "{error}");
+    }
+
+    #[test]
+    fn typer_cli_requires_explicit_argument_or_option_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("cli.py"),
+            "import typer\napp = typer.Typer(name=\"demo\")\n@app.command()\ndef run(path: str) -> None:\n    typer.echo(path)\n",
+        )
+        .unwrap();
+
+        let error = compile_python_td_project(root.path())
+            .expect_err("implicit parameter semantics must fail")
+            .to_string();
+        assert!(error.contains("[implicit-typer-parameter]"), "{error}");
+    }
+
+    #[test]
+    fn typer_cli_rejects_placeholder_command_bodies() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("cli.py"),
+            "import typer\napp = typer.Typer(name=\"demo\")\n@app.command()\ndef run() -> None:\n    \"\"\"Only documentation, not product behavior.\"\"\"\n    pass\n",
+        )
+        .unwrap();
+
+        let error = compile_python_td_project(root.path())
+            .expect_err("placeholder commands must fail")
+            .to_string();
+        assert!(error.contains("[non-executable-typer-command]"), "{error}");
+    }
+
+    #[test]
+    fn executable_body_changes_semantic_digest() {
+        let write_fixture = |root: &Path, value: &str| {
+            let src = root.join("src");
+            fs::create_dir_all(&src).unwrap();
+            fs::write(
+                src.join("contract.py"),
+                format!("def decision() -> str:\n    return \"{value}\"\n"),
+            )
+            .unwrap();
+        };
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        write_fixture(first.path(), "clean");
+        write_fixture(second.path(), "findings");
+
+        let first = compile_python_td_project(first.path()).unwrap();
+        let second = compile_python_td_project(second.path()).unwrap();
+        assert_ne!(first.semantic_digest, second.semantic_digest);
+    }
+
+    #[test]
+    fn public_behavior_inventory_can_exclude_internal_product_helpers() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("contract.py"),
+            r#"__aw_artifact_id__ = "artifact:demo/contract"
+__aw_public_contract__ = True
+__aw_public_behaviors__ = ("external_journey",)
+
+def external_journey() -> bool:
+    return helper()
+
+def helper() -> bool:
+    return True
+"#,
+        )
+        .unwrap();
+
+        let ir = compile_python_td_project(root.path()).unwrap();
+        assert_eq!(ir.modules[0].public_behaviors, vec!["external-journey"]);
+        assert_eq!(ir.modules[0].declarations.len(), 2);
     }
 }

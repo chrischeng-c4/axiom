@@ -4304,6 +4304,7 @@ target = "{target}"
             ),
         )
         .unwrap();
+        init_git_repo(root.path());
         root
     }
 

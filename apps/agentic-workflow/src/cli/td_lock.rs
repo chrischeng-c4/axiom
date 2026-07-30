@@ -845,6 +845,21 @@ fn snapshot_td_lock_target(target: &TdLockTarget) -> Result<TdSnapshot> {
                 compiler_inputs.insert(openapi.document_path.clone());
             }
         }
+        // Python TD execution is frozen to its project manifest and uv lock.
+        // Keep both files in the durable TD snapshot so dependency drift cannot
+        // preserve a green semantic IR digest while changing the executable
+        // reference product underneath it.
+        for dependency_file in ["pyproject.toml", "uv.lock"] {
+            let path = target.td_path.join(dependency_file);
+            if !path.is_file() {
+                anyhow::bail!(
+                    "Python TD lock requires {}; run `uv lock --project {}`",
+                    dependency_file,
+                    target.td_path.display()
+                );
+            }
+            compiler_inputs.insert(dependency_file.to_string());
+        }
         let files = compiler_inputs
             .into_iter()
             .map(|relative| {
@@ -1097,6 +1112,17 @@ mod tests {
         git_output(root, &["config", "user.name", "AW Test"]);
     }
 
+    fn write_python_td_environment(td_root: &Path) {
+        write(
+            &td_root.join("pyproject.toml"),
+            "[project]\nname = \"demo-tech-design\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+        );
+        write(
+            &td_root.join("uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        );
+    }
+
     fn write_td_lock_repo(root: &Path) {
         write(
             &root.join("aw.toml"),
@@ -1114,6 +1140,7 @@ path = "projects/demo"
             &root.join("projects/demo/tech-design/src/demo/design.py"),
             "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    pass\n",
         );
+        write_python_td_environment(&root.join("projects/demo/tech-design"));
         write(&root.join("notes/staged.txt"), "staged baseline\n");
         write(&root.join("notes/unstaged.txt"), "unstaged baseline\n");
         git_output(root, &["add", "."]);
@@ -1426,7 +1453,7 @@ path = "projects/demo"
     }
 
     #[test]
-    fn python_td_canonical_routing_lock_uses_only_compiler_inventory() {
+    fn python_td_canonical_routing_lock_includes_executable_dependency_inputs() {
         let root = TempDir::new().unwrap();
         write(
             &root.path().join("aw.toml"),
@@ -1447,6 +1474,16 @@ path = "projects/demo"
             "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Invoice\",\"version\":\"1\"},\"paths\":{}}\n",
         );
         write(
+            &root
+                .path()
+                .join("projects/demo/tech-design/pyproject.toml"),
+            "[project]\nname = \"demo-tech-design\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+        );
+        write(
+            &root.path().join("projects/demo/tech-design/uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        );
+        write(
             &td_root.join("__pycache__/invoice.cpython-313.pyc"),
             "runtime cache\n",
         );
@@ -1465,11 +1502,13 @@ path = "projects/demo"
         assert_eq!(before.ir_digest, compiled.semantic_digest);
         assert!(before.files.iter().all(|entry| entry.parse_error.is_none()));
         assert!(before.files.iter().all(|entry| entry.ir_digest.is_none()));
-        assert_eq!(before.files.len(), 2);
+        assert_eq!(before.files.len(), 4);
         assert_eq!(before.td_ir_count, 1);
         assert_eq!(before.td_ir_error_count, 0);
         assert_eq!(before.files[0].path, "openapi.json");
-        assert_eq!(before.files[1].path, "src/demo/domain/invoice.py");
+        assert_eq!(before.files[1].path, "pyproject.toml");
+        assert_eq!(before.files[2].path, "src/demo/domain/invoice.py");
+        assert_eq!(before.files[3].path, "uv.lock");
 
         write(
             &root
@@ -1492,12 +1531,20 @@ path = "projects/demo"
         assert_ne!(before.ir_digest, after_openapi.ir_digest);
 
         write(
+            &root.path().join("projects/demo/tech-design/uv.lock"),
+            "version = 1\nrevision = 4\nrequires-python = \">=3.11\"\n",
+        );
+        let after_lock = snapshot_td_lock_target(&target).unwrap();
+        assert_ne!(after_openapi.source_digest, after_lock.source_digest);
+        assert_eq!(after_openapi.ir_digest, after_lock.ir_digest);
+
+        write(
             &td_root.join("invoice.py"),
             "__aw_artifact_id__ = \"artifact:billing/issue-invoice\"\n\n@openapi_client(source=\"openapi.json\", python=\"python-3.11\", typescript=\"typescript-5.0\", rust=\"rust-2021\")\nclass InvoiceClient:\n    pass\n\ndef issue_invoice(reference: str) -> None:\n    pass\n",
         );
         let after_python = snapshot_td_lock_target(&target).unwrap();
-        assert_ne!(after_openapi.source_digest, after_python.source_digest);
-        assert_ne!(after_openapi.ir_digest, after_python.ir_digest);
+        assert_ne!(after_lock.source_digest, after_python.source_digest);
+        assert_ne!(after_lock.ir_digest, after_python.ir_digest);
     }
 
     #[test]
@@ -1521,6 +1568,7 @@ path = "projects/demo"
                 .join("projects/demo/tech-design/src/demo/design.py"),
             "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    pass\n",
         );
+        write_python_td_environment(&tmp.path().join("projects/demo/tech-design"));
 
         let status = check_project_td_lock_at_root(tmp.path(), "d").unwrap();
 
@@ -1548,6 +1596,7 @@ path = "projects/demo"
                 .join("projects/demo/tech-design/src/demo/design.py"),
             "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    pass\n",
         );
+        write_python_td_environment(&tmp.path().join("projects/demo/tech-design"));
 
         let status = check_project_td_lock_for_spec_at_root(tmp.path(), &spec).unwrap();
 
@@ -1593,6 +1642,7 @@ td_path = "projects/demo/tech-design"
             &python_td,
             "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    pass\n",
         );
+        write_python_td_environment(&td_root);
         let snapshot = snapshot_td_root(&td_root).unwrap();
         let lock = TdLockFile {
             version: TD_LOCK_VERSION,

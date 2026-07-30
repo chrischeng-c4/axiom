@@ -44,6 +44,7 @@ const EC_DOC_BEGIN_MARKER: &str = "AW-EC-DOC-BEGIN";
 const EC_DOC_END_MARKER: &str = "AW-EC-DOC-END";
 const EC_CATEGORIES: [&str; 4] = ["behavior", "efficiency", "security", "stability"];
 const EC_COMMAND_TIMEOUT_ENV: &str = "AW_EC_COMMAND_TIMEOUT_SECS";
+const EC_STAGE_ENV: &str = "AW_EC_STAGE";
 const DEFAULT_EC_COMMAND_TIMEOUT_SECS: u64 = 30 * 60;
 const EC_PROCESS_TERM_GRACE: Duration = Duration::from_secs(1);
 const EC_PROCESS_KILL_GRACE: Duration = Duration::from_secs(1);
@@ -1443,7 +1444,7 @@ requires-python = ">=3.11"
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src"]
-dependency_files = ["pyproject.toml"]
+dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
 [tool.aw.python-ec]
@@ -1550,8 +1551,10 @@ def verify_{id}() -> None:
         ),
     )
     .with_context(|| format!("write {}", case_path.display()))?;
+    crate::services::python_artifact::refresh_uv_lock(&ctx.ec_root, Path::new("uv"))?;
 
     let inventory_rel = relative_to(&ctx.project_root, &inventory_path);
+    let lock_rel = relative_to(&ctx.project_root, &ctx.ec_root.join("uv.lock"));
     let runner_rel = relative_to(&ctx.project_root, &runner_path);
     let case_rel = relative_to(&ctx.project_root, &case_path);
     let next = command_with_wi(
@@ -1578,7 +1581,7 @@ def verify_{id}() -> None:
                 "kind": "ec_authoring",
                 "id": id,
             },
-            "artifacts": [inventory_rel, runner_rel, case_rel],
+            "artifacts": [inventory_rel, lock_rel, runner_rel, case_rel],
             "completion": {
                 "root_complete": false,
                 "workflow_complete": false,
@@ -6448,6 +6451,7 @@ fn verify_ec_context_with_stage(
             case.category.clone(),
             case.command.clone(),
             &ctx.project_root,
+            stage,
         );
         if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
             validate_python_ec_result_evidence(ctx, case, &mut result);
@@ -6471,7 +6475,7 @@ fn verify_ec_context_with_stage(
         {
             continue;
         }
-        results.push(run_ec_tool_manifest_command(tool, &ctx.project_root));
+        results.push(run_ec_tool_manifest_command(tool, &ctx.project_root, stage));
     }
     let executed_count = results
         .iter()
@@ -6704,6 +6708,7 @@ fn terminal_ec_gate_lock_path(project_root: &Path, project: &str) -> PathBuf {
 fn run_ec_tool_manifest_command(
     tool: &EcToolManifest,
     project_root: &Path,
+    stage: Option<&str>,
 ) -> EcVerifyCommandResult {
     let category = if tool.category.trim().is_empty() {
         "tool".to_string()
@@ -6732,6 +6737,7 @@ fn run_ec_tool_manifest_command(
         category,
         tool.command.clone(),
         project_root,
+        stage,
     )
 }
 
@@ -6742,6 +6748,7 @@ fn run_ec_verify_command(
     category: String,
     command: String,
     project_root: &Path,
+    stage: Option<&str>,
 ) -> EcVerifyCommandResult {
     run_ec_verify_command_with_timeout(
         case_id,
@@ -6750,6 +6757,7 @@ fn run_ec_verify_command(
         category,
         command,
         project_root,
+        stage,
         ec_command_timeout(),
     )
 }
@@ -6761,9 +6769,10 @@ fn run_ec_verify_command_with_timeout(
     category: String,
     command: String,
     project_root: &Path,
+    stage: Option<&str>,
     timeout: Duration,
 ) -> EcVerifyCommandResult {
-    let output = run_ec_command_with_timeout(project_root, &command, timeout);
+    let output = run_ec_command_with_timeout(project_root, &command, stage, timeout);
     match output {
         Ok(output) => {
             let false_green = ec_false_green_reason(&command, &output.stdout, &output.stderr);
@@ -6845,9 +6854,15 @@ fn ec_command_timeout() -> Duration {
 fn run_ec_command_with_timeout(
     project_root: &Path,
     command: &str,
+    stage: Option<&str>,
     timeout: Duration,
 ) -> Result<EcCommandOutput> {
     let mut process = crate::cli::shell_env::protected_shell_command(project_root, command);
+    if let Some(stage) = stage {
+        process.env(EC_STAGE_ENV, stage);
+    } else {
+        process.env_remove(EC_STAGE_ENV);
+    }
     configure_ec_command_process_group(&mut process);
     process
         .current_dir(project_root)
@@ -7974,12 +7989,13 @@ e2e_tests:
                 r#"[project]
 name = "demo-external-contracts"
 version = "0.0.0"
+requires-python = ">=3.11"
 
 [tool.aw.python-artifact]
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src"]
-dependency_files = ["pyproject.toml"]
+dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
 [tool.aw.python-ec]
@@ -8002,6 +8018,11 @@ command = {command:?}
 evidence_paths = ["evidence/behavior.json"]
 "#
             ),
+        )
+        .unwrap();
+        fs::write(
+            ctx.ec_root.join("uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n\n[[package]]\nname = \"demo-external-contracts\"\nversion = \"0.0.0\"\nsource = { virtual = \".\" }\n",
         )
         .unwrap();
         fs::write(
@@ -10098,6 +10119,24 @@ e2e_tests:
 
     #[cfg(unix)]
     #[test]
+    fn ec_verify_exports_selected_stage_to_the_contract_runner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run_ec_verify_command_with_timeout(
+            "stage-routing".to_string(),
+            "demo".to_string(),
+            "demo-stage-routing".to_string(),
+            "behavior".to_string(),
+            "test \"$AW_EC_STAGE\" = td".to_string(),
+            tmp.path(),
+            Some("td"),
+            Duration::from_secs(1),
+        );
+
+        assert_eq!(result.status, "passed", "{}", result.stderr_tail);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn ec_verify_bounds_a_wrapper_after_its_child_exits() {
         let tmp = tempfile::tempdir().unwrap();
         let wrapper_pid = tmp.path().join("wrapper.pid");
@@ -10130,6 +10169,7 @@ while :; do :; done
                 child_exited.display()
             ),
             tmp.path(),
+            None,
             Duration::from_millis(500),
         );
 
@@ -10197,6 +10237,7 @@ wait $!
                 descendant_ready.display()
             ),
             tmp.path(),
+            None,
             Duration::from_millis(500),
         );
 
@@ -10265,6 +10306,7 @@ exit 0
                 descendant_ready.display()
             ),
             tmp.path(),
+            None,
             Duration::from_secs(5),
         );
 
@@ -10630,7 +10672,7 @@ tool_contracts:
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src"]
-dependency_files = ["pyproject.toml"]
+dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
 [tool.aw.python-ec]
@@ -10654,6 +10696,7 @@ evidence_paths = ["evidence/behavior.json"]
 "#,
         )
         .unwrap();
+        fs::write(ctx.ec_root.join("uv.lock"), "version = 1\nrevision = 3\n").unwrap();
         fs::write(
             ctx.ec_root.join("src/runner.py"),
             "raise RuntimeError('lock must not import Python')\n",

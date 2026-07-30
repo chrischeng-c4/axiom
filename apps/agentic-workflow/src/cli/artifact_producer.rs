@@ -270,7 +270,7 @@ pub(crate) fn ec_contract(
                 section,
                 format!("aw.ec.{section}.payload.v1"),
                 payload_path,
-                format!("aw ec fill --project {project} {skeleton_path} --section {section}"),
+                format!("aw ec check --project {project}"),
             )
         })
         .collect();
@@ -280,8 +280,8 @@ pub(crate) fn ec_contract(
         skeleton_path,
         initialized,
         slots,
-        format!("aw ec review --project {project}"),
-        Some(format!("aw ec gen --project {project} --verify")),
+        format!("aw ec check --project {project}"),
+        None,
         vec![skeleton_path.to_string()],
         Vec::new(),
     )
@@ -459,7 +459,7 @@ mod tests {
             let message = error.to_string();
             assert!(message.contains("artifact slot/schema violation"));
             assert_eq!(message.matches("remediation:").count(), 1);
-            assert!(message.contains("aw ec fill --project agentic-workflow"));
+            assert!(message.contains("aw ec check --project agentic-workflow"));
         }
     }
 

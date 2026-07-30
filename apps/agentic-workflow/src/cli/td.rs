@@ -2626,6 +2626,38 @@ fn python_td_root_for_issue(
     Ok((project, std::path::PathBuf::from(resolved.root)))
 }
 
+fn ensure_python_td_environment(
+    project_root: &std::path::Path,
+    td_root: &std::path::Path,
+    project: &str,
+) -> Result<Vec<String>> {
+    std::fs::create_dir_all(td_root)
+        .with_context(|| format!("create Python TD root {}", td_root.display()))?;
+    let pyproject = td_root.join("pyproject.toml");
+    if !pyproject.is_file() {
+        let package = slugify_spec_filename(project);
+        std::fs::write(
+            &pyproject,
+            format!(
+                "[project]\nname = \"{}-tech-design\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                if package.is_empty() { "project" } else { &package }
+            ),
+        )
+        .with_context(|| format!("write Python TD manifest {}", pyproject.display()))?;
+    }
+    crate::services::python_artifact::refresh_uv_lock(td_root, std::path::Path::new("uv"))?;
+    Ok([pyproject, td_root.join("uv.lock")]
+        .into_iter()
+        .map(|path| {
+            slash_path(
+                path.strip_prefix(project_root)
+                    .unwrap_or(&path)
+                    .to_path_buf(),
+            )
+        })
+        .collect())
+}
+
 fn default_python_td_path_for_issue_in_project(
     project_root: &std::path::Path,
     issue: &Issue,
@@ -4082,6 +4114,7 @@ async fn run_create_python_brief(
         Some(path) => path.to_string(),
         None => default_python_td_path_for_issue_in_project(&project_root, &issue, &slug)?,
     };
+    let environment_paths = ensure_python_td_environment(&project_root, &td_root, &project)?;
     let spec_abs = resolve_python_td_module_path(&project_root, &td_root, &spec_path)?;
     let initialized = initialize_python_td_module(&spec_abs, &issue, &slug)?;
     if !issue.implements.iter().any(|path| path == &spec_path) {
@@ -4112,12 +4145,14 @@ async fn run_create_python_brief(
         .await?;
         let current_issue = backend.get(&slug).await?.unwrap_or_else(|| issue.clone());
         let issue_path = issue_path_arg(&backend, &current_issue);
+        let mut commit_paths = vec![spec_path.as_str(), issue_path.as_str()];
+        commit_paths.extend(environment_paths.iter().map(String::as_str));
         commit_lifecycle_with_extra(
             &project_root,
             &slug,
             "Python TD source initialized",
             crate::issues::types::lifecycle_trailer::TD_PYTHON_SOURCE,
-            &[spec_path.as_str(), issue_path.as_str()],
+            &commit_paths,
             &[
                 ("Lifecycle-Phase", "td_inited"),
                 ("TD-Source", spec_path.as_str()),
@@ -6756,7 +6791,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn td_gen_prefers_issue_scope_over_foreign_legacy_discovery() {
+    async fn td_gen_prefers_issue_owned_python_scope_over_foreign_legacy_discovery() {
         if !git_available() {
             return;
         }
@@ -6776,10 +6811,25 @@ mod tests {
         let mut issue = issue_with_title("lumen: active generation scope");
         issue.slug = "lumen-gen-scope".to_string();
         issue.labels = vec!["app:lumen".to_string()];
-        let expected = default_spec_path_for_issue_in_project(root, &issue, &issue.slug).unwrap();
+        let expected = "apps/lumen/tech-design/src/lumen/work_items/lumen_gen_scope.py".to_string();
+        issue.implements = vec![expected.clone()];
         let expected_abs = root.join(&expected);
         std::fs::create_dir_all(expected_abs.parent().unwrap()).unwrap();
-        std::fs::write(&expected_abs, "# active configured TD\n").unwrap();
+        std::fs::write(
+            &expected_abs,
+            "__aw_artifact_id__ = \"artifact:lumen/lumen-gen-scope\"\n\ndef active_generation_scope() -> str:\n    return \"lumen\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("apps/lumen/tech-design/pyproject.toml"),
+            "[project]\nname = \"lumen-tech-design\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("apps/lumen/tech-design/uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
         let foreign = root.join(".aw/tech-design/projects/mamba/logic/foreign.md");
         std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
         std::fs::write(&foreign, "# foreign legacy TD\n").unwrap();
@@ -6805,7 +6855,8 @@ mod tests {
         assert_eq!(prepared.spec_path, expected);
 
         let mut exact = issue.clone();
-        exact.implements = vec!["apps/lumen/tech-design/logic/custom.md".to_string()];
+        exact.implements =
+            vec!["apps/lumen/tech-design/src/lumen/work_items/custom.py".to_string()];
         assert_eq!(
             resolve_issue_td_generation_spec_path(root, &exact, &exact.slug).unwrap(),
             exact.implements[0]

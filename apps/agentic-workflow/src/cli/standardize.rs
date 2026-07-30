@@ -9739,12 +9739,21 @@ changes:
     }
 
     #[test]
-    fn traceability_change_entries_reads_state_machine_repair_edges() {
-        let content = fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tech-design/core/logic/state-machine.md"),
+    fn traceability_change_entries_reads_async_api_repair_edges() {
+        let entries = traceability_change_entries(
+            r#"## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - action: annotate
+    section: async-api
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the async-api section."
+```
+"#,
         )
-        .expect("read state-machine TD fixture");
-        let entries = traceability_change_entries(&content).expect("changes entries");
+        .expect("changes entries");
 
         assert!(
             entries.iter().any(|entry| {
