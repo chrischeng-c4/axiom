@@ -22,22 +22,30 @@ The document is a fixture written into a temporary project. Lumen's production
 contract is never opened for writing, and the caller proves that by digesting it
 before and after.
 
-What this fixture does *not* assert, so it is not read as proving more than it
-does: `validate_capability_feature_roots` also rejects a missing root and an
-unknown root. Neither is falsified here, and neither can be a single-message
-falsifier -- deleting `### Non-Core Features` yields the missing-root finding
-plus one field/root contradiction per capability stranded under the surviving
-root, and renaming it yields unknown-root plus missing-root -- so they need
-co-occurring-set assertions and belong in their own slice. `document_blockers`
-is nonetheless total, so if either fires on a document this fixture *does* run,
-the run fails.
+Two earlier revisions of this docstring excused rules from coverage instead of
+covering them, and both excuses were wrong. They are recorded here because the
+reasoning was plausible each time, and the same shape is easy to reach for
+again.
 
-That constraint is specific to those two rules. An earlier revision of this
-docstring generalized it over a third, a capability nested under both roots, and
-that was false: appending one bare `#### Search Core` heading inside the non-core
-root yields exactly one blocker with all six capabilities still parsing, because
-`scan_feature_roots` records root membership from headings alone. It is now
-falsified directly as `MULTIPLY_CLASSIFIED_DOCUMENT` rather than excused.
+The first claimed a capability nested under both roots could not be falsified in
+isolation. False: appending one bare `#### Search Core` heading inside the
+non-core root yields exactly one blocker with all six capabilities still
+parsing, because `scan_feature_roots` records root membership from headings
+alone. It is now `MULTIPLY_CLASSIFIED_DOCUMENT`.
+
+The second claimed the missing-root and unknown-root rules needed "co-occurring-
+set assertions" and so belonged in their own slice. The *factual* half was
+right -- deleting `### Non-Core Features` really does yield the missing-root
+finding plus one field/root contradiction per stranded capability, and renaming
+it really does yield unknown-root plus missing-root -- but the conclusion did
+not follow. `document_blockers` already returns an ordered list, and the
+falsifiers here already assert full list equality against it, so a co-occurring
+set needs no machinery that is not already in use. Both are now falsified
+directly as `MISSING_NON_CORE_ROOT_DOCUMENT` and `UNKNOWN_FEATURE_ROOT_DOCUMENT`.
+
+The standing lesson: "this rule cannot be falsified by a single message" is a
+statement about the *assertion shape*, never a reason to leave the rule
+unbound.
 """
 
 from __future__ import annotations
@@ -251,6 +259,37 @@ service baselines are non-core.
 
 #: The reference document: both roots present, every class declared.
 REFERENCE_DOCUMENT = _document(_CORE_MEMBERS, _NON_CORE_MEMBERS)
+
+#: Falsifier: the non-core root deleted outright. Every non-core capability is
+#: then stranded under the surviving root, so the missing-root finding arrives
+#: with one field/root contradiction per stranded capability. That co-occurrence
+#: is why an earlier revision of this module excused the rule from coverage --
+#: wrongly, since `document_blockers` returns an ordered list and the whole set
+#: can simply be asserted.
+MISSING_NON_CORE_ROOT_DOCUMENT = REFERENCE_DOCUMENT.replace(
+    "### Non-Core Features", ""
+)
+assert MISSING_NON_CORE_ROOT_DOCUMENT != REFERENCE_DOCUMENT
+
+#: Falsifier: the non-core root renamed to a heading outside the closed pair.
+#: Yields unknown-root *and* missing-root, for the same reason.
+UNKNOWN_FEATURE_ROOT_DOCUMENT = REFERENCE_DOCUMENT.replace(
+    "### Non-Core Features", "### Optional Features"
+)
+assert UNKNOWN_FEATURE_ROOT_DOCUMENT != REFERENCE_DOCUMENT
+
+#: Falsifier: a `Feature Class` value outside the closed pair. Unlike every
+#: other document here this one does not report at all -- the parser refuses it
+#: -- so it is asserted against the failure, not against a blocker list.
+UNKNOWN_FEATURE_CLASS_VALUE = "optional"
+UNKNOWN_FEATURE_CLASS_DOCUMENT = REFERENCE_DOCUMENT.replace(
+    "Feature Class: non_core", f"Feature Class: {UNKNOWN_FEATURE_CLASS_VALUE}", 1
+)
+assert UNKNOWN_FEATURE_CLASS_DOCUMENT != REFERENCE_DOCUMENT
+UNKNOWN_FEATURE_CLASS_ERROR = (
+    f"unknown capability feature class `{UNKNOWN_FEATURE_CLASS_VALUE}`; "
+    "expected core or non_core"
+)
 
 
 def _flat_document(brief: str, members: tuple[tuple[tuple[Any, ...], str | None], ...]) -> str:
@@ -625,6 +664,101 @@ def assert_duplicate_root_is_rejected(report: dict[str, Any]) -> None:
     ], report["blockers"]
 
 
+def assert_missing_non_core_root_is_rejected(report: dict[str, Any]) -> None:
+    """Deleting a canonical root is rejected, and so is every capability it stranded.
+
+    Asserted as the whole ordered blocker list rather than as one message,
+    because deleting the root cannot produce one message: the four non-core
+    capabilities end up nested under `Core Features` while still declaring
+    `non_core`, so the missing-root finding necessarily arrives with one
+    field/root contradiction per stranded capability. Asserting the set is what
+    makes the co-occurrence a property under test instead of a reason to skip
+    the rule -- which is what an earlier revision of this module did.
+    """
+    assert len(report["capabilities"]) == len(CORE_IDS) + len(NON_CORE_IDS), report
+    assert document_blockers(report) == [
+        "capability document declares feature classes but is missing the "
+        "`### Non-Core Features` root; add it under `## Capabilities` so both "
+        "canonical roots exist",
+        *(
+            f"capability `{cap_id}` declares `Feature Class: non_core` but is "
+            "nested under `Core Features`; make the field and the root agree"
+            for cap_id in NON_CORE_IDS
+        ),
+    ], report["blockers"]
+
+
+def assert_unknown_feature_root_is_rejected(report: dict[str, Any]) -> None:
+    """A root outside the closed pair is named as unknown, not silently accepted.
+
+    Renaming the root also removes it, so this too is asserted as the whole
+    ordered list. The capabilities beneath it do *not* contradict their field
+    here -- an unknown root is not `Core Features` -- which is what makes this
+    list two long rather than five, and is the discriminating difference from
+    the missing-root falsifier above.
+    """
+    assert len(report["capabilities"]) == len(CORE_IDS) + len(NON_CORE_IDS), report
+    assert document_blockers(report) == [
+        "capability document declares feature classes but is missing the "
+        "`### Non-Core Features` root; add it under `## Capabilities` so both "
+        "canonical roots exist",
+        "unknown feature root `Optional Features`; the closed pair is "
+        "`Core Features` and `Non-Core Features` — move its capabilities under "
+        "one of those two",
+    ], report["blockers"]
+
+
+def assert_unknown_feature_class_value_is_refused(
+    returncode: int, stderr: str
+) -> None:
+    """A `Feature Class` value outside the closed pair fails the command outright.
+
+    This is the guard on the *other* direction of the same default the fixture
+    already binds. `effective_feature_class` resolves an undeclared class to
+    non-core, which is correct; a *mistyped* class must not take that same path,
+    or `Feature Class: cire` would land silently in non-core and read as a
+    deliberate classification. The parser refuses it instead, so this is the one
+    document here asserted against a failure rather than a blocker list.
+    """
+    assert returncode != 0, "a feature class outside the closed pair must not report"
+    assert UNKNOWN_FEATURE_CLASS_ERROR in stderr, stderr
+
+
+def assert_human_report_renders_the_split(stdout: str, report: dict[str, Any]) -> None:
+    """`--human` renders the same split the JSON envelope reports.
+
+    The human line exists only to show the two classes, and it is built from its
+    own format string rather than from the JSON serializer, so the core and
+    non-core operands can be transposed there while every JSON-reading leg in
+    this fixture stays green. Expected values are taken from the JSON report of
+    the same run, so this asserts the two surfaces agree rather than restating
+    a hardcoded count that could drift from both.
+    """
+    expected = (
+        "readiness by feature class: "
+        f"core={report['core_verified_count']}/{report['core_capability_count']} "
+        f"capabilities, {report['core_verified_claim_count']}/"
+        f"{report['core_claim_count']} claims; "
+        f"non_core={report['non_core_verified_count']}/"
+        f"{report['non_core_capability_count']} capabilities, "
+        f"{report['non_core_verified_claim_count']}/"
+        f"{report['non_core_claim_count']} claims"
+    )
+    lines = [line.strip() for line in stdout.splitlines()]
+    assert expected in lines, (
+        f"`aw capability report --human` did not render the split as the JSON "
+        f"envelope reports it.\nexpected: {expected}\ngot: "
+        + "\n".join(line for line in lines if "feature class" in line)
+    )
+    # The two classes must be distinguishable in that line, or a transposition
+    # of equal operands would pass. Asserted on the fixture's real shape: it has
+    # two core capabilities and four non-core ones.
+    assert report["core_capability_count"] != report["non_core_capability_count"], (
+        "the reference fixture must keep the two class counts different, or the "
+        "human line could not detect a transposition"
+    )
+
+
 def assert_capability_under_both_roots_is_rejected(report: dict[str, Any]) -> None:
     """One capability under both roots is a blocker, and the only one.
 
@@ -796,13 +930,25 @@ def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
     `_LEGACY_ROWS` happens to be core-first, which is the kind of accidental
     agreement `NON_CORE_FIRST_DOCUMENT` exists to eliminate, not to reintroduce.
     """
-    index_titles = _index_titles(migrated)
+    rows = _index_rows_parsed(migrated)
+    index_titles = [row[0] for row in rows]
     section_titles = _section_titles(migrated)
     assert len(index_titles) == LEGACY_ROW_COUNT, index_titles
     assert set(index_titles) == set(section_titles), (
         f"the migrated legacy index and its sections cover different "
         f"capabilities; index={sorted(index_titles)} sections={sorted(section_titles)}"
     )
+
+    # Only column 1 is asserted, and the reason is worth recording. Round 10
+    # proposed also pinning each row's `Root WI` back to the `Active WI` its
+    # legacy row carried. That expectation is not met at HEAD and must not be
+    # written as though it were: migration drops the legacy `Active WI`
+    # outright, so the migrated document contains no `#1`/`#2`/`#3` anywhere and
+    # every rendered cell is already `-`. Blanking that cell in the renderer is
+    # therefore an equivalent mutation -- it cannot change observable output, so
+    # no assertion here or anywhere else could catch it. The information loss
+    # itself is real and is filed separately; asserting `-` would freeze the
+    # current behavior as the contract, which is the opposite of the point.
 
 
 def assert_migration_preserves_declared_class(migrated: str) -> None:
@@ -879,8 +1025,8 @@ def assert_migration_derives_the_split(migrated: str) -> None:
         _assert_declared_class(migrated, cap_id, expected)
 
 
-def _index_titles(migrated: str) -> list[str]:
-    """The first cell of every Capability Index row, in document order.
+def _index_rows_parsed(migrated: str) -> list[list[str]]:
+    """Every Capability Index row as its list of cells, in document order.
 
     Bounded to the index table itself: rows are taken from `### Capability
     Index` up to the next `###` heading, which is the first feature root.
@@ -889,16 +1035,21 @@ def _index_titles(migrated: str) -> list[str]:
     rest = migrated[start + len("### Capability Index") :]
     end = rest.find("\n### ")
     table = rest if end == -1 else rest[:end]
-    titles = []
+    rows = []
     for raw in table.splitlines():
         line = raw.strip()
         if not line.startswith("|") or set(line) <= set("|-: "):
             continue
-        cell = line.split("|")[1].strip()
-        if cell == "Capability":
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells and cells[0] == "Capability":
             continue
-        titles.append(cell)
-    return titles
+        rows.append(cells)
+    return rows
+
+
+def _index_titles(migrated: str) -> list[str]:
+    """The first cell of every Capability Index row, in document order."""
+    return [row[0] for row in _index_rows_parsed(migrated)]
 
 
 def _section_titles(migrated: str) -> list[str]:
