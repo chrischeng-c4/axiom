@@ -85,6 +85,7 @@ def _capability(
     surface: str,
     work_roots: tuple[str, ...],
     heading: str = "####",
+    status: str = "verified",
 ) -> str:
     rows = "\n".join(
         f"| {root} | change | - | implemented | verified | smoke | `true` |"
@@ -103,7 +104,7 @@ Type: Service
 EC Dimensions:
 - behavior: `true` - {cap_id} behavior gate.
 Root WI: -
-Status: verified
+Status: {status}
 Required Verification: smoke
 Promise:
 {promise}
@@ -179,6 +180,7 @@ def _section(
     member: tuple[Any, ...],
     feature_class: str | None,
     heading: str = "####",
+    status: str = "verified",
 ) -> str:
     title, cap_id, promise, surface, work_roots = member
     return _capability(
@@ -189,6 +191,7 @@ def _section(
         surface=surface,
         work_roots=work_roots,
         heading=heading,
+        status=status,
     )
 
 
@@ -205,6 +208,7 @@ def _document(
     *,
     core_class: str = "core",
     non_core_class: str = "non_core",
+    retired_id: str | None = None,
 ) -> str:
     index = "\n".join(
         (
@@ -212,8 +216,16 @@ def _document(
             _index_rows(non_core, "archetype service baseline"),
         )
     )
-    core_body = "\n".join(_section(member, core_class) for member in core)
-    non_core_body = "\n".join(_section(member, non_core_class) for member in non_core)
+
+    def _status(member: tuple[Any, ...]) -> str:
+        return "retired" if member[1] == retired_id else "verified"
+
+    core_body = "\n".join(
+        _section(member, core_class, status=_status(member)) for member in core
+    )
+    non_core_body = "\n".join(
+        _section(member, non_core_class, status=_status(member)) for member in non_core
+    )
     return f"""# Lumen
 
 ## Brief
@@ -356,6 +368,36 @@ LEGACY_TABLE_BLOCKER = (
     "legacy capability table detected; migrate rows to canonical field-style "
     "capability contracts under ## Capabilities"
 )
+
+#: The legacy rows split by the same derivation the section branch uses:
+#: `migration_feature_class` on the slugified row title. Two authored promises,
+#: one trait-derived baseline -- so an inverted derivation cannot satisfy this
+#: by symmetry.
+LEGACY_CORE_ROW_IDS = ("search-core", "lexical-search")
+LEGACY_NON_CORE_ROW_IDS = ("security-hardening",)
+
+#: One retired member, which is what makes the word "retained" in the totals
+#: mean anything. `feature_class_totals` filters retired items out of the
+#: per-class counts with the same conjunct that defines `capability_count`, so
+#: unless some document carries a retired capability, every pair-sum assertion
+#: holds vacuously in exactly that dimension.
+RETIRED_ID = "security-hardening"
+#: That member's work-root count, stated rather than inferred, so the expected
+#: arithmetic below is readable without cross-referencing `_NON_CORE_MEMBERS`.
+RETIRED_CLAIM_COUNT = 1
+assert RETIRED_ID in NON_CORE_IDS
+assert (
+    len(next(m for m in _NON_CORE_MEMBERS if m[1] == RETIRED_ID)[4])
+    == RETIRED_CLAIM_COUNT
+)
+
+#: The reference document with exactly one baseline retired. Generated through
+#: the `status` parameter rather than text-patched, so it cannot silently stop
+#: matching if the section layout changes.
+RETIRED_MEMBER_DOCUMENT = _document(
+    _CORE_MEMBERS, _NON_CORE_MEMBERS, retired_id=RETIRED_ID
+)
+assert RETIRED_MEMBER_DOCUMENT.count("Status: retired") == 1
 
 #: `observability` is a real Lumen capability and *not* a trait-derived
 #: baseline, so migration's derivation would call it core. Declaring it
@@ -606,6 +648,114 @@ def assert_legacy_rows_are_attributed_to_non_core(report: dict[str, Any]) -> Non
     assert document_blockers(report) == [LEGACY_TABLE_BLOCKER], report["blockers"]
 
 
+def _assert_declared_class(migrated: str, cap_id: str, expected: str) -> None:
+    """The `Feature Class:` field of one capability equals exactly `expected`.
+
+    Exact equality rather than containment, so `non_core` cannot satisfy a
+    `core` expectation by substring.
+    """
+    at = migrated.find(f"ID: {cap_id}\n")
+    assert at != -1, f"`{cap_id}` missing from the migrated document"
+    block = migrated[at:]
+    line = next(
+        stripped
+        for stripped in (raw.strip() for raw in block.splitlines())
+        if stripped.startswith("Feature Class:")
+    )
+    assert line == f"Feature Class: {expected}", f"{cap_id}: {line}"
+
+
+def assert_retired_capability_is_excluded_from_both_classes(
+    report: dict[str, Any],
+) -> None:
+    """A retired capability leaves both per-class counts and both totals.
+
+    This is what earns the word "retained" in every other pair-sum assertion
+    here. `feature_class_totals` excludes retired items with the same conjunct
+    that defines `capability_count`, so with no retired member anywhere in the
+    fixture the two filters could disagree and every pair still sum.
+
+    Asserted to be about *attribution*, not parsing: the retired member is still
+    present in `capabilities` carrying its declared class, so this cannot pass
+    because the capability vanished from the document.
+    """
+    by_id = {item["id"]: item for item in report["capabilities"]}
+    assert set(by_id) == set(CORE_IDS) | set(NON_CORE_IDS), sorted(by_id)
+    retired = by_id[RETIRED_ID]
+    assert retired["status"] == "retired", retired
+    assert retired["feature_class"] == "non_core", retired
+
+    # Retired leaves the totals...
+    assert report["capability_count"] == len(CORE_IDS) + len(NON_CORE_IDS) - 1, report
+    assert (
+        report["claim_count"]
+        == CORE_CLAIM_COUNT + NON_CORE_CLAIM_COUNT - RETIRED_CLAIM_COUNT
+    ), report
+
+    # ...and leaves the class it declared, rather than only one of the two.
+    assert report["core_capability_count"] == len(CORE_IDS), report
+    assert report["core_claim_count"] == CORE_CLAIM_COUNT, report
+    assert report["non_core_capability_count"] == len(NON_CORE_IDS) - 1, report
+    assert (
+        report["non_core_claim_count"] == NON_CORE_CLAIM_COUNT - RETIRED_CLAIM_COUNT
+    ), report
+
+    # The pair-sums still hold, now against a total that actually excludes
+    # something -- which is the whole point of this leg.
+    assert (
+        report["core_capability_count"] + report["non_core_capability_count"]
+        == report["capability_count"]
+    ), report
+    assert (
+        report["core_claim_count"] + report["non_core_claim_count"]
+        == report["claim_count"]
+    ), report
+
+    # Retiring a capability is a legal shape, not a diagnosed one.
+    assert document_blockers(report) == [], report["blockers"]
+
+
+def assert_legacy_migration_derives_the_split(migrated: str) -> None:
+    """Migration derives both roots for legacy *rows*, not only for sections.
+
+    `render_capability_registry` groups legacy rows through a branch entirely
+    separate from the one that handles capability sections, so the derivation
+    rule the section legs bind could be inverted here and nothing else in this
+    fixture would notice.
+    """
+    core_at = migrated.index("### Core Features")
+    non_core_at = migrated.index("### Non-Core Features")
+    assert core_at < non_core_at, migrated
+
+    for cap_id in LEGACY_CORE_ROW_IDS:
+        at = migrated.index(f"ID: {cap_id}")
+        assert core_at < at < non_core_at, f"{cap_id} not under Core Features"
+        _assert_declared_class(migrated, cap_id, "core")
+
+    for cap_id in LEGACY_NON_CORE_ROW_IDS:
+        at = migrated.index(f"ID: {cap_id}")
+        assert at > non_core_at, f"{cap_id} not under Non-Core Features"
+        _assert_declared_class(migrated, cap_id, "non_core")
+
+
+def assert_migrated_legacy_document_is_accepted(report: dict[str, Any]) -> None:
+    """The migrated legacy document is one the checker accepts.
+
+    The negative half of the leg above: without it, migration could emit a
+    collapsed or self-contradicting document and the string assertions would
+    still find their substrings.
+    """
+    assert document_blockers(report) == [], report["blockers"]
+    ids = {item["id"] for item in report["capabilities"]}
+    assert ids == set(LEGACY_CORE_ROW_IDS) | set(LEGACY_NON_CORE_ROW_IDS), sorted(ids)
+    assert report["core_capability_count"] == len(LEGACY_CORE_ROW_IDS), report
+    assert report["non_core_capability_count"] == len(LEGACY_NON_CORE_ROW_IDS), report
+    assert (
+        report["core_capability_count"] + report["non_core_capability_count"]
+        == report["capability_count"]
+    ), report
+
+
 def assert_migration_preserves_declared_class(migrated: str) -> None:
     """An author's stated class survives migration; only silence is filled in.
 
@@ -677,10 +827,4 @@ def assert_migration_derives_the_split(migrated: str) -> None:
         (cap_id, "non_core") for cap_id in NON_CORE_IDS
     ]
     for cap_id, expected in expected_classes:
-        block = migrated[migrated.find(f"ID: {cap_id}\n") :]
-        line = next(
-            stripped
-            for stripped in (raw.strip() for raw in block.splitlines())
-            if stripped.startswith("Feature Class:")
-        )
-        assert line == f"Feature Class: {expected}", f"{cap_id}: {line}"
+        _assert_declared_class(migrated, cap_id, expected)
