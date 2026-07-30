@@ -11766,6 +11766,19 @@ fn collect_td_capability_refs_for_scope(
     capability_scope: Option<&BTreeSet<String>>,
 ) -> Result<Vec<TdCapabilityEvidence>> {
     let td_root = resolve_td_path(project_root, project)?;
+    let project_row =
+        crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    if project_row.effective_artifact_model()
+        == crate::models::project::ProjectArtifactModel::PythonV1
+    {
+        return collect_python_td_capability_refs_for_scope(
+            project_root,
+            &project_row,
+            &td_root,
+            document,
+            capability_scope,
+        );
+    }
     if !td_root.exists() {
         return Ok(Vec::new());
     }
@@ -11836,6 +11849,116 @@ fn collect_td_capability_refs_for_scope(
     if !findings.is_empty() {
         anyhow::bail!("{}", findings.join("\n"));
     }
+    Ok(refs)
+}
+
+/// Python TD uses executable artifact identities instead of Markdown
+/// frontmatter. A public TD edge becomes primary claim evidence only when the
+/// independent EC inventory maps the same artifact + behavior pair to a
+/// declared capability + claim pair.
+fn collect_python_td_capability_refs_for_scope(
+    project_root: &Path,
+    project_row: &crate::services::project_registry::ProjectConfigRow,
+    td_root: &Path,
+    document: &CapabilityDocument,
+    capability_scope: Option<&BTreeSet<String>>,
+) -> Result<Vec<TdCapabilityEvidence>> {
+    let manifest_path = td_root.join("pyproject.toml");
+    if !manifest_path.is_file() {
+        anyhow::bail!(
+            "canonical Python TD manifest is missing at {}",
+            manifest_path.display()
+        );
+    }
+    let ir = crate::services::python_td::compile_python_td_project(td_root)?;
+    let ec_root = project_root
+        .join(&project_row.path)
+        .join("external-contracts");
+    let inventory = crate::services::python_ec::discover_python_ec_inventory(&ec_root)?;
+    if !inventory.findings.is_empty() {
+        anyhow::bail!("{}", inventory.findings.join("\n"));
+    }
+
+    let public_td_edges = ir
+        .modules
+        .iter()
+        .filter(|module| module.public_contract)
+        .filter_map(|module| {
+            module
+                .artifact_id
+                .as_ref()
+                .map(|artifact_id| (artifact_id, module))
+        })
+        .flat_map(|(artifact_id, module)| {
+            module
+                .public_behaviors
+                .iter()
+                .map(move |behavior| ((artifact_id.as_str(), behavior.as_str()), module))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let capability_ids = document.capability_ids();
+    let mut refs = Vec::new();
+    let mut seen = BTreeSet::new();
+    for case in &inventory.cases {
+        if capability_scope.is_some_and(|scope| !scope.contains(&case.capability_id)) {
+            continue;
+        }
+        if !capability_ids.contains(&case.capability_id) {
+            continue;
+        }
+        if !document
+            .claim_ids_for(&case.capability_id)
+            .contains(&case.use_case_id)
+        {
+            continue;
+        }
+        let Some(module) =
+            public_td_edges.get(&(case.artifact_id.as_str(), case.use_case_id.as_str()))
+        else {
+            continue;
+        };
+        let absolute_path = td_root.join(&module.path);
+        let spec_path = absolute_path
+            .strip_prefix(project_root)
+            .unwrap_or(&absolute_path)
+            .display()
+            .to_string();
+        let key = (
+            spec_path.clone(),
+            case.capability_id.clone(),
+            case.use_case_id.clone(),
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        refs.push(TdCapabilityEvidence {
+            spec_path,
+            spec_id: module.artifact_id.clone(),
+            review_status: None,
+            capability_id: case.capability_id.clone(),
+            role: CapabilityRefRole::Primary,
+            gap: None,
+            claim: Some(case.use_case_id.clone()),
+            coverage: CapabilityCoverage::Full,
+            rationale: Some(format!(
+                "Python TD public behavior `{}` is independently mapped by EC case `{}`",
+                case.use_case_id, case.id
+            )),
+        });
+    }
+    refs.sort_by(|left, right| {
+        (
+            left.capability_id.as_str(),
+            left.claim.as_deref(),
+            left.spec_path.as_str(),
+        )
+            .cmp(&(
+                right.capability_id.as_str(),
+                right.claim.as_deref(),
+                right.spec_path.as_str(),
+            ))
+    });
     Ok(refs)
 }
 
@@ -18409,6 +18532,147 @@ changes: []
         let (_, refs, findings) = validate_td_capability_refs_for_content(td, &doc).unwrap();
         assert_eq!(refs.len(), 1);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn python_td_artifact_edge_derives_primary_claim_linkage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        let td_root = project_dir.join("tech-design");
+        let ec_root = project_dir.join("external-contracts");
+        std::fs::create_dir_all(td_root.join("src/demo/public_contracts")).unwrap();
+        std::fs::create_dir_all(ec_root.join("src/cases")).unwrap();
+        std::fs::create_dir_all(ec_root.join("evidence")).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "demo"
+cap_path = "README.md"
+
+[[workspaces]]
+name = "demo"
+paths = ["**"]
+target = "python"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            td_root.join("src/demo/public_contracts/package_manager.py"),
+            r#"__aw_artifact_id__ = "artifact:demo/package-manager"
+__aw_public_contract__ = True
+
+def lockfile_determinism() -> str:
+    return "installs are reproducible from the lockfile"
+
+def legacy_alias() -> str:
+    return "an EC behavior that is not a capability claim"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            td_root.join("pyproject.toml"),
+            r#"[project]
+name = "demo-tech-design"
+version = "0.1.0"
+requires-python = ">=3.11"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            td_root.join("uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
+        std::fs::write(ec_root.join("src/runner.py"), "print('fixture runner')\n").unwrap();
+        std::fs::write(
+            ec_root.join("src/cases/lockfile.py"),
+            "def verify() -> list[str]:\n    return ['lockfile is deterministic']\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ec_root.join("pyproject.toml"),
+            r#"[project]
+name = "demo-external-contracts"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml", "uv.lock"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "fixture:external"
+efficiency_policy = "not-applicable"
+
+[[tool.aw.python-ec.cases]]
+id = "lockfile-determinism"
+artifact_id = "artifact:demo/package-manager"
+capability_id = "package-manager"
+use_case_id = "lockfile-determinism"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/lockfile.py"
+promise = "lockfile installs remain deterministic"
+oracle = "the external fixture observes the generated install result"
+target = "python"
+command = "uv run --frozen --offline --project projects/demo/external-contracts python -m demo.verify"
+evidence_paths = ["evidence/lockfile.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "legacy-alias"
+artifact_id = "artifact:demo/package-manager"
+capability_id = "package-manager"
+use_case_id = "legacy-alias"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/lockfile.py"
+promise = "a non-claim EC case remains external behavior only"
+oracle = "the external fixture observes the legacy compatibility result"
+target = "python"
+command = "uv run --frozen --offline --project projects/demo/external-contracts python -m demo.verify"
+evidence_paths = ["evidence/legacy-alias.json"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            ec_root.join("uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
+
+        let document = cap_doc(one_capability());
+        let refs = collect_td_capability_refs(tmp.path(), "demo", &document).unwrap();
+
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].capability_id, "package-manager");
+        assert_eq!(refs[0].claim.as_deref(), Some("lockfile-determinism"));
+        assert_eq!(refs[0].role, CapabilityRefRole::Primary);
+        assert_eq!(refs[0].coverage, CapabilityCoverage::Full);
+        assert_eq!(
+            refs[0].spec_id.as_deref(),
+            Some("artifact:demo/package-manager")
+        );
+        assert!(refs[0]
+            .spec_path
+            .ends_with("tech-design/src/demo/public_contracts/package_manager.py"));
+
+        std::fs::remove_file(td_root.join("pyproject.toml")).unwrap();
+        let error = collect_td_capability_refs(tmp.path(), "demo", &document).unwrap_err();
+        assert!(
+            error.to_string().contains("pyproject.toml"),
+            "missing Python TD manifest must fail closed instead of scanning Markdown: {error:#}"
+        );
+
+        std::fs::remove_dir_all(&td_root).unwrap();
+        let error = collect_td_capability_refs(tmp.path(), "demo", &document).unwrap_err();
+        assert!(
+            error.to_string().contains("pyproject.toml"),
+            "missing Python TD root must fail closed before legacy Markdown fallback: {error:#}"
+        );
     }
 
     #[test]

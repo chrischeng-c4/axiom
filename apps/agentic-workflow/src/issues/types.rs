@@ -554,6 +554,7 @@ pub mod td_phase {
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#schema
 pub mod lifecycle_trailer {
     pub const TD_INIT: &str = "Td-Init";
+    pub const TD_PYTHON_SOURCE: &str = "Td-Python-Source";
     pub const TD_CREATE: &str = "Td-Create";
     pub const TD_VALIDATE: &str = "Td-Validate";
     pub const TD_REVIEW: &str = "Td-Review";

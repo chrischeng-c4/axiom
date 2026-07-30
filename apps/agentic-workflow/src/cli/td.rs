@@ -2626,6 +2626,38 @@ fn python_td_root_for_issue(
     Ok((project, std::path::PathBuf::from(resolved.root)))
 }
 
+fn ensure_python_td_environment(
+    project_root: &std::path::Path,
+    td_root: &std::path::Path,
+    project: &str,
+) -> Result<Vec<String>> {
+    std::fs::create_dir_all(td_root)
+        .with_context(|| format!("create Python TD root {}", td_root.display()))?;
+    let pyproject = td_root.join("pyproject.toml");
+    if !pyproject.is_file() {
+        let package = slugify_spec_filename(project);
+        std::fs::write(
+            &pyproject,
+            format!(
+                "[project]\nname = \"{}-tech-design\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                if package.is_empty() { "project" } else { &package }
+            ),
+        )
+        .with_context(|| format!("write Python TD manifest {}", pyproject.display()))?;
+    }
+    crate::services::python_artifact::refresh_uv_lock(td_root, std::path::Path::new("uv"))?;
+    Ok([pyproject, td_root.join("uv.lock")]
+        .into_iter()
+        .map(|path| {
+            slash_path(
+                path.strip_prefix(project_root)
+                    .unwrap_or(&path)
+                    .to_path_buf(),
+            )
+        })
+        .collect())
+}
+
 fn default_python_td_path_for_issue_in_project(
     project_root: &std::path::Path,
     issue: &Issue,
@@ -2863,7 +2895,22 @@ pub(crate) fn resolve_issue_td_spec_paths(
     fallback_slug: &str,
 ) -> Result<Vec<String>> {
     let mut paths = Vec::new();
-    for raw in issue.implements.iter().filter(|path| path.ends_with(".md")) {
+    let configured_td_root = project_label_for_issue(issue)
+        .and_then(|project| {
+            crate::services::project_registry::resolve_td_root_from_config(project_root, &project)
+                .ok()
+        })
+        .map(|resolved| std::path::PathBuf::from(resolved.root))
+        .and_then(|root| {
+            root.strip_prefix(project_root)
+                .ok()
+                .map(std::path::Path::to_path_buf)
+        });
+    for raw in issue
+        .implements
+        .iter()
+        .filter(|path| path.ends_with(".md") || path.ends_with(".py"))
+    {
         let normalized = normalize_checkout_rel_path(raw);
         let rel = std::path::Path::new(&normalized);
         if normalized.is_empty()
@@ -2876,16 +2923,62 @@ pub(crate) fn resolve_issue_td_spec_paths(
                 "issue '{fallback_slug}' has a non-normalized TD reference in implements: `{raw}`"
             );
         }
+        let belongs_to_td_root = configured_td_root
+            .as_deref()
+            .is_some_and(|root| rel.starts_with(root))
+            || configured_td_root.is_none()
+                && (normalized.starts_with("tech-design/") || normalized.contains("/tech-design/"));
+        if !belongs_to_td_root {
+            continue;
+        }
         if !paths.contains(&normalized) {
             paths.push(normalized);
         }
     }
     if paths.is_empty() {
-        paths.push(default_spec_path_for_issue_in_project(
-            project_root,
-            issue,
-            fallback_slug,
-        )?);
+        let python_project = project_label_for_issue(issue)
+            .and_then(|project| {
+                crate::services::project_registry::resolve_project_config_row(
+                    project_root,
+                    &project,
+                )
+                .ok()
+            })
+            .is_some_and(|row| {
+                row.effective_artifact_model()
+                    == crate::models::project::ProjectArtifactModel::PythonV1
+            });
+        if python_project {
+            let td_root_rel = configured_td_root.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "issue '{fallback_slug}' belongs to a Python-v1 project without a configured TD root"
+                )
+            })?;
+            let ir = crate::services::python_td::compile_python_td_project(
+                &project_root.join(td_root_rel),
+            )?;
+            paths.extend(
+                ir.modules
+                    .iter()
+                    .filter(|module| {
+                        let path = std::path::Path::new(&module.path);
+                        path.starts_with("src") && path.extension().is_some_and(|ext| ext == "py")
+                    })
+                    .map(|module| slash_path(td_root_rel.join(&module.path))),
+            );
+            if paths.is_empty() {
+                anyhow::bail!(
+                    "issue '{fallback_slug}' has no exact implements reference and configured Python TD root `{}` has no source modules",
+                    td_root_rel.display()
+                );
+            }
+        } else {
+            paths.push(default_spec_path_for_issue_in_project(
+                project_root,
+                issue,
+                fallback_slug,
+            )?);
+        }
     }
     Ok(paths)
 }
@@ -3643,14 +3736,12 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
                 project,
             )?;
             crate::cli::td_lock::write_project_td_lock_snapshot_at_root(&project_root, &row.name)?;
-            crate::cli::ec::persist_ec_first_next_action(
-                &project_root,
-                wi,
-                format!(
-                    "aw ec verify --project {} --required-only --stage td --wi {wi}",
-                    row.name,
-                ),
-            )?;
+            let next = format!(
+                "aw ec verify --project {} --required-only --stage td --wi {wi}",
+                row.name,
+            );
+            ensure_python_td_source_baseline(&project_root, wi, &candidate, &next)?;
+            crate::cli::ec::persist_ec_first_next_action(&project_root, wi, next)?;
         }
         return Ok(());
     }
@@ -3738,6 +3829,70 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
 
     // Slug mode: resolve to the current checkout spec dir.
     run_slug_check(target, None, args.json)
+}
+
+fn ensure_python_td_source_baseline(
+    project_root: &std::path::Path,
+    wi: &str,
+    td_root: &std::path::Path,
+    next_command: &str,
+) -> Result<()> {
+    use crate::issues::types::lifecycle_trailer;
+
+    if lifecycle_stage_for_slug_exists(project_root, wi, lifecycle_trailer::TD_PYTHON_SOURCE)? {
+        return Ok(());
+    }
+    crate::git::ensure_no_staged_changes(project_root)?;
+    let td_root_arg = td_root.to_string_lossy().into_owned();
+    commit_lifecycle_with_extra(
+        project_root,
+        wi,
+        "Python TD source checked",
+        lifecycle_trailer::TD_PYTHON_SOURCE,
+        &[td_root_arg.as_str()],
+        &[
+            ("Lifecycle-Phase", "td_compiled"),
+            ("TD-Root", td_root_arg.as_str()),
+            ("Next-Command", next_command),
+        ],
+    )
+}
+
+pub(crate) fn lifecycle_stage_for_slug_exists(
+    project_root: &std::path::Path,
+    slug: &str,
+    stage: &str,
+) -> Result<bool> {
+    use crate::issues::types::lifecycle_trailer;
+
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let slug_line = format!("Lifecycle-Slug: {slug}");
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args([
+            "log",
+            "--format=%B%x1e",
+            "--fixed-strings",
+            "--grep",
+            slug_line.as_str(),
+            "HEAD",
+        ])
+        .output()
+        .context("git log failed while locating Python TD source baseline")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git log failed while locating Python TD source baseline: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\x1e')
+        .any(|body| {
+            lifecycle_trailer::body_has_slug_trailer(body, slug)
+                && lifecycle_trailer::body_has_stage_trailer(body, stage)
+        }))
 }
 
 fn canonical_python_td_root(
@@ -3959,6 +4114,7 @@ async fn run_create_python_brief(
         Some(path) => path.to_string(),
         None => default_python_td_path_for_issue_in_project(&project_root, &issue, &slug)?,
     };
+    let environment_paths = ensure_python_td_environment(&project_root, &td_root, &project)?;
     let spec_abs = resolve_python_td_module_path(&project_root, &td_root, &spec_path)?;
     let initialized = initialize_python_td_module(&spec_abs, &issue, &slug)?;
     if !issue.implements.iter().any(|path| path == &spec_path) {
@@ -3989,12 +4145,14 @@ async fn run_create_python_brief(
         .await?;
         let current_issue = backend.get(&slug).await?.unwrap_or_else(|| issue.clone());
         let issue_path = issue_path_arg(&backend, &current_issue);
+        let mut commit_paths = vec![spec_path.as_str(), issue_path.as_str()];
+        commit_paths.extend(environment_paths.iter().map(String::as_str));
         commit_lifecycle_with_extra(
             &project_root,
             &slug,
             "Python TD source initialized",
-            "Td-Python-Source",
-            &[spec_path.as_str(), issue_path.as_str()],
+            crate::issues::types::lifecycle_trailer::TD_PYTHON_SOURCE,
+            &commit_paths,
             &[
                 ("Lifecycle-Phase", "td_inited"),
                 ("TD-Source", spec_path.as_str()),
@@ -6307,6 +6465,53 @@ mod tests {
     }
 
     #[test]
+    fn python_td_check_baseline_is_exact_idempotent_and_path_scoped() {
+        if !git_available() {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        init_git_repo(root.path());
+        let td_root = root.path().join("apps/demo/tech-design");
+        std::fs::create_dir_all(td_root.join("src")).unwrap();
+        std::fs::write(td_root.join("src/demo.py"), "value = 1\n").unwrap();
+        std::fs::write(root.path().join("unrelated.txt"), "seed\n").unwrap();
+        git_stdout(root.path(), &["add", "."]);
+        git_stdout(root.path(), &["commit", "-q", "-m", "seed"]);
+
+        std::fs::write(td_root.join("src/demo.py"), "value = 2\n").unwrap();
+        std::fs::write(root.path().join("unrelated.txt"), "user change\n").unwrap();
+        ensure_python_td_source_baseline(
+            root.path(),
+            "42",
+            &td_root,
+            "aw ec verify --project demo --required-only --stage td --wi 42",
+        )
+        .unwrap();
+        assert!(lifecycle_stage_for_slug_exists(
+            root.path(),
+            "42",
+            crate::issues::types::lifecycle_trailer::TD_PYTHON_SOURCE,
+        )
+        .unwrap());
+        assert_eq!(
+            git_stdout(root.path(), &["status", "--short"]),
+            "M unrelated.txt"
+        );
+        let count_before = git_stdout(root.path(), &["rev-list", "--count", "HEAD"]);
+        ensure_python_td_source_baseline(
+            root.path(),
+            "42",
+            &td_root,
+            "aw ec verify --project demo --required-only --stage td --wi 42",
+        )
+        .unwrap();
+        assert_eq!(
+            git_stdout(root.path(), &["rev-list", "--count", "HEAD"]),
+            count_before
+        );
+    }
+
+    #[test]
     fn python_td_canonical_routing_check_and_ast_require_configured_project_root() {
         let root = tempfile::tempdir().unwrap();
         let td_root = root.path().join("projects/demo/tech-design");
@@ -6586,7 +6791,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn td_gen_prefers_issue_scope_over_foreign_legacy_discovery() {
+    async fn td_gen_prefers_issue_owned_python_scope_over_foreign_legacy_discovery() {
         if !git_available() {
             return;
         }
@@ -6606,10 +6811,25 @@ mod tests {
         let mut issue = issue_with_title("lumen: active generation scope");
         issue.slug = "lumen-gen-scope".to_string();
         issue.labels = vec!["app:lumen".to_string()];
-        let expected = default_spec_path_for_issue_in_project(root, &issue, &issue.slug).unwrap();
+        let expected = "apps/lumen/tech-design/src/lumen/work_items/lumen_gen_scope.py".to_string();
+        issue.implements = vec![expected.clone()];
         let expected_abs = root.join(&expected);
         std::fs::create_dir_all(expected_abs.parent().unwrap()).unwrap();
-        std::fs::write(&expected_abs, "# active configured TD\n").unwrap();
+        std::fs::write(
+            &expected_abs,
+            "__aw_artifact_id__ = \"artifact:lumen/lumen-gen-scope\"\n\ndef active_generation_scope() -> str:\n    return \"lumen\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("apps/lumen/tech-design/pyproject.toml"),
+            "[project]\nname = \"lumen-tech-design\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("apps/lumen/tech-design/uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
         let foreign = root.join(".aw/tech-design/projects/mamba/logic/foreign.md");
         std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
         std::fs::write(&foreign, "# foreign legacy TD\n").unwrap();
@@ -6635,7 +6855,8 @@ mod tests {
         assert_eq!(prepared.spec_path, expected);
 
         let mut exact = issue.clone();
-        exact.implements = vec!["apps/lumen/tech-design/logic/custom.md".to_string()];
+        exact.implements =
+            vec!["apps/lumen/tech-design/src/lumen/work_items/custom.py".to_string()];
         assert_eq!(
             resolve_issue_td_generation_spec_path(root, &exact, &exact.slug).unwrap(),
             exact.implements[0]
@@ -6665,6 +6886,75 @@ label = "app:agentic-workflow"
         assert_eq!(
             default_spec_path_for_issue_in_project(tmp.path(), &issue, "4162").unwrap(),
             "apps/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md"
+        );
+    }
+
+    #[test]
+    fn issue_td_scope_accepts_exact_reference_under_nonstandard_configured_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "todo-app"
+path = "examples/todo-app"
+td_path = "examples/todo-app/td"
+label = "app:todo-app"
+artifact_model = "python-v1"
+"#,
+        )
+        .unwrap();
+        let mut issue = issue_with_title("Keep exact configured TD reference");
+        issue.slug = "2874".to_string();
+        issue.labels = vec!["app:todo-app".to_string()];
+        issue.implements = vec![
+            "examples/todo-app/td/src/todo/work_items/exact.py".to_string(),
+            "examples/todo-app/src/not_a_td.py".to_string(),
+        ];
+
+        assert_eq!(
+            resolve_issue_td_spec_paths(tmp.path(), &issue, "2874").unwrap(),
+            vec!["examples/todo-app/td/src/todo/work_items/exact.py"]
+        );
+    }
+
+    #[test]
+    fn python_issue_without_exact_reference_uses_existing_flat_td_modules() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "guard"
+path = "apps/guard"
+td_path = "apps/guard/tech-design"
+label = "app:guard"
+artifact_model = "python-v1"
+"#,
+        )
+        .unwrap();
+        let source = tmp.path().join("apps/guard/tech-design/src");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("policy.py"),
+            "__aw_artifact_id__ = \"artifact:guard/policy\"\n\ndef policy() -> None:\n    pass\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("scan.py"),
+            "__aw_artifact_id__ = \"artifact:guard/scan\"\n\ndef scan() -> None:\n    pass\n",
+        )
+        .unwrap();
+        let mut issue = issue_with_title("Align existing flat Guard TD modules");
+        issue.slug = "2866".to_string();
+        issue.labels = vec!["app:guard".to_string()];
+
+        assert_eq!(
+            resolve_issue_td_spec_paths(tmp.path(), &issue, "2866").unwrap(),
+            vec![
+                "apps/guard/tech-design/src/policy.py",
+                "apps/guard/tech-design/src/scan.py",
+            ]
         );
     }
 
@@ -9178,7 +9468,7 @@ fn branch_has_trailer(repo: &std::path::Path, branch: &str, stage: &str) -> Opti
 
 /// Like `commit_lifecycle` but appends extra trailers (e.g. `Claim-Source:`,
 /// `Claim-Type:`) below `Lifecycle-Stage:`.
-fn commit_lifecycle_with_extra(
+pub(crate) fn commit_lifecycle_with_extra(
     worktree_path: &std::path::Path,
     slug: &str,
     detail: &str,

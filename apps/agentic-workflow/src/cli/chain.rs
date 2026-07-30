@@ -309,8 +309,8 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "ec.rs:EC-first WI transition",
-        sample: "aw ec gen --project agentic-workflow --verify --wi 1500",
-        note: "only a successful EC generation may unlock the owning WI's TD create act",
+        sample: "aw ec lock --project agentic-workflow --wi 1500",
+        note: "an accepted Python EC review locks the executable inventory before TD authoring",
     },
     EmitSite {
         source: "run.rs:ec_verify_command (EC verdict transition)",
@@ -902,6 +902,49 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: true,
         sunset_criterion: "",
     },
+    // -- coordination (AW-owned durable reconciliation) ----------------
+    VerbLifecycle {
+        path: "coordination.open",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "coordination.satisfy-gate",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "coordination.interrupt",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "coordination.submit",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "coordination.decide",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "coordination.show",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "coordination.schema",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
     // -- td (core LINEAR lifecycle + read-only/debug support verbs) -----
     VerbLifecycle {
         path: "td.create",
@@ -991,18 +1034,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "ec.draft",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "ec.fill",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "ec.gen",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
@@ -1717,7 +1748,6 @@ mod tests {
             "cb.promote",
             "td.audit-record",
             "cb.check",
-            "ec.gen",
             "ec.lock",
             "capability.apply-draft",
             "capability.init",

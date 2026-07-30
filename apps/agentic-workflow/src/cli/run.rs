@@ -546,17 +546,49 @@ pub(crate) fn python_target_gen_command(
             row.name
         ));
     }
-    let output_dir = project_root
-        .join(&row.path)
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.join(&row.path));
-    let source_root = output_dir.join("tech-design");
+    let output_dir =
+        crate::services::python_artifact_code_check::project_native_generation_workspace_root(
+            project_root,
+            &row.name,
+            target,
+            Some(wi),
+        )?;
+    let source_root =
+        crate::services::project_registry::resolve_td_root_from_config(project_root, &row.name)
+            .map(|resolved| PathBuf::from(resolved.root))
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "cannot resolve configured TD root for project `{}` ({}: {})",
+                    row.name,
+                    error.kind,
+                    error.message
+                )
+            })?;
     Ok(format!(
         "aw cb gen --target {target} --source-root {} --output-dir {} --project {} --wi {wi}",
         shell_quote_goal_arg(&source_root.display().to_string()),
         shell_quote_goal_arg(&output_dir.display().to_string()),
         row.name,
     ))
+}
+
+pub(crate) fn python_cb_materialize_command(
+    project_root: &Path,
+    project: &str,
+    wi: &str,
+) -> Result<String> {
+    let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    let target = python_artifact_codegen_target(project_root, &row.name)?;
+    if !is_self_hosting_project(&row.name)
+        && crate::services::python_artifact_code_check::project_has_bounded_native_handwrite(
+            project_root,
+            &row.name,
+            target,
+        )?
+    {
+        return Ok(format!("aw cb fill {wi}"));
+    }
+    python_target_gen_command(project_root, &row.name, target, wi)
 }
 
 pub(crate) fn python_artifact_codegen_target(
@@ -595,9 +627,23 @@ pub(crate) fn python_artifact_codegen_target(
     }
 }
 
-fn python_td_check_command(project_root: &Path, project: &str, wi: &str) -> Result<String> {
+pub(crate) fn python_td_check_command(
+    project_root: &Path,
+    project: &str,
+    wi: &str,
+) -> Result<String> {
     let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
-    let source_root = project_root.join(&row.path).join("tech-design");
+    let source_root =
+        crate::services::project_registry::resolve_td_root_from_config(project_root, &row.name)
+            .map(|resolved| PathBuf::from(resolved.root))
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "cannot resolve configured TD root for project `{}` ({}: {})",
+                    row.name,
+                    error.kind,
+                    error.message
+                )
+            })?;
     Ok(format!(
         "aw td check {} --project {} --wi {wi}",
         shell_quote_goal_arg(&source_root.display().to_string()),
@@ -630,7 +676,7 @@ pub(crate) fn python_artifact_lifecycle_step(
         Some("ec_reviewed" | "td_authoring") => PythonArtifactPhase::TdAuthoring,
         Some("td_compiled") => PythonArtifactPhase::EcTdVerify,
         Some("ec_td_green") => PythonArtifactPhase::CbGenerate,
-        Some("cb_generated") => PythonArtifactPhase::CbFill,
+        Some("cb_generated" | "cb_genned") => PythonArtifactPhase::CbFill,
         Some("cb_filled" | "unit_green") => PythonArtifactPhase::CbCheck,
         Some("cb_checked") => PythonArtifactPhase::EcCbVerify,
         Some("ec_cb_green" | "code_checked") => PythonArtifactPhase::Close,
@@ -650,10 +696,6 @@ pub(crate) fn python_artifact_lifecycle_step(
         Some(_) => PythonArtifactPhase::EcAuthoring,
     };
 
-    let target_gen = || {
-        let target = python_artifact_codegen_target(project_root, &row.name)?;
-        python_target_gen_command(project_root, &row.name, target, wi)
-    };
     let step = match phase {
         PythonArtifactPhase::EcAuthoring => PythonArtifactLifecycleStep {
             phase,
@@ -684,8 +726,8 @@ pub(crate) fn python_artifact_lifecycle_step(
         },
         PythonArtifactPhase::CbGenerate => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen()?,
-            reason: "TD behavior and security are green; materialize the native DDD codebase and its unit-test inventory".to_string(),
+            command: python_cb_materialize_command(project_root, &row.name, wi)?,
+            reason: "TD behavior and security are green; materialize a generated native target or preserve an explicitly bounded whole-project HANDWRITE target before native verification".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::CbFill => PythonArtifactLifecycleStep {
@@ -717,19 +759,19 @@ pub(crate) fn python_artifact_lifecycle_step(
         },
         PythonArtifactPhase::BehaviorOrSecurityRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen()?,
+            command: python_cb_materialize_command(project_root, &row.name, wi)?,
             reason: "behavior/security EC is red; adapt TD or generated source, then regenerate the configured native target".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::StabilityRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen()?,
+            command: python_cb_materialize_command(project_root, &row.name, wi)?,
             reason: "stability EC is red; adapt runtime/deployment/source behavior, then regenerate the configured native target".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::EfficiencyRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen()?,
+            command: python_cb_materialize_command(project_root, &row.name, wi)?,
             reason: "efficiency EC is red; route remediation to the configured native production target".to_string(),
             requires_hitl: false,
         },
@@ -4237,7 +4279,15 @@ mod tests {
 
     fn python_project_root_with_target(target: &str) -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("projects/demo/tech-design")).unwrap();
+        let td = root
+            .path()
+            .join("projects/demo/tech-design/src/demo/policy.py");
+        std::fs::create_dir_all(td.parent().unwrap()).unwrap();
+        std::fs::write(
+            td,
+            "__aw_artifact_id__ = \"artifact:policy/evaluate\"\n\nclass Policy:\n    pass\n",
+        )
+        .unwrap();
         std::fs::write(
             root.path().join("aw.toml"),
             format!(
@@ -4254,6 +4304,7 @@ target = "{target}"
             ),
         )
         .unwrap();
+        init_git_repo(root.path());
         root
     }
 
@@ -4315,6 +4366,77 @@ target = "rust"
     }
 
     #[test]
+    fn python_artifact_routes_a_bounded_native_handwrite_target_before_generation() {
+        let root = python_project_root();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "demo"
+path = "projects/demo"
+artifact_model = "python-v1"
+
+[[projects.workspaces]]
+paths = ["projects/demo/backend-rust/**"]
+target = "rust"
+"#,
+        )
+        .unwrap();
+        let td = root
+            .path()
+            .join("projects/demo/tech-design/src/demo/policy.py");
+        std::fs::create_dir_all(td.parent().unwrap()).unwrap();
+        std::fs::write(
+            &td,
+            "__aw_artifact_id__ = \"artifact:policy/evaluate\"\n\nclass Policy:\n    pass\n",
+        )
+        .unwrap();
+        let native = root.path().join("projects/demo/backend-rust/src/policy.rs");
+        std::fs::create_dir_all(native.parent().unwrap()).unwrap();
+        std::fs::write(
+            root.path().join("projects/demo/backend-rust/Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            crate::services::python_artifact_code_check::project_primary_native_workspace_root(
+                root.path(),
+                "demo",
+                "rust",
+            )
+            .unwrap(),
+            root.path().join("projects/demo/backend-rust")
+        );
+        std::fs::write(
+            native,
+            "// SPEC-MANAGED: projects/demo/tech-design/src/demo/policy.py\n\
+             // HANDWRITE-BEGIN gap=\"native-rust\" tracker=\"#2874\" reason=\"existing Rust implementation\"\n\
+             pub struct Policy;\n\
+             // HANDWRITE-END\n",
+        )
+        .unwrap();
+        assert_eq!(
+            crate::services::python_artifact_code_check::project_bounded_native_handwrite_paths(
+                root.path(),
+                "demo",
+                "rust",
+            )
+            .unwrap(),
+            Some(vec!["projects/demo/backend-rust/src/policy.rs".to_string()])
+        );
+
+        let step = python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_td_green"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(step.phase, PythonArtifactPhase::CbGenerate);
+        assert_eq!(step.command, "aw cb fill 42");
+        assert_eq!(
+            python_cb_materialize_command(root.path(), "demo", "42").unwrap(),
+            "aw cb fill 42"
+        );
+    }
+
+    #[test]
     fn python_td_canonical_routing_goal_uses_one_ec_first_phase_table() {
         let root = python_project_root();
         let cases = [
@@ -4331,6 +4453,7 @@ target = "rust"
             ),
             (Some("ec_td_green"), "aw cb gen --target rust --source-root"),
             (Some("cb_generated"), "aw cb fill 42"),
+            (Some("cb_genned"), "aw cb fill 42"),
             (Some("cb_filled"), "aw cb check 42"),
             (
                 Some("cb_checked"),

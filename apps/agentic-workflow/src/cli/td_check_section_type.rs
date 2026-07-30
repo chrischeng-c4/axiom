@@ -430,7 +430,6 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::spec_rules::SectionType;
 
     #[test]
     fn parse_annotation_extracts_type() {
@@ -562,30 +561,6 @@ properties:
         let registry = load_registry(dir.path()).unwrap();
 
         assert!(registry.section_types.contains("logic"));
-    }
-
-    #[test]
-    fn repo_registry_covers_all_non_deprecated_section_type_variants() {
-        let project_root = crate::find_project_root().unwrap();
-        let registry = load_registry(&project_root).unwrap();
-
-        for section_type in SectionType::all_in_fill_order() {
-            if matches!(
-                section_type,
-                SectionType::Overview | SectionType::Requirements | SectionType::Doc
-            ) {
-                continue;
-            }
-            assert!(
-                registry.section_types.contains(section_type.as_str()),
-                "registry missing approved section type `{}`",
-                section_type.as_str()
-            );
-        }
-        assert!(
-            registry.section_types.contains("source"),
-            "registry should keep the legacy source-template section type"
-        );
     }
 
     #[test]

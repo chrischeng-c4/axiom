@@ -541,7 +541,12 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
         args.project
             .as_deref()
             .context("--target --wi requires --project <project>")?;
-        Some(crate::find_project_root()?)
+        let root = crate::find_project_root()?;
+        // Refuse before the emitter mutates the native target. The lifecycle
+        // commit below is deliberately path-scoped and must never absorb a
+        // caller's pre-existing index.
+        crate::git::ensure_no_staged_changes(&root)?;
+        Some(root)
     } else {
         None
     };
@@ -564,10 +569,57 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
         _ => unreachable!("validated target"),
     };
     if let Some(wi) = args.wi.as_deref() {
-        crate::cli::ec::persist_ec_first_next_action(
-            lifecycle_project_root
-                .as_deref()
-                .expect("WI lifecycle project root resolved before materialization"),
+        let project_root = lifecycle_project_root
+            .as_deref()
+            .expect("WI lifecycle project root resolved before materialization");
+        let generated_paths = manifest
+            .get("files")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|file| file.get("path").and_then(serde_json::Value::as_str))
+            .map(|relative| output_root.join(relative))
+            .collect::<Vec<_>>();
+        let workspace = output_root
+            .strip_prefix(project_root)
+            .with_context(|| {
+                format!(
+                    "native generation output root `{}` must be inside `{}`",
+                    output_root.display(),
+                    project_root.display()
+                )
+            })?
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        let message = format!(
+            "cb({wi}) - {target} native target generated\n\n\
+             Lifecycle-Slug: {wi}\n\
+             Work-Item: {wi}\n\
+             Lifecycle-Stage: {}\n\
+             Native-Target: {target}\n\
+             Native-Workspace: {workspace}",
+            crate::issues::types::lifecycle_trailer::CB_GEN,
+        );
+        if !crate::git::commit_scoped_paths(project_root, &generated_paths, &message)? {
+            // A byte-identical generated target still needs WI-scoped
+            // ownership history. The index is rechecked immediately before
+            // the empty lifecycle commit, so there is no unrelated content
+            // for the otherwise-unscoped git commit to absorb.
+            crate::git::ensure_no_staged_changes(project_root)?;
+            crate::cli::td::commit_lifecycle_with_extra(
+                project_root,
+                wi,
+                &format!("{target} native target adopted without drift"),
+                crate::issues::types::lifecycle_trailer::CB_GEN,
+                &[],
+                &[
+                    ("Native-Target", target),
+                    ("Native-Workspace", workspace.as_str()),
+                ],
+            )?;
+        }
+        crate::cli::ec::persist_python_native_generation(
+            project_root,
             wi,
             format!("aw cb fill {wi}"),
         )?;
@@ -5426,59 +5478,6 @@ async fn run_check_lifecycle_terminal(
         println!("{}", serde_json::to_string(&env)?);
         return Ok(true);
     };
-    if let Some(project) = project_label_for_wi(&issue) {
-        let is_python = !crate::models::project::test_only_legacy_artifact_model_enabled()
-            && crate::services::project_registry::resolve_project_config_row(project_root, project)
-                .map(|row| {
-                    row.effective_artifact_model()
-                        == crate::models::project::ProjectArtifactModel::PythonV1
-                })
-                .unwrap_or(false);
-        if is_python {
-            let report =
-                crate::services::python_artifact_code_check::verify_python_artifact_code_check(
-                    project_root,
-                    project,
-                )?
-                .expect("python-v1 project must return a Python artifact code-check report");
-            if !report.clean {
-                let env = serde_json::json!({
-                    "action": "error",
-                    "error_kind": "python_artifact_code_check_failed",
-                    "slug": slug,
-                    "project": report.project,
-                    "findings": report.findings,
-                    "next": { "command": report.next_command },
-                });
-                println!("{}", serde_json::to_string(&env)?);
-                return Ok(true);
-            }
-            let next = format!(
-                "aw ec verify --project {} --required-only --stage cb --wi {slug}",
-                report.project
-            );
-            crate::cli::ec::persist_ec_first_next_action(project_root, slug, next.clone())?;
-            let env = serde_json::json!({
-                "action": "dispatch",
-                "slug": slug,
-                "project": report.project,
-                "next": {
-                    "kind": "run_command",
-                    "command": next,
-                    "reason": "Python target-native unit and cold artifact checks are green; run terminal CB-stage EC verification",
-                },
-                "completion": {
-                    "root_complete": false,
-                    "workflow_complete": false,
-                    "requires_hitl": false,
-                    "criteria": ["Python TD/EC locks, cold target, DDD identity, and native unit inventory are green"],
-                    "missing": ["CB-stage behavior, security, stability, and efficiency EC evidence"],
-                },
-            });
-            println!("{}", serde_json::to_string(&env)?);
-            return Ok(true);
-        }
-    }
     let initial_phase = issue.phase.as_deref().unwrap_or("");
     let initial_is_retry = td_phase::is_terminal_code_check_retry(initial_phase);
     if !td_phase::is_terminal_code_checkable(initial_phase) && !initial_is_retry {
@@ -5624,8 +5623,33 @@ async fn run_check_lifecycle_terminal(
         // further down — both need this WI's own touched-file set (branch
         // diff ∪ spec Changes paths) and previously each called
         // `cb_fill::resolve_touched_scope` independently.
-        let touched_scope =
-            crate::cli::cb_fill::resolve_touched_scope(project_root, &marker_gate_scope);
+        // A Python-v1 bounded HANDWRITE target has an explicit native source
+        // denominator. Use that denominator instead of the persistent
+        // app/lib branch's whole diff: EC and TD Python sources are verifier
+        // artifacts, while unrelated historical branch changes must not
+        // become this WI's CB ownership scope.
+        let python_native_scope = project_label_for_wi(&issue).and_then(|project| {
+            let row = crate::services::project_registry::resolve_project_config_row(
+                project_root,
+                project,
+            )
+            .ok()?;
+            (row.effective_artifact_model()
+                == crate::models::project::ProjectArtifactModel::PythonV1)
+                .then_some(())?;
+            let target =
+                crate::cli::run::python_artifact_codegen_target(project_root, project).ok()?;
+            crate::services::python_artifact_code_check::project_bounded_native_handwrite_paths(
+                project_root,
+                project,
+                target,
+            )
+            .ok()
+            .flatten()
+        });
+        let touched_scope = python_native_scope.unwrap_or_else(|| {
+            crate::cli::cb_fill::resolve_touched_scope(project_root, &marker_gate_scope)
+        });
 
         // Clean-touched-scope precondition (issue #807 / #1275): refuse to
         // perform ANY mutation below (the phase-advancing `backend.update`
@@ -5786,18 +5810,30 @@ async fn run_check_lifecycle_terminal(
         }
 
         // Python-v1 has an explicit terminal graph rather than the legacy
-        // path-anchor closure: verify its TD/EC locks, DDD identity edges,
-        // cold target manifest, and target-native unit inventory before any
-        // EC evaluation or lifecycle/tracker mutation can close this WI.
+        // path-anchor closure: after the shared dirty-scope, ownership, and
+        // implementation-evidence gates above, verify its TD/EC locks, DDD
+        // identity edges, and ownership-appropriate native target evidence.
+        // Generator-owned targets require cold parity; bounded HANDWRITE
+        // targets require their configured workspace tests. A clean graph
+        // dispatches the explicit CB-stage EC verifier instead of closing
+        // through the legacy inline terminal gate.
         if !crate::models::project::test_only_legacy_artifact_model_enabled() {
             if let Some(project) = project_label_for_wi(&issue) {
                 match crate::services::python_artifact_code_check::verify_python_artifact_code_check(
                     project_root,
                     project,
+                    Some(slug),
                 ) {
                     Ok(Some(report)) if !report.clean => {
-                        let next = if report.next_command.starts_with("aw cb gen --project ") {
-                            format!("aw cb gen {slug}")
+                        let next = if let Some(target) =
+                            report.native_targets.iter().find(|target| !target.clean)
+                        {
+                            crate::cli::run::python_target_gen_command(
+                                project_root,
+                                &report.project,
+                                &target.target,
+                                slug,
+                            )?
                         } else {
                             report.next_command.clone()
                         };
@@ -5812,7 +5848,75 @@ async fn run_check_lifecycle_terminal(
                         println!("{}", serde_json::to_string(&env)?);
                         return Ok(true);
                     }
-                    Ok(Some(_)) | Ok(None) => {}
+                    Ok(Some(report)) => {
+                        let native_handwrite_paths = report
+                            .native_targets
+                            .iter()
+                            .filter(|target| {
+                                target.ownership
+                                    == crate::services::python_artifact_code_check::NativeTargetOwnership::Handwrite
+                            })
+                            .flat_map(|target| target.handwrite_paths.iter().cloned())
+                            .collect::<Vec<_>>();
+                        if let Some(message) = python_native_handwrite_evidence_gate_message(
+                            project_root,
+                            slug,
+                            &native_handwrite_paths,
+                        ) {
+                            let baseline_exists = crate::cli::td::lifecycle_stage_for_slug_exists(
+                                project_root,
+                                slug,
+                                crate::issues::types::lifecycle_trailer::TD_PYTHON_SOURCE,
+                            )?;
+                            let next = if baseline_exists {
+                                format!("aw cb fill {slug}")
+                            } else {
+                                crate::cli::run::python_td_check_command(
+                                    project_root,
+                                    &report.project,
+                                    slug,
+                                )?
+                            };
+                            let env = serde_json::json!({
+                                "action": "error",
+                                "error_kind": "python_native_handwrite_evidence_missing",
+                                "slug": slug,
+                                "message": message,
+                                "next": { "command": next },
+                            });
+                            println!("{}", serde_json::to_string(&env)?);
+                            return Ok(true);
+                        }
+                        let next = format!(
+                            "aw ec verify --project {} --required-only --stage cb --wi {slug}",
+                            report.project
+                        );
+                        crate::cli::ec::persist_ec_first_next_action(
+                            project_root,
+                            slug,
+                            next.clone(),
+                        )?;
+                        let env = serde_json::json!({
+                            "action": "dispatch",
+                            "slug": slug,
+                            "project": report.project,
+                            "next": {
+                                "kind": "run_command",
+                                "command": next,
+                                "reason": "Python TD/EC locks, DDD identity, shared CB ownership gates, and native target verification are green; run terminal CB-stage EC verification",
+                            },
+                            "completion": {
+                                "root_complete": false,
+                                "workflow_complete": false,
+                                "requires_hitl": false,
+                                "criteria": ["Python TD/EC locks, DDD identity, shared CB ownership gates, and native target verification are green"],
+                                "missing": ["CB-stage behavior, security, stability, and efficiency EC evidence"],
+                            },
+                        });
+                        println!("{}", serde_json::to_string(&env)?);
+                        return Ok(true);
+                    }
+                    Ok(None) => {}
                     Err(error) => {
                         let env = serde_json::json!({
                             "action": "error",
@@ -6428,12 +6532,30 @@ pub(crate) enum TdInitReachability {
     SlugHistoryWithoutInit,
 }
 
-/// Locate this slug's most recent exact `Td-Init` commit reachable from HEAD.
+/// Locate this slug's most recent exact TD baseline commit reachable from
+/// HEAD. Markdown TDs use `Td-Init`; Python TDs use `Td-Python-Source`.
 /// Slug and stage matching are both line-exact so prefix-colliding slugs and
 /// stage names cannot be adopted as lifecycle baselines.
 pub(crate) fn reachable_td_init_from_head(
     project_root: &std::path::Path,
     slug: &str,
+) -> Result<TdInitReachability> {
+    use crate::issues::types::lifecycle_trailer;
+
+    reachable_exact_td_baseline_from_head(
+        project_root,
+        slug,
+        &[
+            lifecycle_trailer::TD_INIT,
+            lifecycle_trailer::TD_PYTHON_SOURCE,
+        ],
+    )
+}
+
+fn reachable_exact_td_baseline_from_head(
+    project_root: &std::path::Path,
+    slug: &str,
+    accepted_stages: &[&str],
 ) -> Result<TdInitReachability> {
     use crate::issues::types::lifecycle_trailer;
 
@@ -6452,10 +6574,10 @@ pub(crate) fn reachable_td_init_from_head(
             "HEAD",
         ])
         .output()
-        .context("git log failed while locating Td-Init")?;
+        .context("git log failed while locating exact TD lifecycle baseline")?;
     if !log.status.success() {
         anyhow::bail!(
-            "git log failed while locating Td-Init: {}",
+            "git log failed while locating exact TD lifecycle baseline: {}",
             String::from_utf8_lossy(&log.stderr).trim()
         );
     }
@@ -6471,7 +6593,10 @@ pub(crate) fn reachable_td_init_from_head(
             continue;
         }
         saw_slug_history = true;
-        if lifecycle_trailer::body_has_stage_trailer(body, lifecycle_trailer::TD_INIT) {
+        if accepted_stages
+            .iter()
+            .any(|stage| lifecycle_trailer::body_has_stage_trailer(body, stage))
+        {
             init_commit = Some(hash.trim().to_string());
             break;
         }
@@ -6488,7 +6613,8 @@ pub(crate) fn reachable_td_init_from_head(
 mod td_init_reachability_tests {
     use super::{
         accepted_codegen_claims_for_changed_paths, committed_paths_since_td_init,
-        reachable_td_init_from_head, TdInitReachability,
+        python_native_handwrite_evidence_gate_message, reachable_td_init_from_head,
+        TdInitReachability,
     };
     use std::collections::BTreeSet;
 
@@ -6564,6 +6690,21 @@ mod td_init_reachability_tests {
             reachable_td_init_from_head(root, "1602").unwrap(),
             TdInitReachability::Found(_)
         ));
+
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "python source\n\nLifecycle-Slug: py-42\nLifecycle-Stage: Td-Python-Source",
+                "-q",
+            ],
+        );
+        assert!(matches!(
+            reachable_td_init_from_head(root, "py-42").unwrap(),
+            TdInitReachability::Found(_)
+        ));
     }
 
     #[test]
@@ -6624,13 +6765,69 @@ changes:
         assert_eq!(claims[0].target, "src/generated.rs");
         assert_eq!(claims[0].display_ref(), "tech-design/accepted.md#schema");
     }
+
+    #[test]
+    fn python_handwrite_requires_committed_native_diff_after_source_baseline() {
+        if crate::git::find_git_bin().is_none() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        git(root, &["config", "user.email", "test@example.com"]);
+        git(root, &["config", "user.name", "Test"]);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/native.rs"), "pub fn native() {}\n").unwrap();
+        git(root, &["add", "src/native.rs"]);
+        git(root, &["commit", "-m", "seed native", "-q"]);
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "legacy baseline\n\nLifecycle-Slug: py-42\nLifecycle-Stage: Td-Init",
+                "-q",
+            ],
+        );
+        let paths = vec!["src/native.rs".to_string()];
+        let wrong_baseline =
+            python_native_handwrite_evidence_gate_message(root, "py-42", &paths).unwrap();
+        assert!(wrong_baseline.contains("no exact Td-Python-Source"));
+
+        std::fs::write(
+            root.join("src/native.rs"),
+            "pub fn native() { staged_before_source() }\n",
+        )
+        .unwrap();
+        git(root, &["add", "src/native.rs"]);
+        git(
+            root,
+            &[
+                "commit",
+                "-m",
+                "python source\n\nLifecycle-Slug: py-42\nLifecycle-Stage: Td-Python-Source",
+                "-q",
+            ],
+        );
+
+        let missing = python_native_handwrite_evidence_gate_message(root, "py-42", &paths).unwrap();
+        assert!(missing.contains("no committed diff since Td-Python-Source"));
+
+        std::fs::write(root.join("src/native.rs"), "pub fn native() { todo!() }\n").unwrap();
+        git(root, &["add", "src/native.rs"]);
+        git(root, &["commit", "-m", "implement native", "-q"]);
+        assert!(python_native_handwrite_evidence_gate_message(root, "py-42", &paths).is_none());
+    }
 }
 
 /// Return the committed, repo-relative paths changed after this slug's most
-/// recent exact `Td-Init` trailer. The init commit's parent is the baseline:
-/// the TD/spec commit itself is lifecycle setup, while implementation must be
-/// introduced by later commits. This keeps a persistent project branch's old
-/// divergence from satisfying a new WI's hand-written implementation gate.
+/// recent exact TD baseline trailer (`Td-Init` for Markdown or
+/// `Td-Python-Source` for Python). The baseline commit's parent is the
+/// comparison root: TD/spec setup and later implementation must therefore
+/// appear in the committed lifecycle diff. This keeps a persistent project
+/// branch's old divergence from satisfying a new WI's hand-written
+/// implementation gate.
 ///
 /// `Ok(None)` is reserved for synthetic/legacy entries with no lifecycle
 /// history at all. If the slug has lifecycle commits but no usable `Td-Init`,
@@ -6645,7 +6842,9 @@ fn committed_paths_since_td_init(
         TdInitReachability::Found(commit) => commit,
         TdInitReachability::NoSlugHistory => return Ok(None),
         TdInitReachability::SlugHistoryWithoutInit => {
-            anyhow::bail!("lifecycle history for '{slug}' has no exact Td-Init trailer")
+            anyhow::bail!(
+                "lifecycle history for '{slug}' has no exact Td-Init or Td-Python-Source trailer"
+            )
         }
     };
 
@@ -6654,10 +6853,10 @@ fn committed_paths_since_td_init(
         .arg(project_root)
         .args(["rev-parse", &format!("{init_commit}^")])
         .output()
-        .context("git rev-parse Td-Init parent failed")?;
+        .context("git rev-parse TD baseline parent failed")?;
     if !parent.status.success() {
         anyhow::bail!(
-            "cannot resolve parent of Td-Init commit {}: {}",
+            "cannot resolve parent of TD baseline commit {}: {}",
             init_commit,
             String::from_utf8_lossy(&parent.stderr).trim()
         );
@@ -6685,6 +6884,43 @@ fn committed_paths_since_td_init(
             .map(normalize_touched_rel_path)
             .collect(),
     ))
+}
+
+fn committed_paths_after_td_python_source(
+    project_root: &std::path::Path,
+    slug: &str,
+) -> Result<BTreeSet<String>> {
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let source_commit = match reachable_exact_td_baseline_from_head(
+        project_root,
+        slug,
+        &[crate::issues::types::lifecycle_trailer::TD_PYTHON_SOURCE],
+    )? {
+        TdInitReachability::Found(commit) => commit,
+        TdInitReachability::NoSlugHistory | TdInitReachability::SlugHistoryWithoutInit => {
+            anyhow::bail!("lifecycle history for '{slug}' has no exact Td-Python-Source trailer")
+        }
+    };
+    let diff_range = format!("{source_commit}..HEAD");
+    let diff = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["diff", "--name-only", "--no-renames", &diff_range, "--"])
+        .output()
+        .context("git diff failed while verifying Python HANDWRITE implementation")?;
+    if !diff.status.success() {
+        anyhow::bail!(
+            "git diff {} failed: {}",
+            diff_range,
+            String::from_utf8_lossy(&diff.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&diff.stdout)
+        .lines()
+        .filter(|path| !path.trim().is_empty())
+        .map(normalize_touched_rel_path)
+        .collect())
 }
 
 /// Issue #1382: every `impl_mode: hand-written` create/modify path must have
@@ -6752,6 +6988,60 @@ fn hand_written_implementation_gate_message(
          required implementation evidence: {}; create, implement, and commit every listed path, \
          then re-run `aw cb check {slug}` (or pass --allow-empty-impl for an intentional \
          spec-only completion)",
+        incomplete.len(),
+        promised.len(),
+        incomplete.join(", "),
+    ))
+}
+
+/// Python TDs do not carry Markdown `Changes` entries, so their native
+/// HANDWRITE denominator comes from the target ownership inventory itself.
+/// Every bounded native source must have a committed net change after the
+/// exact `Td-Python-Source` baseline; pre-existing marked files alone are not
+/// implementation evidence for the current WI.
+fn python_native_handwrite_evidence_gate_message(
+    project_root: &std::path::Path,
+    slug: &str,
+    native_paths: &[String],
+) -> Option<String> {
+    let promised = native_paths
+        .iter()
+        .map(|path| normalize_touched_rel_path(path))
+        .collect::<BTreeSet<_>>();
+    if promised.is_empty() {
+        return None;
+    }
+
+    let changed = match committed_paths_after_td_python_source(project_root, slug) {
+        Ok(changed) => changed,
+        Err(error) => {
+            return Some(format!(
+                "refusing to complete Python HANDWRITE code-check: cannot verify committed \
+                 native implementation evidence for `{slug}`: {error:#}"
+            ));
+        }
+    };
+
+    let incomplete = promised
+        .iter()
+        .filter_map(|path| {
+            if !project_root.join(path).is_file() {
+                Some(format!("{path} (missing on disk)"))
+            } else if !changed.contains(path) {
+                Some(format!("{path} (no committed diff since Td-Python-Source)"))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    if incomplete.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "refusing to complete Python HANDWRITE code-check: {} of {} bounded native source(s) \
+         lack committed lifecycle evidence: {}; commit each native implementation path after \
+         Td-Python-Source, then re-run `aw cb check {slug}`",
         incomplete.len(),
         promised.len(),
         incomplete.join(", "),

@@ -867,9 +867,13 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     let project_root = crate::find_project_root()?;
     let project = resolve_health_project_name(&project_root, project)?;
     let caps_ec_only = project_health_caps_ec_only(&project);
-    let verify_traceability = verify_traceability && !caps_ec_only;
-    let verify_cb = verify_cb && !caps_ec_only;
-    let verify_cold = verify_cold && !caps_ec_only;
+    let artifact_model =
+        crate::services::project_registry::resolve_project_config_row(&project_root, &project)?
+            .effective_artifact_model();
+    let legacy_replay = legacy_health_replay_enabled(artifact_model, caps_ec_only);
+    let verify_traceability = verify_traceability && legacy_replay;
+    let verify_cb = verify_cb && legacy_replay;
+    let verify_cold = verify_cold && legacy_replay;
     progress.emit(
         30,
         "traceability",
@@ -888,6 +892,10 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     } else if caps_ec_only {
         Some(format!(
             "traceability is advisory for `{project}` self-health; capability and EC gates are authoritative"
+        ))
+    } else if !legacy_replay {
+        Some(format!(
+            "legacy source-marker traceability is advisory for Python Spec project `{project}`; EC/TD semantic health is authoritative"
         ))
     } else {
         Some(format!(
@@ -909,6 +917,13 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
                 "cb verify is advisory for `{project}` self-health; capability and EC gates are authoritative"
             )),
         )
+    } else if !legacy_replay {
+        (
+            cb_verify_not_evaluated(),
+            Some(format!(
+                "legacy Markdown CB replay is advisory for Python Spec project `{project}`; Python artifact readiness is authoritative"
+            )),
+        )
     } else {
         (
             cb_verify_not_evaluated(),
@@ -917,9 +932,12 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
             )),
         )
     };
-    let cold_workspace_count =
-        crate::cli::cb::project_force_regen_cold_verify_workspaces(&project)?.len();
-    let production_gates_evaluated = if caps_ec_only {
+    let cold_workspace_count = if legacy_replay {
+        crate::cli::cb::project_force_regen_cold_verify_workspaces(&project)?.len()
+    } else {
+        0
+    };
+    let production_gates_evaluated = if caps_ec_only || !legacy_replay {
         production_gates_evaluated
     } else {
         production_gates_evaluated && (verify_cold || cold_workspace_count == 0)
@@ -1010,6 +1028,13 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         capability_verified_by_id,
     )?;
     Ok(report)
+}
+
+fn legacy_health_replay_enabled(
+    artifact_model: crate::models::project::ProjectArtifactModel,
+    caps_ec_only: bool,
+) -> bool {
+    !caps_ec_only && artifact_model == crate::models::project::ProjectArtifactModel::Legacy
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -5956,6 +5981,28 @@ mod tests {
                 mutation: false,
             }
         );
+    }
+
+    #[test]
+    fn python_spec_health_never_routes_through_legacy_cb_replay() {
+        use crate::models::project::ProjectArtifactModel;
+
+        assert!(!legacy_health_replay_enabled(
+            ProjectArtifactModel::PythonV1,
+            false,
+        ));
+        assert!(!legacy_health_replay_enabled(
+            ProjectArtifactModel::PythonV1,
+            true,
+        ));
+        assert!(legacy_health_replay_enabled(
+            ProjectArtifactModel::Legacy,
+            false,
+        ));
+        assert!(!legacy_health_replay_enabled(
+            ProjectArtifactModel::Legacy,
+            true,
+        ));
     }
 
     #[test]

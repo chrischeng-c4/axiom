@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-28T06:32:52.053959+00:00"
-ir_digest = "sha256:e1793c04411c1e6d2fade03e0b7285ac7fa4f4d28c2fed8c9781e9ce9631aa92"
-source_digest = "sha256:6626cb95da78a2f5087f72c9c7516b8d8c332e69c24b3af993ad8e5b4c2613ef"
+generated_at = "2026-07-29T12:48:57.458613+00:00"
+ir_digest = "sha256:3eb856cfc74680a2740851719c466f544c56baad3ea2dc48208bdc62d3bbc990"
+source_digest = "sha256:d3c99f7273c7819af6accb4af6c7355cb4bd6c914a7a7d2515d5048bd295b0b6"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:f9cd505cc6b2646274bbab8127ea4b89cecc26d178e8886b054201ed2cc6726c"
+digest = "sha256:200646f7626f1df5a143244a7296a060be69d1e2e646e9c3c11dc36ea6d272da"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -50,7 +50,7 @@ digest = "sha256:1d3a96efdd5afd69c7c222fe51319959dcdba184faa8aee8de34e05ab7b6594
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
-digest = "sha256:88296c626c1262a172e509db9f12033d9a3fdcba00b0f8deb5fa6c2893a550c8"
+digest = "sha256:b1e4d45e83d4b6efe564395d1f3a0b7431c46390632d4ca238346dde6601c107"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
@@ -102,11 +102,15 @@ digest = "sha256:98a7b86bf45ece690ac8f11e382a26405ecf2a5249c4e24588cca16ce09c9af
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-cache-safe-discovery.py"
-digest = "sha256:250c923e0e3e33b7ba537d9a997f4ebd188a10542b39db290b1f24d5dcbd197a"
+digest = "sha256:25b1e5463346c723b7aa0d48398f711ac54be747f53b4097dcecc39067cf06ec"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
-digest = "sha256:005bf721f757c81955d3a1cbfd3144280aa34ba702dbec911e1e23d3ff5f47af"
+digest = "sha256:1c3e26d14659dc2c1fb75e206e730656a05ae3b6d4ff629f1a9f63cad66c04f4"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py"
+digest = "sha256:72a9c94184274c934c2f70739905a04b9f6921ac769a9352be5c8814d65c3a20"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
@@ -270,7 +274,7 @@ digest = "sha256:bc485dcbb3879fc10c50b8925683259f64a31f02ae57d2a0bed577472a9905f
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_health.py"
-digest = "sha256:0bcf72bd85a62a2ffca05b9ba660f641c2270a6292edfdc4ef98f92e3dd74843"
+digest = "sha256:1e19032b43875de73988061f890c698da543f1f907316fb06e79b11ba80e4995"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_service_kit.py"
@@ -278,7 +282,7 @@ digest = "sha256:74dca45f06d9bf53e0f76aa0c01ee1079d9d9ebd5569ea3acf1b9d726c908d9
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/project_local_gates.py"
-digest = "sha256:1b768f87bb59ac1d053de044cad81f3347f799f839bea2f687189af6d2e96a8b"
+digest = "sha256:96e2b792bd97587285e66c0f93dd29f47edb54f45052506578cc0d00a96899a2"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/prompt_artifacts.py"
@@ -298,7 +302,7 @@ digest = "sha256:9693ee2e5e6e163a225aac83e12463b519c353db331ca94e77623ad7eb8d267
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/td_terminal.py"
-digest = "sha256:18b7d77ce6fef3eda2aee7cd6b15221597df5818702bdcda2083c24f0dee50f8"
+digest = "sha256:df6c3f8005b2b8b93b7418269ef5e4a792f07a1810f5b68ce151869c4c775d1f"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/work_item_planning.py"
@@ -332,6 +336,10 @@ digest = "sha256:fe11e0054e83ccefad9583c4f69e81b03ec018481480a89b288479b51de4fad
 path = "apps/agentic-workflow/external-contracts/tests/unit/test_project_health_contract.py"
 digest = "sha256:2af8fd91c78a0244e4f8dce292b80ccb55d74e1f4ba78a56d0d2a773d452d98d"
 
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/uv.lock"
+digest = "sha256:9f2f79b796ce3a01936c741e044d1fef8c39303e12f79a32bc3cd76c145995f1"
+
 [[cases]]
 id = "authoritative-fixture-blocks-on-regenerability-gap"
 capability_id = "existing-project-standardization"
@@ -340,7 +348,7 @@ contract_id = "authoritative-fixture-blocks-on-regenerability-gap"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:authoritative-fixture-blocks-on-regenerability-gap"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case authoritative-fixture-blocks-on-regenerability-gap"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case authoritative-fixture-blocks-on-regenerability-gap"
 required_for_production = true
 assertions = [
     "a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap; the health payload exposes the regenerability production blocker and a runnable remediation command",
@@ -350,7 +358,7 @@ assertions = [
 ]
 evidence_digest = "sha256:557969141342905870a1cd86f32426b578bdf4573664a2b938f94f09f3976e54"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:02219d4a499d0e15a1ce4c057948dd754220c2d5d075bbc4086b8d78c65b3c17"
+digest = "sha256:3d1da082cec998e22c5d195b91ef0d4f2f717c7bd722e17e4468ec1f2839d4e8"
 
 [[cases]]
 id = "aw-core-client-core-concept-model-phase-less-admission"
@@ -360,7 +368,7 @@ contract_id = "aw-core-client-core-concept-model-phase-less-admission"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-core-concept-model-phase-less-admission"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-core-concept-model-phase-less-admission.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-phase-less-admission"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-phase-less-admission"
 required_for_production = true
 assertions = [
     "a phase-less project WorkItem enters EC authoring before any TD authoring command",
@@ -370,7 +378,7 @@ assertions = [
 ]
 evidence_digest = "sha256:fa17638fb6a97c02e9878f1c47883e011af780c74c7546351c07f2ae6d9ec33d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ac4f44c800b0980847db06a553efa5ac3df77901075f9be439076eb6d5ce2216"
+digest = "sha256:0634512466756b2fffba795535c8c03a0ef65617c6601325ef30c0c3d7e60441"
 
 [[cases]]
 id = "aw-core-client-operational-efficiency"
@@ -380,7 +388,7 @@ contract_id = "aw-core-client-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-operational-efficiency"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-operational-efficiency.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency"
 required_for_production = true
 assertions = [
     "The native Python prompt and runner scenario completes within 120 seconds, executes its representative assertions, and performs no cargo delegation.",
@@ -391,7 +399,7 @@ assertions = [
 ]
 evidence_digest = "sha256:ca2f1f38d54198d9d3831cb1803ad13d0ce51cb116f6211ab9a606cadcea528c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:398a8ac8db3200854cbf0445c4b84d3c887e647b675a726da90c74644d9a8b11"
+digest = "sha256:7279686f48f76ccc859af33b7744e9fa5c1a99016f205f527bd1c000c1f14c49"
 
 [[cases]]
 id = "aw-core-client-operational-stability"
@@ -401,7 +409,7 @@ contract_id = "aw-core-client-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-operational-stability"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-operational-stability.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability"
 required_for_production = true
 assertions = [
     "Two fresh native Python prompt and runner scenarios produce identical prompt documentation and preserve the same typed lifecycle invariants without cargo delegation.",
@@ -412,7 +420,7 @@ assertions = [
 ]
 evidence_digest = "sha256:9bdf407dabd12d5d329b8894a8427493491e93b72a8046fca94d4c13f9d3d15b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1e9ef582f7fc125cbca56d7cc33dabb8711011a1b1e7fa018f1f6e2b63c76211"
+digest = "sha256:bceca9a4359e83c0695ceeaa7757def0b423d2f896ae537a5b12332ca25f01e2"
 
 [[cases]]
 id = "aw-health-default-full-verification-smoke"
@@ -422,7 +430,7 @@ contract_id = "aw-health-default-full-verification-smoke"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-health-default-full-verification-smoke"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-health-default-full-verification-smoke.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke"
 required_for_production = true
 assertions = [
     "stdout includes progress JSONL events before the final result when long gates run; the final result includes payload_path; the payload file contains complete blocker and command evidence",
@@ -432,7 +440,7 @@ assertions = [
 ]
 evidence_digest = "sha256:15a062f5a158f721b76de88d1b3f1711f066e94ecf442cd59cdd0df4f941810c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:33fb31e30561023e47be5343036234a5bb05e2efd5a11d77ec67f85476f246fe"
+digest = "sha256:7ff0a4f2af5ee1c6dedbb3d9e798384c2832f2ab6f593d8b9faf7772071dbf50"
 
 [[cases]]
 id = "capability-control-plane-markdown-capability-schema"
@@ -442,7 +450,7 @@ contract_id = "capability-control-plane-markdown-capability-schema"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-markdown-capability-schema"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-markdown-capability-schema.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema"
 required_for_production = true
 assertions = [
     "canonical field-style capability contracts parse from Markdown",
@@ -452,7 +460,7 @@ assertions = [
 ]
 evidence_digest = "sha256:c4b675f6c48bcbf5709df6fad71a88f16daef75adb252e513fb79caa95cbee93"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:97ded3cfbde499fe12dde358259c89665c9f3ef6f1b49bf1912b81c4680533ac"
+digest = "sha256:8bbb605f8a604f15320275c3743cf0c01983771dcd04e3eb838261f389012983"
 
 [[cases]]
 id = "capability-control-plane-missing-readme-initialization"
@@ -462,7 +470,7 @@ contract_id = "capability-control-plane-missing-readme-initialization"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-missing-readme-initialization"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-missing-readme-initialization.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-missing-readme-initialization"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-missing-readme-initialization"
 required_for_production = true
 assertions = [
     "capability init renders a canonical README shell",
@@ -472,7 +480,7 @@ assertions = [
 ]
 evidence_digest = "sha256:fddf04dce8ca503b0fe77d13e0d13d622491bd8d1db6ad455d40591dd6a3b440"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:41855eace8a1a6f22d891a1589c5eadd66a95d7ce5381d9464bac3ed4a7a68b6"
+digest = "sha256:d4cc3f514a7976424bd94b0c27066ab54447cd00830a4b60801316a75abf0a02"
 
 [[cases]]
 id = "capability-control-plane-operational-efficiency"
@@ -482,7 +490,7 @@ contract_id = "capability-control-plane-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-operational-efficiency"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-efficiency.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency"
 required_for_production = true
 assertions = [
     "The native Python capability init, report, and sweep scenario completes within 120 seconds and passes its representative assertions without cargo delegation.",
@@ -493,7 +501,7 @@ assertions = [
 ]
 evidence_digest = "sha256:bafdbe99846715b5fecc2eda70a2b8c2720f115cdb94a6a03c8f950c52202c5c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d6c2dda9ec467be9ea7af045c39d606261656e7bf0b918ab7d206d471bb715c2"
+digest = "sha256:25c003ccebf05417c6bf9fbfa5b9be5ab0040a520844d8e83a8acceb4a44d968"
 
 [[cases]]
 id = "capability-control-plane-operational-stability"
@@ -503,7 +511,7 @@ contract_id = "capability-control-plane-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-operational-stability"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-stability.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability"
 required_for_production = true
 assertions = [
     "Two fresh native Python capability scenarios preserve the same project identity and both parse the canonical Markdown capability contract without cargo delegation.",
@@ -514,7 +522,7 @@ assertions = [
 ]
 evidence_digest = "sha256:32ee6c7ab59e2eb6f1fe61bdc1a0daece6ed7cdf5759bc5793923fd0e4a77718"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1437cb050712c4d522f970ae11b8d00a053ebe33d6f59e2d10b12f0a24ffdd05"
+digest = "sha256:adf8a3a34826d481baeb0ef6d7c4aba97aa071ab0e23a600ce0cc5094aa993e5"
 
 [[cases]]
 id = "capability-scoped-dependency-verification"
@@ -524,7 +532,7 @@ contract_id = "capability-scoped-dependency-verification"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-scoped-dependency-verification"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-scoped-dependency-verification"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-scoped-dependency-verification"
 required_for_production = true
 assertions = [
     "a capability goal verifies only the requested capability and its transitive dependencies, excludes workspace-wide test gates, and retains scope in follow-up commands",
@@ -534,7 +542,7 @@ assertions = [
 ]
 evidence_digest = "sha256:42d725be80fa7a07424b0ed45116178aefb2cd0dd619fe3e9efb41813165781c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:15f2bc3eaab426fbe94248b8d93fc525056111c46ad38779b2335076bc6e42ba"
+digest = "sha256:57a3711461cf6e84f0018f17898c10c6640a85b53d1fb1fbaa6ebb374e629a06"
 
 [[cases]]
 id = "coordination-authority"
@@ -544,7 +552,7 @@ contract_id = "coordination-authority"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:coordination-authority"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-authority"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case coordination-authority"
 required_for_production = true
 assertions = [
     "Only AW-owned durable coordination state may advance completion or a decision, and it does so only for the active dispatch after every required gate is satisfied and cited as evidence.",
@@ -554,7 +562,7 @@ assertions = [
 ]
 evidence_digest = "sha256:1174bef2f236dc173ac7d6e100631cb3180993cf003aacc34ce5c8c96b167611"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8755e467ad4c81ebde05b568b4e43f729ad0dc51ff2d23ee5c459970790b64e5"
+digest = "sha256:31dd3393aead4bc69d100813d271aab8de9f3467eb2acbac7c09c834d78a3c2b"
 
 [[cases]]
 id = "coordination-contract-schema"
@@ -564,7 +572,7 @@ contract_id = "coordination-contract-schema"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:coordination-contract-schema"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-contract-schema"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case coordination-contract-schema"
 required_for_production = true
 assertions = [
     "Task, dispatch, message, and gate documents share one versioned, client-independent JSON contract that round-trips valid fixtures and rejects unknown versions, missing identity or linkage, untyped fields, invalid enums, and structural drift.",
@@ -574,7 +582,7 @@ assertions = [
 ]
 evidence_digest = "sha256:be5e49b6dfb9918318381d5fa1f83ea1a5c93b54e1e9222b0ea8a99ec120c01e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ddb936fa46e48565a10bb24cac9bd56f4158b1aa9f7b40eac8ca13a8570f9024"
+digest = "sha256:351ec6c0b5e1cff345d35a53d7878bc1112017517f9d94e1871ffc57e5d2058e"
 
 [[cases]]
 id = "coordination-event-validation"
@@ -584,7 +592,7 @@ contract_id = "coordination-event-validation"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:coordination-event-validation"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/coordination-event-validation.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-event-validation"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case coordination-event-validation"
 required_for_production = true
 assertions = [
     "Stale, unauthorised, and structurally invalid coordination events fail closed without durable mutation and return stable codes plus an executable exact remediation.",
@@ -594,7 +602,7 @@ assertions = [
 ]
 evidence_digest = "sha256:ec4acd5b2cd1bb3b0b9e85095b14a27d927edfd0f0e7d76d2c487f1314985851"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:01a69709023aedddf110652d4f1a4c3d054ee805ba9a05bdbf87577f51330a12"
+digest = "sha256:af672728c376c58bf064ed28d990ef5b76564a2780ae77281eca6f3fb82882cb"
 
 [[cases]]
 id = "existing-project-standardization-operational-efficiency"
@@ -604,7 +612,7 @@ contract_id = "existing-project-standardization-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:existing-project-standardization-operational-efficiency"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-operational-efficiency.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-efficiency"
 required_for_production = true
 assertions = [
     "The native Python existing-project health scenario completes within 120 seconds against the real AW health surface without cargo delegation.",
@@ -615,7 +623,7 @@ assertions = [
 ]
 evidence_digest = "sha256:0372e38e5adcfb4e07e9348e2228b35afa94876e25fa3d4f8dd7e4d3509ecd16"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:572bae52b4d95cc8660f6aee9e116d9def7140963ae71b549b7b876115155cd4"
+digest = "sha256:896359ced12aafdd154a24390f1f204bab81e4cc97128aee91de4f95c2bd57fa"
 
 [[cases]]
 id = "existing-project-standardization-operational-stability"
@@ -625,7 +633,7 @@ contract_id = "existing-project-standardization-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:existing-project-standardization-operational-stability"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-operational-stability.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability"
 required_for_production = true
 assertions = [
     "Two fresh native Python existing-project health scenarios preserve the same stable readiness-axis statuses and configured gate identities without cargo delegation.",
@@ -636,7 +644,7 @@ assertions = [
 ]
 evidence_digest = "sha256:a8d4c2b4a07a926b835aec0e2135c8f480b310ba0a4318c18ab81cb6fadf7c14"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ea9aebbb312b8f280a9fac80db9aaf6c151cad4bbdde2235a6898d49890da0ed"
+digest = "sha256:31ffd12ebc571d8ac76ff3c3c6ff49526d16aadd3c74ef7633e6188e4f774f2b"
 
 [[cases]]
 id = "external-fixture-reports-advisory-gap"
@@ -646,7 +654,7 @@ contract_id = "external-fixture-reports-advisory-gap"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:external-fixture-reports-advisory-gap"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/external-fixture-reports-advisory-gap.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap"
 required_for_production = true
 assertions = [
     "the external-advisory fixture reports the regenerability gap as an advisory warning; the advisory gap does not add a production blocker when all required gates are clean",
@@ -656,7 +664,7 @@ assertions = [
 ]
 evidence_digest = "sha256:862f7edcfa17cb7e6d9449c6b984a528d29af19f012b453b15d299aec56badb7"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0544a82c52c34879d80f18e79e42c62325b4c8ef2e4da4030b90010a49da8aab"
+digest = "sha256:f384a289d9cc3a6d53bffcdf503abe4f2d2510f0fd38129b0db97ddca99bd1a7"
 
 [[cases]]
 id = "issue-cache-canonical-change"
@@ -666,7 +674,7 @@ contract_id = "issue-cache-canonical-change"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:issue-cache-canonical-change"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/issue-cache-canonical-change.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case issue-cache-canonical-change"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case issue-cache-canonical-change"
 required_for_production = true
 assertions = [
     "Canonical Change work items serialize and parse as type change in the issue cache, and one cached Change cannot poison list, show, or EC draft for another work item.",
@@ -676,7 +684,7 @@ assertions = [
 ]
 evidence_digest = "sha256:f1198222d5aaa398ddc48a1668937ed940088768bb05874123f3b4bbb41ca5f0"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2917c8fc5606773f11ad02b23baa6083cd676690f89417bddba9153b50985dee"
+digest = "sha256:699ed858f873114fd0ec7ac27b36b4906a9e64c479dd8d7cde4352884c94e677"
 
 [[cases]]
 id = "manual-evidence-artifacts-operational-efficiency"
@@ -686,7 +694,7 @@ contract_id = "manual-evidence-artifacts-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:manual-evidence-artifacts-operational-efficiency"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-artifacts-operational-efficiency.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency"
 required_for_production = true
 assertions = [
     "The native Python EC scaffold and evidence scenario completes within 120 seconds and passes its representative assertions without cargo delegation.",
@@ -697,7 +705,7 @@ assertions = [
 ]
 evidence_digest = "sha256:1435a452d4b2f39ebd63b3a6af24b1879d9ac17100a5bce7a9fa781c76b8bba8"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:023b1c721c6efa14b7771bb039aad5f98394ce7d73ff9ccb1588330e5102b590"
+digest = "sha256:1600aa29130aa227b13dc5f7ec781c88cf6e9c8ab1e4127bc9582dc5004f244f"
 
 [[cases]]
 id = "manual-evidence-artifacts-operational-stability"
@@ -707,7 +715,7 @@ contract_id = "manual-evidence-artifacts-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:manual-evidence-artifacts-operational-stability"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-artifacts-operational-stability.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability"
 required_for_production = true
 assertions = [
     "Two fresh native Python EC scaffold scenarios produce identical case and evidence identities and the same structural-check continuation without cargo delegation.",
@@ -718,7 +726,7 @@ assertions = [
 ]
 evidence_digest = "sha256:b335ced3899d499f862349b1c25bf2ff694640223d5a75dab8aef2691adaf7fb"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ec6dd5541da376a60ed7f7dd7b1fb469c47d13bcec7d326b888036fc6f8ddfda"
+digest = "sha256:2f0c5b5c68966605da4e16a186ff10ea4bef498f1a4279c89a83f31a0dd59046"
 
 [[cases]]
 id = "project-health-total-observation"
@@ -728,7 +736,7 @@ contract_id = "project-health-total-observation"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:project-health-total-observation"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
 required_for_production = true
 assertions = [
     "Project semantic health contains exactly ec_accepts_td and ec_td_alignment: TD-applicable EC evidence accepts or rejects TD, while public EC/TD identities are compared in both directions without requiring EC coverage for internal TD artifacts.",
@@ -738,7 +746,7 @@ assertions = [
 ]
 evidence_digest = "sha256:fe8ba46ddb05266ba5ff6d97d34d76e3736c62ab86505ddf5d89637d5b1b32f1"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c3078afe8b319a85fce164a3a5f1a4023c25932061b70ea23aacba3b8388ffe2"
+digest = "sha256:d45cfb7d83f78f33b9882e438ce030178568723fb5f00771e4e7185ae8179b19"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-operational-efficiency"
@@ -748,7 +756,7 @@ contract_id = "project-local-td-and-ec-gates-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:project-local-td-and-ec-gates-operational-efficiency"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-efficiency.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-efficiency"
 required_for_production = true
 assertions = [
     "The native Python project-local TD and EC producer scenario completes within 120 seconds and passes its representative assertions without cargo delegation.",
@@ -759,7 +767,7 @@ assertions = [
 ]
 evidence_digest = "sha256:8290ac59a6d8bf671efb2a5648b75b8deabea76542fe5d016252dac153006554"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0e1233d3d6f08ba983d11caa72a215133e2590d3e08240d246015854e3fb590a"
+digest = "sha256:3efb29be51350e8a09b7a670d7a0074adee2bf40138bfbdb4416c87e5bc97063"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-operational-stability"
@@ -769,7 +777,7 @@ contract_id = "project-local-td-and-ec-gates-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:project-local-td-and-ec-gates-operational-stability"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-stability.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability"
 required_for_production = true
 assertions = [
     "Two fresh native Python project-local TD and EC producer scenarios preserve artifact identities and the same inventory, source, validation, and continuation routes.",
@@ -780,7 +788,7 @@ assertions = [
 ]
 evidence_digest = "sha256:a1100bc16bd92ea8eaa80370b258e094c95d347eab81012291930ab9fcbf4b2d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a72a7ed95e918cfd6f7eb16ae37c1e8bdd51d0c8de6bc36f8d7f205efa6249c5"
+digest = "sha256:c73916fd3ca19aabf8919962a6f4f550b566048cd005f3c422146624e4175ddc"
 
 [[cases]]
 id = "python-ec-cache-safe-discovery"
@@ -790,7 +798,7 @@ contract_id = "python-ec-cache-safe-discovery"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-ec-cache-safe-discovery"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-cache-safe-discovery.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-cache-safe-discovery"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-cache-safe-discovery"
 required_for_production = true
 assertions = [
     "Public Python EC discovery ignores undeclared cache/build binaries while still rejecting a missing declared Python source or a binary path declared as the contract.",
@@ -800,7 +808,7 @@ assertions = [
 ]
 evidence_digest = "sha256:56991a4d858719e0969f7cb7c6d6a1366c4364f71e86ff5c7f6870cb95b3a802"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0bb8892051002f8566bd3865be73817d340286bf89590b147b4223580a1ba25e"
+digest = "sha256:b59eccaef9a0192fcf07de79c7dab14e492ca6abd7bc689d454e2c6fee4ab966"
 
 [[cases]]
 id = "python-ec-only-authoring"
@@ -810,7 +818,7 @@ contract_id = "python-ec-only-authoring"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-ec-only-authoring"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-only-authoring"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-only-authoring"
 required_for_production = true
 assertions = [
     "Public EC authoring, checking, review, locking, and verification operate only on the project-local Python EC project, even when legacy spec_model configuration is present.",
@@ -820,7 +828,27 @@ assertions = [
 ]
 evidence_digest = "sha256:3b2284aeeab2efa74afca2dcdf278562d380e4b2ce5d69d8819ad5779a9ec287"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0af97541b69e939e2b4e4cd701b3ae12b498ea4e03ee913061adcad2fad51880"
+digest = "sha256:37b91de10c01128eab1d3aa4d0ca526cf4f32b34020d2cd980f45f26f0ae0e8f"
+
+[[cases]]
+id = "python-td-claim-linkage"
+capability_id = "capability-control-plane"
+claim_id = "python-td-claim-linkage"
+contract_id = "python-td-claim-linkage"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-td-claim-linkage"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-td-claim-linkage"
+required_for_production = true
+assertions = [
+    "a matching Python TD artifact and public behavior becomes primary capability claim evidence without an empty WI-planning detour",
+    "artifact: artifact:capability-control-plane/public-contract",
+    "oracle: The hand-authored Python EC executes the real compiled aw binary against an isolated Python TD/EC project and independently inspects its capability report.",
+    "target: rust",
+]
+evidence_digest = "sha256:fa3b8f24bf94b2dd699d4c61a2af457211504a828b4fa2dc90b4c562be0c81a2"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a3691734501514840138b5eb6f733e4b10f0eada9be1c19ebd5ce12050db5ea1"
 
 [[cases]]
 id = "python-td-global-artifact-identity"
@@ -830,7 +858,7 @@ contract_id = "python-td-global-artifact-identity"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-td-global-artifact-identity"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-td-global-artifact-identity"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-td-global-artifact-identity"
 required_for_production = true
 assertions = [
     "Python TD module and explicit artifact identities are globally unique, the reviewed corpus remains complete, and role-distinct migrated projections cannot collapse into duplicate mutation identities.",
@@ -840,7 +868,7 @@ assertions = [
 ]
 evidence_digest = "sha256:3a84cf30abb2d42459fe5ce7a61cf0a7766947d49546e46db5ca6d66de699b44"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9bfe3af0a45740db0ca62a35780623b7c5b53caf0f9e37f77b3241b4b3df604d"
+digest = "sha256:3c511383f2c544f9f31b312b35d1fe749e3b98f854ac12dbd693a1cd6db5f99d"
 
 [[cases]]
 id = "self-hosting-bounded-admission"
@@ -850,7 +878,7 @@ contract_id = "self-hosting-bounded-admission"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:self-hosting-bounded-admission"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-bounded-admission.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission"
 required_for_production = true
 assertions = [
     "backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state",
@@ -861,7 +889,7 @@ assertions = [
 ]
 evidence_digest = "sha256:757a27c0098bcc389ba3befd3d96b9160d4c303ae95452338cec334f05595169"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f00be03b8621029f3662eeb91871f8cd8ddb0306e6e67228908a6cca6b860b37"
+digest = "sha256:79c41368d4abb2bf98272a3a418665987297f1befeb1da5ced2fad1b3f4972bb"
 
 [[cases]]
 id = "self-hosting-capability-admission"
@@ -871,7 +899,7 @@ contract_id = "self-hosting-capability-admission"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:self-hosting-capability-admission"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-capability-admission.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
 required_for_production = true
 assertions = [
     "scoped capability admission completes without unrelated project lifecycle gates and hands control to project rollup; backlog admission fail-closes on the absent reviewed graph with the exact project planning remediation",
@@ -881,7 +909,7 @@ assertions = [
 ]
 evidence_digest = "sha256:d8c2101a4de33e39e2e6ccc9a8b65aaf325addd1436f70a0ca5f0b919d865a99"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:be7772fe1fa5eebb973aea9d6704f70d2f3602136b3c43ed556405d462f4af87"
+digest = "sha256:256b6a89beabf88850f155acb749aa17070b1b5082f83ab5da01d7e816f5f1b7"
 
 [[cases]]
 id = "self-hosting-health-policy"
@@ -891,7 +919,7 @@ contract_id = "self-hosting-health-policy"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:self-hosting-health-policy"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-health-policy.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-health-policy"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-health-policy"
 required_for_production = true
 assertions = [
     "public AW health declares Python-first root admission and limits bounded direct repair to a self-hosting-only fallback for a broken current worker verb",
@@ -901,7 +929,7 @@ assertions = [
 ]
 evidence_digest = "sha256:b84b2229ba14143089eff46cfb5978bef27959aa70fa5ae6ea0a9140eb6150f0"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:32938b268ef4deca0494527d48e17e934d0c70cda13e1bfd243d709c37e71fd9"
+digest = "sha256:55fe480fb2dfc1507715d917c70498a61935418e3d2dab00b1f63b4d9fa97202"
 
 [[cases]]
 id = "self-hosting-identity-stability"
@@ -911,7 +939,7 @@ contract_id = "self-hosting-identity-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:self-hosting-identity-stability"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-identity-stability.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability"
 required_for_production = true
 assertions = [
     "a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical",
@@ -922,7 +950,7 @@ assertions = [
 ]
 evidence_digest = "sha256:72843a95e598b8220e9eefed3aeb8cceb26bbfdce6c0f6043ac4b22a30cc233f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bc0d6ac06f4ab4b381fe3fc4d220d9997ec7254519c8e2515facdb3a92741788"
+digest = "sha256:fca2f9a6e6d79a7b9a7b9012c586a55a818375bf07e44fcbb027dec1937271c0"
 
 [[cases]]
 id = "self-hosting-wi-admission"
@@ -932,7 +960,7 @@ contract_id = "self-hosting-wi-admission"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:self-hosting-wi-admission"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-wi-admission.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission"
 required_for_production = true
 assertions = [
     "the self-hosted WI root enters EC authoring and dispatches the exact project-and-WI-scoped EC check as its first worker command",
@@ -942,7 +970,7 @@ assertions = [
 ]
 evidence_digest = "sha256:0d4c82f140f915ec8526408dd45263c78b1053f163a4ce929e2154aa66e10297"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ca094ace550478761fdfffec093069f0249acb8adcc252e0285398148abad179"
+digest = "sha256:4193c53496ca545d6ffaf557a8683439462cbab5d0f4ebb4fb85d157f6aa8913"
 
 [[cases]]
 id = "shared-cli-issue-report-intake"
@@ -952,7 +980,7 @@ contract_id = "shared-cli-issue-report-intake"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:shared-cli-issue-report-intake"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/shared-cli-issue-report-intake.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case shared-cli-issue-report-intake"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case shared-cli-issue-report-intake"
 required_for_production = true
 assertions = [
     "shared CLI issue create emits app identity plus type:report through its public dry-run, courier JSON transport, and credential-free fallback URL",
@@ -962,7 +990,7 @@ assertions = [
 ]
 evidence_digest = "sha256:996d64d677ec2c7b0bc1c3a71b2b8353d770fa13e1ec4a902311f0298aaa03eb"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8adeb93f75834acead29800dcd9b0d60269e90e4eed8a75403b1fdd1503b6f0b"
+digest = "sha256:03cce716440e238a0032cb0af7efd980d554a97fc3d045bc3d723d024b9534ae"
 
 [[cases]]
 id = "standardize-audit-first-contract-test"
@@ -972,7 +1000,7 @@ contract_id = "standardize-audit-first-contract-test"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:standardize-audit-first-contract-test"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/standardize-audit-first-contract-test.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test"
 required_for_production = true
 assertions = [
     "Focused takeover-audit health succeeds as a not-applicable observation without a preservation baseline, then succeeds as a recorded observation after aw td audit-record captures the preservation contract.",
@@ -982,7 +1010,7 @@ assertions = [
 ]
 evidence_digest = "sha256:5894754d276ffa1cbc00b4f5e0315f0f4034ad0c0beb6ef8aeea7c9cb5b6ef5a"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:58534b3a4c54094cf7d43ed907f6e8dc53e78b804f156e17c7e80a17e1531c9b"
+digest = "sha256:402ba2a3a4073e0f9ef9b7b8945e0246b717cf54c03a0e9093021b5442633f56"
 
 [[cases]]
 id = "td-artifact-producer-cli-fixture"
@@ -992,7 +1020,7 @@ contract_id = "td-artifact-producer-cli-fixture"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-artifact-producer-cli-fixture"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/td-artifact-producer-cli-fixture.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture"
 required_for_production = true
 assertions = [
     "aw td create initializes one WI-bound Python module below tech-design/src and emits the exact apply handoff without Markdown skeletons or JSON section payloads",
@@ -1002,7 +1030,7 @@ assertions = [
 ]
 evidence_digest = "sha256:b728859dd5244808dbb08d81028deb3f1c1439a2c4341f0724ecc567b9d31d49"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c0a66d8ed1b34575fa6506975d2ca15081eb36157f4e3dfd389cd8291cd6236b"
+digest = "sha256:ca14878a57b836573f8318d6f76ff604ebd9a3dd38258b62e6f591ef95cf52f4"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-operational-efficiency"
@@ -1012,7 +1040,7 @@ contract_id = "td-cb-lifecycle-automation-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-cb-lifecycle-automation-operational-efficiency"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/td-cb-lifecycle-automation-operational-efficiency.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency"
 required_for_production = true
 assertions = [
     "The native Python red-to-green terminal EC scenario completes within 120 seconds through the real AW binary and performs no cargo delegation.",
@@ -1023,7 +1051,7 @@ assertions = [
 ]
 evidence_digest = "sha256:c4338943f46a5078f7876e4bbc66dcf9cfc82661dbe838f45e2baf9de5066ad3"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:915c7f453aacd4e789e0a973104dfd0127e16bdb0d6808b271e1aab6344393bf"
+digest = "sha256:d699a88151f6216cda039ca8301c6e5018ca4201f58d2b16e5bfc4ed2b34ee2a"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-operational-stability"
@@ -1033,7 +1061,7 @@ contract_id = "td-cb-lifecycle-automation-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-cb-lifecycle-automation-operational-stability"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/td-cb-lifecycle-automation-operational-stability.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability"
 required_for_production = true
 assertions = [
     "Two fresh native Python terminal EC scenarios reproduce the same red and green verdicts and emit one deterministic close continuation per green run.",
@@ -1044,7 +1072,7 @@ assertions = [
 ]
 evidence_digest = "sha256:89bfd484b4a234e67a0e5f94ef479bf389316f210c50bc1b42da86891bad7068"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7d1744d614377eb0f7ce5d71cf9a02dedc2e77cbd1aaf9c30afdae5db7a0d97f"
+digest = "sha256:86eef5affaee89f36c1cd18ea71071efc32e09a76f15c97d1adb3cebc1c71beb"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-remove-td-merge-command"
@@ -1054,7 +1082,7 @@ contract_id = "td-cb-lifecycle-automation-remove-td-merge-command"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-cb-lifecycle-automation-remove-td-merge-command"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/td-cb-lifecycle-automation-remove-td-merge-command.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-remove-td-merge-command"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-remove-td-merge-command"
 required_for_production = true
 assertions = [
     "the retired `aw td merge` command is absent from the Clap tree and parsing it returns the literal unrecognized-subcommand failure (#914, refs #851)",
@@ -1064,7 +1092,7 @@ assertions = [
 ]
 evidence_digest = "sha256:6a944eb2a9baa19bcb62ca06eda1a08c5450e126ee454134c2208cf7597f4f27"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2f88ff7afbee1bff84ff3c46a725657546b68ee50bd78fdf6130e7180ca351df"
+digest = "sha256:a3c9a9a492697f4704f0fdde24a46da9e2913de67a4c85d6acbddbe317f1910d"
 
 [[cases]]
 id = "td-create-dirty-persistent-branch"
@@ -1074,7 +1102,7 @@ contract_id = "td-create-dirty-persistent-branch"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-create-dirty-persistent-branch"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/td-create-dirty-persistent-branch.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-create-dirty-persistent-branch"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-create-dirty-persistent-branch"
 required_for_production = true
 assertions = [
     "TD create stays on a dirty persistent non-main project branch, commits only lifecycle-owned paths, and leaves unrelated modified, deleted, and untracked work byte-identical; dirty main still fails before branch activation.",
@@ -1084,7 +1112,7 @@ assertions = [
 ]
 evidence_digest = "sha256:969a538c9adabbb0c48ea1b55791366871f5f7e4cd68ece066fa9194dd00099e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3b5197530c248f5a94e0e05fcec35206882849f0637d3e6c5118be537e869a98"
+digest = "sha256:5185e1416c176dbe5db191d1a4475c8fcb0c2ffe1d163508a701a20eca848d3b"
 
 [[cases]]
 id = "td-existing-workspace-dirty-persistent-branch"
@@ -1094,7 +1122,7 @@ contract_id = "td-existing-workspace-dirty-persistent-branch"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-existing-workspace-dirty-persistent-branch"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/td-existing-workspace-dirty-persistent-branch.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-existing-workspace-dirty-persistent-branch"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-existing-workspace-dirty-persistent-branch"
 required_for_production = true
 assertions = [
     "Public TD apply rejects malformed Python then advances with a semantic digest, and public CB generation stays on a dirty persistent non-main branch while committing only its generated target and preserving unrelated modified, deleted, and untracked paths; pre-existing staged paths fail closed, dirty main fails before switching, and clean main without a TD branch retains the workspace-not-found remediation.",
@@ -1104,7 +1132,7 @@ assertions = [
 ]
 evidence_digest = "sha256:d97a62aae39b5038ff7447c744d12768882aecfb280324ec4536cb5c52873d8f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d697084cd7bad065ee23670c90a02bcf3d81d8691b286b103b20b622e37bd6ef"
+digest = "sha256:779e4e7d556dce7ed929ae5cc2d7f5c23389d644ac1ca635b1d484ba25494112"
 
 [[cases]]
 id = "wi-close-remote-real-cli"
@@ -1114,7 +1142,7 @@ contract_id = "wi-close-remote-real-cli"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-close-remote-real-cli"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-close-remote-real-cli.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-close-remote-real-cli"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-close-remote-real-cli"
 required_for_production = true
 assertions = [
     "the repo-built aw binary resolves a tracker-only numeric issue through the configured GitHub backend; --repo selects every remote read and mutation; the optional reason and close mutation each occur exactly once across a retry; a missing remote names its backend and repository and emits an executable recovery command; a local-only issue still moves from open to closed",
@@ -1124,7 +1152,7 @@ assertions = [
 ]
 evidence_digest = "sha256:ab38030faf90b1bfe3337d32e200e18e602c0900135d024fb8956679d8084084"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:91b61e5049452570d7b771990dace9d6cccb0b198e9a679887b01d83692a949b"
+digest = "sha256:b57e47965927508b2376a15971ff6d1f55bde1178cc89ece94eadf4c9608c1b0"
 
 [[cases]]
 id = "wi-create-help-command"
@@ -1134,7 +1162,7 @@ contract_id = "wi-create-help-command"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-create-help-command"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-create-help-command.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-command"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-command"
 required_for_production = true
 assertions = [
     "help output does not list --remote",
@@ -1144,7 +1172,7 @@ assertions = [
 ]
 evidence_digest = "sha256:31eb923d97b29ecaac6834def8e1910c5a80932f26f55cf686f0b087f8e486f4"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3c725bbdbee075f2c71609d51937e4e297054c84f10d98d8949499bdae545db4"
+digest = "sha256:48bf5570b830ef3ed3bae4913c7c5cb498fe436bc8fd346270289c760719f885"
 
 [[cases]]
 id = "wi-create-help-smoke"
@@ -1154,7 +1182,7 @@ contract_id = "wi-create-help-smoke"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-create-help-smoke"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-create-help-smoke.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-smoke"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-smoke"
 required_for_production = true
 assertions = [
     "stdout does not contain --remote",
@@ -1164,7 +1192,7 @@ assertions = [
 ]
 evidence_digest = "sha256:f0f0616891af4c1059f18454b1590d96ef60203099b8d2ad1931456560fbbd9d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:06d83e50bc167bdff55f54ae2ed666e49f7b37a1557e1e388deedd59adcd55fb"
+digest = "sha256:f0202f81757dadcb6c6fe43fea003fd441cba5d14638b3cfc967113f5af06975"
 
 [[cases]]
 id = "wi-create-remote-flag-tests"
@@ -1174,7 +1202,7 @@ contract_id = "wi-create-remote-flag-tests"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-create-remote-flag-tests"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-create-remote-flag-tests.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-flag-tests"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-flag-tests"
 required_for_production = true
 assertions = [
     "create help hides remote flag; hidden remote compatibility flag parses; create behavior is config-driven",
@@ -1184,7 +1212,7 @@ assertions = [
 ]
 evidence_digest = "sha256:1a2813d3226211d0a22afbb0b41119ab992785d740a238de2078d5b1a33d686b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:aeeba2a5507b70e59fca0fa4d36eb7f646c26ca5b562c429365a9870752ffdb1"
+digest = "sha256:ead8c81a4d57557fb92f75d44aa3fd2cc04e5f196eebea580857997091900564"
 
 [[cases]]
 id = "wi-create-remote-unit-command"
@@ -1194,7 +1222,7 @@ contract_id = "wi-create-remote-unit-command"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-create-remote-unit-command"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-create-remote-unit-command.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-unit-command"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-unit-command"
 required_for_production = true
 assertions = [
     "help hides deprecated remote flag; compatibility flag parses; backend decision is config-driven",
@@ -1204,7 +1232,7 @@ assertions = [
 ]
 evidence_digest = "sha256:58aa94928c88be0b3210fad0986d07c390e19634b8838871b2892235053b50dc"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8fc620e6c77091f3001d8c0f4736271a51631ad4a7764c868cf9a6438c113663"
+digest = "sha256:343aedd30f4398ff74c0d89f41d44ffc9c74a7f4a142b9fe4802cc4a816365cb"
 
 [[cases]]
 id = "wi-remove-agent-estimate-build"
@@ -1214,7 +1242,7 @@ contract_id = "wi-remove-agent-estimate-build"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-remove-agent-estimate-build"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-remove-agent-estimate-build.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-build"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-build"
 required_for_production = true
 assertions = [
     "prioritization output contains no estimate field while retaining the bounded capability-to-epic planning result",
@@ -1224,7 +1252,7 @@ assertions = [
 ]
 evidence_digest = "sha256:764773fc2e94fef0c706cd0a14579ae343d2de3f51fa42e5db8679b3ea804116"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0a201708b2bb48ba7759dbf45a30ec557da0cf91861ef432e33a454f7f21003c"
+digest = "sha256:328caf318e60fb6e297ddb673fadc466ff6c0d1d7ad2f649e362d5a16d77ccaf"
 
 [[cases]]
 id = "wi-remove-agent-estimate-spec-check"
@@ -1234,7 +1262,7 @@ contract_id = "wi-remove-agent-estimate-spec-check"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-remove-agent-estimate-spec-check"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-remove-agent-estimate-spec-check.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-spec-check"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-spec-check"
 required_for_production = true
 assertions = [
     "legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement",
@@ -1244,7 +1272,7 @@ assertions = [
 ]
 evidence_digest = "sha256:4735c21cb23975935dc6b9867bd7804d1442a301d7365de2a24a46d96442e32f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:071ac8c68040b68ff8b48e42204a623e72545973f3daad43eb2a20668b2d4384"
+digest = "sha256:33855c0ce7f7763e46ac6e27fb2490a668b676d1e3500bf366e067f4310d4510"
 
 [[cases]]
 id = "wi-remove-agent-estimate-unit-command"
@@ -1254,7 +1282,7 @@ contract_id = "wi-remove-agent-estimate-unit-command"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-remove-agent-estimate-unit-command"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-remove-agent-estimate-unit-command.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-unit-command"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-unit-command"
 required_for_production = true
 assertions = [
     "bounded non-epic validates without estimate section; legacy estimate section remains parseable; generated body and planning output omit estimate fields",
@@ -1264,7 +1292,7 @@ assertions = [
 ]
 evidence_digest = "sha256:24d579566dcccd2528c5e912fa4637ce1939a857a51a773b9cff2c20982ed4ae"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:741c80680599375eff7ed227b6f064ee59a986a5c36ad87ab78a9512e9a3c841"
+digest = "sha256:e372bc52bc1f311db8350b3dc30393a6172c1a50577a702c03f645fa80467faf"
 
 [[cases]]
 id = "wi-typed-epic-owner"
@@ -1274,7 +1302,7 @@ contract_id = "wi-typed-epic-owner"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-typed-epic-owner"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-epic-owner.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-epic-owner"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-epic-owner"
 required_for_production = true
 assertions = [
     "typed epic ownership is authorable on create/update, canonical in labels, visible in graph projection, body-only compatibility remains readable, and unowned creation emits an exact actionable command template",
@@ -1284,7 +1312,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e57d7d65f09c4daaeada55ea5d199f1c210fbc9787489cf1b55a1b7b5d074714"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:408f85b708cdb20ef2adb8ee488c76c9f92e66f5648351b38fe0fa6e458e122a"
+digest = "sha256:648f37b4fa09f830578b1c3882752cb7b5a23310cb1a38407372487d9e724030"
 
 [[cases]]
 id = "wi-typed-priority-label"
@@ -1294,7 +1322,7 @@ contract_id = "wi-typed-priority-label"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-typed-priority-label"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-priority-label.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-priority-label"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-priority-label"
 required_for_production = true
 assertions = [
     "typed priority authoring documents and emits the canonical single-colon priority:<value> label and never publishes priority::<value>",
@@ -1304,7 +1332,7 @@ assertions = [
 ]
 evidence_digest = "sha256:05ca0312934c06b3bcb3e46f092da0babf90aec747935feae982b6cc2f9962dc"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:15d01c57720e2b6ffefa98c00dc98484918d8d8140f607cce8dfe5ba40c1c45c"
+digest = "sha256:1f3d77fef0addb5bf5d738d8da67b9f986d931a220a99115321fecf460b085d2"
 
 [[cases]]
 id = "work-item-four-type-taxonomy"
@@ -1314,7 +1342,7 @@ contract_id = "work-item-four-type-taxonomy"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-four-type-taxonomy"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-four-type-taxonomy.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-four-type-taxonomy"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-four-type-taxonomy"
 required_for_production = true
 assertions = [
     "epic, change, spike, and report round-trip through the public CLI while only change enters the executable project graph",
@@ -1324,7 +1352,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e16d116a37f6058baea0e22f81c65247e64f13b1f692f44a6d3ed631a00a8862"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c31d71df99bf29d7ec122d993c3666ee77e33f52ab42668244225d8689084b4e"
+digest = "sha256:c6e8d0cddaa3a3118fd5590f7ca3243b00256a0d9eada93b0e16aaae8e1260fd"
 
 [[cases]]
 id = "work-item-intake-health"
@@ -1334,7 +1362,7 @@ contract_id = "work-item-intake-health"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-intake-health"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-intake-health.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-intake-health"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-intake-health"
 required_for_production = true
 assertions = [
     "health projects open Report and expired Spike counts plus the exact next typed intake remediation command",
@@ -1344,7 +1372,7 @@ assertions = [
 ]
 evidence_digest = "sha256:52ec40dbdddd070a326ed359c353757bf1a1ac0d57d330f5f5b09f0271140136"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:02965807d8e80ffb2e4d416ae0e0366b30612f1af9ddb009ae196d945e12e3f1"
+digest = "sha256:7ced574340c3e69e95898ac2b63d581d3e5275b3f0248eab5eeab276605da7ea"
 
 [[cases]]
 id = "work-item-planning-epic-to-change-atomization"
@@ -1354,7 +1382,7 @@ contract_id = "work-item-planning-epic-to-change-atomization"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-planning-epic-to-change-atomization"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-epic-to-change-atomization.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-to-change-atomization"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-to-change-atomization"
 required_for_production = true
 assertions = [
     "prioritization routes bounded changes into the ready lane",
@@ -1364,7 +1392,7 @@ assertions = [
 ]
 evidence_digest = "sha256:64122cbd7aabc3ab73cefc0c9aa25574e094fbd01dddabc4039715428cbd718b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:94aa73fed13725b66bcef0a0117542fef22dc998c1fc63c116b886c5e98b68ce"
+digest = "sha256:e4004de0f23957d45fd6f8bc8b7b717b699cef2e9bf710a8db5bd6b00e91b197"
 
 [[cases]]
 id = "work-item-planning-operational-efficiency"
@@ -1374,7 +1402,7 @@ contract_id = "work-item-planning-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-planning-operational-efficiency"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-operational-efficiency.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency"
 required_for_production = true
 assertions = [
     "The native Python planning scenario completes within 120 seconds and passes every representative work-item assertion without cargo delegation.",
@@ -1385,7 +1413,7 @@ assertions = [
 ]
 evidence_digest = "sha256:a56ad699f2f3e99c7a9c28c51b3e0dc7e09a9a0f4f04af3cc87d342ba0f0aa61"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:eed4e6bb6c160acf08d8a7746e6dc3204b69342b0f06a936c4067ea89a0843f5"
+digest = "sha256:340db0fbc7cd734e64d2846ba9ce71fb1deed23a944268b427b01cf6ba6bc3de"
 
 [[cases]]
 id = "work-item-planning-operational-stability"
@@ -1395,7 +1423,7 @@ contract_id = "work-item-planning-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-planning-operational-stability"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-operational-stability.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability"
 required_for_production = true
 assertions = [
     "Two fresh native Python planning scenarios produce identical non-empty results and both pass every representative work-item assertion without cargo delegation.",
@@ -1406,7 +1434,7 @@ assertions = [
 ]
 evidence_digest = "sha256:4a3a2c087ad4a3320cb4e4238812f2f0c2aa179ad47c8b5576eb92b8a6363a81"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f74ac520d6281a504954a6ddc244a41465eb5495edcd1d4a93e65d14a5135375"
+digest = "sha256:a632625e2b7d49a3f4140b0958b04edcb5a26df9e4621c1565be92a9a736171f"
 
 [[cases]]
 id = "work-item-report-triage"
@@ -1416,7 +1444,7 @@ contract_id = "work-item-report-triage"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-report-triage"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-report-triage.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-report-triage"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-report-triage"
 required_for_production = true
 assertions = [
     "Report type is immutable and typed triage either spawns linked delivery work for accepted or closes with a non-delivery verdict",
@@ -1426,7 +1454,7 @@ assertions = [
 ]
 evidence_digest = "sha256:d67f271b5cf2709f23926fd02f08b4a425b82f50e71c1af223d4d6f59a061dfc"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:caf267c465b1e464b9cf240eeac302a3519c3b14fb27b48411c8d5910bd9bd47"
+digest = "sha256:b6a11117e5b5a61bc6efd96dc8f7e793e4cefea8fed45cd4acd8c914df5ae576"
 
 [[cases]]
 id = "work-item-spike-terminal"
@@ -1436,7 +1464,7 @@ contract_id = "work-item-spike-terminal"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-spike-terminal"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-spike-terminal.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-spike-terminal"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-spike-terminal"
 required_for_production = true
 assertions = [
     "Spike cannot enter product source work and terminates only as decided with linked/no-action evidence or gave_up after expiry",
@@ -1446,7 +1474,7 @@ assertions = [
 ]
 evidence_digest = "sha256:cd451cafee9d19e5d03420825630ed2e9d8fa288528664f4bb343a999538bfd1"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:aba49a2561484d5c3a55b450c0b0a98443e9d56661300f262d92a629c3c8917f"
+digest = "sha256:1c9e9b83475c29bdd504ed15750aa59a7b4b04a4284aad8861baf662afc3e9c9"
 
 [[cases]]
 id = "work-item-type-templates"
@@ -1456,7 +1484,7 @@ contract_id = "work-item-type-templates"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-type-templates"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-templates.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-templates"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-templates"
 required_for_production = true
 assertions = [
     "Spike and Report use exact hard authoring profiles, Report intake omits Capability Alignment, and cross-profile sections fail closed",
@@ -1466,7 +1494,7 @@ assertions = [
 ]
 evidence_digest = "sha256:345a92494aa0703e6128089042d076802e6c164d83e8bc498425b3f5e94140d4"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:242587fe5c9ec03c1821608e1103426089b385c8e703121dae03f80648425f9d"
+digest = "sha256:dcfbb8f3c35acdcb4b92d8e675bf41a4de0ab23f30d2954c0b8a0c8b188d9cd0"
 
 [[cases]]
 id = "work-item-type-vocabulary"
@@ -1476,7 +1504,7 @@ contract_id = "work-item-type-vocabulary"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-type-vocabulary"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-vocabulary.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-vocabulary"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-vocabulary"
 required_for_production = true
 assertions = [
     "aw llm and generated META-doc guidance define epic, change, spike, and report by canonical terminal states",
@@ -1486,7 +1514,7 @@ assertions = [
 ]
 evidence_digest = "sha256:50407b46886d6289ddf16fd650668d9dcd295f0bceb09330df3ca4608fea3e52"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a948e598ce29c6350377abea018028f96c9b6e5ca4243871930a936fc4ae0229"
+digest = "sha256:e7f1b5e398befb7d13bc7c1e8094b6916f5ed5f1fe7f9b6d63cdf0a00c20f756"
 
 [[cases]]
 id = "workflow-root-runner-parent-rollup-routing"
@@ -1496,7 +1524,7 @@ contract_id = "workflow-root-runner-parent-rollup-routing"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-parent-rollup-routing"
 test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-parent-rollup-routing.py"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing"
 required_for_production = true
 assertions = [
     "closed change roots route agents to parent inspection",
@@ -1506,4 +1534,4 @@ assertions = [
 ]
 evidence_digest = "sha256:ed7bd5cc8763b06d7187bcb16e2ea9a285116510c4cc9104473e356e19c7fd46"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f3a67002bc7888a895b016c7c5a20baf72cf730f895edaa1f773cd8889e3c90c"
+digest = "sha256:5ca46d835b5a651edb50b8b345500a0a1ad1bccde8d649b71f0783214ad01608"

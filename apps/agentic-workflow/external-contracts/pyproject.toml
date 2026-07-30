@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src", "tests/unit"]
-dependency_files = ["pyproject.toml"]
+dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
 [tool.aw.python-ec]
@@ -26,7 +26,7 @@ test_path = "src/cases/coordination-event-validation.py"
 promise = "Stale, unauthorised, and structurally invalid coordination events fail closed without durable mutation and return stable codes plus an executable exact remediation."
 oracle = "The Python external contract drives public AW coordination commands against durable state, accepts sequences 1, 2, and 3 around stale/authority/structural rejection groups, mutates sequence/event/dispatch/sender identities and every structural boundary, proves rejection does not consume sequence or persist events, executes each emitted remediation, and requires the embedded schema to equal the published message.schema.json."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-event-validation"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case coordination-event-validation"
 evidence_paths = ["evidence/coordination-event-validation.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -40,7 +40,7 @@ test_path = "src/cases/coordination-authority.py"
 promise = "Only AW-owned durable coordination state may advance completion or a decision, and it does so only for the active dispatch after every required gate is satisfied and cited as evidence."
 oracle = "The Python external contract establishes state through public AW authority commands, then submits only untrusted events. It independently checks durable active and interrupted dispatches, a positive two-gate completion with exact stored evidence, a concrete non-empty human decision, and rejection of forged authority/satisfaction, identity mismatch, empty gate or decision inputs, pending/wrong/partial gates, and non-human decision authority without durable decision mutation."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-authority"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case coordination-authority"
 evidence_paths = ["evidence/coordination-authority.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -54,7 +54,7 @@ test_path = "src/cases/coordination-contract-schema.py"
 promise = "Task, dispatch, message, and gate documents share one versioned, client-independent JSON contract that round-trips valid fixtures and rejects unknown versions, missing identity or linkage, untyped fields, invalid enums, and structural drift."
 oracle = "The Python external contract reads only the four published JSON Schema artifacts, evaluates representative fixtures through an independent schema interpreter, pins each schema's complete required-property set, and mutates every required field, typed field, enum, and const."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-contract-schema"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case coordination-contract-schema"
 evidence_paths = ["evidence/coordination-contract-schema.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -68,7 +68,7 @@ test_path = "src/cases/python-ec-cache-safe-discovery.py"
 promise = "Public Python EC discovery ignores undeclared cache/build binaries while still rejecting a missing declared Python source or a binary path declared as the contract."
 oracle = "An isolated Python-first repository executes the real aw ec check command against non-UTF-8 pyc and native-extension fixtures, then independently mutates only the declared test_path boundary to prove strict missing and source-type findings."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-cache-safe-discovery"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-cache-safe-discovery"
 evidence_paths = ["evidence/python-ec-cache-safe-discovery.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -82,7 +82,7 @@ test_path = "src/cases/work-item-four-type-taxonomy.py"
 promise = "epic, change, spike, and report round-trip through the public CLI while only change enters the executable project graph"
 oracle = "The hand-authored Python EC executes the real compiled aw binary against an isolated local-backend project and asserts public envelopes and graph projection without importing production source."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-four-type-taxonomy"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-four-type-taxonomy"
 evidence_paths = ["evidence/work-item-four-type-taxonomy.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -96,7 +96,7 @@ test_path = "src/cases/issue-cache-canonical-change.py"
 promise = "Canonical Change work items serialize and parse as type change in the issue cache, and one cached Change cannot poison list, show, or EC draft for another work item."
 oracle = "An isolated local-backend repository inspects the raw cache frontmatter, then executes the real aw list, show, and EC draft surfaces without importing production source."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case issue-cache-canonical-change"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case issue-cache-canonical-change"
 evidence_paths = ["evidence/issue-cache-canonical-change.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -110,7 +110,7 @@ test_path = "src/cases/work-item-type-templates.py"
 promise = "Spike and Report use exact hard authoring profiles, Report intake omits Capability Alignment, and cross-profile sections fail closed"
 oracle = "The hand-authored Python EC drives real aw create/show commands and independently checks the emitted work-item bodies and invalid-profile failure."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-templates"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-templates"
 evidence_paths = ["evidence/work-item-type-templates.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -124,7 +124,7 @@ test_path = "src/cases/work-item-spike-terminal.py"
 promise = "Spike cannot enter product source work and terminates only as decided with linked/no-action evidence or gave_up after expiry"
 oracle = "The hand-authored Python EC runs the real goal and spike commands, inspects persisted terminal records, and rejects a decision without an exit disposition."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-spike-terminal"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-spike-terminal"
 evidence_paths = ["evidence/work-item-spike-terminal.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -138,7 +138,7 @@ test_path = "src/cases/work-item-report-triage.py"
 promise = "Report type is immutable and typed triage either spawns linked delivery work for accepted or closes with a non-delivery verdict"
 oracle = "The hand-authored Python EC executes the real aw triage surface, reads persisted Report and spawned Change state, and proves type-label immutability."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-report-triage"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-report-triage"
 evidence_paths = ["evidence/work-item-report-triage.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -152,7 +152,7 @@ test_path = "src/cases/shared-cli-issue-report-intake.py"
 promise = "shared CLI issue create emits app identity plus type:report through its public dry-run, courier JSON transport, and credential-free fallback URL"
 oracle = "The hand-authored Python EC builds and executes a real cli-std consumer, captures its courier request at the HTTP boundary, and independently inspects its public dry-run and fallback outputs."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case shared-cli-issue-report-intake"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case shared-cli-issue-report-intake"
 evidence_paths = ["evidence/shared-cli-issue-report-intake.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -166,7 +166,7 @@ test_path = "src/cases/work-item-intake-health.py"
 promise = "health projects open Report and expired Spike counts plus the exact next typed intake remediation command"
 oracle = "The hand-authored Python EC creates real local-backend intake WIs, executes health, and independently checks the public intake_queue axis before and after triage."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-intake-health"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-intake-health"
 evidence_paths = ["evidence/work-item-intake-health.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -180,7 +180,7 @@ test_path = "src/cases/work-item-type-vocabulary.py"
 promise = "aw llm and generated META-doc guidance define epic, change, spike, and report by canonical terminal states"
 oracle = "The hand-authored Python EC executes the real aw llm and meta producers, then independently checks their public output for the closed terminology-first terminal-state contract."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-vocabulary"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-vocabulary"
 evidence_paths = ["evidence/work-item-type-vocabulary.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -194,7 +194,7 @@ test_path = "src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
 promise = "a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap; the health payload exposes the regenerability production blocker and a runnable remediation command"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case authoritative-fixture-blocks-on-regenerability-gap"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case authoritative-fixture-blocks-on-regenerability-gap"
 evidence_paths = ["evidence/authoritative-fixture-blocks-on-regenerability-gap.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -208,7 +208,7 @@ test_path = "src/cases/aw-core-client-core-concept-model-phase-less-admission.py
 promise = "a phase-less project WorkItem enters EC authoring before any TD authoring command"
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-phase-less-admission"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-phase-less-admission"
 evidence_paths = ["evidence/aw-core-client-core-concept-model-phase-less-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -222,7 +222,7 @@ test_path = "src/cases/aw-health-default-full-verification-smoke.py"
 promise = "stdout includes progress JSONL events before the final result when long gates run; the final result includes payload_path; the payload file contains complete blocker and command evidence"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke"
 evidence_paths = ["evidence/aw-health-default-full-verification-smoke.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -236,7 +236,7 @@ test_path = "src/cases/capability-control-plane-markdown-capability-schema.py"
 promise = "canonical field-style capability contracts parse from Markdown"
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema"
 evidence_paths = ["evidence/capability-control-plane-markdown-capability-schema.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -250,7 +250,7 @@ test_path = "src/cases/capability-control-plane-missing-readme-initialization.py
 promise = "capability init renders a canonical README shell"
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-missing-readme-initialization"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-missing-readme-initialization"
 evidence_paths = ["evidence/capability-control-plane-missing-readme-initialization.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -264,8 +264,22 @@ test_path = "src/cases/capability-scoped-dependency-verification.py"
 promise = "a capability goal verifies only the requested capability and its transitive dependencies, excludes workspace-wide test gates, and retains scope in follow-up commands"
 oracle = "The hand-authored Python EC executes the real compiled aw binary against an isolated capability catalog, observes gate side effects, and independently proves unrelated and unknown capability gates never run."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-scoped-dependency-verification"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-scoped-dependency-verification"
 evidence_paths = ["evidence/capability-scoped-dependency-verification.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "python-td-claim-linkage"
+artifact_id = "artifact:capability-control-plane/public-contract"
+capability_id = "capability-control-plane"
+use_case_id = "python-td-claim-linkage"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/python-td-claim-linkage.py"
+promise = "a matching Python TD artifact and public behavior becomes primary capability claim evidence without an empty WI-planning detour"
+oracle = "The hand-authored Python EC executes the real compiled aw binary against an isolated Python TD/EC project and independently inspects its capability report."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-td-claim-linkage"
+evidence_paths = ["evidence/python-td-claim-linkage.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "external-fixture-reports-advisory-gap"
@@ -278,7 +292,7 @@ test_path = "src/cases/external-fixture-reports-advisory-gap.py"
 promise = "the external-advisory fixture reports the regenerability gap as an advisory warning; the advisory gap does not add a production blocker when all required gates are clean"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap"
 evidence_paths = ["evidence/external-fixture-reports-advisory-gap.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -293,7 +307,7 @@ promise = "backlog admission reaches reviewed-graph preflight instead of a self-
 oracle = "A local fixture with no reviewed graph independently requires the public backlog root to emit planning remediation; repeated public WI envelopes and filesystem digests prove bounded admission."
 threshold = "backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission"
 evidence_paths = ["evidence/self-hosting-bounded-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -307,7 +321,7 @@ test_path = "src/cases/self-hosting-health-policy.py"
 promise = "public AW health declares Python-first root admission and limits bounded direct repair to a self-hosting-only fallback for a broken current worker verb"
 oracle = "Independent self-hosting and non-self-hosting fixtures invoke the public health command; the self-hosting result must expose every exact policy field while the control must expose none of them."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-health-policy"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-health-policy"
 evidence_paths = ["evidence/self-hosting-health-policy.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -321,7 +335,7 @@ test_path = "src/cases/self-hosting-capability-admission.py"
 promise = "scoped capability admission completes without unrelated project lifecycle gates and hands control to project rollup; backlog admission fail-closes on the absent reviewed graph with the exact project planning remediation"
 oracle = "A canonical verified capability with a passing capability-owned gate independently requires scoped completion and project rollup, while the deliberately absent reviewed graph independently requires project planning; the verifier pins both public commands and reasons."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
 evidence_paths = ["evidence/self-hosting-capability-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -336,7 +350,7 @@ promise = "a malformed self-hosting WI identity returns a normal blocked envelop
 oracle = "The verifier corrupts local WI frontmatter after a valid admission snapshot and compares repository/runtime digests around the public CLI call."
 threshold = "a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability"
 evidence_paths = ["evidence/self-hosting-identity-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -350,7 +364,7 @@ test_path = "src/cases/self-hosting-wi-admission.py"
 promise = "the self-hosted WI root enters EC authoring and dispatches the exact project-and-WI-scoped EC check as its first worker command"
 oracle = "A valid local AW-owned change with no lifecycle phase independently requires the public WI root to emit the exact EC-first action, state, reason, and command."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission"
 evidence_paths = ["evidence/self-hosting-wi-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -364,7 +378,7 @@ test_path = "src/cases/standardize-audit-first-contract-test.py"
 promise = "Focused takeover-audit health succeeds as a not-applicable observation without a preservation baseline, then succeeds as a recorded observation after aw td audit-record captures the preservation contract."
 oracle = "An isolated project runs the public focused health command before and after the public audit-record producer, requiring exact successful/healthy states, a false-to-true recorded transition, and the captured route and command surface."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test"
 evidence_paths = ["evidence/standardize-audit-first-contract-test.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -378,7 +392,7 @@ test_path = "src/cases/td-artifact-producer-cli-fixture.py"
 promise = "aw td create initializes one WI-bound Python module below tech-design/src and emits the exact apply handoff without Markdown skeletons or JSON section payloads"
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture"
 evidence_paths = ["evidence/td-artifact-producer-cli-fixture.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -392,7 +406,7 @@ test_path = "src/cases/td-cb-lifecycle-automation-remove-td-merge-command.py"
 promise = "the retired `aw td merge` command is absent from the Clap tree and parsing it returns the literal unrecognized-subcommand failure (#914, refs #851)"
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-remove-td-merge-command"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-remove-td-merge-command"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-remove-td-merge-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -406,7 +420,7 @@ test_path = "src/cases/wi-close-remote-real-cli.py"
 promise = "the repo-built aw binary resolves a tracker-only numeric issue through the configured GitHub backend; --repo selects every remote read and mutation; the optional reason and close mutation each occur exactly once across a retry; a missing remote names its backend and repository and emits an executable recovery command; a local-only issue still moves from open to closed"
 oracle = "Native Python black-box assertions run the repo-built aw binary against an isolated HTTP tracker and local backend."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-close-remote-real-cli"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-close-remote-real-cli"
 evidence_paths = ["evidence/wi-close-remote-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -420,7 +434,7 @@ test_path = "src/cases/wi-typed-epic-owner.py"
 promise = "typed epic ownership is authorable on create/update, canonical in labels, visible in graph projection, body-only compatibility remains readable, and unowned creation emits an exact actionable command template"
 oracle = "Native Python black-box assertions drive the repo-built aw binary in an isolated local tracker."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-epic-owner"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-epic-owner"
 evidence_paths = ["evidence/wi-typed-epic-owner.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -434,7 +448,7 @@ test_path = "src/cases/wi-typed-priority-label.py"
 promise = "typed priority authoring documents and emits the canonical single-colon priority:<value> label and never publishes priority::<value>"
 oracle = "Native Python black-box assertions inspect repo-built aw help and create a local work item through the real CLI."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-priority-label"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-priority-label"
 evidence_paths = ["evidence/wi-typed-priority-label.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -448,7 +462,7 @@ test_path = "src/cases/wi-create-help-command.py"
 promise = "help output does not list --remote"
 oracle = "Native Python black-box assertions inspect the repo-built aw help output."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-command"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-command"
 evidence_paths = ["evidence/wi-create-help-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -462,7 +476,7 @@ test_path = "src/cases/wi-create-help-smoke.py"
 promise = "stdout does not contain --remote"
 oracle = "Native Python black-box assertions inspect the repo-built aw help output."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-smoke"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-smoke"
 evidence_paths = ["evidence/wi-create-help-smoke.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -476,7 +490,7 @@ test_path = "src/cases/wi-create-remote-flag-tests.py"
 promise = "create help hides remote flag; hidden remote compatibility flag parses; create behavior is config-driven"
 oracle = "Native Python black-box assertions exercise help, hidden compatibility parsing, and configuration-driven local creation."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-flag-tests"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-flag-tests"
 evidence_paths = ["evidence/wi-create-remote-flag-tests.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -490,7 +504,7 @@ test_path = "src/cases/wi-create-remote-unit-command.py"
 promise = "help hides deprecated remote flag; compatibility flag parses; backend decision is config-driven"
 oracle = "Native Python black-box assertions exercise help, hidden compatibility parsing, and configuration-driven local creation."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-unit-command"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-unit-command"
 evidence_paths = ["evidence/wi-create-remote-unit-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -504,7 +518,7 @@ test_path = "src/cases/wi-remove-agent-estimate-build.py"
 promise = "prioritization output contains no estimate field while retaining the bounded capability-to-epic planning result"
 oracle = "Native Python black-box assertions validate real work items and inspect the emitted planning artifact."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-build"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-build"
 evidence_paths = ["evidence/wi-remove-agent-estimate-build.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -518,7 +532,7 @@ test_path = "src/cases/wi-remove-agent-estimate-spec-check.py"
 promise = "legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement"
 oracle = "Native Python black-box assertions validate a bounded work item containing the legacy inert section."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-spec-check"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-spec-check"
 evidence_paths = ["evidence/wi-remove-agent-estimate-spec-check.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -532,7 +546,7 @@ test_path = "src/cases/wi-remove-agent-estimate-unit-command.py"
 promise = "bounded non-epic validates without estimate section; legacy estimate section remains parseable; generated body and planning output omit estimate fields"
 oracle = "Native Python black-box assertions validate bounded current and legacy work-item bodies and inspect planning output."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-unit-command"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-unit-command"
 evidence_paths = ["evidence/wi-remove-agent-estimate-unit-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -546,7 +560,7 @@ test_path = "src/cases/work-item-planning-epic-to-change-atomization.py"
 promise = "prioritization routes bounded changes into the ready lane"
 oracle = "Native Python black-box assertions inspect the strict project graph produced from a bounded owned change."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-to-change-atomization"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-to-change-atomization"
 evidence_paths = ["evidence/work-item-planning-epic-to-change-atomization.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -560,7 +574,7 @@ test_path = "src/cases/workflow-root-runner-parent-rollup-routing.py"
 promise = "closed change roots route agents to parent inspection"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing"
 evidence_paths = ["evidence/workflow-root-runner-parent-rollup-routing.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -575,7 +589,7 @@ promise = "The native Python prompt and runner scenario completes within 120 sec
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency"
 evidence_paths = ["evidence/aw-core-client-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -590,7 +604,7 @@ promise = "Two fresh native Python prompt and runner scenarios produce identical
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability"
 evidence_paths = ["evidence/aw-core-client-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -605,7 +619,7 @@ promise = "The native Python capability init, report, and sweep scenario complet
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency"
 evidence_paths = ["evidence/capability-control-plane-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -620,7 +634,7 @@ promise = "Two fresh native Python capability scenarios preserve the same projec
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability"
 evidence_paths = ["evidence/capability-control-plane-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -635,7 +649,7 @@ promise = "The native Python existing-project health scenario completes within 1
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-efficiency"
 evidence_paths = ["evidence/existing-project-standardization-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -650,7 +664,7 @@ promise = "Two fresh native Python existing-project health scenarios preserve th
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability"
 evidence_paths = ["evidence/existing-project-standardization-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -665,7 +679,7 @@ promise = "The native Python EC scaffold and evidence scenario completes within 
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency"
 evidence_paths = ["evidence/manual-evidence-artifacts-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -680,7 +694,7 @@ promise = "Two fresh native Python EC scaffold scenarios produce identical case 
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability"
 evidence_paths = ["evidence/manual-evidence-artifacts-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -695,7 +709,7 @@ promise = "The native Python project-local TD and EC producer scenario completes
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-efficiency"
 evidence_paths = ["evidence/project-local-td-and-ec-gates-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -710,7 +724,7 @@ promise = "Two fresh native Python project-local TD and EC producer scenarios pr
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability"
 evidence_paths = ["evidence/project-local-td-and-ec-gates-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -725,7 +739,7 @@ promise = "The native Python red-to-green terminal EC scenario completes within 
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -740,7 +754,7 @@ promise = "Two fresh native Python terminal EC scenarios reproduce the same red 
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -755,7 +769,7 @@ promise = "The native Python planning scenario completes within 120 seconds and 
 oracle = "A monotonic clock around the native Python black-box suite enforces the elapsed-time limit."
 threshold = "elapsed <= 120 seconds; every representative Python assertion passes"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency"
 evidence_paths = ["evidence/work-item-planning-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -770,7 +784,7 @@ promise = "Two fresh native Python planning scenarios produce identical non-empt
 oracle = "Two fresh native Python black-box suites must return identical all-pass snapshots."
 threshold = "two attempts; identical representative assertion results"
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability"
 evidence_paths = ["evidence/work-item-planning-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -784,7 +798,7 @@ test_path = "src/cases/python-ec-only-authoring.py"
 promise = "Public EC authoring, checking, review, locking, and verification operate only on the project-local Python EC project, even when legacy spec_model configuration is present."
 oracle = "A hand-authored Python black-box fixture executes the real aw CLI, inspects help and artifacts, independently supplies digest-bound review evidence, and rejects retired fill/gen commands."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-only-authoring"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-only-authoring"
 evidence_paths = ["evidence/python-ec-only-authoring.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -798,7 +812,7 @@ test_path = "src/cases/td-create-dirty-persistent-branch.py"
 promise = "TD create stays on a dirty persistent non-main project branch, commits only lifecycle-owned paths, and leaves unrelated modified, deleted, and untracked work byte-identical; dirty main still fails before branch activation."
 oracle = "Two isolated real-git repositories independently expose branch identity, porcelain state, file bytes, TD source existence, and td-branch refs before and after the real aw td create command."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-create-dirty-persistent-branch"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-create-dirty-persistent-branch"
 evidence_paths = ["evidence/td-create-dirty-persistent-branch.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -812,7 +826,7 @@ test_path = "src/cases/td-existing-workspace-dirty-persistent-branch.py"
 promise = "Public TD apply rejects malformed Python then advances with a semantic digest, and public CB generation stays on a dirty persistent non-main branch while committing only its generated target and preserving unrelated modified, deleted, and untracked paths; pre-existing staged paths fail closed, dirty main fails before switching, and clean main without a TD branch retains the workspace-not-found remediation."
 oracle = "Four isolated real-git repositories run the real aw TD/CB commands and independently expose syntax diagnostics, semantic digest and continuation, two exact commit deltas, staged-path refusal, branch identity and refs, porcelain state, file bytes, generated output, and remediation output."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-existing-workspace-dirty-persistent-branch"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case td-existing-workspace-dirty-persistent-branch"
 evidence_paths = ["evidence/td-existing-workspace-dirty-persistent-branch.json"]
 [[tool.aw.python-ec.cases]]
 id = "project-health-total-observation"
@@ -825,7 +839,7 @@ test_path = "src/cases/project-health-total-observation.py"
 promise = "Project semantic health contains exactly ec_accepts_td and ec_td_alignment: TD-applicable EC evidence accepts or rejects TD, while public EC/TD identities are compared in both directions without requiring EC coverage for internal TD artifacts."
 oracle = "An isolated Python-first project drives the real aw health command with passing, missing, and identity-mutated EC/TD artifacts. The independent Python oracle rejects any third semantic cell, requires result/payload correspondence, proves matching evidence and identities pass, proves EC-only and public-TD-only identities are reported in opposite set differences, and proves an internal TD-only artifact is ignored."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
 evidence_paths = ["evidence/project-health-total-observation.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -839,5 +853,5 @@ test_path = "src/cases/python-td-global-artifact-identity.py"
 promise = "Python TD module and explicit artifact identities are globally unique, the reviewed corpus remains complete, and role-distinct migrated projections cannot collapse into duplicate mutation identities."
 oracle = "The Python EC compiles the complete public TD AST, pins the 1002-module and 995-explicit-artifact inventories plus the exact seven modules without explicit artifact IDs, requires exact role-distinct identities for both normalized logic-emitter paths, proves two reverse-created duplicate-ID groups emit one complete exact cross-group and within-group sorted diagnostic twice, and verifies the public typed mutation inventory against an exact 8756-descriptor count, sorted-ID digest, uniqueness, and both logic emitters."
 target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-td-global-artifact-identity"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-td-global-artifact-identity"
 evidence_paths = ["evidence/python-td-global-artifact-identity.json"]

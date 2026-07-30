@@ -51,7 +51,7 @@ version = "0.1.0"
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/zero.py"
 source_roots = ["src"]
-dependency_files = ["pyproject.toml"]
+dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
 [tool.aw.python-ec]

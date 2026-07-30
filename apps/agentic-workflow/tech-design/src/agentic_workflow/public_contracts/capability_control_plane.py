@@ -16,6 +16,10 @@ def scoped_capability_verification() -> str:
     return "capability verification follows dependency closure"
 
 
+def python_td_claim_linkage() -> str:
+    return "Python TD artifact edges provide primary capability claim linkage"
+
+
 def capability_control_plane_operational_efficiency() -> str:
     return "capability operations stay within their efficiency threshold"
 
