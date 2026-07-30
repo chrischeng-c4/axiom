@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 
 use super::crd::{AuthMode, Tape};
 use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
+use service_k8s::service::PruneTarget;
 use service_k8s::stateful::{
     resource_request_or_default, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST,
 };
@@ -48,6 +49,19 @@ fn instance(tape: &Tape) -> String {
         .name
         .clone()
         .unwrap_or_else(|| APP.to_string())
+}
+
+/// The shared name of every backup-scoped child: the CronJob, its
+/// ServiceAccount, and the CronJob's [`prunes`] target.
+///
+/// One spelling on purpose. [`prunes`] must name the exact object
+/// [`backup_cron_job`] rendered, and a prune that misses by one character is
+/// silent — the controller GETs a name that does not exist, finds nothing to
+/// delete, and reports success while the real CronJob keeps firing on its old
+/// schedule. Deriving both from here makes that class of drift a compile-time
+/// impossibility rather than something a test has to notice.
+fn backup_child(name: &str) -> String {
+    format!("{name}-backup")
 }
 
 /// Resolve the namespace (defaults to `default` for unit construction).
@@ -145,6 +159,66 @@ pub fn render(tape: &Tape) -> Vec<Value> {
         objects.push(cron);
     }
     objects
+}
+
+/// Children a previous spec rendered that this one no longer wants (#3054).
+///
+/// The inverse of the `spec.backup` branch in [`render`] above, naming its
+/// target through the same [`instance`] / [`backup_child`] helpers the render
+/// path resolves its own name with rather than re-spelling it. Removing a
+/// backup schedule from the CR must actually stop the CronJob from existing —
+/// Server-Side Apply only reconciles fields on objects it is still given, it
+/// never deletes an object that stopped being rendered, so without this the
+/// CronJob keeps firing on its old schedule forever.
+///
+/// # Why the observability pair is not pruned
+///
+/// The `spec.observability` ServiceMonitor/PrometheusRule are the other two
+/// conditional children, and naming them here is actively wrong for two
+/// independent reasons.
+///
+/// The disqualifying one is that a `PruneTarget` costs a GET on every requeue,
+/// and both are `monitoring.coreos.com/v1` kinds. On a cluster without the
+/// Prometheus Operator CRDs that API group is not served at all, so the
+/// apiserver answers the GET with a plain-text `404 page not found` rather than
+/// a structured `NotFound`; `get_opt` keys off `reason == "NotFound"`, does not
+/// recognise it, and propagates it — failing the *entire* reconcile, including
+/// the apply and the status write, on a 15s retry loop that never converges.
+/// `spec.observability` is default-off precisely so a vanilla cluster stays
+/// installable (see its doc comment on `TapeSpec`); pruning on the `false`
+/// branch would reach for that API group in exactly the vanilla case the
+/// default exists to protect, inverting the invariant. Caught by the Kind gate,
+/// which is the only place a missing API group is real. Restoring these two
+/// targets is blocked on `get_opt` treating a bare 404 as absence (#3079).
+///
+/// The independent one is that they would not earn it anyway: lumen's
+/// `prunes()` draws the line at children whose *presence changes runtime
+/// behaviour*, and a stale ServiceMonitor only scrapes a metric nobody reads,
+/// where a stale CronJob keeps writing backups to a destination the spec has
+/// stopped naming.
+///
+/// [`backup_service_account`] is likewise never named, for a third reason: it
+/// is rendered *unconditionally* (`render`, above) as a stable per-instance
+/// identity for Workload Identity annotations, precisely so that identity
+/// survives toggling `spec.backup` on and off. Pruning it would break that
+/// guarantee in the other direction.
+///
+/// R4/AC6: this only *names* candidates; it does not itself verify ownership.
+/// The controller (`libs/service-k8s/src/controller.rs:198` `prune_object`)
+/// GETs the live object and only deletes it when a controller `ownerReference`
+/// UID matches this CR's UID, warning and skipping otherwise — so a
+/// same-named object this CR does not own is never touched. Tape does not
+/// reimplement that check here.
+pub fn prunes(tape: &Tape) -> Vec<PruneTarget> {
+    let mut targets = Vec::new();
+    if tape.spec.backup.is_none() {
+        targets.push(PruneTarget {
+            api_version: "batch/v1",
+            kind: "CronJob",
+            name: backup_child(&instance(tape)),
+        });
+    }
+    targets
 }
 
 /// Prometheus label-selector fragment scoping a *self-scraped tape* series to
@@ -429,7 +503,7 @@ fn backup_service_account(cx: &RenderCtx) -> Value {
     json!({
         "apiVersion": "v1",
         "kind": "ServiceAccount",
-        "metadata": cx.meta(&format!("{}-backup", cx.name), BACKUP_COMPONENT),
+        "metadata": cx.meta(&backup_child(cx.name), BACKUP_COMPONENT),
     })
 }
 
@@ -456,7 +530,7 @@ fn backup_service_account(cx: &RenderCtx) -> Value {
 /// block with no `adminTokenSecret` is worth a second look.
 fn backup_cron_job(tape: &Tape, cx: &RenderCtx) -> Option<Value> {
     let backup = tape.spec.backup.as_ref()?;
-    let cron_name = format!("{}-backup", cx.name);
+    let cron_name = backup_child(cx.name);
 
     let mut args = vec![
         "backup".to_string(),

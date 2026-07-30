@@ -12,9 +12,9 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
-use service_k8s::{ClusterSpec, ManagedService, ReadyFacts};
-use tape::operator::render::render;
-use tape::operator::{crd_yaml, AuthMode, Tape, TapeSpec};
+use service_k8s::{ClusterSpec, ConditionStatus, ManagedService, ReadyFacts};
+use tape::operator::render::{prunes, render};
+use tape::operator::{crd_yaml, AuthMode, Tape, TapeBackupSpec, TapeSpec};
 
 fn spec(replicas: u32) -> TapeSpec {
     TapeSpec {
@@ -521,8 +521,6 @@ fn bootstrap_seed_uri_wiring_is_opt_in() {
 /// render it rather than hand-author one alongside the CR.
 #[test]
 fn backup_cron_job_is_opt_in_and_invokes_the_backup_verb() {
-    use tape::operator::TapeBackupSpec;
-
     let plain = render(&Tape::new("tape", spec(3)));
     assert!(
         plain.iter().all(|o| o["kind"] != "CronJob"),
@@ -599,8 +597,6 @@ fn backup_cron_job_is_opt_in_and_invokes_the_backup_verb() {
 /// and the pre-existing identity assertion resolves through it.
 #[test]
 fn backup_service_account_exists_independently_of_the_schedule() {
-    use tape::operator::TapeBackupSpec;
-
     let names = |objs: &[Value]| -> Vec<String> {
         objs.iter()
             .filter(|o| o["kind"] == "ServiceAccount")
@@ -644,8 +640,6 @@ fn backup_service_account_exists_independently_of_the_schedule() {
 /// omitting them must not emit an empty flag or an unresolvable env var.
 #[test]
 fn backup_cron_job_omits_unset_retention_and_token() {
-    use tape::operator::TapeBackupSpec;
-
     let mut minimal = spec(1);
     minimal.backup = Some(TapeBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {
@@ -1068,5 +1062,335 @@ fn status_patch_reports_pending_reconciling_ready() {
 fn rustls_provider_install_is_idempotent() {
     peer_tls::install_default_crypto_provider();
     peer_tls::install_default_crypto_provider();
+}
+
+// ---- #3054: prunes() ------------------------------------------------------
+
+fn configured_backup() -> TapeBackupSpec {
+    TapeBackupSpec {
+        policy: service_backup::ScheduledBackupPolicy {
+            schedule: "17 3 * * *".into(),
+            destination: "gs://tape-backups/orders".into(),
+            retention_secs: None,
+        },
+        admin_token_secret: None,
+    }
+}
+
+/// `api_version` is part of the identity, not decoration: the controller GETs
+/// each target by `(api_version, kind, name)`, so a wrong group/version makes
+/// the delete address an object that does not exist and the prune silently
+/// becomes a no-op. Assert all three.
+fn prune_names(
+    targets: &[service_k8s::service::PruneTarget],
+) -> Vec<(&'static str, &'static str, String)> {
+    targets
+        .iter()
+        .map(|t| (t.api_version, t.kind, t.name.clone()))
+        .collect()
+}
+
+/// The four `(observability, backup)` permutations, so every test below states
+/// its expectation against the whole spec space instead of one sample.
+fn permutations() -> Vec<(bool, bool, Tape)> {
+    let mut out = Vec::new();
+    for observability in [false, true] {
+        for backup in [false, true] {
+            let mut s = spec(3);
+            s.observability = observability;
+            s.backup = backup.then(configured_backup);
+            out.push((observability, backup, Tape::new("tape", s)));
+        }
+    }
+    out
+}
+
+/// R1/AC1 — no backup schedule: prune exactly the backup CronJob, whatever
+/// `spec.observability` says. The two are independent branches and the
+/// observability one deliberately prunes nothing (see
+/// [`prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve`]).
+#[test]
+fn prunes_names_the_cron_job_when_no_backup_is_configured() {
+    for (observability, backup, tape) in permutations() {
+        if backup {
+            continue;
+        }
+        assert_eq!(
+            prune_names(&prunes(&tape)),
+            vec![("batch/v1", "CronJob", "tape-backup".to_string())],
+            "at observability={observability} with no backup schedule"
+        );
+    }
+}
+
+/// R1/AC1 — a backup schedule is configured, so the CronJob is rendered and
+/// must not be pruned; nothing else is a prune candidate either.
+#[test]
+fn prunes_names_nothing_when_a_backup_schedule_is_configured() {
+    for (observability, backup, tape) in permutations() {
+        if !backup {
+            continue;
+        }
+        assert!(
+            prunes(&tape).is_empty(),
+            "at observability={observability} with a backup schedule, the CronJob is \
+             rendered and prunes() must name nothing"
+        );
+    }
+}
+
+/// The regression guard for the defect the Kind gate caught: a `PruneTarget`
+/// costs a GET on **every** requeue, so naming a kind whose API group the
+/// cluster does not serve fails the entire reconcile — the apply and the status
+/// write included — not just the prune.
+///
+/// A missing *object* comes back as a structured `NotFound` that `get_opt` maps
+/// to `Ok(None)`. A missing *API group* comes back as a plain-text
+/// `404 page not found` that kube cannot parse into an `ErrorResponse`, so its
+/// `reason == "NotFound"` arm never matches and the error propagates. The
+/// operator then retries every 15s, forever, and the CR's status stays empty.
+///
+/// This is why the `spec.observability` ServiceMonitor/PrometheusRule pair is
+/// absent from `prunes()`: both are `monitoring.coreos.com/v1`, and
+/// `spec.observability` is default-off precisely so a cluster without the
+/// Prometheus Operator CRDs stays installable — pruning on the `false` branch
+/// would reach for that group in exactly the vanilla case the default protects.
+/// Blocked on #3079; until then the allow-list below is the gate.
+#[test]
+fn prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve() {
+    // Groups every conformant Kubernetes apiserver serves without any CRD or
+    // add-on installed. Anything outside this set is only present if something
+    // installed it, which the operator cannot assume and must not GET.
+    const BUILT_IN: &[&str] = &[
+        "v1",
+        "apps/v1",
+        "batch/v1",
+        "policy/v1",
+        "networking.k8s.io/v1",
+        "rbac.authorization.k8s.io/v1",
+        "autoscaling/v2",
+        "coordination.k8s.io/v1",
+    ];
+    for (observability, backup, tape) in permutations() {
+        for target in prunes(&tape) {
+            assert!(
+                BUILT_IN.contains(&target.api_version),
+                "prunes() names {}/{} in group `{}`, which a cluster without add-on \
+                 CRDs does not serve; the GET returns an unparseable plain-text 404 \
+                 and fails the whole reconcile loop (observability={observability} \
+                 backup={backup})",
+                target.kind,
+                target.name,
+                target.api_version,
+            );
+        }
+    }
+}
+
+/// AC6 — the always-rendered `<name>-backup` ServiceAccount must never appear
+/// in `prunes()` under any spec, since it deliberately outlives the schedule
+/// toggle. The controller's own ownership re-check
+/// (`libs/service-k8s/src/controller.rs:198` `prune_object`) is a separate,
+/// already-exercised safety net this test does not reimplement.
+#[test]
+fn prunes_never_names_the_backup_service_account() {
+    for (observability, backup, tape) in permutations() {
+        assert!(
+            prunes(&tape)
+                .iter()
+                .all(|t| !(t.kind == "ServiceAccount" && t.name == "tape-backup")),
+            "the backup ServiceAccount is a stable identity rendered unconditionally; \
+             prunes() must never name it (observability={observability} backup={backup})"
+        );
+    }
+}
+
+/// The load-bearing invariant behind `prunes()`, asserted across all four spec
+/// permutations, in two halves that each catch a different failure.
+///
+/// - **Disjoint — holds for every target, unconditionally.** An identity that
+///   `prunes()` names while `render()` still emits it makes the controller
+///   delete an object it re-applies on the next pass, forever: a reconcile loop
+///   that never converges and a CronJob that fires or does not depending on
+///   where in the loop the clock lands.
+/// - **Total — holds for the CronJob.** It is rendered or pruned, never
+///   neither. Neither is the #3054 bug itself: SSA reconciles fields, not
+///   object lifetimes, so an object that stops being rendered and is never
+///   pruned simply stays. A future conditional branch added to `render()` and
+///   not mirrored into `prunes()` fails here rather than in a cluster months
+///   later — so a new entry belongs in `total` unless it has an explicit
+///   exemption below.
+///
+/// The `spec.observability` pair is the one exemption, and it is asserted as an
+/// exemption rather than omitted, so that deleting `prunes()`'s CronJob branch
+/// and "fixing" this test by moving the CronJob into the same list cannot pass
+/// quietly. Both are `monitoring.coreos.com/v1`; pruning them would GET an API
+/// group a vanilla cluster does not serve and fail every reconcile — see
+/// [`prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve`]. Blocked on
+/// #3079.
+#[test]
+fn prunes_is_the_exact_inverse_of_the_conditional_render_branches() {
+    let total = [("batch/v1", "CronJob", "tape-backup")];
+    let exempt = [
+        ("monitoring.coreos.com/v1", "ServiceMonitor", "tape"),
+        ("monitoring.coreos.com/v1", "PrometheusRule", "tape"),
+    ];
+    for (observability, backup, tape) in permutations() {
+        let rendered: Vec<(String, String, String)> = render(&tape)
+            .iter()
+            .map(|o| {
+                (
+                    o["apiVersion"].as_str().unwrap().to_string(),
+                    o["kind"].as_str().unwrap().to_string(),
+                    o["metadata"]["name"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let pruned = prune_names(&prunes(&tape));
+        let is_rendered = |api_version: &str, kind: &str, name: &str| {
+            rendered.contains(&(api_version.to_string(), kind.to_string(), name.to_string()))
+        };
+        let is_pruned = |api_version: &str, kind: &str, name: &str| {
+            pruned
+                .iter()
+                .any(|(a, k, n)| *a == api_version && *k == kind && n == name)
+        };
+
+        for (api_version, kind, name) in &pruned {
+            assert!(
+                !is_rendered(api_version, kind, name),
+                "{kind}/{name} is both rendered and pruned at \
+                 observability={observability} backup={backup}; the controller \
+                 would delete and re-apply it on every pass"
+            );
+        }
+
+        for (api_version, kind, name) in total {
+            assert!(
+                is_rendered(api_version, kind, name) ^ is_pruned(api_version, kind, name),
+                "{kind}/{name} is rendered={} pruned={} at observability={observability} \
+                 backup={backup}; it must be in exactly one of the two sets",
+                is_rendered(api_version, kind, name),
+                is_pruned(api_version, kind, name),
+            );
+        }
+
+        for (api_version, kind, name) in exempt {
+            assert!(
+                !is_pruned(api_version, kind, name),
+                "{kind}/{name} is pruned at observability={observability} backup={backup}; \
+                 its API group is not served by a vanilla cluster, so the GET would fail \
+                 every reconcile (#3079)"
+            );
+        }
+    }
+}
+
+// ---- #3054: conditions() ---------------------------------------------------
+
+fn condition<'a>(
+    facts: &'a [service_k8s::ConditionFact],
+    type_: &str,
+) -> &'a service_k8s::ConditionFact {
+    facts
+        .iter()
+        .find(|c| c.type_ == type_)
+        .unwrap_or_else(|| panic!("expected a `{type_}` condition, got: {facts:?}"))
+}
+
+fn ready_facts(name: &str, count: i64) -> ReadyFacts {
+    let mut ready = HashMap::new();
+    ready.insert(name.to_string(), count);
+    ReadyFacts { ready }
+}
+
+/// R2/AC3 — all four conditions are present, each with a non-empty `reason`
+/// and `message`.
+#[test]
+fn conditions_reports_all_four_with_reason_and_message() {
+    let tape = Tape::new("tape", spec(3));
+    let facts = tape.conditions(&ready_facts("tape", 3), &Value::Null);
+    assert_eq!(facts.len(), 4, "got: {facts:?}");
+    for type_ in ["Ready", "Progressing", "StorageHealthy", "BackupConfigured"] {
+        let c = condition(&facts, type_);
+        assert!(!c.reason.is_empty(), "{type_} must carry a reason");
+        assert!(!c.message.is_empty(), "{type_} must carry a message");
+    }
+}
+
+/// R3/AC5 — `conditions()` is a pure function of `(spec, ready facts,
+/// context)`: identical inputs called twice produce identical output.
+///
+/// This is what makes `observed_conditions()` safe to diff against: the
+/// projection helper only preserves an existing `lastTransitionTime` when the
+/// newly computed fact equals the observed one, so a `conditions()` that
+/// varied per call — a clock read, a hash iteration order, a counter — would
+/// restamp every condition on every 30s requeue and make the transition time
+/// meaningless. `ConditionFact` carries no timestamp field of its own; the
+/// stamping is entirely [`service_k8s::service::project`]'s job.
+#[test]
+fn conditions_is_a_pure_function_of_spec_and_observed_facts() {
+    let tape = Tape::new("tape", spec(3));
+    let facts_a = tape.conditions(&ready_facts("tape", 2), &Value::Null);
+    let facts_b = tape.conditions(&ready_facts("tape", 2), &Value::Null);
+    assert_eq!(facts_a, facts_b);
+}
+
+/// R2 — a degraded-storage instance is out of the operator's observation
+/// reach today, so `StorageHealthy` reports `Unknown`/`NotObserved` rather
+/// than a `False` derived from a signal that does not mean "the disk is
+/// full". #3054's AC4 wanted the `False`; the observation path it needs is
+/// #3071. The reasoning is on the condition in `src/operator/reconcile.rs`.
+#[test]
+fn storage_healthy_reports_unknown_not_observed() {
+    let tape = Tape::new("tape", spec(3));
+    let facts = tape.conditions(&ready_facts("tape", 3), &Value::Null);
+    let storage = condition(&facts, "StorageHealthy");
+    assert_eq!(storage.status, ConditionStatus::Unknown);
+    assert_eq!(storage.reason, "NotObserved");
+}
+
+/// R2 — `BackupConfigured` names the schedule and destination when set, and
+/// reports `False`/`NotConfigured` when `spec.backup` is unset.
+#[test]
+fn backup_configured_reflects_spec_backup() {
+    let tape = Tape::new("tape", spec(3));
+    let facts = tape.conditions(&ready_facts("tape", 3), &Value::Null);
+    let backup = condition(&facts, "BackupConfigured");
+    assert_eq!(backup.status, ConditionStatus::False);
+    assert_eq!(backup.reason, "NotConfigured");
+
+    let mut configured = spec(3);
+    configured.backup = Some(configured_backup());
+    let tape = Tape::new("tape", configured);
+    let facts = tape.conditions(&ready_facts("tape", 3), &Value::Null);
+    let backup = condition(&facts, "BackupConfigured");
+    assert_eq!(backup.status, ConditionStatus::True);
+    assert_eq!(backup.reason, "ScheduleConfigured");
+    assert!(backup.message.contains("17 3 * * *"));
+    assert!(backup.message.contains("gs://tape-backups/orders"));
+}
+
+/// AC5 anti-drift assertion: the `Ready` condition's status agrees with
+/// `status_patch`'s `phase` for the same inputs, because both project from
+/// the same `Observation` — this is what makes the shared struct load-bearing
+/// rather than two independently-written computations that happen to agree
+/// today.
+#[test]
+fn ready_condition_agrees_with_status_patch_phase() {
+    let tape = Tape::new("tape", spec(3));
+    for count in [0i64, 1, 3] {
+        let facts = tape.conditions(&ready_facts("tape", count), &Value::Null);
+        let ready = condition(&facts, "Ready");
+        let patch = tape.status_patch(&ready_facts("tape", count));
+        let phase = patch["status"]["phase"].as_str().unwrap();
+        let expected_ready_status = phase == "Ready";
+        assert_eq!(
+            ready.status == ConditionStatus::True,
+            expected_ready_status,
+            "Ready condition ({:?}) disagrees with status_patch phase ({phase}) at count={count}",
+            ready.status
+        );
+    }
 }
 // HANDWRITE-END
