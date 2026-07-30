@@ -26,7 +26,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use futures::future::join_all;
+use futures::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use service_http::{MetricsProvider, ReadinessHook};
 use utoipa::{
@@ -59,6 +59,37 @@ use crate::types::{
     MAX_BATCH_REPLACE_SIZE, MAX_BATCH_SEARCH_SIZE, MAX_INDEX_BATCH_SIZE,
 };
 use crate::wal::{MemWal, SharedWal};
+
+/// The `/metrics` body: the engine's domain counters plus the delegated-auth
+/// counters.
+///
+/// They are composed here rather than merged into the engine because they
+/// answer different questions and are owned by different layers — and because
+/// an operator diagnosing a 503 needs `delegated_auth_unavailable_total` on the
+/// same scrape as the request counters, not in a second place they have to know
+/// to look. The auth half renders empty when auth is off, so a scrape's shape
+/// tells you which mode the process is in.
+struct ServingMetrics {
+    engine: Arc<Engine>,
+    verifier: Arc<LumenVerifier>,
+}
+
+impl MetricsProvider for ServingMetrics {
+    fn render_metrics(&self) -> String {
+        let mut rendered = self.engine.render_metrics();
+        rendered.push_str(&self.verifier.render_metrics());
+        rendered
+    }
+}
+
+/// How many authorization checks one request may have in flight at once.
+///
+/// The multi-collection paths (`GET /collections`, `POST /collections:search`)
+/// ask one `SubjectAccessReview` per collection. Serially that is a round trip
+/// per item; unbounded it is a way to point a fleet's whole list surface at the
+/// apiserver at once. The cache absorbs the repeat traffic, so this bound only
+/// has to keep the cold case civil.
+const AUTHORIZATION_CONCURRENCY: usize = 16;
 
 #[derive(Clone)]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
@@ -530,6 +561,18 @@ impl AppState {
         Arc::clone(&self.verifier)
     }
 
+    /// Install a verifier the caller built itself.
+    ///
+    /// [`with_components`](Self::with_components) can only build the two
+    /// verifiers that need nothing: open, and required-but-unwired. A delegated
+    /// verifier has to reach kube-apiserver and prove its delegation grant
+    /// before it exists, which is async and can fail — so the serving binary
+    /// builds it and hands it in here (#2869).
+    pub fn with_verifier(mut self, verifier: Arc<LumenVerifier>) -> Self {
+        self.verifier = verifier;
+        self
+    }
+
     /// No-auth state over an in-process log. Used by tests and the
     /// simplest single-node runs.
     pub fn open(engine: Arc<Engine>) -> Self {
@@ -841,7 +884,10 @@ pub fn router_with_admission(
         None => data_plane,
     };
 
-    let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
+    let metrics: Arc<dyn MetricsProvider> = Arc::new(ServingMetrics {
+        engine: state.engine.clone(),
+        verifier: state.verifier.clone(),
+    });
     let probes = service_http::standard_probe_routes_canonical_json(
         state.engine.clone(),
         Some(metrics),
@@ -1121,12 +1167,30 @@ async fn list_collections(
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<Vec<String>>, ApiErr> {
     let all = state.engine.list_collections().map_err(ApiErr::from)?;
-    // Filter to what the caller can actually read.
-    let visible = all
-        .into_iter()
-        .filter(|id| auth.ensure(id, Role::Read).is_ok())
-        .collect();
-    Ok(Json(visible))
+    // Filter to what the caller can actually read. Each id is its own
+    // SubjectAccessReview, so the checks go out concurrently — but bounded, or
+    // one list request against a fleet with thousands of collections becomes
+    // thousands of simultaneous apiserver calls.
+    //
+    // A denial removes the collection from the listing. An *unanswered* check
+    // does not: silently dropping it would tell the caller the collection does
+    // not exist on the strength of an apiserver outage, and a wrong listing is
+    // harder to notice than a 503.
+    let visible: Vec<Option<String>> = futures::stream::iter(all)
+        .map(|id| {
+            let auth = &auth;
+            async move {
+                match auth.ensure(&id, Role::Read).await {
+                    Ok(()) => Ok(Some(id)),
+                    Err(crate::auth::AuthErr::Forbidden { .. }) => Ok(None),
+                    Err(e) => Err(ApiErr::from(e)),
+                }
+            }
+        })
+        .buffered(AUTHORIZATION_CONCURRENCY)
+        .try_collect()
+        .await?;
+    Ok(Json(visible.into_iter().flatten().collect()))
 }
 
 #[utoipa::path(
@@ -1148,7 +1212,7 @@ async fn create_collection(
     Path(collection_id): Path<String>,
     Json(req): Json<CreateCollectionRequest>,
 ) -> Result<Json<CreateCollectionResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Admin)?;
+    auth.ensure(&collection_id, Role::Admin).await?;
     enforce_storage_writable(&state)?;
     // #2496: fan create_collection out across every physical shard when
     // routed — a collection created against only one shard left every other
@@ -1205,7 +1269,7 @@ async fn drop_collection(
     Path(collection_id): Path<String>,
     Query(q): Query<DropQuery>,
 ) -> Result<StatusCode, ApiErr> {
-    auth.ensure(&collection_id, Role::Admin)?;
+    auth.ensure(&collection_id, Role::Admin).await?;
     enforce_storage_writable(&state)?;
     // #2496: same routed-or-local fan-out as `create_collection` above.
     let outcome = if let Some(router) = &state.routed {
@@ -1272,7 +1336,7 @@ async fn index(
     Path(collection_id): Path<String>,
     Json(req): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Write)?;
+    auth.ensure(&collection_id, Role::Write).await?;
     enforce_storage_writable(&state)?;
     if req.items.len() > MAX_INDEX_BATCH_SIZE {
         return Err(ApiErr::new(
@@ -1328,7 +1392,7 @@ async fn delete_external_id(
     Path((collection_id, external_id)): Path<(String, String)>,
     Query(q): Query<DeleteQuery>,
 ) -> Result<StatusCode, ApiErr> {
-    auth.ensure(&collection_id, Role::Write)?;
+    auth.ensure(&collection_id, Role::Write).await?;
     enforce_storage_writable(&state)?;
     enforce_write_fence(&state, &collection_id, &external_id)?;
     if let Some(router) = &state.routed {
@@ -1383,7 +1447,7 @@ async fn replace_docs(
     Path(collection_id): Path<String>,
     Json(req): Json<ReplaceDocsRequest>,
 ) -> Result<Json<ReplaceDocsResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Write)?;
+    auth.ensure(&collection_id, Role::Write).await?;
     enforce_storage_writable(&state)?;
     if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
         return Err(ApiErr::new(
@@ -1452,7 +1516,7 @@ async fn replace_doc(
     Path((collection_id, external_id)): Path<(String, String)>,
     Json(body): Json<ReplaceDocBody>,
 ) -> Result<Json<ReplaceDocResult>, ApiErr> {
-    auth.ensure(&collection_id, Role::Write)?;
+    auth.ensure(&collection_id, Role::Write).await?;
     enforce_storage_writable(&state)?;
     enforce_write_fence(&state, &collection_id, &external_id)?;
     let req = ReplaceDocsRequest {
@@ -1562,7 +1626,7 @@ async fn search_core(
     collection_id: &str,
     req: SearchRequest,
 ) -> Result<SearchResponse, ApiErr> {
-    auth.ensure(collection_id, Role::Read)?;
+    auth.ensure(collection_id, Role::Read).await?;
     let consistency = read_consistency_from(headers);
     enforce_read_consistency(state, consistency)?;
     if let Some(router) = &state.routed {
@@ -1628,28 +1692,35 @@ async fn batch_search_core(
     }
     let consistency = read_consistency_from(headers);
     enforce_read_consistency(state, consistency)?;
-    let results = join_all(req.searches.into_iter().map(|item| {
-        let state = state.clone();
-        let auth = auth.clone();
-        let headers = headers.clone();
-        async move {
-            if let Err(e) = auth.ensure(&item.collection, Role::Read) {
-                return batch_search_auth_error(e);
+    // `buffered`, not `buffer_unordered`: the response contract is that
+    // `results` matches `searches` in order and length, and each item's
+    // authorization now costs a SubjectAccessReview, so the bound matters as
+    // much as the concurrency does.
+    let results: Vec<BatchSearchResult> = futures::stream::iter(req.searches)
+        .map(|item| {
+            let state = state.clone();
+            let auth = auth.clone();
+            let headers = headers.clone();
+            async move {
+                if let Err(e) = auth.ensure(&item.collection, Role::Read).await {
+                    return batch_search_auth_error(e);
+                }
+                let result = if let Some(router) = &state.routed {
+                    router
+                        .search(&item.collection, item.request, &headers)
+                        .await
+                } else {
+                    state.search_backend.search(&item.collection, item.request)
+                };
+                match result {
+                    Ok(response) => BatchSearchResult::Ok { response },
+                    Err(e) => batch_search_storage_error(e),
+                }
             }
-            let result = if let Some(router) = &state.routed {
-                router
-                    .search(&item.collection, item.request, &headers)
-                    .await
-            } else {
-                state.search_backend.search(&item.collection, item.request)
-            };
-            match result {
-                Ok(response) => BatchSearchResult::Ok { response },
-                Err(e) => batch_search_storage_error(e),
-            }
-        }
-    }))
-    .await;
+        })
+        .buffered(AUTHORIZATION_CONCURRENCY)
+        .collect()
+        .await;
     Ok(BatchSearchResponse { results })
 }
 
@@ -1784,16 +1855,17 @@ fn batch_search_storage_error(e: anyhow::Error) -> BatchSearchResult {
 
 /// Classify one batch item's auth rejection into a
 /// [`BatchSearchResult::Error`].
+///
+/// The per-item envelope reuses [`AuthErr::wire`], so a batch item and a
+/// single-collection request report a denial — or an unanswered
+/// SubjectAccessReview — with the same code and the same wording. One item's
+/// failure never fails the batch: the caller may legitimately hold read on
+/// some of the collections it asked about and not others.
 fn batch_search_auth_error(e: crate::auth::AuthErr) -> BatchSearchResult {
-    match e {
-        crate::auth::AuthErr::Forbidden {
-            subject,
-            needed,
-            collection_id,
-        } => BatchSearchResult::Error {
-            code: "forbidden".to_string(),
-            message: format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
-        },
+    let (_, code, message) = e.wire();
+    BatchSearchResult::Error {
+        code: code.to_string(),
+        message,
     }
 }
 
@@ -1824,7 +1896,7 @@ async fn duplicates(
     Path(collection_id): Path<String>,
     Json(req): Json<DuplicatesRequest>,
 ) -> Result<Json<DuplicatesResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Read)?;
+    auth.ensure(&collection_id, Role::Read).await?;
     let _consistency = read_consistency_from(&headers);
     if state.routed.is_some() {
         return Err(ApiErr::new(
@@ -1855,7 +1927,7 @@ async fn stats(
     Extension(auth): Extension<AuthContext>,
     Path(collection_id): Path<String>,
 ) -> Result<Json<StatsResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Read)?;
+    auth.ensure(&collection_id, Role::Read).await?;
     Ok(Json(
         state.engine.stats(&collection_id).map_err(ApiErr::from)?,
     ))
@@ -1907,7 +1979,7 @@ async fn reindex_stream(
     use std::time::Instant;
     use tokio::sync::mpsc;
 
-    auth.ensure(&collection_id, Role::Write)?;
+    auth.ensure(&collection_id, Role::Write).await?;
     if state.routed.is_some() {
         return Err(ApiErr::new(
             StatusCode::NOT_IMPLEMENTED,
@@ -2075,7 +2147,7 @@ async fn drop_field(
     Extension(auth): Extension<AuthContext>,
     Path((collection_id, field_name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure(&collection_id, Role::Admin)?;
+    auth.ensure(&collection_id, Role::Admin).await?;
     let version = state
         .write_backend
         .drop_field(collection_id.clone(), field_name.clone())
@@ -2115,7 +2187,7 @@ async fn backup(
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<SnapshotV1>, ApiErr> {
     // Cluster-wide admin op: needs admin on wildcard.
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     tracing::info!(
         target: "lumen.audit",
         event = "backup_started",
@@ -2155,7 +2227,7 @@ async fn backup_to_local(
     Extension(auth): Extension<AuthContext>,
     Json(req): Json<LocalBackupRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     let snap = state.engine.snapshot().map_err(ApiErr::from)?;
     let payload = serde_json::to_vec(&snap)
         .map_err(|e| ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "encode", e.to_string()))?;
@@ -2198,7 +2270,7 @@ async fn restore(
     Extension(auth): Extension<AuthContext>,
     Json(snap): Json<SnapshotV1>,
 ) -> Result<StatusCode, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     enforce_storage_writable(&state)?;
     state.engine.restore(snap).map_err(ApiErr::from)?;
     tracing::info!(
@@ -2244,7 +2316,7 @@ async fn reshard_apply(
     Extension(auth): Extension<AuthContext>,
     Json(batch): Json<ReshardBatch>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     let outcome = state
         .engine
         .apply_reshard_batch(batch.snapshot, None)
@@ -2294,7 +2366,7 @@ async fn reshard_prune(
     Extension(auth): Extension<AuthContext>,
     Json(chunk): Json<crate::reshard::ReshardPruneChunk>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     let to_map_version = chunk.to_map_version;
     let bucket = chunk.bucket;
     let collection_id = chunk.collection_id.clone();
@@ -2354,7 +2426,7 @@ async fn backup_scoped(
     Extension(auth): Extension<AuthContext>,
     Json(req): Json<ScopedBackupRequest>,
 ) -> Result<Json<SnapshotV1>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     let full = state.engine.snapshot().map_err(ApiErr::from)?;
     let scoped =
         crate::reshard::snapshot_bucket_subset(&full, req.virtual_bucket_count, &req.buckets)
@@ -2402,7 +2474,7 @@ async fn reshard_evict(
     Extension(auth): Extension<AuthContext>,
     Json(req): Json<ReshardEvictRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     let map =
         VirtualBucketShardMap::new(req.map_version, req.assignments, req.physical_shard_count)
             .map_err(ApiErr::from)?;
@@ -2449,7 +2521,7 @@ async fn admin_checkpoint(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     let persisted = state
         .checkpoint
         .checkpoint_now()
@@ -2516,7 +2588,7 @@ async fn reshard_fence(
     Extension(auth): Extension<AuthContext>,
     Json(req): Json<ReshardFenceRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
+    auth.ensure_admin(Role::Admin).await?;
     if req.virtual_bucket_count == 0 {
         return Err(ApiErr::new(
             StatusCode::BAD_REQUEST,
@@ -2900,17 +2972,11 @@ impl IntoResponse for ApiErr {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl From<crate::auth::AuthErr> for ApiErr {
     fn from(e: crate::auth::AuthErr) -> Self {
-        match e {
-            crate::auth::AuthErr::Forbidden {
-                subject,
-                needed,
-                collection_id,
-            } => Self::new(
-                StatusCode::FORBIDDEN,
-                "forbidden",
-                format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
-            ),
-        }
+        // A denial and an unanswered SubjectAccessReview reach the wire as
+        // different statuses (403 vs 503); `AuthErr::wire` owns that split so
+        // this conversion cannot quietly flatten it into one.
+        let (status, code, message) = e.wire();
+        Self::new(status, code, message)
     }
 }
 // CODEGEN-END

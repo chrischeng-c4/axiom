@@ -73,6 +73,18 @@
 //! middleware through [`AsAsync`]. Neither trait replaces the other, and no
 //! existing [`Verifier`] implementation changed to make room for the second.
 //!
+//! ## Delegating both halves to Kubernetes
+//!
+//! A service whose callers are all Kubernetes workloads can skip having a
+//! credential store at all. [`k8s`] delegates authentication to `TokenReview`
+//! and authorization to `SubjectAccessReview`, so the only place policy lives
+//! is `RoleBinding`s in the cluster. It accepts exactly one kind of caller —
+//! a `system:serviceaccount:<ns>:<name>` identity holding an audience-bound
+//! token — which is what keeps a delegating service from quietly becoming a
+//! second identity provider for whatever the cluster's authenticator happens
+//! to verify. That module names no service's resources; a caller maps its own
+//! operations onto [`k8s::ResourceAttributes`] (#2869).
+//!
 //! ## Two credential namespaces, deliberately disjoint
 //!
 //! [`Registry`] holds bearer secrets (`tokens`) and provider-verified
@@ -88,6 +100,7 @@
 pub mod async_verifier;
 mod error;
 pub mod gcp;
+pub mod k8s;
 pub mod llm;
 mod middleware;
 pub mod reload;

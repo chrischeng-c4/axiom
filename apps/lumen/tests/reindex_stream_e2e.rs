@@ -115,7 +115,8 @@ async fn stream_skips_blank_lines_and_reports_parse_errors() {
 
 /// #2871: the write-role half of this gate cannot be produced — there is no
 /// registry to mint a read-only credential from, and the
-/// SubjectAccessReview that will answer "may they write?" lands with #2869.
+/// SubjectAccessReview that answers "may they write?" is exercised in
+/// `authz_matrix_e2e.rs` (#2869).
 /// What is still worth pinning is that the streaming ingest route is not an
 /// exception to the auth middleware: an unauthenticated stream must be
 /// refused before a single NDJSON line is read, not after.
@@ -124,7 +125,7 @@ async fn stream_is_refused_without_an_identity_under_required_auth() {
     use lumen::auth::AuthConfig;
 
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig { required: true };
+    let cfg = AuthConfig::required_in("serving");
     let app = router(AppState::new(engine, Arc::new(cfg)));
     let s = TestServer::new(app).unwrap();
 

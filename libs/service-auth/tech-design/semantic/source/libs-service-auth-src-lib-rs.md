@@ -21,18 +21,19 @@ Public API manifest for `libs/service-auth/src/lib.rs` captured during libs code
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `async_verifier` | libs/service-auth/src/lib.rs | module | pub | 88 | pub mod async_verifier; |
-| `gcp` | libs/service-auth/src/lib.rs | module | pub | 90 | pub mod gcp; |
-| `llm` | libs/service-auth/src/lib.rs | module | pub | 91 | pub mod llm; |
-| `reload` | libs/service-auth/src/lib.rs | module | pub | 93 | pub mod reload; |
-| `role_map` | libs/service-auth/src/lib.rs | module | pub | 94 | pub mod role_map; |
-| `async_auth_middleware` | libs/service-auth/src/lib.rs | re-export | pub | 97 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
-| `AsAsync` | libs/service-auth/src/lib.rs | re-export | pub | 97 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
-| `AsyncVerifier` | libs/service-auth/src/lib.rs | re-export | pub | 97 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
-| `AuthError` | libs/service-auth/src/lib.rs | re-export | pub | 98 | pub use error::AuthError; |
-| `auth_middleware` | libs/service-auth/src/lib.rs | re-export | pub | 103 | pub use middleware::{auth_middleware, bearer_token}; |
-| `bearer_token` | libs/service-auth/src/lib.rs | re-export | pub | 103 | pub use middleware::{auth_middleware, bearer_token}; |
-| `Verifier` | libs/service-auth/src/lib.rs | re-export | pub | 114 | pub use verifier::Verifier; |
+| `async_verifier` | libs/service-auth/src/lib.rs | module | pub | 100 | pub mod async_verifier; |
+| `gcp` | libs/service-auth/src/lib.rs | module | pub | 102 | pub mod gcp; |
+| `k8s` | libs/service-auth/src/lib.rs | module | pub | 103 | pub mod k8s; |
+| `llm` | libs/service-auth/src/lib.rs | module | pub | 104 | pub mod llm; |
+| `reload` | libs/service-auth/src/lib.rs | module | pub | 106 | pub mod reload; |
+| `role_map` | libs/service-auth/src/lib.rs | module | pub | 107 | pub mod role_map; |
+| `async_auth_middleware` | libs/service-auth/src/lib.rs | re-export | pub | 110 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
+| `AsAsync` | libs/service-auth/src/lib.rs | re-export | pub | 110 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
+| `AsyncVerifier` | libs/service-auth/src/lib.rs | re-export | pub | 110 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
+| `AuthError` | libs/service-auth/src/lib.rs | re-export | pub | 111 | pub use error::AuthError; |
+| `auth_middleware` | libs/service-auth/src/lib.rs | re-export | pub | 116 | pub use middleware::{auth_middleware, bearer_token}; |
+| `bearer_token` | libs/service-auth/src/lib.rs | re-export | pub | 116 | pub use middleware::{auth_middleware, bearer_token}; |
+| `Verifier` | libs/service-auth/src/lib.rs | re-export | pub | 127 | pub use verifier::Verifier; |
 
 
 ## Source
@@ -112,6 +113,18 @@ Public API manifest for `libs/service-auth/src/lib.rs` captured during libs code
 //! middleware through [`AsAsync`]. Neither trait replaces the other, and no
 //! existing [`Verifier`] implementation changed to make room for the second.
 //!
+//! ## Delegating both halves to Kubernetes
+//!
+//! A service whose callers are all Kubernetes workloads can skip having a
+//! credential store at all. [`k8s`] delegates authentication to `TokenReview`
+//! and authorization to `SubjectAccessReview`, so the only place policy lives
+//! is `RoleBinding`s in the cluster. It accepts exactly one kind of caller —
+//! a `system:serviceaccount:<ns>:<name>` identity holding an audience-bound
+//! token — which is what keeps a delegating service from quietly becoming a
+//! second identity provider for whatever the cluster's authenticator happens
+//! to verify. That module names no service's resources; a caller maps its own
+//! operations onto [`k8s::ResourceAttributes`] (#2869).
+//!
 //! ## Two credential namespaces, deliberately disjoint
 //!
 //! [`Registry`] holds bearer secrets (`tokens`) and provider-verified
@@ -122,11 +135,12 @@ Public API manifest for `libs/service-auth/src/lib.rs` captured during libs code
 //! email silently grants that identity's roles to anyone who read it off a CR.
 //! A service that resolves only secrets keeps using [`load_registry`], which
 //! now rejects rather than ignores an identity-keyed document it cannot honour;
-//! a service that resolves both uses [`load_registry_file`] (#2678).
+//! a service that resolves both uses [`load_registry_files`] (#2678).
 
 pub mod async_verifier;
 mod error;
 pub mod gcp;
+pub mod k8s;
 pub mod llm;
 mod middleware;
 pub mod reload;
@@ -147,8 +161,8 @@ pub use reload::{
     DEFAULT_REGISTRY_FILE_WATCH_INTERVAL,
 };
 pub use role_map::{
-    load_registry, load_registry_file, Registry, Role, RoleMapDenied, RoleMapPrincipal,
-    StaticRoleMapVerifier, TokenClaims,
+    load_registry, load_registry_file, load_registry_files, Registry, RegistrySource, Role,
+    RoleMapDenied, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims,
 };
 pub use verifier::Verifier;
 

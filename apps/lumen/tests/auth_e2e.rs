@@ -1,18 +1,25 @@
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
-//! Phase-1 request-authentication contract (#2871).
+//! The three request-authentication states of a serving process (#2869).
 //!
-//! The bearer/identity registry this file used to exercise is gone, and the
-//! Kubernetes TokenReview/SubjectAccessReview verifier that replaces it has
-//! not landed. That leaves exactly two states worth pinning, and the value of
-//! pinning them is that the gap between them is where a silent fallback would
-//! live:
+//! Lumen holds no credentials; `LUMEN_AUTH=required` delegates authentication
+//! to Kubernetes `TokenReview` and authorization to `SubjectAccessReview`. That
+//! leaves three states, and the value of pinning all three is that the gaps
+//! between them are where a silent fallback would live:
 //!
-//! - `auth: disabled` serves every route to an unauthenticated caller,
-//!   unchanged from before the removal.
-//! - `auth: required` has nothing to verify with, so it must refuse — at the
-//!   router for a hand-built config, and at process start for the real binary,
-//!   which must not reach the point of binding a serving port.
+//! - `auth: disabled` serves every route to an unauthenticated caller — and
+//!   still refuses a *presented* credential, because nothing here could have
+//!   checked it.
+//! - `auth: required` with no review backend wired (reachable only by building
+//!   the config by hand) refuses every data-plane request rather than
+//!   degrading to the open mode.
+//! - `LUMEN_AUTH=required` in a process that cannot delegate — no namespace to
+//!   scope the review to, or no transport linked — must fail at startup
+//!   without ever binding a serving port.
+//!
+//! The positive path (a real ServiceAccount identity allowed or denied by a
+//! scripted apiserver) lives in `authz_matrix_e2e.rs`, which drives the same
+//! router through a fake `ReviewBackend`.
 
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
@@ -73,13 +80,11 @@ async fn disabled_auth_serves_the_whole_data_plane_unauthenticated() {
         .assert_status(axum::http::StatusCode::ACCEPTED);
 }
 
-/// A presented bearer resolves to nothing now, and "nothing" is not the same
-/// as "absent": an unknown credential is still an unknown identity, so it is
-/// rejected even on an open server. Pinned because the tempting shortcut —
-/// ignoring the header entirely — would make a stale client look authenticated
-/// against a server that cannot authenticate anyone.
+/// A presented bearer is rejected even on an open server. Pinned because the
+/// tempting shortcut — ignoring the header entirely — would make a stale client
+/// look authenticated against a server that verified nothing.
 #[tokio::test]
-async fn a_presented_bearer_resolves_to_nothing_even_when_auth_is_disabled() {
+async fn a_presented_bearer_is_rejected_even_when_auth_is_disabled() {
     let s = server(AuthConfig::open());
     s.get("/collections")
         .add_header("authorization", "Bearer whatever")
@@ -87,12 +92,12 @@ async fn a_presented_bearer_resolves_to_nothing_even_when_auth_is_disabled() {
         .assert_status_unauthorized();
 }
 
-/// The router half of fail-closed: a `required` config built by hand (the only
-/// way to get one — `AuthConfig::from_env` refuses to return one) rejects every
-/// data-plane request, with and without a credential.
+/// The router half of fail-closed: a `required` config whose verifier was never
+/// wired to a review backend rejects every data-plane request, with and without
+/// a credential. There is no degradation to the open mode.
 #[tokio::test]
-async fn required_auth_rejects_every_request_because_nothing_can_verify_one() {
-    let s = server(AuthConfig { required: true });
+async fn required_auth_without_a_review_backend_rejects_every_request() {
+    let s = server(AuthConfig::required_in("serving"));
     let schema = json!({ "fields": { "e": { "type": "keyword" } } });
 
     s.get("/collections").await.assert_status_unauthorized();
@@ -111,7 +116,7 @@ async fn required_auth_rejects_every_request_because_nothing_can_verify_one() {
 /// to see that a pod is unhealthy without holding a credential.
 #[tokio::test]
 async fn probe_and_scrape_routes_stay_exempt_in_both_states() {
-    for cfg in [AuthConfig::open(), AuthConfig { required: true }] {
+    for cfg in [AuthConfig::open(), AuthConfig::required_in("serving")] {
         let s = server(cfg);
         s.get("/metrics").await.assert_status_ok();
         s.get("/healthz").await.assert_status_ok();
@@ -129,36 +134,33 @@ fn free_port() -> u16 {
     port
 }
 
-/// AC3: the process half of fail-closed. `LUMEN_AUTH=required` must not
-/// produce a running server. The oracle is deliberately two-sided — the exit
-/// has to be non-zero *and* the port has to stay unbound for the whole
-/// startup window — because a process that exits after binding, or binds and
-/// then exits, is exactly the window an unauthenticated request could slip
-/// through.
-#[test]
-fn required_auth_exits_at_startup_without_ever_binding_a_serving_port() {
+/// Run `lumen serve` with the given extra env and report `(exit ok, ever bound,
+/// stderr)`. The port is polled for the whole startup budget rather than
+/// sampled once after the exit: a bind that opened and closed inside the window
+/// is still a bind, and a single post-hoc check would miss it.
+fn serve_startup(env: &[(&str, &str)]) -> (bool, bool, String) {
     let port = free_port();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_lumen"))
-        .args([
-            "serve",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-            "--wal",
-            "embedded",
-        ])
-        .env("LUMEN_AUTH", "required")
-        .env_remove("RUST_LOG")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn lumen serve");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_lumen"));
+    cmd.args([
+        "serve",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &port.to_string(),
+        "--wal",
+        "embedded",
+    ])
+    .env_remove("RUST_LOG")
+    .env_remove("LUMEN_AUTH_NAMESPACE")
+    .env_remove("POD_NAMESPACE")
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn().expect("spawn lumen serve");
 
-    // Poll the port for the whole startup budget rather than sampling once
-    // after the exit: a bind that opened and closed inside the window is still
-    // a bind, and a single post-hoc check would miss it.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let mut ever_bound = false;
     let mut status = None;
     while Instant::now() < deadline {
@@ -174,14 +176,6 @@ fn required_auth_exits_at_startup_without_ever_binding_a_serving_port() {
         }
     }
 
-    let status = match status {
-        Some(s) => s,
-        None => {
-            let _ = child.kill();
-            panic!("`LUMEN_AUTH=required` kept running instead of refusing to start");
-        }
-    };
-
     let mut stderr = String::new();
     if let Some(err) = child.stderr.take() {
         for line in BufReader::new(err).lines().map_while(Result::ok) {
@@ -190,22 +184,89 @@ fn required_auth_exits_at_startup_without_ever_binding_a_serving_port() {
         }
     }
 
+    let status = match status {
+        Some(s) => s,
+        None => {
+            let _ = child.kill();
+            panic!("`LUMEN_AUTH=required` kept running instead of refusing to start:\n{stderr}");
+        }
+    };
+    (status.success(), ever_bound, stderr)
+}
+
+/// AC3: the process half of fail-closed, with no namespace to scope the
+/// review to. An unscoped `SubjectAccessReview` asks a different question than
+/// the request did, so the process must refuse rather than pick a namespace.
+#[test]
+fn required_auth_without_a_namespace_refuses_to_start() {
+    let (success, ever_bound, stderr) = serve_startup(&[("LUMEN_AUTH", "required")]);
+
     assert!(
-        !status.success(),
-        "`LUMEN_AUTH=required` exited successfully; stderr:\n{stderr}"
+        !success,
+        "`LUMEN_AUTH=required` with no namespace exited successfully; stderr:\n{stderr}"
     );
     assert!(
         !ever_bound,
-        "`LUMEN_AUTH=required` bound :{port} before giving up — for that window an \
+        "`LUMEN_AUTH=required` bound a serving port before giving up — for that window an \
          unauthenticated request would have been served"
     );
-    // The message is part of the contract: an operator reading only this line
-    // has to learn that the mode is unimplemented, not that they mistyped it.
-    for needle in ["LUMEN_AUTH=required", "TokenReview", "not implemented yet"] {
+    for needle in [
+        "LUMEN_AUTH=required",
+        "LUMEN_AUTH_NAMESPACE",
+        "SubjectAccessReview",
+    ] {
         assert!(
             stderr.contains(needle),
             "startup refusal does not name `{needle}`; stderr:\n{stderr}"
         );
     }
+}
+
+/// AC3 continued: a namespace is not enough. The process still has to reach an
+/// apiserver that will answer `TokenReview`/`SubjectAccessReview` for it, and
+/// a build without the transport cannot even try. Neither case may bind.
+///
+/// The needles differ by build because the two failures are different facts —
+/// a missing transport is a build mistake, an unreachable apiserver is a
+/// deployment one — and an operator reading a single line has to be able to
+/// tell which they have.
+#[test]
+fn required_auth_refuses_to_start_when_it_cannot_delegate() {
+    let (success, ever_bound, stderr) = serve_startup(&[
+        ("LUMEN_AUTH", "required"),
+        ("LUMEN_AUTH_NAMESPACE", "serving"),
+        // Keep the in-cluster client from finding a real cluster if the test
+        // host happens to carry a kubeconfig.
+        ("KUBERNETES_SERVICE_HOST", ""),
+        ("KUBECONFIG", "/nonexistent/kubeconfig"),
+    ]);
+
+    assert!(
+        !success,
+        "`LUMEN_AUTH=required` exited successfully without a working delegation path; \
+         stderr:\n{stderr}"
+    );
+    assert!(
+        !ever_bound,
+        "`LUMEN_AUTH=required` bound a serving port before giving up — for that window an \
+         unauthenticated request would have been served"
+    );
+    assert!(
+        stderr.contains("LUMEN_AUTH=required"),
+        "startup refusal does not name the mode that caused it; stderr:\n{stderr}"
+    );
+
+    #[cfg(not(feature = "delegated-auth"))]
+    for needle in ["delegated-auth", "Refusing to start"] {
+        assert!(
+            stderr.contains(needle),
+            "a build without the transport must say so; `{needle}` missing from:\n{stderr}"
+        );
+    }
+    #[cfg(feature = "delegated-auth")]
+    assert!(
+        stderr.contains("kube-apiserver") || stderr.contains("system:auth-delegator"),
+        "a build with the transport must name the delegation failure; stderr:\n{stderr}"
+    );
 }
 // CODEGEN-END

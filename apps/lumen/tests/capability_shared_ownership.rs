@@ -164,12 +164,28 @@ fn platform_mechanisms_delegate_to_shared_owners() {
         assert!(API.contains(seam), "HTTP seam must delegate through {seam}");
     }
 
-    // The auth adapter's shape changed with #2871 — the registry it wrapped is
-    // gone — but its ownership did not: the verifier and the middleware are
-    // still `service-auth`'s, and lumen holds only the policy newtype around
-    // them. A lumen-local verifier implementation would be the regression.
-    assert!(AUTH.contains("service_auth::StaticRoleMapVerifier"));
-    assert!(AUTH.contains("service_auth::auth_middleware::<LumenVerifier>"));
+    // The auth adapter's shape changed again with #2869 — the registry it
+    // wrapped is gone and the decision is delegated to kube-apiserver — but
+    // its ownership did not: the TokenReview/SubjectAccessReview mechanics,
+    // the principal parsing, and the middleware are all `service-auth`'s, and
+    // lumen holds only the resource mapping around them. A lumen-local review
+    // client, principal parser, or verifier would be the regression.
+    for seam in [
+        "service_auth::k8s::",
+        "DelegatedAuthenticator",
+        "service_auth::async_auth_middleware::<LumenVerifier>",
+    ] {
+        assert!(
+            AUTH.contains(seam),
+            "auth seam must delegate through {seam}"
+        );
+    }
+    for regrown in ["struct KubeReviewBackend", "fn parse_service_account"] {
+        assert!(
+            !AUTH.contains(regrown),
+            "delegated-auth mechanics are not lumen's to own: {regrown}"
+        );
+    }
     assert!(OPERATOR_RENDER.contains("use service_k8s::render"));
     assert!(OPERATOR_RENDER.contains("render::service_statefulset"));
 

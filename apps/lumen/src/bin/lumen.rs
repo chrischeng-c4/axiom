@@ -2427,14 +2427,50 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     };
 
-    // `AuthConfig::from_env` refuses to return a `required` config while no
-    // identity verifier exists (#2871), so reaching this line means auth is
-    // off. Say so plainly instead of pointing at a mode that cannot start.
+    // `LUMEN_AUTH=required` delegates both halves of the decision to the
+    // apiserver: TokenReview says who is calling, SubjectAccessReview says
+    // whether they may (#2869). Building the verifier proves both grants before
+    // the listener opens, so a missing `system:auth-delegator` binding is a
+    // startup failure rather than a fleet that serves 503s while looking ready.
+    //
+    // The transport lives behind the `delegated-auth` feature. A build without
+    // it can still *parse* `LUMEN_AUTH=required` — and must refuse to start
+    // rather than quietly serve unauthenticated traffic under that setting.
+    #[cfg(feature = "delegated-auth")]
+    async fn serving_verifier(
+        auth: &AuthConfig,
+    ) -> anyhow::Result<Arc<lumen::auth::LumenVerifier>> {
+        Ok(Arc::new(lumen::auth::LumenVerifier::connect(auth).await?))
+    }
+    #[cfg(not(feature = "delegated-auth"))]
+    async fn serving_verifier(
+        _auth: &AuthConfig,
+    ) -> anyhow::Result<Arc<lumen::auth::LumenVerifier>> {
+        anyhow::bail!(
+            "LUMEN_AUTH=required needs the Kubernetes TokenReview/SubjectAccessReview transport, \
+             which this binary was built without. Rebuild with `--features delegated-auth`, or \
+             unset LUMEN_AUTH to serve without authentication. Refusing to start."
+        )
+    }
+
     let auth = Arc::new(AuthConfig::from_env()?);
-    tracing::warn!(
-        "auth=off — request authentication is unimplemented in this build; the Kubernetes \
-         TokenReview/SubjectAccessReview verifier arrives with the KSA-only serving auth work"
-    );
+    let verifier = if auth.required {
+        let verifier = serving_verifier(&auth).await?;
+        tracing::info!(
+            namespace = %auth.namespace,
+            audience = lumen::auth::AUDIENCE,
+            "auth=required — every request is authenticated by Kubernetes TokenReview and \
+             authorized by SubjectAccessReview; only audience-bound ServiceAccount tokens are \
+             accepted"
+        );
+        Some(verifier)
+    } else {
+        tracing::warn!(
+            "auth=off — requests are not authenticated. Set LUMEN_AUTH=required (plus \
+             LUMEN_AUTH_NAMESPACE when not running in-cluster) to delegate to Kubernetes"
+        );
+        None
+    };
     let admission = service_http::AdmissionConfig::from_env("LUMEN")?.controller(
         "lumen.read",
         "lumen.write",
@@ -2445,6 +2481,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
 
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
+    if let Some(verifier) = verifier {
+        state = state.with_verifier(verifier);
+    }
     // #1389: wire a real on-demand checkpoint (`POST /admin/checkpoint`) only
     // when segment persistence is actually configured — the raft path has
     // its own snapshot mechanism and is out of the reshard driver's scope

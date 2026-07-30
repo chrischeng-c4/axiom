@@ -21,13 +21,13 @@ fn server() -> TestServer {
     TestServer::new(router(AppState::open(engine))).unwrap()
 }
 
-/// #2871: the only non-open config that can be built. It has no registry
-/// behind it, so every request it sees is unauthenticated — the role
-/// dimension these helpers used to carry returns with SubjectAccessReview
-/// (#2869).
+/// A `required` config whose verifier was never wired to a review backend:
+/// every request it sees is unauthenticated, and it never degrades to open.
+/// The graded role dimension lives in `authz_matrix_e2e.rs`, which drives the
+/// delegated verifier against a scripted apiserver (#2869).
 fn required_server() -> TestServer {
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig { required: true };
+    let cfg = AuthConfig::required_in("serving");
     TestServer::new(router(AppState::new(engine, Arc::new(cfg)))).unwrap()
 }
 

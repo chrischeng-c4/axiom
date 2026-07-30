@@ -157,10 +157,10 @@ async fn access_log_records_anonymous_for_rejected_request() {
 
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    // Set up lumen with auth required. Nothing can satisfy it (#2871), which
-    // is exactly the state this test wants: a rejected request.
+    // Set up lumen with auth required and no review backend wired, which is
+    // exactly the state this test wants: a rejected request (#2869).
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig { required: true };
+    let cfg = AuthConfig::required_in("serving");
     let app = router(AppState::new(engine, Arc::new(cfg)));
     let server = TestServer::new(app).expect("test server");
 

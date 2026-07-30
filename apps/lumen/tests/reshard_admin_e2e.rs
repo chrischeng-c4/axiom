@@ -25,12 +25,12 @@ fn server() -> TestServer {
     TestServer::new(app).expect("test server")
 }
 
-/// #2871: a `required` config with nothing behind it — the only non-open
-/// config that can be built now that the bearer/identity registry is gone.
-/// Every request it sees is an unknown identity, credential or not.
+/// A `required` config with no review backend wired behind it. Every request
+/// it sees is an unknown identity, credential or not — the fail-closed state
+/// (#2869).
 fn auth_server() -> TestServer {
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig { required: true };
+    let cfg = AuthConfig::required_in("serving");
     let app = router(AppState::new(engine, Arc::new(cfg)));
     TestServer::new(app).expect("test server")
 }

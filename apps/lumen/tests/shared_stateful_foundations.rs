@@ -39,12 +39,14 @@ fn configured_peer_identity_uses_shared_https_transport_and_dedicated_listener()
 
 #[test]
 fn completed_shared_roots_have_lumen_owned_adapters_or_runtime_projection() {
-    // #2871 retired the reloadable registry, but the ownership boundary this
-    // test exists to lock is unchanged: the verifier mechanics still come from
-    // `service-auth`, and lumen keeps only the policy around them.
+    // #2871 retired the reloadable registry and #2869 delegated the decision
+    // to kube-apiserver, but the ownership boundary this test exists to lock
+    // is unchanged: the verifier mechanics still come from `service-auth`, and
+    // lumen keeps only the resource mapping around them.
     assert!(LUMEN_AUTH.contains("service_auth::"));
-    assert!(LUMEN_AUTH.contains("StaticRoleMapVerifier"));
+    assert!(LUMEN_AUTH.contains("service_auth::k8s::"));
     assert!(!LUMEN_AUTH.contains("ReloadableRoleMapVerifier"));
+    assert!(!LUMEN_AUTH.contains("StaticRoleMapVerifier"));
     assert!(LUMEN_API.contains("service_http::AdmissionController"));
     assert!(LUMEN_OPERATOR.contains("service_statefulset"));
     assert!(LUMEN_OPERATOR.contains("headless_service_with_ports"));
