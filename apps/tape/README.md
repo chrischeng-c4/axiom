@@ -233,7 +233,7 @@ Type: RuntimeTool
 Root WI: #768
 Status: verified
 Surfaces: CLI: `tape append`, `tape replay` - durable append and replay; HTTP: `/topics/{topic}/append`, `/topics/{topic}/replay`, `/topics/{topic}/replay/stream` - JSON replay plus compact read-only h2c bulk replay.
-EC Dimensions: behavior: `cargo test -p tape` - append ordering plus replay range smoke
+EC Dimensions: behavior: `cargo test -p tape` - append ordering plus replay range smoke; behavior: `uv run --frozen --offline --project apps/tape/external-contracts python apps/tape/external-contracts/src/runner.py ec-3052-durability` - acknowledged appends survive SIGKILL, refused ones stay absent, replay applies nothing twice; efficiency: `uv run --frozen --offline --project apps/tape/external-contracts python apps/tape/external-contracts/src/runner.py ec-3052-scaling` - durable append throughput rises with concurrency, bounded below so the ratio cannot be won by starving the lone writer and above so it cannot be won by skipping the durability barrier (red until #3052 lands)
 Required Verification: smoke, conformance
 Promise:
 Tape provides a durable append-only topic journal for replay/backfill workloads
@@ -242,6 +242,8 @@ at most 1000 oldest-first events; page with offset+limit.
 Gate Inventory:
 - apps/tape/src/lib.rs
 - apps/tape/tests/cli_contract.rs
+- apps/tape/external-contracts/src/ec-3052-durability-under-sigkill.py
+- apps/tape/external-contracts/src/ec-3052-durable-append-scaling.py
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
