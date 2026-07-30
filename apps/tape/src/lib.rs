@@ -24,6 +24,7 @@ pub mod raft;
 pub mod replay_wire;
 pub mod server;
 pub mod spec;
+pub mod wal;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TapeError {
