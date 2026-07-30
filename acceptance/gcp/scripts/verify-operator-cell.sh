@@ -42,9 +42,14 @@ assert_can_i() {
   local resource="$2"
   local target_namespace="$3"
   local result
+  # `kubectl auth can-i` exits 1 when the answer is "no". Without `|| true`,
+  # `set -e` kills the script at this assignment -- before the row is recorded
+  # and before the message below is printed -- so a missing grant surfaced as a
+  # run that stopped after the last successful phase line with no diagnostic at
+  # all. The exit status is not the signal here; the word it printed is.
   result="$(kubectl auth can-i "$verb" "$resource" \
     --namespace="$target_namespace" \
-    --as="system:serviceaccount:${operator_namespace}:${service_account}")"
+    --as="system:serviceaccount:${operator_namespace}:${service_account}" || true)"
   printf '%s\t%s\t%s\t%s\n' \
     "${operator_namespace}/${service_account}" "$verb" "$resource" "$result" \
     >> "$rbac_evidence"
@@ -226,9 +231,13 @@ if [[ "$app" != "tape" ]]; then
   # backup field), so its operator deliberately carries no batch RBAC.
   assert_can_i create cronjobs.batch "$app_namespace"
 fi
-if [[ "$app" == "lumen" ]]; then
-  assert_can_i get secrets "$app_namespace"
-fi
+# Lumen's operator used to read Secrets, for the auth token registry and the
+# backup runner's bearer token. #2870 and #2871 removed both projections and
+# #2889 replaced them with rendered RBAC, so `secrets` is no longer in the
+# operator's ClusterRole and asserting it fails a correct deployment. The
+# grant that replaced it -- `bind` on `system:auth-delegator` -- is not
+# assertable with `auth can-i`, and the binding it produces is checked
+# directly by verify-lumen-auth.sh (#2879).
 
 initial_holder="$(wait_live_holder)"
 printf '%s\n' "$initial_holder" > "$EVIDENCE_DIR/kubernetes/${app}-lease-holder-initial.txt"

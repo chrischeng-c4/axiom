@@ -131,6 +131,16 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   else
     kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
       --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+    # The per-instance `system:auth-delegator` binding (#2876) is cluster-scoped,
+    # so nothing above reaches it: a cluster-scoped object cannot carry an owner
+    # reference to a namespaced CR, and the operator's own sweep dies with the
+    # namespace that hosts it. Deleting the namespace therefore leaves a live
+    # delegated-authentication grant naming a ServiceAccount that no longer
+    # exists. Labels are the only link back to the instance, which is exactly
+    # what they were rendered for.
+    kubectl delete clusterrolebinding \
+      -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=lumen \
+      --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
   fi
 fi
 
