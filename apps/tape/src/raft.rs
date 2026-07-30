@@ -344,6 +344,75 @@ impl TapeStateMachine {
     }
 }
 
+/// Apply one decoded [`TapeCommand`] to `journal` under a single lock
+/// acquisition, producing the [`TapeOutcome`] the proposing handler will read
+/// back. This is the exact per-command semantics both the raft path
+/// ([`TapeStateMachine::apply`]) and the single-node commit coordinator
+/// share.
+///
+/// It exists as a free function so those two paths cannot drift: the
+/// single-node WAL records `TapeCommand`s rather than journal state
+/// precisely so a replay reproduces the same effects the raft path would
+/// produce, including the retention pruning `TapeJournal::append_at`
+/// performs as a side effect of an append (#3052).
+pub(crate) fn apply_command(journal: &mut TapeJournal, command: TapeCommand) -> TapeOutcome {
+    match command {
+        TapeCommand::Append {
+            topic,
+            key,
+            payload,
+            timestamp_ms,
+            applied_at_ms,
+        } => {
+            let applied_at_ms = if applied_at_ms == 0 {
+                timestamp_ms
+            } else {
+                applied_at_ms
+            };
+            let event = journal.append_at(topic, key, payload, timestamp_ms, applied_at_ms);
+            TapeOutcome::Appended(event)
+        }
+        TapeCommand::CheckpointPut {
+            topic,
+            consumer,
+            offset,
+            updated_at_ms,
+        } => {
+            let result = journal.put_checkpoint_at(topic, consumer, offset, updated_at_ms);
+            TapeOutcome::Checkpoint(result)
+        }
+        TapeCommand::SubscriptionCreate { topic, name } => {
+            TapeOutcome::SubscriptionCreated(journal.create_subscription(topic, name))
+        }
+        TapeCommand::SubscriptionDelete { topic, name } => {
+            TapeOutcome::SubscriptionDeleted(journal.delete_subscription(&topic, &name))
+        }
+        TapeCommand::SubscriptionAck {
+            topic,
+            name,
+            offset,
+            updated_at_ms,
+        } => {
+            let valid = journal
+                .require_pull_subscription(&topic, &name)
+                .map(|_| ())
+                .map_err(SubscriptionAckError::from);
+            let result = match valid {
+                Ok(()) => journal
+                    .put_checkpoint_at(topic, name, offset, updated_at_ms)
+                    .map_err(SubscriptionAckError::from),
+                Err(error) => Err(error),
+            };
+            TapeOutcome::SubscriptionAcked(result)
+        }
+        TapeCommand::RetentionPut {
+            topic,
+            policy,
+            now_ms,
+        } => TapeOutcome::RetentionUpdated(journal.put_retention(topic, policy, now_ms)),
+    }
+}
+
 impl RaftStateMachine for TapeStateMachine {
     fn apply(&self, index: Index, command: &[u8]) -> Result<()> {
         // Legacy migration floor: entries represented by an imported app
@@ -364,84 +433,9 @@ impl RaftStateMachine for TapeStateMachine {
             .and_then(|id| self.completed.lock().expect("completed proposals").get(id));
         let outcome = match (cached, decoded) {
             (Some(outcome), _) => Some(outcome),
-            (
-                None,
-                Ok(TapeCommand::Append {
-                    topic,
-                    key,
-                    payload,
-                    timestamp_ms,
-                    applied_at_ms,
-                }),
-            ) => {
+            (None, Ok(command)) => {
                 let mut journal = self.journal.lock().expect("journal mutex poisoned");
-                let applied_at_ms = if applied_at_ms == 0 {
-                    timestamp_ms
-                } else {
-                    applied_at_ms
-                };
-                let event = journal.append_at(topic, key, payload, timestamp_ms, applied_at_ms);
-                Some(TapeOutcome::Appended(event))
-            }
-            (
-                None,
-                Ok(TapeCommand::CheckpointPut {
-                    topic,
-                    consumer,
-                    offset,
-                    updated_at_ms,
-                }),
-            ) => {
-                let mut journal = self.journal.lock().expect("journal mutex poisoned");
-                let result = journal.put_checkpoint_at(topic, consumer, offset, updated_at_ms);
-                Some(TapeOutcome::Checkpoint(result))
-            }
-            (None, Ok(TapeCommand::SubscriptionCreate { topic, name })) => {
-                let mut journal = self.journal.lock().expect("journal mutex poisoned");
-                Some(TapeOutcome::SubscriptionCreated(
-                    journal.create_subscription(topic, name),
-                ))
-            }
-            (None, Ok(TapeCommand::SubscriptionDelete { topic, name })) => {
-                let mut journal = self.journal.lock().expect("journal mutex poisoned");
-                Some(TapeOutcome::SubscriptionDeleted(
-                    journal.delete_subscription(&topic, &name),
-                ))
-            }
-            (
-                None,
-                Ok(TapeCommand::SubscriptionAck {
-                    topic,
-                    name,
-                    offset,
-                    updated_at_ms,
-                }),
-            ) => {
-                let mut journal = self.journal.lock().expect("journal mutex poisoned");
-                let valid = journal
-                    .require_pull_subscription(&topic, &name)
-                    .map(|_| ())
-                    .map_err(SubscriptionAckError::from);
-                let result = match valid {
-                    Ok(()) => journal
-                        .put_checkpoint_at(topic, name, offset, updated_at_ms)
-                        .map_err(SubscriptionAckError::from),
-                    Err(error) => Err(error),
-                };
-                Some(TapeOutcome::SubscriptionAcked(result))
-            }
-            (
-                None,
-                Ok(TapeCommand::RetentionPut {
-                    topic,
-                    policy,
-                    now_ms,
-                }),
-            ) => {
-                let mut journal = self.journal.lock().expect("journal mutex poisoned");
-                Some(TapeOutcome::RetentionUpdated(
-                    journal.put_retention(topic, policy, now_ms),
-                ))
+                Some(apply_command(&mut journal, command))
             }
             (None, Err(e)) => {
                 tracing::warn!(index, error = %e, "raft: undecodable command (entry no-ops)");
