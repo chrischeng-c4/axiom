@@ -91,6 +91,15 @@ def _capability_snapshot() -> dict[str, Any]:
         assert "## Brief" in shell
         assert "## Capabilities" in shell
         assert "### Capability Index" in shell
+        # The two feature roots, in their canonical order. A fresh document that
+        # renders no roots is one every new project would have to migrate before
+        # it could classify anything, so "canonical shell" has to name them
+        # rather than stop at the index.
+        core_root = shell.find("### Core Features")
+        non_core_root = shell.find("### Non-Core Features")
+        assert core_root != -1, shell
+        assert non_core_root != -1, shell
+        assert shell.find("### Capability Index") < core_root < non_core_root, shell
         cap_path.write_text(CAPABILITY_DOCUMENT, encoding="utf-8")
 
         report = final_json(
@@ -252,6 +261,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
         legacy_migrated = cap_path.read_text(encoding="utf-8")
         lumen_reference.assert_legacy_migration_derives_the_split(legacy_migrated)
+        lumen_reference.assert_migrated_legacy_index_lists_every_row(legacy_migrated)
         # The negative half: migration must emit a document the checker accepts,
         # not merely one containing the right substrings.
         legacy_migrated_report = final_json(
@@ -306,6 +316,19 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         # the same attribution as the hand-classified reference.
         lumen_reference.assert_feature_class_attribution(migrated_report)
 
+        # The same unclassified shape with the two groups reversed. Migration
+        # groups the sections but renders the index from a separate pass, and
+        # the core-first input above cannot tell raw order from grouped order --
+        # they are the same list. Non-core-first separates them, so the index
+        # and the sections can actually disagree and be caught.
+        cap_path.write_text(
+            lumen_reference.NON_CORE_FIRST_DOCUMENT, encoding="utf-8"
+        )
+        final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
+        fixed_point_text = cap_path.read_text(encoding="utf-8")
+        lumen_reference.assert_migration_reaches_a_fixed_point(fixed_point_text)
+        lumen_reference.assert_migration_derives_the_split(fixed_point_text)
+
         # Migration fills silence only. A class the author already stated has to
         # survive even where the derivation would have chosen the other one,
         # otherwise migration is a rewrite of the contract rather than a
@@ -330,6 +353,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "retired": retired,
         "unclassified": unclassified,
         "migrated": migrated_report,
+        "fixed_point": fixed_point_text,
         "preserved": preserved_text,
     }
 
@@ -409,15 +433,17 @@ def verify(case_id: str) -> list[str]:
                 "a document that declares no feature class at all raises no blocker and is attributed wholly to non-core, capabilities and claims alike, which is the default rule no self-describing document can exercise",
                 "a legacy capability table is diagnosed as legacy and its rows are attributed wholly to non-core rather than falling out of both classes, which is the branch of that default rule where no capability section parses at all",
                 "aw capability migrate derives the split for the rows of a legacy table through its own branch, placing the authored promises under Core Features and the trait-derived baseline under Non-Core Features, and the migrated document is accepted by a follow-up report with no blocker",
+                "the migrated legacy document indexes every row it turned into a capability section, through the index branch legacy rows reach and the capability sections do not, so a migrated document cannot ship an empty table of contents alongside its sections",
                 "a retired capability is excluded from both per-class counts and from the retained totals alike, so each per-class pair still sums against a total that genuinely excludes something",
                 "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
+                "aw capability migrate reaches a fixed point on a non-core-first document: the migrated Capability Index and the migrated capability sections list the same capabilities in the same core-then-non-core order, so re-parsing the migrated document cannot render a different index again",
                 "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
             assertions = [
                 "capability init creates the missing canonical CAPABILITIES.md shell",
-                "the shell contains Brief, Capabilities, and Capability Index sections",
+                "the shell contains Brief, Capabilities, and Capability Index sections, plus the Core Features and Non-Core Features roots in that order, so a fresh project starts classified-shaped rather than needing migration first",
             ]
         elif case_id == "capability-control-plane-operational-efficiency":
             assert time.monotonic() - started <= 120
