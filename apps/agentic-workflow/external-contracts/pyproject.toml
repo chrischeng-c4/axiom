@@ -192,7 +192,7 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
 promise = "a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap; the health payload exposes the regenerability production blocker and a runnable remediation command"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+oracle = "Black-box Python assertions over the real `aw health` stdout envelope and its durable payload file for a generator_authoritative fixture: readiness.production_ready is false, regenerability_authority pins authority and required_for_production, a production blocker names the regenerability requirement, and next.command is an executable `aw` remediation."
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case authoritative-fixture-blocks-on-regenerability-gap"
 evidence_paths = ["evidence/authoritative-fixture-blocks-on-regenerability-gap.json"]
@@ -220,7 +220,7 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-health-default-full-verification-smoke.py"
 promise = "stdout includes progress JSONL events before the final result when long gates run; the final result includes payload_path; the payload file contains complete blocker and command evidence"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+oracle = "Black-box Python assertions over the real `aw health` JSONL stream and its durable payload file: the emitted phase sequence starts start then tests and reaches summary before the terminal record, and the payload independently retains the configured test-gate command and the blocker list."
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke"
 evidence_paths = ["evidence/aw-health-default-full-verification-smoke.json"]
@@ -290,7 +290,7 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/external-fixture-reports-advisory-gap.py"
 promise = "the external-advisory fixture reports the regenerability gap as an advisory warning; the advisory gap does not add a production blocker when all required gates are clean"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+oracle = "Black-box Python assertions over the real `aw health` durable payload for an external_advisory fixture that differs from the generator_authoritative fixture only in that authority: optional_regenerability_gaps is non-empty, required_for_production is false, and no production blocker names the regenerability requirement."
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap"
 evidence_paths = ["evidence/external-fixture-reports-advisory-gap.json"]
@@ -305,7 +305,7 @@ applicability = "post-gen"
 test_path = "src/cases/self-hosting-bounded-admission.py"
 promise = "backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state"
 oracle = "A local fixture with no reviewed graph independently requires the public backlog root to emit planning remediation; repeated public WI envelopes and filesystem digests prove bounded admission."
-threshold = "backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state"
+threshold = "one attempt; wall-clock elapsed <= 120 seconds for the full admission scenario; zero cargo delegation and zero network access; each public `aw` admission call returns within the same bound rather than spinning on the absent reviewed graph"
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission"
 evidence_paths = ["evidence/self-hosting-bounded-admission.json"]
@@ -348,7 +348,7 @@ applicability = "post-gen"
 test_path = "src/cases/self-hosting-identity-stability.py"
 promise = "a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical"
 oracle = "The verifier corrupts local WI frontmatter after a valid admission snapshot and compares repository/runtime digests around the public CLI call."
-threshold = "a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical"
+threshold = "two attempts from a fresh fixture; both emit a byte-identical assertion list; the repository digest and the runtime-state digest taken around the failing public CLI call are equal within each attempt and equal across both attempts"
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability"
 evidence_paths = ["evidence/self-hosting-identity-stability.json"]
@@ -572,7 +572,7 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/workflow-root-runner-parent-rollup-routing.py"
 promise = "closed change roots route agents to parent inspection"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+oracle = "Black-box Python assertions over the real `aw goal wi` envelope after `aw wi close`: action equals done with root_complete true and workflow_complete false, and next.command equals the exact `aw goal wi <parent-epic-slug>` string derived independently from the epic the fixture created."
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing"
 evidence_paths = ["evidence/workflow-root-runner-parent-rollup-routing.json"]
@@ -668,6 +668,34 @@ command = "uv run --frozen --offline --project apps/agentic-workflow/external-co
 evidence_paths = ["evidence/existing-project-standardization-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "manual-evidence-schema-python-contract"
+artifact_id = "artifact:manual-evidence-artifacts/public-contract"
+capability_id = "manual-evidence-artifacts"
+use_case_id = "generated-manual-ec-evidence-schema"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/manual-evidence-schema-python-contract.py"
+promise = "A generated manual EC inventory entry declares a complete, concrete evidence schema: one case id, its capability and use-case identity, a declared dimension and applicability, a source path, an evidence path derived from the case id, a gate command that requires that evidence file to be non-empty, and an explicit oracle fill marker instead of an invented oracle."
+oracle = "The Python external contract runs the real `aw ec draft manual-evidence` command in an isolated fixture, re-parses the emitted TOML inventory independently, and requires the generated case entry to equal an exact field set - so a generator that dropped evidence_paths, invented an oracle, or derived the evidence path from anything but the case id fails."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-schema-python-contract"
+evidence_paths = ["evidence/manual-evidence-schema-python-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "manual-runner-output-convention-python-contract"
+artifact_id = "artifact:manual-evidence-artifacts/public-contract"
+capability_id = "manual-evidence-artifacts"
+use_case_id = "manual-runner-output-convention"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/manual-runner-output-convention-python-contract.py"
+promise = "Manual EC scaffolding writes exactly the inventory, its dependency lock, the Python runner, and the declared case module, emits the exact structural-check continuation, and leaves a runner that refuses to execute until it is authored."
+oracle = "The Python external contract runs the real `aw ec draft manual-evidence` command in an isolated fixture and independently requires the exact emitted artifact list, the exact `next` dispatch object including its command, reason, and payload path, and that the scaffolded runner body raises rather than exiting zero with no assertions."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case manual-runner-output-convention-python-contract"
+evidence_paths = ["evidence/manual-runner-output-convention-python-contract.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "manual-evidence-artifacts-operational-efficiency"
 artifact_id = "artifact:manual-evidence-artifacts/public-contract"
 capability_id = "manual-evidence-artifacts"
@@ -726,6 +754,76 @@ threshold = "two attempts; identical passed/failed totals; passed tests >= 1; fa
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability"
 evidence_paths = ["evidence/project-local-td-and-ec-gates-operational-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "self-ec-fixture-loop-gate-python-contract"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "self-ec-fixture-loop-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/self-ec-fixture-loop-gate-python-contract.py"
+promise = "A required Python EC that is red blocks terminal progress for its work item, and only a green verification records the consulted case and emits the exact WI close continuation."
+oracle = "The Python external contract builds an isolated python-v1 project whose EC gate process is switchable between red and green, drives the real `aw` terminal verification in both states, and independently requires zero passed cases plus a non-terminal continuation while red and exactly one passed case plus the exact `aw wi close <slug>` continuation while green."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-ec-fixture-loop-gate-python-contract"
+evidence_paths = ["evidence/self-ec-fixture-loop-gate-python-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "ec-gated-terminal-check-unification-python-contract"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/ec-gated-terminal-check-unification-python-contract.py"
+promise = "One EC-gated terminal check owns the whole lifecycle seam: a red public Python EC routes back to bounded CB regeneration and the same work item converges to a single exact terminal close continuation once the EC is green."
+oracle = "The Python external contract drives the real `aw` terminal verification over one work item in both EC states and independently requires the two emitted `next` continuations to differ, with the red route naming bounded regeneration and the green route naming the exact single terminal close command."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case ec-gated-terminal-check-unification-python-contract"
+evidence_paths = ["evidence/ec-gated-terminal-check-unification-python-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "terminal-ec-cross-process-single-flight-python-contract"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "terminal-ec-process-liveness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/terminal-ec-cross-process-single-flight-python-contract.py"
+promise = "Two concurrent real AW processes contending on one project EC lease launch exactly one Python EC process, and the duplicate returns promptly with a typed single-flight verdict that names the same work item."
+oracle = "The Python external contract starts two real `aw` processes against one fixture, counts the launches the gate process itself appends to a durable file, requires exactly one launch, requires the loser's typed failure_kind to be single_flight, and bounds the loser's wall-clock return independently of the winner."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-cross-process-single-flight-python-contract"
+evidence_paths = ["evidence/terminal-ec-cross-process-single-flight-python-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "terminal-ec-wrapper-timeout-teardown-python-contract"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "terminal-ec-process-liveness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/terminal-ec-wrapper-timeout-teardown-python-contract.py"
+promise = "A stalled Python EC wrapper that spawns no child is still bounded by the configured timeout: AW tears down the whole wrapper process group and reports a typed timeout rather than hanging."
+oracle = "The Python external contract runs a fixture gate that blocks forever without forking, drives the real `aw` terminal verification with a configured timeout, and independently requires a typed timeout verdict plus the absence of any surviving process in the wrapper's process group after the command returns."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-wrapper-timeout-teardown-python-contract"
+evidence_paths = ["evidence/terminal-ec-wrapper-timeout-teardown-python-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "terminal-ec-retry-transition-lease-python-contract"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "terminal-ec-process-liveness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/terminal-ec-retry-transition-lease-python-contract.py"
+promise = "A retry issued while a terminal EC is still in flight contends on the same lease instead of starting a second run, and only the lease owner reaches the exact WI close continuation."
+oracle = "The Python external contract issues a retry against an in-flight fixture EC through the real `aw` binary, independently requires the retry to report contention on the same lease without adding a gate launch, and requires only the owning process to emit the exact `aw wi close <slug>` continuation."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-retry-transition-lease-python-contract"
+evidence_paths = ["evidence/terminal-ec-retry-transition-lease-python-contract.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "td-cb-lifecycle-automation-operational-efficiency"

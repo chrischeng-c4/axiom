@@ -5,7 +5,11 @@ CAPABILITY_ID = "work-item-planning"
 USE_CASE_ID = "capability-to-epic-planning"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_wi_create_help_command.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-command"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case wi-create-help-command"
+)
 ASSERTIONS = ('help output does not list --remote',)
 
 

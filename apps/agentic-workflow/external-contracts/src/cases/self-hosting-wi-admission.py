@@ -5,7 +5,11 @@ CAPABILITY_ID = "workflow-root-runner"
 USE_CASE_ID = "self-hosting-root-runner-policy"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_self_hosting_wi_admission.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case self-hosting-wi-admission"
+)
 ASSERTIONS = ('the self-hosted WI root enters the normal EC-first lifecycle', 'the envelope dispatches the exact project-and-WI-scoped EC check')
 
 

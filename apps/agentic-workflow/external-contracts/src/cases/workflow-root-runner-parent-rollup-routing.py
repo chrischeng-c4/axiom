@@ -5,7 +5,11 @@ CAPABILITY_ID = "workflow-root-runner"
 USE_CASE_ID = "parent-rollup-routing"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_workflow_root_runner_parent_rollup_routing.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case workflow-root-runner-parent-rollup-routing"
+)
 ASSERTIONS = ('closed change roots route agents to parent inspection',)
 
 

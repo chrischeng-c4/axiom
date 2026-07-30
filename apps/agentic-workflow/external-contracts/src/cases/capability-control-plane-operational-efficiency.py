@@ -4,7 +4,11 @@ CASE_ID = "capability-control-plane-operational-efficiency"
 CAPABILITY_ID = "capability-control-plane"
 USE_CASE_ID = "capability-control-plane-operational-efficiency"
 DIMENSION = "efficiency"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case capability-control-plane-operational-efficiency"
+)
 ASSERTIONS = ("the native Python capability init, report, and sweep scenario completes within 120 seconds without cargo delegation",)
 
 

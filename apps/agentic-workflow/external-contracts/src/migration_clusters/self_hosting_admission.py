@@ -8,7 +8,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from wi_contract_fixture import final_json, run_aw
+from wi_contract_fixture import (
+    final_json,
+    run_aw,
+    write_python_artifact_lock,
+    write_python_artifact_unit_test,
+)
 
 
 CASE_IDS = {
@@ -84,6 +89,91 @@ def _runtime_root(root: Path) -> Path:
     return Path("/tmp/aw/workspaces") / "".join(slug).strip("-")
 
 
+def _write_claim_linkage(root: Path) -> None:
+    """Give the fixture capability claim its derived Python TD/EC linkage.
+
+    A `python-v1` capability claim is linked when an EC case names
+    `(capability_id, use_case_id, artifact_id)` and a public Python TD module
+    exposes a public behavior of the same name, so a fixture that omits either
+    side cannot reach production readiness on its capability root.
+    """
+    td_root = root / "tech-design"
+    (td_root / "src").mkdir(parents=True, exist_ok=True)
+    (td_root / "pyproject.toml").write_text(
+        """\
+[project]
+name = "self-hosting-tech-design"
+version = "0.1.0"
+requires-python = ">=3.11"
+""",
+        encoding="utf-8",
+    )
+    write_python_artifact_lock(td_root, name="self-hosting-tech-design")
+    (td_root / "src/workflow_root_runner.py").write_text(
+        '''\
+__aw_artifact_id__ = "artifact:agentic-workflow/workflow-root-runner"
+__aw_public_contract__ = True
+
+
+def self_hosted_fixture() -> str:
+    return "Python-first lifecycle roots drive an executable continuation"
+''',
+        encoding="utf-8",
+    )
+
+    ec_root = root / "external-contracts"
+    (ec_root / "src/cases").mkdir(parents=True, exist_ok=True)
+    (ec_root / "evidence").mkdir(parents=True, exist_ok=True)
+    (ec_root / "src/runner.py").write_text(
+        'print("fixture runner")\n', encoding="utf-8"
+    )
+    (ec_root / "src/cases/self_hosted_fixture.py").write_text(
+        "def verify_self_hosted_fixture() -> list[str]:\n"
+        '    return ["the self-hosted fixture claim is externally observable"]\n',
+        encoding="utf-8",
+    )
+    (ec_root / "evidence/self-hosted-fixture.json").write_text(
+        '{"protocol":"aw.python-ec.evidence.v1","exit_code":0}\n', encoding="utf-8"
+    )
+    (ec_root / "pyproject.toml").write_text(
+        """\
+[project]
+name = "self-hosting-external-contracts"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml", "uv.lock"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "agent:fixture"
+efficiency_policy = "not-applicable"
+
+[[tool.aw.python-ec.cases]]
+id = "self-hosted-fixture-behavior"
+artifact_id = "artifact:agentic-workflow/workflow-root-runner"
+capability_id = "workflow-root-runner"
+use_case_id = "self-hosted-fixture"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/self_hosted_fixture.py"
+promise = "Python-first lifecycle roots drive an executable continuation."
+oracle = "the outer EC independently inspects the real aw goal envelopes"
+target = "rust"
+command = "true"
+evidence_paths = ["evidence/self-hosted-fixture.json"]
+""",
+        encoding="utf-8",
+    )
+    write_python_artifact_lock(ec_root, name="self-hosting-external-contracts")
+    write_python_artifact_unit_test(ec_root, "self_hosted_fixture")
+
+
 def _write_fixture(root: Path, project: str = "agentic-workflow") -> str:
     (root / "aw.toml").write_text(
         f"""\
@@ -144,6 +234,7 @@ Gate Inventory:
 """,
         encoding="utf-8",
     )
+    _write_claim_linkage(root)
     created = final_json(
         run_aw(
             root,
@@ -174,13 +265,16 @@ def _health_policy_snapshot(project: str) -> dict[str, Any]:
     ) as raw_root:
         root = Path(raw_root)
         _write_fixture(root, project)
+        # Self-hosting policy metadata is orthogonal to the readiness verdict, so
+        # the exit status must not be the oracle here. The case pins the policy
+        # field set instead and asserts the two fixtures agree on readiness.
         return final_json(
             run_aw(
                 root,
                 "health",
                 "--project",
                 project,
-                expect_success=False,
+                expect_success=None,
             )
         )
 
@@ -258,9 +352,21 @@ def verify(case_id: str) -> list[str]:
             "required_trailer",
         ):
             assert field not in control
+        # The two fixtures differ only in which project the policy applies to, so
+        # the policy fields must not be a side effect of a different readiness
+        # verdict.
+        assert self_hosted["status"] == control["status"], (
+            self_hosted["status"],
+            control["status"],
+        )
+        assert (
+            self_hosted["readiness"]["production_ready"]
+            == control["readiness"]["production_ready"]
+        ), (self_hosted["readiness"], control["readiness"])
         return [
             "public AW health enables Python-first self-hosting roots",
             "bounded direct repair is conditional self-hosting fallback metadata",
+            "the self-hosting policy field set is absent for a non-self-hosting project at the same readiness verdict",
         ]
     snapshot = _snapshot()
     if case_id == "self-hosting-bounded-admission":

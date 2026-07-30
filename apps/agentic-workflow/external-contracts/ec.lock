@@ -3,250 +3,278 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-30T02:59:21.753004+00:00"
-ir_digest = "sha256:52cf32f8f296fcd6cbf0a9e5897279bb5c6d85e44231d6f3822b5fb108c77919"
-source_digest = "sha256:07af4d36fed3371d7860ff8108f39fbde0ac68bbffa0aad6d6293e319058033f"
+generated_at = "2026-07-30T08:04:34.998553+00:00"
+ir_digest = "sha256:f8d07fc7377109194e2238a6aca792c9a1368466cd072fed45b82f68b51d567a"
+source_digest = "sha256:70b330f0e9b8a06e15777b5113e1ae164a7b4c7d40c21f281c44583893daf3ee"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:001efeb9571857a73661bf1e92ae2c548eabddc7ab413b5bf6d80efc52e7a67c"
+digest = "sha256:c25df14f95e98435ec299e8fef258bf717d9166357d1c9d0d7786096990d0219"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
-digest = "sha256:87ae3f8f8b34e9f5284881aeacbe2cb05f6f57b598fbcf4c9ec06bdea4144f07"
+digest = "sha256:99c79a46a93f958f5b96cf50263f3ecd401b3dc9456aa95ac618c70a657a96db"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-core-concept-model-phase-less-admission.py"
-digest = "sha256:fe7fa47c3c48d3df5b1707af7228a6cebd58fa992f23ea741ec1e8476e08b47f"
+digest = "sha256:168182bcf758db1e9c2e84673372c2d4759ea1ba41506a3cdc09c10528292073"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-operational-efficiency.py"
-digest = "sha256:6c96df91bf9341799978beab21bc27bee05edfeff9f85d48893e887b5d56e01b"
+digest = "sha256:1da06eb6b7de830ef9630d9f9839991bef9478b7cb6796d4f179595598c7904b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-operational-stability.py"
-digest = "sha256:e147b8fc432bd6f4ad766a088b470cff8bc326a1ed86548b96480abd54e488ba"
+digest = "sha256:10f062d0bbead44a17255c7767f0cc40dc31eabd05cd0abc84da777e0d1d4486"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-health-default-full-verification-smoke.py"
-digest = "sha256:186f8f7ae25c8ff7ba4c09317edd224bd9afc41960777f8f653658a5302fabd1"
+digest = "sha256:8b80cd6aefc17ce610a0f71ae2223a31c1b0324d343221d7d7105c89f1bf4d5e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-markdown-capability-schema.py"
-digest = "sha256:744bf9de271e44bb0547e1e66e7276549432ea13f805a3bace8901b4865af999"
+digest = "sha256:90f2067dce49ba14fdd3b9d8bb2dcadd14a40470c297bb801a7204f364aaeb8c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-missing-readme-initialization.py"
-digest = "sha256:e0e2eab242260652b7b13e2cefc5bd21d76e3a750d9b6b5ba59e5d10a291d272"
+digest = "sha256:eb9fbf4e2e203a9519792d26aa8bffe2530f6294ffa4961d9ba1fa8cd05bbbb6"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-efficiency.py"
-digest = "sha256:d475cb315d2c1690588187974cc350027646058541db2a94eda6abfc1d44b669"
+digest = "sha256:51860e142b2698bf0e4a9e8c0c72c4aa2991368ae83b07e9a6e79636dc097b94"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-stability.py"
-digest = "sha256:1d3a96efdd5afd69c7c222fe51319959dcdba184faa8aee8de34e05ab7b6594e"
+digest = "sha256:fa6c757eeeee988586ce20ebc59f89e5629bdcc18b56941c5b87592949be1bab"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
-digest = "sha256:825da6170d278fba43a82c892984de2af321bfa6a1d2a0e3dff353dad72615f1"
+digest = "sha256:2dbc5e97d2697e5c258ccfea279b751d0a9561ac8d633bcb4da0388fd380e4ac"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
-digest = "sha256:af5218e82cb05be354466636fa8c6dc58bf5706d5b14d85461ac8918dcde05c0"
+digest = "sha256:7fc7e618908e386ea1a0469ce3aba84d8cb69b68119202889cad5ef11637cced"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
-digest = "sha256:7db1cd20878e8af5fd3e01bad10ecc73d1128117f1f217a8024365914688bd12"
+digest = "sha256:def7554e95bad82106ac785585342518d236f54597ba899b5afbbc695b42bfef"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-event-validation.py"
-digest = "sha256:5d93c2efee6467e14f7ce65ee908c7036529318003c09bed70383ab2c7bf1ad3"
+digest = "sha256:512de17a58725df0e3a70ed7d8780460e231de19271aa19a17ba71cc714a4dff"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/ec-gated-terminal-check-unification-python-contract.py"
+digest = "sha256:c21e936a8532c7b2771b2897d9cd3c8b2efae338d52890db9296fbd2fee6ce62"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-operational-efficiency.py"
-digest = "sha256:86737ebbc08291a84710bd0b4d6f62fa1870056cb3bda17d520f0b41b83bbb30"
+digest = "sha256:e9f1fab4cd5a5ada2885f597bd345649aa4604be93a0b1df5f91fcb19171778f"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-operational-stability.py"
-digest = "sha256:56fd38bc1883fda1f3f62352605e52c72bba97efc0ad34d12057a5bccf185b2a"
+digest = "sha256:a96b7f3d5c6c2aba05d987035fb9fae6997074c46e8de442547c4b9c1a56ac48"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/external-fixture-reports-advisory-gap.py"
-digest = "sha256:3ec5972b56c78957ebeca47c3d60fd45f0c153633c0a564968a51402f8cfe687"
+digest = "sha256:19d3c99e0ac23a622e6e35c9e2ca021e2dc004e234fe6ff3c132cd9fbae94e00"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/issue-cache-canonical-change.py"
-digest = "sha256:3c764d9f3d4c1df56ffd4a9520d6a8ab748b7365deec5deea0e27338ec711cfe"
+digest = "sha256:5cfbb7cdcabf423080bc267b4c96e65b19fdcb7a2f848e4d40ffeb3734d160cf"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-artifacts-operational-efficiency.py"
-digest = "sha256:2887253234b4e7de3309310eedcf832f5c94714e243c2368ce91766b5a5293fd"
+digest = "sha256:c4b894dce9338cc0ccf006e6e3c892b32452b203d613255592e414ef02644e9c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-artifacts-operational-stability.py"
-digest = "sha256:9e38b77fe1b00ecf871f41533ac9858ac89326b2f7a9c9dd88f824cb7dc42df0"
+digest = "sha256:1dedc7c95bfadcfdbe31c4ee21a7e60b2a76bc749c73e2ec8214d9b1a9992a32"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-schema-python-contract.py"
+digest = "sha256:42865ddb9b694724bdf75eb2961d53f549af0bd5f1b9bde5ce680f9906a7beb1"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/manual-runner-output-convention-python-contract.py"
+digest = "sha256:f701e366c29a2b8ab9e268583a8b60495ed62294597796697d8d7167544be7ca"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
-digest = "sha256:820dcede6e1bbc6e1b3e34c76c39d27ba0ab3493d0af21f19adfc6b084971d24"
+digest = "sha256:f5639336216dc73a38ca73a7d2b4c59e9e8f9402df7954bbfba87f3fe28673db"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-efficiency.py"
-digest = "sha256:47d8986b9061689d0985c77c0542c274b9cbf5c92b5d8abc955d010af89bdfe9"
+digest = "sha256:975dfd7f7e2c5144ce971f56dac00c6a7265216ea84b7440d7dab6273e40a59a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-stability.py"
-digest = "sha256:98a7b86bf45ece690ac8f11e382a26405ecf2a5249c4e24588cca16ce09c9af5"
+digest = "sha256:89285034fec8c73f38fc5382a8e4ee49ccd6aa4368ed5a7bc01a6f0a8b7847f6"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-cache-safe-discovery.py"
-digest = "sha256:f80d8b6172b9bc1ddd9e8f56f016118545c318f062a8d0fc475ccfe2de6050b8"
+digest = "sha256:9124044826bb09151cfa6bc1f640e53fbb64ff1a33ebdc541d4abc200dba8849"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
-digest = "sha256:2b2e48af6f6e470e8308493d03e70c5661c4b7e2e3081f63db58cfdfda5b1dea"
+digest = "sha256:18e870bdecf763ef739aae963be1a5d7fa954d3676b330ef3e1a530b2244880a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py"
-digest = "sha256:72a9c94184274c934c2f70739905a04b9f6921ac769a9352be5c8814d65c3a20"
+digest = "sha256:230afe98d16c3ada5bda8e76e11dd935182b4c72e8348076d599550a18b0f1dc"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
-digest = "sha256:ad1299ef81b9c47c75ae9523fd620a3e0ecf4815142ac57c81211dba3e6cda3b"
+digest = "sha256:0cb38e710e0a0fc5bfb1e2b545cbc5cbcf1011252c27ba01e7c386d894e54d24"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/self-ec-fixture-loop-gate-python-contract.py"
+digest = "sha256:c3948174a78aa941718a51886e7dede04120109b5bd3ae89cbf15d991a10894b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-bounded-admission.py"
-digest = "sha256:494da34273e75538163cd47d3d2cf3b4a7ce6608464cd6f9302844b4d2346fc1"
+digest = "sha256:1af4afa3a5e76d0ed597e058b97b25df2ee5ba1b865fd3b39df8f169cc63b49d"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-capability-admission.py"
-digest = "sha256:e74ac1b937c1adecc5efd03918005b570780d2ea1fdc11fe077f2ff6512c16eb"
+digest = "sha256:469364d91725e0f6ee1e78a837d632806ec85a12f06823425d02d004e169ea69"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-health-policy.py"
-digest = "sha256:ab5cc6dcf18f2568ea7d6701822e9bea666dda97cb99062a567d59965d109f3d"
+digest = "sha256:c53c3c9b18dfc8b1aaba52fa18fb03213654cab8d5f2d505ac2bbc71442ad468"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-identity-stability.py"
-digest = "sha256:970122b4fb265a01449df3a9420fa4b7cdca6113447a4322259920333ce1ffb6"
+digest = "sha256:3a86407b6af2456bcf0c6cd6bad27dc4dc560a9220ae7dccc2de0e94899af4c7"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-wi-admission.py"
-digest = "sha256:ad2a148120577ae5732d8dd2e03a86a86d3b90821ac533c4521fc1276c6623f2"
+digest = "sha256:f7845936bf6befe5ef5bc51756b178d7b99c216f72571efcd218977b1bf358b3"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/shared-cli-issue-report-intake.py"
-digest = "sha256:d00c5852ea07dba22a61bbd680405337fe4e87056fd2923f9645be9f00696e7c"
+digest = "sha256:aabff428728560dda7438d893644339668f923b83c631949a5f9eba0e534b04e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/standardize-audit-first-contract-test.py"
-digest = "sha256:4cefc708f1518081be04626cf2aa5881bd83ef3ca85f72af35c59c6dce7749d0"
+digest = "sha256:ae13c108420ac116524e4bfb84c1b4e0922c0467f63a7797f4e64e667570b28c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-artifact-producer-cli-fixture.py"
-digest = "sha256:019c26d3f749c2352e384f18f9d82a5702d9d52e3fa04b22803767e91027409f"
+digest = "sha256:c180db7bc315437bbafe76427b1402fb0744d81b5499ef2421824e8235b6d5f0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-cb-lifecycle-automation-operational-efficiency.py"
-digest = "sha256:2a5e7ed4de86fd49666bfa046778594c55cab190b3af0728707d8dfff61c03f9"
+digest = "sha256:0184a27c4c5fc3068624d169f09ead3ff2ae57771d528dd73b33f0e5b3392a6f"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-cb-lifecycle-automation-operational-stability.py"
-digest = "sha256:b50153797512e0608a27231c7a88224815853da5e472b80676c78dad1f59399f"
+digest = "sha256:9937a5cdae33d823a5b9c4366ad844206bc4c733d7b73ae51bf97edba07e108e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-cb-lifecycle-automation-remove-td-merge-command.py"
-digest = "sha256:ec878b0dfeecef5cd9df2e849e1b94a53e0d399736b221f577bec98ba93c4466"
+digest = "sha256:807cda5fea6cadc9be0e9d8d69c9d4427199943b9cbca244a7515a3f526e5567"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-create-dirty-persistent-branch.py"
-digest = "sha256:69b77d135e12faad8bf893108d7798515148b682ab55c1c55039db5ec8ac2d7c"
+digest = "sha256:fa1dc6ec36320336ad0e188ad3f13ed5af4e19aa6a955d34c2a86ed1ed798a8e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-existing-workspace-dirty-persistent-branch.py"
-digest = "sha256:a70708583429025ab330831e06c0b9bd39449a89ccfdd770347751ddd25219d0"
+digest = "sha256:a8c92e1b81540dcda4bb31ef82a42b258cda354d334fce9aa10e2db4beca7e2a"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/terminal-ec-cross-process-single-flight-python-contract.py"
+digest = "sha256:877fd7fe219d9d1f3acacb99792496b65e1d307f3ac3ba908f362ceda75891d4"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/terminal-ec-retry-transition-lease-python-contract.py"
+digest = "sha256:dcbb29566438c466de8fdf81c3895ffb162e145ddf98e0ddfe24c1e2a789cfdc"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/terminal-ec-wrapper-timeout-teardown-python-contract.py"
+digest = "sha256:229924f441541788f62fd5028af9796d4848363e44a1e748cb614019085ad66d"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-close-remote-real-cli.py"
-digest = "sha256:78ba6b38e350ce6ecb21ddc08465397972434a43d8fe6387c4784a20102edf8f"
+digest = "sha256:5fe6bc5a7e2057cca64b582e47bd10eb5e0e3541d29b7cd117c0e124943c703b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-create-help-command.py"
-digest = "sha256:b78c1b8cab0074763153f9ed839ecc1798d851893a846f25d406509ff815ba2f"
+digest = "sha256:446cbd07f3f7ec61af446c450c46f9c1db702107499e2e8cb9838be6f5fa9492"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-create-help-smoke.py"
-digest = "sha256:04f93eca17782207c033d13e036db6fb27a84769da5646f90f6bce1fd7d3fb80"
+digest = "sha256:3ed1072573b36a51a15f2ebd312395439addd2cdf7b6f5b6c8df00d37dbb5a2a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-create-remote-flag-tests.py"
-digest = "sha256:3b8a3a4abcabbbb93e088fd381d71756ebd931de473f990ddc34c67da831ca29"
+digest = "sha256:183a61becbaa166fa996498bbae221e020eae0d0a4cd67eaa6c4f3ec8c219945"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-create-remote-unit-command.py"
-digest = "sha256:67a97534daea84003262060a6ef64ab151597a1ed4144890fa287836bc811fa0"
+digest = "sha256:3372439a5fe0fa8ace770fb73441e7c57eeca0c104fd0b97e8e694ace4037637"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-remove-agent-estimate-build.py"
-digest = "sha256:512ad32d9a45100fee58eaf2974189b0cc8e688782d59bd7673bb6048a97f851"
+digest = "sha256:3be622c5770b4e2050eed489435bf05224b3f0171fb0f336f827c056d9b6a649"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-remove-agent-estimate-spec-check.py"
-digest = "sha256:c9ee7fcc2c2c6d806756e2c1037500f6c8874e54b37176ba0e2ba3400eff1bf4"
+digest = "sha256:25d5de0ec4998488875780c529d72386cdcc51e186f74c0ab0a7b699e3201271"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-remove-agent-estimate-unit-command.py"
-digest = "sha256:f2f5b46a8f07a206850ed82a7b9f382a05a95e4b63d46800a65d3fa48e5d9fc2"
+digest = "sha256:7e49776fdd867660d8258cfaab8e8ca2adaa10929c51d705d5c11b53f8fb03c6"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-epic-owner.py"
-digest = "sha256:63f6ca1ca466d62f22ebf0a6669bc515555485cbd04a4aa387a50e34149f0cd9"
+digest = "sha256:5b2c73b175d223c75c56b939286487d0e557fa93229c91f71534414ef00012a1"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-priority-label.py"
-digest = "sha256:ff9c2b4c5d603f07e77710aacc97831b2fe8a37b2e9552665553e485e3aacec3"
+digest = "sha256:c3ff37838a74e9f4d0a0db7df4fbd05aa99219c8bae0aeb0a6f0968fa282fbd0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-four-type-taxonomy.py"
-digest = "sha256:b366a4cc3f66b2eeb0a7f2b59e5116ee8ce3a1a54a9e64fd09ca480e5bcac250"
+digest = "sha256:9fad42475687bc77f698de10f109cdf598ca07724402668382d21ce0f0afc5d9"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-intake-health.py"
-digest = "sha256:f5ea2b00da1db9b294514b8dc1e8e3e0a9aeeca0f60c29296948e9702f06c49d"
+digest = "sha256:03fb6a974d393e9bdfd677a50485f41168dc078d7ebec3e5c5efcbe2084fb4e9"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-epic-to-change-atomization.py"
-digest = "sha256:05f7db669815c60a23d4d29778d1dc2bc2779bd49f0fdb132247a35f9ddee1d4"
+digest = "sha256:7b2090dc575aa137f580e23ac84a620ff858892cc4193c7702e07f0e53f384f0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-operational-efficiency.py"
-digest = "sha256:57bc568683374d566feaa2be2e105f1b3ad337dae7b8c9468354041f6cc68658"
+digest = "sha256:0b65175e77e741987c7bd6631046742ac0cac45936d72ab4ef443c9a6273da12"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-operational-stability.py"
-digest = "sha256:8ee041915c314bbeb7f4c1a1e248ccc7bb7bae81c2b9ce932c6959d8f41d2c01"
+digest = "sha256:7459cc141416c7360abc86a22a506e032cbcb17395e47bebc8d8b356f09f1d68"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-report-triage.py"
-digest = "sha256:71594b427832c53efb0ddfb82ecaff2f6091a787673dc50f5f02e48416cd7d6d"
+digest = "sha256:7bcdb1a379d2ca3f2716a1a78098bbc7cfe754d9004a6466504f2360b0d8c19b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-spike-terminal.py"
-digest = "sha256:2d83921ae3bf1bb828f01cf264b1cb6627243eed094630d6c1d1fc9fec81a43e"
+digest = "sha256:8782e1116b25f35f040170de41549e2fa04f7faee22a30b0fb2a6a511ed7cd1c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-templates.py"
-digest = "sha256:286e6652403d86891c031159a51119da769c435c5f6d01b1047d482c53c69c92"
+digest = "sha256:d98340ceb2562c4435d3dbce0eb13980632f276a000fc24037770d12897646b6"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-vocabulary.py"
-digest = "sha256:6720e4d22339938492837815cf233b7caf47c5c8f78951fe0679854c348077f2"
+digest = "sha256:57b3d90b5de8a0f6496a0eb504f7e02fe684c002bbb7473946f7fa34c1793b2c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-parent-rollup-routing.py"
-digest = "sha256:9f6782e40be8e3c3217563a0d83f2f5bc1fb901c77c61722b50d363f51334fc3"
+digest = "sha256:67950bcb80c00f3491e3fb632636c209f294c401eabadb7928e8fc8e95f40f20"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/claim_reconciliation.py"
@@ -254,7 +282,7 @@ digest = "sha256:a38aa5f3efc1f7c61c0dcde4a4e41a719081ae20ec3493a3f9d41f9974632b2
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/inventory_parity.py"
-digest = "sha256:e192401a66fe40c404afb9b2629ee4682edda034360369847eccbb02525b8538"
+digest = "sha256:343a2c27ee1bac1bcaa1c306825efef73c9d6f5afc69c390fb85e5863bd2dee3"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/keep_td_routing_config_oracle.py"
@@ -266,7 +294,7 @@ digest = "sha256:5168eb2ad120f2e3f074bf58853868842be8d1ebe484a4c050cf56f54ec43b7
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/capability_manual.py"
-digest = "sha256:f1733cce97643dae397b42bd011b23e5b4b28f0a40ea65492c5af5f0276aa3fc"
+digest = "sha256:bf71bdba5c66378858f5006805c65d1d9b5b1d4adc5afe4a7edea966c04742fa"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/core_model.py"
@@ -274,7 +302,7 @@ digest = "sha256:bc485dcbb3879fc10c50b8925683259f64a31f02ae57d2a0bed577472a9905f
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_health.py"
-digest = "sha256:1e19032b43875de73988061f890c698da543f1f907316fb06e79b11ba80e4995"
+digest = "sha256:89925998f05601f3d587975e837ffb032cc08c011733b79cfe5ba601d6cfddeb"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_service_kit.py"
@@ -290,7 +318,7 @@ digest = "sha256:86b4aff2e016e82895e4a7115c99f656c3e1f823d518148e9ea42183814da03
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/self_hosting_admission.py"
-digest = "sha256:dc94bef444d170e70893b4315ba2e9e1e2f0c9602fdd9508baa44e88c4ef7f29"
+digest = "sha256:e1312a6f48957178e5a1087ac1c4ac3e23c6d18f22de69f2055ee82e9d29b6ca"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/td_lifecycle.py"
@@ -302,11 +330,11 @@ digest = "sha256:9693ee2e5e6e163a225aac83e12463b519c353db331ca94e77623ad7eb8d267
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/td_terminal.py"
-digest = "sha256:df6c3f8005b2b8b93b7418269ef5e4a792f07a1810f5b68ce151869c4c775d1f"
+digest = "sha256:af0fb91038dd8bd3c7af3f07b4f5d139d4712aa8f6f93b3d585ad106911d51c9"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/work_item_planning.py"
-digest = "sha256:ff1ec40824047ee1e8757b063818dbb568d777b32b2ad4bff42328409dffdb47"
+digest = "sha256:ce875a83aabead273adc6e1045ff5b9397e2e179d7170dbeb6d37045bc7ca22b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/workflow_runner.py"
@@ -314,7 +342,7 @@ digest = "sha256:8a07c2fb854f1a90f3f47db1029e3bcc82a69f266973d10daaaa3d6d6b5a848
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_reconciliation.py"
-digest = "sha256:be59adbe9070c888611272ec539bab31771e683e522debf5d724639a076565eb"
+digest = "sha256:04d5ec00991aca7ccf69379f295cc65475089d02cd2952e139b953fa9420cd1b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/oracles/project_health_contract.py"
@@ -326,7 +354,7 @@ digest = "sha256:3dc90509a8c8fd1472e80871b5ad17c133e126932d381eb239a7734d55ad824
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py"
-digest = "sha256:749ccbc6a7eecc86ff8a3163b3b04dfb20aad54814832ca96df24a3ed15774d4"
+digest = "sha256:bda3f5dbfb3b9be0d585fbde026e5a835dcbbfadc6b809dd87c4e35d21bdf93f"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/tests/unit/test_claim_reconciliation.py"
@@ -353,12 +381,12 @@ required_for_production = true
 assertions = [
     "a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap; the health payload exposes the regenerability production blocker and a runnable remediation command",
     "artifact: artifact:existing-project-standardization/public-contract",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
+    "oracle: Black-box Python assertions over the real `aw health` stdout envelope and its durable payload file for a generator_authoritative fixture: readiness.production_ready is false, regenerability_authority pins authority and required_for_production, a production blocker names the regenerability requirement, and next.command is an executable `aw` remediation.",
     "target: rust",
 ]
-evidence_digest = "sha256:557969141342905870a1cd86f32426b578bdf4573664a2b938f94f09f3976e54"
+evidence_digest = "sha256:8d0ae6f2f495d092ab22aa2b8cb0a6bf902e1f939d4fc4e037635f76f3e5e117"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3d1da082cec998e22c5d195b91ef0d4f2f717c7bd722e17e4468ec1f2839d4e8"
+digest = "sha256:81256852361cf6c6b2aa75089edeea38c3b00f8ad3d845b233da55116838374a"
 
 [[cases]]
 id = "aw-core-client-core-concept-model-phase-less-admission"
@@ -435,12 +463,12 @@ required_for_production = true
 assertions = [
     "stdout includes progress JSONL events before the final result when long gates run; the final result includes payload_path; the payload file contains complete blocker and command evidence",
     "artifact: artifact:existing-project-standardization/public-contract",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
+    "oracle: Black-box Python assertions over the real `aw health` JSONL stream and its durable payload file: the emitted phase sequence starts start then tests and reaches summary before the terminal record, and the payload independently retains the configured test-gate command and the blocker list.",
     "target: rust",
 ]
-evidence_digest = "sha256:15a062f5a158f721b76de88d1b3f1711f066e94ecf442cd59cdd0df4f941810c"
+evidence_digest = "sha256:877faef39219d20b82547578c22bc14b0310ed8cdd47261ef04d0b2d3a9a9fac"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7ff0a4f2af5ee1c6dedbb3d9e798384c2832f2ab6f593d8b9faf7772071dbf50"
+digest = "sha256:929291db593b8a87d85de51930483d24c4996893756f6c419e84e64ead43e5e0"
 
 [[cases]]
 id = "capability-control-plane-markdown-capability-schema"
@@ -605,6 +633,26 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:af672728c376c58bf064ed28d990ef5b76564a2780ae77281eca6f3fb82882cb"
 
 [[cases]]
+id = "ec-gated-terminal-check-unification-python-contract"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+contract_id = "ec-gated-terminal-check-unification-python-contract"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:ec-gated-terminal-check-unification-python-contract"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/ec-gated-terminal-check-unification-python-contract.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case ec-gated-terminal-check-unification-python-contract"
+required_for_production = true
+assertions = [
+    "One EC-gated terminal check owns the whole lifecycle seam: a red public Python EC routes back to bounded CB regeneration and the same work item converges to a single exact terminal close continuation once the EC is green.",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
+    "oracle: The Python external contract drives the real `aw` terminal verification over one work item in both EC states and independently requires the two emitted `next` continuations to differ, with the red route naming bounded regeneration and the green route naming the exact single terminal close command.",
+    "target: rust",
+]
+evidence_digest = "sha256:7c9ce97ded97591746d381c38f661cbe66eb04922f35c8afa6a33de260254808"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1c80b7dd352ab520e4b32ff80bf31fe7d4e604960646335eb6054419cf4e8d21"
+
+[[cases]]
 id = "existing-project-standardization-operational-efficiency"
 capability_id = "existing-project-standardization"
 claim_id = "existing-project-standardization-operational-efficiency"
@@ -659,12 +707,12 @@ required_for_production = true
 assertions = [
     "the external-advisory fixture reports the regenerability gap as an advisory warning; the advisory gap does not add a production blocker when all required gates are clean",
     "artifact: artifact:existing-project-standardization/public-contract",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
+    "oracle: Black-box Python assertions over the real `aw health` durable payload for an external_advisory fixture that differs from the generator_authoritative fixture only in that authority: optional_regenerability_gaps is non-empty, required_for_production is false, and no production blocker names the regenerability requirement.",
     "target: rust",
 ]
-evidence_digest = "sha256:862f7edcfa17cb7e6d9449c6b984a528d29af19f012b453b15d299aec56badb7"
+evidence_digest = "sha256:d2246df7baca9b5dac0cd37257c137331113560d682e78100d0b56fe2da67d22"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f384a289d9cc3a6d53bffcdf503abe4f2d2510f0fd38129b0db97ddca99bd1a7"
+digest = "sha256:ba943e73cbb3c7a42799c74f29a15033d301e0bc91d5b09c6fe4792260ba8fe5"
 
 [[cases]]
 id = "issue-cache-canonical-change"
@@ -727,6 +775,46 @@ assertions = [
 evidence_digest = "sha256:b335ced3899d499f862349b1c25bf2ff694640223d5a75dab8aef2691adaf7fb"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:2f0c5b5c68966605da4e16a186ff10ea4bef498f1a4279c89a83f31a0dd59046"
+
+[[cases]]
+id = "manual-evidence-schema-python-contract"
+capability_id = "manual-evidence-artifacts"
+claim_id = "generated-manual-ec-evidence-schema"
+contract_id = "manual-evidence-schema-python-contract"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:manual-evidence-schema-python-contract"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-schema-python-contract.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-schema-python-contract"
+required_for_production = true
+assertions = [
+    "A generated manual EC inventory entry declares a complete, concrete evidence schema: one case id, its capability and use-case identity, a declared dimension and applicability, a source path, an evidence path derived from the case id, a gate command that requires that evidence file to be non-empty, and an explicit oracle fill marker instead of an invented oracle.",
+    "artifact: artifact:manual-evidence-artifacts/public-contract",
+    "oracle: The Python external contract runs the real `aw ec draft manual-evidence` command in an isolated fixture, re-parses the emitted TOML inventory independently, and requires the generated case entry to equal an exact field set - so a generator that dropped evidence_paths, invented an oracle, or derived the evidence path from anything but the case id fails.",
+    "target: rust",
+]
+evidence_digest = "sha256:f86e5c9916805e21122c51892f6d4af8192ac5988df83dd261ef809efacef2e6"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a291ea1c7053974ce47e68ed974030116840f581578872c27aa23f04fa1def80"
+
+[[cases]]
+id = "manual-runner-output-convention-python-contract"
+capability_id = "manual-evidence-artifacts"
+claim_id = "manual-runner-output-convention"
+contract_id = "manual-runner-output-convention-python-contract"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:manual-runner-output-convention-python-contract"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/manual-runner-output-convention-python-contract.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case manual-runner-output-convention-python-contract"
+required_for_production = true
+assertions = [
+    "Manual EC scaffolding writes exactly the inventory, its dependency lock, the Python runner, and the declared case module, emits the exact structural-check continuation, and leaves a runner that refuses to execute until it is authored.",
+    "artifact: artifact:manual-evidence-artifacts/public-contract",
+    "oracle: The Python external contract runs the real `aw ec draft manual-evidence` command in an isolated fixture and independently requires the exact emitted artifact list, the exact `next` dispatch object including its command, reason, and payload path, and that the scaffolded runner body raises rather than exiting zero with no assertions.",
+    "target: rust",
+]
+evidence_digest = "sha256:633da076b97ff8ef25e68480a009205c56a48db48ff08d5c038d0888b85846e5"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:556c6e7b2eda206ff01a341110a80b0a3be8561c756cea33b83439649b5a5fbe"
 
 [[cases]]
 id = "project-health-total-observation"
@@ -871,6 +959,26 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:9b7fd1ca487f4b493200c267e83b8ef30ceed5f6be4470eb7a2e3602401ef1e7"
 
 [[cases]]
+id = "self-ec-fixture-loop-gate-python-contract"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "self-ec-fixture-loop-gate"
+contract_id = "self-ec-fixture-loop-gate-python-contract"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:self-ec-fixture-loop-gate-python-contract"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/self-ec-fixture-loop-gate-python-contract.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case self-ec-fixture-loop-gate-python-contract"
+required_for_production = true
+assertions = [
+    "A required Python EC that is red blocks terminal progress for its work item, and only a green verification records the consulted case and emits the exact WI close continuation.",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
+    "oracle: The Python external contract builds an isolated python-v1 project whose EC gate process is switchable between red and green, drives the real `aw` terminal verification in both states, and independently requires zero passed cases plus a non-terminal continuation while red and exactly one passed case plus the exact `aw wi close <slug>` continuation while green.",
+    "target: rust",
+]
+evidence_digest = "sha256:0e6893974c0a6f7b478b65f8df469520e8ae5409f2fed6ffa8a9c630f7d04d7b"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b455911b69168724534ec7ffefc716c391628bede8edad64724ec8b3f4787dfa"
+
+[[cases]]
 id = "self-hosting-bounded-admission"
 capability_id = "workflow-root-runner"
 claim_id = "self-hosting-root-runner-policy"
@@ -884,12 +992,12 @@ assertions = [
     "backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state",
     "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: A local fixture with no reviewed graph independently requires the public backlog root to emit planning remediation; repeated public WI envelopes and filesystem digests prove bounded admission.",
-    "threshold: backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state",
+    "threshold: one attempt; wall-clock elapsed <= 120 seconds for the full admission scenario; zero cargo delegation and zero network access; each public `aw` admission call returns within the same bound rather than spinning on the absent reviewed graph",
     "target: rust",
 ]
 evidence_digest = "sha256:757a27c0098bcc389ba3befd3d96b9160d4c303ae95452338cec334f05595169"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:79c41368d4abb2bf98272a3a418665987297f1befeb1da5ced2fad1b3f4972bb"
+digest = "sha256:f09b01fbe05eab51fad31329fed8695caea8c9644aa277a3dc2e87b0143a8d16"
 
 [[cases]]
 id = "self-hosting-capability-admission"
@@ -945,12 +1053,12 @@ assertions = [
     "a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical",
     "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: The verifier corrupts local WI frontmatter after a valid admission snapshot and compares repository/runtime digests around the public CLI call.",
-    "threshold: a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical",
+    "threshold: two attempts from a fresh fixture; both emit a byte-identical assertion list; the repository digest and the runtime-state digest taken around the failing public CLI call are equal within each attempt and equal across both attempts",
     "target: rust",
 ]
 evidence_digest = "sha256:72843a95e598b8220e9eefed3aeb8cceb26bbfdce6c0f6043ac4b22a30cc233f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fca2f9a6e6d79a7b9a7b9012c586a55a818375bf07e44fcbb027dec1937271c0"
+digest = "sha256:4cdbf0f1e0cd354e468b9bc44bb24509378e7b65b38e757141758bc2c5bbd423"
 
 [[cases]]
 id = "self-hosting-wi-admission"
@@ -1133,6 +1241,66 @@ assertions = [
 evidence_digest = "sha256:d97a62aae39b5038ff7447c744d12768882aecfb280324ec4536cb5c52873d8f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:7c018a7b74ad3e5220b744c2923fe870ba3a65bf6c11df0a186d8ef369c00060"
+
+[[cases]]
+id = "terminal-ec-cross-process-single-flight-python-contract"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-cross-process-single-flight-python-contract"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:terminal-ec-cross-process-single-flight-python-contract"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/terminal-ec-cross-process-single-flight-python-contract.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-cross-process-single-flight-python-contract"
+required_for_production = true
+assertions = [
+    "Two concurrent real AW processes contending on one project EC lease launch exactly one Python EC process, and the duplicate returns promptly with a typed single-flight verdict that names the same work item.",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
+    "oracle: The Python external contract starts two real `aw` processes against one fixture, counts the launches the gate process itself appends to a durable file, requires exactly one launch, requires the loser's typed failure_kind to be single_flight, and bounds the loser's wall-clock return independently of the winner.",
+    "target: rust",
+]
+evidence_digest = "sha256:c11ab81d6fec87e4caf32ac4a380fa1b94cc7a024ffb9774fe52e63ef9c10394"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:45751933a94794704f1623e39cb0a62c27eb38874bc8bfab9150879fc458b29b"
+
+[[cases]]
+id = "terminal-ec-retry-transition-lease-python-contract"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-retry-transition-lease-python-contract"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:terminal-ec-retry-transition-lease-python-contract"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/terminal-ec-retry-transition-lease-python-contract.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-retry-transition-lease-python-contract"
+required_for_production = true
+assertions = [
+    "A retry issued while a terminal EC is still in flight contends on the same lease instead of starting a second run, and only the lease owner reaches the exact WI close continuation.",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
+    "oracle: The Python external contract issues a retry against an in-flight fixture EC through the real `aw` binary, independently requires the retry to report contention on the same lease without adding a gate launch, and requires only the owning process to emit the exact `aw wi close <slug>` continuation.",
+    "target: rust",
+]
+evidence_digest = "sha256:118151d2509106209817c843f3c8760f6f06f5985d29b86169315da47ed4ec0c"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b7e945beaca336a5e645d59bde4013239a22d2c01ba8ec9e2cfcabfe12d5397a"
+
+[[cases]]
+id = "terminal-ec-wrapper-timeout-teardown-python-contract"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-wrapper-timeout-teardown-python-contract"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:terminal-ec-wrapper-timeout-teardown-python-contract"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/terminal-ec-wrapper-timeout-teardown-python-contract.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-wrapper-timeout-teardown-python-contract"
+required_for_production = true
+assertions = [
+    "A stalled Python EC wrapper that spawns no child is still bounded by the configured timeout: AW tears down the whole wrapper process group and reports a typed timeout rather than hanging.",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
+    "oracle: The Python external contract runs a fixture gate that blocks forever without forking, drives the real `aw` terminal verification with a configured timeout, and independently requires a typed timeout verdict plus the absence of any surviving process in the wrapper's process group after the command returns.",
+    "target: rust",
+]
+evidence_digest = "sha256:dd4bf8298a0f09120883a40dda9a5c0fa07b21a982a0dc8ca43d1e1f0be88adf"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:be02ec8cc14f63091abd1c7503c82276fe2980510becf92ddd829cc7971d5a8d"
 
 [[cases]]
 id = "wi-close-remote-real-cli"
@@ -1529,9 +1697,9 @@ required_for_production = true
 assertions = [
     "closed change roots route agents to parent inspection",
     "artifact: artifact:workflow-root-runner/public-contract",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
+    "oracle: Black-box Python assertions over the real `aw goal wi` envelope after `aw wi close`: action equals done with root_complete true and workflow_complete false, and next.command equals the exact `aw goal wi <parent-epic-slug>` string derived independently from the epic the fixture created.",
     "target: rust",
 ]
-evidence_digest = "sha256:ed7bd5cc8763b06d7187bcb16e2ea9a285116510c4cc9104473e356e19c7fd46"
+evidence_digest = "sha256:1635f249fc0d7f3450cb9f633835c2b1db78591e8d7e7f4748302275eea6c8f0"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:5ca46d835b5a651edb50b8b345500a0a1ad1bccde8d649b71f0783214ad01608"
+digest = "sha256:05688b4eccaad7544477db5103f704dc8ee515df52880638fb205b2f82de131e"

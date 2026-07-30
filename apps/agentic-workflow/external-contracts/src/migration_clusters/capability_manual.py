@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 import tomllib
 from pathlib import Path
@@ -19,8 +18,8 @@ CASE_IDS = {
     "capability-control-plane-missing-readme-initialization",
     "capability-control-plane-operational-efficiency",
     "capability-control-plane-operational-stability",
-    "manual-evidence-artifacts-generated-manual-ec-evidence-schema",
-    "manual-evidence-artifacts-manual-runner-output-convention",
+    "manual-evidence-schema-python-contract",
+    "manual-runner-output-convention-python-contract",
     "manual-evidence-artifacts-operational-efficiency",
     "manual-evidence-artifacts-operational-stability",
 }
@@ -36,27 +35,32 @@ Demo capability fixture.
 
 ### Capability Index
 
-| Capability | ID | Status | Evidence |
-|------------|----|--------|----------|
-| Planning | planning | implemented | `true` |
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Planning | - | implemented | verified | smoke | ready | verified; deterministic planning fixture |
 
 ### Planning
 
-Capability ID: planning
-Status: implemented
-Summary: Provide deterministic planning.
+ID: planning
+Type: DeveloperTool
+Surfaces:
+- CLI: `aw wi` - the planning fixture surface.
+EC Dimensions:
+- behavior: `true` - planning behavior fixture gate.
+- efficiency: `true` - planning efficiency fixture gate.
+- stability: `true` - planning stability fixture gate.
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+Provide deterministic planning.
+Gate Inventory:
+- tech-design/planning.md
 
-#### Claims
-
-| Claim ID | Claim | Status | Evidence |
-|----------|-------|--------|----------|
-| planning-ready | Planning is ready | verified | `true` |
-
-#### Work Roots
-
-| Type | ID | Status | Verification |
-|------|----|--------|--------------|
-| epic | planning-epic | implemented | `true` |
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Planning ready | change | - | implemented | verified | smoke | `true` |
+| Planning epic | epic | - | implemented | verified | smoke | `true` |
 """
 
 
@@ -102,9 +106,52 @@ def _capability_snapshot() -> dict[str, Any]:
                 "--skip-issue-inventory",
             )
         )
-        serialized = json.dumps({"report": report, "sweep": sweep}, sort_keys=True)
-        assert "planning" in serialized
-        assert "demo" in serialized
+        # Substring membership in a serialized blob would pass for any
+        # implementation that echoes the project name, so the schema promise is
+        # pinned to the parsed structure: one capability identity, its declared
+        # type, every per-dimension gate command, and the exact ordered set of
+        # Work Root claim slugs and their derived gate ids.
+        capabilities = report["capabilities"]
+        assert len(capabilities) == 1, capabilities
+        capability = capabilities[0]
+        assert capability["id"] == "planning", capability["id"]
+        assert capability["title"] == "Planning", capability["title"]
+        assert capability["capability_type"] == "DeveloperTool", capability
+        assert capability["status"] == "verified", capability["status"]
+        assert capability["promise"] == "Provide deterministic planning.", capability
+        assert [
+            (dimension["dimension"], dimension["runner"])
+            for dimension in capability["ec_dimensions"]
+        ] == [
+            ("behavior", "true"),
+            ("efficiency", "true"),
+            ("stability", "true"),
+        ], capability["ec_dimensions"]
+        assert [claim["id"] for claim in capability["claims"]] == [
+            "planning-ready",
+            "planning-epic",
+        ], capability["claims"]
+        assert [
+            (gate["id"], gate["command"]) for gate in capability["verification"]
+        ] == [
+            ("planning-ready-gate", "true"),
+            ("planning-epic-gate", "true"),
+        ], capability["verification"]
+        assert capability["release_scope"] is True, capability
+        assert report["capability_count"] == 1, report["capability_count"]
+        assert report["claim_count"] == 2, report["claim_count"]
+        # `Production | ready` in the index is a declaration, not evidence: no
+        # claim gate has run, so readiness must still be false.
+        assert capability["production_ready"] is False, capability
+        assert capability["production_blockers"] == [
+            "catalog/claim verification is not complete"
+        ], capability["production_blockers"]
+        assert [entry["project"] for entry in sweep["projects"]] == ["demo"], sweep
+        swept = sweep["projects"][0]
+        assert swept["report_status"] == report["status"], (swept, report["status"])
+        assert swept["capability_count"] == report["capability_count"], swept
+        assert swept["claim_count"] == report["claim_count"], swept
+        assert swept["verified_claim_count"] == report["verified_claim_count"], swept
         return {"initialized": initialized, "report": report, "sweep": sweep}
 
 
@@ -144,7 +191,12 @@ def _manual_snapshot() -> dict[str, Any]:
         assert runner.is_file()
         assert source.is_file()
         assert draft["next"]["command"].startswith("aw ec check ")
-        return {"draft": draft, "case": cases[0], "runner": runner.read_text()}
+        return {
+            "draft": draft,
+            "case": cases[0],
+            "runner": runner.read_text(),
+            "slug": change["slug"],
+        }
 
 
 def verify(case_id: str) -> list[str]:
@@ -165,8 +217,9 @@ def verify(case_id: str) -> list[str]:
             ]
         elif case_id == "capability-control-plane-markdown-capability-schema":
             assertions = [
-                "field-style capability contract and Markdown tables parse successfully",
-                "Capability Index, Claims, and Work Roots survive reporting",
+                "the field-style capability contract parses into one exact capability id, title, type, status, and promise",
+                "every declared EC dimension keeps its exact gate command and every Work Root row becomes an exactly named claim and gate",
+                "the sweep projection reports the same capability and claim counts and the same status as the report",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
             assertions = [
@@ -189,15 +242,59 @@ def verify(case_id: str) -> list[str]:
         return assertions
 
     first = _manual_snapshot()
-    if case_id == "manual-evidence-artifacts-generated-manual-ec-evidence-schema":
+    if case_id == "manual-evidence-schema-python-contract":
+        # The generated inventory entry is deterministic generator output, so the
+        # oracle is exact field-set equality rather than substring membership. A
+        # generator that dropped `evidence_paths`, invented an oracle instead of
+        # leaving the fill marker, or derived the evidence path from anything but
+        # the case id would fail here.
+        case = first["case"]
+        assert case == {
+            "id": "manual-evidence-behavior",
+            "artifact_id": "artifact:demo/manual-evidence",
+            "capability_id": "planning",
+            "use_case_id": "manual-evidence",
+            "dimension": "behavior",
+            "applicability": "td",
+            "test_path": "src/manual-evidence.py",
+            "promise": "Manual evidence fixture",
+            "oracle": "replace-with-independent-oracle",
+            "target": "rust",
+            "command": (
+                "test -s external-contracts/evidence/manual-evidence-behavior.json"
+            ),
+            "evidence_paths": ["evidence/manual-evidence-behavior.json"],
+        }, case
         return [
-            "generated Python EC inventory declares a concrete evidence path",
-            "case id, capability id, promise, command, and evidence metadata parse as TOML",
+            "the generated manual EC inventory entry equals its exact declared field set",
+            "the evidence path and gate command derive from the case id while the oracle stays an explicit fill marker",
         ]
-    if case_id == "manual-evidence-artifacts-manual-runner-output-convention":
+    if case_id == "manual-runner-output-convention-python-contract":
+        draft = first["draft"]
+        assert draft["action"] == "python_ec_scaffold_created", draft["action"]
+        assert draft["artifacts"] == [
+            "external-contracts/pyproject.toml",
+            "external-contracts/uv.lock",
+            "external-contracts/src/runner.py",
+            "external-contracts/src/manual-evidence.py",
+        ], draft["artifacts"]
+        assert draft["next"] == {
+            "kind": "dispatch",
+            "command": (
+                f"aw ec check --project demo --json --wi {first['slug']}"
+            ),
+            "reason": (
+                "author the generated Python EC source/inventory, then run its "
+                "structural check"
+            ),
+            "payload_path": "external-contracts/pyproject.toml",
+        }, draft["next"]
+        # The scaffolded runner must refuse to run rather than exit zero with no
+        # assertions, so an unfilled manual artifact can never read as evidence.
+        assert "Python EC scaffold is incomplete" in first["runner"], first["runner"]
         return [
-            "EC draft writes the Python runner and case module from inventory",
-            "the artifact envelope emits the exact structural-check continuation",
+            "EC draft writes the runner, the case module, the inventory, and the lock in that exact artifact set",
+            "the envelope emits the exact structural-check continuation and the scaffolded runner fails closed until authored",
         ]
     if case_id == "manual-evidence-artifacts-operational-efficiency":
         assert time.monotonic() - started <= 120

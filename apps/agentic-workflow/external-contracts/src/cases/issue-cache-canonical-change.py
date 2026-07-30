@@ -14,7 +14,8 @@ CAPABILITY_ID = "work-item-planning"
 USE_CASE_ID = "canonical-change-issue-cache-round-trip"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case issue-cache-canonical-change"
 )
 ASSERTIONS = (

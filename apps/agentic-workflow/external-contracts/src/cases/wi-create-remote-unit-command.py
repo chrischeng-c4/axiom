@@ -5,7 +5,11 @@ CAPABILITY_ID = "work-item-planning"
 USE_CASE_ID = "capability-to-epic-planning"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_wi_create_remote_unit_command.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-unit-command"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case wi-create-remote-unit-command"
+)
 ASSERTIONS = ('help hides deprecated remote flag', 'compatibility flag parses', 'backend decision is config-driven')
 
 

@@ -5,7 +5,11 @@ CAPABILITY_ID = "work-item-planning"
 USE_CASE_ID = "capability-to-epic-planning"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_spec_check.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-spec-check"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case wi-remove-agent-estimate-spec-check"
+)
 ASSERTIONS = ('legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement',)
 
 
