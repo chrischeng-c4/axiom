@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+use super::capability_feature_class::CapabilityFeatureClass;
 use super::capability_type::CapabilityType;
 use super::production::{
     evaluate_capability_scope, inputs_from_report_items, ProductionReadinessReport,
@@ -712,6 +713,10 @@ struct CapabilityYaml {
     pub status: CapabilityStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_type: Option<CapabilityType>,
+    /// Which logical feature root owns this capability. Orthogonal to
+    /// `capability_type`, maturity, and production requirement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_class: Option<CapabilityFeatureClass>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<CapabilitySurface>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -746,6 +751,14 @@ pub struct CapabilitySection {
     pub index_summary: Option<CapabilityIndexSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_type: Option<CapabilityType>,
+    /// Which logical feature root owns this capability: `core` or `non_core`.
+    ///
+    /// Orthogonal to [`Self::capability_type`], to the maturity in
+    /// [`Self::verification_contract`], and to production requirement — none of
+    /// those may be derived from it, and it may never be derived from them.
+    /// `None` means the document has not classified this capability yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_class: Option<CapabilityFeatureClass>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<CapabilitySurface>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -778,6 +791,7 @@ impl CapabilitySection {
             postlude: String::new(),
             index_summary: None,
             capability_type: yaml.capability_type,
+            feature_class: yaml.feature_class,
             surfaces: yaml.surfaces,
             ec_dimensions: yaml.ec_dimensions,
             promise: yaml.promise,
@@ -8702,6 +8716,9 @@ fn render_markdown_capability_section(capability: &CapabilitySection) -> String 
     if let Some(capability_type) = capability.capability_type {
         out.push_str(&format!("Type: {}\n", capability_type.as_str()));
     }
+    if let Some(feature_class) = capability.feature_class {
+        out.push_str(&format!("Feature Class: {}\n", feature_class.as_str()));
+    }
     out.push_str(&format!(
         "Required Verification: {}\n",
         capability_maturity_summary(capability)
@@ -10091,6 +10108,7 @@ fn parse_markdown_capability_block(
     let gate_inventory = contract.gate_inventory;
     let dependencies = parse_dependency_list(&contract.dependencies);
     let capability_type = parse_capability_type_cell(&contract.capability_type)?;
+    let feature_class = parse_feature_class_cell(&contract.feature_class)?;
     surfaces.extend(parse_capability_surfaces(&contract.surfaces));
     ec_dimensions.extend(parse_capability_ec_dimensions(&contract.ec_dimensions));
     if let Some(slot) = parse_efficiency_slot_from_contract(
@@ -10231,6 +10249,7 @@ fn parse_markdown_capability_block(
             postlude,
             index_summary: None,
             capability_type,
+            feature_class,
             surfaces,
             ec_dimensions,
             promise,
@@ -10263,6 +10282,7 @@ struct MarkdownCapabilityContract {
     root_wi: String,
     status: String,
     capability_type: String,
+    feature_class: String,
     surfaces: String,
     ec_dimensions: String,
     promise: String,
@@ -10315,6 +10335,9 @@ fn parse_markdown_field_capability_contract(
             .remove("status")
             .unwrap_or_else(|| "candidate".to_string()),
         capability_type: values.remove("type").unwrap_or_else(|| "-".to_string()),
+        feature_class: values
+            .remove("featureclass")
+            .unwrap_or_else(|| "-".to_string()),
         surfaces: values.remove("surfaces").unwrap_or_else(|| "-".to_string()),
         ec_dimensions: values
             .remove("ecdimensions")
@@ -10391,6 +10414,7 @@ fn parse_markdown_contract_field_line(line: &str) -> Option<(String, String)> {
         "rootwi" | "wi" => "rootwi",
         "status" => "status",
         "type" | "capabilitytype" => "type",
+        "featureclass" | "capabilityfeatureclass" | "featureroot" => "featureclass",
         "surface" | "surfaces" | "capabilitysurface" | "capabilitysurfaces" => "surfaces",
         "clisurface" | "commands" | "command" => "surfaces",
         "ecdimensions" | "dimension" | "dimensions" | "requireddimensions" => "ecdimensions",
@@ -10488,6 +10512,10 @@ fn parse_markdown_capability_contract(
                 .capability_type
                 .map(|idx| table_cell(row, idx))
                 .unwrap_or_else(|| "-".to_string()),
+            feature_class: indices
+                .feature_class
+                .map(|idx| table_cell(row, idx))
+                .unwrap_or_else(|| "-".to_string()),
             surfaces: indices
                 .surfaces
                 .map(|idx| table_cell(row, idx))
@@ -10538,6 +10566,8 @@ fn parse_markdown_capability_contract(
         root_wi: value_for(&["rootwi", "wi"]).unwrap_or_else(|| "-".to_string()),
         status: value_for(&["status"]).unwrap_or_else(|| "candidate".to_string()),
         capability_type: value_for(&["type", "capabilitytype"]).unwrap_or_else(|| "-".to_string()),
+        feature_class: value_for(&["featureclass", "capabilityfeatureclass", "featureroot"])
+            .unwrap_or_else(|| "-".to_string()),
         surfaces: value_for(&[
             "surface",
             "surfaces",
@@ -10672,6 +10702,7 @@ struct MarkdownContractIndices {
     root_wi: usize,
     status: usize,
     capability_type: Option<usize>,
+    feature_class: Option<usize>,
     surfaces: Option<usize>,
     ec_dimensions: Option<usize>,
     promise: usize,
@@ -10688,6 +10719,10 @@ fn markdown_contract_indices(cells: &[String]) -> Option<MarkdownContractIndices
         root_wi: find_table_column(cells, &["rootwi", "wi"])?,
         status: find_table_column(cells, &["status"])?,
         capability_type: find_table_column(cells, &["type", "capabilitytype"]),
+        feature_class: find_table_column(
+            cells,
+            &["featureclass", "capabilityfeatureclass", "featureroot"],
+        ),
         surfaces: find_table_column(
             cells,
             &[
@@ -10725,6 +10760,18 @@ fn parse_capability_type_cell(value: &str) -> Result<Option<CapabilityType>> {
         return Ok(None);
     }
     CapabilityType::from_cli_str(value).map(Some)
+}
+
+/// Parse a `Feature Class` cell/field into the closed `core` / `non_core` pair.
+///
+/// An absent or empty value is `None` (unclassified), which existing documents
+/// rely on. A present but unrecognized value is an error rather than `None`, so
+/// a typo cannot silently drop a capability out of both feature roots.
+fn parse_feature_class_cell(value: &str) -> Result<Option<CapabilityFeatureClass>> {
+    if is_empty_table_value(value) {
+        return Ok(None);
+    }
+    CapabilityFeatureClass::from_cli_str(value).map(Some)
 }
 
 fn parse_capability_surfaces(value: &str) -> Vec<CapabilitySurface> {
@@ -16861,6 +16908,282 @@ Required Verification: smoke, conformance
             contract.claims[0].fixtures[0],
             "apps/jet/validation/pkg-manager.toml"
         );
+    }
+
+    /// A capability contract carrying an explicit `Feature Class:` field, with
+    /// `{class}` substituted, plus a type and a maturity so the orthogonality
+    /// assertions below have something to hold fixed.
+    fn feature_class_field_capability(class: &str) -> String {
+        format!(
+            "# demo\n\n\
+             ## Search\n\n\
+             ID: search\n\
+             Root WI: #4100\n\
+             Status: auditing\n\
+             Type: Service\n\
+             Feature Class: {class}\n\
+             Required Verification: smoke, conformance\n\
+             Promise:\n\
+             Serve search queries as ranked external ids only.\n\
+             Gate Inventory:\n\
+             - `cargo test -p lumen planner`\n"
+        )
+    }
+
+    #[test]
+    fn markdown_capability_tables_carry_a_core_or_non_core_feature_class() {
+        for (spelling, expected) in [
+            ("core", CapabilityFeatureClass::Core),
+            ("non_core", CapabilityFeatureClass::NonCore),
+            ("non-core", CapabilityFeatureClass::NonCore),
+        ] {
+            let doc = cap_doc(&feature_class_field_capability(spelling));
+            let capability = &doc.capabilities[0];
+            assert_eq!(
+                capability.feature_class,
+                Some(expected),
+                "field spelling `{spelling}` did not classify the capability"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_capability_tables_read_a_feature_class_contract_column() {
+        let body = r#"# demo
+
+## Package Manager
+
+| ID | Root WI | Status | Type | Feature Class | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|---|---|
+| package-manager | #3779 | auditing | DeveloperTool | non_core | Replace package manager flows. | smoke | apps/jet/validation/pkg-manager.toml |
+"#;
+        let capability = &cap_doc(body).capabilities[0];
+        assert_eq!(capability.id, "package-manager");
+        assert_eq!(
+            capability.feature_class,
+            Some(CapabilityFeatureClass::NonCore)
+        );
+        assert_eq!(
+            capability.capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_read_a_feature_class_field_value_row() {
+        let body = r#"# demo
+
+## Package Manager
+
+| Field | Value |
+|---|---|
+| ID | package-manager |
+| Root WI | #3779 |
+| Status | auditing |
+| Feature Class | core |
+| Promise | Replace package manager flows. |
+| Required Verification | smoke |
+| Gate Inventory | apps/jet/validation/pkg-manager.toml |
+"#;
+        let capability = &cap_doc(body).capabilities[0];
+        assert_eq!(capability.feature_class, Some(CapabilityFeatureClass::Core));
+    }
+
+    #[test]
+    fn markdown_capability_tables_without_a_feature_class_stay_unclassified() {
+        // Requiring a class is a later gate; R1 only has to represent it. This
+        // is the fixture that fails if the field is ever silently defaulted.
+        let capability = &cap_doc(one_markdown_capability()).capabilities[0];
+        assert_eq!(capability.feature_class, None);
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_an_unknown_feature_class() {
+        let err = parse_capability_document(
+            &feature_class_field_capability("semi-core"),
+            Path::new("README.md"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("expected core or non_core"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_capability_type_as_a_feature_class() {
+        // The feature class must never be expressible as a capability type: the
+        // two axes answer different questions and share no vocabulary.
+        for value in ["Service", "AgentFirst", "DeveloperTool"] {
+            let err = parse_capability_document(
+                &feature_class_field_capability(value),
+                Path::new("README.md"),
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("expected core or non_core"),
+                "`{value}` was accepted as a feature class: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_capability_tables_keep_feature_class_orthogonal_to_type_and_maturity() {
+        let core = cap_doc(&feature_class_field_capability("core"))
+            .capabilities
+            .remove(0);
+        let non_core = cap_doc(&feature_class_field_capability("non_core"))
+            .capabilities
+            .remove(0);
+
+        // Same type and same required maturity on both sides of the partition:
+        // neither is derivable from the feature class.
+        assert_eq!(core.capability_type, Some(CapabilityType::Service));
+        assert_eq!(non_core.capability_type, core.capability_type);
+        let core_contract = core.verification_contract.as_ref().unwrap();
+        let non_core_contract = non_core.verification_contract.as_ref().unwrap();
+        assert_eq!(
+            core_contract.required_maturity,
+            non_core_contract.required_maturity
+        );
+        assert_eq!(
+            crate::cli::capability_type::required_ec_dimensions(&CapabilityType::Service),
+            crate::cli::capability_type::required_ec_dimensions(
+                non_core.capability_type.as_ref().unwrap()
+            ),
+            "production-required dimensions must not depend on the feature class"
+        );
+        assert_ne!(core.feature_class, non_core.feature_class);
+    }
+
+    #[test]
+    fn markdown_capability_tables_round_trip_feature_class_through_the_serializer() {
+        for class in [
+            CapabilityFeatureClass::Core,
+            CapabilityFeatureClass::NonCore,
+        ] {
+            let before = cap_doc(&feature_class_field_capability(class.as_str()))
+                .capabilities
+                .remove(0);
+            let rendered = render_markdown_capability_section(&before);
+            assert!(
+                rendered.contains(&format!("Feature Class: {}\n", class.as_str())),
+                "serializer dropped the feature class: {rendered}"
+            );
+            let after = cap_doc(&format!("# demo\n\n{rendered}"))
+                .capabilities
+                .remove(0);
+            assert_eq!(after.feature_class, Some(class));
+            assert_eq!(after.capability_type, before.capability_type);
+            // Production requirement is derived from the type, so assert it
+            // directly rather than leaving it implied by type equality.
+            assert_eq!(
+                crate::cli::capability_type::required_ec_dimensions(
+                    after.capability_type.as_ref().unwrap()
+                ),
+                crate::cli::capability_type::required_ec_dimensions(
+                    before.capability_type.as_ref().unwrap()
+                ),
+            );
+            assert_eq!(
+                after
+                    .verification_contract
+                    .as_ref()
+                    .unwrap()
+                    .required_maturity,
+                before
+                    .verification_contract
+                    .as_ref()
+                    .unwrap()
+                    .required_maturity
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_capability_tables_omit_feature_class_when_unclassified() {
+        let unclassified = cap_doc(one_markdown_capability()).capabilities.remove(0);
+        let rendered = render_markdown_capability_section(&unclassified);
+        assert!(!rendered.contains("Feature Class"), "{rendered}");
+        assert_eq!(
+            cap_doc(&format!("# demo\n\n{rendered}"))
+                .capabilities
+                .remove(0)
+                .feature_class,
+            None
+        );
+    }
+
+    #[test]
+    fn yaml_and_markdown_capability_tables_agree_on_feature_class() {
+        let body = r##"# demo
+
+## Capability: Search
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: search
+status: auditing
+capability_type: Service
+feature_class: non_core
+promise: "Serve search queries."
+current_state: "Planner exists."
+```
+"##;
+        let capability = &cap_doc(body).capabilities[0];
+        assert_eq!(
+            capability.feature_class,
+            Some(CapabilityFeatureClass::NonCore)
+        );
+        assert_eq!(capability.capability_type, Some(CapabilityType::Service));
+    }
+
+    #[test]
+    fn markdown_capability_tables_prove_a_quality_gate_without_a_third_feature_class() {
+        // A quality gate is evidence *inside* one capability: it becomes a
+        // claim gate, not a second capability row and not a third class.
+        let body = r#"# demo
+
+## Search
+
+ID: search
+Root WI: #4100
+Status: auditing
+Type: Service
+Feature Class: core
+Required Verification: smoke, conformance
+Promise:
+Serve search queries as ranked external ids only.
+Gate Inventory:
+- `cargo test -p lumen planner`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Query planner | epic | #4141 | implemented | passing | conformance | `cargo test -p lumen planner` |
+"#;
+        let doc = cap_doc(body);
+        // One capability, one feature class, gate carried as claim evidence.
+        assert_eq!(doc.capabilities.len(), 1);
+        let capability = &doc.capabilities[0];
+        assert_eq!(capability.feature_class, Some(CapabilityFeatureClass::Core));
+        let claims = &capability.verification_contract.as_ref().unwrap().claims;
+        assert_eq!(claims.len(), 1);
+        assert_eq!(
+            claims[0].gates[0].command, "cargo test -p lumen planner",
+            "the quality gate must land as claim evidence"
+        );
+        // The class enumeration stays closed at two members.
+        assert_eq!(
+            [
+                CapabilityFeatureClass::Core.as_str(),
+                CapabilityFeatureClass::NonCore.as_str()
+            ]
+            .iter()
+            .filter(|value| CapabilityFeatureClass::from_cli_str(value).is_ok())
+            .count(),
+            2
+        );
+        assert!(CapabilityFeatureClass::from_cli_str("quality_gate").is_err());
     }
 
     #[test]
