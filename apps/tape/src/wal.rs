@@ -183,8 +183,21 @@ pub struct WalStore {
     /// to the existing `TapeMetrics::mark_storage_degraded` sticky
     /// read-only/507 path.
     poisoned: bool,
-    #[cfg(test)]
-    fail_next_sync: std::sync::atomic::AtomicBool,
+    /// Fault-injection seam (WI #3052 AC7): when armed via
+    /// [`Self::inject_next_sync_failure_with_kind`], the next [`Self::commit`]
+    /// fails its sync with this [`std::io::ErrorKind`] instead of performing a
+    /// real fsync -- e.g. `ErrorKind::StorageFull` to simulate ENOSPC
+    /// originating INSIDE the WAL without needing a genuinely full disk.
+    ///
+    /// Deliberately NOT `#[cfg(test)]` (unlike the older
+    /// [`Self::inject_next_sync_failure`] this replaces the body of below):
+    /// an integration test under `apps/tape/tests/` links this crate as an
+    /// ordinary, non-`cfg(test)` dependency, so a `#[cfg(test)]`-gated seam
+    /// would not exist for `tests/durable_write_path.rs` to call at all.
+    /// This is an honestly-named, always-present fault-injection hook, not a
+    /// hidden backdoor: it only ever fires when a caller explicitly arms it,
+    /// and arming requires holding a `&WalStore` in the first place.
+    injected_sync_failure: Mutex<Option<std::io::ErrorKind>>,
 }
 
 impl WalStore {
@@ -250,8 +263,7 @@ impl WalStore {
                 frames_since_snapshot,
                 snapshot_threshold,
                 poisoned: false,
-                #[cfg(test)]
-                fail_next_sync: std::sync::atomic::AtomicBool::new(false),
+                injected_sync_failure: Mutex::new(None),
             },
             journal,
         ))
@@ -294,16 +306,20 @@ impl WalStore {
             self.wal.append(seq, &payload).map_err(flatten_io_error)?;
         }
 
-        #[cfg(test)]
-        if self
-            .fail_next_sync
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        if let Some(kind) = self
+            .injected_sync_failure
+            .lock()
+            .expect("injected_sync_failure mutex poisoned")
+            .take()
         {
             // Injected right where the real `sync()` call below would fail:
             // every frame in this batch has already been appended (as a real
             // `sync` failure would leave it), but nothing has been synced or
             // applied yet.
-            return Err(std::io::Error::other("injected sync failure (test)"));
+            return Err(std::io::Error::new(
+                kind,
+                "injected sync failure (fault-injection seam)",
+            ));
         }
 
         // The single group-commit barrier: one fsync covers every frame just
@@ -399,8 +415,29 @@ impl WalStore {
     /// `AppState::inject_storage_full` in `apps/tape/src/server.rs`).
     #[cfg(test)]
     fn inject_next_sync_failure(&self) {
-        self.fail_next_sync
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.inject_next_sync_failure_with_kind(std::io::ErrorKind::Other);
+    }
+
+    /// Fault-injection seam for WI #3052 AC7: arm the next [`Self::commit`]
+    /// call to fail its sync with `kind` -- e.g.
+    /// `std::io::ErrorKind::StorageFull` to simulate ENOSPC originating
+    /// INSIDE the WAL (as opposed to `AppState::set_inject_storage_full`,
+    /// which short-circuits BEFORE the durable backend is ever reached and
+    /// so cannot exercise this path -- see
+    /// `apps/tape/tests/durable_write_path.rs`). Frames from the armed batch
+    /// still land on disk (matching a real crash-during-sync), and the
+    /// failure poisons the store exactly as a genuine sync failure would --
+    /// see the `poisoned` field doc comment.
+    ///
+    /// Call this on the `WalStore` BEFORE handing it to
+    /// [`CommitCoordinator::spawn`] (which moves it onto the dedicated commit
+    /// thread and does not expose it again): the injected kind is consumed
+    /// by the very next `commit`, whichever caller reaches it first.
+    pub fn inject_next_sync_failure_with_kind(&self, kind: std::io::ErrorKind) {
+        *self
+            .injected_sync_failure
+            .lock()
+            .expect("injected_sync_failure mutex poisoned") = Some(kind);
     }
 }
 

@@ -14,6 +14,10 @@ struct Cli {
 enum Command {
     /// Run the local Tape replay benchmark and report win/loss calibration status.
     Run(RunArgs),
+    /// WI #3052 AC1: drive the real WAL commit coordinator over real HTTP at
+    /// varying connection counts and report the durable throughput scaling
+    /// ratio (highest sampled connection count vs. the lowest).
+    Durable(DurableArgs),
 }
 
 #[derive(clap::Args)]
@@ -29,6 +33,22 @@ struct RunArgs {
     format: OutputFormat,
 }
 
+#[derive(clap::Args)]
+struct DurableArgs {
+    /// Number of sequential append requests each connection issues.
+    #[arg(long, default_value_t = 200)]
+    events_per_connection: usize,
+    /// Payload body size in bytes.
+    #[arg(long, default_value_t = 128)]
+    payload_bytes: usize,
+    /// Connection counts to sample, e.g. `--connections 1,4,16`.
+    #[arg(long, value_delimiter = ',', default_value = "1,4,16")]
+    connections: Vec<usize>,
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum OutputFormat {
     Text,
@@ -39,6 +59,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run(args),
+        Command::Durable(args) => durable(args),
     }
 }
 
@@ -68,6 +89,33 @@ fn run(args: RunArgs) -> Result<()> {
     }
     if let Err(error) = tape::bench::verify_report(&report) {
         bail!("{error}");
+    }
+    Ok(())
+}
+
+fn durable(args: DurableArgs) -> Result<()> {
+    if args.connections.is_empty() {
+        bail!("--connections requires at least one connection count");
+    }
+    let report = tape::bench::run_durable_benchmark(
+        args.events_per_connection,
+        args.payload_bytes,
+        &args.connections,
+    );
+    match args.format {
+        OutputFormat::Text => {
+            println!(
+                "payload_bytes={} scaling_ratio={:.2}x",
+                report.payload_bytes, report.scaling_ratio
+            );
+            for sample in &report.samples {
+                println!(
+                    "connections={} events={} elapsed_us={} ops_per_sec={:.2}",
+                    sample.connections, sample.events, sample.elapsed_us, sample.ops_per_sec
+                );
+            }
+        }
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
     }
     Ok(())
 }
