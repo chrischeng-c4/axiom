@@ -179,6 +179,7 @@ Verification:
 - `apps/lumen/tests/authz_matrix_e2e.rs`
 - `apps/lumen/tests/operator_render.rs`
 - `acceptance/gcp/scripts/run.sh`
+- `acceptance/gcp/scripts/verify-lumen-auth.sh`
 
 Ready when one retained GKE evidence bundle proves KSA allow/deny, direct
 Google rejection, peer mTLS positive/negative behavior, credential rotation,
