@@ -20,12 +20,25 @@ jq empty "$ACCEPTANCE_ROOT/evidence/schema.json"
 # only symptom is a pod that never goes Ready -- twenty minutes and a cloud
 # build away from the one line that explains it. Check the feature here, where
 # it costs nothing.
-grep -q -- '--features "[^"]*delegated-auth' "$ACCEPTANCE_ROOT/images/Dockerfile.lumen" || {
-  echo "acceptance/gcp/images/Dockerfile.lumen must build lumen with the \
-delegated-auth feature; spec.auth defaults to required and the binary \
-refuses to start without it" >&2
+#
+# Every Dockerfile that builds the lumen binary, not a named one: there are two
+# build paths (both images together, or one at a time when the other was
+# supplied by digest), and the first version of this check named only the path
+# that was not being taken. A grep for the build line finds whichever file
+# grows next.
+lumen_build_files="$(grep -rl -- '-p lumen --bin lumen' "$ACCEPTANCE_ROOT/images")"
+[[ -n "$lumen_build_files" ]] || {
+  echo "no acceptance image builds the lumen binary; this check is now looking \
+in the wrong place" >&2
   exit 1
 }
+while IFS= read -r dockerfile; do
+  grep -q -- '--features "[^"]*delegated-auth' "$dockerfile" || {
+    echo "$dockerfile must build lumen with the delegated-auth feature; \
+spec.auth defaults to required and the binary refuses to start without it" >&2
+    exit 1
+  }
+done <<<"$lumen_build_files"
 for terraform_dir in environment cluster; do
   terraform -chdir="$ACCEPTANCE_ROOT/$terraform_dir" fmt -check -recursive
 done

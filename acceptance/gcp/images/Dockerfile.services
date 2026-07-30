@@ -7,8 +7,13 @@
 FROM rust:1.96-bookworm AS service-builder
 WORKDIR /workspace
 COPY . .
+# `delegated-auth` carries lumen's TokenReview/SubjectAccessReview transport.
+# `spec.auth` defaults to `required`, and a binary built without it refuses to
+# start rather than serve unauthenticated -- so omitting it here crash-loops
+# every auth-mode instance the run deploys. This is the default build path:
+# both images at once, taken whenever neither was supplied by digest.
 RUN cargo build --locked --release -p lumen --bin lumen \
-      --features "otel operator raft-wal jieba" \
+      --features "otel operator raft-wal jieba delegated-auth" \
  && cargo build --locked --release -p sift --bin sift \
  && install -D -m 0755 target/release/lumen /out/lumen \
  && install -D -m 0755 target/release/sift /out/sift
