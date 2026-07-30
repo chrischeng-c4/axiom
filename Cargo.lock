@@ -5242,21 +5242,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cclab-compass",
+ "clap",
  "serde",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "guard-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cclab-cli-registry",
- "clap",
- "guard",
- "linkme",
- "serde_json",
 ]
 
 [[package]]

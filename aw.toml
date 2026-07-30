@@ -280,7 +280,7 @@ label = "app:guard"
 name = "guard"
 paths = ["apps/guard/**"]
 target = "rust"
-test_cmd = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -p guard-cli'
+test_cmd = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard'
 verify_cold = true
 codegen.profile = "rust/score-crate"
 
