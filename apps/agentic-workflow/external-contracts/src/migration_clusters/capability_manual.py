@@ -281,10 +281,31 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
             refused.returncode, refused.stderr
         )
 
+        # The verified half of the split. Every leg above reads a report with no
+        # gate execution, where all four verified fields are zero -- so the
+        # pair-sum assertions covering them are `0 + 0 == 0` and hold for an
+        # implementation that never attributes a verified capability at all.
+        # Under `--verify` the counts are populated and the two classes differ in
+        # both dimensions, which is what makes those four fields falsifiable.
+        cap_path.write_text(lumen_reference.REFERENCE_DOCUMENT, encoding="utf-8")
+        verified = final_json(
+            run_aw(
+                root,
+                "capability",
+                "report",
+                "--project",
+                "demo",
+                "--skip-issue-inventory",
+                "--verify",
+            )
+        )
+        lumen_reference.assert_verified_split_is_non_degenerate(verified)
+
         # The human rendering of the split, which is built from its own format
         # string and which every other leg here is blind to because they all
-        # read the JSON envelope.
-        cap_path.write_text(lumen_reference.REFERENCE_DOCUMENT, encoding="utf-8")
+        # read the JSON envelope. Driven on the verified report for the same
+        # reason: four of that line's eight operands are verified counts, so on
+        # an unverified report a transposition among them renders identically.
         human = run_aw(
             root,
             "capability",
@@ -292,9 +313,10 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
             "--project",
             "demo",
             "--skip-issue-inventory",
+            "--verify",
             "--human",
         )
-        lumen_reference.assert_human_report_renders_the_split(human.stdout, report)
+        lumen_reference.assert_human_report_renders_the_split(human.stdout, verified)
 
         # The other branch of the default-class rule: a legacy table parses to
         # zero capability sections, so the count comes from the rows and has to
@@ -388,6 +410,50 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         preserved_text = cap_path.read_text(encoding="utf-8")
         lumen_reference.assert_migration_preserves_declared_class(preserved_text)
 
+        # `aw capability migrate` has a second entry point, and every leg above
+        # drives only the first. When a project has no CAPABILITIES.md at all and
+        # its README still carries the legacy table, migration *relocates* the
+        # contract instead of reformatting one in place -- a different caller of
+        # the same renderers, reached only from a fixture that was never
+        # initialized. It needs its own project: this one has a CAPABILITIES.md
+        # from the `capability init` above, which routes migration down the other
+        # branch.
+        with project_fixture() as relocation_root:
+            relocation_readme = relocation_root / "README.md"
+            relocation_cap = relocation_root / "CAPABILITIES.md"
+            relocation_readme.write_text(
+                lumen_reference.LEGACY_TABLE_DOCUMENT, encoding="utf-8"
+            )
+            assert not relocation_cap.exists(), (
+                "the relocation branch fires only when no CAPABILITIES.md exists; "
+                "this fixture must not be initialized first"
+            )
+            final_json(
+                run_aw(relocation_root, "capability", "migrate", "--project", "demo")
+            )
+            assert relocation_cap.exists(), (
+                "migration must create the relocated capability contract"
+            )
+            relocated_text = relocation_cap.read_text(encoding="utf-8")
+            lumen_reference.assert_readme_relocation_preserves_tracker_state(
+                relocation_readme.read_text(encoding="utf-8"), relocated_text
+            )
+            # And the relocated document must be one the checker accepts, not
+            # merely one carrying the right substrings.
+            relocated_report = final_json(
+                run_aw(
+                    relocation_root,
+                    "capability",
+                    "report",
+                    "--project",
+                    "demo",
+                    "--skip-issue-inventory",
+                )
+            )
+            lumen_reference.assert_migrated_legacy_document_is_accepted(
+                relocated_report
+            )
+
     after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
     lumen_reference.assert_production_contract_unmutated(before, after)
     return {
@@ -405,6 +471,8 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "migrated": migrated_report,
         "fixed_point": fixed_point_text,
         "preserved": preserved_text,
+        "verified": verified,
+        "relocated": relocated_report,
     }
 
 
@@ -474,7 +542,7 @@ def verify(case_id: str) -> list[str]:
                 "the field-style capability contract parses into one exact capability id, title, type, status, and promise",
                 "every declared EC dimension keeps its exact gate command and every Work Root row becomes an exactly named claim and gate",
                 "the sweep projection reports the same capability and claim counts and the same status as the report",
-                "the Lumen reference fixture attributes its domain search promises to core and every archetype service baseline to non-core, with each per-class pair summing to its retained total",
+                "the Lumen reference fixture attributes its domain search promises to core and every archetype service baseline to non-core, with the capability and claim pairs each summing to their retained total",
                 "each of the four trait-derived baselines is rejected as a blocker when declared core, naming that exact capability",
                 "a Feature Class field contradicting its containing feature root is rejected as a blocker",
                 "no document raises a blocker the fixture did not name, because document findings are separated from the scratch environment by subtraction rather than by a whitelist of wordings",
@@ -483,7 +551,8 @@ def verify(case_id: str) -> list[str]:
                 "deleting a canonical feature root is rejected together with every capability it stranded, asserted as the whole ordered blocker set rather than skipped for raising more than one message",
                 "a feature root outside the closed pair is named as unknown rather than silently accepted, and is distinguished from the missing-root case by raising two blockers instead of five",
                 "a Feature Class value outside the closed pair fails the command outright rather than resolving to non-core the way an undeclared class legitimately does",
-                "aw capability report --human renders the same core/non-core split the JSON envelope reports, on a fixture whose two class counts differ so a transposition cannot pass",
+                "aw capability report --verify attributes the verified capability and claim counts per class as well, on a report where those four fields are populated and the two classes differ in both, so the half of the split that is identically zero on an unverified report is falsifiable",
+                "aw capability report --human renders the same core/non-core split the verified JSON envelope reports, with all eight operands non-zero and the two classes differing in every dimension so no transposition among them can pass",
                 "a document that declares no feature class at all raises no blocker and is attributed wholly to non-core, capabilities and claims alike, which is the default rule no self-describing document can exercise",
                 "a legacy capability table is diagnosed as legacy and its rows are attributed wholly to non-core rather than falling out of both classes, which is the branch of that default rule where no capability section parses at all",
                 "aw capability migrate derives the split for the rows of a legacy table through its own branch, placing the authored promises under Core Features and the trait-derived baseline under Non-Core Features, and the migrated document is accepted by a follow-up report with no blocker",
@@ -492,6 +561,7 @@ def verify(case_id: str) -> list[str]:
                 "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
                 "aw capability migrate reaches a fixed point on a non-core-first document: the migrated Capability Index and the migrated capability sections list the same capabilities in the same core-then-non-core order, so re-parsing the migrated document cannot render a different index again",
                 "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
+                "aw capability migrate relocating a README-resident legacy table into a project with no CAPABILITIES.md preserves each row's tracker state as its Root WI in both the index column and the section field, derives the same core/non-core split, and leaves the README a forwarding pointer instead of the table, which is the second entry point of migrate and the only one where the rendered tracker cell is non-empty and therefore falsifiable",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
