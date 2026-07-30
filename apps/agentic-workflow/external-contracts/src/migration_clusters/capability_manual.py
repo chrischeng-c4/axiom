@@ -233,9 +233,15 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         # reading one. Without this leg the derivation rule could be inverted
         # and every other assertion here would still pass, because every other
         # document states its own answer.
-        cap_path.write_text(
-            lumen_reference.UNCLASSIFIED_DOCUMENT, encoding="utf-8"
+        # Reported *before* migrating it: a document that declares nothing must
+        # read as wholly non-core and raise nothing. The default is the one
+        # feature-class rule no other document here can exercise, because every
+        # other one states its own answer.
+        unclassified = _lumen_report(
+            root, cap_path, lumen_reference.UNCLASSIFIED_DOCUMENT
         )
+        lumen_reference.assert_unclassified_defaults_to_non_core(unclassified)
+
         final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
         migrated_text = cap_path.read_text(encoding="utf-8")
         lumen_reference.assert_migration_derives_the_split(migrated_text)
@@ -271,6 +277,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "baseline_core": baseline_core,
         "conflict": conflict,
         "duplicate_root": duplicate_root,
+        "unclassified": unclassified,
         "migrated": migrated_report,
         "preserved": preserved_text,
     }
@@ -347,6 +354,7 @@ def verify(case_id: str) -> list[str]:
                 "a Feature Class field contradicting its containing feature root is rejected as a blocker",
                 "no document raises a blocker the fixture did not name, because document findings are separated from the scratch environment by subtraction rather than by a whitelist of wordings",
                 "a feature root declared twice is rejected as a blocker whose message names neither the field nor the class, which is what the subtractive filter is required to see",
+                "a document that declares no feature class at all raises no blocker and is attributed wholly to non-core, capabilities and claims alike, which is the default rule no self-describing document can exercise",
                 "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
                 "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",

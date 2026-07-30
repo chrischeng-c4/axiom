@@ -21,6 +21,16 @@ from.
 The document is a fixture written into a temporary project. Lumen's production
 contract is never opened for writing, and the caller proves that by digesting it
 before and after.
+
+What this fixture does *not* assert, so it is not read as proving more than it
+does: `validate_capability_feature_roots` also rejects a missing root, an unknown
+root, and a capability nested under both roots. None of the three is falsified
+here. They cannot be added as single-message falsifiers -- deleting
+`### Non-Core Features` yields the missing-root finding plus one field/root
+contradiction per capability stranded under the surviving root, and renaming it
+yields unknown-root plus missing-root -- so they need co-occurring-set assertions
+and belong in their own slice. `document_blockers` is nonetheless total, so if
+any of the three fires on a document this fixture *does* run, the run fails.
 """
 
 from __future__ import annotations
@@ -413,6 +423,33 @@ def assert_feature_class_attribution(report: dict[str, Any]) -> None:
     # below: whatever rule rejects them must stay silent here, or "rejected"
     # would carry no information.
     assert document_blockers(report) == [], report["blockers"]
+
+
+def assert_unclassified_defaults_to_non_core(report: dict[str, Any]) -> None:
+    """An undeclared class reads as non-core, and is still attributed.
+
+    This is the report of `UNCLASSIFIED_DOCUMENT` *before* migration: no root, no
+    field, nothing to parse. The default is the whole rule under test, so it is
+    asserted through the totals rather than only through the per-item field --
+    flipping the default to core moves all six capabilities and all seven claims
+    across, which no other assertion in this fixture would see, because every
+    other document it runs states its own answer.
+
+    A document that declares nothing must also raise nothing: silence is a legal
+    pre-migration state, not a defect to report.
+    """
+    assert document_blockers(report) == [], report["blockers"]
+
+    for item in report["capabilities"]:
+        assert item.get("feature_class") is None, item
+
+    assert report["capability_count"] == len(CORE_IDS) + len(NON_CORE_IDS), report
+    assert report["claim_count"] == CORE_CLAIM_COUNT + NON_CORE_CLAIM_COUNT, report
+
+    assert report["core_capability_count"] == 0, report
+    assert report["core_claim_count"] == 0, report
+    assert report["non_core_capability_count"] == report["capability_count"], report
+    assert report["non_core_claim_count"] == report["claim_count"], report
 
 
 def assert_baseline_core_is_rejected(report: dict[str, Any], cap_id: str) -> None:
