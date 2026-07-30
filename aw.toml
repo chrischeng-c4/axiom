@@ -497,21 +497,6 @@ test_cmd = "cargo test -p pgpool"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 
-[[projects]]
-name = "truce"
-path = "apps/truce"
-td_path = "apps/truce/tech-design"
-cap_path = "apps/truce/CAPABILITIES.md"
-label = "app:truce"
-
-[[projects.workspaces]]
-name = "truce"
-paths = ["apps/truce/**"]
-target = "rust"
-test_cmd = "cargo test -p truce"
-verify_cold = true
-codegen.profile = "rust/score-crate"
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Agents — registry of LLM runners available for work-item assignment.
 #
