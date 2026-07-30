@@ -109,10 +109,16 @@ id: tape-operator-k8s-dockerfile-cli-verification
 requirements:
   auth_secret_wiring_opt_in:
     id: R6
-    text: "The token-registry Secret volume/env (TAPE_AUTH=required, TAPE_TOKEN_REGISTRY_FILE) is rendered only when spec.auth is required and spec.tokensSecret is set; otherwise the StatefulSet carries neither."
+    text: "TAPE_AUTH is always rendered from spec.auth, so a Tape naming no token source still serves closed; the registry projection (volume, mount, TAPE_TOKEN_REGISTRY_FILE) is added only when spec.auth is required and exactly one of tokensSecret / tokensSecretProviderClass is set, and a spec naming both renders neither source rather than silently picking one."
     kind: functional
     risk: medium
     verify: tests/operator.rs::token_registry_secret_wiring_is_opt_in
+  auth_is_a_closed_enum:
+    id: R6
+    text: "spec.auth is a closed enum spelled disabled|required that defaults to required, so a misspelling is rejected by the API server naming the field and an omitted auth cannot silently serve open; a CEL rule rejects a Tape naming both token sources, and every instance profile states its mode explicitly."
+    kind: functional
+    risk: high
+    verify: tests/operator.rs::auth_defaults_to_required
   crd_flattens_cluster_spec:
     id: R4
     text: "TapeSpec flattens service_k8s::ClusterSpec directly into the CRD schema (no nested cluster wrapper) and pins shardCount to 1 in the render, matching tape's single-raft-group Primary Replicas topology."
@@ -175,6 +181,7 @@ flowchart TD
     r4[R4 crd flattens cluster spec] --> tests_operator_rs_crd_flattens_cluster_spec[tests/operator.rs::crd_flattens_cluster_spec]
     r5[R5 render emits downward api statefulset] --> tests_operator_rs_render_emits_expected_child_objects[tests/operator.rs::render_emits_expected_child_objects]
     r6[R6 auth secret wiring opt in] --> tests_operator_rs_token_registry_secret_wiring_is_opt_in[tests/operator.rs::token_registry_secret_wiring_is_opt_in]
+    r6[R6 auth is a closed enum] --> tests_operator_rs_auth_defaults_to_required[tests/operator.rs::auth_defaults_to_required]
     r7[R7 status patch phases] --> tests_operator_rs_status_patch_reports_pending_reconciling_ready[tests/operator.rs::status_patch_reports_pending_reconciling_ready]
     r8[R8 operator feature default off] --> cargo_build_p_tape_cargo_test_p_tape[cargo build -p tape && cargo test -p tape]
     r9[R9 operator feature build green] --> cargo_test_p_tape_features_operator[cargo test -p tape --features operator]
@@ -224,17 +231,17 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Feature-gated (operator) module root: crd/render/reconcile submodules, re-exports (Tape, TapeSpec, TapeStatus, run), crd_yaml() = serde_json(Tape::crd()) -> normalize_kubernetes_schema_formats -> serde_yaml string (relay's pattern verbatim)."
+    description: "Feature-gated (operator) module root: crd/render/reconcile submodules, re-exports (AuthMode, Tape, TapeSpec, TapeStatus, run), crd_yaml() = serde_json(Tape::crd()) -> normalize_unsigned_integer_formats -> add_spec_validation_rule(ONE_TOKEN_SOURCE_RULE) asserted to attach -> quote_yaml_1_1_boolean_like_strings. The CEL rule is presence tests only ('!(has(self.tokensSecret) && has(self.tokensSecretProviderClass))'): a '!= null' guard fails CEL compilation at the API server for a nullable string and yields a CRD that installs nowhere while every YAML-text assertion still passes."
   - path: apps/tape/src/operator/crd.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: "TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (flat string off|required) + tokensSecret (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
+    description: "TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth: AuthMode (closed enum disabled|required, #[default] Required; spelled 'disabled' because YAML 1.1 reads a bare 'off' as boolean false, while AuthMode::as_env() still yields the 'off' the serving process's TAPE_AUTH takes) + mutually exclusive tokensSecret / tokensSecretProviderClass (+ tokensSecretCsiDriver) (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
   - path: apps/tape/src/operator/render.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Pure render (no I/O), everything via the shared service_k8s::render toolkit: RenderCtx (app tape, manager tape-operator, owner_ref from CR uid) -> ServiceAccount, StatefulSet via sharded_statefulset (command [tape, serve], port http 7137, shard_count pinned 1, headless_env_key TAPE_PEER_SERVICE, /data PVC with storage/storageClass, extra_env TAPE_BIND 0.0.0.0:7137 + TAPE_DATA_DIR /data + TAPE_GRACE_SECS + optional RUST_LOG + opt-in TAPE_AUTH/TAPE_TOKEN_REGISTRY_FILE with the token-registry Secret volume mounted read-only at /var/run/secrets/tape, off unless auth: required AND tokensSecret), then harden(): RollingUpdate + revisionHistoryLimit 5 + prometheus annotations + nonroot 65532 pod/container security contexts + readOnlyRootFilesystem + writable /tmp + terminationGracePeriodSeconds = graceSecs + readiness /readyz + liveness/startup /healthz probes; headless + client Services on 7137; PDB maxUnavailable 1."
+    description: "Pure render (no I/O), everything via the shared service_k8s::render toolkit: RenderCtx (app tape, manager tape-operator, owner_ref from CR uid) -> ServiceAccount, StatefulSet via sharded_statefulset (command [tape, serve], port http 7137, shard_count pinned 1, headless_env_key TAPE_PEER_SERVICE, /data PVC with storage/storageClass, extra_env TAPE_BIND 0.0.0.0:7137 + TAPE_DATA_DIR /data + TAPE_GRACE_SECS + optional RUST_LOG + unconditional TAPE_AUTH = spec.auth.as_env() + opt-in TAPE_TOKEN_REGISTRY_FILE with the registry projection mounted read-only at /var/run/secrets/tape, added only when auth: required AND exactly one of tokensSecret / tokensSecretProviderClass is named -- with both named the render emits neither, so an ambiguous spec fails startup loudly instead of serving a registry the operator is not reading), then harden(): RollingUpdate + revisionHistoryLimit 5 + prometheus annotations + nonroot 65532 pod/container security contexts + readOnlyRootFilesystem + writable /tmp + terminationGracePeriodSeconds = graceSecs + readiness /readyz + liveness/startup /healthz probes; headless + client Services on 7137; PDB maxUnavailable 1."
   - path: apps/tape/src/operator/reconcile.rs
     action: create
     section: logic
@@ -249,7 +256,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add K8s(K8sArgs) and Dockerfile(DockerfileArgs) subcommands alongside the existing Append/Replay/Checkpoint/Serve/Spec/Llm/Upgrade/Issue commands: tape k8s crd render, tape k8s operator render/run, tape k8s instance render --profile dev|staging|prod|template, tape dockerfile render --variant source|release [--version] [--out]; dispatch, write_or_print, and Dockerfile-fixture-diffing render helpers mirror relay's bin/relay.rs; adds an operations LLM topic naming the new verbs."
+    description: "Add K8s(K8sArgs) and Dockerfile(DockerfileArgs) subcommands alongside the existing Append/Replay/Checkpoint/Serve/Spec/Llm/Upgrade/Issue commands: tape k8s crd render, tape k8s operator render/run, tape k8s instance render --profile dev|staging|prod|template, tape dockerfile render --variant source|release [--version] [--out]; dispatch, write_or_print, and Dockerfile-fixture-diffing render helpers mirror relay's bin/relay.rs; adds an operations LLM topic naming the new verbs. Every instance profile states spec.auth explicitly (dev/staging disabled, prod/template required) because since #2765 an omitted auth means required, so a silently tokenless profile would render a CR whose pod cannot start."
   - path: apps/tape/tests/deploy_cli.rs
     action: create
     section: unit-test

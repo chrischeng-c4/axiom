@@ -95,6 +95,16 @@ fn render_verbs_emit_parseable_yaml_offline() {
         assert_eq!(cr[0]["kind"], "Tape", "profile {profile}");
         assert_eq!(cr[0]["apiVersion"], "tape.dev/v1alpha1");
         assert!(cr[0]["spec"]["image"].is_string());
+        // #2765: every profile states its auth mode. Omission now means
+        // `required`, so a silent tokenless profile would render a CR whose
+        // pod cannot start; and the value must be a string the CRD's enum
+        // accepts — a bare `off` would parse as the boolean false and be
+        // rejected by the API server.
+        let auth = &cr[0]["spec"]["auth"];
+        assert!(
+            auth.as_str() == Some("disabled") || auth.as_str() == Some("required"),
+            "profile {profile} must state auth as disabled|required, got {auth:?}"
+        );
     }
     // The prod profile is the HA shape and dogfoods the auth wiring.
     let prod: serde_yaml::Value =

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 use service_k8s::{ClusterSpec, ManagedService, ReadyFacts};
 use tape::operator::render::render;
-use tape::operator::{crd_yaml, Tape, TapeSpec};
+use tape::operator::{crd_yaml, AuthMode, Tape, TapeSpec};
 
 fn spec(replicas: u32) -> TapeSpec {
     TapeSpec {
@@ -30,7 +30,10 @@ fn spec(replicas: u32) -> TapeSpec {
         storage_class: None,
         grace_secs: 10,
         log_level: None,
-        auth: "off".into(),
+        // Not a literal: the fixture must track the real default, so a future
+        // flip of `AuthMode::default()` shows up in every render test at once
+        // instead of leaving them asserting a shape no user ever gets (#2765).
+        auth: AuthMode::default(),
         tokens_secret: None,
         tokens_secret_provider_class: None,
         tokens_secret_csi_driver: None,
@@ -110,11 +113,25 @@ fn crd_flattens_cluster_spec() {
         yaml.contains("minimum"),
         "normalized uints keep a minimum floor"
     );
-    assert!(
-        yaml.contains("default: \"off\""),
-        "the auth default must remain a string when Kubernetes parses YAML 1.1"
+    // #2765 — `auth` is a closed enum defaulting to the required state. As an
+    // unconstrained string, every value except the exact literal `"required"`
+    // rendered an open data plane, so `auth: requried` applied cleanly and the
+    // only signal was the absence of an env var in a pod nobody inspects.
+    assert_eq!(props["auth"]["default"], "required");
+    assert_eq!(
+        props["auth"]["enum"]
+            .as_sequence()
+            .expect("auth carries a closed enum"),
+        &vec![
+            serde_yaml::Value::from("disabled"),
+            serde_yaml::Value::from("required"),
+        ],
     );
-    assert_eq!(props["auth"]["default"], "off");
+    assert_eq!(
+        props["auth"]["type"], "string",
+        "the off-state is spelled `disabled`, so nothing in this schema is \
+         YAML 1.1 boolean-like and the enum can never be coerced to a bool"
+    );
     assert_eq!(
         include_str!("../k8s/operator/crd.yaml"),
         yaml,
@@ -238,17 +255,28 @@ fn render_emits_expected_child_objects() {
 }
 // </HANDWRITE>
 
-/// R6 — TAPE_AUTH / TAPE_TOKEN_REGISTRY_FILE + the Secret volume render only
-/// when the CR sets `auth: required` AND names a `tokensSecret` (off by
-/// default — relay/lumen's pattern).
+/// R6 — TAPE_AUTH always states the resolved mode; TAPE_TOKEN_REGISTRY_FILE +
+/// the volume render only when the CR also names a source.
+///
+/// The env var used to be derived from whether a source was set, which made
+/// `auth: required` with no `tokensSecret` render a pod with no TAPE_AUTH at
+/// all — an open data plane produced by a CR that explicitly asked for
+/// authentication (#2765).
 #[test]
 fn token_registry_secret_wiring_is_opt_in() {
-    // Default CR: no auth env, no token-registry volume.
+    // Default CR: authentication required, no registry file. This pod fails
+    // startup naming the field to set, which is the whole point of the flip —
+    // the previous default served an open API and said nothing.
     let plain = Tape::new("tape", spec(1));
     let objs = render(&plain);
     let sts = of_kind(&objs, "StatefulSet");
-    let keys: Vec<&str> = env_of(sts).iter().map(|(k, _)| *k).collect();
-    assert!(!keys.contains(&"TAPE_AUTH"), "auth env must be opt-in");
+    let env = env_of(sts);
+    let keys: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
+    assert_eq!(
+        env.iter().find(|(n, _)| *n == "TAPE_AUTH").unwrap().1["value"],
+        "required",
+        "omitting spec.auth must render authentication required"
+    );
     assert!(!keys.contains(&"TAPE_TOKEN_REGISTRY_FILE"));
     let vols = sts["spec"]["template"]["spec"]["volumes"]
         .as_array()
@@ -258,21 +286,27 @@ fn token_registry_secret_wiring_is_opt_in() {
         "no token-registry volume without tokensSecret"
     );
 
-    // auth: required alone (no Secret named) still renders nothing — a
-    // half-configured CR must not produce a pod that crash-loops on a missing
-    // registry file.
-    let mut half = spec(1);
-    half.auth = "required".into();
-    let objs = render(&Tape::new("tape", half));
-    let keys: Vec<String> = env_of(of_kind(&objs, "StatefulSet"))
+    // The explicit opt-out. Spelled `disabled` in the CR, `off` on the wire —
+    // both halves pinned here so neither spelling can drift into the other
+    // (a bare `off` in the CRD is read by YAML 1.1 as the boolean `false`).
+    let mut open = spec(1);
+    open.auth = AuthMode::Off;
+    let objs = render(&Tape::new("tape", open));
+    let sts = of_kind(&objs, "StatefulSet");
+    let env = env_of(sts);
+    assert_eq!(
+        env.iter().find(|(n, _)| *n == "TAPE_AUTH").unwrap().1["value"],
+        "off",
+        "the serving process's TAPE_AUTH keeps taking `off`, not `disabled`"
+    );
+    assert_eq!(AuthMode::Off.as_env(), "off");
+    assert!(!env
         .iter()
-        .map(|(k, _)| k.to_string())
-        .collect();
-    assert!(!keys.contains(&"TAPE_AUTH".to_string()));
+        .any(|(n, _)| *n == "TAPE_TOKEN_REGISTRY_FILE"));
 
     // auth: required + tokensSecret: env + read-only Secret mount.
     let mut secured = spec(3);
-    secured.auth = "required".into();
+    secured.auth = AuthMode::Required;
     secured.tokens_secret = Some("tape-token-registry".into());
     let objs = render(&Tape::new("tape", secured));
     let sts = of_kind(&objs, "StatefulSet");
@@ -305,7 +339,7 @@ fn token_registry_secret_wiring_is_opt_in() {
     // Kubernetes Secret object; the shared projection helper emits the CSI
     // volume exactly once.
     let mut csi = spec(3);
-    csi.auth = "required".into();
+    csi.auth = AuthMode::Required;
     csi.tokens_secret_provider_class = Some("tape-registry-csi".into());
     let objs = render(&Tape::new("tape", csi));
     let sts = of_kind(&objs, "StatefulSet");
@@ -328,22 +362,101 @@ fn token_registry_secret_wiring_is_opt_in() {
         "tape-registry-csi"
     );
 
-    // Explicit Secret retains precedence over CSI, matching Lumen's
-    // backwards-compatible deployment contract.
+    // Naming both sources renders NEITHER — the replacement for the old
+    // "tokensSecret wins" precedence (#2765). Such a spec is rejected at
+    // `kubectl apply` by the CRD's CEL rule, so one that reaches the renderer
+    // never came from an API server. Rendering nothing leaves
+    // TAPE_AUTH=required with no registry file, so the pod fails startup
+    // instead of quietly serving whichever registry the precedence picked
+    // while the operator reads the other one.
     let mut both = spec(3);
-    both.auth = "required".into();
+    both.auth = AuthMode::Required;
     both.tokens_secret = Some("tape-registry-secret".into());
     both.tokens_secret_provider_class = Some("tape-registry-csi".into());
     let objs = render(&Tape::new("tape", both));
     let sts = of_kind(&objs, "StatefulSet");
-    let vol = sts["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
+    assert!(
+        sts["spec"]["template"]["spec"]["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["name"] != "tape-token-registry"),
+        "an ambiguous spec must render no registry at all, not an arbitrary one"
+    );
+    assert!(
+        !env_of(sts)
+            .iter()
+            .any(|(n, _)| *n == "TAPE_TOKEN_REGISTRY_FILE"),
+        "no registry file path without an unambiguous source"
+    );
+}
+
+/// #2765 — the CRD rejects an ambiguous token source at `kubectl apply`, and
+/// the rule is spelled with presence tests only.
+///
+/// The `!= null` shape a nullable field seems to want does not compile at the
+/// API server ("found no matching overload for '_!=_' applied to '(string,
+/// null)'"), producing a CRD that passes every local test and installs on no
+/// cluster. Lumen shipped exactly that once. Asserting the rule's TEXT here is
+/// the cheap half; `kubectl apply --dry-run=server` is the half that actually
+/// proves it.
+#[test]
+fn crd_rejects_naming_both_token_sources() {
+    let yaml = crd_yaml();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("CRD parses as YAML");
+    let rules = doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]
+        ["x-kubernetes-validations"]
+        .as_sequence()
+        .expect("spec carries validation rules");
+    let rule = rules
         .iter()
-        .find(|v| v["name"] == "tape-token-registry")
-        .expect("token-registry volume");
-    assert_eq!(vol["secret"]["secretName"], "tape-registry-secret");
-    assert!(vol.get("csi").is_none());
+        .find(|r| {
+            r["rule"]
+                .as_str()
+                .is_some_and(|s| s.contains("tokensSecretProviderClass"))
+        })
+        .expect("a rule covering the two token sources");
+    assert_eq!(
+        rule["rule"],
+        "!(has(self.tokensSecret) && has(self.tokensSecretProviderClass))"
+    );
+    assert!(
+        !rule["rule"].as_str().unwrap().contains("null"),
+        "CEL rules on nullable fields take presence tests only; a `!= null` \
+         guard fails compilation at the API server and installs on no cluster"
+    );
+    assert!(
+        rule["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("at most one")),
+        "the rejection must name the remedy, not just the violation"
+    );
+}
+
+/// #2765 — omitting `spec.auth` means authentication is required.
+///
+/// The direct analogue of lumen's `auth_defaults_to_required`: the other way
+/// round, forgetting the field ships an open cluster and nothing says so.
+#[test]
+fn auth_defaults_to_required() {
+    assert_eq!(AuthMode::default(), AuthMode::Required);
+    let parsed: TapeSpec = serde_json::from_value(serde_json::json!({
+        "image": "tape:test",
+        "storage": "10Gi",
+    }))
+    .expect("a spec omitting auth parses");
+    assert_eq!(parsed.auth, AuthMode::Required);
+
+    // And a typo is not silently the open state — it is not a state at all.
+    let typo: Result<TapeSpec, _> = serde_json::from_value(serde_json::json!({
+        "image": "tape:test",
+        "storage": "10Gi",
+        "auth": "requried",
+    }));
+    assert!(
+        typo.is_err(),
+        "an unknown auth value must be rejected, never read as disabled"
+    );
 }
 
 /// GKE's managed Secrets Store add-on registers a different CSI driver name
@@ -352,7 +465,7 @@ fn token_registry_secret_wiring_is_opt_in() {
 #[test]
 fn tokens_secret_csi_driver_overrides_the_default_csi_driver_name() {
     let mut csi = spec(3);
-    csi.auth = "required".into();
+    csi.auth = AuthMode::Required;
     csi.tokens_secret_provider_class = Some("tape-registry-csi".into());
     csi.tokens_secret_csi_driver = Some("secrets-store-gke.csi.k8s.io".into());
     let objs = render(&Tape::new("tape", csi));

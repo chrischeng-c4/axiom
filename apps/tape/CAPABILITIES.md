@@ -24,6 +24,60 @@ predate #2705 executed the same harness at its former path
 `benchmarks/gcp-operator-acceptance`; the relocation is a rename with no
 behaviour change.
 
+### Auth default flip (#2765, 2026-07-28 — closed `AuthMode` enum, proven against a live API server)
+
+`spec.auth` was a free `String` defaulting to `"off"`, so three separate
+mistakes all produced a Tape that served open and reported nothing: a
+misspelling (`requried` deserialized to a string the render simply did not
+match), an omission, and — the path the issue did not name — `TAPE_AUTH` being
+derived from *whether a token source was set* rather than from `spec.auth`, so
+`auth: required` with no `tokensSecret` rendered a pod with no `TAPE_AUTH` at
+all. It is now a closed `AuthMode` enum (`disabled` | `required`) defaulting to
+`required`, `TAPE_AUTH` is written unconditionally from `spec.auth`, and a CEL
+rule rejects a CR naming both token sources.
+
+A green local suite is not evidence for a CRD: every assertion in it reads YAML
+text, never the compiled CEL expression, so a rule that no API server accepts
+still passes. Each case below was applied with
+`kubectl apply --dry-run=server` against a real API server
+(kind `lumen-wave2`, Kubernetes server v1.36):
+
+| Case | `spec` | Exit | API-server response |
+|---|---|---:|---|
+| CRD installs | — | 0 | `customresourcedefinition.apiextensions.k8s.io/tapes.tape.dev created` — the CEL rule compiles |
+| typo rejected | `auth: requried` | 1 | `spec.auth: Unsupported value: "requried": supported values: "disabled", "required"` |
+| both sources rejected | `tokensSecret` + `tokensSecretProviderClass` | 1 | `spec: Invalid value: set at most one of spec.tokensSecret … there is no way to tell which registry is actually being served` |
+| bare `off` rejected | `auth: off` | 1 | `spec.auth in body must be of type string: "boolean"` — YAML 1.1 read it as `false`, which is exactly why the off-state is spelled `disabled` |
+| omission defaults closed | no `auth` | 0 | accepted; defaults to `required` |
+| `disabled` accepted | `auth: disabled` | 0 | accepted |
+| one source accepted | `tokensSecret` only | 0 | accepted |
+
+The two spellings are not interchangeable: the CRD says `disabled`, the serving
+process's `TAPE_AUTH` env var still takes `off`. An env var is never parsed as
+YAML, so `off` is safe there and nowhere else.
+
+Because omission now means `required`, every instance profile states its mode
+explicitly — `tape k8s instance render --profile dev|staging` emits
+`auth: disabled`, `prod`/`template` emit `auth: required` — otherwise a
+silently tokenless dev CR would render a pod that refuses to start. All three
+appliable profiles were round-tripped through the same API server (exit 0).
+
+With both token sources named the render now emits *neither*, rather than
+picking one by precedence. Such a spec cannot come from an API server, so the
+loud failure — `TAPE_AUTH=required` with no registry file, and the pod fails
+startup — beats silently serving whichever registry a precedence rule chose
+while the operator reads the other one.
+
+Local gates: `cargo test -p tape --features operator --test operator`
+(17 passed), `cargo test -p tape --test deploy_cli` (4 passed).
+
+**Upgrade note (AC7).** This flip is not backward compatible for existing open
+Tape resources. A CR that relied on the old `"off"` default, or that spells
+`auth: off`, is rejected on its next apply; it must be edited to
+`auth: disabled` (to keep serving tokenless) or given a token source. A CR
+already carrying `auth: required` is unaffected. The release carrying this
+change must repeat this note.
+
 ### Release tape@0.4.11 (2026-07-25, published — binaries + digest-pinned multi-arch GHCR image)
 
 The GKE-proven 0.4.11 candidate shipped. Release run `30114475151`: all five
