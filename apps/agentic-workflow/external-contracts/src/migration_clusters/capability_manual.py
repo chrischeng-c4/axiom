@@ -8,7 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from migration_clusters.work_item_planning import BOUNDED_BODY
-from wi_contract_fixture import create, final_json, project_fixture, run_aw
+from oracles import lumen_feature_class_reference as lumen_reference
+from wi_contract_fixture import (
+    REPOSITORY_ROOT,
+    create,
+    final_json,
+    project_fixture,
+    run_aw,
+)
 
 
 CASE_IDS = {
@@ -155,6 +162,70 @@ def _capability_snapshot() -> dict[str, Any]:
         return {"initialized": initialized, "report": report, "sweep": sweep}
 
 
+def _lumen_report(root: Path, cap_path: Path, document: str) -> dict[str, Any]:
+    cap_path.write_text(document, encoding="utf-8")
+    return final_json(
+        run_aw(
+            root,
+            "capability",
+            "report",
+            "--project",
+            "demo",
+            "--skip-issue-inventory",
+        )
+    )
+
+
+def _lumen_feature_class_snapshot() -> dict[str, Any]:
+    """Attribute a Lumen-shaped contract to its two feature roots.
+
+    The reference document is asserted positively, then two falsifiers are
+    asserted to be rejected: an implementation that ignores `Feature Class`, or
+    reads only the field, or only the containing root, fails at least one.
+    """
+    before = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
+    with project_fixture() as root:
+        initialized = final_json(
+            run_aw(
+                root,
+                "capability",
+                "init",
+                "--project",
+                "demo",
+                "--title",
+                "Lumen",
+                "--brief",
+                "Lumen reference fixture.",
+            )
+        )
+        cap_path = Path(initialized["cap_path"])
+
+        report = _lumen_report(root, cap_path, lumen_reference.REFERENCE_DOCUMENT)
+        lumen_reference.assert_feature_class_attribution(report)
+
+        # Every baseline the fixture names, not one representative: the claim is
+        # that archetype baselines are always non-core.
+        baseline_core = {}
+        for cap_id in lumen_reference.NON_CORE_IDS:
+            baseline_core[cap_id] = _lumen_report(
+                root,
+                cap_path,
+                lumen_reference.baseline_declared_core_document(cap_id),
+            )
+            lumen_reference.assert_baseline_core_is_rejected(
+                baseline_core[cap_id], cap_id
+            )
+
+        conflict = _lumen_report(
+            root, cap_path, lumen_reference.ROOT_FIELD_CONFLICT_DOCUMENT
+        )
+        lumen_reference.assert_root_field_conflict_is_rejected(conflict)
+
+    after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
+    lumen_reference.assert_production_contract_unmutated(before, after)
+    return {"report": report, "baseline_core": baseline_core, "conflict": conflict}
+
+
 def _manual_snapshot() -> dict[str, Any]:
     with project_fixture() as root:
         change = create(
@@ -216,10 +287,15 @@ def verify(case_id: str) -> list[str]:
                 "project readiness is emitted from the canonical capability document",
             ]
         elif case_id == "capability-control-plane-markdown-capability-schema":
+            _lumen_feature_class_snapshot()
             assertions = [
                 "the field-style capability contract parses into one exact capability id, title, type, status, and promise",
                 "every declared EC dimension keeps its exact gate command and every Work Root row becomes an exactly named claim and gate",
                 "the sweep projection reports the same capability and claim counts and the same status as the report",
+                "the Lumen reference fixture attributes its domain search promises to core and every archetype service baseline to non-core, with each per-class pair summing to its retained total",
+                "each of the four trait-derived baselines is rejected as a blocker when declared core, naming that exact capability",
+                "a Feature Class field contradicting its containing feature root is rejected as a blocker",
+                "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
             assertions = [
