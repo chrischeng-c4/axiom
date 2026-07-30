@@ -288,6 +288,29 @@ UNCLASSIFIED_DOCUMENT = _flat_document(
     tuple((member, None) for member in _CORE_MEMBERS + _NON_CORE_MEMBERS),
 )
 
+#: Capability titles in the order the two roots impose, which is the order both
+#: the index and the sections of a migrated document must be in.
+CORE_TITLES = tuple(member[0] for member in _CORE_MEMBERS)
+NON_CORE_TITLES = tuple(member[0] for member in _NON_CORE_MEMBERS)
+GROUPED_TITLES = CORE_TITLES + NON_CORE_TITLES
+
+#: The same unclassified shape, non-core first. `UNCLASSIFIED_DOCUMENT` is
+#: core-first, so its raw document order and its grouped render order coincide
+#: by construction -- migration could emit the index in raw order and every
+#: assertion drawn from it would still pass. Reversing the two groups separates
+#: those orders, which is the only input shape under which the index/section
+#: agreement rule can fail at all.
+NON_CORE_FIRST_DOCUMENT = _flat_document(
+    "Lumen reference fixture, pre-migration: nothing is classified, non-core first.",
+    tuple((member, None) for member in _NON_CORE_MEMBERS + _CORE_MEMBERS),
+)
+#: Asserted, not assumed: if a future edit to the member tuples made this
+#: document core-first again, the fixed-point leg would go quiet rather than
+#: fail, and the blindness this constant exists to remove would come back.
+assert NON_CORE_FIRST_DOCUMENT.index(f"### {NON_CORE_TITLES[0]}\n") < (
+    NON_CORE_FIRST_DOCUMENT.index(f"### {CORE_TITLES[0]}\n")
+), "NON_CORE_FIRST_DOCUMENT must present the non-core group first"
+
 
 def baseline_declared_core_document(cap_id: str) -> str:
     """Falsifier 1, per baseline: promote one baseline into the core root.
@@ -756,6 +779,32 @@ def assert_migrated_legacy_document_is_accepted(report: dict[str, Any]) -> None:
     ), report
 
 
+def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
+    """The migrated legacy document indexes every row it turned into a section.
+
+    Legacy rows reach the index through their own branch of
+    `render_capability_index`, separate from the one the section legs exercise.
+    Emptying that branch leaves a document with three capability sections and an
+    empty table of contents, which every other assertion here would accept.
+
+    Membership, not order, and deliberately so. The legacy branch renders rows in
+    raw table order while the sections are grouped by root, so on a legacy table
+    whose first row is a trait-derived baseline the two genuinely disagree at
+    HEAD -- a real defect, filed separately rather than asserted here, because
+    this fixture must not encode the product's current wrong answer as its
+    expectation. Asserting order on this fixture would pass only because
+    `_LEGACY_ROWS` happens to be core-first, which is the kind of accidental
+    agreement `NON_CORE_FIRST_DOCUMENT` exists to eliminate, not to reintroduce.
+    """
+    index_titles = _index_titles(migrated)
+    section_titles = _section_titles(migrated)
+    assert len(index_titles) == LEGACY_ROW_COUNT, index_titles
+    assert set(index_titles) == set(section_titles), (
+        f"the migrated legacy index and its sections cover different "
+        f"capabilities; index={sorted(index_titles)} sections={sorted(section_titles)}"
+    )
+
+
 def assert_migration_preserves_declared_class(migrated: str) -> None:
     """An author's stated class survives migration; only silence is filled in.
 
@@ -828,3 +877,64 @@ def assert_migration_derives_the_split(migrated: str) -> None:
     ]
     for cap_id, expected in expected_classes:
         _assert_declared_class(migrated, cap_id, expected)
+
+
+def _index_titles(migrated: str) -> list[str]:
+    """The first cell of every Capability Index row, in document order.
+
+    Bounded to the index table itself: rows are taken from `### Capability
+    Index` up to the next `###` heading, which is the first feature root.
+    """
+    start = migrated.index("### Capability Index")
+    rest = migrated[start + len("### Capability Index") :]
+    end = rest.find("\n### ")
+    table = rest if end == -1 else rest[:end]
+    titles = []
+    for raw in table.splitlines():
+        line = raw.strip()
+        if not line.startswith("|") or set(line) <= set("|-: "):
+            continue
+        cell = line.split("|")[1].strip()
+        if cell == "Capability":
+            continue
+        titles.append(cell)
+    return titles
+
+
+def _section_titles(migrated: str) -> list[str]:
+    return [
+        raw.strip()[len("#### ") :].strip()
+        for raw in migrated.splitlines()
+        if raw.strip().startswith("#### ")
+    ]
+
+
+def assert_migration_reaches_a_fixed_point(migrated: str) -> None:
+    """The migrated index and the migrated sections are in the same order.
+
+    Migration groups the capability *sections* under the two roots but renders
+    the *index* from its own pass. If that pass followed raw document order
+    instead of the grouped order, migrating a document whose first capability is
+    non-core would emit an index that disagrees with the sections; re-parsing it
+    would yield a different document order and render a different index again --
+    a migration with no fixed point, so no adopter document could ever converge.
+
+    This is asserted on `NON_CORE_FIRST_DOCUMENT` rather than on
+    `UNCLASSIFIED_DOCUMENT` because the core-first input cannot distinguish the
+    two orders: they are the same list. Under the non-core-first input they
+    differ, and the rule has something to be wrong about.
+
+    Both halves are pinned to the expected grouped order rather than only to
+    each other, so this cannot pass by both collapsing to raw input order
+    together.
+    """
+    index_titles = _index_titles(migrated)
+    section_titles = _section_titles(migrated)
+
+    assert index_titles == section_titles, (
+        f"the migrated index and its capability sections disagree on order; "
+        f"index={index_titles} sections={section_titles}"
+    )
+    assert section_titles == list(GROUPED_TITLES), (
+        f"migration must render core-then-non-core, got {section_titles}"
+    )
