@@ -359,13 +359,70 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
 
         # The accepting half of the `Feature Class` parser. The mistyped-value
         # leg above binds only the refusal; the spellings a human actually writes
-        # -- backticked, hyphenated, camel-cased -- must resolve to the canonical
-        # pair, and that acceptance is observable product behavior of `aw
-        # capability report` rather than an implementation-internal rule.
-        human_spellings = _lumen_report(
-            root, cap_path, lumen_reference.human_spelling_document()
+        # -- backticked, hyphenated, camel-cased, and the root headings
+        # themselves -- must resolve to the canonical pair, and that acceptance
+        # is observable product behavior of `aw capability report` rather than an
+        # implementation-internal rule.
+        #
+        # One document holds one spelling per capability, so the accepting set is
+        # exercised in waves rather than in a single report. An earlier revision
+        # ran one document and claimed the whole set; the `Core Features` /
+        # `Non-Core Features` suffix family was unexercised and the claim was an
+        # overclaim.
+        human_spellings = {}
+        for wave in range(lumen_reference.HUMAN_SPELLING_WAVES):
+            human_spellings[wave] = _lumen_report(
+                root, cap_path, lumen_reference.human_spelling_document(wave)
+            )
+            lumen_reference.assert_human_class_spellings_are_accepted(
+                human_spellings[wave]
+            )
+
+        # `validate_capability_feature_roots` returns early unless the document
+        # "declares any class", and that test is a three-way disjunction: a
+        # capability field, a canonical root, or an unknown root. Every document
+        # above satisfies the first arm, which masks the other two -- both were
+        # independently deletable with the whole case still green.
+        roots_only = _lumen_report(
+            root, cap_path, lumen_reference.ROOTS_ONLY_DOCUMENT
         )
-        lumen_reference.assert_human_class_spellings_are_accepted(human_spellings)
+        lumen_reference.assert_roots_alone_classify_the_document(roots_only)
+
+        unknown_roots_only = _lumen_report(
+            root, cap_path, lumen_reference.UNKNOWN_ROOTS_ONLY_DOCUMENT
+        )
+        lumen_reference.assert_unknown_roots_alone_classify_the_document(
+            unknown_roots_only
+        )
+
+        # Root membership scope. Every other document here places capability
+        # headings strictly below their root and nothing else at the root's own
+        # level, so the rule that a sibling heading *closes* the root is
+        # unexercised -- and it is the one rule whose failure shows up as a
+        # blocker that should not exist rather than one that is missing.
+        sibling_heading = _lumen_report(
+            root, cap_path, lumen_reference.SIBLING_HEADING_DOCUMENT
+        )
+        lumen_reference.assert_sibling_heading_closes_the_root(sibling_heading)
+
+        # The product reads capability contracts in four Markdown forms and each
+        # has its own `Feature Class` lookup. The canonical field-style section
+        # is the only one every leg above drives; the other three were each
+        # independently mutable to "never read the class" with the case green.
+        alternate_forms = {}
+        for form, document, expected_blockers in (
+            ("field_value", lumen_reference.FIELD_VALUE_CONTRACT_DOCUMENT, []),
+            ("contract_table", lumen_reference.CONTRACT_TABLE_DOCUMENT, []),
+            (
+                "yaml",
+                lumen_reference.YAML_CONTRACT_DOCUMENT,
+                [lumen_reference.YAML_CONTRACT_BLOCKER],
+            ),
+        ):
+            alternate_forms[form] = _lumen_report(root, cap_path, document)
+            lumen_reference.assert_alternate_form_reads_the_class(
+                alternate_forms[form], form=form, expected_blockers=expected_blockers
+            )
 
         # The other branch of the default-class rule: a legacy table parses to
         # zero capability sections, so the count comes from the rows and has to
@@ -602,6 +659,10 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "next_coverage": next_coverage,
         "placed_core": placed_core,
         "human_spellings": human_spellings,
+        "roots_only": roots_only,
+        "unknown_roots_only": unknown_roots_only,
+        "sibling_heading": sibling_heading,
+        "alternate_forms": alternate_forms,
         "relocated_sections": relocated_sections,
         "empty_class": empty_class_report,
     }
@@ -698,7 +759,11 @@ def verify(case_id: str) -> list[str]:
                 "aw capability migrate emits both canonical feature roots when one class has no members, asserted on the only input shape where a populated-roots-only renderer differs from a both-roots renderer, and the emitted document is accepted by a follow-up report",
                 "aw capability next renders the same core/non-core split its own report computes, through a coverage object built by a separate JSON literal, with the four populated operands non-zero and pairwise distinct",
                 "each trait-derived baseline nested under Core Features while declaring no Feature Class at all is rejected by that exact blocker, which is the half of the effective-class rule that resolves the class from the containing root rather than from the field",
-                "aw capability report resolves every human spelling of Feature Class -- backticked, hyphenated, camel-cased, case-folded -- to its canonical class with the same per-class counts and no blocker, which is the accepting half of the parser the mistyped-value assertion only binds the refusal of",
+                "aw capability report resolves every human spelling of Feature Class -- backticked, hyphenated, camel-cased, case-folded, and the root headings themselves -- to its canonical class with the same per-class counts and no blocker, exercised in waves because one document holds one spelling per capability, which is the accepting half of the parser the mistyped-value assertion only binds the refusal of",
+                "a document declaring no Feature Class field anywhere is still classified by its canonical feature roots alone, rejecting a baseline for its placement while every capability still reports the unclassified default, which is the arm of the declares-any-class test that a field-carrying document masks",
+                "a document whose only feature roots are outside the closed pair is diagnosed rather than waved through as pre-migration, asserted as the whole ordered set of two missing-root and two unknown-root blockers, which is the third arm of that same test",
+                "a heading at a feature root's own level closes that root, so a capability title repeated under a later sibling heading is not read as a member of both roots -- the one assertion here falsified by an implementation that reports too much rather than too little",
+                "each of the three capability-contract reading forms other than the canonical field-style section -- the Field/Value contract, the one-row contract table, and the YAML-fenced section -- honours its Feature Class declaration, asserted per capability and by unequal per-class counts, because each form has its own class lookup and binding one binds none of the others",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
