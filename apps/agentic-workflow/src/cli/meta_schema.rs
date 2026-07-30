@@ -105,6 +105,14 @@ const PROJECT_CAPABILITY_SECTIONS: &[MetaSectionSchema] = &[
         heading: "### Capability Index",
         cardinality: "exactly_one",
     },
+    MetaSectionSchema {
+        heading: "### Core Features",
+        cardinality: "exactly_one",
+    },
+    MetaSectionSchema {
+        heading: "### Non-Core Features",
+        cardinality: "exactly_one",
+    },
 ];
 
 const PROJECT_README_SECTIONS: &[MetaSectionSchema] = &[
@@ -313,7 +321,7 @@ pub const META_SCHEMA_REGISTRY: &[MetaDocSchema] = &[
     },
     MetaDocSchema {
         kind: "project-capabilities",
-        version: 1,
+        version: 2,
         layer: "project",
         semantic_path: "<project>/CAPABILITIES.md",
         audience: MetaAudience::Agent,
@@ -322,10 +330,10 @@ pub const META_SCHEMA_REGISTRY: &[MetaDocSchema] = &[
         optional_frontmatter: &[],
         ordered_sections: PROJECT_CAPABILITY_SECTIONS,
         tables: CAPABILITY_TABLES,
-        additional_sections: "capability H3/H4 contracts are allowed below the index",
+        additional_sections: "capability H4 contracts are allowed below either feature root",
         projection: "README keeps a human summary and link only",
         validator: "aw capability check --project <project>",
-        example: "# <Project> Capabilities\\n\\n## Brief\\n\\n...\\n\\n## Capabilities\\n\\n### Capability Index\\n\\n| Capability | Root WI | ... |",
+        example: "# <Project> Capabilities\\n\\n## Brief\\n\\n...\\n\\n## Capabilities\\n\\n### Capability Index\\n\\n| Capability | Root WI | ... |\\n\\n### Core Features\\n\\n#### <Promise>\\n\\n...\\n\\n### Non-Core Features\\n\\n#### <Baseline>\\n\\n...",
     },
     MetaDocSchema {
         kind: "skill",
@@ -1344,6 +1352,60 @@ mod tests {
          ## References\n\
          \n\
          - CONTRIBUTING.md\n"
+    }
+
+    #[test]
+    fn meta_doc_ownership_capability_schema_declares_both_feature_roots() {
+        let schema = META_SCHEMA_REGISTRY
+            .iter()
+            .find(|schema| schema.kind == "project-capabilities")
+            .expect("project-capabilities schema");
+        let contract = crate::cli::meta_docs::meta_doc_contract(
+            crate::cli::meta_docs::MetaDocLayer::Project,
+            "CAPABILITIES.md",
+        )
+        .expect("project CAPABILITIES.md contract");
+
+        // The documented schema and the enforced ownership matrix are the same
+        // contract seen from two sides; if they drift, `aw meta schema` starts
+        // advertising a shape `aw meta check` will reject.
+        assert_eq!(
+            schema
+                .ordered_sections
+                .iter()
+                .map(|section| section.heading)
+                .collect::<Vec<_>>(),
+            contract.required_headings.to_vec()
+        );
+        assert!(
+            schema
+                .ordered_sections
+                .iter()
+                .all(|section| section.cardinality == "exactly_one"),
+            "both feature roots are mandatory and single: {:?}",
+            schema.ordered_sections
+        );
+        assert!(
+            schema.version >= 2,
+            "adding the feature roots is a schema break and must bump the version"
+        );
+        for fragment in [
+            "### Core Features",
+            "### Non-Core Features",
+            "#### <Promise>",
+            "#### <Baseline>",
+        ] {
+            assert!(
+                schema.example.contains(fragment),
+                "documented example must show `{fragment}`, got {}",
+                schema.example
+            );
+        }
+        assert!(
+            schema.additional_sections.contains("feature root"),
+            "capability contracts hang below a feature root, got {}",
+            schema.additional_sections
+        );
     }
 
     #[test]
