@@ -248,6 +248,54 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
             multiply_classified
         )
 
+        # The remaining two rules of `validate_capability_feature_roots`. Each
+        # raises a co-occurring set rather than one message, which is an
+        # assertion shape, not a reason to leave them unbound.
+        missing_root = _lumen_report(
+            root, cap_path, lumen_reference.MISSING_NON_CORE_ROOT_DOCUMENT
+        )
+        lumen_reference.assert_missing_non_core_root_is_rejected(missing_root)
+
+        unknown_root = _lumen_report(
+            root, cap_path, lumen_reference.UNKNOWN_FEATURE_ROOT_DOCUMENT
+        )
+        lumen_reference.assert_unknown_feature_root_is_rejected(unknown_root)
+
+        # The other direction of the undeclared-class default: a *mistyped*
+        # class must be refused outright rather than resolving to non-core the
+        # way silence legitimately does. This document does not report at all,
+        # so it is asserted against the failure.
+        cap_path.write_text(
+            lumen_reference.UNKNOWN_FEATURE_CLASS_DOCUMENT, encoding="utf-8"
+        )
+        refused = run_aw(
+            root,
+            "capability",
+            "report",
+            "--project",
+            "demo",
+            "--skip-issue-inventory",
+            expect_success=False,
+        )
+        lumen_reference.assert_unknown_feature_class_value_is_refused(
+            refused.returncode, refused.stderr
+        )
+
+        # The human rendering of the split, which is built from its own format
+        # string and which every other leg here is blind to because they all
+        # read the JSON envelope.
+        cap_path.write_text(lumen_reference.REFERENCE_DOCUMENT, encoding="utf-8")
+        human = run_aw(
+            root,
+            "capability",
+            "report",
+            "--project",
+            "demo",
+            "--skip-issue-inventory",
+            "--human",
+        )
+        lumen_reference.assert_human_report_renders_the_split(human.stdout, report)
+
         # The other branch of the default-class rule: a legacy table parses to
         # zero capability sections, so the count comes from the rows and has to
         # be attributed from there. Nothing else in this fixture reaches it.
@@ -348,6 +396,8 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "conflict": conflict,
         "duplicate_root": duplicate_root,
         "multiply_classified": multiply_classified,
+        "missing_root": missing_root,
+        "unknown_root": unknown_root,
         "legacy": legacy,
         "legacy_migrated": legacy_migrated_report,
         "retired": retired,
@@ -430,6 +480,10 @@ def verify(case_id: str) -> list[str]:
                 "no document raises a blocker the fixture did not name, because document findings are separated from the scratch environment by subtraction rather than by a whitelist of wordings",
                 "a feature root declared twice is rejected as a blocker whose message names neither the field nor the class, which is what the subtractive filter is required to see",
                 "one capability listed under both feature roots is rejected as a blocker naming that exact capability, with every capability still parsing",
+                "deleting a canonical feature root is rejected together with every capability it stranded, asserted as the whole ordered blocker set rather than skipped for raising more than one message",
+                "a feature root outside the closed pair is named as unknown rather than silently accepted, and is distinguished from the missing-root case by raising two blockers instead of five",
+                "a Feature Class value outside the closed pair fails the command outright rather than resolving to non-core the way an undeclared class legitimately does",
+                "aw capability report --human renders the same core/non-core split the JSON envelope reports, on a fixture whose two class counts differ so a transposition cannot pass",
                 "a document that declares no feature class at all raises no blocker and is attributed wholly to non-core, capabilities and claims alike, which is the default rule no self-describing document can exercise",
                 "a legacy capability table is diagnosed as legacy and its rows are attributed wholly to non-core rather than falling out of both classes, which is the branch of that default rule where no capability section parses at all",
                 "aw capability migrate derives the split for the rows of a legacy table through its own branch, placing the authored promises under Core Features and the trait-derived baseline under Non-Core Features, and the migrated document is accepted by a follow-up report with no blocker",
