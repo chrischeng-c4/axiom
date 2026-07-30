@@ -1192,6 +1192,12 @@ pub struct CapabilityReportItem {
     pub status: CapabilityStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_type: Option<CapabilityType>,
+    /// The document's declared feature class, verbatim. `None` means the
+    /// document has not classified this capability; readiness attribution uses
+    /// [`CapabilityReportItem::effective_feature_class`] instead of defaulting
+    /// this field, so an undeclared class is never rendered as a declared one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_class: Option<CapabilityFeatureClass>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<CapabilitySurface>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1218,6 +1224,80 @@ pub struct CapabilityReportItem {
     pub production_blockers: Vec<String>,
 }
 
+impl CapabilityReportItem {
+    /// The class this capability is attributed to for readiness reporting.
+    ///
+    /// Attribution must be a total function, or the per-class totals would not
+    /// sum to the retained totals. An undeclared class resolves to
+    /// [`CapabilityFeatureClass::NonCore`]: core-ness is a claim the document
+    /// makes, and an unmade claim is not a claim. Nothing is ever counted as
+    /// core without declaring `core`.
+    pub fn effective_feature_class(&self) -> CapabilityFeatureClass {
+        self.feature_class
+            .unwrap_or(CapabilityFeatureClass::NonCore)
+    }
+}
+
+/// Per-class capability and claim completion over the non-retired items.
+///
+/// Returned as one value so the caller cannot pair a core count with a non-core
+/// total by accident.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FeatureClassTotals {
+    capability_count: usize,
+    verified_count: usize,
+    claim_count: usize,
+    verified_claim_count: usize,
+}
+
+impl CapabilityReport {
+    /// Derive the feature-class split from `capabilities`.
+    ///
+    /// The invariant this upholds is that each pair sums to its retained total,
+    /// so a reader can never see a split that fails to account for every
+    /// capability or claim.
+    ///
+    /// A legacy-only document parses to zero capabilities while still reporting
+    /// a non-zero `capability_count` from its table rows. Those rows have
+    /// declared no class, so they are attributed to non-core in full rather than
+    /// silently dropped out of both classes.
+    fn apply_feature_class_totals(&mut self) {
+        let core = feature_class_totals(&self.capabilities, CapabilityFeatureClass::Core);
+        let non_core = feature_class_totals(&self.capabilities, CapabilityFeatureClass::NonCore);
+        self.core_capability_count = core.capability_count;
+        self.core_verified_count = core.verified_count;
+        self.core_claim_count = core.claim_count;
+        self.core_verified_claim_count = core.verified_claim_count;
+        self.non_core_capability_count = non_core.capability_count;
+        self.non_core_verified_count = non_core.verified_count;
+        self.non_core_claim_count = non_core.claim_count;
+        self.non_core_verified_claim_count = non_core.verified_claim_count;
+        if self.capabilities.is_empty() {
+            self.non_core_capability_count = self.capability_count;
+            self.non_core_verified_count = self.verified_count;
+            self.non_core_claim_count = self.claim_count;
+            self.non_core_verified_claim_count = self.verified_claim_count;
+        }
+    }
+}
+
+fn feature_class_totals(
+    items: &[CapabilityReportItem],
+    class: CapabilityFeatureClass,
+) -> FeatureClassTotals {
+    let members = items.iter().filter(|item| {
+        item.status != CapabilityStatus::Retired && item.effective_feature_class() == class
+    });
+    let mut totals = FeatureClassTotals::default();
+    for item in members {
+        totals.capability_count += 1;
+        totals.verified_count += usize::from(item.verified);
+        totals.claim_count += item.claim_count;
+        totals.verified_claim_count += item.verified_claim_count;
+    }
+    totals
+}
+
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct CapabilityReport {
@@ -1240,6 +1320,19 @@ pub struct CapabilityReport {
     pub claim_count: usize,
     pub verified_claim_count: usize,
     pub claim_percent: f64,
+    /// Feature-class split of the totals above. Each pair sums to its retained
+    /// total (`capability_count` / `claim_count`), because attribution is a
+    /// total function over non-retired capabilities. The split is reporting
+    /// only: `production_ready` and `production_status` stay single-valued and
+    /// are not computed per class.
+    pub core_capability_count: usize,
+    pub core_verified_count: usize,
+    pub non_core_capability_count: usize,
+    pub non_core_verified_count: usize,
+    pub core_claim_count: usize,
+    pub core_verified_claim_count: usize,
+    pub non_core_claim_count: usize,
+    pub non_core_verified_claim_count: usize,
     pub capabilities: Vec<CapabilityReportItem>,
     pub blockers: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -6120,6 +6213,7 @@ async fn build_capability_report_inner(
             capability_type: capability
                 .capability_type
                 .or_else(|| capability_types.get(&capability.id).copied()),
+            feature_class: capability.feature_class,
             surfaces: capability.surfaces.clone(),
             ec_dimensions: derive_report_ec_dimensions(capability, &capability_types),
             promise: capability.promise.clone(),
@@ -6209,6 +6303,14 @@ async fn build_capability_report_inner(
         claim_count,
         verified_claim_count,
         claim_percent,
+        core_capability_count: 0,
+        core_verified_count: 0,
+        non_core_capability_count: 0,
+        non_core_verified_count: 0,
+        core_claim_count: 0,
+        core_verified_claim_count: 0,
+        non_core_claim_count: 0,
+        non_core_verified_claim_count: 0,
         capabilities: report_items,
         blockers,
         warnings,
@@ -6225,6 +6327,7 @@ async fn build_capability_report_inner(
         },
         run_results: Vec::new(),
     };
+    report.apply_feature_class_totals();
     apply_production_readiness_to_items(&mut report.capabilities, &production_readiness);
     report.next_action = choose_next_action(
         &report,
@@ -6323,6 +6426,14 @@ fn capability_map_read_blocked_report(
         percent: 0.0,
         claim_count: 0,
         verified_claim_count: 0,
+        core_capability_count: 0,
+        core_verified_count: 0,
+        non_core_capability_count: 0,
+        non_core_verified_count: 0,
+        core_claim_count: 0,
+        core_verified_claim_count: 0,
+        non_core_claim_count: 0,
+        non_core_verified_claim_count: 0,
         claim_percent: 0.0,
         capabilities: Vec::new(),
         blockers: vec![reason],
@@ -6369,6 +6480,14 @@ fn capability_map_stale_project_config_report(
         percent: 0.0,
         claim_count: 0,
         verified_claim_count: 0,
+        core_capability_count: 0,
+        core_verified_count: 0,
+        non_core_capability_count: 0,
+        non_core_verified_count: 0,
+        core_claim_count: 0,
+        core_verified_claim_count: 0,
+        non_core_claim_count: 0,
+        non_core_verified_claim_count: 0,
         claim_percent: 0.0,
         capabilities: Vec::new(),
         blockers: vec![reason],
@@ -11994,6 +12113,14 @@ fn capability_map_readme_resident_report(
         percent: 0.0,
         claim_count: 0,
         verified_claim_count: 0,
+        core_capability_count: 0,
+        core_verified_count: 0,
+        non_core_capability_count: 0,
+        non_core_verified_count: 0,
+        core_claim_count: 0,
+        core_verified_claim_count: 0,
+        non_core_claim_count: 0,
+        non_core_verified_claim_count: 0,
         claim_percent: 0.0,
         capabilities: Vec::new(),
         blockers: vec![reason],
@@ -12980,6 +13107,7 @@ fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<
         println!("warning: {warning}");
     }
     println!("{}", capability_human_readiness_line(report));
+    println!("{}", capability_human_feature_class_line(report));
     println!(
         "test gates: {:?} [{}/{} passed]",
         report.test_gates.status, report.test_gates.passed_count, report.test_gates.command_count
@@ -13002,6 +13130,26 @@ fn capability_human_readiness_line(report: &CapabilityReport) -> String {
         },
         report.production_scope.len(),
         report.production_blockers.len(),
+    )
+}
+
+/// Core and non-core completion, rendered *beside* the readiness decision
+/// rather than inside it.
+///
+/// The `loop=`/`production=` decision stays a single value on its own line:
+/// splitting it per class would create two production verdicts, and there is
+/// exactly one. This line reports where the work stands in each class.
+fn capability_human_feature_class_line(report: &CapabilityReport) -> String {
+    format!(
+        "readiness by feature class: core={}/{} capabilities, {}/{} claims; non_core={}/{} capabilities, {}/{} claims",
+        report.core_verified_count,
+        report.core_capability_count,
+        report.core_verified_claim_count,
+        report.core_claim_count,
+        report.non_core_verified_count,
+        report.non_core_capability_count,
+        report.non_core_verified_claim_count,
+        report.non_core_claim_count,
     )
 }
 
@@ -13192,6 +13340,14 @@ fn capability_coverage_summary(report: &CapabilityReport) -> serde_json::Value {
         "claim_count": report.claim_count,
         "verified_claim_count": report.verified_claim_count,
         "claim_percent": report.claim_percent,
+        "core_capability_count": report.core_capability_count,
+        "core_verified_count": report.core_verified_count,
+        "non_core_capability_count": report.non_core_capability_count,
+        "non_core_verified_count": report.non_core_verified_count,
+        "core_claim_count": report.core_claim_count,
+        "core_verified_claim_count": report.core_verified_claim_count,
+        "non_core_claim_count": report.non_core_claim_count,
+        "non_core_verified_claim_count": report.non_core_verified_claim_count,
         "blocker_count": report.blockers.len(),
         "warning_count": report.warnings.len(),
         "production_ready": report.production_ready,
@@ -13702,6 +13858,14 @@ mod tests {
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: Vec::new(),
             blockers: Vec::new(),
             warnings: Vec::new(),
@@ -13730,12 +13894,354 @@ mod tests {
         }
     }
 
+    /// A report item with an explicit feature class, claim totals, and verified
+    /// state, for exercising the readiness split.
+    fn classified_report_item(
+        id: &str,
+        feature_class: Option<CapabilityFeatureClass>,
+        status: CapabilityStatus,
+        verified: bool,
+        claim_count: usize,
+        verified_claim_count: usize,
+    ) -> CapabilityReportItem {
+        let mut item = sample_report_item_with_gap(None);
+        item.id = id.to_string();
+        item.title = id.to_string();
+        item.feature_class = feature_class;
+        item.status = status;
+        item.verified = verified;
+        item.claim_count = claim_count;
+        item.verified_claim_count = verified_claim_count;
+        item
+    }
+
+    /// A mixed report: one verified core, one unverified core, one non-core,
+    /// one *unclassified*, and one retired that must be excluded entirely.
+    fn mixed_feature_class_report() -> CapabilityReport {
+        use CapabilityFeatureClass::{Core, NonCore};
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capabilities = vec![
+            classified_report_item(
+                "indexing",
+                Some(Core),
+                CapabilityStatus::Auditing,
+                true,
+                4,
+                4,
+            ),
+            classified_report_item(
+                "querying",
+                Some(Core),
+                CapabilityStatus::Auditing,
+                false,
+                3,
+                1,
+            ),
+            classified_report_item(
+                "security-hardening",
+                Some(NonCore),
+                CapabilityStatus::Auditing,
+                true,
+                2,
+                2,
+            ),
+            classified_report_item("tracing", None, CapabilityStatus::Auditing, false, 6, 0),
+            classified_report_item(
+                "observability",
+                Some(NonCore),
+                CapabilityStatus::Auditing,
+                false,
+                0,
+                0,
+            ),
+            classified_report_item(
+                "retired-thing",
+                Some(Core),
+                CapabilityStatus::Retired,
+                false,
+                9,
+                9,
+            ),
+        ];
+        // Mirror what `build_capability_report` computes for the retained totals.
+        let retained = report
+            .capabilities
+            .iter()
+            .filter(|item| item.status != CapabilityStatus::Retired);
+        report.capability_count = retained.clone().count();
+        report.verified_count = retained.clone().filter(|item| item.verified).count();
+        report.claim_count = retained.clone().map(|item| item.claim_count).sum();
+        report.verified_claim_count = retained.map(|item| item.verified_claim_count).sum();
+        report.apply_feature_class_totals();
+        report
+    }
+
+    #[test]
+    fn report_exposes_core_and_non_core_capability_and_claim_totals() {
+        let report = mixed_feature_class_report();
+        assert_eq!(report.core_capability_count, 2);
+        assert_eq!(report.core_verified_count, 1);
+        assert_eq!(report.core_claim_count, 7);
+        assert_eq!(report.core_verified_claim_count, 5);
+        // `tracing` declares no class, so it is attributed to non-core: core-ness
+        // is a claim, and an unmade claim is not a claim.
+        assert_eq!(report.non_core_capability_count, 3);
+        assert_eq!(report.non_core_verified_count, 1);
+        assert_eq!(report.non_core_claim_count, 8);
+        assert_eq!(report.non_core_verified_claim_count, 2);
+    }
+
+    #[test]
+    fn report_feature_class_pairs_sum_to_the_retained_totals() {
+        let report = mixed_feature_class_report();
+        assert_eq!(
+            report.core_capability_count + report.non_core_capability_count,
+            report.capability_count
+        );
+        assert_eq!(
+            report.core_verified_count + report.non_core_verified_count,
+            report.verified_count
+        );
+        assert_eq!(
+            report.core_claim_count + report.non_core_claim_count,
+            report.claim_count
+        );
+        assert_eq!(
+            report.core_verified_claim_count + report.non_core_verified_claim_count,
+            report.verified_claim_count
+        );
+        // The retired capability contributed 9 claims to neither side.
+        assert_eq!(report.claim_count, 15);
+        assert_eq!(report.capability_count, 5);
+    }
+
+    #[test]
+    fn report_feature_class_pairs_sum_for_every_document_shape() {
+        use CapabilityFeatureClass::{Core, NonCore};
+        let shapes: Vec<(&str, Vec<CapabilityReportItem>)> = vec![
+            ("no capabilities", Vec::new()),
+            (
+                "all core",
+                vec![
+                    classified_report_item("a", Some(Core), CapabilityStatus::Auditing, true, 2, 1),
+                    classified_report_item(
+                        "b",
+                        Some(Core),
+                        CapabilityStatus::Auditing,
+                        false,
+                        3,
+                        0,
+                    ),
+                ],
+            ),
+            (
+                "all non-core",
+                vec![classified_report_item(
+                    "c",
+                    Some(NonCore),
+                    CapabilityStatus::Auditing,
+                    true,
+                    4,
+                    4,
+                )],
+            ),
+            (
+                "all unclassified",
+                vec![classified_report_item(
+                    "d",
+                    None,
+                    CapabilityStatus::Auditing,
+                    false,
+                    1,
+                    0,
+                )],
+            ),
+            (
+                "all retired",
+                vec![classified_report_item(
+                    "e",
+                    Some(Core),
+                    CapabilityStatus::Retired,
+                    true,
+                    7,
+                    7,
+                )],
+            ),
+        ];
+
+        for (label, items) in shapes {
+            let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+            report.capabilities = items;
+            let retained = report
+                .capabilities
+                .iter()
+                .filter(|item| item.status != CapabilityStatus::Retired);
+            report.capability_count = retained.clone().count();
+            report.verified_count = retained.clone().filter(|item| item.verified).count();
+            report.claim_count = retained.clone().map(|item| item.claim_count).sum();
+            report.verified_claim_count = retained.map(|item| item.verified_claim_count).sum();
+            report.apply_feature_class_totals();
+
+            assert_eq!(
+                report.core_capability_count + report.non_core_capability_count,
+                report.capability_count,
+                "{label}: capability split"
+            );
+            assert_eq!(
+                report.core_verified_count + report.non_core_verified_count,
+                report.verified_count,
+                "{label}: verified split"
+            );
+            assert_eq!(
+                report.core_claim_count + report.non_core_claim_count,
+                report.claim_count,
+                "{label}: claim split"
+            );
+            assert_eq!(
+                report.core_verified_claim_count + report.non_core_verified_claim_count,
+                report.verified_claim_count,
+                "{label}: verified claim split"
+            );
+        }
+    }
+
+    #[test]
+    fn report_attributes_legacy_rows_to_non_core_rather_than_dropping_them() {
+        // A legacy-only document parses to zero capabilities but still reports
+        // rows. Attributing none of them would break the summing invariant.
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capabilities = Vec::new();
+        report.capability_count = 3;
+        report.verified_count = 1;
+        report.claim_count = 6;
+        report.verified_claim_count = 2;
+        report.apply_feature_class_totals();
+
+        assert_eq!(report.core_capability_count, 0);
+        assert_eq!(report.core_claim_count, 0);
+        assert_eq!(report.non_core_capability_count, 3);
+        assert_eq!(report.non_core_verified_count, 1);
+        assert_eq!(report.non_core_claim_count, 6);
+        assert_eq!(report.non_core_verified_claim_count, 2);
+    }
+
+    #[test]
+    fn report_keeps_production_ready_and_status_single_valued() {
+        // The split is reporting only. There is exactly one production verdict,
+        // and the class totals must not introduce a second one.
+        let mut report = mixed_feature_class_report();
+        report.production_status = ProductionStatus::Blocked;
+        report.production_ready = false;
+        let before = (report.production_ready, report.production_status);
+        report.apply_feature_class_totals();
+        assert_eq!((report.production_ready, report.production_status), before);
+
+        let serialized = serde_json::to_value(&report).unwrap();
+        let object = serialized.as_object().unwrap();
+        // No per-class production verdict exists anywhere in the projection.
+        let mut verdict_keys = object
+            .keys()
+            .filter(|key| key.contains("production"))
+            .cloned()
+            .collect::<Vec<_>>();
+        verdict_keys.sort();
+        assert_eq!(
+            verdict_keys,
+            vec![
+                "production_blockers".to_string(),
+                "production_ready".to_string(),
+                "production_scope".to_string(),
+                "production_status".to_string()
+            ],
+            "unexpected production keys: {verdict_keys:?}"
+        );
+        assert!(object["production_ready"].is_boolean());
+        assert!(object["production_status"].is_string());
+    }
+
+    #[test]
+    fn report_coverage_summary_exposes_the_feature_class_split() {
+        let report = mixed_feature_class_report();
+        let coverage = capability_coverage_summary(&report);
+        for (key, expected) in [
+            ("core_capability_count", 2),
+            ("core_verified_count", 1),
+            ("core_claim_count", 7),
+            ("core_verified_claim_count", 5),
+            ("non_core_capability_count", 3),
+            ("non_core_verified_count", 1),
+            ("non_core_claim_count", 8),
+            ("non_core_verified_claim_count", 2),
+        ] {
+            assert_eq!(
+                coverage[key].as_u64(),
+                Some(expected),
+                "{key} in {coverage}"
+            );
+        }
+        // The single decision is still there, still single-valued.
+        assert!(coverage["production_ready"].is_boolean());
+        assert!(coverage["production_status"].is_string());
+    }
+
+    #[test]
+    fn readiness_names_core_and_non_core_completion_beside_the_single_decision() {
+        let mut report = mixed_feature_class_report();
+        report.status = "healthy".to_string();
+        report.production_status = ProductionStatus::Blocked;
+        report.production_scope = vec!["indexing".to_string()];
+        report.production_blockers = vec!["indexing: claim verification is incomplete".to_string()];
+
+        // The decision line is unchanged: one loop value, one production value.
+        assert_eq!(
+            capability_human_readiness_line(&report),
+            "readiness: loop=continue; production=blocked/not_ready [scope=1, blockers=1]"
+        );
+        // The class completion is reported beside it, not inside it.
+        assert_eq!(
+            capability_human_feature_class_line(&report),
+            "readiness by feature class: core=1/2 capabilities, 5/7 claims; non_core=1/3 capabilities, 2/8 claims"
+        );
+    }
+
+    #[test]
+    fn readiness_attributes_every_capability_to_exactly_one_feature_class() {
+        use CapabilityFeatureClass::{Core, NonCore};
+        for declared in [Some(Core), Some(NonCore), None] {
+            let item =
+                classified_report_item("subject", declared, CapabilityStatus::Auditing, true, 1, 1);
+            let core = feature_class_totals(std::slice::from_ref(&item), Core);
+            let non_core = feature_class_totals(std::slice::from_ref(&item), NonCore);
+            assert_eq!(
+                core.capability_count + non_core.capability_count,
+                1,
+                "declared={declared:?} landed in {} classes",
+                core.capability_count + non_core.capability_count
+            );
+            // Nothing is counted as core without declaring core.
+            assert_eq!(
+                core.capability_count,
+                usize::from(declared == Some(Core)),
+                "declared={declared:?}"
+            );
+        }
+        // Retired capabilities are in neither class, matching the retained totals.
+        let retired =
+            classified_report_item("gone", Some(Core), CapabilityStatus::Retired, true, 1, 1);
+        assert_eq!(
+            feature_class_totals(std::slice::from_ref(&retired), Core).capability_count
+                + feature_class_totals(std::slice::from_ref(&retired), NonCore).capability_count,
+            0
+        );
+    }
+
     fn sample_report_item_with_gap(active_wi: Option<&str>) -> CapabilityReportItem {
         CapabilityReportItem {
             id: "package-manager".to_string(),
             title: "Package Manager".to_string(),
             status: CapabilityStatus::Auditing,
             capability_type: None,
+            feature_class: None,
             surfaces: Vec::new(),
             ec_dimensions: Vec::new(),
             promise: "Replace package manager flows.".to_string(),
@@ -19711,11 +20217,20 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Auditing,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -19796,11 +20311,20 @@ capability_refs:
             claim_count: 1,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -19927,11 +20451,20 @@ capability_refs:
             claim_count: 1,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -20036,11 +20569,20 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -20131,11 +20673,20 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -20252,11 +20803,20 @@ capability_refs:
             claim_count: 1,
             verified_claim_count: 1,
             claim_percent: 100.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "legacy-carried-internals".to_string(),
                 title: "Legacy Carried Internals".to_string(),
                 status: CapabilityStatus::Retired,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Compatibility-only internals retained outside public scope.".to_string(),
@@ -20350,12 +20910,21 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![
                 CapabilityReportItem {
                     id: "rust-native-frontend-toolchain".to_string(),
                     title: "Rust-Native Frontend Toolchain Replacement".to_string(),
                     status: CapabilityStatus::Auditing,
                     capability_type: None,
+                    feature_class: None,
                     surfaces: Vec::new(),
                     ec_dimensions: Vec::new(),
                     promise: "replace frontend toolchain".to_string(),
@@ -20395,6 +20964,7 @@ capability_refs:
                     title: "Package Manager".to_string(),
                     status: CapabilityStatus::Auditing,
                     capability_type: None,
+                    feature_class: None,
                     surfaces: Vec::new(),
                     ec_dimensions: Vec::new(),
                     promise: "replace package manager flows".to_string(),
@@ -20483,12 +21053,21 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![
                 CapabilityReportItem {
                     id: "rust-native-frontend-toolchain".to_string(),
                     title: "Rust-Native Frontend Toolchain Replacement".to_string(),
                     status: CapabilityStatus::Auditing,
                     capability_type: None,
+                    feature_class: None,
                     surfaces: Vec::new(),
                     ec_dimensions: Vec::new(),
                     promise: "replace frontend toolchain".to_string(),
@@ -20528,6 +21107,7 @@ capability_refs:
                     title: "Package Manager".to_string(),
                     status: CapabilityStatus::Auditing,
                     capability_type: None,
+                    feature_class: None,
                     surfaces: Vec::new(),
                     ec_dimensions: Vec::new(),
                     promise: "replace package manager flows".to_string(),
