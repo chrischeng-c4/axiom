@@ -31,6 +31,9 @@ patches:
         path: /spec/template/spec/containers/0/resources/requests/memory
         value: "256Mi"
       - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "256Mi"
+      - op: replace
         path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
         value: "2Gi"
 # HANDWRITE-END

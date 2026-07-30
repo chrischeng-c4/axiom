@@ -34,4 +34,22 @@ fn alert_rules_only_reference_existing_tape_latency_series() {
         assert!(rule.contains(metric), "missing real Tape metric {metric}");
     }
 }
+
+/// #3051 — memory headroom alert references cAdvisor series, not tape-scraped
+/// metrics. cAdvisor series are published by kubelet and carried by kube-state-
+/// metrics / Prometheus Operator's default scrape config; they are not `tape_*`
+/// names so this is a separate pinned assertion.
+#[test]
+fn alert_rules_reference_cadvisor_memory_series() {
+    let rule = include_str!("../k8s/components/observability/prometheusrule.yaml");
+    for metric in [
+        "container_memory_working_set_bytes",
+        "container_spec_memory_limit_bytes",
+    ] {
+        assert!(
+            rule.contains(metric),
+            "TapeMemoryHeadroomLow must reference cAdvisor series {metric}"
+        );
+    }
+}
 // HANDWRITE-END

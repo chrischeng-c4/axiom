@@ -19,6 +19,9 @@ use serde_json::{json, Value};
 
 use super::crd::{AuthMode, Tape};
 use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
+use service_k8s::stateful::{
+    resource_request_or_default, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST,
+};
 
 const APP: &str = "tape";
 const MANAGER: &str = "tape-operator";
@@ -221,6 +224,35 @@ fn service_monitor(cx: &RenderCtx<'_>) -> Value {
     })
 }
 
+/// Container resources for tape's workload: requests for both CPU and memory,
+/// plus a memory limit matching the request (#3051).
+///
+/// This is `render::requested_resources` plus the memory limit. Requests alone
+/// make the pod Burstable, and the kubelet then relieves node memory pressure
+/// by picking victims on QoS and usage — so a tape that grows without bound
+/// gets its neighbours evicted while it keeps running. Bounding memory makes
+/// the OOMKill land on the container that caused it.
+///
+/// Memory only, no CPU limit: tape is scheduled one pod per node and should be
+/// free to use idle CPU, and throttling the persist path would make the very
+/// latency this alert watches worse.
+///
+/// Do not raise the limit in response to an OOMKill. The growth it bounds is
+/// the whole-journal rewrite in `AppState::persist`, and #3052 (WAL + group
+/// commit) is what removes it.
+fn container_resources(cpu: &str, memory: &str) -> Value {
+    // Same defaulting as `render::requested_resources`, reused rather than
+    // re-spelled: a whitespace-only `spec.cluster.resources.cpu` must fall back
+    // to the shared baseline, not render as an unparseable quantity that makes
+    // the API server reject the StatefulSet on every reconcile.
+    let cpu = resource_request_or_default(cpu, DEFAULT_CPU_REQUEST);
+    let memory = resource_request_or_default(memory, DEFAULT_MEMORY_REQUEST);
+    json!({
+        "requests": { "cpu": cpu, "memory": memory },
+        "limits": { "memory": memory },
+    })
+}
+
 /// tape's four SLO alerts (#2575), the operator-rendered twin of
 /// `k8s/components/observability/prometheusrule.yaml`.
 ///
@@ -317,6 +349,29 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                             "runbook": SUBSCRIPTION_LAG_RUNBOOK,
                         },
                     },
+                    {
+                        // #3051: Memory headroom alert fires before the limit is
+                        // reached. Both series come from cAdvisor and carry identical
+                        // labels, so they divide directly. Guard divide-by-zero by
+                        // filtering the denominator: if no limit is set, the container
+                        // is unbounded and the gauge is 0, so the division yields +Inf
+                        // and the alert fires permanently.
+                        "alert": "TapeMemoryHeadroomLow",
+                        "expr": format!(
+                            "max by (pod) (\n\
+                             container_memory_working_set_bytes{{namespace=\"{}\",pod=~\"^{}-[0-9]+$\",container=\"{}\"}}\n\
+                             / (container_spec_memory_limit_bytes{{namespace=\"{}\",pod=~\"^{}-[0-9]+$\",container=\"{}\"}} > 0)\n\
+                             ) > 0.85",
+                            cx.ns, cx.name, COMPONENT,
+                            cx.ns, cx.name, COMPONENT
+                        ),
+                        "for": "10m",
+                        "labels": alert_labels(cx, "warning"),
+                        "annotations": {
+                            "summary": "tape container memory headroom below 15%",
+                            "runbook": MEMORY_HEADROOM_RUNBOOK,
+                        },
+                    },
                 ],
             }],
         },
@@ -340,6 +395,19 @@ const SUBSCRIPTION_LAG_RUNBOOK: &str = "#2485: Check if the consumer bound to th
 /// point at the two things that actually decide the outcome: capacity, and the
 /// flap counter that distinguishes "recovered" from "recovering every 30s".
 const STORAGE_DEGRADED_RUNBOOK: &str = "#2573: The node hit ENOSPC on its journal persist path and latched degraded read-only mode — mutating requests answer 507 `storage_full`, reads keep serving. Check `tape_storage_full_errors_total`: a rising counter with the gauge back at 0 means the volume is flapping in and out of full, not that it recovered. Remedy is capacity — free objects via retention or expand the PVC on a resizable StorageClass. No restart is needed: the pod re-probes the store directory every `TAPE_STORAGE_FULL_REPROBE_SECS` (default 30s) and clears the flag itself. If the gauge stays 1 after the volume has room, read the pod log for the re-probe warning — the store directory can be unwritable for reasons other than capacity (read-only remount, permissions).";
+
+/// #3051 / #3052: Memory headroom runbook.
+///
+/// The one thing this text has to stop is the reflex fix. Raising the limit
+/// clears the alert and restores exactly the silent growth the limit was added
+/// to expose, so the runbook names the two causes that are actionable now
+/// (unbounded retention, a stalled consumer) and points the structural one at
+/// #3052 rather than at the person holding the pager.
+///
+/// It states no amplification ratio. The measured figure is from a macOS/APFS
+/// host and has not been re-taken on Linux; an unverified multiplier in a
+/// runbook is read as a fact about the cluster in front of you.
+const MEMORY_HEADROOM_RUNBOOK: &str = "#3051: The container's memory working set is within 15% of its limit, and the limit equals the request, so the next step is an OOMKill of this pod. Do NOT raise the limit as the remedy — it defers the wall and hides the growth again; the limit exists to make this growth visible. Act on the two causes you can fix now: (1) retention — `tape retention list` (or the CR's `spec.retention`); a topic with no entry is NEVER pruned and grows without bound, so give every active topic a byte or count bound; (2) a stalled consumer — check `tape_subscription_lag` and whether the bound consumer is still pulling, since a checkpoint that stops advancing pins events that retention would otherwise drop. If neither applies, the pod is holding more memory than its journal justifies: this is the whole-journal-rewrite persist path (`AppState::persist` serializes the entire journal on every mutation), which #3052 (WAL + group commit) removes. Capacity sizing is #2552 — do not derive a new limit from this alert alone.";
 
 /// A stable, per-instance identity for scheduled backup jobs (lumen's #808
 /// pattern, adopted for #2574).
@@ -542,7 +610,7 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         service_account_name: Some(cx.name),
         env: extra_env,
         env_from: vec![],
-        resources: render::requested_resources(cpu, memory),
+        resources: container_resources(cpu, memory),
         pod_annotations: Some(json!({
             "prometheus.io/scrape": "true",
             "prometheus.io/port": CLIENT_PORT.to_string(),

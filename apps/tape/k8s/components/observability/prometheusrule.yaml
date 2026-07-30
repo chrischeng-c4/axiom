@@ -65,4 +65,25 @@ spec:
           annotations:
             summary: "tape subscription lag growing over 15m"
             runbook: "#2485: Check if the consumer bound to the subscription is alive and actively pulling. If the consumer has stopped or stalled, verify it has not crashed or exhausted resources. If the consumer is healthy, check the append rate to the topic — a rapid append rate combined with a slow consumer will naturally grow lag. No action needed if this is expected; adjust retention policy if needed to protect the subscription's checkpoint from expiry."
+        - alert: TapeMemoryHeadroomLow
+          # #3051. Unlike every other alert here, both series come from
+          # cAdvisor, not from tape's own /metrics — so this one is scoped by
+          # the kubelet's `namespace`/`container` labels and carries no
+          # `app`/`role`, exactly as TapePodRestarting above.
+          #
+          # The `> 0` on the denominator is a filter, not a comparison: a
+          # container with no memory limit reports the spec gauge as 0, and
+          # dropping those samples leaves the division with nothing to match
+          # rather than +Inf. Without it, every unbounded container in the
+          # namespace would alert forever.
+          expr: |
+            max by (pod) (
+            container_memory_working_set_bytes{namespace="tape",container="tape"}
+            / (container_spec_memory_limit_bytes{namespace="tape",container="tape"} > 0)
+            ) > 0.85
+          for: 10m
+          labels: { severity: warning, app: tape, role: server }
+          annotations:
+            summary: "tape container memory headroom below 15%"
+            runbook: "#3051: The container's memory working set is within 15% of its limit, and the limit equals the request, so the next step is an OOMKill of this pod. Do NOT raise the limit as the remedy — it defers the wall and hides the growth again; the limit exists to make this growth visible. Act on the two causes you can fix now: (1) retention — `tape retention list` (or the CR's `spec.retention`); a topic with no entry is NEVER pruned and grows without bound, so give every active topic a byte or count bound; (2) a stalled consumer — check `tape_subscription_lag` and whether the bound consumer is still pulling, since a checkpoint that stops advancing pins events that retention would otherwise drop. If neither applies, the pod is holding more memory than its journal justifies: this is the whole-journal-rewrite persist path (`AppState::persist` serializes the entire journal on every mutation), which #3052 (WAL + group commit) removes. Capacity sizing is #2552 — do not derive a new limit from this alert alone."
 # HANDWRITE-END

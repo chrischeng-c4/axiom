@@ -98,11 +98,24 @@ spec:
                 configMapKeyRef:
                   name: tape-config
                   key: TAPE_AUTH
-          # Request-only baseline, matching Tape's shared service-k8s
-          # defaults. Tune the overlay for its actual node pool.
+          # Memory is bounded, CPU is not (#3051).
+          #
+          # Requests alone make this pod Burstable, and the kubelet relieves
+          # node memory pressure by ranking victims on QoS and usage — so a
+          # tape whose journal keeps growing gets its neighbours evicted while
+          # it survives. The limit equals the request so the kill lands on the
+          # container that caused it. Do not raise it in response to an
+          # OOMKill: the growth it exposes is the whole-journal rewrite in
+          # AppState::persist, which #3052 (WAL + group commit) removes.
+          #
+          # No CPU limit on purpose. tape runs one pod per node and should use
+          # idle CPU, and throttling the persist path only lengthens the append
+          # latency TapeAppendLatencyHigh is watching.
           resources:
             requests:
               cpu: "1"
+              memory: 4Gi
+            limits:
               memory: 4Gi
           readinessProbe:
             httpGet:
