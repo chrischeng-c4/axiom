@@ -231,15 +231,26 @@ def commit_batch_outcome(
     return CommitOutcome.ACKED
 
 
-def should_enter_storage_degraded_mode(outcome: CommitOutcome, is_enospc: bool) -> bool:
-    """Only a durability failure caused by ENOSPC latches sticky degraded
-    mode via the existing `TapeMetrics::mark_storage_degraded` (apps/tape/
-    src/metrics.rs) and its 507 `storage_full` response envelope. A
-    transient, non-ENOSPC batch failure fails that one batch closed but
-    does not flip the server into sticky read-only degraded mode.
+STORAGE_DEGRADED_REPROBE_INTERVAL_SECONDS = 30
+
+
+def should_enter_storage_degraded_mode(
+    outcome: CommitOutcome, is_enospc: bool, is_eio: bool
+) -> bool:
+    """WI R6: a durability failure caused by ENOSPC *or* EIO latches sticky
+    degraded mode via the existing `TapeMetrics::mark_storage_degraded`
+    (apps/tape/src/metrics.rs) and its 507 `storage_full` response
+    envelope, re-probed every `STORAGE_DEGRADED_REPROBE_INTERVAL_SECONDS`
+    seconds by the existing `spawn_storage_full_reprobe` (apps/tape/src/
+    bin/tape.rs). Narrowing this predicate to ENOSPC alone would route a
+    durable EIO into a plain per-batch failure -- exactly the "durability
+    failure treated as an ordinary retryable request" R6 forbids. A batch
+    failure that is neither ENOSPC nor EIO still fails that one batch
+    closed but does not flip the server into sticky read-only degraded
+    mode.
     """
 
-    return outcome is not CommitOutcome.ACKED and is_enospc
+    return outcome is not CommitOutcome.ACKED and (is_enospc or is_eio)
 
 
 class RecoveryAction(StrEnum):
@@ -330,33 +341,55 @@ def out_of_scope_boundaries() -> tuple[OutOfScopeBoundary, ...]:
     )
 
 
+class TrapKind(StrEnum):
+    """Which direction one implementation trap points tape-dev in."""
+
+    MUST_HANDLE = "must_handle"
+    CONFIRM_DO_NOT_CHANGE = "confirm_do_not_change"
+
+
 @dataclass(frozen=True)
 class ImplementationTrap:
-    """One named hazard tape-dev must handle explicitly, not rediscover."""
+    """One named hazard tape-dev must resolve explicitly, not rediscover.
+    `kind` distinguishes "this must change" from "this is already correct;
+    the hazard is editing it anyway"."""
 
     name: str
     location: str
+    kind: TrapKind
     hazard: str
 
 
 def implementation_traps() -> tuple[ImplementationTrap, ...]:
     """Traps found while grounding this design against current source;
-    each must be handled, not silently reintroduced."""
+    each must be resolved in the direction `kind` names, not silently
+    reintroduced or "fixed" in the wrong direction."""
 
     return (
         ImplementationTrap(
             name="data_dir_has_existing_state",
             location="apps/tape/src/raft.rs",
+            kind=TrapKind.CONFIRM_DO_NOT_CHANGE,
             hazard=(
-                "bootstrap-vs-join detection currently only recognizes "
-                "Raft/snapshot markers under --data-dir; it must also "
-                "recognize a non-empty WAL/snapshot as existing state, or "
-                "a restart re-bootstraps and silently discards it"
+                "reads backwards on a skim: `data_dir_has_existing_state` "
+                "(raft.rs:155-172) already returns true on the first "
+                "directory entry that is not `lost+found` -- it recognizes "
+                "no markers at all, so a new WAL/snapshot file already "
+                "trips it with zero code changes needed. Its only caller is "
+                "`prepare_bootstrap_seed`'s replica-mode cold-start refusal "
+                "(raft.rs:192), and replica mode never has a WAL "
+                "(JournalStoreKind.NONE), so 'refuse to seed over existing "
+                "single-node data' stays correct as written. Do not edit "
+                "this function: 'teaching' it to recognize WAL files would "
+                "be narrowing a check that today refuses on anything to "
+                "one that refuses only on recognized markers -- a "
+                "regression dressed as a fix"
             ),
         ),
         ImplementationTrap(
             name="storage_full_probe filename collision",
             location="apps/tape/src/bin/tape.rs (spawn_storage_full_reprobe)",
+            kind=TrapKind.MUST_HANDLE,
             hazard=(
                 "the ENOSPC reprobe already writes a `.storage_full_probe` "
                 "file under --data-dir; new WAL segment and snapshot "
@@ -366,6 +399,7 @@ def implementation_traps() -> tuple[ImplementationTrap, ...]:
         ImplementationTrap(
             name="in-crate persist tests must be rewritten, not deleted",
             location="apps/tape/src/server.rs",
+            kind=TrapKind.MUST_HANDLE,
             hazard=(
                 "persist_failure_leaves_the_previous_journal_intact, "
                 "persist_commits_by_rename_without_temp_residue, "
@@ -383,11 +417,23 @@ def implementation_traps() -> tuple[ImplementationTrap, ...]:
 class PerformanceGateContract:
     """The performance gate this design requires; today's `bench.rs` is
     vacuous (it benchmarks an in-memory-only journal and never touches
-    disk, so it cannot regress-test durability throughput)."""
+    disk, so it cannot regress-test durability throughput).
+
+    The required ratio is a *scaling* assertion -- throughput at
+    `scaled_connections` versus `baseline_connections` on the same build --
+    not an old-versus-new improvement assertion; a bare "improvement
+    ratio" name would read as the latter, which is a different and much
+    easier property (it is satisfiable by making the 1-connection baseline
+    worse, not by amortising the barrier). This matches accepted EC
+    `ec-3052-scaling`'s `BASELINE_CONNECTIONS`/`SCALED_CONNECTIONS`/
+    `REQUIRED_RATIO`.
+    """
 
     baseline_ops_per_sec_low: float
     baseline_ops_per_sec_high: float
-    min_improvement_ratio: float
+    baseline_connections: int
+    scaled_connections: int
+    required_scaled_over_baseline_connection_throughput_ratio: float
 
 
 def performance_gate_contract() -> PerformanceGateContract:
@@ -396,7 +442,9 @@ def performance_gate_contract() -> PerformanceGateContract:
     return PerformanceGateContract(
         baseline_ops_per_sec_low=85.0,
         baseline_ops_per_sec_high=89.0,
-        min_improvement_ratio=3.0,
+        baseline_connections=1,
+        scaled_connections=16,
+        required_scaled_over_baseline_connection_throughput_ratio=4.0,
     )
 
 
@@ -412,77 +460,205 @@ def benchmark_is_durable_and_not_vacuous(
 
 
 @dataclass(frozen=True)
-class AcceptanceCriterion:
-    """One acceptance criterion for WI #3052, identified by a stable id."""
+class DesignInvariant:
+    """One structural invariant this design restates for legibility; NOT
+    an acceptance criterion. Kept under its own name and function so it
+    cannot be confused with WI #3052's actual, numbered acceptance surface
+    below (`AcceptanceCriterion` / `acceptance_criteria`)."""
 
     id: str
     statement: str
 
 
-def acceptance_criteria() -> tuple[AcceptanceCriterion, ...]:
-    """The bounded acceptance surface for this change."""
+def design_invariants() -> tuple[DesignInvariant, ...]:
+    """Design-level restatements, useful as a reading aid; the bounded
+    *acceptance* surface for this change is `acceptance_criteria()`."""
 
     return (
-        AcceptanceCriterion(
-            id="AC1",
+        DesignInvariant(
+            id="DI1",
             statement=(
                 "`tape serve --data-dir` mutations commit through an "
                 "append-only WAL + group commit; `--store <file>` keeps "
                 "today's whole-file JSON behavior unchanged"
             ),
         ),
-        AcceptanceCriterion(
-            id="AC2",
+        DesignInvariant(
+            id="DI2",
             statement=(
                 "WAL frames encode TapeCommand values and replay through "
                 "the shared apply_command extraction, not raw journal state"
             ),
         ),
-        AcceptanceCriterion(
-            id="AC3",
+        DesignInvariant(
+            id="DI3",
             statement=(
                 "one fsync covers one batch of commands (group commit); no "
                 "request is acknowledged before its covering fsync returns"
             ),
         ),
-        AcceptanceCriterion(
-            id="AC4",
+        DesignInvariant(
+            id="DI4",
             statement=(
                 "FIFO submission order is preserved end-to-end through "
                 "batch drain, on-disk commit, and single-lock-scope apply"
             ),
         ),
-        AcceptanceCriterion(
-            id="AC5",
+        DesignInvariant(
+            id="DI5",
             statement=(
-                "an ENOSPC durability failure latches the existing sticky "
-                "storage-degraded mode and 507 storage_full response; a "
-                "non-ENOSPC batch failure fails closed without a silent ack"
+                "an ENOSPC or EIO durability failure latches the existing "
+                "sticky storage-degraded mode and 507 storage_full "
+                "response; a batch failure that is neither fails closed "
+                "without a silent ack"
             ),
         ),
-        AcceptanceCriterion(
-            id="AC6",
+        DesignInvariant(
+            id="DI6",
             statement=(
                 "startup recovery truncates a torn WAL tail instead of "
                 "hard-failing, unlike today's load_journal"
             ),
         ),
-        AcceptanceCriterion(
-            id="AC7",
+        DesignInvariant(
+            id="DI7",
             statement=(
                 "periodic snapshot + truncate bounds WAL growth using "
                 "existing storage-durable primitives; snapshot/backup wire "
                 "format is unchanged"
             ),
         ),
-        AcceptanceCriterion(
-            id="AC8",
+        DesignInvariant(
+            id="DI8",
             statement=(
                 "the performance gate exercises real durable I/O and "
-                "asserts a measurable throughput improvement ratio over "
-                "the recorded 85-89 ops/s baseline, replacing the vacuous "
-                "in-memory bench"
+                "asserts a throughput ratio between scaled and baseline "
+                "connection counts, replacing the vacuous in-memory bench"
             ),
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class AcceptanceCriterion:
+    """One of WI #3052's own acceptance criteria, carried with the WI's
+    own id, the WI's own measurable statement, and where it is verified.
+    Distinct from `DesignInvariant`: these are outcome measurements the
+    implementation is graded against, not a restatement of the design."""
+
+    id: str
+    statement: str
+    verified_by: str
+
+
+def acceptance_criteria() -> tuple[AcceptanceCriterion, ...]:
+    """WI #3052's AC1-AC8, unchanged from the work item. Two are only
+    partially covered by the two accepted EC cases (`ec-3052-scaling`,
+    `ec-3052-durability`); the rest have no EC case at all and must be
+    added as new Rust-level tests -- `ec-3052-durability-under-sigkill`'s
+    own docstring hands AC7 to the TD explicitly ("the TD owes it a new
+    home ... in scope for #3052 and is not verified by any contract in
+    this file"), and AC2/AC3/AC6/AC8 are simply outside both EC cases'
+    scope."""
+
+    return (
+        AcceptanceCriterion(
+            id="AC1",
+            statement=(
+                "durable append throughput rises with connection count "
+                "instead of staying flat, measured with the same harness "
+                "that produced the 85-89 ops/s flat line"
+            ),
+            verified_by=(
+                "EC ec-3052-scaling: scaled/baseline ratio >= "
+                "REQUIRED_RATIO plus the lone-writer floor and the "
+                "barrier-cost ceiling"
+            ),
+        ),
+        AcceptanceCriterion(
+            id="AC2",
+            statement=(
+                "median read latency under 4 concurrent durable writers is "
+                "within one order of magnitude of the 0.11 ms idle "
+                "baseline (currently 45.13 ms, 400x)"
+            ),
+            verified_by=(
+                "new Rust-level read-latency-under-concurrent-writers "
+                "test; not covered by either accepted EC case"
+            ),
+        ),
+        AcceptanceCriterion(
+            id="AC3",
+            statement=(
+                "RSS / logical payload on the durable path is within the "
+                "same order of magnitude as the in-memory path's 1.6x "
+                "(currently 43.4x)"
+            ),
+            verified_by=(
+                "new Rust-level memory-amplification test; not covered by "
+                "either accepted EC case"
+            ),
+        ),
+        AcceptanceCriterion(
+            id="AC4",
+            statement=(
+                "a SIGKILL-then-restart test recovers every acknowledged "
+                "append and no unacknowledged one"
+            ),
+            verified_by=(
+                "EC ec-3052-durability, on the achievable half of the "
+                "wording: every acknowledged append survives, and no "
+                "append the server explicitly refused comes back; that "
+                "EC's own docstring explains why the literal 'no "
+                "unacknowledged one' half is not achievable by any "
+                "correct implementation (a barrier can succeed after the "
+                "response fails to write)"
+            ),
+        ),
+        AcceptanceCriterion(
+            id="AC5",
+            statement=(
+                "a test that appends a deliberately truncated final frame "
+                "recovers all prior records and drops only the torn one"
+            ),
+            verified_by=(
+                "new Rust-level torn-tail recovery test exercising "
+                "recovery_action_for_wal_scan's TRUNCATE_TORN_TAIL branch "
+                "against a real on-disk WAL"
+            ),
+        ),
+        AcceptanceCriterion(
+            id="AC6",
+            statement=(
+                "GET /admin/backup on a journal built through the new "
+                "path is byte-identical to the same journal built through "
+                "the old path"
+            ),
+            verified_by=(
+                "new Rust-level round-trip test; this is WI #3052's "
+                "Required Closure (R7) and is not covered by either "
+                "accepted EC case"
+            ),
+        ),
+        AcceptanceCriterion(
+            id="AC7",
+            statement=(
+                "a fault-injected ENOSPC on the durable path yields 507 "
+                "and sticky degraded read-only, not a silent success"
+            ),
+            verified_by=(
+                "new Rust-level fault-injection test at the commit-"
+                "coordinator boundary, replacing today's injection inside "
+                "the synchronous persist this design deletes "
+                "(server.rs:1671-1714); EC ec-3052-durability's docstring "
+                "explicitly excludes AC7 and hands it to the TD, and R6 "
+                "additionally requires the same treatment for EIO"
+            ),
+        ),
+        AcceptanceCriterion(
+            id="AC8",
+            statement="cargo test -p tape passes",
+            verified_by="cargo test -p tape (aw.toml test_cmd)",
         ),
     )
 
