@@ -705,12 +705,22 @@ MULTIPLY_CLASSIFIED_ID = _CORE_MEMBERS[0][1]
 #: rows, which is the *other* branch of the default-class rule -- `report`
 #: attributes the row count wholly to non-core instead of letting the rows fall
 #: out of both classes. The columns are the legacy header the parser recognizes.
+#:
+#: Every cell is pairwise distinct across the three rows. Two of them used to
+#: share `shipped` and two used to share `none`, which is the fixture-coincidence
+#: shape: a per-row assertion on a column whose values collide is satisfied by a
+#: renderer that mixed those two rows up.
 _LEGACY_ROWS = (
     ("Search Core", "shipped", "none", "#1", "`lumen serve`"),
-    ("Lexical Search", "shipped", "none", "#2", "`lumen serve`"),
+    ("Lexical Search", "partial rollout", "analyzer coverage", "#2", "`lumen index`"),
     ("Security Hardening", "partial", "audit coverage", "#3", "`lumen auth`"),
 )
 LEGACY_ROW_COUNT = len(_LEGACY_ROWS)
+for _column, _label in ((1, "Current State"), (2, "Gaps"), (3, "Active WI"), (4, "Evidence")):
+    assert len({row[_column] for row in _LEGACY_ROWS}) == LEGACY_ROW_COUNT, (
+        f"legacy rows must differ in every column; {_label} collides, and a "
+        f"colliding column cannot tell a per-row renderer from a mixed-up one"
+    )
 LEGACY_TABLE_DOCUMENT = """# Lumen
 
 ## Brief
@@ -1374,6 +1384,36 @@ def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
     # the conclusion of an exhausted search rather than its premise.
 
 
+def assert_migrated_legacy_sections_carry_their_row_content(migrated: str) -> None:
+    """Each legacy row's own cells land in the section it becomes.
+
+    `render_legacy_capability_section` (`capability.rs:9209-9223`) is one format
+    literal that reads five cells off the row. Only the evidence cell was bound;
+    the row's `Current State`, which becomes the section's `Promise`, and its
+    `Gaps`, which becomes the name of the single work root, could each be
+    replaced by a constant with nothing noticing -- so migration could turn three
+    distinct legacy capabilities into three sections describing the same thing.
+
+    Asserted per row against that row's own cells, which is only discriminating
+    because `_LEGACY_ROWS` is pairwise distinct in every column; a colliding
+    column would let a renderer that swapped two rows pass.
+    """
+    for title, state, gaps, _wi, evidence in _LEGACY_ROWS:
+        body = _capability_section_body(migrated, title)
+        assert f"Promise:\n{state}\n" in body, (
+            f"migrated legacy section {title!r} lost its Current State "
+            f"{state!r}; section was:\n{body}"
+        )
+        assert f"| {gaps} | epic |" in body, (
+            f"migrated legacy section {title!r} lost its Gaps {gaps!r} as the "
+            f"name of its work root; section was:\n{body}"
+        )
+        assert f"- {evidence}\n" in body, (
+            f"migrated legacy section {title!r} lost its Evidence {evidence!r}; "
+            f"section was:\n{body}"
+        )
+
+
 def assert_migration_erases_legacy_row_tracker_state(migrated: str) -> None:
     """Format migration drops every legacy row's `Active WI`.
 
@@ -1672,10 +1712,44 @@ SECTION_RELOCATION_WI = {
 assert len(set(SECTION_RELOCATION_WI.values())) == len(_ALL_MEMBERS)
 
 
+#: Each fixture member's own promise text, keyed by title. Pairwise distinct, so
+#: "the section carries its own promise" cannot be satisfied by a renderer that
+#: copied one capability's promise into all of them.
+MEMBER_PROMISE = {member[0]: member[2] for member in _ALL_MEMBERS}
+assert len(set(MEMBER_PROMISE.values())) == len(_ALL_MEMBERS), (
+    "fixture members must carry pairwise-distinct promises"
+)
+
+
+def assert_sections_carry_their_own_promise(
+    migrated: str, titles: tuple[str, ...]
+) -> None:
+    """Every rendered capability section carries its own promise text.
+
+    `render_markdown_capability_section_at_level` (`capability.rs:9036-9038`)
+    writes `Promise:` and then the capability's own promise. The product's own
+    doc comment says everything constituting the promise is carried through
+    untouched; the id, type, surfaces, EC dimensions and gate inventory halves of
+    that were bound, and the promise itself -- the part the sentence is named
+    after -- was not. Replacing that line with a single literal left the gate
+    green while `aw capability migrate` rewrote every capability in the document
+    to say the same thing.
+    """
+    for title in titles:
+        body = _capability_section_body(migrated, title)
+        expected = f"Promise:\n{MEMBER_PROMISE[title]}\n"
+        assert expected in body, (
+            f"section {title!r} did not carry its own promise "
+            f"{MEMBER_PROMISE[title]!r}; section was:\n{body}"
+        )
+
+
 def _section_readme(
     members: tuple[tuple[Any, ...], ...],
     classes: tuple[str | None, ...],
     brief: str,
+    statuses: tuple[str, ...] | None = None,
+    preludes: tuple[str | None, ...] | None = None,
 ) -> str:
     """A README whose capability contract is canonical `###` sections.
 
@@ -1690,10 +1764,17 @@ def _section_readme(
     lose.
     """
     body = ""
-    for member, declared in zip(members, classes):
-        body += _section(member, declared, "###").replace(
+    for index, (member, declared) in enumerate(zip(members, classes)):
+        status = "verified" if statuses is None else statuses[index]
+        section = _section(member, declared, "###", status=status).replace(
             "Root WI: -", f"Root WI: {SECTION_RELOCATION_WI[member[0]]}"
         )
+        prelude = None if preludes is None else preludes[index]
+        if prelude is not None:
+            heading = f"### {member[0]}\n\n"
+            assert section.startswith(heading), section
+            section = heading + prelude + "\n\n" + section[len(heading) :]
+        body += section
     return f"""# Lumen
 
 ## Brief
@@ -1754,6 +1835,234 @@ MIXED_SECTION_README = _section_readme(
     MIXED_SECTION_CLASSES,
     "Lumen README-resident capability contract, all three render groups.",
 )
+
+
+#: Relocation input where the capabilities do not all share one status.
+#:
+#: Every other document in this case renders through
+#: `render_markdown_capability_section_at_level` with `Status: verified`, which
+#: makes three separate rules vacuous at once. The section's own `Status:` field
+#: could be hardcoded to `verified` and nothing would change. So could the
+#: Capability Index's `Impl` and `Verification` columns, because both are derived
+#: from the status (`capability.rs:9273-9306`) and a single status derives a
+#: single pair. And the prelude prose branch (`capability.rs:9016-9019`) was
+#: never entered at all, because no fixture document carried prose between a
+#: capability heading and its first field.
+#:
+#: `blocked` is the one status that changes `Impl`; `candidate` and `auditing`
+#: change `Verification` without changing `Impl`, so the two columns are
+#: falsified independently rather than moving together.
+VARIED_STATUSES = (
+    "blocked",
+    "verified",
+    "candidate",
+    "verified",
+    "auditing",
+    "verified",
+)
+assert len(VARIED_STATUSES) == len(_ALL_MEMBERS)
+#: Exactly one capability carries prose. One rather than all, so "the prelude is
+#: carried" cannot be confused with "some constant prose is emitted everywhere".
+VARIED_PRELUDE_TITLE = _ALL_MEMBERS[1][0]
+VARIED_PRELUDE = (
+    "Ranked retrieval is the promise this project is bought for; the analyzer "
+    "pipeline below is subordinate to it."
+)
+VARIED_STATUS_PRELUDES: tuple[str | None, ...] = tuple(
+    VARIED_PRELUDE if member[0] == VARIED_PRELUDE_TITLE else None
+    for member in _ALL_MEMBERS
+)
+VARIED_STATUS_SECTION_README = _section_readme(
+    _ALL_MEMBERS,
+    (None,) * len(_ALL_MEMBERS),
+    "Lumen README-resident capability contract, statuses not uniform.",
+    statuses=VARIED_STATUSES,
+    preludes=VARIED_STATUS_PRELUDES,
+)
+
+#: What each status derives for the two index columns that read it, restated
+#: from `capability_impl_summary` and `capability_verification_summary`. Restated
+#: rather than imported, because the point is to pin the product's mapping; the
+#: fixture asserts below that the restatement is not degenerate.
+_STATUS_INDEX_COLUMNS = {
+    "verified": ("implemented", "verified"),
+    "blocked": ("blocked", "blocked"),
+    "candidate": ("implemented", "planned"),
+    "auditing": ("implemented", "planned"),
+}
+VARIED_STATUS_INDEX_COLUMNS = {
+    member[0]: _STATUS_INDEX_COLUMNS[status]
+    for member, status in zip(_ALL_MEMBERS, VARIED_STATUSES)
+}
+assert len(set(VARIED_STATUS_INDEX_COLUMNS.values())) >= 3, (
+    "the varied-status shape must derive at least three distinct (Impl, "
+    "Verification) pairs, or a constant column is indistinguishable from a "
+    "derived one"
+)
+assert len({pair[0] for pair in VARIED_STATUS_INDEX_COLUMNS.values()}) > 1
+assert len({pair[1] for pair in VARIED_STATUS_INDEX_COLUMNS.values()}) > 1
+
+
+def assert_relocation_carries_per_capability_status(migrated: str) -> None:
+    """Status, prose, and the two index columns derived from status all survive.
+
+    Three rules in one leg because one document falsifies all three and they
+    share the same cause -- a fixture in which every capability was `verified`.
+
+    - The section's `Status:` field is the capability's own, not a constant.
+    - The Capability Index's `Impl` and `Verification` columns are derived from
+      that status. This is the branch reached when the input carries no index
+      table of its own, which is every relocation input here.
+    - The `Notes` column falls back to the capability's own promise, so it is
+      asserted per capability too; a constant there would otherwise pass.
+    - The one capability carrying prose keeps it, above its first field.
+    """
+    for member, status in zip(_ALL_MEMBERS, VARIED_STATUSES):
+        body = _capability_section_body(migrated, member[0])
+        assert f"Status: {status}\n" in body, (
+            f"relocated section {member[0]!r} lost its status {status!r}; "
+            f"section was:\n{body}"
+        )
+
+    rows = {row[0]: row for row in _index_rows_parsed(migrated)}
+    assert set(rows) == set(VARIED_STATUS_INDEX_COLUMNS), sorted(rows)
+    for title, (implementation, verification) in VARIED_STATUS_INDEX_COLUMNS.items():
+        row = rows[title]
+        assert row[2] == implementation, (
+            f"index row {title!r} Impl column: expected {implementation!r} for "
+            f"its status, got {row[2]!r}"
+        )
+        assert row[3] == verification, (
+            f"index row {title!r} Verification column: expected "
+            f"{verification!r} for its status, got {row[3]!r}"
+        )
+        assert row[6] == MEMBER_PROMISE[title], (
+            f"index row {title!r} Notes column must fall back to that "
+            f"capability's own promise, got {row[6]!r}"
+        )
+
+    prelude_body = _capability_section_body(migrated, VARIED_PRELUDE_TITLE)
+    assert prelude_body.startswith(f"\n{VARIED_PRELUDE}\n"), (
+        f"relocated section {VARIED_PRELUDE_TITLE!r} lost its prose prelude; "
+        f"section was:\n{prelude_body}"
+    )
+    assert migrated.count(VARIED_PRELUDE) == 1, (
+        "the prelude belongs to exactly one capability; emitting it more than "
+        "once would mean prose is being copied rather than carried"
+    )
+
+
+#: Per-capability Capability Index cells, pairwise distinct in every column.
+#:
+#: `_index_rows` emits the same five trailing cells for every member, so a
+#: renderer that dropped `capability.index_summary` and printed one constant row
+#: per capability was indistinguishable from one that carried each row through.
+#: Five of the seven columns were unbound at once.
+#:
+#: These values are deliberately not all drawn from the token vocabularies the
+#: rest of the document uses. `parse_capability_index_summaries`
+#: (`capability.rs:9316-9385`) stores each cell as free text and the renderer
+#: prints it back, so the contract is round-trip, not normalisation; asserting it
+#: with values no enum could supply is what separates "carried" from "recomputed
+#: and coincidentally equal".
+VARIED_INDEX_CELLS = {
+    "Search Core": ("implemented", "verified", "conformance", "ready", "domain core"),
+    "Lexical Search": ("partial", "planned", "load", "pilot", "analyzer rollout"),
+    "Standard Operational Endpoints": (
+        "planned",
+        "blocked",
+        "smoke",
+        "not_ready",
+        "awaiting probe contract",
+    ),
+    "Kubernetes-Native Deployment": (
+        "blocked",
+        "deferred",
+        "chaos",
+        "staged",
+        "manifest packaging gap",
+    ),
+    "Security Hardening": (
+        "prototype",
+        "contract-only",
+        "soak",
+        "ready-with-caveats",
+        "identity hardening in review",
+    ),
+    "Contract Gate Wiring": (
+        "staged",
+        "smoke-only",
+        "functional",
+        "blocked",
+        "gate inventory sync pending",
+    ),
+}
+assert set(VARIED_INDEX_CELLS) == {member[0] for member in _ALL_MEMBERS}
+for _column in range(5):
+    assert len({cells[_column] for cells in VARIED_INDEX_CELLS.values()}) == len(
+        _ALL_MEMBERS
+    ), f"Capability Index column {_column} must be pairwise distinct across members"
+
+
+def _varied_index_document() -> str:
+    """`UNCLASSIFIED_DOCUMENT`'s shape, with the index rows made distinguishable.
+
+    Format migration, not relocation: this input already carries a `Capability
+    Index`, so every capability gets an `index_summary` and the renderer takes
+    the carried-through branch rather than the derived-from-status fallback.
+    `Maturity` and `Production` are reachable *only* on this branch -- the
+    fallback derives them from a verification contract this fixture's
+    capabilities do not declare and from `release_scope`, which is false for
+    every capability in a document with no index table.
+    """
+    rows = "\n".join(
+        "| {title} | - | {impl} | {verification} | {maturity} | {production} | {notes} |".format(
+            title=member[0],
+            impl=VARIED_INDEX_CELLS[member[0]][0],
+            verification=VARIED_INDEX_CELLS[member[0]][1],
+            maturity=VARIED_INDEX_CELLS[member[0]][2],
+            production=VARIED_INDEX_CELLS[member[0]][3],
+            notes=VARIED_INDEX_CELLS[member[0]][4],
+        )
+        for member in _ALL_MEMBERS
+    )
+    body = "".join(_section(member, None, "###") for member in _ALL_MEMBERS)
+    return f"""# Lumen
+
+## Brief
+
+Lumen reference fixture, pre-migration: the index rows differ per capability.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+{rows}
+
+{body}"""
+
+
+VARIED_INDEX_DOCUMENT = _varied_index_document()
+
+
+def assert_migration_carries_every_index_column(migrated: str) -> None:
+    """Each capability's own five index cells survive the rewrite.
+
+    Not "an index table is emitted" and not "the row count is right" -- the
+    columns other than `Capability` and `Root WI` were rewritable to constants
+    without failing anything.
+    """
+    rows = {row[0]: row for row in _index_rows_parsed(migrated)}
+    assert set(rows) == set(VARIED_INDEX_CELLS), sorted(rows)
+    columns = ("Impl", "Verification", "Maturity", "Production", "Notes")
+    for title, expected in VARIED_INDEX_CELLS.items():
+        actual = tuple(rows[title][2:7])
+        assert actual == expected, (
+            f"index row {title!r} lost its own cells: expected "
+            f"{dict(zip(columns, expected))}, got {dict(zip(columns, actual))}"
+        )
 
 
 def _mixed_titles_in_group_order(order: tuple[str | None, ...]) -> tuple[str, ...]:
@@ -1949,6 +2258,21 @@ def assert_relocation_falls_back_to_the_first_work_root_wi(migrated: str) -> Non
             f"{shadowed} belongs to a second work root and must not be chosen "
             f"as any capability's Root WI"
         )
+    # The work-root table's own `WI` cell, which is a different assignment from
+    # the field the fallback feeds (`capability.rs:9074` versus `:9023`).
+    # Asserting the fallback alone left `markdown_cell(&row.wi)` rewritable to
+    # `-`: the field still rendered, because the fallback had already read the
+    # row before the table was printed. The shadowed WI is asserted *present*
+    # here and *absent* as a `Root WI:` above -- the row it came from must
+    # survive even though it lost the election.
+    for member in _ALL_MEMBERS:
+        body = _capability_section_body(migrated, member[0])
+        for work_root in member[4]:
+            row = f"| {work_root} | change | {WORK_ROOT_WI[work_root]} |"
+            assert row in body, (
+                f"relocated section {member[0]!r} lost its work-root row for "
+                f"{work_root!r}; expected {row!r}, section was:\n{body}"
+            )
 
 
 def assert_relocation_renders_every_capability_section(
