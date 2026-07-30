@@ -307,8 +307,12 @@ if [[ "$acceptance_mode" == "tape" ]]; then
     -p tape --bin tape --features "operator backup"
   TAPE_CLI="${TAPE_CLI:-$REPO_ROOT/target/debug/tape}"
 else
+  # `delegated-auth` alongside `operator` (#2879): the auth leg drives `lumen
+  # query --client-sa`, whose TokenRequest minter is behind that feature. A CLI
+  # built without it refuses the flag rather than minting, so the auth leg would
+  # fail on a build flag instead of on the contract it exists to check.
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
-    -p lumen --bin lumen --features operator
+    -p lumen --bin lumen --features "operator delegated-auth"
   LUMEN_CLI="${LUMEN_CLI:-$REPO_ROOT/target/debug/lumen}"
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
     -p sift --bin sift
@@ -539,6 +543,12 @@ else
     export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance.json"
     export LUMEN_ACCEPTANCE_PROVENANCE="current-run"
   fi
+
+  # Request authorization is its own proof and runs on every pass, including
+  # one reusing a prior persistence/backup/split proof: those legs all opt out
+  # of auth, so nothing they established says anything about who may call.
+  "$SCRIPT_DIR/verify-lumen-auth.sh"
+  export LUMEN_AUTH_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-auth-acceptance.json"
 
   # Only a successful Lumen phase starts the Sift data plane. The collector then
   # reads Lumen's structured stdout from Standard GKE node logs and the proof

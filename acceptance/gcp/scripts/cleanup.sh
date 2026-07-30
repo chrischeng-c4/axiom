@@ -90,7 +90,10 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
     # that bills forever with nothing left to point at it. Every namespace the
     # run can create belongs in this list, including the ones a passing run
     # tears down itself.
-    namespaces=(lumen lumen-system sift sift-system lumen-fleet-a lumen-fleet-b)
+    # lumen-auth-client holds the client ServiceAccount the auth leg (#2879)
+    # puts in a *second* namespace to prove a SubjectAccessReview scoped to the
+    # serving namespace does not honour a grant written elsewhere.
+    namespaces=(lumen lumen-system sift sift-system lumen-fleet-a lumen-fleet-b lumen-auth-client)
   fi
   # The fleet controller reconciles cluster-wide, so it must lose its API
   # before its target namespaces start terminating; otherwise a pass that
