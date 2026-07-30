@@ -221,9 +221,59 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         )
         lumen_reference.assert_root_field_conflict_is_rejected(conflict)
 
+        # The duplicate-root rule is the one whose blocker names neither the
+        # field nor the class, so it is what proves the blocker filter subtracts
+        # a pinned environment instead of admitting anticipated wordings.
+        duplicate_root = _lumen_report(
+            root, cap_path, lumen_reference.DUPLICATE_ROOT_DOCUMENT
+        )
+        lumen_reference.assert_duplicate_root_is_rejected(duplicate_root)
+
+        # Migration is the only path that has to *derive* the class instead of
+        # reading one. Without this leg the derivation rule could be inverted
+        # and every other assertion here would still pass, because every other
+        # document states its own answer.
+        cap_path.write_text(
+            lumen_reference.UNCLASSIFIED_DOCUMENT, encoding="utf-8"
+        )
+        final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
+        migrated_text = cap_path.read_text(encoding="utf-8")
+        lumen_reference.assert_migration_derives_the_split(migrated_text)
+        migrated_report = final_json(
+            run_aw(
+                root,
+                "capability",
+                "report",
+                "--project",
+                "demo",
+                "--skip-issue-inventory",
+            )
+        )
+        # The migrated document must be one the checker accepts, and must carry
+        # the same attribution as the hand-classified reference.
+        lumen_reference.assert_feature_class_attribution(migrated_report)
+
+        # Migration fills silence only. A class the author already stated has to
+        # survive even where the derivation would have chosen the other one,
+        # otherwise migration is a rewrite of the contract rather than a
+        # completion of it.
+        cap_path.write_text(
+            lumen_reference.PARTIALLY_CLASSIFIED_DOCUMENT, encoding="utf-8"
+        )
+        final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
+        preserved_text = cap_path.read_text(encoding="utf-8")
+        lumen_reference.assert_migration_preserves_declared_class(preserved_text)
+
     after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
     lumen_reference.assert_production_contract_unmutated(before, after)
-    return {"report": report, "baseline_core": baseline_core, "conflict": conflict}
+    return {
+        "report": report,
+        "baseline_core": baseline_core,
+        "conflict": conflict,
+        "duplicate_root": duplicate_root,
+        "migrated": migrated_report,
+        "preserved": preserved_text,
+    }
 
 
 def _manual_snapshot() -> dict[str, Any]:
@@ -295,6 +345,10 @@ def verify(case_id: str) -> list[str]:
                 "the Lumen reference fixture attributes its domain search promises to core and every archetype service baseline to non-core, with each per-class pair summing to its retained total",
                 "each of the four trait-derived baselines is rejected as a blocker when declared core, naming that exact capability",
                 "a Feature Class field contradicting its containing feature root is rejected as a blocker",
+                "no document raises a blocker the fixture did not name, because document findings are separated from the scratch environment by subtraction rather than by a whitelist of wordings",
+                "a feature root declared twice is rejected as a blocker whose message names neither the field nor the class, which is what the subtractive filter is required to see",
+                "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
+                "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
