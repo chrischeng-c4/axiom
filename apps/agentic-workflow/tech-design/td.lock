@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-29T13:35:15.426354+00:00"
-digest = "sha256:b2189c23236087b4860177a64a1d3a76a82bb1f67a555bd7d4cf731241207df9"
-source_digest = "sha256:b2189c23236087b4860177a64a1d3a76a82bb1f67a555bd7d4cf731241207df9"
-ir_digest = "sha256:f09a74d2878dae10e22897a3d13217b1e0cad63dc6ceb139a469643c2831e0d7"
+generated_at = "2026-07-30T08:22:59.689805+00:00"
+digest = "sha256:9a49780d5ca4c98b4f1cc43d8f6ceeb1a7bb3933beb32e2f1fcf5dd496406d0d"
+source_digest = "sha256:9a49780d5ca4c98b4f1cc43d8f6ceeb1a7bb3933beb32e2f1fcf5dd496406d0d"
+ir_digest = "sha256:25ede661130ff6cbfc01403b62853a65dcaccd66edb518378284c47bbfec6210"
 
 [[files]]
 path = "pyproject.toml"
@@ -3941,11 +3941,11 @@ digest = "sha256:6b56eeedd79afdefe637666483e5a8eb793c901816630ca4517aaf590bda56f
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/aw_core_client.py"
-digest = "sha256:c39a00b8bb29e027fa70fc21b41948213947080a18e2e4ed48351461287293b0"
+digest = "sha256:8378f0a348a6cff688da16739d98544446473099a6e814842fc85368b420d370"
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/capability_control_plane.py"
-digest = "sha256:8e5ce817f14e94eb807329944649d5f6b57f5d239281a501bb3402e0401efecf"
+digest = "sha256:c44dc865f384e2c4c755252ce582e03a0ae1858787c77d507ce6b3a604e4eeda"
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/existing_project_standardization.py"
@@ -3957,19 +3957,19 @@ digest = "sha256:c43fa1e8255eff468149dec98e4ad9afebbd55b15774edad0268460863c6059
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/project_local_td_and_ec_gates.py"
-digest = "sha256:239b3754c0b6e327f701f127def5347c69e70363f87abd3d051964f5b109da06"
+digest = "sha256:27033c95afb8c71c7d89f262723aa8db810edc27f60e7130d042775c92093e3b"
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/td_cb_lifecycle_automation.py"
-digest = "sha256:1418a2a0e3b2f7888ed582870d9e691330cfa5479ece4dbe172cd050174c3c08"
+digest = "sha256:d5d93ccdbdfab62efc927df493cd4dd35d763910de650a8b6291566c6b113d2d"
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/work_item_planning.py"
-digest = "sha256:9e367000b8863dd4ecd6dfab85eb2709c1a6000143e48ab2984230f0f99f2be9"
+digest = "sha256:3b8cf3e8dad497b174b253661b78234a9bf600c34434c1fce3f18222b727e0cf"
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/workflow_root_runner.py"
-digest = "sha256:f23885899deef520a6a116234c56186d6a5c868f4b3be65dd3f15f2a1023364a"
+digest = "sha256:a7b51d8e60b5fa38f0d91b70c6285376b487a40ede00bc0b9544a60ed83f149d"
 
 [[files]]
 path = "src/agentic_workflow/work_items/coordination_authority.py"
