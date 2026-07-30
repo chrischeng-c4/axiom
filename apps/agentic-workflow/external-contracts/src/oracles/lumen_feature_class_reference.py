@@ -302,6 +302,125 @@ service baselines are non-core.
 #: The reference document: both roots present, every class declared.
 REFERENCE_DOCUMENT = _document(_CORE_MEMBERS, _NON_CORE_MEMBERS)
 
+
+def _fail_claim_gate(document: str, claim: str) -> str:
+    """Make one claim's gate command fail, leaving the document otherwise intact.
+
+    The gate cell is the only thing that changes, so the claim still exists, is
+    still `implemented`, and is still owned by the same capability -- it is
+    unverified rather than absent, which is the state the readiness split has to
+    attribute.
+    """
+    row = f"| {claim} | change | - | implemented | verified | smoke | "
+    assert document.count(row + "`true` |") == 1, claim
+    return document.replace(row + "`true` |", row + "`false` |", 1)
+
+
+#: The eight operands of the `--human` readiness line, in the order it renders
+#: them. Named once because the non-collision property below quantifies over
+#: every pair of them.
+READINESS_OPERAND_KEYS = (
+    "core_verified_count",
+    "core_capability_count",
+    "core_verified_claim_count",
+    "core_claim_count",
+    "non_core_verified_count",
+    "non_core_capability_count",
+    "non_core_verified_claim_count",
+    "non_core_claim_count",
+)
+
+
+def _partially_verified_document(claims: tuple[str, ...]) -> str:
+    document = REFERENCE_DOCUMENT
+    for claim in claims:
+        document = _fail_claim_gate(document, claim)
+    assert document.count("`false`") == len(claims)
+    return document
+
+
+#: Documents in which some claims are unverified, together with the exact
+#: readiness operands each must produce.
+#:
+#: Every other `--verify` leg in this module reads `REFERENCE_DOCUMENT`, where
+#: each class is fully verified and so `verified` and `total` are the same
+#: integer in all four dimensions. On such a report an implementation that
+#: rendered or accumulated a *total* where a verified count belongs is
+#: indistinguishable from a correct one, which is a rule left unfalsified -- the
+#: same reasoning the human leg already applied across the two classes, never
+#: applied within one.
+#:
+#: There are two shapes rather than one because no single shape can make all
+#: eight operands pairwise distinct: the four totals are fixed at 2, 3, 4 and 5
+#: by the fixture's membership, and the four verified counts must then reuse
+#: values from that range. Two shapes whose collisions do not overlap achieve
+#: together what neither achieves alone, which the assertion below enforces
+#: rather than leaves to inspection.
+PARTIAL_VERIFICATION_SHAPES = (
+    (
+        "one-claim-in-each-class",
+        ("analyzer-pipeline", "gate-inventory-sync"),
+        ("lexical-search", "ec-gates-configured"),
+        (1, 2, 2, 3, 3, 4, 4, 5),
+    ),
+    (
+        "clustered-in-core-and-spread-in-non-core",
+        (
+            "bm25-ranking",
+            "analyzer-pipeline",
+            "manifest-packaging",
+            "operational-endpoint-set",
+        ),
+        (
+            "lexical-search",
+            "lexical-search",
+            "standard-operational-endpoints",
+            "kubernetes-native-deployment",
+        ),
+        (1, 2, 1, 3, 2, 4, 3, 5),
+    ),
+)
+
+PARTIALLY_VERIFIED_DOCUMENTS = {
+    name: _partially_verified_document(claims)
+    for name, claims, _failing, _operands in PARTIAL_VERIFICATION_SHAPES
+}
+
+
+def _colliding_operand_pairs(operands: tuple[int, ...]) -> set[frozenset[str]]:
+    return {
+        frozenset((left, right))
+        for index, left in enumerate(READINESS_OPERAND_KEYS)
+        for right in READINESS_OPERAND_KEYS[index + 1 :]
+        if operands[index] == operands[READINESS_OPERAND_KEYS.index(right)]
+    }
+
+
+#: No operand may be zero: a zero renders identically to any other zero, so a
+#: transposition confined to zeroed operands is invisible.
+assert all(
+    value > 0 for _n, _c, _f, operands in PARTIAL_VERIFICATION_SHAPES for value in operands
+)
+#: Within each shape, every verified count must fall short of its own total, or
+#: the line could pair a total with itself.
+assert all(
+    operands[0] < operands[1]
+    and operands[2] < operands[3]
+    and operands[4] < operands[5]
+    and operands[6] < operands[7]
+    for _n, _c, _f, operands in PARTIAL_VERIFICATION_SHAPES
+)
+#: And no pair of operands may agree in *every* shape. A pair that agrees
+#: everywhere the line is asserted is a pair the line could swap undetected --
+#: not only across the two classes but across dimensions, which is how a
+#: capability count could be rendered where a claim count belongs.
+assert not set.intersection(
+    *(
+        _colliding_operand_pairs(operands)
+        for _n, _c, _f, operands in PARTIAL_VERIFICATION_SHAPES
+    )
+), "the partial-verification shapes share a colliding operand pair"
+
 #: Falsifier: the non-core root deleted outright. Every non-core capability is
 #: then stranded under the surviving root, so the missing-root finding arrives
 #: with one field/root contradiction per stranded capability. That co-occurrence
@@ -403,6 +522,48 @@ def baseline_declared_core_document(cap_id: str) -> str:
     promoted = next(member for member in _NON_CORE_MEMBERS if member[1] == cap_id)
     remaining = tuple(member for member in _NON_CORE_MEMBERS if member[1] != cap_id)
     return _document(_CORE_MEMBERS + (promoted,), remaining)
+
+
+#: Baselines that belong to only one of the two registries the baseline rule
+#: reads. `trait_derived_baseline_ids` is the union of
+#: `doc_mirror::CAPABILITY_FAMILIES` baselines and `doc_mirror::TRAITS`
+#: baselines, and every id in `NON_CORE_IDS` above sits in *both* -- so a
+#: fixture that names only Lumen's own baselines cannot tell the union from
+#: either half, and an implementation that dropped one registry entirely would
+#: keep rejecting all four while waving through the ids only the dropped half
+#: supplies. `agent-task-navigation` is family-only; the other two are
+#: trait-only. Both trait-only ids are kept rather than one, so that moving a
+#: single id between the registries cannot silently collapse this coverage back
+#: to what it was.
+REGISTRY_SPANNING_BASELINE_IDS = (
+    "agent-task-navigation",
+    "developer-agent-experience",
+    "stateful-service-workload",
+)
+assert not set(REGISTRY_SPANNING_BASELINE_IDS) & set(NON_CORE_IDS + CORE_IDS), (
+    "a registry-spanning baseline id also appears in the fixture's own "
+    "membership, so it would not extend the rule beyond what NON_CORE_IDS covers"
+)
+
+
+def registry_spanning_baseline_core_document(cap_id: str) -> str:
+    """Falsifier 1 again, on a baseline this fixture does not otherwise carry.
+
+    The capability is added under the core root rather than promoted out of the
+    non-core root, because Lumen does not own it: the claim under test is about
+    the baseline registry, not about Lumen's membership. Every other capability
+    keeps its correct class, so the single expected blocker is this rule and not
+    a side effect of rearranging the document.
+    """
+    title = " ".join(word.capitalize() for word in cap_id.split("-"))
+    member = (
+        title,
+        cap_id,
+        f"Carry the {title.lower()} archetype baseline.",
+        "lumen serve",
+        (f"{cap_id}-work-root",),
+    )
+    return _document(_CORE_MEMBERS + (member,), _NON_CORE_MEMBERS)
 
 
 #: Falsifier 2 -- the field and the containing root disagree. An implementation
@@ -803,19 +964,36 @@ def assert_human_report_renders_the_split(stdout: str, report: dict[str, Any]) -
         "the reference fixture must keep the two claim counts different, or a "
         "transposition of the claim operands would pass"
     )
-    # Four of the line's eight operands are verified counts. On a report with no
-    # gate execution they are all zero, so a transposition confined to them is
-    # invisible and this leg silently covers half of what its name claims. The
-    # caller must drive it at least once on a `--verify` report; this guard is
-    # what forces that, rather than trusting the leg order to stay correct.
-    assert report["verified_count"] > 0, (
-        "assert_human_report_renders_the_split must be driven on a report whose "
-        "verified counts are populated, or its verified operands are all zero "
-        "and a transposition among them cannot be detected"
-    )
+    # No operand may be zero. Four of the eight are verified counts, and on a
+    # report with no gate execution they are all zero, so a transposition
+    # confined to them is invisible and this leg would silently cover half of
+    # what its name claims. The caller must drive it on a `--verify` report;
+    # this guard is what forces that, rather than trusting the leg order to
+    # stay correct.
+    for key in READINESS_OPERAND_KEYS:
+        assert report[key] > 0, (
+            f"assert_human_report_renders_the_split must be driven on a report "
+            f"whose eight readiness operands are all populated; `{key}` is "
+            f"{report[key]}, and a transposition involving a zero cannot be "
+            f"detected"
+        )
     assert report["core_verified_count"] != report["non_core_verified_count"], report
     assert (
         report["core_verified_claim_count"] != report["non_core_verified_claim_count"]
+    ), report
+    # And each verified count must fall short of its own total. Distinguishing
+    # the two *classes* says nothing about whether the line pairs each verified
+    # count with the right denominator: on a fully verified report the two are
+    # the same integer, so a line that rendered `core=2/2` by reading the total
+    # twice renders exactly what a correct line renders. This is the guard that
+    # forces the caller onto a partially verified report.
+    assert report["core_verified_count"] < report["core_capability_count"], report
+    assert report["core_verified_claim_count"] < report["core_claim_count"], report
+    assert (
+        report["non_core_verified_count"] < report["non_core_capability_count"]
+    ), report
+    assert (
+        report["non_core_verified_claim_count"] < report["non_core_claim_count"]
     ), report
 
 
@@ -2203,3 +2381,45 @@ def assert_verified_split_is_non_degenerate(report: dict[str, Any]) -> None:
     ), report
     assert report["verified_count"] == report["capability_count"], report
     assert report["verified_claim_count"] == report["claim_count"], report
+
+
+def assert_partial_verification_is_attributed_per_class(
+    report: dict[str, Any],
+    name: str,
+    failing_capabilities: tuple[str, ...],
+    operands: tuple[int, ...],
+) -> None:
+    """An unverified claim is subtracted from its own class, not from the other.
+
+    The leg above reads a document where everything verifies, so it can only
+    check that the verified counts equal the totals -- an implementation that
+    attributed an unverified capability to the wrong class has nothing to get
+    wrong there. Here two classes are each short by a different amount, and the
+    eight operands are pinned to exact integers, so a claim charged to the wrong
+    class moves two of them.
+    """
+    for key, value in zip(READINESS_OPERAND_KEYS, operands, strict=True):
+        assert report[key] == value, (name, key, report[key], value, report)
+
+    # The per-class figures must still exhaust the report-level ones, so a
+    # capability cannot go unverified in its class and verified in the total.
+    assert (
+        report["core_verified_count"] + report["non_core_verified_count"]
+        == report["verified_count"]
+    ), report
+    assert (
+        report["core_verified_claim_count"] + report["non_core_verified_claim_count"]
+        == report["verified_claim_count"]
+    ), report
+    # Non-vacuity for those two sums: unlike the fully verified leg, the totals
+    # here are strictly larger, so neither sum can be satisfied by an
+    # implementation that simply copies the totals across.
+    assert report["verified_count"] < report["capability_count"], report
+    assert report["verified_claim_count"] < report["claim_count"], report
+
+    # And the failure is reported against the capability that owns the claim,
+    # one message per unverified claim in document order. Without this, the
+    # counts above could be right while the diagnostic named another capability.
+    assert document_blockers(report) == [
+        f"verification failed for {cap_id}: false" for cap_id in failing_capabilities
+    ], (name, report["blockers"])
