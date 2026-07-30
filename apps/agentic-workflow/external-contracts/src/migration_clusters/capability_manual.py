@@ -225,6 +225,19 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 baseline_core[cap_id], cap_id
             )
 
+        # Every id above sits in both registries the rule unions, so the four
+        # legs cannot tell the union from either half. These ids sit in exactly
+        # one registry each, which is what makes dropping a registry observable.
+        for cap_id in lumen_reference.REGISTRY_SPANNING_BASELINE_IDS:
+            baseline_core[cap_id] = _lumen_report(
+                root,
+                cap_path,
+                lumen_reference.registry_spanning_baseline_core_document(cap_id),
+            )
+            lumen_reference.assert_baseline_core_is_rejected(
+                baseline_core[cap_id], cap_id
+            )
+
         conflict = _lumen_report(
             root, cap_path, lumen_reference.ROOT_FIELD_CONFLICT_DOCUMENT
         )
@@ -303,27 +316,59 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
 
         # The human rendering of the split, which is built from its own format
         # string and which every other leg here is blind to because they all
-        # read the JSON envelope. Driven on the verified report for the same
-        # reason: four of that line's eight operands are verified counts, so on
-        # an unverified report a transposition among them renders identically.
-        human = run_aw(
-            root,
-            "capability",
-            "report",
-            "--project",
-            "demo",
-            "--skip-issue-inventory",
-            "--verify",
-            "--human",
-        )
-        lumen_reference.assert_human_report_renders_the_split(human.stdout, verified)
+        # read the JSON envelope. Driven on partially verified reports, not on
+        # the fully verified one: there `verified` and `total` are the same
+        # integer in every dimension, so a line that read a total where a
+        # verified count belongs renders exactly what a correct line renders.
+        # Two shapes, because no single one makes all eight operands pairwise
+        # distinct -- the reason is stated where the shapes are defined.
+        partial = {}
+        for (
+            name,
+            _claims,
+            failing,
+            operands,
+        ) in lumen_reference.PARTIAL_VERIFICATION_SHAPES:
+            cap_path.write_text(
+                lumen_reference.PARTIALLY_VERIFIED_DOCUMENTS[name], encoding="utf-8"
+            )
+            partial[name] = final_json(
+                run_aw(
+                    root,
+                    "capability",
+                    "report",
+                    "--project",
+                    "demo",
+                    "--skip-issue-inventory",
+                    "--verify",
+                )
+            )
+            lumen_reference.assert_partial_verification_is_attributed_per_class(
+                partial[name], name, failing, operands
+            )
+            human = run_aw(
+                root,
+                "capability",
+                "report",
+                "--project",
+                "demo",
+                "--skip-issue-inventory",
+                "--verify",
+                "--human",
+            )
+            lumen_reference.assert_human_report_renders_the_split(
+                human.stdout, partial[name]
+            )
+
+        # The reference document is what the legs below expect at `cap_path`.
+        cap_path.write_text(lumen_reference.REFERENCE_DOCUMENT, encoding="utf-8")
 
         # A third rendering of the same split, on a third surface. `aw capability
         # next` builds its `coverage` object from its own JSON literal rather
         # than from the report serializer, so it can zero or transpose a field
         # while every report-reading leg above stays green -- which is the exact
         # argument the `--human` leg makes, left unapplied here until now. The
-        # reference document is still at `cap_path` from the verified leg.
+        # reference document was restored to `cap_path` above.
         next_coverage = final_json(
             run_aw(
                 root,
@@ -711,6 +756,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "fixed_point": fixed_point_text,
         "preserved": preserved_text,
         "verified": verified,
+        "partial": partial,
         "relocated": relocated_report,
         "next_coverage": next_coverage,
         "placed_core": placed_core,
@@ -792,6 +838,7 @@ def verify(case_id: str) -> list[str]:
                 "the sweep projection reports the same capability and claim counts and the same status as the report",
                 "the Lumen reference fixture attributes its domain search promises to core and every archetype service baseline to non-core, with the capability and claim pairs each summing to their retained total",
                 "each of the four trait-derived baselines is rejected as a blocker when declared core, naming that exact capability",
+                "the same rejection holds for baselines the fixture does not otherwise carry, chosen to span both registries the baseline set unions -- one supplied only by the capability families and two supplied only by the archetype traits -- so deleting either registry is observable rather than masked by ids that both supply",
                 "a Feature Class field contradicting its containing feature root is rejected as a blocker",
                 "no document raises a blocker the fixture did not name, because document findings are separated from the scratch environment by subtraction rather than by a whitelist of wordings",
                 "a feature root declared twice is rejected as a blocker whose message names neither the field nor the class, which is what the subtractive filter is required to see",
@@ -800,7 +847,8 @@ def verify(case_id: str) -> list[str]:
                 "a feature root outside the closed pair is named as unknown rather than silently accepted, and is distinguished from the missing-root case by raising two blockers instead of five",
                 "a Feature Class value outside the closed pair fails the command outright rather than resolving to non-core the way an undeclared class legitimately does",
                 "aw capability report --verify attributes the verified capability and claim counts per class as well, on a report where those four fields are populated and the two classes differ in both, so the half of the split that is identically zero on an unverified report is falsifiable",
-                "aw capability report --human renders the same core/non-core split the verified JSON envelope reports, with all eight operands non-zero and the two classes differing in every dimension so no transposition among them can pass",
+                "aw capability report --human renders the same core/non-core split the JSON envelope of the same run reports, driven on partially verified reports where each of the eight operands is non-zero, the two classes differ in every dimension, and every verified count falls strictly short of its own total, so neither a transposition across the classes nor a total rendered in place of its own verified count can pass",
+                "an unverified claim is subtracted from its own class rather than from the other, asserted as the eight readiness operands pinned to exact integers across two partial-verification shapes whose per-operand collisions do not overlap, so no pair of operands agrees in every document the split is asserted on, and the failure is reported against the capability that owns each unverified claim",
                 "a document that declares no feature class at all raises no blocker and is attributed wholly to non-core, capabilities and claims alike, which is the default rule no self-describing document can exercise",
                 "a legacy capability table is diagnosed as legacy and its rows are attributed wholly to non-core rather than falling out of both classes, which is the branch of that default rule where no capability section parses at all",
                 "aw capability migrate derives the split for the rows of a legacy table through its own branch, placing the authored promises under Core Features and the trait-derived baseline under Non-Core Features, and the migrated document is accepted by a follow-up report with no blocker",
