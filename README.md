@@ -18,6 +18,7 @@ details.
 | [tape](apps/tape/README.md) | Tape is the topic replay journal in the Axiom service stack. |
 | [defer](apps/defer/README.md) | Defer is the Cloud Tasks-like delayed push-queue dispatch service in the Axiom stack. |
 | [cube](apps/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
+| [mesh](apps/mesh/README.md) | Mesh is the relationship/property-graph service in the Axiom service stack. |
 | [beam](apps/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
 | [arena](apps/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
 | [guard](apps/guard/README.md) | Security posture gate for the cclab ecosystem. |

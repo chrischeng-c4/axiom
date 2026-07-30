@@ -102,6 +102,7 @@ members = [
     "apps/keep",
     "examples/client-transport-policy",
     "apps/beam",
+    "apps/mesh",
 ]
 resolver = "2"
 
