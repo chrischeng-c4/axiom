@@ -1976,7 +1976,10 @@ fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()>
 /// `### Capability Index` -- the project-CAPABILITIES required headings --
 /// since the file itself is the contract, not a pointer to one.
 fn render_empty_capability_readme(title: &str, brief: &str, readme_resident: bool) -> String {
-    let capabilities_section = "## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n";
+    let capabilities_section = format!(
+        "## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n\n{}",
+        render_empty_capability_feature_roots()
+    );
     if readme_resident {
         format!(
             "# {title}\n\n## Brief\n\n{brief}\n\n## Contributing\n\nProject-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md). Add that file's `## Brief` here after confirming the project-local rules.\n\n## Capability Contract\n\nThe full project capability contract lives in [CAPABILITIES.md](CAPABILITIES.md). Add that file's `## Brief` here after confirming the capability contract.\n\n{capabilities_section}"
@@ -1984,6 +1987,19 @@ fn render_empty_capability_readme(title: &str, brief: &str, readme_resident: boo
     } else {
         format!("# {title}\n\n## Brief\n\n{brief}\n\n{capabilities_section}")
     }
+}
+
+/// The two canonical feature roots, empty, with a one-line statement of what
+/// belongs under each. Emitted by `capability init` so a fresh document already
+/// carries the canonical shape instead of a flat capability list.
+fn render_empty_capability_feature_roots() -> String {
+    format!(
+        "### {}\n\n{}\n\n### {}\n\n{}\n",
+        CapabilityFeatureClass::Core.root_heading(),
+        "Capabilities that are part of what this product fundamentally is.",
+        CapabilityFeatureClass::NonCore.root_heading(),
+        "Supporting and trait-derived capabilities. Archetype baselines always belong here.",
+    )
 }
 
 fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Result<()> {
@@ -8366,8 +8382,31 @@ fn render_capability_registry(document: &CapabilityDocument, project: &str) -> S
             out.push_str(&render_legacy_capability_section(row));
         }
     } else {
+        // Classified capabilities render under their canonical feature root, one
+        // heading level deeper. Unclassified ones keep their current top-level
+        // position: choosing a root for them would be a silent classification,
+        // and rejecting them is #3061's gate, not this one's.
+        for class in [
+            CapabilityFeatureClass::Core,
+            CapabilityFeatureClass::NonCore,
+        ] {
+            let members = document
+                .capabilities
+                .iter()
+                .filter(|capability| capability.feature_class == Some(class))
+                .collect::<Vec<_>>();
+            if members.is_empty() {
+                continue;
+            }
+            out.push_str(&format!("### {}\n\n", class.root_heading()));
+            for capability in members {
+                out.push_str(&render_markdown_capability_section_at_level(capability, 4));
+            }
+        }
         for capability in &document.capabilities {
-            out.push_str(&render_markdown_capability_section(capability));
+            if capability.feature_class.is_none() {
+                out.push_str(&render_markdown_capability_section(capability));
+            }
         }
     }
     out
@@ -8701,8 +8740,22 @@ fn render_capability_index(document: &CapabilityDocument, project: &str) -> Stri
 }
 
 fn render_markdown_capability_section(capability: &CapabilitySection) -> String {
+    render_markdown_capability_section_at_level(capability, 3)
+}
+
+/// Render one capability contract with its heading at `level`. Top-level
+/// capabilities use 3; capabilities nested under a feature root use 4. The
+/// parser is heading-level agnostic, so only the document's shape changes.
+fn render_markdown_capability_section_at_level(
+    capability: &CapabilitySection,
+    level: usize,
+) -> String {
     let mut out = String::new();
-    out.push_str(&format!("### {}\n\n", capability.title.trim()));
+    out.push_str(&format!(
+        "{} {}\n\n",
+        "#".repeat(level),
+        capability.title.trim()
+    ));
     if !capability.prelude.trim().is_empty() {
         out.push_str(capability.prelude.trim());
         out.push_str("\n\n");
@@ -16036,6 +16089,140 @@ generated_at: 2026-06-18T00:00:00Z
         ));
         assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
         assert!(doc.capabilities.is_empty());
+    }
+
+    /// Count of `#`-level headings with exactly `level` hashes.
+    fn heading_count(body: &str, level: usize) -> usize {
+        body.lines()
+            .filter_map(parse_heading)
+            .filter(|(found, _)| *found == level)
+            .count()
+    }
+
+    #[test]
+    fn capability_init_renders_the_three_canonical_document_roots() {
+        for readme_resident in [false, true] {
+            let body = render_empty_capability_readme(
+                "Cclab Core",
+                "Capability map placeholder for `cclab-core`.",
+                readme_resident,
+            );
+            assert_eq!(
+                heading_count(&body, 1),
+                1,
+                "expected exactly one project H1: {body}"
+            );
+            assert!(body.starts_with("# Cclab Core\n"), "{body}");
+            for root in [
+                "### Capability Index\n",
+                "### Core Features\n",
+                "### Non-Core Features\n",
+            ] {
+                assert!(body.contains(root), "missing `{root}` root in: {body}");
+            }
+            // Canonical order: the index, then core, then non-core.
+            let index = body.find("### Capability Index").unwrap();
+            let core = body.find("### Core Features").unwrap();
+            let non_core = body.find("### Non-Core Features").unwrap();
+            assert!(index < core && core < non_core, "{body}");
+        }
+    }
+
+    #[test]
+    fn capability_init_feature_roots_are_not_parsed_as_capabilities() {
+        // The roots carry no `ID`, so they must not become empty capability
+        // contracts — the skeleton stays an empty document.
+        let body = render_empty_capability_readme("Cclab Core", "placeholder.", false);
+        let doc = cap_doc(&body);
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.capabilities.is_empty());
+    }
+
+    #[test]
+    fn capability_init_registry_groups_classified_capabilities_under_feature_roots() {
+        let body = r#"# demo
+
+## Capabilities
+
+### Indexing
+
+ID: indexing
+Root WI: #1
+Status: auditing
+Type: Service
+Feature Class: core
+Required Verification: smoke
+Promise:
+Index documents.
+Gate Inventory:
+- `cargo test -p lumen index`
+
+### Static Security Scan
+
+ID: static-security-scan
+Root WI: #2
+Status: auditing
+Type: SecurityTool
+Feature Class: non_core
+Required Verification: smoke
+Promise:
+Scan for vulnerabilities.
+Gate Inventory:
+- `cargo test -p lumen scan`
+"#;
+        let document = canonical_doc(body);
+        let rendered = render_capability_registry(&document, "demo");
+
+        let core_root = rendered.find("### Core Features").unwrap();
+        let non_core_root = rendered.find("### Non-Core Features").unwrap();
+        let indexing = rendered.find("#### Indexing").unwrap();
+        let scan = rendered.find("#### Static Security Scan").unwrap();
+        assert!(
+            core_root < indexing && indexing < non_core_root && non_core_root < scan,
+            "capabilities did not land under their roots: {rendered}"
+        );
+
+        // Re-parsing the grouped document preserves ids and classes, so the
+        // grouping is a shape change and not a data change.
+        let reparsed = cap_doc(&format!("# demo\n\n{rendered}"));
+        let by_id = |id: &str| {
+            reparsed
+                .capabilities
+                .iter()
+                .find(|capability| capability.id == id)
+                .unwrap_or_else(|| panic!("`{id}` missing from: {rendered}"))
+        };
+        assert_eq!(
+            by_id("indexing").feature_class,
+            Some(CapabilityFeatureClass::Core)
+        );
+        assert_eq!(
+            by_id("static-security-scan").feature_class,
+            Some(CapabilityFeatureClass::NonCore)
+        );
+        assert_eq!(
+            by_id("indexing").capability_type,
+            Some(CapabilityType::Service)
+        );
+        assert_eq!(
+            by_id("static-security-scan").capability_type,
+            Some(CapabilityType::SecurityTool)
+        );
+    }
+
+    #[test]
+    fn capability_init_registry_leaves_unclassified_capabilities_outside_the_roots() {
+        // Placing an unclassified capability under a root would be a silent
+        // classification; rejecting it is #3061's gate, not this one's.
+        let document = canonical_doc(one_markdown_capability());
+        let rendered = render_capability_registry(&document, "demo");
+        assert!(!rendered.contains("### Core Features"), "{rendered}");
+        assert!(!rendered.contains("### Non-Core Features"), "{rendered}");
+        assert!(rendered.contains("### Package Manager"), "{rendered}");
+        assert_eq!(
+            cap_doc(&format!("# demo\n\n{rendered}")).capabilities[0].feature_class,
+            None
+        );
     }
 
     #[test]
