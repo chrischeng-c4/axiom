@@ -68,10 +68,13 @@ NON_CORE_IDS = (
     "security-hardening",
     "ec-gates-configured",
 )
-#: Claim counts are deliberately unequal per class (3 core, 4 non-core) so no
-#: assertion can pass by pairing a core count with a non-core total.
+#: Claim counts are deliberately unequal per class (3 core, 5 non-core) so no
+#: assertion can pass by pairing a core count with a non-core total. The gap is
+#: two rather than one so that the counts stay unequal after the retired member
+#: (1 claim) is excluded, which is what makes the retired document's verified
+#: claim pair falsifiable against transposition as well as against inclusion.
 CORE_CLAIM_COUNT = 3
-NON_CORE_CLAIM_COUNT = 4
+NON_CORE_CLAIM_COUNT = 5
 
 #: A real Lumen capability that is *not* a trait-derived baseline, used to
 #: falsify the field/root agreement rule without also tripping the baseline
@@ -166,14 +169,53 @@ _NON_CORE_MEMBERS = (
         "lumen auth",
         ("transport-and-identity-hardening",),
     ),
+    # This member's title deliberately does not slugify to its id, and it
+    # deliberately carries two work roots. The title, because
+    # `validate_capability_feature_roots` keys its root-membership lookup on
+    # `slugify(&capability.title)` (capability.rs:10087) while every message it
+    # emits names the *id* -- so a fixture whose titles always slugify to their
+    # ids cannot tell the two keys apart, and an implementation that looked the
+    # capability up by id would find no roots and report nothing. The second
+    # work root, because it is what keeps the per-class claim counts unequal
+    # once the retired member is excluded.
     (
-        "EC Gates Configured",
+        "Contract Gate Wiring",
         "ec-gates-configured",
         "Carry configured external-contract gates.",
         "lumen verify",
-        ("gate-configuration",),
+        ("gate-configuration", "gate-inventory-sync"),
     ),
 )
+
+def _slugify(value: str) -> str:
+    """`capability.rs:11965`, restated so the divergence guard below is checkable.
+
+    Not used to predict product output anywhere -- only to assert a property of
+    this fixture's own inputs.
+    """
+    out: list[str] = []
+    last_dash = False
+    for ch in value:
+        if ch.isascii() and ch.isalnum():
+            out.append(ch.lower())
+            last_dash = False
+        elif not last_dash and out:
+            out.append("-")
+            last_dash = True
+    return "".join(out).strip("-")
+
+
+#: The fixture must keep at least one member whose heading title does not
+#: slugify to its id, because the root-membership lookup is keyed on the slug of
+#: the title while every finding names the id. Asserted rather than commented,
+#: so a later rename that restores the coincidence fails here instead of
+#: silently reopening the hole.
+DIVERGENT_TITLE_IDS = tuple(
+    member[1] for member in _CORE_MEMBERS + _NON_CORE_MEMBERS
+    if _slugify(member[0]) != member[1]
+)
+assert DIVERGENT_TITLE_IDS, "no member's title diverges from its id"
+
 
 _CONFLICT_MEMBER = (
     "Observability",
@@ -890,6 +932,62 @@ def assert_retired_capability_is_excluded_from_both_classes(
     assert document_blockers(report) == [], report["blockers"]
 
 
+def assert_retired_is_excluded_from_the_verified_counts_too(
+    report: dict[str, Any],
+) -> None:
+    """The retired exclusion holds in all four dimensions, not only in two.
+
+    `feature_class_totals` applies one `status != Retired` filter to four
+    accumulators (`capability.rs:1300-1310`). The unverified retired leg can
+    only see two of them: with no gate execution both verified accumulators are
+    zero, so an implementation that counted retired items into
+    `verified_count` and `verified_claim_count` produced identical output. Half
+    the exclusion was asserted vacuously, which is the same defect shape
+    `assert_verified_split_is_non_degenerate` was added to fix on the reference
+    document and left unfixed here.
+
+    Run under `--verify`, where all four are populated, and pinned individually
+    against the retained totals. The distinctness guards are what make
+    "individually" mean something -- and the fixture's claim counts are spaced
+    two apart precisely so that the claim pair stays unequal after one claim is
+    retired away.
+    """
+    assert report["capability_count"] == len(CORE_IDS) + len(NON_CORE_IDS) - 1, report
+    assert report["verified_count"] == report["capability_count"], report
+    assert (
+        report["verified_claim_count"]
+        == CORE_CLAIM_COUNT + NON_CORE_CLAIM_COUNT - RETIRED_CLAIM_COUNT
+    ), report
+
+    assert report["core_verified_count"] == len(CORE_IDS), report
+    assert report["non_core_verified_count"] == len(NON_CORE_IDS) - 1, report
+    assert report["core_verified_claim_count"] == CORE_CLAIM_COUNT, report
+    assert (
+        report["non_core_verified_claim_count"]
+        == NON_CORE_CLAIM_COUNT - RETIRED_CLAIM_COUNT
+    ), report
+
+    # Non-vacuity: neither pinned pair may be interchangeable.
+    assert report["core_verified_count"] != report["non_core_verified_count"], report
+    assert (
+        report["core_verified_claim_count"] != report["non_core_verified_claim_count"]
+    ), report
+
+    # And the pairs must still exhaust the retained totals, so no verified
+    # capability or claim can fall out of both classes.
+    assert (
+        report["core_verified_count"] + report["non_core_verified_count"]
+        == report["verified_count"]
+    ), report
+    assert (
+        report["core_verified_claim_count"] + report["non_core_verified_claim_count"]
+        == report["verified_claim_count"]
+    ), report
+
+    # Still a legal shape, not a diagnosed one.
+    assert document_blockers(report) == [], report["blockers"]
+
+
 def assert_legacy_migration_derives_the_split(migrated: str) -> None:
     """Migration derives both roots for legacy *rows*, not only for sections.
 
@@ -1395,6 +1493,90 @@ def assert_relocation_preserves_section_tracker_state(migrated: str) -> None:
         )
 
 
+#: Per-capability work-root WIs for the fallback shape below. Distinct per work
+#: root, not merely per capability, because the fallback takes the *first*
+#: non-empty one and `lexical-search` has two.
+WORK_ROOT_WI = {
+    work_root: f"#{70 + index}"
+    for index, work_root in enumerate(
+        work_root for member in _ALL_MEMBERS for work_root in member[4]
+    )
+}
+assert len(set(WORK_ROOT_WI.values())) == len(WORK_ROOT_WI)
+#: The WI each capability must end up with: its first work root's.
+FIRST_WORK_ROOT_WI = {
+    member[0]: WORK_ROOT_WI[member[4][0]] for member in _ALL_MEMBERS
+}
+#: The WIs that must appear nowhere, because they belong to a second work root
+#: that the fallback is required to pass over.
+SHADOWED_WORK_ROOT_WIS = tuple(
+    WORK_ROOT_WI[work_root]
+    for member in _ALL_MEMBERS
+    for work_root in member[4][1:]
+)
+assert SHADOWED_WORK_ROOT_WIS, (
+    "at least one member must carry a second work root, or 'the first WI wins' "
+    "is indistinguishable from 'any WI wins'"
+)
+
+
+def _work_root_wi_readme() -> str:
+    """The section README with every `Root WI` blank and the work roots numbered.
+
+    `root_wi_for_capability` is two branches: the declared `Root WI:` field, and
+    -- only when that is absent or `-` -- the first non-empty `active_wi` among
+    the capability's work roots. Every other relocation input here declares its
+    own `Root WI`, so the second branch is unreachable from them and an
+    implementation that deleted it entirely renders identically.
+    """
+    document = UNCLASSIFIED_SECTION_README
+    for wi in SECTION_RELOCATION_WI.values():
+        document = document.replace(f"Root WI: {wi}", "Root WI: -")
+    assert "Root WI: #" not in document, document
+    for work_root, wi in WORK_ROOT_WI.items():
+        marker = f"| {work_root} | change | - |"
+        assert document.count(marker) == 1, (work_root, document.count(marker))
+        document = document.replace(marker, f"| {work_root} | change | {wi} |")
+    return document
+
+
+WORK_ROOT_WI_SECTION_README = _work_root_wi_readme()
+
+
+def assert_relocation_falls_back_to_the_first_work_root_wi(migrated: str) -> None:
+    """With no declared `Root WI`, the first work root's WI is what renders.
+
+    Both halves are asserted. That the fallback fires at all: every capability
+    renders its first work root's WI rather than the `-` it declared, in the
+    index column and in the section field alike. And that it takes the *first*
+    one: `lexical-search` has two work roots, and the second one's WI must
+    appear nowhere in the document -- otherwise "the first non-empty WI wins"
+    is indistinguishable from "some WI wins".
+    """
+    rows = _index_rows_parsed(migrated)
+    assert [row[0] for row in rows] == list(UNCLASSIFIED_SECTION_TITLES), (
+        f"the relocated index must list every capability in document order, "
+        f"got {[row[0] for row in rows]}"
+    )
+    for row in rows:
+        expected = FIRST_WORK_ROOT_WI[row[0]]
+        assert row[1] == expected, (
+            f"relocated index row {row[0]!r} did not fall back to its first "
+            f"work root; expected {expected!r}, got {row[1]!r}"
+        )
+    for title, wi in FIRST_WORK_ROOT_WI.items():
+        body = _capability_section_body(migrated, title)
+        assert f"Root WI: {wi}\n" in body, (
+            f"relocated section {title!r} did not fall back to its first work "
+            f"root; expected 'Root WI: {wi}', section was:\n{body}"
+        )
+    for shadowed in SHADOWED_WORK_ROOT_WIS:
+        assert f"Root WI: {shadowed}" not in migrated, (
+            f"{shadowed} belongs to a second work root and must not be chosen "
+            f"as any capability's Root WI"
+        )
+
+
 def assert_relocation_renders_every_capability_section(
     migrated: str, report: dict[str, Any]
 ) -> None:
@@ -1421,6 +1603,32 @@ def assert_relocation_renders_every_capability_section(
     assert sorted(parsed) == sorted(expected_ids), parsed
     assert report["capability_count"] == len(expected_ids), report
     assert document_blockers(report) == [], report["blockers"]
+
+
+def assert_relocation_root_emission(
+    migrated: str, *, declares_any_class: bool
+) -> None:
+    """Relocation emits the two roots exactly when the input classifies anything.
+
+    `render_capability_registry` guards the whole two-root block on
+    `document.capabilities.iter().any(|c| c.feature_class.is_some())`
+    (`capability.rs:8619-8623`). Emitting the roots unconditionally would put a
+    fully unclassified contract under `### Core Features` / `### Non-Core
+    Features` headings it never claimed -- a silent classification -- and
+    emitting them never would produce a document its own checker rejects for a
+    missing root.
+
+    Both directions are asserted, from the two relocation shapes that differ in
+    exactly this input property: nothing classified, and the domain promises
+    classified. Asserting only the positive direction would pass for a renderer
+    that always emits both roots, which is the mutation this exists to kill.
+    """
+    for class_heading in ("### Core Features", "### Non-Core Features"):
+        present = class_heading in migrated
+        assert present == declares_any_class, (
+            f"{class_heading} present={present} on a relocation whose input "
+            f"declares_any_class={declares_any_class}"
+        )
 
 
 def assert_relocation_emits_both_roots_when_one_is_empty(
@@ -1717,6 +1925,57 @@ def assert_unknown_roots_alone_classify_the_document(report: dict[str, Any]) -> 
 #: strictly shallower one, `Search Core` would be read as a member of the
 #: non-core root as well as the core root and the document would be falsely
 #: rejected for being under both.
+#: The reference document plus an appendix that *shows* the canonical shape
+#: inside a fenced code block. `scan_feature_roots` masks fenced lines
+#: (`capability.rs:9979-9981`) before it parses headings, so nothing in the
+#: fence is a root or a member. Both a root heading and a capability heading are
+#: fenced, and the fenced root is the *non-core* one carrying the *core*
+#: document's first capability, so dropping the mask breaks two rules at once
+#: rather than one: the root is then declared twice, and `search-core` then sits
+#: under both roots.
+#:
+#: This is not hypothetical repo hygiene. `apps/lumen/README.md` -- the file
+#: this fixture digests before and after every relocation leg -- carries
+#: heading-shaped lines inside fences, as do the CLI template README and
+#: several other project READMEs.
+FENCED_ROOT_DOCUMENT = (
+    REFERENCE_DOCUMENT
+    + """
+## Appendix
+
+The canonical shape this document follows:
+
+```markdown
+### Non-Core Features
+
+#### Search Core
+
+ID: search-core
+Feature Class: non_core
+```
+"""
+)
+assert FENCED_ROOT_DOCUMENT.count("### Non-Core Features") == 2
+assert FENCED_ROOT_DOCUMENT.count("#### Search Core") == 2
+
+
+def assert_fenced_headings_are_not_read_as_structure(report: dict[str, Any]) -> None:
+    """A heading inside a code fence is documentation, not classification.
+
+    Asserted through the blockers *and* the counts. Without the fenced-line
+    mask this document raises a duplicate-root finding and a both-roots finding
+    for `search-core`, so an empty blocker list is only reachable when the mask
+    holds -- and the counts are pinned alongside so that a mask which dropped
+    the whole appendix (rather than only its heading lines) is distinguishable
+    from one that read it correctly.
+    """
+    assert document_blockers(report) == [], report["blockers"]
+    assert report["core_capability_count"] == len(CORE_IDS), report
+    assert report["non_core_capability_count"] == len(NON_CORE_IDS), report
+    assert report["core_claim_count"] == CORE_CLAIM_COUNT, report
+    assert report["non_core_claim_count"] == NON_CORE_CLAIM_COUNT, report
+
+
 SIBLING_HEADING_DOCUMENT = (
     REFERENCE_DOCUMENT + "\n\n### Appendix\n\n#### Search Core\n\nSee above.\n"
 )
