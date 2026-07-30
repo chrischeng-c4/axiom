@@ -55,10 +55,8 @@ fn render_verbs_emit_parseable_yaml_offline() {
     assert_eq!(crd[0]["kind"], "CustomResourceDefinition");
 
     // Operator render: the control plane, namespace-substituted.
-    let ops = parse_yaml_docs(
-        "operator render",
-        &stdout(&["k8s", "operator", "render", "--namespace", "tape-ops"]),
-    );
+    let ops_yaml = stdout(&["k8s", "operator", "render", "--namespace", "tape-ops"]);
+    let ops = parse_yaml_docs("operator render", &ops_yaml);
     let kinds: Vec<&str> = ops.iter().filter_map(|d| d["kind"].as_str()).collect();
     for kind in [
         "Namespace",
@@ -66,6 +64,8 @@ fn render_verbs_emit_parseable_yaml_offline() {
         "ClusterRole",
         "ClusterRoleBinding",
         "Deployment",
+        "Service",
+        "PodDisruptionBudget",
     ] {
         assert!(kinds.contains(&kind), "operator render missing {kind}");
     }
@@ -85,6 +85,125 @@ fn render_verbs_emit_parseable_yaml_offline() {
         "operator image is release-pinned to the crate version"
     );
     assert_ne!(image, "tape:latest", "operator never emits a mutable tag");
+    // Service and PDB should have substituted namespace.
+    let service = ops.iter().find(|d| d["kind"] == "Service").unwrap();
+    assert_eq!(
+        service["metadata"]["namespace"], "tape-ops",
+        "service namespace substituted"
+    );
+    let pdb = ops
+        .iter()
+        .find(|d| d["kind"] == "PodDisruptionBudget")
+        .unwrap();
+    assert_eq!(
+        pdb["metadata"]["namespace"], "tape-ops",
+        "pdb namespace substituted"
+    );
+    // Without --monitoring, no monitoring.coreos.com resources are emitted.
+    assert!(
+        !kinds
+            .iter()
+            .any(|&k| k == "ServiceMonitor" || k == "PrometheusRule"),
+        "operator render without --monitoring must not emit ServiceMonitor or PrometheusRule"
+    );
+    // Assert no tape-system string appears in the non-monitoring render.
+    assert!(
+        !ops_yaml.contains("tape-system"),
+        "rendered operator manifest must have all tape-system refs substituted to target namespace"
+    );
+    // Assert no codegen markers leak into the rendered output.
+    assert!(
+        !ops_yaml.contains("CODEGEN-BEGIN"),
+        "rendered output must not contain CODEGEN-BEGIN marker"
+    );
+    assert!(
+        !ops_yaml.contains("CODEGEN-END"),
+        "rendered output must not contain CODEGEN-END marker"
+    );
+    assert!(
+        !ops_yaml.contains("SPEC-MANAGED"),
+        "rendered output must not contain SPEC-MANAGED marker"
+    );
+
+    // With --monitoring, both ServiceMonitor and PrometheusRule are emitted.
+    let ops_monitoring_yaml = stdout(&[
+        "k8s",
+        "operator",
+        "render",
+        "--namespace",
+        "tape-ops",
+        "--monitoring",
+    ]);
+    let ops_monitoring = parse_yaml_docs("operator render --monitoring", &ops_monitoring_yaml);
+    let kinds_monitoring: Vec<&str> = ops_monitoring
+        .iter()
+        .filter_map(|d| d["kind"].as_str())
+        .collect();
+    assert!(
+        kinds_monitoring.contains(&"ServiceMonitor"),
+        "operator render --monitoring must emit ServiceMonitor"
+    );
+    assert!(
+        kinds_monitoring.contains(&"PrometheusRule"),
+        "operator render --monitoring must emit PrometheusRule"
+    );
+    // Check that monitoring resources have the substituted namespace in all places.
+    let sm = ops_monitoring
+        .iter()
+        .find(|d| d["kind"] == "ServiceMonitor")
+        .unwrap();
+    assert_eq!(
+        sm["metadata"]["namespace"], "tape-ops",
+        "servicemonitor metadata namespace substituted"
+    );
+    // Critical: the namespaceSelector.matchNames must be substituted so the
+    // ServiceMonitor selects Services in the correct namespace.
+    let selector_names = &sm["spec"]["namespaceSelector"]["matchNames"];
+    assert!(
+        selector_names.is_sequence(),
+        "namespaceSelector.matchNames should be a list"
+    );
+    let selector_list: Vec<&str> = selector_names
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(
+        selector_list,
+        vec!["tape-ops"],
+        "namespaceSelector.matchNames must be substituted to the target namespace"
+    );
+
+    let pr = ops_monitoring
+        .iter()
+        .find(|d| d["kind"] == "PrometheusRule")
+        .unwrap();
+    assert_eq!(
+        pr["metadata"]["namespace"], "tape-ops",
+        "prometheusrule metadata namespace substituted"
+    );
+
+    // Assert no tape-system string appears anywhere in the rendered output,
+    // catching hardcoded namespaces in PromQL, selectors, and runbook annotations.
+    assert!(
+        !ops_monitoring_yaml.contains("tape-system"),
+        "rendered operator manifest must have all tape-system refs substituted to target namespace"
+    );
+
+    // Assert no codegen markers leak into the rendered output.
+    assert!(
+        !ops_monitoring_yaml.contains("CODEGEN-BEGIN"),
+        "rendered output must not contain CODEGEN-BEGIN marker"
+    );
+    assert!(
+        !ops_monitoring_yaml.contains("CODEGEN-END"),
+        "rendered output must not contain CODEGEN-END marker"
+    );
+    assert!(
+        !ops_monitoring_yaml.contains("SPEC-MANAGED"),
+        "rendered output must not contain SPEC-MANAGED marker"
+    );
 
     // Instance render: all four profiles emit a `kind: Tape` CR.
     for profile in ["dev", "staging", "prod", "template"] {

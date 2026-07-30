@@ -191,6 +191,12 @@ requirements:
     kind: functional
     risk: medium
     verify: tests/operator.rs::conditions_is_a_pure_function_of_spec_and_observed_facts
+  control_plane_survives_a_node_drain:
+    id: R14
+    text: "k8s/operator installs as one kustomization and runs two replicas behind the coordination.k8s.io Lease, so losing the active reconciler is a handover rather than an outage. Three properties have to hold together and none of them can be checked offline. Exactly one replica reports leader, cross-checked against both the Lease holderIdentity and each replica's own tape_operator_leader gauge -- the Lease alone would pass even if a replica believed itself leader without holding it. A handover must end in the new holder APPLYING, proven by a spec.logLevel change reaching the child StatefulSet's RUST_LOG env, because a status write only proves a replica is watching. And a drain of the leader's node must complete under maxUnavailable: 1 with reconciliation unbroken across the entire window, proven by a heartbeat running concurrently with the drain rather than one probe after it. The observed window must extend past the drain's return until a surviving replica holds the Lease, because kubectl drain returns on eviction while the orphaned Lease cannot be taken for at least its 15s duration -- the drain's own window never contains the handover it causes. That heartbeat must record the Lease holder alongside every sample and the holder must be seen to change, because reconciliation is leader-gated: if the holder never moved then the surviving replica served every probe by itself and 'reconciliation continued' is a true statement that says nothing about a handover. The gate needs three nodes: on one node a drain evicts the replacement too, so 'the drain completed and reconciliation continued' is not a statement that cluster can make."
+    kind: functional
+    risk: high
+    verify: scripts/kind-operator-ha.sh
 ---
 flowchart TD
     r1[R1 dockerfile render reproduces fixtures] --> tests_deploy_cli_rs_dockerfile_render_reproduces_committed_fixtures[tests/deploy_cli.rs::dockerfile_render_reproduces_committed_fixtures]
@@ -207,6 +213,7 @@ flowchart TD
     r11[R11 prunes inverts conditional render] --> tests_operator_rs_prunes_is_the_exact_inverse_of_the_conditional_render_branches[tests/operator.rs::prunes_is_the_exact_inverse_of_the_conditional_render_branches]
     r12[R12 conditions project from one observation] --> tests_operator_rs_conditions_is_a_pure_function_of_spec_and_observed_facts[tests/operator.rs::conditions_is_a_pure_function_of_spec_and_observed_facts]
     r13[R13 prunes only names built in api groups] --> tests_operator_rs_prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve[tests/operator.rs::prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve]
+    r14[R14 control plane survives a node drain] --> scripts_kind_operator_ha_sh[scripts/kind-operator-ha.sh]
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -247,7 +254,37 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Checked-in operator control-plane Deployment fixture running `tape k8s operator run` (built with --features operator), mirroring relay's k8s/operator/deployment.yaml."
+    description: "Checked-in operator control-plane Deployment fixture running `tape k8s operator run` (built with --features operator), mirroring relay's k8s/operator/deployment.yaml. Runs two replicas behind leader election with preferred pod anti-affinity for multi-node resilience, and exposes a named metrics port on 9090 for Prometheus scraping."
+  - path: apps/tape/k8s/operator/kustomization.yaml
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "Kustomization that installs the operator as a single unit: crd.yaml, rbac.yaml, deployment.yaml, service.yaml, and pdb.yaml, so `kubectl apply -k k8s/operator` applies all five layers together without file-by-file orchestration."
+  - path: apps/tape/k8s/operator/service.yaml
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "ClusterIP Service exposing the operator's metrics port on 9090, unconditional because it is core/v1 and carries no CRD dependency. Prometheus-operator ServiceMonitor scrapes individual pod Endpoints rather than the Service VIP, preserving the per-replica leader gauge visibility needed for lease-handover observability."
+  - path: apps/tape/k8s/operator/pdb.yaml
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "PodDisruptionBudget with maxUnavailable: 1, protecting the second replica during node drain/eviction so the first replica remains available and leader election continues during the drain window rather than leaving every Tape CR unreconciled."
+  - path: apps/tape/k8s/components/operator-monitoring/kustomization.yaml
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "Opt-in kustomize Component for operator observability, consumed by `tape k8s operator render --monitoring`. References servicemonitor.yaml and prometheusrule.yaml (both monitoring.coreos.com/v1 CRDs). Kept separate from k8s/operator/ so a vanilla cluster without prometheus-operator can still install the operator via k8s/operator/kustomization.yaml."
+  - path: apps/tape/k8s/components/operator-monitoring/servicemonitor.yaml
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "ServiceMonitor targeting the tape-operator-metrics Service, scraping /metrics on both replicas. Paired with PrometheusRule to answer 'which replica is the leader' via the tape_operator_leader per-replica gauge."
+  - path: apps/tape/k8s/components/operator-monitoring/prometheusrule.yaml
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "Two alerts: TapeOperatorAbsent (critical, fires when all replicas are unreachable) and TapeOperatorReconcileErrorRate (warning, fires when error rate exceeds 10% over 15m). Metrics use the derived prefix tape_operator_* from the MANAGER name."
   - path: apps/tape/src/operator/mod.rs
     action: create
     section: logic
@@ -277,7 +314,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add K8s(K8sArgs) and Dockerfile(DockerfileArgs) subcommands alongside the existing Append/Replay/Checkpoint/Serve/Spec/Llm/Upgrade/Issue commands: tape k8s crd render, tape k8s operator render/run, tape k8s instance render --profile dev|staging|prod|template, tape dockerfile render --variant source|release [--version] [--out]; dispatch, write_or_print, and Dockerfile-fixture-diffing render helpers mirror relay's bin/relay.rs; adds an operations LLM topic naming the new verbs. Every instance profile states spec.auth explicitly (dev/staging disabled, prod/template required) because since #2765 an omitted auth means required, so a silently tokenless profile would render a CR whose pod cannot start."
+    description: "Add K8s(K8sArgs) and Dockerfile(DockerfileArgs) subcommands alongside the existing Append/Replay/Checkpoint/Serve/Spec/Llm/Upgrade/Issue commands: tape k8s crd render, tape k8s operator render/run --monitoring, tape k8s instance render --profile dev|staging|prod|template, tape dockerfile render --variant source|release [--version] [--out]. render_operator_yaml now includes rbac.yaml, deployment.yaml, service.yaml, and pdb.yaml unconditionally, plus ServiceMonitor + PrometheusRule behind the --monitoring flag (opt-in to avoid CRD rejection on clusters without prometheus-operator). Dispatch, write_or_print, and Dockerfile-fixture-diffing render helpers mirror relay's bin/relay.rs; adds an operations LLM topic naming the new verbs. Every instance profile states spec.auth explicitly (dev/staging disabled, prod/template required) because since #2765 an omitted auth means required, so a silently tokenless profile would render a CR whose pod cannot start."
   - path: apps/tape/tests/deploy_cli.rs
     action: create
     section: unit-test
@@ -292,5 +329,15 @@ changes:
     action: modify
     section: changes
     impl_mode: hand-written
-    description: "Update the 'Kubernetes-Native Deployment' capability row's maturity/verification from planned/planned/none/not_ready to reflect the operator/k8s/dockerfile CLI actually landed and verified in this slice (only this row changes)."
+    description: "Update the 'Kubernetes-Native Deployment' capability row's maturity/verification from planned/planned/none/not_ready to reflect the operator/k8s/dockerfile CLI actually landed and verified in this slice (only this row changes). Add an 'Operations' section after the capability index documenting the node drain behavior, the deliberate maxUnavailable: 0 on the data-plane PDB, and the safe sequence to proceed when a drain hangs: accepting the write outage, grace period details, PVC persistence, pod recovery, and verification steps."
+  - path: apps/tape/k8s/base/pdb.yaml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Extend the existing comment on maxUnavailable: 0 to state the consequence outright: kubectl drain never completes and GKE node auto-upgrade blocks indefinitely, with a pointer to the operations runbook in README.md."
+  - path: apps/tape/scripts/kind-operator-ha.sh
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Control-plane HA gate on a disposable three-node Kind cluster. Three nodes are load-bearing: on the single node kind-e2e.sh uses, a drain evicts the replacement too, so 'the drain completed and reconciliation continued' is not a statement that cluster can make. Proves `kubectl apply -k k8s/operator` installs the layer as one unit with two ready replicas on distinct nodes; that exactly one holds the Lease, cross-checked against each replica's own tape_operator_leader gauge so a replica that believes itself leader without holding it fails the gate; that the metrics Service resolves with both replicas as separate Endpoints; that the monitoring component renders while k8s/operator installs no monitoring.coreos.com object; that deleting the leader hands the Lease over and the new holder goes on to APPLY a spec change to the child StatefulSet (a status write only proves it is watching); and that draining the leader's node completes with a reconcile heartbeat running concurrently, every sample recorded, so a control plane that was dead for the whole drain window cannot pass."
 ```

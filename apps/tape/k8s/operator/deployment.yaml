@@ -1,7 +1,9 @@
 # The tape operator: a controller that watches Tape objects cluster-wide.
 # Ships in the same `tape` image (run as `tape k8s operator run`, built with
-# --features operator). HA-safe: a coordination.k8s.io Lease elects one active
-# reconciler, so this can be scaled to replicas > 1 (the others stand by).
+# --features operator). Two replicas run behind a coordination.k8s.io Lease,
+# which elects one active reconciler and keeps the other as a warm standby.
+# With the PDB's maxUnavailable: 1, a node drain takes them one at a time,
+# maintaining continuous reconciliation without leaving Tape CRs unreconciled.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,8 +13,12 @@ metadata:
     app.kubernetes.io/name: tape-operator
     app.kubernetes.io/part-of: tape
 spec:
-  # Scale to 2+ for HA — leader-election guarantees a single active reconciler.
-  replicas: 1
+  # HA floor: two replicas is the minimum for leader election to provide
+  # meaningful availability. The Lease elects one to reconcile; the other
+  # stands by and takes over on drain, eviction, or rollout. The PDB
+  # (maxUnavailable: 1) enforces one-at-a-time eviction during voluntary
+  # disruption so the standby survives and the group never goes dark.
+  replicas: 2
   strategy:
     type: RollingUpdate
   selector:
@@ -25,6 +31,19 @@ spec:
     spec:
       serviceAccountName: tape-operator
       terminationGracePeriodSeconds: 15
+      affinity:
+        podAntiAffinity:
+          # Preferred, not required: co-located replicas still survive a drain
+          # (the PDB forces it one pod at a time), and a single-node cluster —
+          # kind, minikube — must be able to run both rather than park one
+          # replica Pending forever.
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: tape-operator
+                topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -36,6 +55,14 @@ spec:
           image: ghcr.io/chrischeng-c4/tape:0.4.11
           imagePullPolicy: IfNotPresent
           command: ["tape", "k8s", "operator", "run"]
+          ports:
+            # Control-plane scrape endpoint. Every replica serves it, leader
+            # and standby alike: the standby publishes `_leader 0` rather than
+            # going dark, which is what makes "which replica is in charge"
+            # answerable and a failed handover visible.
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
           env:
             - name: RUST_LOG
               value: "info"

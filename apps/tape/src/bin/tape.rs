@@ -357,7 +357,7 @@ struct BackupArgs {
     #[arg(long)]
     dest: String,
     /// Bearer token for `/admin/backup` (needs `admin` on `*`). Falls back to
-    /// `TAPE_BACKUP_TOKEN`; omit entirely when the node runs `--auth off`.
+    /// `TAPE_BACKUP_TOKEN`; omit entirely when the node runs `--auth disabled`.
     #[arg(long, env = "TAPE_BACKUP_TOKEN")]
     token: Option<String>,
     /// Drop backup objects older than this many seconds after a successful
@@ -506,6 +506,14 @@ struct K8sOperatorRenderArgs {
     /// Namespace that owns the operator control plane.
     #[arg(long, default_value = "tape-system")]
     namespace: String,
+    /// Also emit the operator's ServiceMonitor and PrometheusRule.
+    /// Off by default because both are `monitoring.coreos.com/v1` CRDs and a
+    /// cluster without prometheus-operator rejects the whole apply; the
+    /// scrape *target* Service carries no CRD dependency and is always
+    /// rendered. Mirrors the opt-in `k8s/components/operator-monitoring`
+    /// kustomize component.
+    #[arg(long)]
+    monitoring: bool,
     /// Write to this path instead of stdout. A directory receives
     /// `operator.yaml`.
     #[arg(long)]
@@ -632,9 +640,12 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
             Deploy artifacts are offline renders; the checked-in files under `apps/tape/` \
             are the fixtures, and these commands are their in-binary form (#1328):\n\n\
             - `tape k8s crd render` — the Tape CustomResourceDefinition (tape.dev/v1alpha1).\n\
-            - `tape k8s operator render [--namespace tape-system]` — operator RBAC + \
-              Deployment; `tape k8s operator run` runs the reconcile controller (needs a \
-              build with `--features operator`).\n\
+            - `tape k8s operator render [--namespace tape-system] [--monitoring]` — the \
+              operator control plane: RBAC, Deployment, the metrics Service and the PDB. \
+              `--monitoring` appends the ServiceMonitor + PrometheusRule, off by default \
+              because both are `monitoring.coreos.com/v1` CRDs a vanilla cluster rejects. \
+              `tape k8s operator run` runs the reconcile controller (needs a build with \
+              `--features operator`).\n\
             - `tape k8s instance render --profile dev|staging|prod|template` — a `kind: \
               Tape` CR; prod is the 3-replica raft-HA shape (the operator renders the \
               StatefulSet topology — `k8s/` base stays a single-node direct install for \
@@ -1471,7 +1482,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
         K8sCmd::Operator(a) => match a.cmd.unwrap_or(K8sOperatorCmd::Run) {
             K8sOperatorCmd::Run => run_operator().await,
             K8sOperatorCmd::Render(a) => {
-                let yaml = render_operator_yaml(&a.namespace);
+                let yaml = render_operator_yaml(&a.namespace, a.monitoring);
                 write_or_print(a.out.as_deref(), "operator.yaml", &yaml)
             }
         },
@@ -1510,9 +1521,11 @@ fn crd_yaml() -> String {
     cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
-/// Render the operator control-plane manifests (RBAC + Deployment) with the
-/// namespace substituted, from the checked-in fixtures.
-fn render_operator_yaml(namespace: &str) -> String {
+/// Render the operator control-plane manifests -- RBAC, Deployment, the
+/// metrics Service, and the PDB, plus the ServiceMonitor/PrometheusRule pair
+/// when `monitoring` is set -- with the namespace substituted, from the
+/// checked-in fixtures. Same set, same order as `k8s/operator/kustomization.yaml`.
+fn render_operator_yaml(namespace: &str, monitoring: bool) -> String {
     let mut out = String::new();
     out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/rbac.yaml"),
@@ -1525,7 +1538,75 @@ fn render_operator_yaml(namespace: &str) -> String {
         "tape-system",
         namespace,
     ));
+    // The operator's own scrape target. Unconditional: it is plain
+    // core/v1, so it applies on a cluster with no monitoring stack at all, and
+    // shipping it always means turning monitoring on later never has to come
+    // back and add the target. Kept in the same order as
+    // k8s/operator/kustomization.yaml so the two paths stay comparable.
+    out.push_str("\n---\n");
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/service.yaml"
+        )),
+        "tape-system",
+        namespace,
+    ));
+    // The PDB ships with the Deployment: `replicas: 2` only survives a node
+    // drain if evictions are serialized. Render consumers get the same
+    // operator layer the kustomize consumers get.
+    out.push_str("\n---\n");
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/pdb.yaml"
+        )),
+        "tape-system",
+        namespace,
+    ));
+    // Opt-in tail, byte-identical to the `operator-monitoring` component so a
+    // kustomize consumer and a render consumer get the same alerts. Gated
+    // because these two are monitoring.coreos.com CRDs: emitting them
+    // unconditionally would make `kubectl apply` of the whole render fail on
+    // any cluster without prometheus-operator, taking the operator down with
+    // the alerts.
+    if monitoring {
+        for manifest in [
+            include_str!("../../k8s/components/operator-monitoring/servicemonitor.yaml"),
+            include_str!("../../k8s/components/operator-monitoring/prometheusrule.yaml"),
+        ] {
+            out.push_str("\n---\n");
+            out.push_str(&rewrite_monitoring_namespace(manifest, namespace));
+        }
+    }
     cli_std::artifact::ensure_trailing_newline(&out)
+}
+
+/// Rewrite the control-plane namespace in the two monitoring manifests.
+///
+/// `cli_std::artifact::replace_kubernetes_namespace` rewrites the `name:` and
+/// `namespace:` keys. The monitoring pair needs additional rewrites because the
+/// ServiceMonitor's selector and the PrometheusRule's PromQL expressions embed
+/// namespace values in contexts that are not metadata labels: the
+/// `namespaceSelector.matchNames` list item `- tape-system`, the PromQL label
+/// matcher `namespace="tape-system"`, and the runbook annotation `-n tape-system`.
+/// Without these, a ServiceMonitor living in the target namespace selects
+/// Services in the wrong namespace, and alerts reference the wrong namespace in
+/// their PromQL and remediation steps.
+fn rewrite_monitoring_namespace(manifest: &str, namespace: &str) -> String {
+    let mut out = cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(manifest),
+        "tape-system",
+        namespace,
+    );
+    // ServiceMonitor namespaceSelector: the list item `- tape-system`.
+    out = out.replace("    - tape-system\n", &format!("    - {namespace}\n"));
+    // PromQL expressions: label matcher `namespace="tape-system"`.
+    out = out.replace(
+        r#"namespace="tape-system""#,
+        &format!(r#"namespace="{}""#, namespace),
+    );
+    // Runbook annotations: kubectl command `-n tape-system`.
+    out = out.replace("-n tape-system ", &format!("-n {namespace} "));
+    out
 }
 
 /// Render a `kind: Tape` custom resource for the selected profile.
