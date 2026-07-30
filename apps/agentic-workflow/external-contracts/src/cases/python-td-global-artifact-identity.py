@@ -12,7 +12,7 @@ from wi_contract_fixture import run_aw
 
 CASE_ID = "python-td-global-artifact-identity"
 CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
-USE_CASE_ID = "python-td-global-artifact-identity"
+USE_CASE_ID = "global-python-td-artifact-identity"
 DIMENSION = "behavior"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-td-global-artifact-identity"
 ASSERTIONS = (

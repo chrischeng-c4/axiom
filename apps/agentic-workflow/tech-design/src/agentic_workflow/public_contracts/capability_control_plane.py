@@ -12,7 +12,7 @@ def missing_readme_initialization() -> str:
     return "missing capability documents have one initialization route"
 
 
-def scoped_capability_verification() -> str:
+def scoped_dependency_closed_verification() -> str:
     return "capability verification follows dependency closure"
 
 

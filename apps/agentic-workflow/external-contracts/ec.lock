@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-29T12:48:57.458613+00:00"
-ir_digest = "sha256:3eb856cfc74680a2740851719c466f544c56baad3ea2dc48208bdc62d3bbc990"
-source_digest = "sha256:d3c99f7273c7819af6accb4af6c7355cb4bd6c914a7a7d2515d5048bd295b0b6"
+generated_at = "2026-07-30T02:59:21.753004+00:00"
+ir_digest = "sha256:52cf32f8f296fcd6cbf0a9e5897279bb5c6d85e44231d6f3822b5fb108c77919"
+source_digest = "sha256:07af4d36fed3371d7860ff8108f39fbde0ac68bbffa0aad6d6293e319058033f"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:200646f7626f1df5a143244a7296a060be69d1e2e646e9c3c11dc36ea6d272da"
+digest = "sha256:001efeb9571857a73661bf1e92ae2c548eabddc7ab413b5bf6d80efc52e7a67c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -50,15 +50,15 @@ digest = "sha256:1d3a96efdd5afd69c7c222fe51319959dcdba184faa8aee8de34e05ab7b6594
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
-digest = "sha256:b1e4d45e83d4b6efe564395d1f3a0b7431c46390632d4ca238346dde6601c107"
+digest = "sha256:825da6170d278fba43a82c892984de2af321bfa6a1d2a0e3dff353dad72615f1"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
-digest = "sha256:6a2ae15f243cd49b995314f79cbfe465bff3768d75cb2d959602e4568da645ef"
+digest = "sha256:af5218e82cb05be354466636fa8c6dc58bf5706d5b14d85461ac8918dcde05c0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
-digest = "sha256:912073f6c4353cb91d09566ba7ee8a0d75af03f9c1afa867ce59d48a21fed943"
+digest = "sha256:7db1cd20878e8af5fd3e01bad10ecc73d1128117f1f217a8024365914688bd12"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-event-validation.py"
@@ -78,7 +78,7 @@ digest = "sha256:3ec5972b56c78957ebeca47c3d60fd45f0c153633c0a564968a51402f8cfe68
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/issue-cache-canonical-change.py"
-digest = "sha256:a76986871634efd1cbe2e383e59dd57af9e531c8f8e84abfaafc29f248db967a"
+digest = "sha256:3c764d9f3d4c1df56ffd4a9520d6a8ab748b7365deec5deea0e27338ec711cfe"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-artifacts-operational-efficiency.py"
@@ -90,7 +90,7 @@ digest = "sha256:9e38b77fe1b00ecf871f41533ac9858ac89326b2f7a9c9dd88f824cb7dc42df
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
-digest = "sha256:6a7d532eba3a25441352fee9c5c6b901a36332e465e6f540a76d22c72aadefac"
+digest = "sha256:820dcede6e1bbc6e1b3e34c76c39d27ba0ab3493d0af21f19adfc6b084971d24"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-efficiency.py"
@@ -102,11 +102,11 @@ digest = "sha256:98a7b86bf45ece690ac8f11e382a26405ecf2a5249c4e24588cca16ce09c9af
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-cache-safe-discovery.py"
-digest = "sha256:25b1e5463346c723b7aa0d48398f711ac54be747f53b4097dcecc39067cf06ec"
+digest = "sha256:f80d8b6172b9bc1ddd9e8f56f016118545c318f062a8d0fc475ccfe2de6050b8"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
-digest = "sha256:1c3e26d14659dc2c1fb75e206e730656a05ae3b6d4ff629f1a9f63cad66c04f4"
+digest = "sha256:2b2e48af6f6e470e8308493d03e70c5661c4b7e2e3081f63db58cfdfda5b1dea"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py"
@@ -114,7 +114,7 @@ digest = "sha256:72a9c94184274c934c2f70739905a04b9f6921ac769a9352be5c8814d65c3a2
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
-digest = "sha256:d8efadb404f5efa5606f183e1f2f7959afdc8f3232b28dc2fdc239b1b046dea3"
+digest = "sha256:ad1299ef81b9c47c75ae9523fd620a3e0ecf4815142ac57c81211dba3e6cda3b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-bounded-admission.py"
@@ -138,7 +138,7 @@ digest = "sha256:ad2a148120577ae5732d8dd2e03a86a86d3b90821ac533c4521fc1276c6623f
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/shared-cli-issue-report-intake.py"
-digest = "sha256:8144ebb46d860c48aa17ec7c9bcfbf2bedb96807a844da2bf53f07a720048a3c"
+digest = "sha256:d00c5852ea07dba22a61bbd680405337fe4e87056fd2923f9645be9f00696e7c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/standardize-audit-first-contract-test.py"
@@ -162,11 +162,11 @@ digest = "sha256:ec878b0dfeecef5cd9df2e849e1b94a53e0d399736b221f577bec98ba93c446
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-create-dirty-persistent-branch.py"
-digest = "sha256:3089eeb86868d9360c834301a6a1679b5348df5592b1d3dcf7d04ddab391e2f7"
+digest = "sha256:69b77d135e12faad8bf893108d7798515148b682ab55c1c55039db5ec8ac2d7c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-existing-workspace-dirty-persistent-branch.py"
-digest = "sha256:4a417d899273aaec8fb9d94b5d2c381c43591704f0300895001342820980c6e6"
+digest = "sha256:a70708583429025ab330831e06c0b9bd39449a89ccfdd770347751ddd25219d0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-close-remote-real-cli.py"
@@ -210,11 +210,11 @@ digest = "sha256:ff9c2b4c5d603f07e77710aacc97831b2fe8a37b2e9552665553e485e3aacec
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-four-type-taxonomy.py"
-digest = "sha256:4d7018c0c60a61b1904d622438687fd83bd343481a61024044286968fdbd97db"
+digest = "sha256:b366a4cc3f66b2eeb0a7f2b59e5116ee8ce3a1a54a9e64fd09ca480e5bcac250"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-intake-health.py"
-digest = "sha256:8fc48ad867dbed80ee6a125a8140aab025651e5f8c29750fb7fb14a6eeba2299"
+digest = "sha256:f5ea2b00da1db9b294514b8dc1e8e3e0a9aeeca0f60c29296948e9702f06c49d"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-epic-to-change-atomization.py"
@@ -230,19 +230,19 @@ digest = "sha256:8ee041915c314bbeb7f4c1a1e248ccc7bb7bae81c2b9ce932c6959d8f41d2c0
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-report-triage.py"
-digest = "sha256:27e23dcc5717b2a7c979945afefbdcec0eb141eba00fde4e46993004b6e50948"
+digest = "sha256:71594b427832c53efb0ddfb82ecaff2f6091a787673dc50f5f02e48416cd7d6d"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-spike-terminal.py"
-digest = "sha256:3ca2cdeaa205d5547f85aa9e61c686d822413a7f24be6f8a19227b391e81ee26"
+digest = "sha256:2d83921ae3bf1bb828f01cf264b1cb6627243eed094630d6c1d1fc9fec81a43e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-templates.py"
-digest = "sha256:88a6fe44d211a8364446dac1d8c79376ddc5ce8659c18ced9bd5ec310b23e5b4"
+digest = "sha256:286e6652403d86891c031159a51119da769c435c5f6d01b1047d482c53c69c92"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-vocabulary.py"
-digest = "sha256:0af4650078b6e9cdaf5171020bc07691c13510ff0159b6e1bce5c423a4e81843"
+digest = "sha256:6720e4d22339938492837815cf233b7caf47c5c8f78951fe0679854c348077f2"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-parent-rollup-routing.py"
@@ -527,7 +527,7 @@ digest = "sha256:adf8a3a34826d481baeb0ef6d7c4aba97aa071ab0e23a600ce0cc5094aa993e
 [[cases]]
 id = "capability-scoped-dependency-verification"
 capability_id = "capability-control-plane"
-claim_id = "scoped-capability-verification"
+claim_id = "scoped-dependency-closed-verification"
 contract_id = "capability-scoped-dependency-verification"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-scoped-dependency-verification"
@@ -542,12 +542,12 @@ assertions = [
 ]
 evidence_digest = "sha256:42d725be80fa7a07424b0ed45116178aefb2cd0dd619fe3e9efb41813165781c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:57a3711461cf6e84f0018f17898c10c6640a85b53d1fb1fbaa6ebb374e629a06"
+digest = "sha256:4fbf8c2d779c819be587e2f35b73a7bb3662492cc3c9d53abda48fc647dbb92f"
 
 [[cases]]
 id = "coordination-authority"
 capability_id = "workflow-root-runner"
-claim_id = "aw-only-completion-and-decision-authority"
+claim_id = "aw-only-coordination-authority"
 contract_id = "coordination-authority"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:coordination-authority"
@@ -562,12 +562,12 @@ assertions = [
 ]
 evidence_digest = "sha256:1174bef2f236dc173ac7d6e100631cb3180993cf003aacc34ce5c8c96b167611"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:31dd3393aead4bc69d100813d271aab8de9f3467eb2acbac7c09c834d78a3c2b"
+digest = "sha256:1de7dd1991780ac02df9cc5d5c4bc791af910ac2e18660c29b7d0553ea83405f"
 
 [[cases]]
 id = "coordination-contract-schema"
 capability_id = "workflow-root-runner"
-claim_id = "versioned-client-independent-coordination-contract"
+claim_id = "versioned-coordination-contract"
 contract_id = "coordination-contract-schema"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:coordination-contract-schema"
@@ -582,7 +582,7 @@ assertions = [
 ]
 evidence_digest = "sha256:be5e49b6dfb9918318381d5fa1f83ea1a5c93b54e1e9222b0ea8a99ec120c01e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:351ec6c0b5e1cff345d35a53d7878bc1112017517f9d94e1871ffc57e5d2058e"
+digest = "sha256:c9d5cf1baf46d558a332c0922b2dcebc07fb83bd499a2582744600fdf4364752"
 
 [[cases]]
 id = "coordination-event-validation"
@@ -669,7 +669,7 @@ digest = "sha256:f384a289d9cc3a6d53bffcdf503abe4f2d2510f0fd38129b0db97ddca99bd1a
 [[cases]]
 id = "issue-cache-canonical-change"
 capability_id = "work-item-planning"
-claim_id = "canonical-change-cache-round-trip"
+claim_id = "canonical-change-issue-cache-round-trip"
 contract_id = "issue-cache-canonical-change"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:issue-cache-canonical-change"
@@ -684,7 +684,7 @@ assertions = [
 ]
 evidence_digest = "sha256:f1198222d5aaa398ddc48a1668937ed940088768bb05874123f3b4bbb41ca5f0"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:699ed858f873114fd0ec7ac27b36b4906a9e64c479dd8d7cde4352884c94e677"
+digest = "sha256:18a77c78d9414c7f898da987eeb7920313e87b8e667cf0a4b1456644eda27771"
 
 [[cases]]
 id = "manual-evidence-artifacts-operational-efficiency"
@@ -731,7 +731,7 @@ digest = "sha256:2f0c5b5c68966605da4e16a186ff10ea4bef498f1a4279c89a83f31a0dd5904
 [[cases]]
 id = "project-health-total-observation"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
-claim_id = "health-total-observation-and-readiness-gate"
+claim_id = "two-cell-ec-and-td-semantic-health"
 contract_id = "project-health-total-observation"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:project-health-total-observation"
@@ -746,7 +746,7 @@ assertions = [
 ]
 evidence_digest = "sha256:fe8ba46ddb05266ba5ff6d97d34d76e3736c62ab86505ddf5d89637d5b1b32f1"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d45cfb7d83f78f33b9882e438ce030178568723fb5f00771e4e7185ae8179b19"
+digest = "sha256:af8452eef8a194f76f16438ff470b831d280678e99014a1ad2212c90c7b5ee53"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-operational-efficiency"
@@ -793,7 +793,7 @@ digest = "sha256:c73916fd3ca19aabf8919962a6f4f550b566048cd005f3c422146624e4175dd
 [[cases]]
 id = "python-ec-cache-safe-discovery"
 capability_id = "project-local-td-and-ec-gates"
-claim_id = "python-ec-cache-safe-discovery"
+claim_id = "cache-safe-python-ec-source-discovery"
 contract_id = "python-ec-cache-safe-discovery"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-ec-cache-safe-discovery"
@@ -808,12 +808,12 @@ assertions = [
 ]
 evidence_digest = "sha256:56991a4d858719e0969f7cb7c6d6a1366c4364f71e86ff5c7f6870cb95b3a802"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b59eccaef9a0192fcf07de79c7dab14e492ca6abd7bc689d454e2c6fee4ab966"
+digest = "sha256:3ad693666422a507857c46a29281db88efe4e1831c7225aee587d536d4eae1cc"
 
 [[cases]]
 id = "python-ec-only-authoring"
 capability_id = "project-local-td-and-ec-gates"
-claim_id = "python-ec-only-authoring"
+claim_id = "python-only-ec-authoring-lifecycle"
 contract_id = "python-ec-only-authoring"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-ec-only-authoring"
@@ -828,7 +828,7 @@ assertions = [
 ]
 evidence_digest = "sha256:3b2284aeeab2efa74afca2dcdf278562d380e4b2ce5d69d8819ad5779a9ec287"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:37b91de10c01128eab1d3aa4d0ca526cf4f32b34020d2cd980f45f26f0ae0e8f"
+digest = "sha256:094170ccbe33a1663fb267fc047a132c03aab70475adce1ccf1cc2a61612487e"
 
 [[cases]]
 id = "python-td-claim-linkage"
@@ -853,7 +853,7 @@ digest = "sha256:a3691734501514840138b5eb6f733e4b10f0eada9be1c19ebd5ce12050db5ea
 [[cases]]
 id = "python-td-global-artifact-identity"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
-claim_id = "python-td-global-artifact-identity"
+claim_id = "global-python-td-artifact-identity"
 contract_id = "python-td-global-artifact-identity"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-td-global-artifact-identity"
@@ -868,7 +868,7 @@ assertions = [
 ]
 evidence_digest = "sha256:3a84cf30abb2d42459fe5ce7a61cf0a7766947d49546e46db5ca6d66de699b44"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3c511383f2c544f9f31b312b35d1fe749e3b98f854ac12dbd693a1cd6db5f99d"
+digest = "sha256:9b7fd1ca487f4b493200c267e83b8ef30ceed5f6be4470eb7a2e3602401ef1e7"
 
 [[cases]]
 id = "self-hosting-bounded-admission"
@@ -975,7 +975,7 @@ digest = "sha256:4193c53496ca545d6ffaf557a8683439462cbab5d0f4ebb4fb85d157f6aa891
 [[cases]]
 id = "shared-cli-issue-report-intake"
 capability_id = "work-item-planning"
-claim_id = "shared-cli-report-intake"
+claim_id = "terminology-first-four-type-wi-taxonomy"
 contract_id = "shared-cli-issue-report-intake"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:shared-cli-issue-report-intake"
@@ -990,7 +990,7 @@ assertions = [
 ]
 evidence_digest = "sha256:996d64d677ec2c7b0bc1c3a71b2b8353d770fa13e1ec4a902311f0298aaa03eb"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:03cce716440e238a0032cb0af7efd980d554a97fc3d045bc3d723d024b9534ae"
+digest = "sha256:e7659e23b159ca3901d3d11e3449e5c9a97c23b74293ac88dd4e48a7aeb77d31"
 
 [[cases]]
 id = "standardize-audit-first-contract-test"
@@ -1097,7 +1097,7 @@ digest = "sha256:a3c9a9a492697f4704f0fdde24a46da9e2913de67a4c85d6acbddbe317f1910
 [[cases]]
 id = "td-create-dirty-persistent-branch"
 capability_id = "td-cb-lifecycle-automation"
-claim_id = "td-create-dirty-persistent-branch"
+claim_id = "dirty-persistent-branch-td-activation"
 contract_id = "td-create-dirty-persistent-branch"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-create-dirty-persistent-branch"
@@ -1112,12 +1112,12 @@ assertions = [
 ]
 evidence_digest = "sha256:969a538c9adabbb0c48ea1b55791366871f5f7e4cd68ece066fa9194dd00099e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:5185e1416c176dbe5db191d1a4475c8fcb0c2ffe1d163508a701a20eca848d3b"
+digest = "sha256:75e1a3c8642c4fd386e897e2258471f554c96a6bb39ecbdf4121fdb1f16be6fa"
 
 [[cases]]
 id = "td-existing-workspace-dirty-persistent-branch"
 capability_id = "td-cb-lifecycle-automation"
-claim_id = "td-existing-workspace-dirty-persistent-branch"
+claim_id = "dirty-persistent-branch-existing-td-activation"
 contract_id = "td-existing-workspace-dirty-persistent-branch"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-existing-workspace-dirty-persistent-branch"
@@ -1132,7 +1132,7 @@ assertions = [
 ]
 evidence_digest = "sha256:d97a62aae39b5038ff7447c744d12768882aecfb280324ec4536cb5c52873d8f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:779e4e7d556dce7ed929ae5cc2d7f5c23389d644ac1ca635b1d484ba25494112"
+digest = "sha256:7c018a7b74ad3e5220b744c2923fe870ba3a65bf6c11df0a186d8ef369c00060"
 
 [[cases]]
 id = "wi-close-remote-real-cli"
@@ -1337,7 +1337,7 @@ digest = "sha256:1f3d77fef0addb5bf5d738d8da67b9f986d931a220a99115321fecf460b085d
 [[cases]]
 id = "work-item-four-type-taxonomy"
 capability_id = "work-item-planning"
-claim_id = "canonical-four-type-wi-taxonomy"
+claim_id = "terminology-first-four-type-wi-taxonomy"
 contract_id = "work-item-four-type-taxonomy"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-four-type-taxonomy"
@@ -1352,12 +1352,12 @@ assertions = [
 ]
 evidence_digest = "sha256:e16d116a37f6058baea0e22f81c65247e64f13b1f692f44a6d3ed631a00a8862"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c6e8d0cddaa3a3118fd5590f7ca3243b00256a0d9eada93b0e16aaae8e1260fd"
+digest = "sha256:2e573bcb45067c1136d5ef766570050a382ef4d8f29014759a30a7cf457a2836"
 
 [[cases]]
 id = "work-item-intake-health"
 capability_id = "work-item-planning"
-claim_id = "typed-intake-health"
+claim_id = "terminology-first-four-type-wi-taxonomy"
 contract_id = "work-item-intake-health"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-intake-health"
@@ -1372,7 +1372,7 @@ assertions = [
 ]
 evidence_digest = "sha256:52ec40dbdddd070a326ed359c353757bf1a1ac0d57d330f5f5b09f0271140136"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7ced574340c3e69e95898ac2b63d581d3e5275b3f0248eab5eeab276605da7ea"
+digest = "sha256:e4c5ac4f5186e506be1478ac7b24ae87a78ba3dae0b5eabcc4dcef9e67ffc31c"
 
 [[cases]]
 id = "work-item-planning-epic-to-change-atomization"
@@ -1439,7 +1439,7 @@ digest = "sha256:a632625e2b7d49a3f4140b0958b04edcb5a26df9e4621c1565be92a9a736171
 [[cases]]
 id = "work-item-report-triage"
 capability_id = "work-item-planning"
-claim_id = "report-terminal-triage"
+claim_id = "terminology-first-four-type-wi-taxonomy"
 contract_id = "work-item-report-triage"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-report-triage"
@@ -1454,12 +1454,12 @@ assertions = [
 ]
 evidence_digest = "sha256:d67f271b5cf2709f23926fd02f08b4a425b82f50e71c1af223d4d6f59a061dfc"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b6a11117e5b5a61bc6efd96dc8f7e793e4cefea8fed45cd4acd8c914df5ae576"
+digest = "sha256:880b65aa58217a4c4509d6b875af7a080d23f3f41bace8966ceccb6825539bc0"
 
 [[cases]]
 id = "work-item-spike-terminal"
 capability_id = "work-item-planning"
-claim_id = "spike-terminal-convergence"
+claim_id = "terminology-first-four-type-wi-taxonomy"
 contract_id = "work-item-spike-terminal"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-spike-terminal"
@@ -1474,12 +1474,12 @@ assertions = [
 ]
 evidence_digest = "sha256:cd451cafee9d19e5d03420825630ed2e9d8fa288528664f4bb343a999538bfd1"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1c9e9b83475c29bdd504ed15750aa59a7b4b04a4284aad8861baf662afc3e9c9"
+digest = "sha256:1dcaa2ed40031f1191dd1e6ce666f2c422da866ed387ecad39b78818c4e37636"
 
 [[cases]]
 id = "work-item-type-templates"
 capability_id = "work-item-planning"
-claim_id = "typed-work-item-authoring-profiles"
+claim_id = "terminology-first-four-type-wi-taxonomy"
 contract_id = "work-item-type-templates"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-type-templates"
@@ -1494,12 +1494,12 @@ assertions = [
 ]
 evidence_digest = "sha256:345a92494aa0703e6128089042d076802e6c164d83e8bc498425b3f5e94140d4"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:dcfbb8f3c35acdcb4b92d8e675bf41a4de0ab23f30d2954c0b8a0c8b188d9cd0"
+digest = "sha256:46c5c5f910b93184a9a5b914304bd449eb8c8470a4f8ce8ca96aeea911cd3afd"
 
 [[cases]]
 id = "work-item-type-vocabulary"
 capability_id = "work-item-planning"
-claim_id = "terminology-first-work-item-vocabulary"
+claim_id = "terminology-first-four-type-wi-taxonomy"
 contract_id = "work-item-type-vocabulary"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-type-vocabulary"
@@ -1514,7 +1514,7 @@ assertions = [
 ]
 evidence_digest = "sha256:50407b46886d6289ddf16fd650668d9dcd295f0bceb09330df3ca4608fea3e52"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e7f1b5e398befb7d13bc7c1e8094b6916f5ed5f1fe7f9b6d63cdf0a00c20f756"
+digest = "sha256:f3344dc573177cb3f81fd31b29539cbfb6bc280b9c7292ce96b04b7381eec568"
 
 [[cases]]
 id = "workflow-root-runner-parent-rollup-routing"

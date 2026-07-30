@@ -10,7 +10,7 @@ from pathlib import Path
 
 CASE_ID = "capability-scoped-dependency-verification"
 CAPABILITY_ID = "capability-control-plane"
-USE_CASE_ID = "scoped-capability-verification"
+USE_CASE_ID = "scoped-dependency-closed-verification"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
     "python3 apps/agentic-workflow/external-contracts/src/runner.py "

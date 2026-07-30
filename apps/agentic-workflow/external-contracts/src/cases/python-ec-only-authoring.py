@@ -10,7 +10,7 @@ from wi_contract_fixture import final_json, project_fixture, run_aw
 
 CASE_ID = "python-ec-only-authoring"
 CAPABILITY_ID = "project-local-td-and-ec-gates"
-USE_CASE_ID = "python-ec-only-authoring"
+USE_CASE_ID = "python-only-ec-authoring-lifecycle"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
     "python3 apps/agentic-workflow/external-contracts/src/runner.py "

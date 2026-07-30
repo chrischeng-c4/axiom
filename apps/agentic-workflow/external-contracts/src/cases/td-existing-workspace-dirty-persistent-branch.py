@@ -11,7 +11,7 @@ from wi_contract_fixture import create, final_json, project_fixture, run_aw
 
 CASE_ID = "td-existing-workspace-dirty-persistent-branch"
 CAPABILITY_ID = "td-cb-lifecycle-automation"
-USE_CASE_ID = "td-existing-workspace-dirty-persistent-branch"
+USE_CASE_ID = "dirty-persistent-branch-existing-td-activation"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
     "python3 apps/agentic-workflow/external-contracts/src/runner.py "

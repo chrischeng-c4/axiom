@@ -8,11 +8,11 @@ def fail_closed_coordination_event_validation() -> str:
     return "invalid coordination events fail closed"
 
 
-def aw_only_completion_and_decision_authority() -> str:
+def aw_only_coordination_authority() -> str:
     return "only durable AW state advances completion or decisions"
 
 
-def versioned_client_independent_coordination_contract() -> str:
+def versioned_coordination_contract() -> str:
     return "coordination documents share one versioned public schema"
 
 

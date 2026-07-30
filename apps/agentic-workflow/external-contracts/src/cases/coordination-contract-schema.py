@@ -9,7 +9,7 @@ from typing import Any
 
 CASE_ID = "coordination-contract-schema"
 CAPABILITY_ID = "workflow-root-runner"
-USE_CASE_ID = "versioned-client-independent-coordination-contract"
+USE_CASE_ID = "versioned-coordination-contract"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
     "python3 apps/agentic-workflow/external-contracts/src/runner.py "
