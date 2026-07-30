@@ -51,6 +51,7 @@ unbound.
 from __future__ import annotations
 
 import hashlib
+from itertools import permutations
 from pathlib import Path
 from typing import Any
 
@@ -1592,6 +1593,52 @@ ALL_CORE_SECTION_README = _section_readme(
     "Lumen README-resident capability contract, every capability core.",
 )
 
+#: Relocation input spanning all three render groups at once: two capabilities
+#: declare `core`, one declares `non_core`, and three declare nothing.
+#:
+#: `capabilities_in_render_order` (`capability.rs:8908-8932`) concatenates three
+#: groups -- `Some(Core)`, `Some(NonCore)`, then `None` -- and every other
+#: relocation shape here leaves at most two of them non-empty *and* in an order
+#: that happens to equal raw document order, so the array's order is
+#: unobservable from them: permuting it renders the identical document. This
+#: shape populates all three and interleaves them so that raw order and grouped
+#: order differ, which is what makes the concatenation order falsifiable.
+MIXED_SECTION_CLASSES = ("core", "core", None, None, None, "non_core")
+assert len(MIXED_SECTION_CLASSES) == len(_ALL_MEMBERS)
+MIXED_SECTION_README = _section_readme(
+    _ALL_MEMBERS,
+    MIXED_SECTION_CLASSES,
+    "Lumen README-resident capability contract, all three render groups.",
+)
+
+
+def _mixed_titles_in_group_order(order: tuple[str | None, ...]) -> tuple[str, ...]:
+    """The mixed shape's titles, concatenated in the given group order."""
+    return tuple(
+        member[0]
+        for group in order
+        for member, declared in zip(_ALL_MEMBERS, MIXED_SECTION_CLASSES)
+        if declared == group
+    )
+
+
+#: The order the product's own group array implies for the mixed shape.
+MIXED_SECTION_GROUPED_TITLES = _mixed_titles_in_group_order(("core", "non_core", None))
+_MIXED_GROUP_PERMUTATIONS = tuple(
+    _mixed_titles_in_group_order(order)
+    for order in permutations(("core", "non_core", None))
+)
+assert len(set(_MIXED_GROUP_PERMUTATIONS)) == len(_MIXED_GROUP_PERMUTATIONS), (
+    "every permutation of the three render groups must produce a distinct title "
+    "order, or some reordering of `capabilities_in_render_order` would render "
+    "the identical document and this shape could not falsify it"
+)
+assert MIXED_SECTION_GROUPED_TITLES != tuple(member[0] for member in _ALL_MEMBERS), (
+    "the mixed shape must render in an order different from its raw document "
+    "order, or an index that followed the input instead of the grouping would "
+    "still agree with the sections"
+)
+
 #: The titles each relocation input is required to carry through.
 UNCLASSIFIED_SECTION_TITLES = tuple(member[0] for member in _ALL_MEMBERS)
 
@@ -1635,7 +1682,9 @@ def _rendered_capability_titles(migrated: str) -> list[str]:
     return titles
 
 
-def assert_relocation_preserves_section_tracker_state(migrated: str) -> None:
+def assert_relocation_preserves_section_tracker_state(
+    migrated: str, *, expected_order: tuple[str, ...]
+) -> None:
     """Relocating a section-shaped README preserves each capability's `Root WI`.
 
     This is the caller of `root_wi_for_capability` that `aw capability migrate`
@@ -1653,8 +1702,8 @@ def assert_relocation_preserves_section_tracker_state(migrated: str) -> None:
     settled by this fixture.
     """
     rows = _index_rows_parsed(migrated)
-    assert [row[0] for row in rows] == list(UNCLASSIFIED_SECTION_TITLES), (
-        f"the relocated index must list every capability in document order, "
+    assert [row[0] for row in rows] == list(expected_order), (
+        f"the relocated index must list every capability in render order, "
         f"got {[row[0] for row in rows]}"
     )
     for row in rows:
@@ -1756,7 +1805,7 @@ def assert_relocation_falls_back_to_the_first_work_root_wi(migrated: str) -> Non
 
 
 def assert_relocation_renders_every_capability_section(
-    migrated: str, report: dict[str, Any]
+    migrated: str, report: dict[str, Any], *, expected_order: tuple[str, ...]
 ) -> None:
     """Relocation emits a section for every capability, not just an index.
 
@@ -1772,7 +1821,7 @@ def assert_relocation_renders_every_capability_section(
     document fails to parse, and the report could be right about a document this
     fixture never actually read back.
     """
-    assert _rendered_capability_titles(migrated) == list(UNCLASSIFIED_SECTION_TITLES), (
+    assert _rendered_capability_titles(migrated) == list(expected_order), (
         f"relocation must render one section per capability, got "
         f"{_rendered_capability_titles(migrated)}"
     )
@@ -1781,6 +1830,40 @@ def assert_relocation_renders_every_capability_section(
     assert sorted(parsed) == sorted(expected_ids), parsed
     assert report["capability_count"] == len(expected_ids), report
     assert document_blockers(report) == [], report["blockers"]
+
+
+def assert_relocation_renders_the_three_groups_in_order(migrated: str) -> None:
+    """Relocation renders core, then non-core, then whatever declared nothing.
+
+    `capabilities_in_render_order` (`capability.rs:8908-8932`) is the single
+    array that decides this, and both the Capability Index and the capability
+    sections are rendered from it by separate passes. Every other relocation
+    shape in this fixture leaves at most two of its three groups non-empty and
+    in an order that coincides with raw document order, so permuting the array
+    renders the byte-identical document -- the order is simply not observable
+    from them. Here the three groups are populated and interleaved, so a
+    permuted array renders a different document.
+
+    Three things are asserted, because no two of them imply the third. The
+    index and the sections agree, so a permutation that moved only one of the
+    two passes leaves a document whose index permanently contradicts its own
+    body. The sections are pinned to the grouped order, so both passes moving
+    together is caught as well. And the grouped order is asserted at import to
+    differ from raw input order under every permutation of the three groups, so
+    "agrees with the sections" cannot be satisfied by both halves collapsing
+    back to input order.
+    """
+    index_titles = _index_titles(migrated)
+    rendered = _rendered_capability_titles(migrated)
+
+    assert index_titles == rendered, (
+        f"the relocated index and its capability sections disagree on order; "
+        f"index={index_titles} sections={rendered}"
+    )
+    assert rendered == list(MIXED_SECTION_GROUPED_TITLES), (
+        f"relocation must render core, then non-core, then unclassified; "
+        f"got {rendered}"
+    )
 
 
 def assert_relocation_root_emission(
@@ -1920,6 +2003,69 @@ def assert_baseline_placed_core_is_rejected(
     ], report["blockers"]
     by_id = {item["id"]: item for item in report["capabilities"]}
     assert by_id[cap_id].get("feature_class") is None, by_id[cap_id]
+
+
+def case_varied_root_document(document: str) -> str:
+    """The same document with both feature roots written in a different case.
+
+    `feature_root_title` (`capability.rs:9960-9970`) lower-cases the heading
+    before testing for the trailing `features` word, so a root is recognized
+    however it is capitalized. Every other document in this fixture writes its
+    roots in exact canonical case, which cannot tell that tolerance apart from a
+    case-sensitive test: narrowing the check to `ends_with("Features")` leaves
+    every one of them rendering and reporting identically.
+
+    What makes the narrowing consequential rather than cosmetic is that an
+    unrecognized root does not misclassify -- it disappears. The effective class
+    is the declared field *or else* the containing root, so a capability that
+    declared nothing under an unrecognized root resolves to no class at all,
+    falls to the non-core default, and the rule that would have rejected it goes
+    silent. A human who writes `### CORE FEATURES` gets a document that reads as
+    classified and is checked as if it were not.
+    """
+    varied = document
+    for canonical, upper in (
+        ("### Core Features", "### CORE FEATURES"),
+        ("### Non-Core Features", "### NON-CORE FEATURES"),
+    ):
+        assert document.count(canonical) == 1, (
+            f"expected exactly one {canonical!r} heading to vary; "
+            f"found {document.count(canonical)}"
+        )
+        varied = varied.replace(canonical, upper)
+    assert varied != document
+    return varied
+
+
+def assert_case_varied_roots_are_read_like_canonical_ones(
+    varied: dict[str, Any], canonical: dict[str, Any], cap_id: str
+) -> None:
+    """Case-varied roots produce the same verdict and the same split.
+
+    Asserted against the canonical document's own report rather than against a
+    literal, so this cannot drift away from what the canonical leg established,
+    and asserted on the blocker *and* on every class-partitioned count: the
+    blocker alone would pass an implementation that stopped recognizing the
+    non-core root, since an unrecognized root and the non-core default look the
+    same from a single rejected capability.
+    """
+    assert_baseline_placed_core_is_rejected(varied, cap_id)
+    for field in (
+        "capability_count",
+        "claim_count",
+        "core_capability_count",
+        "non_core_capability_count",
+        "core_claim_count",
+        "non_core_claim_count",
+    ):
+        assert varied[field] == canonical[field], (
+            f"case-varied roots changed {field}: {varied[field]!r} vs the "
+            f"canonical document's {canonical[field]!r}"
+        )
+        assert varied[field] > 0, (
+            f"{field} must be non-zero here, or its equality is 0 == 0 and a "
+            f"report that zeroed the whole split would pass"
+        )
 
 
 #: The `Feature Class` spellings a human writes. The parser normalizes by

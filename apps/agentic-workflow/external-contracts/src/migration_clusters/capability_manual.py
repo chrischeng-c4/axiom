@@ -402,6 +402,25 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 placed_core[cap_id], cap_id
             )
 
+        # Root recognition is case-insensitive, and every document above writes
+        # its roots in exact canonical case -- which cannot tell that tolerance
+        # from a case-sensitive test. Driven once rather than per baseline: the
+        # rule belongs to the heading parser, not to the baseline set, and the
+        # loop above already sweeps that set at canonical case. The placed-core
+        # shape is the one that makes it observable, because it is the shape
+        # whose verdict depends on a root being read at all.
+        case_varied_id = lumen_reference.NON_CORE_IDS[0]
+        case_varied_roots = _lumen_report(
+            root,
+            cap_path,
+            lumen_reference.case_varied_root_document(
+                lumen_reference.baseline_placed_core_document(case_varied_id)
+            ),
+        )
+        lumen_reference.assert_case_varied_roots_are_read_like_canonical_ones(
+            case_varied_roots, placed_core[case_varied_id], case_varied_id
+        )
+
         # The accepting half of the `Feature Class` parser. The mistyped-value
         # leg above binds only the refusal; the spellings a human actually writes
         # -- backticked, hyphenated, camel-cased, and the root headings
@@ -643,21 +662,38 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         # takes the other branch -- the one that renders the sections themselves
         # and that resolves each `Root WI` through `root_wi_for_capability` on
         # live, unblanked tracker state. Format migration cannot reach it either,
-        # because it blanks that state before rendering. Three shapes, because
-        # the branch has three distinguishable behaviors: nothing classified,
-        # partially classified, and one class empty.
+        # because it blanks that state before rendering. Four shapes, because
+        # the branch has that many distinguishable behaviors: nothing
+        # classified, partially classified, the `Root WI` fallback, and all
+        # three render groups populated at once. The last one is what makes the
+        # *order* of `capabilities_in_render_order` observable: in the other
+        # three, grouped order and raw document order are the same list, so
+        # permuting the array renders the identical document.
         relocated_sections = {}
-        for name, readme_document, declares_any_class in (
-            ("unclassified", lumen_reference.UNCLASSIFIED_SECTION_README, False),
+        for name, readme_document, declares_any_class, expected_order in (
+            (
+                "unclassified",
+                lumen_reference.UNCLASSIFIED_SECTION_README,
+                False,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
+            ),
             (
                 "partially_classified",
                 lumen_reference.PARTIALLY_CLASSIFIED_SECTION_README,
                 True,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
             ),
             (
                 "work_root_wi",
                 lumen_reference.WORK_ROOT_WI_SECTION_README,
                 False,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
+            ),
+            (
+                "mixed_class",
+                lumen_reference.MIXED_SECTION_README,
+                True,
+                lumen_reference.MIXED_SECTION_GROUPED_TITLES,
             ),
         ):
             with project_fixture() as section_root:
@@ -694,11 +730,18 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     )
                 else:
                     lumen_reference.assert_relocation_preserves_section_tracker_state(
-                        section_text
+                        section_text, expected_order=expected_order
                     )
                 lumen_reference.assert_relocation_renders_every_capability_section(
-                    section_text, relocated_sections[name]
+                    section_text, relocated_sections[name], expected_order=expected_order
                 )
+                if name == "mixed_class":
+                    # The only shape whose three render groups are all populated
+                    # and whose grouped order differs from its input order, so
+                    # it is the only one that can catch a permuted group array.
+                    lumen_reference.assert_relocation_renders_the_three_groups_in_order(
+                        section_text
+                    )
                 # The roots are emitted exactly when the input classified
                 # something. Two of these shapes classify nothing and one
                 # classifies its domain promises, so both directions are pinned.
@@ -760,6 +803,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "relocated": relocated_report,
         "next_coverage": next_coverage,
         "placed_core": placed_core,
+        "case_varied_roots": case_varied_roots,
         "human_spellings": human_spellings,
         "roots_only": roots_only,
         "unknown_roots_only": unknown_roots_only,
@@ -860,9 +904,11 @@ def verify(case_id: str) -> list[str]:
                 "aw capability migrate relocating a README-resident legacy table into a project with no CAPABILITIES.md preserves each row's tracker state as its Root WI in both the index column and the section field, derives the same core/non-core split, and leaves the README a forwarding pointer instead of the table",
                 "aw capability migrate relocating a README whose contract is canonical capability sections preserves each capability's own declared Root WI into both the index column and the section field, which is the branch that resolves it through root_wi_for_capability on live tracker state rather than through the legacy row or through format migration's pre-blanked input",
                 "aw capability migrate renders one capability section per capability on that same branch, asserted through both the relocated text and a re-report of it, so a relocation emitting a complete-looking Capability Index over no contract at all cannot pass",
+                "aw capability migrate renders core, then non-core, then whatever declared nothing, asserted on the one relocation shape whose three render groups are all populated and whose grouped order differs from its input order, with the Capability Index and the capability sections -- two separate passes over the same group array -- pinned both to each other and to that grouped order",
                 "aw capability migrate emits both canonical feature roots when one class has no members, asserted on the only input shape where a populated-roots-only renderer differs from a both-roots renderer, and the emitted document is accepted by a follow-up report",
                 "aw capability next renders the same core/non-core split its own report computes, through a coverage object built by a separate JSON literal, with the four populated operands non-zero and pairwise distinct",
                 "each trait-derived baseline nested under Core Features while declaring no Feature Class at all is rejected by that exact blocker, which is the half of the effective-class rule that resolves the class from the containing root rather than from the field",
+                "the same placement is read the same way when both feature roots are written in a different case, asserted as the identical blocker and the identical class-partitioned counts as its canonical-cased twin, because an unrecognized root does not misclassify but disappears -- and every other document here writes its roots in exact canonical case",
                 "aw capability report resolves every human spelling of Feature Class -- backticked, hyphenated, camel-cased, case-folded, and the root headings themselves -- to its canonical class with the same per-class counts and no blocker, exercised in waves because one document holds one spelling per capability, which is the accepting half of the parser the mistyped-value assertion only binds the refusal of",
                 "a document declaring no Feature Class field anywhere is still classified by its canonical feature roots alone, rejecting a baseline for its placement while every capability still reports the unclassified default, which is the arm of the declares-any-class test that a field-carrying document masks",
                 "a document whose only feature roots are outside the closed pair is diagnosed rather than waved through as pre-migration, asserted as the whole ordered set of two missing-root and two unknown-root blockers, which is the third arm of that same test",
