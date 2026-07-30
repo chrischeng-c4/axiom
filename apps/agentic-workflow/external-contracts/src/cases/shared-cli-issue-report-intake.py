@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 CASE_ID = "shared-cli-issue-report-intake"
 CAPABILITY_ID = "work-item-planning"
-USE_CASE_ID = "shared-cli-report-intake"
+USE_CASE_ID = "terminology-first-four-type-wi-taxonomy"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
     "python3 apps/agentic-workflow/external-contracts/src/runner.py "

@@ -2,7 +2,7 @@
 
 CASE_ID = "project-health-total-observation"
 CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
-USE_CASE_ID = "health-total-observation-and-readiness-gate"
+USE_CASE_ID = "two-cell-ec-and-td-semantic-health"
 DIMENSION = "behavior"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
 ASSERTIONS = (

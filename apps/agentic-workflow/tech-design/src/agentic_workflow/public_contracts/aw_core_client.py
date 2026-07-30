@@ -20,9 +20,9 @@ def aw_core_client_operational_stability() -> str:
     return "the artifact lifecycle remains stable under repeated execution"
 
 
-def health_total_observation_and_readiness_gate() -> str:
+def two_cell_ec_and_td_semantic_health() -> str:
     return "semantic health has exactly two cells"
 
 
-def python_td_global_artifact_identity() -> str:
+def global_python_td_artifact_identity() -> str:
     return "TD artifact identity is globally unique"

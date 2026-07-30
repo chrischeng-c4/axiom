@@ -12,7 +12,7 @@ from wi_contract_fixture import project_fixture, run_aw, verify_case
 
 CASE_ID = "work-item-type-vocabulary"
 CAPABILITY_ID = "work-item-planning"
-USE_CASE_ID = "terminology-first-work-item-vocabulary"
+USE_CASE_ID = "terminology-first-four-type-wi-taxonomy"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
     "python3 apps/agentic-workflow/external-contracts/src/runner.py "

@@ -4,36 +4,18 @@ __aw_artifact_id__ = "artifact:work-item-planning/public-contract"
 __aw_public_contract__ = True
 
 
-def canonical_four_type_wi_taxonomy() -> str:
-    return "typed work items round-trip through authoring and graph projection"
+def terminology_first_four_type_wi_taxonomy() -> str:
+    return (
+        "typed work items round-trip through authoring and graph projection, "
+        "each type has one bounded authoring profile, spikes terminate with "
+        "decision evidence or expiry, reports terminate through typed triage, "
+        "shared CLI issue intake creates typed reports, health observes report "
+        "and spike intake state, and CLI plus docs share one vocabulary"
+    )
 
 
-def canonical_change_cache_round_trip() -> str:
+def canonical_change_issue_cache_round_trip() -> str:
     return "canonical change identity survives issue-cache rehydration"
-
-
-def typed_work_item_authoring_profiles() -> str:
-    return "each work-item type has one bounded authoring profile"
-
-
-def spike_terminal_convergence() -> str:
-    return "spikes terminate with decision evidence or expiry"
-
-
-def report_terminal_triage() -> str:
-    return "reports terminate through typed triage"
-
-
-def shared_cli_report_intake() -> str:
-    return "shared CLI issue intake creates typed reports"
-
-
-def typed_intake_health() -> str:
-    return "health observes report and spike intake state"
-
-
-def terminology_first_work_item_vocabulary() -> str:
-    return "CLI and docs share one work-item vocabulary"
 
 
 def wi_create_help_smoke() -> str:
