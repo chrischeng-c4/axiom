@@ -757,6 +757,24 @@ def assert_human_report_renders_the_split(stdout: str, report: dict[str, Any]) -
         "the reference fixture must keep the two class counts different, or the "
         "human line could not detect a transposition"
     )
+    assert report["core_claim_count"] != report["non_core_claim_count"], (
+        "the reference fixture must keep the two claim counts different, or a "
+        "transposition of the claim operands would pass"
+    )
+    # Four of the line's eight operands are verified counts. On a report with no
+    # gate execution they are all zero, so a transposition confined to them is
+    # invisible and this leg silently covers half of what its name claims. The
+    # caller must drive it at least once on a `--verify` report; this guard is
+    # what forces that, rather than trusting the leg order to stay correct.
+    assert report["verified_count"] > 0, (
+        "assert_human_report_renders_the_split must be driven on a report whose "
+        "verified counts are populated, or its verified operands are all zero "
+        "and a transposition among them cannot be detected"
+    )
+    assert report["core_verified_count"] != report["non_core_verified_count"], report
+    assert (
+        report["core_verified_claim_count"] != report["non_core_verified_claim_count"]
+    ), report
 
 
 def assert_capability_under_both_roots_is_rejected(report: dict[str, Any]) -> None:
@@ -939,16 +957,29 @@ def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
         f"capabilities; index={sorted(index_titles)} sections={sorted(section_titles)}"
     )
 
-    # Only column 1 is asserted, and the reason is worth recording. Round 10
-    # proposed also pinning each row's `Root WI` back to the `Active WI` its
-    # legacy row carried. That expectation is not met at HEAD and must not be
-    # written as though it were: migration drops the legacy `Active WI`
-    # outright, so the migrated document contains no `#1`/`#2`/`#3` anywhere and
-    # every rendered cell is already `-`. Blanking that cell in the renderer is
-    # therefore an equivalent mutation -- it cannot change observable output, so
-    # no assertion here or anywhere else could catch it. The information loss
-    # itself is real and is filed separately; asserting `-` would freeze the
-    # current behavior as the contract, which is the opposite of the point.
+    # Only column 1 is asserted *here*, and the reason recorded in an earlier
+    # revision was wrong in a way worth keeping visible. It said blanking the
+    # rendered `Root WI` cell was an equivalent mutation because "no
+    # `#1`/`#2`/`#3` survives anywhere". That premise is false: this leg's path
+    # erases document-stored tracker state before rendering, but the *other*
+    # entry point of `aw capability migrate` -- relocating a README-resident
+    # legacy table -- preserves every `Active WI` as `Root WI`. Verified
+    # directly, and now bound by
+    # `assert_readme_relocation_preserves_tracker_state`.
+    #
+    # The conclusion drawn from the false premise happened to be right for this
+    # path, and asserting `-` here would still freeze current behavior as the
+    # contract while the two paths disagree, which is filed separately. So the
+    # assertion stays off -- for the correct reason this time.
+    #
+    # The standing lesson, recorded because it has now cost a round in each
+    # direction: "this rule cannot be observed" is a claim about the inputs the
+    # fixture drives, never about the rule. Enumerate the callers before
+    # excusing a mutation as equivalent -- an unexercised second caller looks
+    # exactly like an unobservable rule. And enumerate them *precisely*: the two
+    # migrate paths render tracker state through different functions, so
+    # discovering that one path preserves the value does not make the other
+    # path's renderer observable.
 
 
 def assert_migration_preserves_declared_class(migrated: str) -> None:
@@ -1089,3 +1120,152 @@ def assert_migration_reaches_a_fixed_point(migrated: str) -> None:
     assert section_titles == list(GROUPED_TITLES), (
         f"migration must render core-then-non-core, got {section_titles}"
     )
+
+
+#: The legacy row title -> `Active WI` mapping, derived from `_LEGACY_ROWS` so a
+#: change to the fixture cannot silently desynchronize the expectation from it.
+LEGACY_ROW_TRACKER_STATE = {name: wi for name, _state, _gaps, wi, _evidence in _LEGACY_ROWS}
+assert len(set(LEGACY_ROW_TRACKER_STATE.values())) == LEGACY_ROW_COUNT, (
+    "each legacy row must carry a distinct Active WI, or a renderer that emitted "
+    "one row's tracker state for every row would satisfy this fixture"
+)
+
+#: The pointer `aw capability migrate` must leave behind in a README whose
+#: capability table it relocated. Without it the relocation is a silent move: the
+#: human-facing document loses its contract with no forwarding address.
+README_CONTRACT_POINTER = "## Capability Contract"
+
+
+def _legacy_title_is_core(title: str) -> bool:
+    slug = title.strip().lower().replace(" ", "-")
+    return slug in LEGACY_CORE_ROW_IDS
+
+
+def _capability_section_text(migrated: str, title: str) -> str:
+    """The body of one `#### <title>` section, up to the next heading."""
+    marker = f"#### {title}\n"
+    start = migrated.index(marker)
+    rest = migrated[start + len(marker) :]
+    end = rest.find("\n#### ")
+    if end == -1:
+        end = rest.find("\n### ")
+    return rest if end == -1 else rest[:end]
+
+
+def assert_readme_relocation_preserves_tracker_state(readme: str, migrated: str) -> None:
+    """Relocating a README-resident legacy table preserves each row's tracker state.
+
+    This binds the *second* entry point of `aw capability migrate`. The legacy leg
+    above drives format migration of an existing CAPABILITIES.md; this one drives
+    the branch that fires when a project has no CAPABILITIES.md at all and its
+    README still carries the legacy table. That branch renders the parsed rows
+    directly through `render_capability_registry`'s legacy path rather than
+    routing them through the format-migration renderer, so it is the only input in
+    this fixture under which a rendered tracker cell is non-blank -- and therefore
+    the only one under which emptying that rendering is observable at all.
+
+    Concretely: the format-migration path erases document-stored tracker state
+    before rendering, so every `Root WI` cell it emits is already `-` and no
+    mutation of that rendering changes its output. Here the legacy `Active WI`
+    survives into both the index column and the section field, which are rendered
+    by separate passes, so blanking either one is caught.
+
+    A precision worth keeping, because getting it wrong cost a review round in each
+    direction. The renderer this leg binds is the legacy one that reads
+    `row.active_wi`. It is *not* `root_wi_for_capability`, which serves documents
+    that parsed into capability sections; relocation never calls that function.
+    `root_wi_for_capability` is unobservable through `aw capability` in this
+    fixture for the reason above -- by the time it runs, its input has already been
+    blanked -- and its coverage question belongs to whichever case owns the surface
+    that still feeds it live tracker state.
+
+    Tracker state is asserted as *preserved*, not as any particular literal: the
+    expectation is derived from `_LEGACY_ROWS`, which is the input this leg
+    writes. That direction stays honest if the fixture changes, and it is not a
+    claim that preserving is more correct than erasing -- the two paths disagree
+    at HEAD and that disagreement is filed as a defect, not settled here. What is
+    asserted is only that this path does observably what it does, so it cannot be
+    silently emptied.
+    """
+    rows = _index_rows_parsed(migrated)
+    index_titles = [row[0] for row in rows]
+    assert set(index_titles) == set(LEGACY_ROW_TRACKER_STATE), sorted(index_titles)
+
+    # The index's Root WI column, per row, against that row's own legacy value.
+    for row in rows:
+        title = row[0]
+        assert row[1] == LEGACY_ROW_TRACKER_STATE[title], (
+            f"relocated index row {title!r} lost its tracker state; "
+            f"expected {LEGACY_ROW_TRACKER_STATE[title]!r}, got {row[1]!r}"
+        )
+
+    # The same value again as a section field: the index and the sections are
+    # rendered by separate passes, so one can be emptied without the other.
+    for title, wi in LEGACY_ROW_TRACKER_STATE.items():
+        section = _capability_section_text(migrated, title)
+        assert f"Root WI: {wi}\n" in section, (
+            f"relocated section {title!r} lost its tracker state; "
+            f"expected 'Root WI: {wi}', section was:\n{section}"
+        )
+
+    # Relocation must still derive the split and group the sections under the
+    # roots that derivation implies. Section order is pinned; index order is
+    # membership only, for the reason recorded on the legacy-index leg.
+    expected_sections = [
+        name for name in LEGACY_ROW_TRACKER_STATE if _legacy_title_is_core(name)
+    ] + [name for name in LEGACY_ROW_TRACKER_STATE if not _legacy_title_is_core(name)]
+    assert _section_titles(migrated) == expected_sections, (
+        f"relocation must group sections core-then-non-core, "
+        f"got {_section_titles(migrated)}"
+    )
+    for cap_id in LEGACY_CORE_ROW_IDS:
+        _assert_declared_class(migrated, cap_id, "core")
+    for cap_id in LEGACY_NON_CORE_ROW_IDS:
+        _assert_declared_class(migrated, cap_id, "non_core")
+
+    # The README keeps a forwarding pointer and gives up the table itself, so the
+    # relocation is observable from the document it moved the contract out of.
+    assert README_CONTRACT_POINTER in readme, readme
+    assert "CAPABILITIES.md" in readme, readme
+    assert "| Capability | Current State |" not in readme, readme
+
+
+def assert_verified_split_is_non_degenerate(report: dict[str, Any]) -> None:
+    """The verified halves of the split are attributed per class, not just summed.
+
+    The pair-sum assertions in `assert_feature_class_attribution` run against a
+    report with no gate execution, where all four verified fields are zero. Every
+    verified-dimension assertion there is therefore `0 + 0 == 0`: true of the
+    correct implementation, and equally true of one that always writes zero or
+    rolls every verified capability into a single class. Half the split's fields
+    were being asserted vacuously.
+
+    This runs the same document under `--verify`, where the counts are populated
+    and the two classes differ in both dimensions, and pins each field
+    individually. The distinctness guard is what makes "individually" mean
+    something: if core and non-core happened to agree, a transposed or duplicated
+    field would satisfy every equality here.
+    """
+    assert report["core_verified_count"] == len(CORE_IDS), report
+    assert report["non_core_verified_count"] == len(NON_CORE_IDS), report
+    assert report["core_verified_claim_count"] == CORE_CLAIM_COUNT, report
+    assert report["non_core_verified_claim_count"] == NON_CORE_CLAIM_COUNT, report
+
+    # Non-vacuity: the operands this leg pins must not be interchangeable.
+    assert report["core_verified_count"] != report["non_core_verified_count"], report
+    assert (
+        report["core_verified_claim_count"] != report["non_core_verified_claim_count"]
+    ), report
+
+    # And they must still exhaust the totals, so the per-class figures cannot be
+    # right while some verified capability falls out of both classes.
+    assert (
+        report["core_verified_count"] + report["non_core_verified_count"]
+        == report["verified_count"]
+    ), report
+    assert (
+        report["core_verified_claim_count"] + report["non_core_verified_claim_count"]
+        == report["verified_claim_count"]
+    ), report
+    assert report["verified_count"] == report["capability_count"], report
+    assert report["verified_claim_count"] == report["claim_count"], report
