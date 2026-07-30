@@ -1,0 +1,344 @@
+"""Lumen reference fixture for the two feature roots, plus its assertions.
+
+Lumen is the archetype case the split exists for: domain search promises the
+project exists to keep, alongside baselines every service of its archetype
+carries.
+
+Every id below is a real Lumen capability id, taken from Lumen's own capability
+contract (`apps/lumen/README.md`, which is Lumen's `cap_path`; its
+`CAPABILITIES.md` index is still empty pending the #1848 relocation). The four
+non-core ids are genuine trait-derived baselines declared in
+`src/cli/doc_mirror.rs`, so the fixture cannot name a class the derivation would
+not produce.
+
+On the two core ids: the work item's oracle wording is "Indexing and Querying".
+Lumen has no `indexing` or `querying` capability; that promise is carried by
+`search-core`, whose surface is literally `POST /index` + `POST /search`, and by
+`lexical-search`. The fixture uses those real ids, because a fixture naming ids
+Lumen does not have could not demonstrate the archetype it claims to be drawn
+from.
+
+The document is a fixture written into a temporary project. Lumen's production
+contract is never opened for writing, and the caller proves that by digesting it
+before and after.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from typing import Any
+
+
+#: Lumen's domain search promises. `search-core` owns both the index and the
+#: query surface; `lexical-search` owns BM25 ranking. Neither is a
+#: trait-derived baseline, which is what makes them eligible to be core.
+CORE_IDS = ("search-core", "lexical-search")
+#: Trait-derived baselines Lumen carries, one per archetype family:
+#: operations-observability, platform-delivery-lifecycle, security-governance,
+#: and contract-quality-assurance.
+NON_CORE_IDS = (
+    "standard-operational-endpoints",
+    "kubernetes-native-deployment",
+    "security-hardening",
+    "ec-gates-configured",
+)
+#: Claim counts are deliberately unequal per class (3 core, 4 non-core) so no
+#: assertion can pass by pairing a core count with a non-core total.
+CORE_CLAIM_COUNT = 3
+NON_CORE_CLAIM_COUNT = 4
+
+#: A real Lumen capability that is *not* a trait-derived baseline, used to
+#: falsify the field/root agreement rule without also tripping the baseline
+#: rule. Keeping the two falsifiers independent is the point.
+CONFLICT_ID = "observability"
+
+LUMEN_PRODUCTION_CONTRACT_PATHS = (
+    "apps/lumen/CAPABILITIES.md",
+    "apps/lumen/README.md",
+)
+
+
+def _capability(
+    *,
+    title: str,
+    cap_id: str,
+    feature_class: str,
+    promise: str,
+    surface: str,
+    work_roots: tuple[str, ...],
+) -> str:
+    rows = "\n".join(
+        f"| {root} | change | - | implemented | verified | smoke | `true` |"
+        for root in work_roots
+    )
+    return f"""#### {title}
+
+ID: {cap_id}
+Type: Service
+Feature Class: {feature_class}
+Surfaces:
+- CLI: `{surface}` - {promise.lower().rstrip('.')}.
+EC Dimensions:
+- behavior: `true` - {cap_id} behavior gate.
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+{promise}
+Gate Inventory:
+- tech-design/{cap_id}.md
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+{rows}
+"""
+
+
+#: (title, id, promise, surface, work roots) for each fixture member. The work
+#: roots are what make the claim counts unequal across the two classes.
+_CORE_MEMBERS = (
+    (
+        "Search Core",
+        "search-core",
+        "Index caller-owned records and return ranked external_ids only.",
+        "lumen serve",
+        ("query-planner-boolean-eval",),
+    ),
+    (
+        "Lexical Search",
+        "lexical-search",
+        "Answer BM25 text queries through the analyzer-backed planner.",
+        "lumen serve",
+        ("bm25-ranking", "analyzer-pipeline"),
+    ),
+)
+
+_NON_CORE_MEMBERS = (
+    (
+        "Standard Operational Endpoints",
+        "standard-operational-endpoints",
+        "Expose the standard health and readiness endpoints.",
+        "lumen serve",
+        ("operational-endpoint-set",),
+    ),
+    (
+        "Kubernetes-Native Deployment",
+        "kubernetes-native-deployment",
+        "Deploy as a Kubernetes-native workload.",
+        "lumen deploy",
+        ("manifest-packaging",),
+    ),
+    (
+        "Security Hardening",
+        "security-hardening",
+        "Enforce the archetype security baseline.",
+        "lumen auth",
+        ("transport-and-identity-hardening",),
+    ),
+    (
+        "EC Gates Configured",
+        "ec-gates-configured",
+        "Carry configured external-contract gates.",
+        "lumen verify",
+        ("gate-configuration",),
+    ),
+)
+
+_CONFLICT_MEMBER = (
+    "Observability",
+    CONFLICT_ID,
+    "Emit the archetype observability signals.",
+    "lumen serve",
+    ("signal-set",),
+)
+
+
+def _section(member: tuple[Any, ...], feature_class: str) -> str:
+    title, cap_id, promise, surface, work_roots = member
+    return _capability(
+        title=title,
+        cap_id=cap_id,
+        feature_class=feature_class,
+        promise=promise,
+        surface=surface,
+        work_roots=work_roots,
+    )
+
+
+def _index_rows(members: tuple[tuple[Any, ...], ...], note: str) -> str:
+    return "\n".join(
+        f"| {member[0]} | - | implemented | verified | smoke | ready | verified; {note} |"
+        for member in members
+    )
+
+
+def _document(
+    core: tuple[tuple[Any, ...], ...],
+    non_core: tuple[tuple[Any, ...], ...],
+    *,
+    core_class: str = "core",
+    non_core_class: str = "non_core",
+) -> str:
+    index = "\n".join(
+        (
+            _index_rows(core, "domain promise"),
+            _index_rows(non_core, "archetype service baseline"),
+        )
+    )
+    core_body = "\n".join(_section(member, core_class) for member in core)
+    non_core_body = "\n".join(_section(member, non_core_class) for member in non_core)
+    return f"""# Lumen
+
+## Brief
+
+Lumen reference fixture: the domain search promises are core, the archetype
+service baselines are non-core.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+{index}
+
+### Core Features
+
+{core_body}
+### Non-Core Features
+
+{non_core_body}"""
+
+
+#: The reference document: both roots present, every class declared.
+REFERENCE_DOCUMENT = _document(_CORE_MEMBERS, _NON_CORE_MEMBERS)
+
+
+def baseline_declared_core_document(cap_id: str) -> str:
+    """Falsifier 1, per baseline: promote one baseline into the core root.
+
+    Generated per id rather than fixed, so "every archetype service baseline is
+    non-core" is asserted for every baseline the fixture names instead of for
+    one representative.
+    """
+    promoted = next(member for member in _NON_CORE_MEMBERS if member[1] == cap_id)
+    remaining = tuple(member for member in _NON_CORE_MEMBERS if member[1] != cap_id)
+    return _document(_CORE_MEMBERS + (promoted,), remaining)
+
+
+#: Falsifier 2 -- the field and the containing root disagree. An implementation
+#: that reads only the field, or only the root, accepts this. The capability is
+#: not a baseline, so falsifier 1's rule cannot be what rejects it.
+ROOT_FIELD_CONFLICT_DOCUMENT = _document(
+    _CORE_MEMBERS + (_CONFLICT_MEMBER,),
+    _NON_CORE_MEMBERS,
+    core_class="core",
+).replace(
+    f"ID: {CONFLICT_ID}\nType: Service\nFeature Class: core",
+    f"ID: {CONFLICT_ID}\nType: Service\nFeature Class: non_core",
+)
+
+
+def digest_production_contract(repository_root: Path) -> dict[str, str]:
+    """Digest Lumen's real contract so mutation of it cannot go unnoticed."""
+    digests: dict[str, str] = {}
+    for relative in LUMEN_PRODUCTION_CONTRACT_PATHS:
+        path = repository_root / relative
+        if not path.is_file():
+            continue
+        digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert digests, f"no Lumen production contract found under {repository_root}"
+    return digests
+
+
+def assert_production_contract_unmutated(
+    before: dict[str, str],
+    after: dict[str, str],
+) -> None:
+    assert before == after, f"Lumen production contract changed: {before} -> {after}"
+
+
+#: Substrings that identify a feature-class finding, so the assertions below can
+#: separate them from the fixture-environment blockers a temporary project always
+#: carries (no Python EC or TD inventory exists under a scratch root).
+_FEATURE_CLASS_MARKERS = ("Feature Class", "feature class", "feature root", "classified")
+
+
+def feature_class_blockers(report: dict[str, Any]) -> list[str]:
+    return [
+        blocker
+        for blocker in report["blockers"]
+        if any(marker in blocker for marker in _FEATURE_CLASS_MARKERS)
+    ]
+
+
+def assert_feature_class_attribution(report: dict[str, Any]) -> None:
+    """The report attributes each capability to the class the document declares."""
+    by_id = {item["id"]: item for item in report["capabilities"]}
+    assert set(by_id) == set(CORE_IDS) | set(NON_CORE_IDS), sorted(by_id)
+    for cap_id in CORE_IDS:
+        assert by_id[cap_id]["feature_class"] == "core", by_id[cap_id]
+    for cap_id in NON_CORE_IDS:
+        assert by_id[cap_id]["feature_class"] == "non_core", by_id[cap_id]
+
+    # Counts, not just per-item fields: an implementation could echo the parsed
+    # field back and still roll every capability into one class.
+    assert report["core_capability_count"] == len(CORE_IDS), report
+    assert report["non_core_capability_count"] == len(NON_CORE_IDS), report
+    assert report["core_claim_count"] == CORE_CLAIM_COUNT, report
+    assert report["non_core_claim_count"] == NON_CORE_CLAIM_COUNT, report
+
+    # Attribution is total: each pair sums to the retained total, so no
+    # capability or claim can fall out of both classes.
+    assert (
+        report["core_capability_count"] + report["non_core_capability_count"]
+        == report["capability_count"]
+    ), report
+    assert (
+        report["core_claim_count"] + report["non_core_claim_count"] == report["claim_count"]
+    ), report
+    assert (
+        report["core_verified_count"] + report["non_core_verified_count"]
+        == report["verified_count"]
+    ), report
+    assert (
+        report["core_verified_claim_count"] + report["non_core_verified_claim_count"]
+        == report["verified_claim_count"]
+    ), report
+
+    # `Production | ready` in the index is a declaration; no claim gate has run,
+    # so neither class may report verified claims.
+    assert report["core_verified_claim_count"] == 0, report
+    assert report["non_core_verified_claim_count"] == 0, report
+    assert report["production_ready"] is False, report
+
+    # The correctly classified document is the negative half of the falsifiers
+    # below: whatever rule rejects them must stay silent here, or "rejected"
+    # would carry no information.
+    assert feature_class_blockers(report) == [], report["blockers"]
+
+
+def assert_baseline_core_is_rejected(report: dict[str, Any], cap_id: str) -> None:
+    """A trait-derived baseline declared core must be named as a blocker.
+
+    Asserted exactly, and asserted to be the only feature-class blocker: a rule
+    that rejected every document, or that rejected the right document while
+    naming the wrong capability, would pass a mere `any(...)`.
+    """
+    assert feature_class_blockers(report) == [
+        f"trait-derived baseline capability `{cap_id}` is classified `core`; "
+        "archetype baselines are always `non_core` and belong under `Non-Core Features`"
+    ], report["blockers"]
+
+
+def assert_root_field_conflict_is_rejected(report: dict[str, Any]) -> None:
+    """A `Feature Class` field contradicting its containing root is a blocker.
+
+    The message has to name both sides of the disagreement, because the author
+    cannot tell which of the two to change from the fact of rejection alone.
+    """
+    assert feature_class_blockers(report) == [
+        f"capability `{CONFLICT_ID}` declares `Feature Class: non_core` but is "
+        "nested under `Core Features`; make the field and the root agree"
+    ], report["blockers"]
