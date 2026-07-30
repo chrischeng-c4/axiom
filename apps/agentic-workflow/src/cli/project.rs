@@ -6507,6 +6507,7 @@ mod tests {
                 postlude: String::new(),
                 index_summary: None,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "promise".to_string(),

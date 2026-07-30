@@ -855,6 +855,32 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "apps/agentic-workflow/src/cli"
+      - path: "apps/agentic-workflow/src/cli/capability_feature_class.rs"
+        language: "rust"
+        ownership_state: "unmanaged"
+        generator_primitives: ["enum_model"]
+        symbols:
+          - name: "CapabilityFeatureClass"
+            kind: "enum"
+            public: true
+          - name: "as_str"
+            kind: "function"
+            public: true
+          - name: "root_heading"
+            kind: "function"
+            public: true
+          - name: "from_cli_str"
+            kind: "function"
+            public: true
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "apps/agentic-workflow/src/cli"
       - path: "apps/agentic-workflow/src/cli/capability_type.rs"
         language: "rust"
         ownership_state: "unmanaged"
@@ -1682,6 +1708,9 @@ semantic_domain:
         generator_primitives: ["config_surface", "service_method"]
         symbols:
           - name: "capability"
+            kind: "module"
+            public: true
+          - name: "capability_feature_class"
             kind: "module"
             public: true
           - name: "capability_type"
@@ -3759,6 +3788,20 @@ changes:
       commits/closes without blocking while keeping the pending review
       visible in the same envelope. See `ec.rs` above for the deferred-mode
       gate/queue implementation.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability_feature_class.rs"
+    action: create
+    section: schema
+    description: |
+      Issue #3059 (epic #2887) homes the closed `core` / `non_core` capability
+      feature class in its own module, mirroring `capability_type.rs`. The class
+      is the document-level partition behind the canonical `Core Features` and
+      `Non-Core Features` roots, and is orthogonal to `CapabilityType`, to
+      maturity, and to `required_for_production`: none of those may be derived
+      from it, and it may never be derived from them. Reusing `CapabilityType`
+      to express core-ness would make the production-required EC dimension set
+      depend on product prioritization, so the two axes stay separate enums.
+      Trait-derived baselines are always `non_core`.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/capability_type.rs"
     action: modify
