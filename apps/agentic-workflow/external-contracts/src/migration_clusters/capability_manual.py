@@ -768,6 +768,12 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 False,
                 lumen_reference.UNCLASSIFIED_SECTION_TITLES,
             ),
+            (
+                "multi_item",
+                lumen_reference.MULTI_ITEM_SECTION_README,
+                False,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
+            ),
         ):
             with project_fixture() as section_root:
                 section_readme = section_root / "README.md"
@@ -826,6 +832,13 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     # all eight roots, which leaves five of the row's seven cells
                     # replaceable by that constant.
                     lumen_reference.assert_relocation_carries_every_work_root_cell(
+                        section_text
+                    )
+                if name == "multi_item":
+                    # Every other document declares one item per list field, so
+                    # rendering only the first element of each was
+                    # indistinguishable from rendering all of them.
+                    lumen_reference.assert_relocation_carries_every_list_item(
                         section_text
                     )
                 if name == "varied_status":
@@ -1023,10 +1036,14 @@ def verify(case_id: str) -> list[str]:
                 "aw capability migrate emits the two canonical feature roots exactly when its input classified something, asserted in both directions across relocation shapes that differ in that one property, so neither an unconditional renderer nor one that never emits them can pass",
                 "a retired capability is excluded from the verified capability and verified claim counts as well, asserted under --verify where those two accumulators are populated and the classes differ in both, which is the half of the retired filter an unverified report holds vacuously",
                 "each legacy row's own Current State, Gaps, and Evidence land in the capability section it becomes, asserted per row against pairwise-distinct cells, so migration cannot turn three distinct legacy capabilities into three sections describing the same thing",
-                "every rendered capability section carries its own Promise, Type, Required Verification, Surfaces, EC Dimensions, and Gate Inventory rather than a shared one, asserted on both re-rendering paths -- format migration and README relocation -- against values made pairwise distinct per capability",
+                "every rendered capability section carries its own Promise, Type, Required Verification, Surfaces, EC Dimensions, Gate Inventory, and Dependencies rather than a shared one, asserted on both re-rendering paths -- format migration and README relocation -- against values made pairwise distinct per capability, down to the surface kind and the EC dimension kind, which are separate reads from the command and summary beside them and stayed constant while the assembled item varied",
+                "the Dependencies field is asserted in both directions, present for the two capabilities that declare one and absent for the four that do not, because no capability declared one at all and the whole block was deletable while the product's own carry-through comment names product dependencies",
+                "a capability's Surfaces, EC Dimensions, and Gate Inventory keep every item in declaration order, asserted on the one input where a capability declares two of each, because every other document declares exactly one item per list and rendering only the first element of each is byte-identical on those",
                 "every cell of every work-root row survives relocation, asserted on the one input whose eight rows differ in Kind, Impl, Verification, Maturity, and Gate / Evidence, so none of those five cells can be the constant the other inputs all happen to write",
-                "the README a section-shaped capability contract was relocated out of keeps only a forwarding pointer, asserted on every section-shaped relocation, so relocation cannot silently leave a second divergent copy of the contract behind",
-                "every Capability Index cell a capability arrived with is carried through per capability, asserted across all five non-identity columns on an input that differs in every column and every row, which is also the only branch on which Maturity and Production are reachable at all",
+                "the Capability Index Maturity column is asserted on the relocation branch as well, against each capability's own Required Verification, because that branch derives it rather than carrying it and the derivation stopped being constant once the fixture varied the field it reads",
+                "a promise containing a pipe is escaped into the Capability Index Notes cell it falls back into, asserted through a row reader that splits on unescaped pipes only, so an unescaped pipe adds a column and fails to parse rather than being silently absorbed",
+                "the README a section-shaped capability contract was relocated out of keeps only a forwarding pointer and keeps everything that was never part of that contract, asserted on every section-shaped relocation, so relocation can neither leave a second divergent copy of the contract behind nor truncate the README around it",
+                "every Capability Index cell a capability arrived with is carried through per capability, asserted across all five non-identity columns on an input that differs in every column and every row, which is the only branch on which Production is reachable at all -- Maturity is reachable on the derived branch too and is asserted there separately",
                 "a relocated capability keeps its own Status, the prose prelude above its fields, and the Impl and Verification columns derived from that status, asserted on the one input whose capabilities are not uniformly verified -- three distinct derived pairs across four statuses, so neither column can be a constant",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
