@@ -174,6 +174,11 @@ spec:
   storage: 1Gi
   graceSecs: 1
   logLevel: info
+  # Stated, not omitted: since #2765 an absent spec.auth defaults to required,
+  # and a CR that asks for auth without naming a token source renders a pod
+  # that fails startup for want of a registry file. This leg proves PVC-retained
+  # replay across a pod replacement, not authentication, so it opts out by name.
+  auth: disabled
 EOF
   wait_for_statefulset
   kubectl -n "$NAMESPACE" rollout status statefulset/"$TAPE_NAME" --timeout=240s

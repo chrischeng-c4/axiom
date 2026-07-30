@@ -167,6 +167,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | topic-replay-security-boundary | epic | #768 | implemented | passing | conformance | shared bearer role map, audited live registry rotation, bounded write admission, redacted backup audit, and non-root operator workload |
 | opt-in-server-ingress-network-policy | change | #1593 | implemented | passing | conformance | apps/tape/k8s/components/network-policy<br>apps/tape/tests/network_policy_assets.rs |
+| closed-auth-mode-enum-defaulting-to-required | change | #2765 | implemented | passing | conformance | `cargo test -p tape --features operator --test operator`<br>`cargo test -p tape --test deploy_cli`<br>live server-side-dry-run proof of every accept/reject case in apps/tape/CAPABILITIES.md (cluster-bound, deliberately not a backtick gate) |
 
 ### Competitor Feature Parity
 

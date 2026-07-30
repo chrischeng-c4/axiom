@@ -17,7 +17,7 @@
 
 use serde_json::{json, Value};
 
-use super::crd::Tape;
+use super::crd::{AuthMode, Tape};
 use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
 
 const APP: &str = "tape";
@@ -77,25 +77,33 @@ fn ctx<'a>(tape: &Tape, name: &'a str, ns: &'a str) -> RenderCtx<'a> {
 }
 
 /// Which shared projection source (if any) supplies the token registry file.
-/// `tokensSecret` wins over `tokensSecretProviderClass`; both are inactive
-/// unless the CR enables required bearer auth.
+/// Both are inactive unless the CR enables required bearer auth.
+///
+/// There is no precedence branch, and its absence is the point (#2765). The
+/// two fields are mutually exclusive by CRD schema, so a spec naming both
+/// never came from an API server; rendering *neither* is the safe answer,
+/// because it leaves `TAPE_AUTH=required` with no registry file and the pod
+/// fails startup naming the problem — instead of quietly serving whichever
+/// registry a precedence rule happened to pick while the operator reads the
+/// other one.
 fn token_registry_source(tape: &Tape) -> Option<render::TokenRegistrySource<'_>> {
-    if tape.spec.auth != "required" {
+    if tape.spec.auth != AuthMode::Required {
         return None;
     }
-    if let Some(secret) = tape.spec.tokens_secret.as_deref() {
-        return Some(render::TokenRegistrySource::Secret {
-            name: secret,
+    match (
+        tape.spec.tokens_secret.as_deref(),
+        tape.spec.tokens_secret_provider_class.as_deref(),
+    ) {
+        (Some(name), None) => Some(render::TokenRegistrySource::Secret {
+            name,
             key: TOKEN_REGISTRY_KEY,
-        });
-    }
-    tape.spec
-        .tokens_secret_provider_class
-        .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi {
+        }),
+        (None, Some(provider_class)) => Some(render::TokenRegistrySource::Csi {
             provider_class,
             driver: tape.spec.tokens_secret_csi_driver.as_deref(),
-        })
+        }),
+        _ => None,
+    }
 }
 
 // <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="#1805" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
@@ -374,8 +382,10 @@ fn backup_service_account(cx: &RenderCtx) -> Value {
 /// `TAPE_BACKUP_TOKEN`, the env var `tape backup --token` already falls back
 /// to. `/admin/backup` requires `admin` on `*`, so an instance running
 /// `auth: required` without this field will render a CronJob whose runs fail
-/// 401 — the CR is accepted either way because `auth: off` instances
-/// legitimately need no token.
+/// 401 — the CR is accepted either way because `auth: disabled` instances
+/// legitimately need no token. Since #2765 made `required` the default, that
+/// combination is now the one a CR reaches by saying nothing, so a `backup`
+/// block with no `adminTokenSecret` is worth a second look.
 fn backup_cron_job(tape: &Tape, cx: &RenderCtx) -> Option<Value> {
     let backup = tape.spec.backup.as_ref()?;
     let cron_name = format!("{}-backup", cx.name);
@@ -457,13 +467,21 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
 
     // tape runtime env layered on top of the downward-API quartet +
     // TAPE_PEER_SERVICE the helper injects: bind-all on the serve port, the
-    // /data disk tier, and the drain window. TAPE_AUTH wiring is opt-in.
+    // /data disk tier, the drain window, and the resolved auth mode.
+    //
+    // TAPE_AUTH is unconditional and comes from the mode, never from whether a
+    // registry source happens to be set (#2765). Deriving it from the source
+    // meant `auth: required` with no `tokensSecret` rendered a pod with no
+    // TAPE_AUTH at all -- an open data plane produced by a CR that explicitly
+    // asked for authentication. Now that same CR starts with
+    // TAPE_AUTH=required and no registry file, so it fails startup loudly.
     let mut extra_env = vec![
         json!({ "name": "TAPE_BIND", "value": format!("0.0.0.0:{CLIENT_PORT}") }),
         json!({ "name": "TAPE_RAFT_PORT", "value": RAFT_PORT.to_string() }),
         json!({ "name": "TAPE_DATA_DIR", "value": "/data" }),
         json!({ "name": "TAPE_GRACE_SECS", "value": s.grace_secs.to_string() }),
         json!({ "name": "TAPE_LOG_FORMAT", "value": "json" }),
+        json!({ "name": "TAPE_AUTH", "value": s.auth.as_env() }),
     ];
     if let Some(level) = &s.log_level {
         extra_env.push(json!({ "name": "RUST_LOG", "value": level }));
@@ -472,7 +490,6 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         extra_env.push(json!({ "name": "TAPE_BODY_LIMIT_BYTES", "value": limit.to_string() }));
     }
     if token_registry_source(tape).is_some() {
-        extra_env.push(json!({ "name": "TAPE_AUTH", "value": "required" }));
         extra_env.push(json!({ "name": "TAPE_TOKEN_REGISTRY_FILE", "value": TOKEN_REGISTRY_FILE }));
     }
     if let Some(seed_uri) = &s.bootstrap_seed_uri {

@@ -641,6 +641,15 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
               kind/smoke).\n\
             - `tape dockerfile render --variant source|release [--version]` — the \
               from-source and published-release images.\n\n\
+            `spec.auth` is a closed enum, `disabled` or `required`, and **omitting it means \
+            `required`** (#2765): a typo or an omission is rejected by the API server instead \
+            of quietly serving open. Under `required` the CR must name exactly one token \
+            source — `tokensSecret` or `tokensSecretProviderClass`, never both — or the pod \
+            fails startup for want of a registry. Spell the off-state `disabled`, not `off`: \
+            YAML 1.1 reads a bare `off` as the boolean `false` and the API server rejects it. \
+            (`off` is what the serving process's own `TAPE_AUTH` env var takes — the two \
+            spellings are not interchangeable.) Every profile states its mode: dev and \
+            staging render `auth: disabled`, prod and template render `auth: required`.\n\n\
             HA is auto-mode raft: scale the StatefulSet and set `REPLICAS_PER_SHARD` > 1 \
             (plus `POD_NAME`, `SHARD_COUNT=1`, `VOTER_COUNT` from the downward API) and the \
             same `tape` bin runs a raft group; `--peer-service` (`TAPE_PEER_SERVICE`) names \
@@ -1556,14 +1565,19 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
         "apiVersion: tape.dev/v1alpha1\nkind: Tape\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
     );
     match body {
+        // `auth: disabled` is spelled out, not omitted: since #2765 an absent
+        // `auth` defaults to `required`, so a tokenless profile that stayed
+        // silent would render a CR whose pod refuses to start for want of a
+        // token registry. Tokenless is a choice these two profiles make, and
+        // the CR should say so.
         InstanceBody::Dev => {
             yaml.push_str(
-                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  auth: disabled\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Staging => {
             yaml.push_str(
-                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  auth: disabled\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Prod => {
@@ -1571,9 +1585,12 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
                 "  imagePullPolicy: Always\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  storage: 100Gi\n  graceSecs: 30\n  auth: required\n  tokensSecret: tape-token-registry\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
+        // The template carries `auth`/`tokensSecret` explicitly even though
+        // `required` is now the default, so the token registry the CR needs is
+        // a visible REPLACE_ME rather than a startup failure discovered later.
         InstanceBody::Template => {
             yaml.push_str(
-                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
+                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  auth: required\n  tokensSecret: REPLACE_ME__TOKEN_REGISTRY_SECRET\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
     }
