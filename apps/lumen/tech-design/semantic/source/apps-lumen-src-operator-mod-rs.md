@@ -20,13 +20,15 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `crd` | apps/lumen/src/operator/mod.rs | module | pub | 15 |  |
-| `crd_yaml` | apps/lumen/src/operator/mod.rs | function | pub | 54 | crd_yaml() -> String |
-| `lease` | apps/lumen/src/operator/mod.rs | module | pub | 17 |  |
-| `reconcile` | apps/lumen/src/operator/mod.rs | module | pub | 18 |  |
-| `render` | apps/lumen/src/operator/mod.rs | module | pub | 19 |  |
-| `reshard_driver` | apps/lumen/src/operator/mod.rs | module | pub | 20 |  |
-| `resize` | apps/lumen/src/operator/mod.rs | module | pub | 21 |  |
+| `certificate` | apps/lumen/src/operator/mod.rs | module | pub | 15 |  |
+| `crd` | apps/lumen/src/operator/mod.rs | module | pub | 16 |  |
+| `crd_yaml` | apps/lumen/src/operator/mod.rs | function | pub | 55 | crd_yaml() -> String |
+| `fleet` | apps/lumen/src/operator/mod.rs | module | pub | 17 |  |
+| `lease` | apps/lumen/src/operator/mod.rs | module | pub | 18 |  |
+| `reconcile` | apps/lumen/src/operator/mod.rs | module | pub | 19 |  |
+| `render` | apps/lumen/src/operator/mod.rs | module | pub | 20 |  |
+| `reshard_driver` | apps/lumen/src/operator/mod.rs | module | pub | 21 |  |
+| `resize` | apps/lumen/src/operator/mod.rs | module | pub | 22 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -45,6 +47,7 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 
+pub mod certificate;
 pub mod crd;
 pub mod fleet;
 pub mod lease;

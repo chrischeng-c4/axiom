@@ -21,7 +21,15 @@ Public API manifest for `libs/service-k8s/src/lib.rs` captured during libs codeg
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `controller` | libs/service-k8s/src/lib.rs | module | pub | 15 | pub mod controller; |
+| `certificate` | libs/service-k8s/src/lib.rs | module | pub | 17 | pub mod certificate; |
+| `CertificateFacts` | libs/service-k8s/src/lib.rs | re-export | pub | 28 | pub use certificate::{CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler}; |
+| `CertificateProfile` | libs/service-k8s/src/lib.rs | re-export | pub | 28 | pub use certificate::{CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler}; |
+| `InstanceScope` | libs/service-k8s/src/lib.rs | re-export | pub | 28 | pub use certificate::{CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler}; |
+| `Issuer` | libs/service-k8s/src/lib.rs | re-export | pub | 28 | pub use certificate::{CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler}; |
+| `IssuerId` | libs/service-k8s/src/lib.rs | re-export | pub | 28 | pub use certificate::{CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler}; |
+| `Purpose` | libs/service-k8s/src/lib.rs | re-export | pub | 28 | pub use certificate::{CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler}; |
+| `Reconciler` | libs/service-k8s/src/lib.rs | re-export | pub | 28 | pub use certificate::{CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler}; |
+| `controller` | libs/service-k8s/src/lib.rs | module | pub | 18 | pub mod controller; |
 | `lease` | libs/service-k8s/src/lib.rs | module | pub | 16 | pub mod lease; |
 | `llm` | libs/service-k8s/src/lib.rs | module | pub | 17 | pub mod llm; |
 | `render` | libs/service-k8s/src/lib.rs | module | pub | 18 | pub mod render; |
@@ -59,6 +67,7 @@ Public API manifest for `libs/service-k8s/src/lib.rs` captured during libs codeg
 //! the shared service kit (`raft-core` + `raft-runtime` + `transport-h2c` + `service-http` +
 //! `service-backup` + `cli-std` + this).
 
+pub mod certificate;
 pub mod controller;
 pub mod crd;
 pub mod lease;
@@ -69,6 +78,9 @@ pub mod resize;
 pub mod service;
 pub mod stateful;
 
+pub use certificate::{
+    CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler,
+};
 pub use controller::{run, Error};
 pub use lease::Election;
 pub use metrics::ControllerMetrics;

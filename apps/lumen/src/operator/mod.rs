@@ -12,6 +12,7 @@
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 
+pub mod certificate;
 pub mod crd;
 pub mod fleet;
 pub mod lease;
