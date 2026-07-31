@@ -1104,6 +1104,58 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 empty_class_text, empty_class_report
             )
 
+        # The frame the *format* migration has to supply. Every document above
+        # arrives with a title, a Brief, and a Capabilities heading already, so
+        # all three repairs could be disabled at once without changing a
+        # rendered byte. Each input here is missing exactly one of them, and the
+        # brief repair's two arms -- promote the lead prose, or write the
+        # human-confirmation placeholder -- get one input each.
+        for frame_label, (
+            frame_document,
+            frame_expected,
+        ) in lumen_reference.FRAME_REPAIRS.items():
+            with project_fixture() as frame_root:
+                (frame_root / "README.md").write_text(
+                    "# Demo\n\nUnrelated to the capability contract.\n",
+                    encoding="utf-8",
+                )
+                frame_cap = frame_root / "CAPABILITIES.md"
+                frame_cap.write_text(frame_document, encoding="utf-8")
+                final_json(
+                    run_aw(frame_root, "capability", "migrate", "--project", "demo")
+                )
+                lumen_reference.assert_format_migration_repairs_the_canonical_frame(
+                    frame_cap.read_text(encoding="utf-8"),
+                    expected=frame_expected,
+                    label=frame_label,
+                )
+
+        # A project whose capability contract has not been written yet. Every
+        # other document here declares either a capability section or a legacy
+        # row, so the guard that keeps an empty registry from acquiring two
+        # memberless feature roots was only ever entered with something to
+        # render. The input carries a legacy level-2 `## Capability Index`
+        # because that is what makes migration run at all on a contract-less
+        # document; a bare `## Capabilities` heading returns "already
+        # canonical" before the renderer is reached.
+        with project_fixture() as empty_registry_root:
+            (empty_registry_root / "README.md").write_text(
+                "# Demo\n\nUnrelated to the capability contract.\n", encoding="utf-8"
+            )
+            empty_registry_cap = empty_registry_root / "CAPABILITIES.md"
+            empty_registry_cap.write_text(
+                lumen_reference.EMPTY_REGISTRY_DOCUMENT, encoding="utf-8"
+            )
+            empty_registry = final_json(
+                run_aw(
+                    empty_registry_root, "capability", "migrate", "--project", "demo"
+                )
+            )
+            lumen_reference.assert_an_empty_registry_gains_no_feature_roots(
+                empty_registry,
+                empty_registry_cap.read_text(encoding="utf-8"),
+            )
+
     after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
     lumen_reference.assert_production_contract_unmutated(before, after)
     return {
@@ -1269,6 +1321,8 @@ def verify(case_id: str) -> list[str]:
                 "all three partial shapes of a contract item round-trip as declared, one per capability of the same input -- a command with no summary, a summary with no command, and an item declaring neither half, which renders as the bare kind alone -- because every other document declares both halves for every item, leaving three of the four arms of each item renderer unentered, and the command-less arms deletable in a way that drops the surface kind and drops the EC dimension name the re-parse needs to read the item back at all, with the neither-half capability declared `candidate` because a bare dimension carries no content and the four contract-bearing statuses require one",
                 "a capability that declared no gate inventory gets the one its claims imply, asserted as the exact item list of the rendered field across four capabilities of the same document -- one deriving a single gate, one deriving seven refs from two work roots, drawn from both halves of the derivation -- four gates spread unevenly across the two roots, one root carrying three of them and two of those three declared inside a single `;`-separated piece, because a gate id is numbered within one work root, so gates on two different roots are each the first of their own and only a root carrying more than one reaches the numbering at all, while only a piece carrying more than one command reaches the loop nested inside the piece loop, which composed at one command apiece stayed free after the outer loop was bound; three fixtures spread across them with the first root carrying two of its own -- and declared so that the rendered order differs from the declared order, so that joining the list is distinguishable from keeping only its first or only its last element, collecting the claim fixtures before the capability gates from collecting them in work-root order, truncating either half to one ref from rendering it whole, and walking the claims in reverse from walking them in order, because composing the two halves at one ref apiece leaves all four of those truncations rendering the identical document, one whose work-root cell is not backticked and therefore derives through the claim-fixture half of the derivation rather than the claim-gate half, and one declaring only empty-table spellings that gets the single `-` placeholder with its own work-root gate not derived in behind it",
                 "a capability with no declared gate inventory and nothing to derive one from renders the placeholder through the derivation's own empty arm, asserted on its own document because the document `aw capability migrate` writes for that input is one `aw capability report` then rejects, named as the exact claim that has neither a gate nor a fixture",
+                "format migration supplies the parts of the canonical frame its input is missing, asserted as the whole prefix up to the Capability Index across three inputs missing one part each -- a document with no title, one with no Brief whose lead prose has to be promoted into it, and one with neither, which gets the human-confirmation placeholder instead -- because every other document here arrives with all three parts, so the three repairs were disabled together without changing a rendered byte, and because containment binds that each heading appears somewhere rather than once, in order, and carrying the body it is required to carry, which the author's own prose and the placeholder are indistinguishable under; a fourth input arriving with no Capabilities heading at all binds the heading insertion only, because the authored brief prose of that input does not survive the migration -- reported as #3234 and deliberately asserted in neither direction, since pinning the loss would hold the defect in place and pinning its absence would fail against the shipped product",
+                "a document whose capability contract has not been written yet -- no capability section and no legacy row -- renders neither canonical feature root, because every other input here declares one or the other and the guard for an empty registry was therefore only ever entered with something to render, making it deletable; asserted as byte equality against the whole migrated document rather than as the absence of the two root headings alone, because the interesting failure adds content, which pins in the same string that the legacy level-2 index heading is demoted to the canonical level-3 one and that an index with nothing to list carries a single synthesized row named after the project; the input carries that legacy heading deliberately, because a contract-less document with a canonical frame is answered \"already canonical\" before the renderer is reached, so it leaves the guard unentered and the byte equality holds for a reason unrelated to it",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
