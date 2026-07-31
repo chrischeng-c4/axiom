@@ -248,6 +248,7 @@ struct IssuerCliArgs {
     ca_pool: Option<String>,
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#rust-source-unit
 impl IssuerCliArgs {
     fn to_raw(&self) -> lumen::operator::RawIssuerConfig {
         lumen::operator::RawIssuerConfig {
@@ -270,6 +271,7 @@ struct K8sOperatorArgs {
     cmd: Option<K8sOperatorCmd>,
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#rust-source-unit
 impl Default for K8sOperatorCmd {
     fn default() -> Self {
         Self::Run(K8sOperatorRunArgs::default())

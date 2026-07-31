@@ -41,6 +41,8 @@ deployment:
     - path: "apps/lumen/k8s/operator/kustomization.yaml"
       kind: "kustomization"
       content: |
+        # SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
+        # CODEGEN-BEGIN
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
         
@@ -64,9 +66,12 @@ deployment:
           # ../components/operator-monitoring component (#2621).
           - service.yaml
           - pdb.yaml
+        # CODEGEN-END
     - path: "apps/lumen/k8s/operator/deployment.yaml"
       kind: "kubernetes-deployment"
       content: |
+        # SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
+        # CODEGEN-BEGIN
         # The operator: a controller that watches Lumen objects cluster-wide. Ships in
         # the same `lumen` image (run as `lumen k8s operator run`, built with
         # --features operator). HA: a coordination.k8s.io Lease elects one active
@@ -197,6 +202,7 @@ deployment:
                     readOnlyRootFilesystem: true
                     capabilities:
                       drop: ["ALL"]
+        # CODEGEN-END
     - path: "apps/lumen/k8s/operator/service.yaml"
       kind: "kubernetes-service"
       content: |

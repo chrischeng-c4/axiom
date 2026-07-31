@@ -30,6 +30,7 @@ fn lumen_with_backup() -> Lumen {
         service_account_name: None,
         service_account_annotations: std::collections::BTreeMap::new(),
         peer_tls_secret: None,
+        serving_tls_secret: None,
     };
     spec.serving.backup = Some(ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {
@@ -266,7 +267,15 @@ fn rendered_network_policy_is_opt_in_and_never_exposes_the_raft_port() {
 fn operator_cli_renders_requested_immutable_image_and_preserves_default() {
     let render = |extra: &[&str]| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_lumen"));
-        command.args(["k8s", "operator", "render"]);
+        command.args([
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog",
+        ]);
         command.args(extra);
         let output = command.output().expect("run lumen operator render");
         assert!(
