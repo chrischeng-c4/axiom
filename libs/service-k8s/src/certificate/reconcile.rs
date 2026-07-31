@@ -49,22 +49,83 @@ pub trait SecretStore: Send + Sync {
         name: &'a str,
     ) -> futures::future::BoxFuture<'a, Result<Option<StoredSecret>, StoreError>>;
 
-    /// Server-side apply `object`. Applying rather than replacing is what lets
-    /// [`Action::PublishTrustBundle`] widen `ca.crt` without naming the leaf
-    /// keys it must not touch.
+    /// Apply `object` with merge semantics. Trust-only projection widens
+    /// `ca.crt` without deleting live leaf keys; the Kubernetes store
+    /// materializes omitted lifecycle-owned fields before server-side apply.
     fn apply<'a>(
         &'a self,
         object: Value,
     ) -> futures::future::BoxFuture<'a, Result<(), StoreError>>;
 }
 
+/// Classification of errors arising from a [`SecretStore`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreErrorKind {
+    /// HTTP 403: Forbidden - configuration/RBAC fault, not retryable.
+    Forbidden,
+    /// HTTP 409: Conflict - SSA field conflict or resource version mismatch, retryable.
+    Conflict,
+    /// 5xx HTTP error or transport failure - transient unavailability, retryable.
+    Unavailable,
+    /// Malformed input object or invalid structure - configuration fault, not retryable.
+    Malformed,
+    /// Other API error with status code.
+    Other(u16),
+}
+
 /// Why a Secret could not be read or written.
-#[derive(Debug)]
-pub struct StoreError(pub String);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoreError {
+    pub kind: StoreErrorKind,
+    pub message: String,
+}
+
+impl StoreError {
+    pub fn new(kind: StoreErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: redact(&message.into()),
+        }
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::new(StoreErrorKind::Forbidden, message)
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(StoreErrorKind::Conflict, message)
+    }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(StoreErrorKind::Unavailable, message)
+    }
+
+    pub fn malformed(message: impl Into<String>) -> Self {
+        Self::new(StoreErrorKind::Malformed, message)
+    }
+
+    pub fn kind(&self) -> &StoreErrorKind {
+        &self.kind
+    }
+
+    pub fn retryable(&self) -> bool {
+        match self.kind {
+            StoreErrorKind::Conflict | StoreErrorKind::Unavailable => true,
+            StoreErrorKind::Forbidden | StoreErrorKind::Malformed => false,
+            StoreErrorKind::Other(code) => code >= 500 || code == 429,
+        }
+    }
+}
 
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        match &self.kind {
+            StoreErrorKind::Forbidden => write!(f, "forbidden: {}", self.message),
+            StoreErrorKind::Conflict => write!(f, "conflict: {}", self.message),
+            StoreErrorKind::Unavailable => write!(f, "unavailable: {}", self.message),
+            StoreErrorKind::Malformed => write!(f, "malformed object: {}", self.message),
+            StoreErrorKind::Other(code) => write!(f, "api error ({code}): {}", self.message),
+        }
     }
 }
 
@@ -356,27 +417,41 @@ impl SecretStore for MemoryStore {
             .unwrap_or_default()
             .to_string();
         let mut secrets = self.secrets.lock().expect("memory store");
-        let entry = secrets
-            .entry(format!("{namespace}/{name}"))
-            .or_insert_with(StoredSecret::default);
+        let mut changed = false;
+        let entry = match secrets.entry(format!("{namespace}/{name}")) {
+            std::collections::btree_map::Entry::Vacant(v) => {
+                changed = true;
+                v.insert(StoredSecret::default())
+            }
+            std::collections::btree_map::Entry::Occupied(o) => o.into_mut(),
+        };
         // Merge semantics, matching a server-side apply of the fields present:
         // a trust-bundle-only apply must leave the leaf keys where they are.
         if let Some(data) = object["stringData"].as_object() {
             for (key, value) in data {
                 if let Some(text) = value.as_str() {
-                    entry.data.insert(key.clone(), text.as_bytes().to_vec());
+                    let bytes = text.as_bytes().to_vec();
+                    if entry.data.get(key) != Some(&bytes) {
+                        entry.data.insert(key.clone(), bytes);
+                        changed = true;
+                    }
                 }
             }
         }
         if let Some(annotations) = object["metadata"]["annotations"].as_object() {
             for (key, value) in annotations {
                 if let Some(text) = value.as_str() {
-                    entry.annotations.insert(key.clone(), text.to_string());
+                    if entry.annotations.get(key) != Some(&text.to_string()) {
+                        entry.annotations.insert(key.clone(), text.to_string());
+                        changed = true;
+                    }
                 }
             }
         }
-        self.applies
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if changed {
+            self.applies
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         Box::pin(futures::future::ready(Ok(())))
     }
 }

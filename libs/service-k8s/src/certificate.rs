@@ -36,6 +36,7 @@
 pub mod digest;
 pub mod ephemeral;
 pub mod issuer;
+pub mod kubernetes_store;
 pub mod profile;
 pub mod projection;
 pub mod reconcile;
@@ -47,13 +48,17 @@ pub mod cas;
 
 pub use ephemeral::EphemeralIssuer;
 pub use issuer::{IssuanceRequest, IssuedMaterial, Issuer, IssuerError, IssuerId, PrivateKey};
+pub use kubernetes_store::{
+    classify_kube_error, prepare_ssa_patch, KubernetesSecretStore, KubernetesStoreError,
+    FIELD_MANAGER, RBAC_VERBS, REQUIRED_RBAC_VERBS,
+};
 pub use profile::{
     CertificateIdentity, CertificateProfile, ExtendedUsage, InstanceScope, ProfileError, Purpose,
 };
 pub use projection::{Owner, ProjectedState, TrustBundle};
 pub use reconcile::{
     MemoryStore, Outcome, ReconcileError, Reconciler, RuntimeReport, SecretStore, StoreError,
-    StoredSecret,
+    StoreErrorKind, StoredSecret,
 };
 pub use state::{next_action, renew_at, retry_after, Action, Desired, IssueReason, Observed,
     ObservedLeaf};

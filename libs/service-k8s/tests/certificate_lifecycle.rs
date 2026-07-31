@@ -371,3 +371,31 @@ fn a_spiffe_uri_from_another_namespace_is_refused() {
     .expect_err("accepted another namespace's identity");
     assert!(matches!(error, ProfileError::ForeignSpiffeUri { .. }));
 }
+
+#[test]
+fn a_settled_unchanged_reconcile_does_not_increment_apply_count() {
+    let harness = Harness::new("pool-a", start());
+    let profile = peer_profile();
+    let owner = owner();
+    let scope = scope();
+    let reconciler = Reconciler::new(&scope, &owner, &harness.store, &harness.issuer);
+
+    drive(&reconciler, &profile, &RuntimeReport::default(), start(), 6);
+    let applies_after_bootstrap = harness.store.apply_count();
+
+    let fingerprint = harness.projected_fingerprint(Purpose::Peer).unwrap();
+
+    // Drive another step at a point where lifecycle is settled.
+    step(
+        &reconciler,
+        &profile,
+        &activated(Some(fingerprint)),
+        plus_hours(start(), 1),
+    );
+
+    assert_eq!(
+        harness.store.apply_count(),
+        applies_after_bootstrap,
+        "a settled unchanged reconcile must not increment apply_count"
+    );
+}
