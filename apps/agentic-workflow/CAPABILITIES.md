@@ -136,7 +136,7 @@ Gate Inventory:
 Surfaces:
 - CLI: `aw capability` - report, next, draft, migrate, check, init, sweep, and contract field setters.
 EC Dimensions:
-- behavior: `uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema` - executable Python ECs cover Markdown capability-document parsing, missing-document initialization, derived TD claim linkage, and scoped dependency verification.
+- behavior: `uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema` - executable Python ECs cover Markdown capability-document parsing, missing-document initialization, feature-class attribution, and migration convergence.
 - efficiency: `uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency` - the native capability init, report, and sweep scenario completes within 120 seconds.
 - stability: `uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability` - two fresh capability scenarios preserve project identity and the canonical Markdown contract.
 

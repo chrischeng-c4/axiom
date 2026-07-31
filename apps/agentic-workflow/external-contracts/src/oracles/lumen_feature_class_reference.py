@@ -1579,8 +1579,11 @@ def assert_legacy_rows_are_attributed_to_non_core(report: dict[str, Any]) -> Non
     assert report["core_claim_count"] == 0, report
 
     # The discriminating assertion: the row count is attributed, not dropped.
-    # (`claim_count` is 0 in this shape -- legacy rows carry no work roots -- so
-    # the claim pair-sum below is real but not what catches the mutation.)
+    # (`claim_count` and `verified_count` are both 0 in this shape -- legacy
+    # rows carry no work roots and no gate has run -- so the two pair-sums below
+    # are `0 == 0` and neither can catch the mutation. They are kept because a
+    # projection that attributed the rows but *invented* claims or verifications
+    # for them would break them, and dropped from the credit this leg claims.)
     assert report["non_core_capability_count"] == report["capability_count"], report
     assert report["non_core_claim_count"] == report["claim_count"], report
     assert report["non_core_verified_count"] == report["verified_count"], report
@@ -7115,15 +7118,23 @@ def assert_partial_verification_is_attributed_per_class(
 
 
 # ---------------------------------------------------------------------------
-# Work-root row reading: surface identity, evidence-cell partition, gap status
+# Work-root row reading: surface identity and gap status
 # ---------------------------------------------------------------------------
 
 #: A capability whose `Surfaces:` list declares the same surface twice, and
-#: three near-misses that must *not* fold. `dedupe_surfaces` keys on
-#: `normalize_table_token(kind) : commands.join(",") : summary`, so each field
-#: of that key gets one pair that differs in it alone. Without the pairs, a key
-#: that dropped the summary or the commands still folds the exact duplicate and
-#: nothing observable changes.
+#: four near-misses. `dedupe_surfaces` keys on
+#: `normalize_table_token(kind) : commands.join(",") : summary`, so each of the
+#: three key fields gets one pair that differs in it alone. Without the pairs, a
+#: key that dropped the summary or the commands still folds the exact duplicate
+#: and nothing observable changes.
+#:
+#: The fifth subject is the kind term, added in round 32. Round 31 shipped this
+#: block with three subjects and claimed all three key fields; a reviewer proved
+#: that no pair anywhere in the case differed in kind alone, so
+#: `normalize_table_token(&surface.kind)` could be dropped from the key with
+#: every expectation still green. `Unknown Kind Case` does not cover it -- that
+#: pair *folds*, so it binds the case-folding inside the kind term rather than
+#: the presence of the term.
 SURFACE_DEDUPE_SUBJECTS = (
     # (title, cap_id, authored items, expected rendered items)
     (
@@ -7162,6 +7173,20 @@ SURFACE_DEDUPE_SUBJECTS = (
         ("Probe: `aw five` -- shared summary", "probe: `aw five` -- shared summary"),
         ("- Probe: `aw five` - - shared summary",),
     ),
+    # The kind term on its own: same command, same summary, two *recognized*
+    # kinds that `normalize_surface_kind` folds to different canonical spellings.
+    # Nothing but the kind term of the dedupe key keeps these two apart, so a key
+    # built as `commands.join(",") : summary` folds them into one item and this
+    # is the only expectation in the case that notices.
+    (
+        "Kind Differs",
+        "kind-differs",
+        ("CLI: `aw six` -- shared summary", "HTTP: `aw six` -- shared summary"),
+        (
+            "- CLI: `aw six` - - shared summary",
+            "- HTTP: `aw six` - - shared summary",
+        ),
+    ),
 )
 
 #: Deliberately not all-1 and not all-2: a dedupe that folded everything, and
@@ -7170,8 +7195,8 @@ SURFACE_DEDUPE_COUNTS = tuple(len(subject[3]) for subject in SURFACE_DEDUPE_SUBJ
 assert set(SURFACE_DEDUPE_COUNTS) == {1, 2}, SURFACE_DEDUPE_COUNTS
 
 
-def _work_root_row(work_root: str, evidence: str) -> str:
-    return f"| {work_root} | change | implemented | verified | smoke | {evidence} |"
+def _work_root_row(work_root: str) -> str:
+    return f"| {work_root} | change | implemented | verified | smoke | `true` |"
 
 
 def surface_dedupe_document() -> str:
@@ -7197,7 +7222,7 @@ EC Dimensions:
 
 | Work Root | Kind | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---|---|---|---|
-{_work_root_row(f"{title} root", "`true`")}
+{_work_root_row(f"{title} root")}
 
 """
         )
@@ -7257,15 +7282,30 @@ def assert_surface_identity_is_the_whole_declared_item(migrated: str) -> None:
 #:  rendered Index Impl cell)
 GAP_STATUS_SUBJECTS = (
     ("Blocked Row", "blocked-row", "implemented", "blocked", "blocked", "planned"),
+    # The same arm through its *other* disjunct. Round 31 entered the blocked
+    # arm only from the verification side, leaving `implementation == "blocked"`
+    # deletable; reviewer finding F103. The two blocked subjects are the reason
+    # the status set below is checked for coverage rather than for uniqueness.
+    ("Impl Blocked Row", "impl-blocked-row", "blocked", "planned", "blocked", "planned"),
     ("Deferred Row", "deferred-row", "out_of_scope", "planned", "deferred", "implemented"),
     ("Open Row", "open-row", "planned", "none", "open", "planned"),
     ("In Progress Row", "in-progress-row", "partial", "planned", "in_progress", "partial"),
 )
 
-#: The four statuses are distinct, so no two subjects can be satisfied by one
-#: arm; the Index cells are deliberately *not* distinct (Blocked and Open both
-#: fold to `planned`), which is why the gap status is asserted by name too.
-assert len({subject[4] for subject in GAP_STATUS_SUBJECTS}) == len(GAP_STATUS_SUBJECTS)
+#: Every arm of the match is entered, and no two subjects present the same cell
+#: pair -- so a subject cannot be satisfied by the arm another subject is there
+#: to bind. The Index cells are deliberately *not* distinct (both blocked rows
+#: and the open row all fold to `planned`), which is why the gap status is
+#: asserted by name too.
+assert {subject[4] for subject in GAP_STATUS_SUBJECTS} == {
+    "blocked",
+    "deferred",
+    "open",
+    "in_progress",
+}, GAP_STATUS_SUBJECTS
+assert len({(subject[2], subject[3]) for subject in GAP_STATUS_SUBJECTS}) == len(
+    GAP_STATUS_SUBJECTS
+), GAP_STATUS_SUBJECTS
 
 
 def gap_status_document() -> str:
@@ -7308,10 +7348,12 @@ def assert_work_root_cells_fold_into_gap_status(
     """Each `(Impl, Verification)` cell pair reads as one gap status.
 
     `capability_gap_status_from_table` is a five-arm match and the rest of this
-    case only ever declares rows that reach `Closed`. The four arms below are
-    entered by one row each: the `blocked` disjunct on the verification side,
-    the `out_of_scope` guard, the `none` spelling of an open row, and the
-    catch-all in-progress fallthrough.
+    case only ever declares rows that reach `Closed`. Every other arm is entered
+    below: the blocked arm through *both* of its disjuncts (one row blocked on
+    the verification side, one on the implementation side), the `out_of_scope`
+    guard, the `none` spelling of an open row, and the catch-all in-progress
+    fallthrough. Two rows reaching the same status through different disjuncts
+    is the point of the pair -- either disjunct alone leaves the other free.
 
     Asserted twice over. The gap status is named directly by `capability
     report`, which is exact. The Index `Impl` cell is the rendered consequence
