@@ -342,8 +342,14 @@ fn auth_delegator_binding_is_cluster_scoped_and_unowned() {
     assert!(meta.get("ownerReferences").is_none(), "got {binding}");
     assert!(meta.get("namespace").is_none(), "got {binding}");
     assert_eq!(meta["labels"]["lumen.dev/owner-namespace"], "acme");
-    assert_eq!(meta["labels"]["app.kubernetes.io/managed-by"], "lumen-operator");
-    assert_eq!(meta["labels"]["app.kubernetes.io/component"], "auth-delegation");
+    assert_eq!(
+        meta["labels"]["app.kubernetes.io/managed-by"],
+        "lumen-operator"
+    );
+    assert_eq!(
+        meta["labels"]["app.kubernetes.io/component"],
+        "auth-delegation"
+    );
     assert_eq!(
         serde_json::to_value(auth_delegator_labels(&l)).unwrap(),
         binding["metadata"]["labels"],
@@ -1822,7 +1828,10 @@ fn peer_tls_secret_sets_the_four_peer_mtls_env_vars() {
         .unwrap()
         .to_string();
 
-    assert_eq!(env_value(container, "LUMEN_PEER_MTLS").as_deref(), Some("on"));
+    assert_eq!(
+        env_value(container, "LUMEN_PEER_MTLS").as_deref(),
+        Some("on")
+    );
     for (var, key) in [
         ("LUMEN_PEER_TLS_CERT", "tls.crt"),
         ("LUMEN_PEER_TLS_KEY", "tls.key"),
@@ -2046,7 +2055,10 @@ fn serving_tls_spec(secret: Option<&str>) -> LumenSpec {
 /// misconfiguration ends up serving the peer identity to clients.
 #[test]
 fn serving_tls_secret_projects_exactly_its_three_keys_read_only() {
-    let objs = render(&lumen("search", serving_tls_spec(Some("search-serving-tls"))));
+    let objs = render(&lumen(
+        "search",
+        serving_tls_spec(Some("search-serving-tls")),
+    ));
     let pod = pod_spec(&objs);
 
     let volume = pod["volumes"]
@@ -2090,7 +2102,10 @@ fn serving_tls_secret_projects_exactly_its_three_keys_read_only() {
 /// cleartext, so all four travel together.
 #[test]
 fn serving_tls_secret_sets_the_four_serving_tls_env_vars() {
-    let objs = render(&lumen("search", serving_tls_spec(Some("search-serving-tls"))));
+    let objs = render(&lumen(
+        "search",
+        serving_tls_spec(Some("search-serving-tls")),
+    ));
     let pod = pod_spec(&objs);
     let container = &pod["containers"][0];
     let mount_path = container["volumeMounts"]
@@ -2170,7 +2185,12 @@ fn a_peer_identity_alone_renders_no_serving_tls_volume_or_env() {
             .all(|v| v["name"] != "lumen-serving-tls"),
         "unexpected serving TLS volume: {pod:#}"
     );
-    for var in ["LUMEN_TLS", "LUMEN_TLS_CERT", "LUMEN_TLS_KEY", "LUMEN_TLS_CA"] {
+    for var in [
+        "LUMEN_TLS",
+        "LUMEN_TLS_CERT",
+        "LUMEN_TLS_KEY",
+        "LUMEN_TLS_CA",
+    ] {
         assert!(
             env_value(container, var).is_none(),
             "unexpected {var} without a serving certificate"
@@ -2198,7 +2218,10 @@ fn serving_and_peer_identities_never_share_material() {
         serving, peer,
         "the two listeners must not load the same certificate"
     );
-    assert_eq!(env_value(container, "LUMEN_PEER_MTLS").as_deref(), Some("on"));
+    assert_eq!(
+        env_value(container, "LUMEN_PEER_MTLS").as_deref(),
+        Some("on")
+    );
     let secrets: Vec<&str> = pod["volumes"]
         .as_array()
         .unwrap()
@@ -2216,7 +2239,10 @@ fn serving_and_peer_identities_never_share_material() {
 /// needs to say it does not want one.
 #[test]
 fn serving_tls_never_renders_a_public_address() {
-    let objs = render(&lumen("search", serving_tls_spec(Some("search-serving-tls"))));
+    let objs = render(&lumen(
+        "search",
+        serving_tls_spec(Some("search-serving-tls")),
+    ));
 
     let service = find(&objs, "Service", "search");
     let service_type = service["spec"]["type"].as_str().unwrap_or("ClusterIP");
@@ -2286,5 +2312,518 @@ fn run_lumen(args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).expect("lumen renders UTF-8")
+}
+
+#[test]
+fn checked_in_operator_deployment_manifest_carries_explicit_dev_issuer_block() {
+    let manifest = include_str!("../k8s/operator/deployment.yaml");
+    let val: serde_yaml::Value =
+        serde_yaml::from_str(manifest).expect("parse checked-in deployment.yaml");
+    let spec = &val["spec"]["template"]["spec"];
+    assert_eq!(spec["serviceAccountName"].as_str(), Some("lumen-operator"));
+    assert!(
+        spec.get("nodeSelector").is_none()
+            || spec["nodeSelector"]
+                .get("iam.gke.io/gke-metadata-server-enabled")
+                .is_none(),
+        "checked-in deployment manifest must omit GKE metadata server node selector"
+    );
+
+    let envs = spec["containers"][0]["env"]
+        .as_sequence()
+        .expect("containers[0].env sequence");
+    let env_counts: std::collections::HashMap<&str, usize> = envs
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .fold(std::collections::HashMap::new(), |mut acc, name| {
+            *acc.entry(name).or_insert(0) += 1;
+            acc
+        });
+
+    assert_eq!(env_counts.get("LUMEN_ISSUER"), Some(&1));
+    assert_eq!(env_counts.get("LUMEN_TRUST_DOMAIN"), Some(&1));
+    assert!(!env_counts.contains_key("LUMEN_CA_POOL"));
+    assert!(!env_counts.contains_key("LUMEN_WORKLOAD_IDENTITY_AUDIENCE"));
+    assert!(!env_counts.contains_key("LUMEN_PROJECTED_TOKEN_PATH"));
+
+    let env_map: std::collections::HashMap<&str, &str> = envs
+        .iter()
+        .filter_map(|e| {
+            let name = e["name"].as_str()?;
+            let value = e["value"].as_str()?;
+            Some((name, value))
+        })
+        .collect();
+    assert_eq!(env_map.get("LUMEN_ISSUER"), Some(&"ephemeral"));
+    assert_eq!(
+        env_map.get("LUMEN_TRUST_DOMAIN"),
+        Some(&"lumen-dev.svc.id.goog")
+    );
+}
+
+#[test]
+fn cas_issuer_configuration_resolves_to_cas_issuer_with_pool() {
+    use lumen::operator::certificate::{IssuerMode, RawIssuerConfig};
+
+    let pool_str = "projects/my-project/locations/us-central1/caPools/my-pool";
+    let raw = RawIssuerConfig {
+        mode: Some("cas".into()),
+        trust_domain: Some("lumen-prod.svc.id.goog".into()),
+        ca_pool: Some(pool_str.into()),
+    };
+    let config = raw.validate().expect("CAS configuration validates");
+    assert_eq!(config.mode, IssuerMode::Cas);
+    assert_eq!(config.ca_pool().as_ref().unwrap().resource(), pool_str);
+
+    let issuer = config.resolve_issuer().expect("resolve CAS issuer");
+    assert_eq!(issuer.id().as_str(), pool_str);
+
+    let yaml = run_lumen(&[
+        "k8s",
+        "operator",
+        "render",
+        "--issuer",
+        "cas",
+        "--trust-domain",
+        "lumen-prod.svc.id.goog",
+        "--ca-pool",
+        pool_str,
+    ]);
+
+    // Structural YAML assertions for CAS mode Deployment
+    let mut found_deployment = false;
+    for doc in yaml.split("\n---") {
+        if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(doc) {
+            if val.get("kind").and_then(|k| k.as_str()) == Some("Deployment") {
+                let spec = &val["spec"]["template"]["spec"];
+                assert_eq!(spec["serviceAccountName"].as_str(), Some("lumen-operator"));
+                assert_eq!(
+                    spec["nodeSelector"]["iam.gke.io/gke-metadata-server-enabled"].as_str(),
+                    Some("true")
+                );
+                let envs = spec["containers"][0]["env"]
+                    .as_sequence()
+                    .expect("env sequence");
+
+                let env_counts: std::collections::HashMap<&str, usize> = envs
+                    .iter()
+                    .filter_map(|e| e["name"].as_str())
+                    .fold(std::collections::HashMap::new(), |mut acc, name| {
+                        *acc.entry(name).or_insert(0) += 1;
+                        acc
+                    });
+                assert_eq!(
+                    env_counts.get("LUMEN_ISSUER"),
+                    Some(&1),
+                    "LUMEN_ISSUER count"
+                );
+                assert_eq!(
+                    env_counts.get("LUMEN_TRUST_DOMAIN"),
+                    Some(&1),
+                    "LUMEN_TRUST_DOMAIN count"
+                );
+                assert_eq!(
+                    env_counts.get("LUMEN_CA_POOL"),
+                    Some(&1),
+                    "LUMEN_CA_POOL count"
+                );
+                assert!(!env_counts.contains_key("LUMEN_WORKLOAD_IDENTITY_AUDIENCE"));
+                assert!(!env_counts.contains_key("LUMEN_PROJECTED_TOKEN_PATH"));
+
+                let env_map: std::collections::HashMap<&str, &str> = envs
+                    .iter()
+                    .filter_map(|e| {
+                        let name = e["name"].as_str()?;
+                        let value = e["value"].as_str()?;
+                        Some((name, value))
+                    })
+                    .collect();
+                assert_eq!(env_map.get("LUMEN_ISSUER"), Some(&"cas"));
+                assert_eq!(
+                    env_map.get("LUMEN_TRUST_DOMAIN"),
+                    Some(&"lumen-prod.svc.id.goog")
+                );
+                assert_eq!(env_map.get("LUMEN_CA_POOL"), Some(&pool_str));
+                found_deployment = true;
+            }
+        }
+    }
+    assert!(
+        found_deployment,
+        "found Deployment manifest doc in CAS render output"
+    );
+
+    // Raw negative controls
+    assert!(!yaml.contains("LUMEN_WORKLOAD_IDENTITY_AUDIENCE"));
+    assert!(!yaml.contains("LUMEN_PROJECTED_TOKEN_PATH"));
+    assert!(!yaml.contains("gcp-ksa-token"));
+    assert!(!yaml.contains("iam.gke.io/gcp-service-account"));
+    assert!(!yaml.contains("secretName:"));
+}
+
+#[test]
+fn ephemeral_issuer_configuration_resolves_to_ephemeral_issuer_and_requires_no_gcp_surface() {
+    use lumen::operator::certificate::{IssuerMode, RawIssuerConfig};
+
+    let raw = RawIssuerConfig {
+        mode: Some("ephemeral".into()),
+        trust_domain: Some("lumen-dev.svc.id.goog".into()),
+        ca_pool: None,
+    };
+    let config = raw.validate().expect("ephemeral configuration validates");
+    assert_eq!(config.mode, IssuerMode::Ephemeral);
+
+    let issuer = config.resolve_issuer().expect("resolve ephemeral issuer");
+    assert_eq!(issuer.id().as_str(), "ephemeral-operator-issuer");
+
+    let yaml = run_lumen(&[
+        "k8s",
+        "operator",
+        "render",
+        "--issuer",
+        "ephemeral",
+        "--trust-domain",
+        "lumen-dev.svc.id.goog",
+    ]);
+
+    // Structural YAML assertions for Ephemeral mode Deployment
+    let mut found_deployment = false;
+    for doc in yaml.split("\n---") {
+        if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(doc) {
+            if val.get("kind").and_then(|k| k.as_str()) == Some("Deployment") {
+                let spec = &val["spec"]["template"]["spec"];
+                assert_eq!(spec["serviceAccountName"].as_str(), Some("lumen-operator"));
+                assert!(
+                    spec.get("nodeSelector").is_none()
+                        || spec["nodeSelector"]
+                            .get("iam.gke.io/gke-metadata-server-enabled")
+                            .is_none()
+                );
+                let envs = spec["containers"][0]["env"]
+                    .as_sequence()
+                    .expect("env sequence");
+
+                let env_counts: std::collections::HashMap<&str, usize> = envs
+                    .iter()
+                    .filter_map(|e| e["name"].as_str())
+                    .fold(std::collections::HashMap::new(), |mut acc, name| {
+                        *acc.entry(name).or_insert(0) += 1;
+                        acc
+                    });
+                assert_eq!(
+                    env_counts.get("LUMEN_ISSUER"),
+                    Some(&1),
+                    "LUMEN_ISSUER count"
+                );
+                assert_eq!(
+                    env_counts.get("LUMEN_TRUST_DOMAIN"),
+                    Some(&1),
+                    "LUMEN_TRUST_DOMAIN count"
+                );
+                assert!(!env_counts.contains_key("LUMEN_CA_POOL"));
+                assert!(!env_counts.contains_key("LUMEN_WORKLOAD_IDENTITY_AUDIENCE"));
+                assert!(!env_counts.contains_key("LUMEN_PROJECTED_TOKEN_PATH"));
+
+                let env_map: std::collections::HashMap<&str, &str> = envs
+                    .iter()
+                    .filter_map(|e| {
+                        let name = e["name"].as_str()?;
+                        let value = e["value"].as_str()?;
+                        Some((name, value))
+                    })
+                    .collect();
+                assert_eq!(env_map.get("LUMEN_ISSUER"), Some(&"ephemeral"));
+                assert_eq!(
+                    env_map.get("LUMEN_TRUST_DOMAIN"),
+                    Some(&"lumen-dev.svc.id.goog")
+                );
+                found_deployment = true;
+            }
+        }
+    }
+    assert!(
+        found_deployment,
+        "found Deployment manifest doc in Ephemeral render output"
+    );
+
+    // Raw negative controls
+    assert!(!yaml.contains("iam.gke.io/gke-metadata-server-enabled"));
+    assert!(!yaml.contains("gcp-ksa-token"));
+    assert!(!yaml.contains("LUMEN_CA_POOL"));
+    assert!(!yaml.contains("iam.gke.io/gcp-service-account"));
+}
+
+#[test]
+fn invalid_issuer_configurations_fail_closed_with_actionable_messages() {
+    let check_fail = |args: &[&str], expected_err: &str| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_lumen"))
+            .args(args)
+            .output()
+            .expect("spawn lumen command");
+        assert!(
+            !output.status.success(),
+            "command unexpectedly succeeded for args {:?}",
+            args
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_err),
+            "expected stderr to contain {:?}, got:\n{}",
+            expected_err,
+            stderr
+        );
+    };
+
+    // Unset mode on run
+    check_fail(&["k8s", "operator", "run"], "missing issuer mode");
+
+    // Unset mode on render
+    check_fail(&["k8s", "operator", "render"], "missing issuer mode");
+
+    // Unset mode with trust domain on render
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog",
+        ],
+        "missing issuer mode",
+    );
+
+    // Unset mode with ca pool on render
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--ca-pool",
+            "projects/p/locations/l/caPools/n",
+        ],
+        "missing issuer mode",
+    );
+
+    // Unrecognized mode
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "selfsigned",
+            "--trust-domain",
+            "td",
+        ],
+        "unrecognized issuer mode 'selfsigned'",
+    );
+
+    // Missing trust domain
+    check_fail(
+        &["k8s", "operator", "render", "--issuer", "ephemeral"],
+        "trust_domain is required",
+    );
+
+    // Ephemeral mode with CAS pool
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "td",
+            "--ca-pool",
+            "projects/p/locations/l/caPools/n",
+        ],
+        "CAS-only field 'ca_pool' is forbidden in ephemeral mode",
+    );
+
+    // CAS mode with malformed pool
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "cas",
+            "--trust-domain",
+            "td",
+            "--ca-pool",
+            "invalid-pool-name",
+        ],
+        "invalid ca_pool resource",
+    );
+}
+
+#[test]
+fn rendered_operator_identity_carries_exact_ksa_binding_and_no_crd_issuer_field() {
+    let yaml = run_lumen(&[
+        "k8s",
+        "operator",
+        "render",
+        "--namespace",
+        "custom-system",
+        "--issuer",
+        "ephemeral",
+        "--trust-domain",
+        "lumen-dev.svc.id.goog",
+    ]);
+
+    assert!(yaml.contains("serviceAccountName: lumen-operator"));
+    assert!(yaml.contains("namespace: custom-system"));
+    assert!(!yaml.contains("iam.gke.io/gke-metadata-server-enabled"));
+    assert!(!yaml.contains("iam.gke.io/gcp-service-account"));
+    assert!(!yaml.contains("kind: Secret"));
+
+    // Terraform module grants certificate_controller = { namespace, service_account }
+    // defined in iam.tf
+    let tf_iam_doc = include_str!("../terraform/modules/lumen-pki/iam.tf");
+    assert!(
+        tf_iam_doc.contains("/subject/ns/${var.certificate_controller.namespace}"),
+        "Terraform iam.tf must specify controller namespace subject fragment"
+    );
+    assert!(
+        tf_iam_doc.contains("/sa/${var.certificate_controller.service_account}"),
+        "Terraform iam.tf must specify controller service_account subject fragment"
+    );
+    assert!(
+        tf_iam_doc.contains("roles/privateca.certificateRequester"),
+        "Terraform iam.tf must grant privateca.certificateRequester role"
+    );
+    assert!(
+        tf_iam_doc.contains("roles/privateca.auditor"),
+        "Terraform iam.tf must grant privateca.auditor role"
+    );
+
+    let crd_yaml = lumen::operator::crd_yaml();
+    assert!(!crd_yaml.contains("issuer:"));
+    assert!(!crd_yaml.contains("caPool:"));
+}
+
+#[test]
+fn injection_payloads_and_unsafe_ca_pools_are_rejected_before_yaml_emission() {
+    let check_fail = |args: &[&str], expected_err: &str| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_lumen"))
+            .args(args)
+            .output()
+            .expect("spawn lumen command");
+        assert!(
+            !output.status.success(),
+            "command unexpectedly succeeded for args {:?}",
+            args
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_err),
+            "expected stderr to contain {:?}, got:\n{}",
+            expected_err,
+            stderr
+        );
+    };
+
+    // Uppercase trust domain
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "LUMEN-PROD",
+        ],
+        "invalid trust_domain",
+    );
+
+    // Trust domain with newline injection
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog\nvalue: inject",
+        ],
+        "invalid trust_domain",
+    );
+
+    // CA pool with newline injection
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "cas",
+            "--trust-domain",
+            "td",
+            "--ca-pool",
+            "projects/p/locations/l/caPools/n\nvalue: inject",
+        ],
+        "invalid ca_pool resource",
+    );
+}
+
+#[test]
+fn instance_rendered_profiles_include_mode_specific_operator_prerequisite_comments_and_no_cr_issuer_fields(
+) {
+    let dev_yaml = run_lumen(&["k8s", "instance", "render", "--profile", "dev"]);
+    assert!(
+        dev_yaml.contains("# Operator prerequisite: run `lumen k8s operator render --issuer ephemeral --trust-domain lumen-dev.svc.id.goog`"),
+        "dev profile must point to explicit ephemeral operator setup"
+    );
+    assert!(
+        dev_yaml.contains("# Issuer selection is operator-scoped; this custom resource carries no issuer or CA pool fields."),
+        "dev profile must state operator scope"
+    );
+    assert!(!dev_yaml.contains("issuer:"));
+    assert!(!dev_yaml.contains("caPool:"));
+
+    let staging_yaml = run_lumen(&["k8s", "instance", "render", "--profile", "staging"]);
+    assert!(
+        staging_yaml
+            .contains("# Operator prerequisite: run `lumen k8s operator render --issuer cas"),
+        "staging profile must point to explicit cas operator setup"
+    );
+    assert!(
+        staging_yaml.contains("module.lumen_pki.issuing_ca_pool_id"),
+        "staging profile must reference Terraform issuing_ca_pool_id output"
+    );
+    assert!(
+        staging_yaml.contains("module.lumen_pki.trust_domain"),
+        "staging profile must reference Terraform trust_domain output"
+    );
+    assert!(!staging_yaml.contains("issuer:"));
+    assert!(!staging_yaml.contains("caPool:"));
+
+    let prod_yaml = run_lumen(&["k8s", "instance", "render", "--profile", "prod"]);
+    assert!(
+        prod_yaml.contains("# Operator prerequisite: run `lumen k8s operator render --issuer cas"),
+        "prod profile must point to explicit cas operator setup"
+    );
+    assert!(
+        prod_yaml.contains("module.lumen_pki.issuing_ca_pool_id"),
+        "prod profile must reference Terraform issuing_ca_pool_id output"
+    );
+    assert!(
+        prod_yaml.contains("module.lumen_pki.trust_domain"),
+        "prod profile must reference Terraform trust_domain output"
+    );
+    assert!(!prod_yaml.contains("issuer:"));
+    assert!(!prod_yaml.contains("caPool:"));
+
+    let template_yaml = run_lumen(&["k8s", "instance", "render", "--profile", "template"]);
+    assert!(
+        template_yaml.contains(
+            "# Operator prerequisite: REPLACE_ME__OPERATOR_PREREQUISITE: `lumen k8s operator render --issuer cas|ephemeral ...`"
+        ),
+        "template profile must expose clear replace-me operator prerequisite comment"
+    );
+    assert!(!template_yaml.contains("issuer:"));
+    assert!(!template_yaml.contains("caPool:"));
 }
 // CODEGEN-END

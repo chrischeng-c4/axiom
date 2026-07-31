@@ -1281,7 +1281,11 @@ fn dx_topics_teach_the_private_clusterip_tls_contract() {
     }
 
     let connect = md("connect-kubernetes");
-    for needle in ["--ca-file", "SNI", "there is no flag that skips verification"] {
+    for needle in [
+        "--ca-file",
+        "SNI",
+        "there is no flag that skips verification",
+    ] {
         assert!(
             connect.contains(needle),
             "`connect-kubernetes` topic missing `{needle}`:\n{connect}"
@@ -1537,4 +1541,60 @@ const WEAKENINGS: [&str; 6] = [
     "rejectUnauthorized: false",
     "NODE_TLS_REJECT_UNAUTHORIZED",
 ];
+
+#[test]
+fn issuer_contract_is_consistently_documented_across_surfaces() {
+    let deployment_md = llm_deployment_md();
+    let readme = std::fs::read_to_string("README.md").expect("read README.md");
+    let capabilities = std::fs::read_to_string("CAPABILITIES.md").expect("read CAPABILITIES.md");
+
+    // README.md and llm_deployment_md() provide operator deployment runbooks with exact CLI flags
+    for doc in [&deployment_md, &readme] {
+        assert!(
+            doc.contains("--issuer cas"),
+            "operator deployment doc missing exact '--issuer cas' flag guidance: {doc}"
+        );
+        assert!(
+            doc.contains("--issuer ephemeral"),
+            "operator deployment doc missing exact '--issuer ephemeral' flag guidance: {doc}"
+        );
+    }
+
+    // All three canonical surfaces (README.md, llm_deployment_md(), CAPABILITIES.md) describe the same contract
+    for doc in [&deployment_md, &readme, &capabilities] {
+        assert!(
+            doc.contains("cas") && doc.contains("ephemeral"),
+            "doc missing explicit cas/ephemeral mode semantics: {doc}"
+        );
+        assert!(
+            doc.contains("operator-scoped") || doc.contains("operator"),
+            "doc should mention operator scope: {doc}"
+        );
+        assert!(
+            doc.contains("lumen-operator"),
+            "doc should mention lumen-operator KSA identity: {doc}"
+        );
+        assert!(
+            doc.contains("certificate_controller"),
+            "doc should mention Terraform certificate_controller binding: {doc}"
+        );
+        assert!(
+            doc.contains("metadata server") || doc.contains("GKE_METADATA"),
+            "doc should mention GKE metadata server / GKE_METADATA requirement: {doc}"
+        );
+
+        // Reject retired direct-STS CLI and env literal names across documentation
+        for retired in [
+            "--workload-identity-audience",
+            "--projected-token-path",
+            "LUMEN_WORKLOAD_IDENTITY_AUDIENCE",
+            "LUMEN_PROJECTED_TOKEN_PATH",
+        ] {
+            assert!(
+                !doc.contains(retired),
+                "doc contains retired direct-STS name '{retired}': {doc}"
+            );
+        }
+    }
+}
 // CODEGEN-END

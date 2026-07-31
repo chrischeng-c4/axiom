@@ -80,8 +80,9 @@ spec:
           # Published GHCR release for this workspace's Lumen version. Bumped by
           # the release procedure alongside Cargo.toml/openapi.json; grep target
           # for the bump commit: `ghcr.io/chrischeng-c4/lumen:`. To pin an
-          # immutable digest or point at a mirrored registry, render this
-          # manifest with `lumen k8s operator render --image <ref>`.
+          # immutable digest, point at a mirrored registry, or set the issuer
+          # (--issuer cas --trust-domain <td> --ca-pool <pool> | --issuer ephemeral),
+          # render this manifest with `lumen k8s operator render`.
           image: ghcr.io/chrischeng-c4/lumen:0.4.25
           imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/lumen", "k8s", "operator", "run"]
@@ -105,6 +106,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # Explicit operator certificate issuer for dev/kind (#3222).
+            - name: LUMEN_ISSUER
+              value: "ephemeral"
+            - name: LUMEN_TRUST_DOMAIN
+              value: "lumen-dev.svc.id.goog"
           volumeMounts:
             - name: lumen-admin-token
               mountPath: /var/run/secrets/lumen.axiom.dev

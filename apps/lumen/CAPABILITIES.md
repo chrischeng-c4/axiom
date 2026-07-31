@@ -184,6 +184,7 @@ Invariants:
   access. Raft `:7374` never falls back to plaintext.
 - Delegated-auth, RBAC rendering, projected-token, and TLS mechanics belong in
   shared libraries; Lumen owns domain policy and wiring.
+- Issuer selection is an explicit operator-scoped contract (`cas` | `ephemeral`), not a tenant CR field. `cas` requires the validated CA pool resource (`CaPool::parse`) plus Standard GKE Workload Identity with `GKE_METADATA`, obtains tokens through the GKE metadata server, and accepts no audience or projected-token-path input. `ephemeral` is explicit for local/kind development and requires no GCP surface. The operator KSA `lumen-operator` joins Terraform's `certificate_controller = { namespace, service_account }` federated principal binding, and instance profiles document their required operator prerequisite via YAML comments.
 
 Claims:
 

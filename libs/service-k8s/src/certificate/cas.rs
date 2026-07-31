@@ -11,11 +11,18 @@
 //!
 //! ### Credentials
 //!
-//! There are none to hold. The only thing this module reads is the projected
-//! KSA token the kubelet writes and rotates, which it exchanges at STS for a
-//! short-lived federated access token. There is no service-account key, no ADC
-//! file, no metadata-server credential — the pool's IAM binding names the
-//! workload's `principal://` directly (#3109), so the KSA *is* the identity.
+//! There are no long-lived keys or ADC files to hold. Access tokens are obtained
+//! dynamically using two shared-library adapters:
+//!
+//! - [`GkeMetadataTokenSource`]: Lumen's Standard-GKE production path. It asks the
+//!   fixed GKE metadata server endpoint for a short-lived OAuth access token using
+//!   the Pod's KSA identity;
+//! - [`WorkloadIdentityTokenSource`]: A compatibility adapter for other consumers
+//!   that directly exchange a projected KSA token at GCP STS.
+//!
+//! Neither adapter uses a service-account key, credential Secret, or logs token
+//! or response bodies. The pool's IAM binding names the workload's `principal://`
+//! directly (#3109), so the KSA *is* the identity.
 //!
 //! ### Retries do not mint duplicates
 //!
@@ -28,6 +35,9 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+const GKE_METADATA_TOKEN_ENDPOINT: &str =
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 
 use futures::future::BoxFuture;
 use serde_json::{json, Value};
@@ -54,6 +64,23 @@ impl CaPool {
             ["projects", project, "locations", location, "caPools", pool]
                 if !project.is_empty() && !location.is_empty() && !pool.is_empty() =>
             {
+                for part in [*project, *location, *pool] {
+                    if part.chars().any(|c| {
+                        c.is_control() || matches!(c, ' ' | '"' | '\'' | '\\' | '\n' | '\r')
+                    }) {
+                        return Err(IssuerError::Upstream(format!(
+                            "unsafe character in CA pool resource name: {resource}"
+                        )));
+                    }
+                    if !part
+                        .chars()
+                        .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_'))
+                    {
+                        return Err(IssuerError::Upstream(format!(
+                            "invalid segment in CA pool resource name: {resource}"
+                        )));
+                    }
+                }
                 Ok(Self {
                     project: (*project).to_string(),
                     location: (*location).to_string(),
@@ -77,6 +104,136 @@ impl CaPool {
 /// Anything that can produce a bearer token for `privateca.googleapis.com`.
 pub trait AccessTokenSource: Send + Sync {
     fn token<'a>(&'a self) -> BoxFuture<'a, Result<String, IssuerError>>;
+}
+
+/// Fetches a short-lived OAuth access token from the GKE Workload Identity metadata server.
+///
+/// Endpoint: `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token`
+/// Header: `Metadata-Flavor: Google`
+pub struct GkeMetadataTokenSource {
+    endpoint: String,
+    client: reqwest::Client,
+    cached: Mutex<Option<(String, Instant)>>,
+}
+
+impl GkeMetadataTokenSource {
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .expect("failed to build reqwest client for GkeMetadataTokenSource");
+
+        Self {
+            endpoint: GKE_METADATA_TOKEN_ENDPOINT.to_string(),
+            client,
+            cached: Mutex::new(None),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    #[cfg(test)]
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = endpoint.into();
+        self
+    }
+
+    #[cfg(test)]
+    pub fn with_cached_token(self, token: impl Into<String>, expiry: Instant) -> Self {
+        if let Ok(mut guard) = self.cached.lock() {
+            *guard = Some((token.into(), expiry));
+        }
+        self
+    }
+}
+
+impl Default for GkeMetadataTokenSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AccessTokenSource for GkeMetadataTokenSource {
+    fn token<'a>(&'a self) -> BoxFuture<'a, Result<String, IssuerError>> {
+        Box::pin(async move {
+            let now = Instant::now();
+            if let Ok(guard) = self.cached.lock() {
+                if let Some((ref tok, expiry)) = *guard {
+                    if now < expiry {
+                        return Ok(tok.clone());
+                    }
+                }
+            }
+
+            let resp = self
+                .client
+                .get(&self.endpoint)
+                .header("Metadata-Flavor", "Google")
+                .send()
+                .await
+                .map_err(|err| {
+                    IssuerError::Upstream(format!(
+                        "metadata server request failed: status {}",
+                        err.status()
+                            .map_or("network error".to_string(), |s| s.to_string())
+                    ))
+                })?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(IssuerError::Upstream(format!(
+                    "metadata server returned HTTP status {status}"
+                )));
+            }
+
+            let body: serde_json::Value = resp.json().await.map_err(|_| {
+                IssuerError::Upstream("metadata server response is not valid JSON".to_string())
+            })?;
+
+            let access_token = body
+                .get("access_token")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| {
+                    IssuerError::Upstream(
+                        "metadata server response missing non-empty access_token".to_string(),
+                    )
+                })?
+                .to_string();
+
+            let expires_in_secs =
+                body.get("expires_in")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| {
+                        IssuerError::Upstream(
+                            "metadata server response missing valid positive integer expires_in"
+                                .to_string(),
+                        )
+                    })?;
+
+            if expires_in_secs == 0 {
+                return Err(IssuerError::Upstream(
+                    "metadata server returned zero token lifetime".to_string(),
+                ));
+            }
+
+            if expires_in_secs > 300 {
+                let refresh_secs = expires_in_secs - 300;
+                let expiry = now + Duration::from_secs(refresh_secs);
+                if let Ok(mut guard) = self.cached.lock() {
+                    *guard = Some((access_token.clone(), expiry));
+                }
+            } else if let Ok(mut guard) = self.cached.lock() {
+                *guard = None;
+            }
+
+            Ok(access_token)
+        })
+    }
 }
 
 /// Exchanges the kubelet's projected KSA token for a federated access token.
@@ -516,7 +673,10 @@ mod tests {
             form["grant_type"],
             "urn:ietf:params:oauth:grant-type:token-exchange"
         );
-        assert_eq!(form["subject_token_type"], "urn:ietf:params:oauth:token-type:jwt");
+        assert_eq!(
+            form["subject_token_type"],
+            "urn:ietf:params:oauth:token-type:jwt"
+        );
         assert_eq!(form["subject_token"], "assertion");
         assert!(
             !form.contains_key("client_secret") && !form.contains_key("assertion_type"),
@@ -554,6 +714,237 @@ mod tests {
         });
         let anchors = CasIssuer::anchors_from(&body);
         assert_eq!(anchors.matches("BEGIN CERTIFICATE").count(), 2);
+    }
+
+    #[tokio::test]
+    async fn gke_metadata_token_source_fetches_token_with_required_header() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 1024];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let req_str = String::from_utf8_lossy(&buf[..n]);
+                // Case-insensitive header check per RFC 7230
+                let lower_req = req_str.to_lowercase();
+                assert!(lower_req.contains("metadata-flavor: google"));
+                let body = json!({
+                    "access_token": "secret-oauth-token-12345",
+                    "expires_in": 3600,
+                    "token_type": "Bearer"
+                })
+                .to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(resp.as_bytes()).await.unwrap();
+            }
+        });
+
+        let source = GkeMetadataTokenSource::new().with_endpoint(format!(
+            "http://127.0.0.1:{port}/computeMetadata/v1/instance/service-accounts/default/token"
+        ));
+        let token = source.token().await.unwrap();
+        assert_eq!(token, "secret-oauth-token-12345");
+
+        // Cache reuse: second call does not reach server (server closed after 1 request)
+        let token2 = source.token().await.unwrap();
+        assert_eq!(token2, "secret-oauth-token-12345");
+    }
+
+    #[test]
+    fn gke_metadata_token_source_default_endpoint_matches_documented_gke_metadata_url() {
+        let source = GkeMetadataTokenSource::new();
+        assert_eq!(
+            source.endpoint(),
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+        );
+        assert_eq!(source.endpoint(), GKE_METADATA_TOKEN_ENDPOINT);
+    }
+
+    #[tokio::test]
+    async fn gke_metadata_token_source_does_not_cache_short_lived_tokens() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            for token_val in ["token-short-1", "token-short-2"] {
+                if let Ok((mut stream, _)) = listener.accept().await {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf).await;
+                    let body = json!({
+                        "access_token": token_val,
+                        "expires_in": 200, // <= 300s margin -> not cached
+                        "token_type": "Bearer"
+                    })
+                    .to_string();
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    stream.write_all(resp.as_bytes()).await.unwrap();
+                }
+            }
+        });
+
+        let source =
+            GkeMetadataTokenSource::new().with_endpoint(format!("http://127.0.0.1:{port}/token"));
+        let token1 = source.token().await.unwrap();
+        assert_eq!(token1, "token-short-1");
+
+        // Second call fetches fresh token because expires_in <= 300
+        let token2 = source.token().await.unwrap();
+        assert_eq!(token2, "token-short-2");
+    }
+
+    #[tokio::test]
+    async fn gke_metadata_token_source_fetches_fresh_token_when_cache_is_stale() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await;
+                let body = json!({
+                    "access_token": "fresh-token-from-server",
+                    "expires_in": 3600,
+                    "token_type": "Bearer"
+                })
+                .to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(resp.as_bytes()).await.unwrap();
+            }
+        });
+
+        // Seed with a stale cached token whose expiry is in the past
+        let stale_expiry = Instant::now() - Duration::from_secs(10);
+        let source = GkeMetadataTokenSource::new()
+            .with_endpoint(format!("http://127.0.0.1:{port}/token"))
+            .with_cached_token("stale-cached-token", stale_expiry);
+
+        let token = source.token().await.unwrap();
+        assert_eq!(token, "fresh-token-from-server");
+    }
+
+    #[tokio::test]
+    async fn gke_metadata_token_source_handles_malformed_json_and_missing_or_invalid_fields() {
+        let test_cases: Vec<(String, String)> = vec![
+            (
+                "SECRET_SENSITIVE_BODY_STRING_123".to_string(),
+                "is not valid JSON".to_string(),
+            ),
+            (
+                json!({ "expires_in": 3600 }).to_string(),
+                "missing non-empty access_token".to_string(),
+            ),
+            (
+                json!({ "access_token": "   ", "expires_in": 3600 }).to_string(),
+                "missing non-empty access_token".to_string(),
+            ),
+            (
+                json!({ "access_token": "SECRET_SENSITIVE_TOKEN_VALUE_XYZ123" }).to_string(),
+                "missing valid positive integer expires_in".to_string(),
+            ),
+            (
+                json!({ "access_token": "SECRET_SENSITIVE_TOKEN_VALUE_XYZ123", "expires_in": "3600" })
+                    .to_string(),
+                "missing valid positive integer expires_in".to_string(),
+            ),
+            (
+                json!({ "access_token": "SECRET_SENSITIVE_TOKEN_VALUE_XYZ123", "expires_in": 0 })
+                    .to_string(),
+                "zero token lifetime".to_string(),
+            ),
+        ];
+
+        for (body, expected_err_fragment) in test_cases {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            listener.set_nonblocking(true).unwrap();
+            let body_clone = body.clone();
+
+            tokio::spawn(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                if let Ok((mut stream, _)) = listener.accept().await {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                        body_clone.len(),
+                        body_clone
+                    );
+                    stream.write_all(resp.as_bytes()).await.unwrap();
+                }
+            });
+
+            let source = GkeMetadataTokenSource::new()
+                .with_endpoint(format!("http://127.0.0.1:{port}/token"));
+            let err = source.token().await.unwrap_err();
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains(&expected_err_fragment),
+                "expected error containing '{expected_err_fragment}', got '{err_msg}'"
+            );
+            // Ensure error message redacts sensitive token values and raw response body
+            assert!(!err_msg.contains("SECRET_SENSITIVE_BODY_STRING_123"));
+            assert!(!err_msg.contains("SECRET_SENSITIVE_TOKEN_VALUE_XYZ123"));
+        }
+    }
+
+    #[tokio::test]
+    async fn gke_metadata_token_source_redacts_errors_on_failure() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await;
+                let body = "SENSITIVE_INTERNAL_SERVER_ERROR_BODY";
+                let resp = format!(
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(resp.as_bytes()).await.unwrap();
+            }
+        });
+
+        let source =
+            GkeMetadataTokenSource::new().with_endpoint(format!("http://127.0.0.1:{port}/token"));
+        let err = source.token().await.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(!err_msg.contains("SENSITIVE_INTERNAL_SERVER_ERROR_BODY"));
+        assert!(err_msg.contains("500"));
+    }
+
+    #[test]
+    fn ca_pool_parse_rejects_unsafe_characters() {
+        assert!(CaPool::parse("projects/p/locations/l/caPools/n\nvalue: inject").is_err());
+        assert!(CaPool::parse("projects/p/locations/l/caPools/n\"injected").is_err());
+        assert!(CaPool::parse("projects/p/locations/l/caPools/n\\injected").is_err());
     }
 
     /// Signs one leaf with the in-process CA so the response-parsing tests have

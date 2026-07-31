@@ -31,6 +31,10 @@ use service_k8s::certificate::profile::{
 
 use super::crd::Lumen;
 
+pub use super::issuer_config::{
+    IssuerConfigError, IssuerMode, OperatorIssuerConfig, RawIssuerConfig,
+};
+
 /// Leaf lifetime. Twelve hours, against the issuing pool's 24h ceiling (#3109).
 ///
 /// Short enough that a leaked leaf is a bounded problem, long enough that the
@@ -104,9 +108,7 @@ pub fn peer_profile(lumen: &Lumen, trust_domain: &str) -> Result<CertificateProf
         format!("{headless}.{ns}.svc"),
     ];
     for ordinal in 0..member_count(lumen) {
-        dns_names.push(format!(
-            "{name}-{ordinal}.{headless}.{ns}.{CLUSTER_DOMAIN}"
-        ));
+        dns_names.push(format!("{name}-{ordinal}.{headless}.{ns}.{CLUSTER_DOMAIN}"));
     }
     CertificateProfile::new(
         &scope(lumen, trust_domain),
@@ -220,14 +222,11 @@ mod tests {
         let profile = peer_profile(&lumen(2, 3), TRUST_DOMAIN).expect("peer profile");
         let names = &profile.identity().dns_names;
         for ordinal in 0..6 {
-            let expected =
-                format!("lumen-{ordinal}.lumen-headless.lumen.svc.cluster.local");
+            let expected = format!("lumen-{ordinal}.lumen-headless.lumen.svc.cluster.local");
             assert!(names.contains(&expected), "missing {expected}: {names:?}");
         }
         assert!(
-            !names
-                .iter()
-                .any(|name| name.contains("lumen-6.")),
+            !names.iter().any(|name| name.contains("lumen-6.")),
             "certified a member the topology cannot produce: {names:?}"
         );
     }
@@ -289,6 +288,100 @@ mod tests {
             profile.identity().spiffe_uri.as_deref(),
             Some("spiffe://lumen-prod.svc.id.goog/ns/staging/sa/lumen")
         );
+    }
+
+    #[test]
+    fn valid_ephemeral_config_validates_and_resolves() {
+        let raw = RawIssuerConfig {
+            mode: Some("ephemeral".into()),
+            trust_domain: Some(TRUST_DOMAIN.into()),
+            ca_pool: None,
+        };
+        let config = raw.validate().expect("ephemeral config validates");
+        assert_eq!(config.mode, IssuerMode::Ephemeral);
+        assert_eq!(config.trust_domain, TRUST_DOMAIN);
+
+        let issuer = config.resolve_issuer().expect("resolve ephemeral issuer");
+        assert_eq!(issuer.id().as_str(), "ephemeral-operator-issuer");
+    }
+
+    #[test]
+    fn valid_cas_config_validates_ca_pool_and_resolves() {
+        let pool_str = "projects/lumen-gcp/locations/us-central1/caPools/lumen-pool";
+        let raw = RawIssuerConfig {
+            mode: Some("cas".into()),
+            trust_domain: Some(TRUST_DOMAIN.into()),
+            ca_pool: Some(pool_str.into()),
+        };
+        let config = raw.validate().expect("cas config validates");
+        assert_eq!(config.mode, IssuerMode::Cas);
+        assert_eq!(config.ca_pool().as_ref().unwrap().resource(), pool_str);
+
+        let issuer = config.resolve_issuer().expect("resolve cas issuer");
+        assert_eq!(issuer.id().as_str(), pool_str);
+    }
+
+    #[test]
+    fn invalid_issuer_configurations_fail_with_distinct_errors() {
+        // Missing mode
+        let err = RawIssuerConfig::default().validate().unwrap_err();
+        assert_eq!(err, IssuerConfigError::MissingMode);
+
+        // Unrecognized mode
+        let err = RawIssuerConfig {
+            mode: Some("selfsigned".into()),
+            trust_domain: Some(TRUST_DOMAIN.into()),
+            ..Default::default()
+        }
+        .validate()
+        .unwrap_err();
+        assert_eq!(
+            err,
+            IssuerConfigError::UnrecognizedMode("selfsigned".into())
+        );
+
+        // Missing trust domain
+        let err = RawIssuerConfig {
+            mode: Some("ephemeral".into()),
+            trust_domain: None,
+            ..Default::default()
+        }
+        .validate()
+        .unwrap_err();
+        assert_eq!(
+            err,
+            IssuerConfigError::MissingTrustDomain("ephemeral".into())
+        );
+
+        // Forbidden CAS field in ephemeral mode
+        let err = RawIssuerConfig {
+            mode: Some("ephemeral".into()),
+            trust_domain: Some(TRUST_DOMAIN.into()),
+            ca_pool: Some("projects/p/locations/l/caPools/n".into()),
+        }
+        .validate()
+        .unwrap_err();
+        assert_eq!(err, IssuerConfigError::ForbiddenCasField("ca_pool".into()));
+
+        // Missing ca_pool in cas mode
+        let err = RawIssuerConfig {
+            mode: Some("cas".into()),
+            trust_domain: Some(TRUST_DOMAIN.into()),
+            ca_pool: None,
+        }
+        .validate()
+        .unwrap_err();
+        assert_eq!(err, IssuerConfigError::MissingCaPool);
+
+        // Malformed ca_pool resource
+        let err = RawIssuerConfig {
+            mode: Some("cas".into()),
+            trust_domain: Some(TRUST_DOMAIN.into()),
+            ca_pool: Some("bad-pool-name".into()),
+        }
+        .validate()
+        .unwrap_err();
+        assert!(matches!(err, IssuerConfigError::MalformedCaPool(_)));
     }
 }
 // HANDWRITE-END

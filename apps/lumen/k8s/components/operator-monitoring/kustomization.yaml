@@ -29,7 +29,7 @@ kind: Component
 # Namespace, ServiceAccount and ClusterRoleBinding subject — so the ordering
 # problem documented there (a Component's transformers resolve before the
 # enclosing kustomization's `namespace:`) has nothing to bite here. Rendering
-# the operator elsewhere goes through `lumen k8s operator render --namespace`,
+# the operator elsewhere goes through `lumen k8s operator render --issuer <cas|ephemeral> ...`,
 # which rewrites all of these together.
 
 resources:

@@ -1,9 +1,12 @@
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
-//! loop ([`reconcile`]) that renders ([`render`]) and applies the serving
-//! data-plane. Behind the `operator` feature so the serving image never links
-//! kube-rs.
+//! K8s Operator for lumen: pure issuer configuration grammar ([`issuer_config`]),
+//! a `Lumen` custom resource ([`crd`]), plus a reconcile loop ([`reconcile`])
+//! that renders ([`render`]) and applies the serving data-plane.
+//!
+//! [`issuer_config`] compiles unconditionally so offline render commands can
+//! validate issuer choices; kube-rs CRD, reconcile, render, and runtime modules
+//! remain behind the `operator` feature so the serving binary never links kube-rs.
 //!
 //! ```text
 //! Lumen (lumen.dev/v1alpha1)  --reconcile-->  ServiceAccount, ConfigMap,
@@ -12,17 +15,31 @@
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 
+pub mod issuer_config;
+pub use issuer_config::{IssuerConfigError, IssuerMode, OperatorIssuerConfig, RawIssuerConfig};
+
+#[cfg(feature = "operator")]
 pub mod certificate;
+#[cfg(feature = "operator")]
 pub mod crd;
+#[cfg(feature = "operator")]
 pub mod fleet;
+#[cfg(feature = "operator")]
 pub mod lease;
+#[cfg(feature = "operator")]
 pub mod reconcile;
+#[cfg(feature = "operator")]
 pub mod render;
+#[cfg(feature = "operator")]
 pub mod reshard_driver;
+#[cfg(feature = "operator")]
 pub mod resize;
 
+#[cfg(feature = "operator")]
 pub use crd::{Lumen, LumenSpec, LumenStatus};
+#[cfg(feature = "operator")]
 pub use fleet::{LumenFleet, LumenFleetSpec, LumenFleetStatus};
+#[cfg(feature = "operator")]
 pub use reconcile::run;
 
 /// The CEL operator no CRD rule here may use, kept as a written rule because
@@ -42,6 +59,7 @@ pub use reconcile::run;
 /// scope, next to [`lumen_crd_yaml`], so the next author to add one reads the
 /// rule before writing the expression rather than after the cluster rejects it.
 #[cfg(test)]
+#[cfg(feature = "operator")]
 const FORBIDDEN_CEL_OPERATOR: &str = "!= null";
 
 /// Every CustomResourceDefinition this operator owns, as one multi-document
@@ -52,12 +70,14 @@ const FORBIDDEN_CEL_OPERATOR: &str = "!= null";
 /// installable: a fleet whose `Lumen` CRD is absent applies cleanly and then
 /// fails every instance, which is a worse failure than not installing.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#source
+#[cfg(feature = "operator")]
 pub fn crd_yaml() -> String {
     format!("{}---\n{}", lumen_crd_yaml(), fleet::fleet_crd_yaml())
 }
 
 /// The `Lumen` CustomResourceDefinition as YAML, for `kubectl apply`.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#source
+#[cfg(feature = "operator")]
 pub fn lumen_crd_yaml() -> String {
     use kube::CustomResourceExt;
     let mut crd = serde_json::to_value(crd::Lumen::crd()).expect("CRD serializes to JSON");
@@ -65,7 +85,7 @@ pub fn lumen_crd_yaml() -> String {
     serde_yaml::to_string(&crd).expect("CRD serializes")
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "operator"))]
 mod tests {
     use super::*;
 

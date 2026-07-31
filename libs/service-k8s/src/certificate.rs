@@ -60,10 +60,13 @@ pub use reconcile::{
     MemoryStore, Outcome, ReconcileError, Reconciler, RuntimeReport, SecretStore, StoreError,
     StoreErrorKind, StoredSecret,
 };
-pub use state::{next_action, renew_at, retry_after, Action, Desired, IssueReason, Observed,
-    ObservedLeaf};
+pub use state::{
+    next_action, renew_at, retry_after, Action, Desired, IssueReason, Observed, ObservedLeaf,
+};
 pub use status::{redact, CertificateFacts, READY_CONDITION, ROTATING_CONDITION};
 
 #[cfg(feature = "gcp-cas")]
-pub use cas::{AccessTokenSource, CaPool, CasIssuer, WorkloadIdentityTokenSource};
+pub use cas::{
+    AccessTokenSource, CaPool, CasIssuer, GkeMetadataTokenSource, WorkloadIdentityTokenSource,
+};
 // HANDWRITE-END

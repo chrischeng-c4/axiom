@@ -209,7 +209,7 @@ instance ownership stay separate:
 ```
 lumen dockerfile render --variant release --version lumen@<version> --out Dockerfile
 lumen k8s crd render --out lumen-crd.yaml
-lumen k8s operator render --namespace lumen-system --out operator/
+lumen k8s operator render --namespace lumen-system --issuer ephemeral --trust-domain lumen-dev.svc.id.goog --out operator/
 lumen k8s instance render --profile prod --out lumen.yaml
 ```
 
@@ -217,6 +217,14 @@ lumen k8s instance render --profile prod --out lumen.yaml
 registries all consume the same image artifact. `k8s crd render` is the
 cluster-scoped API layer, `k8s operator render|run` is the control plane, and
 `k8s instance render` is the app-namespace custom resource.
+
+## Operator Issuer Configuration
+Issuer selection is an operator-scoped contract (`--issuer cas` | `--issuer ephemeral`), not a `Lumen` custom resource field. The absence of CRD issuer fields intentionally prevents per-instance trust-domain selection.
+
+- **Dev / Kind**: Select `ephemeral` explicitly with `lumen k8s operator render --issuer ephemeral --trust-domain lumen-dev.svc.id.goog` (or `LUMEN_ISSUER=ephemeral`). No GCP project, credential, or network is required.
+- **Staging / Production**: Select `cas` explicitly with `lumen k8s operator render --issuer cas --trust-domain <module.lumen_pki.trust_domain> --ca-pool <module.lumen_pki.issuing_ca_pool_id>`, naming the Terraform outputs (`module.lumen_pki.issuing_ca_pool_id`, `module.lumen_pki.trust_domain`) without embedding credentials. CAS requires Standard GKE Workload Identity with `GKE_METADATA` enabled and fetches short-lived tokens directly from the GKE metadata server (`iam.gke.io/gke-metadata-server-enabled: "true"` node selector); users provide no STS audience or projected-token path.
+- **Terraform / Identity Mapping**: The operator runs as Kubernetes ServiceAccount `lumen-operator` in the rendered control-plane namespace (`--namespace`, default `lumen-system`). Terraform's `lumen-pki` module binds the federated principal `principal://iam.googleapis.com/.../subject/ns/${certificate_controller.namespace}/sa/${certificate_controller.service_account}` where `certificate_controller.namespace` must equal `--namespace` and `certificate_controller.service_account` is `lumen-operator`. No GSA annotation or credential Secret is added or required.
+- **Instance Profile Render**: Each `lumen k8s instance render --profile <dev|staging|prod|template>` output carries top-level YAML comments detailing its required operator prerequisite (`--issuer ephemeral` for `dev`, `--issuer cas` and Terraform `module.lumen_pki.issuing_ca_pool_id` for `staging`/`prod`, and a replace-me prerequisite for `template`).
 
 ## Serving transport: private ClusterIP TLS
 Production traffic is **not** published. A Lumen instance is reached at its

@@ -9,54 +9,227 @@ struct DeclaredCall {
 
 const DECLARED_CALLS: &[DeclaredCall] = &[
     // Custom resources (Lumen CRD & Fleet)
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "list", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "watch", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "delete", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens/status", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets", verb: "list", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets/status", verb: "patch", resource_name: None },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumens",
+        verb: "get",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumens",
+        verb: "list",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumens",
+        verb: "watch",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumens",
+        verb: "create",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumens",
+        verb: "patch",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumens",
+        verb: "delete",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumens/status",
+        verb: "patch",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumenfleets",
+        verb: "list",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "lumen.dev",
+        resource: "lumenfleets/status",
+        verb: "patch",
+        resource_name: None,
+    },
     // Core resources (Namespace check + rendered children server-side apply)
-    DeclaredCall { api_group: "", resource: "namespaces", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "", resource: "services", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "", resource: "configmaps", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "", resource: "serviceaccounts", verb: "patch", resource_name: None },
+    DeclaredCall {
+        api_group: "",
+        resource: "namespaces",
+        verb: "get",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "",
+        resource: "services",
+        verb: "patch",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "",
+        resource: "configmaps",
+        verb: "patch",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "",
+        resource: "serviceaccounts",
+        verb: "patch",
+        resource_name: None,
+    },
     // Workloads (StatefulSet readiness check + server-side apply)
-    DeclaredCall { api_group: "apps", resource: "statefulsets", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "apps", resource: "statefulsets", verb: "patch", resource_name: None },
+    DeclaredCall {
+        api_group: "apps",
+        resource: "statefulsets",
+        verb: "get",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "apps",
+        resource: "statefulsets",
+        verb: "patch",
+        resource_name: None,
+    },
     // Batch (CronJob server-side apply)
-    DeclaredCall { api_group: "batch", resource: "cronjobs", verb: "patch", resource_name: None },
+    DeclaredCall {
+        api_group: "batch",
+        resource: "cronjobs",
+        verb: "patch",
+        resource_name: None,
+    },
     // Autoscaling & Policy (HPA existence get & prune delete; PDB server-side apply)
-    DeclaredCall { api_group: "autoscaling", resource: "horizontalpodautoscalers", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "autoscaling", resource: "horizontalpodautoscalers", verb: "delete", resource_name: None },
-    DeclaredCall { api_group: "policy", resource: "poddisruptionbudgets", verb: "patch", resource_name: None },
+    DeclaredCall {
+        api_group: "autoscaling",
+        resource: "horizontalpodautoscalers",
+        verb: "get",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "autoscaling",
+        resource: "horizontalpodautoscalers",
+        verb: "delete",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "policy",
+        resource: "poddisruptionbudgets",
+        verb: "patch",
+        resource_name: None,
+    },
     // Networking (NetworkPolicy existence get, server-side apply patch, & prune delete)
-    DeclaredCall { api_group: "networking.k8s.io", resource: "networkpolicies", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "networking.k8s.io", resource: "networkpolicies", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "networking.k8s.io", resource: "networkpolicies", verb: "delete", resource_name: None },
+    DeclaredCall {
+        api_group: "networking.k8s.io",
+        resource: "networkpolicies",
+        verb: "get",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "networking.k8s.io",
+        resource: "networkpolicies",
+        verb: "patch",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "networking.k8s.io",
+        resource: "networkpolicies",
+        verb: "delete",
+        resource_name: None,
+    },
     // Monitoring (ServiceMonitor & PrometheusRule server-side apply)
-    DeclaredCall { api_group: "monitoring.coreos.com", resource: "servicemonitors", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "monitoring.coreos.com", resource: "prometheusrules", verb: "patch", resource_name: None },
+    DeclaredCall {
+        api_group: "monitoring.coreos.com",
+        resource: "servicemonitors",
+        verb: "patch",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "monitoring.coreos.com",
+        resource: "prometheusrules",
+        verb: "patch",
+        resource_name: None,
+    },
     // Coordination (Leader election LeaseManager)
-    DeclaredCall { api_group: "coordination.k8s.io", resource: "leases", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "coordination.k8s.io", resource: "leases", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "coordination.k8s.io", resource: "leases", verb: "update", resource_name: None },
+    DeclaredCall {
+        api_group: "coordination.k8s.io",
+        resource: "leases",
+        verb: "get",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "coordination.k8s.io",
+        resource: "leases",
+        verb: "create",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "coordination.k8s.io",
+        resource: "leases",
+        verb: "update",
+        resource_name: None,
+    },
     // Events (Reconcile event recorder)
-    DeclaredCall { api_group: "events.k8s.io", resource: "events", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "events.k8s.io", resource: "events", verb: "patch", resource_name: None },
+    DeclaredCall {
+        api_group: "events.k8s.io",
+        resource: "events",
+        verb: "create",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "events.k8s.io",
+        resource: "events",
+        verb: "patch",
+        resource_name: None,
+    },
     // RBAC (KubeAuthDelegatorControl list/patch/delete + auth-delegator bind)
-    DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterrolebindings", verb: "list", resource_name: None },
-    DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterrolebindings", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterrolebindings", verb: "delete", resource_name: None },
-    DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterroles", verb: "bind", resource_name: Some("system:auth-delegator") },
+    DeclaredCall {
+        api_group: "rbac.authorization.k8s.io",
+        resource: "clusterrolebindings",
+        verb: "list",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "rbac.authorization.k8s.io",
+        resource: "clusterrolebindings",
+        verb: "patch",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "rbac.authorization.k8s.io",
+        resource: "clusterrolebindings",
+        verb: "delete",
+        resource_name: None,
+    },
+    DeclaredCall {
+        api_group: "rbac.authorization.k8s.io",
+        resource: "clusterroles",
+        verb: "bind",
+        resource_name: Some("system:auth-delegator"),
+    },
 ];
 
 fn render_operator_manifest() -> String {
     let binary = env!("CARGO_BIN_EXE_lumen");
     let output = Command::new(binary)
-        .args(["k8s", "operator", "render"])
+        .args([
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog",
+        ])
         .output()
         .expect("failed to execute lumen CLI");
 
@@ -91,19 +264,26 @@ fn is_call_covered_by_role(role_val: &serde_yaml::Value, call: &DeclaredCall) ->
         let resource_names = rule.get("resourceNames").and_then(|rn| rn.as_sequence());
 
         let matches_group = api_groups.map_or(false, |groups| {
-            groups.iter().any(|g| g.as_str() == Some(call.api_group) || g.as_str() == Some("*"))
+            groups
+                .iter()
+                .any(|g| g.as_str() == Some(call.api_group) || g.as_str() == Some("*"))
         });
         let matches_resource = resources.map_or(false, |res| {
-            res.iter().any(|r| r.as_str() == Some(call.resource) || r.as_str() == Some("*"))
+            res.iter()
+                .any(|r| r.as_str() == Some(call.resource) || r.as_str() == Some("*"))
         });
         let matches_verb = verbs.map_or(false, |v_seq| {
-            v_seq.iter().any(|v| v.as_str() == Some(call.verb) || v.as_str() == Some("*"))
+            v_seq
+                .iter()
+                .any(|v| v.as_str() == Some(call.verb) || v.as_str() == Some("*"))
         });
         let matches_resource_name = match (call.resource_name, resource_names) {
             (None, None) => true,
             (None, Some(rn_seq)) => rn_seq.is_empty(),
             (Some(_), None) => true,
-            (Some(name), Some(rn_seq)) => rn_seq.is_empty() || rn_seq.iter().any(|rn| rn.as_str() == Some(name)),
+            (Some(name), Some(rn_seq)) => {
+                rn_seq.is_empty() || rn_seq.iter().any(|rn| rn.as_str() == Some(name))
+            }
         };
 
         if matches_group && matches_resource && matches_verb && matches_resource_name {
@@ -199,7 +379,8 @@ fn test_no_secret_client_in_operator_source() {
     let hits = scan_dir_recursive(&operator_dir);
 
     if !hits.is_empty() {
-        let mut msg = String::from("Kubernetes Secret API client construction found in operator source:\n");
+        let mut msg =
+            String::from("Kubernetes Secret API client construction found in operator source:\n");
         for hit in &hits {
             msg.push_str(&format!(
                 "  File: {}, Line: {}, Code: {}\n",
@@ -240,10 +421,8 @@ fn test_secret_client_scanner_fixture_proof() {
 
 #[test]
 fn test_secret_client_scanner_recursive_fixture_proof() {
-    let temp_root = std::env::temp_dir().join(format!(
-        "lumen_rbac_coverage_test_{}",
-        std::process::id()
-    ));
+    let temp_root =
+        std::env::temp_dir().join(format!("lumen_rbac_coverage_test_{}", std::process::id()));
     let nested_dir = temp_root.join("sub_module");
     std::fs::create_dir_all(&nested_dir).expect("failed to create temp nested directory");
 
@@ -295,6 +474,8 @@ fn test_declared_operator_calls_are_granted_and_ungranted_fails() {
     assert!(
         !is_call_covered_by_role(&cluster_role, &ungranted_call),
         "scanner coverage check must fail for ungranted call: ({:?}, {:?}, {:?})",
-        ungranted_call.api_group, ungranted_call.resource, ungranted_call.verb
+        ungranted_call.api_group,
+        ungranted_call.resource,
+        ungranted_call.verb
     );
 }
