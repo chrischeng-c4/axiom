@@ -133,24 +133,25 @@ pub fn render(tape: &Tape) -> Vec<Value> {
     let cx = ctx(tape, &name, &ns);
     let headless = format!("{name}-headless");
 
-    let mut objects = vec![
-        render::service_account(&cx, COMPONENT),
-        statefulset(tape, &cx, &headless),
-        render::headless_service_with_ports(
-            &cx,
-            &headless,
-            COMPONENT,
-            vec![
-                json!({ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }),
-                json!({ "name": "raft", "port": RAFT_PORT, "targetPort": "raft", "protocol": "TCP" }),
-            ],
-        ),
-        render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
-        // Keep a raft quorum during voluntary disruptions: at most one tape
-        // pod may be unavailable at a time.
-        render::pdb(&cx, &name, COMPONENT, 1),
-        backup_service_account(&cx),
-    ];
+    let mut objects = Vec::new();
+    if tape.spec.service_account_name.is_none() {
+        objects.push(render::service_account(&cx, COMPONENT));
+    }
+    objects.push(statefulset(tape, &cx, &headless));
+    objects.push(render::headless_service_with_ports(
+        &cx,
+        &headless,
+        COMPONENT,
+        vec![
+            json!({ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }),
+            json!({ "name": "raft", "port": RAFT_PORT, "targetPort": "raft", "protocol": "TCP" }),
+        ],
+    ));
+    objects.push(render::client_service(&cx, &name, COMPONENT, CLIENT_PORT));
+    // Keep a raft quorum during voluntary disruptions: at most one tape
+    // pod may be unavailable at a time.
+    objects.push(render::pdb(&cx, &name, COMPONENT, 1));
+    objects.push(backup_service_account(&cx));
     if tape.spec.observability {
         objects.push(service_monitor(&cx));
         objects.push(prometheus_rule(&cx));
@@ -681,7 +682,7 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         replicas_per_shard: s.cluster.replicas_per_shard,
         voter_count: s.cluster.voter_count,
         headless_env_key: "TAPE_PEER_SERVICE",
-        service_account_name: Some(cx.name),
+        service_account_name: Some(s.service_account_name.as_deref().unwrap_or(cx.name)),
         env: extra_env,
         env_from: vec![],
         resources: container_resources(cpu, memory),

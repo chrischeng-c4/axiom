@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:bfdc7475" tracker="pending-tracker" reason="TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (closed AuthMode enum disabled|required, defaulting to required) + tokensSecret (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message, conditions }."
+// HANDWRITE-BEGIN gap="missing-generator:logic:bfdc7475" tracker="pending-tracker" reason="TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (closed AuthMode enum disabled|required, defaulting to required) + tokensSecret (Option<String>) + serviceAccountName (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message, conditions }."
 //! The `Tape` custom resource (`tape.dev/v1alpha1`).
 //!
 //! One `Tape` object declares a tape deployment's HA topology. The spec
@@ -167,6 +167,13 @@ pub struct TapeSpec {
     /// then did not track the CR's image, ServiceAccount, or auth wiring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<TapeBackupSpec>,
+
+    /// Optional external ServiceAccount name for the workload StatefulSet.
+    /// When set, the operator skips rendering the `<instance>` ServiceAccount
+    /// entirely and configures the workload StatefulSet to use this name
+    /// instead (#2581). `<name>-backup` identity is unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_account_name: Option<String>,
 }
 
 /// Scheduled-backup projection: the shared

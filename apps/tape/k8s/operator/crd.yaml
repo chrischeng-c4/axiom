@@ -117,6 +117,10 @@ spec:
                     default: ''
                     type: string
                 type: object
+              serviceAccountName:
+                description: Optional external ServiceAccount name for the workload StatefulSet. When set, the operator skips rendering the `<instance>` ServiceAccount entirely and configures the workload StatefulSet to use this name instead (#2581). `<name>-backup` identity is unaffected.
+                nullable: true
+                type: string
               shardCount:
                 default: 1
                 type: integer

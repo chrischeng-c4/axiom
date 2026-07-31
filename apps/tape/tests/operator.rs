@@ -42,6 +42,7 @@ fn spec(replicas: u32) -> TapeSpec {
         topics: None,
         observability: false,
         backup: None,
+        service_account_name: None,
     }
 }
 
@@ -1392,5 +1393,133 @@ fn ready_condition_agrees_with_status_patch_phase() {
             ready.status
         );
     }
+}
+
+// ---- #2581: serviceAccountName --------------------------------------------
+
+/// #2581 E1 — A `Tape` CR without `serviceAccountName` renders the exact same
+/// object set it renders today (no diff).
+#[test]
+fn service_account_name_unset_renders_existing_shape() {
+    let tape = Tape::new("tape", spec(3));
+    let objs = render(&tape);
+
+    let kinds_names: Vec<(&str, &str)> = objs
+        .iter()
+        .map(|o| {
+            (
+                o["kind"].as_str().unwrap(),
+                o["metadata"]["name"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds_names,
+        vec![
+            ("ServiceAccount", "tape"),
+            ("StatefulSet", "tape"),
+            ("Service", "tape-headless"),
+            ("Service", "tape"),
+            ("PodDisruptionBudget", "tape"),
+            ("ServiceAccount", "tape-backup"),
+        ]
+    );
+
+    let sts = of_kind(&objs, "StatefulSet");
+    assert_eq!(
+        sts["spec"]["template"]["spec"]["serviceAccountName"],
+        "tape"
+    );
+}
+
+/// #2581 E2 — A CR with `serviceAccountName: platform-sa` renders no workload
+/// `ServiceAccount` named `<instance>` and a StatefulSet pointing to `platform-sa`.
+#[test]
+fn service_account_name_configured_omits_service_account_and_updates_statefulset() {
+    let mut configured = spec(3);
+    configured.service_account_name = Some("platform-sa".into());
+    let tape = Tape::new("tape", configured);
+    let objs = render(&tape);
+
+    let has_workload_sa = objs
+        .iter()
+        .any(|o| o["kind"] == "ServiceAccount" && o["metadata"]["name"] == "tape");
+    assert!(
+        !has_workload_sa,
+        "operator must not render workload ServiceAccount when serviceAccountName is set"
+    );
+
+    let sts = of_kind(&objs, "StatefulSet");
+    assert_eq!(
+        sts["spec"]["template"]["spec"]["serviceAccountName"],
+        "platform-sa"
+    );
+}
+
+/// #2581 E3 — `<name>-backup` is invariant: `<instance>-backup` ServiceAccount
+/// is rendered in both cases, and the backup CronJob pod serviceAccountName is
+/// `<instance>-backup`.
+#[test]
+fn service_account_name_does_not_affect_backup_identity() {
+    let mut unset = spec(3);
+    unset.backup = Some(configured_backup());
+    let tape_unset = Tape::new("tape", unset);
+    let objs_unset = render(&tape_unset);
+
+    let sa_backup_unset = objs_unset
+        .iter()
+        .find(|o| o["kind"] == "ServiceAccount" && o["metadata"]["name"] == "tape-backup")
+        .expect("tape-backup ServiceAccount must exist when serviceAccountName is unset");
+    assert_eq!(sa_backup_unset["metadata"]["name"], "tape-backup");
+
+    let cj_unset = of_kind(&objs_unset, "CronJob");
+    assert_eq!(
+        cj_unset["spec"]["jobTemplate"]["spec"]["template"]["spec"]["serviceAccountName"],
+        "tape-backup"
+    );
+
+    let mut set = spec(3);
+    set.service_account_name = Some("platform-sa".into());
+    set.backup = Some(configured_backup());
+    let tape_set = Tape::new("tape", set);
+    let objs_set = render(&tape_set);
+
+    let sa_backup_set = objs_set
+        .iter()
+        .find(|o| o["kind"] == "ServiceAccount" && o["metadata"]["name"] == "tape-backup")
+        .expect("tape-backup ServiceAccount must exist when serviceAccountName is set");
+    assert_eq!(sa_backup_set["metadata"]["name"], "tape-backup");
+
+    let cj_set = of_kind(&objs_set, "CronJob");
+    assert_eq!(
+        cj_set["spec"]["jobTemplate"]["spec"]["template"]["spec"]["serviceAccountName"],
+        "tape-backup"
+    );
+}
+
+/// #2581 E4 — `prunes()` is unchanged when `serviceAccountName` is configured:
+/// the workload ServiceAccount is never a prune target.
+#[test]
+fn service_account_name_does_not_affect_prunes() {
+    let mut configured = spec(3);
+    configured.service_account_name = Some("platform-sa".into());
+    configured.backup = Some(configured_backup());
+    let tape = Tape::new("tape", configured);
+
+    let targets = prunes(&tape);
+    assert!(
+        targets.is_empty(),
+        "prunes() must return empty vec when backup is configured, even with serviceAccountName set; got {targets:?}"
+    );
+
+    let mut no_backup = spec(3);
+    no_backup.service_account_name = Some("platform-sa".into());
+    let tape_no_backup = Tape::new("tape", no_backup);
+    let targets_no_backup = prunes(&tape_no_backup);
+    assert_eq!(
+        prune_names(&targets_no_backup),
+        vec![("batch/v1", "CronJob", "tape-backup".to_string())],
+        "prunes() must only name backup CronJob when backup is None, never a ServiceAccount"
+    );
 }
 // HANDWRITE-END
