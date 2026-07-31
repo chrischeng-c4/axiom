@@ -101,6 +101,7 @@ def _capability(
     status: str = "verified",
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
     multi_item: bool = False,
+    no_surfaces: bool = False,
 ) -> str:
     if work_root_cells is None:
         rows = "\n".join(
@@ -134,6 +135,12 @@ def _capability(
         dimension_items.append(MULTI_ITEM_EC_DIMENSION_ITEM)
         gate_items.append(MULTI_ITEM_GATE_INVENTORY_ITEM)
     surfaces_field = "".join(f"- {item}\n" for item in surface_items)
+    # No field at all, not an empty one -- the same distinction `class_field`
+    # draws above. `render_markdown_capability_section_at_level` guards the
+    # whole block on `!capability.surfaces.is_empty()`, and with every fixture
+    # capability declaring one, forcing that guard to `true` rendered the
+    # identical document.
+    surfaces_block = "" if no_surfaces else f"Surfaces:\n{surfaces_field}"
     dimensions_field = "".join(f"- {item}\n" for item in dimension_items)
     gates_field = "".join(f"- {item}\n" for item in gate_items)
     dependencies = _member_dependencies(title)
@@ -146,8 +153,7 @@ def _capability(
 
 ID: {cap_id}
 Type: {_member_type(title)}
-{class_field}Surfaces:
-{surfaces_field}EC Dimensions:
+{class_field}{surfaces_block}EC Dimensions:
 {dimensions_field}{dependencies_field}Root WI: -
 Status: {status}
 Required Verification: {_member_required_verification(title)}
@@ -211,7 +217,18 @@ _NON_CORE_MEMBERS = (
     # capability up by id would find no roots and report nothing. The second
     # work root, because it is what keeps the per-class claim counts unequal
     # once the retired member is excluded.
-    # This member's promise deliberately contains a `|`. It is the one field
+    # This member's promise deliberately contains a `|` *and* spans two lines.
+    # `markdown_cell` performs two substitutions and this is the only cell that
+    # reaches either: the pipe escape was bound from the start, the newline fold
+    # beside it was not, and deleting `.replace('\n', "<br>")` rendered this
+    # whole fixture byte for byte. The two lines are not a contrivance --
+    # `append_markdown_contract_field_value` (`capability.rs:10957-10959`) joins
+    # continuation lines with a newline for `promise` and with `<br>` for every
+    # other field, so a multi-line promise is the one value that can carry a raw
+    # newline into a table cell at all. Unfolded, the Notes cell breaks its row
+    # in half and the index stops parsing.
+    #
+    # It is the one field
     # that reaches `markdown_cell` (`capability.rs:9244-9250`) as free author
     # text: the Capability Index's `Notes` column falls back to the promise when
     # the input carries no index of its own (`capability.rs:8970-8974`), which is
@@ -221,7 +238,8 @@ _NON_CORE_MEMBERS = (
     (
         "Contract Gate Wiring",
         "ec-gates-configured",
-        "Carry configured external-contract gates | one inventory entry per gate.",
+        "Carry configured external-contract gates | one inventory entry per gate.\n"
+        "Refuse an inventory whose entries and gates disagree.",
         "lumen verify",
         ("gate-configuration", "gate-inventory-sync"),
     ),
@@ -494,11 +512,17 @@ def _member_surface_item(title: str, surface: str, promise: str) -> str:
     The command half is a *list* joined with `" + "`, which is the renderer's own
     composition (`capability.rs:9153-9160`) and the one member declaring two is
     what makes both the separator and the traversal observable.
+
+    Only the promise's first line is borrowed. One member's promise spans two
+    lines so that `markdown_cell`'s newline fold is reachable, and a surface item
+    is a single list entry -- carrying the second line in here would put a raw
+    newline inside a `- ` item, which is a different parse, not a longer summary.
     """
     commands = " + ".join(
         f"`{command}`" for command in _member_surface_commands(title, surface)
     )
-    return f"{_member_surface_kind(title)}: {commands} - {promise.lower().rstrip('.')}."
+    headline = promise.splitlines()[0]
+    return f"{_member_surface_kind(title)}: {commands} - {headline.lower().rstrip('.')}."
 
 
 def _member_ec_dimension_item(title: str, cap_id: str) -> str:
@@ -565,6 +589,7 @@ def _section(
     status: str = "verified",
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
     multi_item: bool = False,
+    no_surfaces: bool = False,
 ) -> str:
     title, cap_id, promise, surface, work_roots = member
     return _capability(
@@ -578,6 +603,7 @@ def _section(
         status=status,
         work_root_cells=work_root_cells,
         multi_item=multi_item,
+        no_surfaces=no_surfaces,
     )
 
 
@@ -2320,6 +2346,43 @@ assert len(set(MEMBER_PROMISE.values())) == len(_ALL_MEMBERS), (
 )
 
 
+def member_promise_note_cell(title: str) -> str:
+    """That member's promise as it must read back out of a parsed index row.
+
+    `markdown_cell` (`capability.rs:9244-9250`) performs two substitutions and
+    this is what survives each of them through `_index_rows_parsed`: the pipe
+    escape is undone by the row reader, so the pipe compares as authored, while
+    the newline fold is *not* undone -- `<br>` is the cell's real content, and
+    the only correct expectation for a promise the author wrote across two
+    lines.
+
+    Both substitutions are nonetheless bound by this one comparison, because
+    each fails the reader in its own way rather than merely differing: an
+    unescaped pipe splits the row into an extra column, an unfolded newline ends
+    the row before its last cell. Neither can be absorbed silently.
+    """
+    return MEMBER_PROMISE[title].replace("\n", "<br>")
+
+
+assert any("\n" in promise for promise in MEMBER_PROMISE.values()), (
+    "one member's promise must span two lines, or `markdown_cell`'s newline "
+    "fold never runs and deleting it renders the identical document"
+)
+assert any("|" in promise for promise in MEMBER_PROMISE.values()), (
+    "one member's promise must contain a pipe, or the escape beside the fold "
+    "is free in the same way"
+)
+assert any(
+    "\n" in promise and "|" in promise for promise in MEMBER_PROMISE.values()
+), (
+    "both must reach the *same* cell. Split across two promises, each "
+    "substitution is asserted on a cell where the other one does nothing, and "
+    "an implementation applying them in the wrong order -- folding a newline "
+    "into `<br>` and then escaping nothing, or escaping a pipe the fold later "
+    "re-splits -- is never a different document"
+)
+
+
 #: The rest of each member's rendered contract, keyed by title: the exact
 #: `Surfaces:`, `EC Dimensions:` and `Gate Inventory:` list items the renderers
 #: must produce for it.
@@ -2503,6 +2566,19 @@ def assert_sections_carry_their_own_contract(
                     _OVERRIDE_KEYS[field], (_DECLARED_LIST_ITEMS[field][title],)
                 )
             )
+            if not expected_items:
+                # An empty override means the capability declared no such field,
+                # and the renderer must emit none -- not an empty one. The
+                # heading alone reads as a declared-but-empty contract, and each
+                # of the three fields is guarded separately on its own vector
+                # being non-empty; with every capability declaring one item of
+                # each, forcing any of those guards true was unobservable.
+                assert f"{field}:" not in body, (
+                    f"section {title!r} declared no {field}, so rendering the "
+                    f"field -- even empty -- states a contract the author did "
+                    f"not write; section was:\n{body}"
+                )
+                continue
             rendered = _field_list_items(body, title, field)
             assert rendered == expected_items, (
                 f"section {title!r} must render the {field} items "
@@ -2520,6 +2596,7 @@ def _section_readme(
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
     multi_item_title: str | None = None,
     postludes: tuple[str | None, ...] | None = None,
+    no_surfaces_title: str | None = None,
 ) -> str:
     """A README whose capability contract is canonical `###` sections.
 
@@ -2543,6 +2620,7 @@ def _section_readme(
             status=status,
             work_root_cells=work_root_cells,
             multi_item=member[0] == multi_item_title,
+            no_surfaces=member[0] == no_surfaces_title,
         ).replace(
             "Root WI: -", f"Root WI: {SECTION_RELOCATION_WI[member[0]]}"
         )
@@ -2852,6 +2930,60 @@ for _label, _item in (
         f"either, or the round trip is not the arm under test"
     )
 
+#: The last arm of both renderers: an item that declares *neither* half.
+#:
+#: A third capability of this same document, because the two partial shapes
+#: above answer for a command or a summary and neither answers for their
+#: absence. `(true, true)` is the arm an author reaches by naming a surface kind
+#: or a dimension and wiring nothing to it yet, and it is the arm that renders
+#: the *bare* kind -- so blanking it does not shorten an item, it removes the
+#: only thing identifying what the item was. For `EC Dimensions:` the bare
+#: dimension name is exactly what `parse_ec_dimension_kind` reads back, so an
+#: emptied item stops parsing as a dimension at all.
+#:
+#: Both round-27 fixes bound one arm each and left this one free: blanking it in
+#: either renderer rendered the whole fixture byte for byte.
+BARE_ITEM_TITLE = "Kubernetes-Native Deployment"
+for _other in (NO_SUMMARY_TITLE, NO_COMMAND_TITLE):
+    assert BARE_ITEM_TITLE != _other, (
+        "the neither-half shape has to sit on a third capability, or one "
+        "section's assertion answers for two arms at once"
+    )
+#: What the author writes, and what must come back. They differ for the surface
+#: and not for the dimension, which is the product's own asymmetry:
+#: `parse_capability_surfaces` needs the colon to read `Kubernetes` as a *kind*
+#: (without it the piece is a summary under the default kind), while
+#: `parse_capability_ec_dimensions` reads a colon-less piece as the dimension
+#: name directly.
+BARE_SURFACE_ITEM = _member_surface_kind(BARE_ITEM_TITLE)
+BARE_SURFACE_DECLARED = f"{BARE_SURFACE_ITEM}:"
+BARE_EC_DIMENSION_ITEM = _member_ec_dimension(BARE_ITEM_TITLE)
+BARE_EC_DIMENSION_DECLARED = BARE_EC_DIMENSION_ITEM
+for _label, _item in (
+    ("surface", BARE_SURFACE_ITEM),
+    ("EC dimension", BARE_EC_DIMENSION_ITEM),
+):
+    assert "`" not in _item and " - " not in _item and ":" not in _item, (
+        f"the neither-half {_label} must render as the bare kind alone -- a "
+        f"backtick puts it on a command arm, a `:` or ` - ` on a summary arm"
+    )
+
+#: `candidate`, and only for this capability.
+#:
+#: `validate_capability_contract` (`capability.rs:10156-10165`) requires a
+#: contract-bearing status to carry at least one EC dimension *with content*,
+#: and a neither-half dimension has none by construction
+#: (`ec_dimension_has_content`, `capability.rs:7149-7153`). `candidate` is not
+#: a workaround for that rule: it is the status the rule exists to exempt, and
+#: the authoring state a bare dimension describes -- named, not yet wired.
+#: Varied on one member rather than the document, so the other five still carry
+#: their contract-bearing statuses and the arm is not reached by weakening the
+#: whole input.
+_PARTIAL_ITEM_STATUSES = tuple(
+    "candidate" if member[0] == BARE_ITEM_TITLE else "verified"
+    for member in _ALL_MEMBERS
+)
+
 PARTIAL_ITEM_OVERRIDES = {
     NO_SUMMARY_TITLE: {
         "surfaces": (NO_SUMMARY_SURFACE_ITEM,),
@@ -2861,16 +2993,27 @@ PARTIAL_ITEM_OVERRIDES = {
         "surfaces": (NO_COMMAND_SURFACE_ITEM,),
         "ec_dimensions": (NO_COMMAND_EC_DIMENSION_ITEM,),
     },
+    BARE_ITEM_TITLE: {
+        "surfaces": (BARE_SURFACE_ITEM,),
+        "ec_dimensions": (BARE_EC_DIMENSION_ITEM,),
+    },
 }
 
 
 def _partial_item_readme() -> str:
-    document = UNCLASSIFIED_SECTION_README
+    document = _section_readme(
+        _ALL_MEMBERS,
+        (None,) * len(_ALL_MEMBERS),
+        "Lumen README-resident capability contract, partial contract items.",
+        statuses=_PARTIAL_ITEM_STATUSES,
+    )
     for declared, replacement in (
         (MEMBER_SURFACE_ITEM[NO_SUMMARY_TITLE], NO_SUMMARY_SURFACE_ITEM),
         (MEMBER_EC_DIMENSION_ITEM[NO_SUMMARY_TITLE], NO_SUMMARY_EC_DIMENSION_ITEM),
         (MEMBER_SURFACE_ITEM[NO_COMMAND_TITLE], NO_COMMAND_SURFACE_ITEM),
         (MEMBER_EC_DIMENSION_ITEM[NO_COMMAND_TITLE], NO_COMMAND_EC_DIMENSION_ITEM),
+        (MEMBER_SURFACE_ITEM[BARE_ITEM_TITLE], BARE_SURFACE_DECLARED),
+        (MEMBER_EC_DIMENSION_ITEM[BARE_ITEM_TITLE], BARE_EC_DIMENSION_DECLARED),
     ):
         marker = f"- {declared}\n"
         assert document.count(marker) == 1, (declared, document.count(marker))
@@ -2931,6 +3074,38 @@ def assert_relocation_carries_a_summary_only_item(migrated: str) -> None:
         assert expected in body, (
             f"relocated section {NO_COMMAND_TITLE!r} lost its summary-only "
             f"{label}; expected {expected!r}, section was:\n{body}"
+        )
+
+
+def assert_relocation_carries_a_bare_item(migrated: str) -> None:
+    """An item declared with neither half round-trips as the bare kind.
+
+    The fourth arm, and the one the two legs above cannot reach: they each
+    supply one half, so an implementation may answer both while rendering
+    nothing at all for an item that supplies neither. Blanking that arm passed
+    every assertion this fixture had before -- no other capability declares an
+    item with neither half, so the arm was never entered.
+
+    The bare kind is the *whole* of the item, which makes the failure mode
+    sharper than the partial legs: there is nothing left to identify what was
+    declared. For `EC Dimensions:` an emptied item also stops parsing as a
+    dimension on the next read, so the loss compounds rather than showing up as
+    a shorter line.
+
+    Asserted as the exact `\\n`-terminated item, so an implementation that fell
+    through to a neighbouring arm -- a trailing `: `, an empty pair of
+    backticks, a stray ` - ` -- is a different document too. Asserted against
+    the section body so the bare kind cannot be satisfied by the same word
+    appearing in the capability's `Type:` line or a work-root cell.
+    """
+    body = _capability_section_body(migrated, BARE_ITEM_TITLE)
+    for label, expected in (
+        ("surface", f"Surfaces:\n- {BARE_SURFACE_ITEM}\n"),
+        ("EC dimension", f"EC Dimensions:\n- {BARE_EC_DIMENSION_ITEM}\n"),
+    ):
+        assert expected in body, (
+            f"relocated section {BARE_ITEM_TITLE!r} lost its bare {label}; "
+            f"expected {expected!r}, section was:\n{body}"
         )
 
 
@@ -3205,8 +3380,59 @@ assert VARIED_POSTLUDE_TITLE != _ALL_MEMBERS[-1][0], (
     "the postlude must not sit on the document's last section, whose end is "
     "the end of the document rather than the next heading"
 )
+#: The `aw ec` efficiency backfill slot, carried through relocation.
+#:
+#: Not prose. It occupies the same position as the postlude above -- below the
+#: work-root table -- but takes a different route through migration:
+#: `find_efficiency_backfill_section_span` (`capability.rs:11557+`) *removes* it
+#: from the prose it would otherwise be carried as, `parse_efficiency_slot_from_
+#: contract` reads its two fields into the capability, and
+#: `render_efficiency_backfill_section` (`capability.rs:5324-5332`) writes it
+#: back out. Deleting that last step used to render the identical document,
+#: because no fixture declared a slot: the block simply had nowhere to go
+#: missing from.
+#:
+#: On a third capability, distinct from both prose sides, so an implementation
+#: that carried the block through as ordinary postlude prose -- or that emitted
+#: the prose postlude through the efficiency renderer -- is a different document
+#: rather than a coincidence of the two landing on the same section.
+EFFICIENCY_SLOT_TITLE = _ALL_MEMBERS[3][0]
+EFFICIENCY_SLOT_OPERATING_POINT = "p99 < 45ms at 1.2k rps, 3 replicas"
+EFFICIENCY_SLOT_CUBE = "cube/kubernetes-native-deployment.json"
+#: `####`, one level below the `###` capability sections of this input. At the
+#: capability level it would close the section rather than sit inside it.
+EFFICIENCY_SLOT_BLOCK = (
+    "#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n"
+    "\n"
+    f"Operating point: {EFFICIENCY_SLOT_OPERATING_POINT}\n"
+    f"Cube: {EFFICIENCY_SLOT_CUBE}\n"
+)
+for _label, _other in (
+    ("prelude", VARIED_PRELUDE_TITLE),
+    ("postlude", VARIED_POSTLUDE_TITLE),
+):
+    assert EFFICIENCY_SLOT_TITLE != _other, (
+        f"the efficiency slot must not share a capability with the {_label}, "
+        f"or carrying one answers for the other"
+    )
+#: The merge's own effect on the contract, which is not prose at all:
+#: `merge_efficiency_backfill_slot` (`capability.rs:11632-11650`) appends an
+#: `efficiency` EC dimension when the capability declares none. This carrier
+#: declares `behavior`, so the appended item is observable; had it been the
+#: capability whose declared dimension is already `efficiency`, the merge would
+#: have left the list untouched and that arm would stay unreached.
+EFFICIENCY_SLOT_MERGED_DIMENSION = "efficiency: aw-generated efficiency backfill slot"
+assert _member_ec_dimension(EFFICIENCY_SLOT_TITLE) != "efficiency", (
+    "the efficiency slot has to land on a capability that declares some other "
+    "dimension, or the merge's append arm is never entered"
+)
+
 VARIED_STATUS_POSTLUDES: tuple[str | None, ...] = tuple(
-    VARIED_POSTLUDE if member[0] == VARIED_POSTLUDE_TITLE else None
+    VARIED_POSTLUDE
+    if member[0] == VARIED_POSTLUDE_TITLE
+    else EFFICIENCY_SLOT_BLOCK.rstrip("\n")
+    if member[0] == EFFICIENCY_SLOT_TITLE
+    else None
     for member in _ALL_MEMBERS
 )
 #: Work-root cells that make every capability's gap read `InProgress`.
@@ -3231,6 +3457,34 @@ _IN_PROGRESS_WORK_ROOT_CELLS = {
     for work_root in member[4]
 }
 
+#: The capability that declares no `Surfaces:` field at all.
+#:
+#: `render_markdown_capability_section_at_level` guards the whole block on
+#: `!capability.surfaces.is_empty()`; every capability of every document here
+#: declared one, so forcing that guard to `true` rendered the identical
+#: document and the conditional was free in the direction of absence.
+#:
+#: It has to be a `candidate`. `validate_capability_contract`
+#: (`capability.rs:10133+`) requires at least one surface for the four
+#: contract-bearing statuses, so on any of those the input is rejected before
+#: the renderer is reached. This document is the one that already varies status,
+#: and its `candidate` member is the only capability across the whole fixture
+#: that can legally declare nothing here.
+NO_SURFACES_TITLE = _ALL_MEMBERS[2][0]
+assert VARIED_STATUSES[2] == "candidate", (
+    "the surface-less capability must be the one whose status exempts it from "
+    "the contract requirement, or the document is rejected rather than rendered"
+)
+for _label, _other in (
+    ("prelude", VARIED_PRELUDE_TITLE),
+    ("postlude", VARIED_POSTLUDE_TITLE),
+    ("efficiency slot", EFFICIENCY_SLOT_TITLE),
+):
+    assert NO_SURFACES_TITLE != _other, (
+        f"the surface-less capability must not also carry the {_label}; one "
+        f"capability per shape keeps each assertion answering for one rule"
+    )
+
 VARIED_STATUS_SECTION_README = _section_readme(
     _ALL_MEMBERS,
     (None,) * len(_ALL_MEMBERS),
@@ -3239,11 +3493,47 @@ VARIED_STATUS_SECTION_README = _section_readme(
     preludes=VARIED_STATUS_PRELUDES,
     postludes=VARIED_STATUS_POSTLUDES,
     work_root_cells=_IN_PROGRESS_WORK_ROOT_CELLS,
+    no_surfaces_title=NO_SURFACES_TITLE,
+)
+_NO_SURFACES_DECLARED = VARIED_STATUS_SECTION_README.split(
+    f"### {NO_SURFACES_TITLE}\n", 1
+)[1].split("\n### ", 1)[0]
+assert "Surfaces:" not in _NO_SURFACES_DECLARED, (
+    "the varied-status document must actually withhold the field it asserts "
+    "absent"
+)
+assert VARIED_STATUS_SECTION_README.count("Surfaces:") == len(_ALL_MEMBERS) - 1, (
+    "every other capability of this document must still declare one, or the "
+    "absence is a property of the document rather than of one capability"
 )
 assert VARIED_STATUS_SECTION_README.count(VARIED_POSTLUDE) == 1, (
     "the varied-status document must actually declare the postlude, or its "
     "assertion pins nothing"
 )
+assert VARIED_STATUS_SECTION_README.count(EFFICIENCY_SLOT_BLOCK.rstrip("\n")) == 1, (
+    "the varied-status document must actually declare an efficiency backfill "
+    "slot, or its assertion pins nothing"
+)
+
+#: What the efficiency merge does to the *contract*, as opposed to the block.
+#:
+#: The one capability of this document whose rendered EC dimension list is not
+#: the one it declared: `merge_efficiency_backfill_slot` appends a dimension for
+#: the slot. Declared as an override rather than folded into `MEMBER_EC_
+#: DIMENSION_ITEM`, because it is the product's addition and not the author's --
+#: writing it into the member table would make the two indistinguishable.
+VARIED_STATUS_OVERRIDES = {
+    EFFICIENCY_SLOT_TITLE: {
+        "ec_dimensions": (
+            MEMBER_EC_DIMENSION_ITEM[EFFICIENCY_SLOT_TITLE],
+            EFFICIENCY_SLOT_MERGED_DIMENSION,
+        ),
+    },
+    #: The empty override: this capability declared no surfaces, so the renderer
+    #: must emit no `Surfaces:` field -- asserted as absence rather than by
+    #: skipping the capability, which would stop binding its other six fields.
+    NO_SURFACES_TITLE: {"surfaces": ()},
+}
 
 #: What each status derives for the two index columns that read it, restated
 #: from `capability_impl_summary` and `capability_verification_summary`. Restated
@@ -3346,9 +3636,10 @@ def assert_relocation_carries_per_capability_status(migrated: str) -> None:
             f"Markdown is never in release scope, so the derived column must "
             f"read 'not_ready', got {row[5]!r}"
         )
-        assert row[6] == MEMBER_PROMISE[title], (
+        assert row[6] == member_promise_note_cell(title), (
             f"index row {title!r} Notes column must fall back to that "
-            f"capability's own promise, got {row[6]!r}"
+            f"capability's own promise, folded into one cell; expected "
+            f"{member_promise_note_cell(title)!r}, got {row[6]!r}"
         )
 
     prelude_body = _capability_section_body(migrated, VARIED_PRELUDE_TITLE)
@@ -3380,6 +3671,39 @@ def assert_relocation_carries_per_capability_status(migrated: str) -> None:
         "the two prose sides must stay on their own capabilities, or one of "
         "them is being copied rather than carried"
     )
+
+    # And the third thing that can occupy that same slot, which is not prose at
+    # all. `find_efficiency_backfill_section_span` lifts the block out of the
+    # prose before either side above is read, so the two prose assertions hold
+    # whether or not it is ever re-emitted: deleting the renderer that writes it
+    # back rendered this document byte for byte.
+    #
+    # Read against the whole document rather than the section body, because the
+    # block is itself a heading at the capability level -- it *bounds* the
+    # section it belongs to rather than sitting inside it, and a reader that
+    # looked for it in the body would find it missing on a correct product.
+    assert migrated.count(EFFICIENCY_SLOT_BLOCK) == 1, (
+        f"the efficiency backfill slot must be re-emitted exactly once; found "
+        f"{migrated.count(EFFICIENCY_SLOT_BLOCK)} copies of:\n"
+        f"{EFFICIENCY_SLOT_BLOCK}"
+    )
+    # Bounded by the *next capability*, not by the next heading.
+    # `_capability_section_body` stops at the next heading of the rendering
+    # level or shallower, and the block renders at `####` -- so it falls inside
+    # the section on an unclassified document and outside it on a classified
+    # one. Which of those this document is is not what this assertion is about.
+    slot_window = _capability_window(migrated, EFFICIENCY_SLOT_TITLE)
+    assert slot_window.rstrip("\n").endswith(EFFICIENCY_SLOT_BLOCK.rstrip("\n")), (
+        f"the efficiency backfill slot must be re-emitted below "
+        f"{EFFICIENCY_SLOT_TITLE!r}'s work-root table, in the position it was "
+        f"authored; that capability ended with:\n{slot_window[-500:]}"
+    )
+    for other in (VARIED_PRELUDE, VARIED_POSTLUDE):
+        assert other not in slot_window, (
+            "the efficiency slot's capability carries neither prose side, so a "
+            "renderer that emitted prose through the efficiency block -- or the "
+            "block through the prose renderer -- is a different document"
+        )
 
 
 #: Per-capability Capability Index cells, pairwise distinct in every column.
@@ -3589,10 +3913,11 @@ def assert_migration_falls_back_to_the_promise_for_notes(migrated: str) -> None:
             f"index row {title!r} lost the columns it did declare: expected "
             f"{cells[:4]}, got {carried}"
         )
-        # `_index_rows_parsed` unescapes `\|` back to `|`, so the cell compares
-        # against the promise as written -- including the one that contains a
-        # pipe, whose escaping is asserted separately.
-        expected_note = MEMBER_PROMISE[title]
+        # `_index_rows_parsed` unescapes `\|` back to `|`, so the pipe compares
+        # against the promise as written. The newline fold is not undone: a
+        # two-line promise is one cell containing `<br>`, which is what
+        # `member_promise_note_cell` restates.
+        expected_note = member_promise_note_cell(title)
         assert rows[title][6] == expected_note, (
             f"index row {title!r} declared no note, so it must fall back to its "
             f"own promise; expected {expected_note!r}, got {rows[title][6]!r}"
@@ -3653,11 +3978,48 @@ def _capability_section_body(migrated: str, title: str) -> str:
     )
 
 
+def _capability_window(migrated: str, title: str) -> str:
+    """One capability's text, bounded by the *next capability* rather than by
+    the next heading.
+
+    `_capability_section_body` is the right reader for a capability's fields:
+    it stops at the next heading of the rendering level or shallower, which is
+    what keeps one section from claiming its siblings' fields. That bound is
+    wrong for anything the product renders as a heading *inside* a capability --
+    the efficiency backfill block, which renders at `####` and therefore lands
+    inside the body on an unclassified document and outside it on a classified
+    one. This reader answers "what belongs to this capability" independently of
+    the level either it or its contents rendered at.
+    """
+    titles = _rendered_capability_titles(migrated)
+    assert title in titles, (title, titles)
+    for level in ("#### ", "### "):
+        marker = f"{level}{title}\n"
+        start = migrated.find(marker)
+        if start != -1:
+            break
+    rest = migrated[start + len(marker) :]
+    following = titles[titles.index(title) + 1 :]
+    ends = [
+        at
+        for other in following[:1]
+        for at in (rest.find(f"\n### {other}\n"), rest.find(f"\n#### {other}\n"))
+        if at != -1
+    ]
+    return rest if not ends else rest[: min(ends) + 1]
+
+
 def _rendered_capability_titles(migrated: str) -> list[str]:
     """Every capability section title, at either heading level, in order.
 
     The feature roots are headings at the same level as an unclassified
     capability section, so they are excluded by name rather than by level.
+
+    The efficiency backfill block is excluded the same way and for the same
+    reason: `render_efficiency_backfill_section` emits it at `####`, exactly the
+    level a classified capability section renders at, so a level-based reader
+    counts it as a seventh capability. It is excluded by prefix rather than by
+    exact name because its heading carries a parenthetical the product owns.
     """
     roots = {"Capability Index", "Core Features", "Non-Core Features"}
     titles = []
@@ -3666,7 +4028,7 @@ def _rendered_capability_titles(migrated: str) -> list[str]:
         for level in ("#### ", "### "):
             if line.startswith(level):
                 title = line[len(level) :].strip()
-                if title not in roots:
+                if title not in roots and not title.startswith("Efficiency - "):
                     titles.append(title)
                 break
     return titles
@@ -4126,8 +4488,25 @@ MULTI_GATE_INVENTORY_PIECES = (
     ),
     (
         "evidence/lexical-search-recall.md",
-        "`aw ec check --project demo`",
-        "`aw ec verify --project demo --stage td`",
+        # Two commands inside *one* piece. `split_gate_evidence_pieces`
+        # (`capability.rs:11921-11927`) splits a cell only on `<br>` and on
+        # newlines, so this stays a single piece, and
+        # `capability_claim_evidence_from_table` then loops
+        # `extract_backtick_values` over it -- a second, inner list whose arity
+        # was 1 in every piece this fixture declared. Truncating that loop to
+        # `.take(1)` rendered the whole document byte for byte.
+        #
+        # This is the shape this repository's own contract carries, not a
+        # contrivance: `apps/agentic-workflow/CAPABILITIES.md` contains no `<br>`
+        # at all and separates a work root's gate commands with `; ` inside one
+        # cell, which is one piece by the rule above.
+        "`aw ec check --project demo` ; `aw ec verify --project demo --stage td`",
+        # A third gate in a *separate* piece, so the cross-piece accumulation
+        # (`gates` persisting across iterations of the outer loop) stays bound
+        # too. Collapsing the two levels into one would leave whichever level
+        # the fix did not reach free -- which is exactly how the inner one
+        # survived the round that added the second gate.
+        "`aw ec verify --project demo --stage cb`",
     ),
 )
 MULTI_GATE_INVENTORY_CELLS = tuple(
@@ -4135,9 +4514,34 @@ MULTI_GATE_INVENTORY_CELLS = tuple(
 )
 
 
+def _gate_commands(piece: str) -> tuple[str, ...]:
+    """The backticked commands one cell piece declares, in order.
+
+    `extract_backtick_values` (`capability.rs:11929-11944`) restated: a piece
+    contributes one gate per backticked span, not one gate per piece.
+    """
+    commands: list[str] = []
+    rest = piece
+    while "`" in rest:
+        _, _, after = rest.partition("`")
+        value, sep, rest = after.partition("`")
+        if not sep:
+            break
+        if value.strip():
+            commands.append(value.strip())
+    return tuple(commands)
+
+
 def _is_gate_piece(piece: str) -> bool:
-    """A backticked cell piece parses as a claim gate; a bare one as a fixture."""
-    return piece.startswith("`") and piece.endswith("`")
+    """A piece carrying any backticked command parses as gates; a bare one as a fixture.
+
+    Keyed on "carries a backticked value" rather than "starts and ends with a
+    backtick", which is the product's own test (`commands.is_empty()`,
+    `capability.rs:11896`). The two agreed only while every gate piece was
+    exactly one command; a piece holding two commands separated by `; ` is a
+    gate piece that does not end where it starts.
+    """
+    return bool(_gate_commands(piece))
 
 
 _MULTI_GATE_DECLARED = tuple(
@@ -4145,9 +4549,17 @@ _MULTI_GATE_DECLARED = tuple(
 )
 #: The same refs in the order the derivation must render them: every claim's
 #: fixtures in claim order first, then the capability's gates.
+#:
+#: The gate half is per *command*, not per piece: the inventory is rebuilt from
+#: `capability.evidence.verification` as one `` `cmd` `` item each
+#: (`capability.rs:9852-9858`), so a piece declaring two commands owes two items.
 MULTI_GATE_INVENTORY_ITEMS = tuple(
     [piece for piece in _MULTI_GATE_DECLARED if not _is_gate_piece(piece)]
-    + [piece for piece in _MULTI_GATE_DECLARED if _is_gate_piece(piece)]
+    + [
+        f"`{command}`"
+        for piece in _MULTI_GATE_DECLARED
+        for command in _gate_commands(piece)
+    ]
 )
 assert len(set(_MULTI_GATE_DECLARED)) == len(_MULTI_GATE_DECLARED), (
     "two identical pieces would not separate keep-first from keep-last"
@@ -4178,11 +4590,33 @@ assert any(
     "single claim's fixture list renders the identical document"
 )
 assert any(
-    sum(1 for piece in pieces if _is_gate_piece(piece)) > 1
+    sum(len(_gate_commands(piece)) for piece in pieces) > 1
     for pieces in MULTI_GATE_INVENTORY_PIECES
 ), (
     "one work root has to contribute more than one *gate*, or the id rule for "
     "a claim's second gate (`capability.rs:11903-11907`) is never reached"
+)
+assert any(
+    len(_gate_commands(piece)) > 1
+    for pieces in MULTI_GATE_INVENTORY_PIECES
+    for piece in pieces
+), (
+    "one *piece* has to declare more than one command, or the inner loop over "
+    "`extract_backtick_values` (`capability.rs:11902`) is composed at arity 1 "
+    "and truncating it to the first command renders the identical document. "
+    "Two gates in two pieces do not reach it: that binds the outer loop only"
+)
+assert any(
+    len(_gate_commands(piece)) > 1
+    for pieces in MULTI_GATE_INVENTORY_PIECES
+    for piece in pieces
+) and any(
+    sum(1 for piece in pieces if _is_gate_piece(piece)) > 1
+    for pieces in MULTI_GATE_INVENTORY_PIECES
+), (
+    "one work root has to declare gates at both levels at once -- two commands "
+    "in one piece *and* more than one gate-bearing piece -- or the level the "
+    "fixture did not reach stays free while the numbering looks bound"
 )
 
 
@@ -4199,6 +4633,11 @@ assert any(
 #: work root, which this repository's own `CAPABILITIES.md` carries, into a
 #: refused contract.
 #:
+#: The numbering is counted over *commands*, not over pieces, because the
+#: product counts `gates.len()` -- a single accumulator shared by both loops.
+#: Enumerating pieces instead agreed with it only while no piece held two
+#: commands, and that agreement is what let the inner loop stay unbound.
+#:
 #: Derived from the declared pieces by the product's own rule rather than written
 #: out, so the expectation cannot be edited into agreement with a changed
 #: fixture.
@@ -4208,10 +4647,10 @@ MULTI_GATE_CLAIM_EVIDENCE = {
             (
                 f"{work_root}-gate" if position == 0
                 else f"{work_root}-gate-{position + 1}",
-                piece.strip("`"),
+                command,
             )
-            for position, piece in enumerate(
-                piece for piece in pieces if _is_gate_piece(piece)
+            for position, command in enumerate(
+                command for piece in pieces for command in _gate_commands(piece)
             )
         ),
         "fixtures": tuple(
