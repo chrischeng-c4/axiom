@@ -88,8 +88,20 @@ LUMEN_PRODUCTION_CONTRACT_PATHS = (
     "apps/lumen/README.md",
 )
 
-#: The capability fields an author may legally omit, each guarded by its own
-#: emptiness check inside `render_markdown_capability_section_at_level`.
+#: The capability fields an author may legally omit. Three of the four are
+#: guarded by their own emptiness check inside
+#: `render_markdown_capability_section_at_level` -- `type` (`capability.rs:9027`),
+#: `surfaces` (`:9044`) and `ec_dimensions` (`:9050`), each of which renders no
+#: line at all when withheld.
+#:
+#: `required_verification` is the exception and reaches the rendered section by a
+#: different route: `:9033-9036` emits the line *unconditionally* and fills it
+#: from `capability_maturity_summary`, so withholding it produces a derived
+#: value rather than an absent line. An earlier revision of this comment said all
+#: four were guarded, which is the kind of claim that would send a reader
+#: looking for a fourth `is_empty()` that does not exist. What the fixture binds
+#: is unchanged -- the assertions below already distinguish the absent lines from
+#: the derived one -- so only this map was wrong.
 #:
 #: Named as a closed set rather than left implicit, so that adding a fifth
 #: optional field to the product without extending the fixture is a mismatch a
@@ -1564,6 +1576,45 @@ def assert_capability_under_both_roots_is_rejected(report: dict[str, Any]) -> No
         f"capability `{MULTIPLY_CLASSIFIED_ID}` is classified under both "
         "`Core Features` and `Non-Core Features`; keep exactly one root"
     ], report["blockers"]
+
+
+def assert_check_surfaces_the_same_root_diagnostics(
+    checked: dict[str, dict[str, Any]],
+) -> None:
+    """`aw capability check` reports the four root rules AC2 names it for.
+
+    AC2 of epic #2887 names `aw capability check` -- not `aw capability report`
+    -- as the surface that must fail with an actionable diagnostic when a
+    feature root is absent, duplicated, unknown, or shared by one capability.
+    Every other leg in this case reads those four rules through `report`, so
+    until this leg existed the verb the acceptance criterion actually names was
+    driven by nothing in the case at all.
+
+    **What this adds is narrower than the four rules, and saying so precisely
+    matters more than claiming the criterion.** `check` and `report` return the
+    same blocker strings from the same validator -- established by running both
+    over each document below and comparing the subtracted lists, which were
+    equal for all four -- so this leg does not re-prove the rules, and the
+    assertions below deliberately reuse the very same expectation functions the
+    `report` legs use rather than restating them. What it proves is the wiring:
+    that the verb AC2 names still reaches the validator and still surfaces what
+    it finds. An implementation that left `check` returning an empty blocker
+    list while `report` stayed correct satisfies every other leg in this case.
+
+    The valid document is included for the same reason the other blocker legs
+    include their negative half: without it, a `check` that emitted all four
+    diagnostics unconditionally would pass.
+
+    Not asserted here, and not by anything else in the case: `check` also
+    validates TD capability refs, and this fixture's project has no TD root, so
+    that half arrives as an environment blocker and is subtracted. Whether the
+    ref validation is correct is outside this case.
+    """
+    assert document_blockers(checked["valid"]) == [], checked["valid"]["blockers"]
+    assert_duplicate_root_is_rejected(checked["duplicate_root"])
+    assert_missing_non_core_root_is_rejected(checked["missing_non_core_root"])
+    assert_unknown_feature_root_is_rejected(checked["unknown_feature_root"])
+    assert_capability_under_both_roots_is_rejected(checked["both_roots"])
 
 
 def assert_legacy_rows_are_attributed_to_non_core(report: dict[str, Any]) -> None:
@@ -6572,8 +6623,26 @@ def assert_next_coverage_matches_the_report(
             f"{field} must be non-zero here, or its equality is 0 == 0 and a "
             f"coverage summary that zeroed it would pass"
         )
-    assert coverage["core_capability_count"] != coverage["non_core_capability_count"]
-    assert coverage["core_claim_count"] != coverage["non_core_claim_count"]
+    # Pairwise distinct across all four, not just within each pair. The two
+    # within-pair inequalities alone leave a coverage summary free to swap a
+    # capability total with a claim total -- `core_capability_count` reading
+    # `core_claim_count` satisfies both of them. The fixture fixes these four at
+    # 2, 4, 3 and 5 precisely so all six comparisons are available, and an
+    # earlier revision asserted two of the six under a label that claimed all
+    # four operands were pairwise distinct.
+    _distinct = (
+        "core_capability_count",
+        "non_core_capability_count",
+        "core_claim_count",
+        "non_core_claim_count",
+    )
+    for _i, _left in enumerate(_distinct):
+        for _right in _distinct[_i + 1 :]:
+            assert coverage[_left] != coverage[_right], (
+                f"`aw capability next` coverage operands {_left} and {_right} "
+                f"must differ, or a summary that confused them would pass: "
+                f"{coverage[_left]!r}"
+            )
     # And the pairs still exhaust the totals *this surface* reports, so the split
     # cannot be right per field while the summary disagrees with itself.
     assert (
@@ -6927,12 +6996,19 @@ SIBLING_HEADING_DOCUMENT = (
 def assert_sibling_heading_closes_the_root(report: dict[str, Any]) -> None:
     """A heading at the root's own level ends that root's membership scope.
 
-    This is the only assertion in the case that is falsified by an
+    This is one of the two assertions in the case falsified by an
     *over*-reporting implementation rather than an under-reporting one, which is
-    why it exists: every other document here is asserted against the blockers it
+    why it exists: most documents here are asserted against the blockers they
     should raise, so a containment rule that swallowed too much of the document
     would go unnoticed. Tightening the scope test by one comparison makes this
     document raise a capability-under-both-roots finding that is simply untrue.
+
+    The other is `assert_fenced_headings_are_not_read_as_structure`, whose empty
+    blocker list is reachable only while the fenced-line mask holds -- without
+    it that document raises a duplicate-root finding and a both-roots finding
+    that are equally untrue. An earlier revision of this docstring called this
+    leg the only one, which understated the case by exactly one and would have
+    made removing the fenced-heading document look free.
     """
     assert document_blockers(report) == [], report["blockers"]
     assert_feature_class_attribution(report)
@@ -7490,14 +7566,40 @@ assert set(YAML_GAP_VERIFICATION) == set(YAML_GAP_STATUSES)
 #: any two arms swapped is observable.
 assert len(set(YAML_GAP_IMPL.values())) == len(YAML_GAP_STATUSES)
 
-#: The verification fold is *not* a bijection, and its arms are ordered. These
-#: two subjects pin the order, which arm-by-arm assertions cannot: under a
-#: verified capability a closed gap reads `verified` rather than `passing`
-#: (the capability-status arm precedes the closed arm), while a blocked gap
-#: still reads `blocked` (the blocked arm precedes the capability-status arm).
-YAML_VERIFIED_GAP_VERIFICATION = {"closed": "verified", "blocked": "blocked"}
+#: The verification fold is *not* a bijection, and its arms are ordered. The
+#: fold is `(Blocked,_) -> (_,Verified) -> (Closed,_) -> (Deferred,_) -> _`
+#: (`capability.rs:9920-9926`), so exactly three status/`Verified` pairs are
+#: decided by arm order rather than by a single matching arm, and all three are
+#: subjects here:
+#:
+#: * `blocked` still reads `blocked`, because the blocked arm precedes the
+#:   capability-status arm;
+#: * `closed` reads `verified` rather than `passing`, because the
+#:   capability-status arm precedes the closed arm;
+#: * `deferred` reads `verified` rather than `blocked`, because the
+#:   capability-status arm precedes the deferred arm.
+#:
+#: The deferred pair was added after review: an earlier revision declared only
+#: the first two and claimed in this comment that they were "the two subjects"
+#: whose rendering depends on the order. Swapping the deferred arm ahead of the
+#: capability-status arm is a live, compiling, behaviour-changing edit -- both
+#: are specific patterns, so neither becomes unreachable -- and the case stayed
+#: green through it. Nothing else in this module reaches the fold with a
+#: deferred gap: the only other `deferred` declaration is on a candidate
+#: capability, and the work-root-cell route never opens the
+#: `work_roots.is_empty()` guard the fold sits behind.
+YAML_VERIFIED_GAP_VERIFICATION = {
+    "closed": "verified",
+    "blocked": "blocked",
+    "deferred": "verified",
+}
 assert YAML_VERIFIED_GAP_VERIFICATION["closed"] != YAML_GAP_VERIFICATION["closed"]
 assert YAML_VERIFIED_GAP_VERIFICATION["blocked"] == YAML_GAP_VERIFICATION["blocked"]
+assert YAML_VERIFIED_GAP_VERIFICATION["deferred"] != YAML_GAP_VERIFICATION["deferred"]
+#: Every pair here must be one the fold's *order* decides, or the subject proves
+#: nothing about ordering: each declares a status that some arm other than the
+#: capability-status arm also matches.
+assert set(YAML_VERIFIED_GAP_VERIFICATION) <= set(YAML_GAP_STATUSES)
 
 YAML_GAP_CANDIDATE = ("Every Gap Status", "every-gap-status")
 YAML_GAP_VERIFIED = ("Verified Capability", "verified-capability")
@@ -7571,10 +7673,16 @@ def assert_gap_status_renders_its_own_work_root_row(migrated: str) -> None:
     All five statuses are declared. The impl fold is asserted as a bijection --
     five statuses, five distinct cells -- so no two arms can be swapped. The
     verification fold is not a bijection and its arms are *ordered*, so a second
-    capability declares the two gaps whose rendering depends on that order: under
-    a verified capability a closed gap reads `verified` and a blocked gap still
-    reads `blocked`. Together those pin the blocked arm ahead of the
-    capability-status arm and the capability-status arm ahead of the closed one.
+    capability declares all three gaps whose rendering depends on that order:
+    under a verified capability a blocked gap still reads `blocked`, a closed
+    gap reads `verified`, and a deferred gap reads `verified` too. Together
+    those pin the blocked arm ahead of the capability-status arm and the
+    capability-status arm ahead of both the closed and the deferred arm.
+
+    Three, not two: an earlier revision declared only the closed and blocked
+    pairs while claiming they were the only order-dependent ones, which left the
+    deferred/capability-status swap free to compile and change a rendered cell
+    with this case still green.
 
     The row `Kind` is asserted as `epic`, which is what distinguishes a
     gap-derived row from the `change` rows the table route emits: without it a
