@@ -818,8 +818,8 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 lumen_reference.UNCLASSIFIED_SECTION_TITLES,
             ),
             (
-                "no_summary",
-                lumen_reference.NO_SUMMARY_SECTION_README,
+                "partial_item",
+                lumen_reference.PARTIAL_ITEM_SECTION_README,
                 False,
                 lumen_reference.UNCLASSIFIED_SECTION_TITLES,
             ),
@@ -882,7 +882,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     section_text,
                     expected_order,
                     item_overrides={
-                        "no_summary": lumen_reference.NO_SUMMARY_ITEM_OVERRIDES,
+                        "partial_item": lumen_reference.PARTIAL_ITEM_OVERRIDES,
                         "derived_inventory": (
                             lumen_reference.DERIVED_INVENTORY_ITEM_OVERRIDES
                         ),
@@ -896,11 +896,23 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     lumen_reference.assert_relocation_derives_a_missing_gate_inventory(
                         section_text
                     )
-                if name == "no_summary":
+                    # The migrated field is the *union* of a capability's refs,
+                    # so which claim each came from, what gate id it was given,
+                    # and which work root it proves are invisible in it. Read off
+                    # the report instead -- and the id of a claim's second gate
+                    # was unreachable until one work root declared two.
+                    lumen_reference.assert_derived_claims_carry_their_own_gates(
+                        relocated_sections[name]
+                    )
+                if name == "partial_item":
                     # Every other document declares both a command and a summary
-                    # for every surface and dimension, so three of the four arms
-                    # of each item renderer were never entered.
+                    # for every surface and dimension, so two of the four arms of
+                    # each item renderer were never entered. Both partial shapes
+                    # live here, on two different capabilities.
                     lumen_reference.assert_relocation_carries_a_command_only_item(
+                        section_text
+                    )
+                    lumen_reference.assert_relocation_carries_a_summary_only_item(
                         section_text
                     )
                 # Relocation is a move, not a copy. Only the legacy-table shape
@@ -939,7 +951,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     # compared as one string, because it is the one that carries
                     # both a multi-item capability and a dependent one.
                     lumen_reference.assert_relocation_renders_the_canonical_field_block(
-                        section_text
+                        section_text, lumen_reference.CANONICAL_BLOCK_SUBJECTS
                     )
                 if name == "varied_status":
                     # Every other document in this case is uniformly
@@ -955,6 +967,14 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     # it is the only one that can catch a permuted group array.
                     lumen_reference.assert_relocation_renders_the_three_groups_in_order(
                         section_text
+                    )
+                    # `Feature Class` renders in the *middle* of the canonical
+                    # field block, and no subject in `multi_item` declares one,
+                    # so the block comparison there binds its absence only. This
+                    # document is the only one that classifies, so it is where a
+                    # present class -- of both values -- gets its position bound.
+                    lumen_reference.assert_relocation_renders_the_canonical_field_block(
+                        section_text, lumen_reference.MIXED_CANONICAL_BLOCK_SUBJECTS
                     )
                 # The roots are emitted exactly when the input classified
                 # something. Two of these shapes classify nothing and one
@@ -1167,16 +1187,16 @@ def verify(case_id: str) -> list[str]:
                 "aw capability migrate emits the two canonical feature roots exactly when its input classified something, asserted in both directions across relocation shapes that differ in that one property, so neither an unconditional renderer nor one that never emits them can pass",
                 "a retired capability is excluded from the verified capability and verified claim counts as well, asserted under --verify where those two accumulators are populated and the classes differ in both, which is the half of the retired filter an unverified report holds vacuously",
                 "each legacy row's own Current State, Gaps, and Evidence land in the capability section it becomes, asserted as the whole byte-exact section body per row -- separator included, an earlier revision having compared after stripping trailing newlines on the ground that the blank lines before the next heading were pinned elsewhere, which they were not -- against pairwise-distinct cells rather than as substrings, and bound on both entry points -- format migration, where document-stored tracker state is erased and every Root WI must therefore render `-`, and README relocation, where it is live and each row's own WI must render -- so no field of the rendered section can be a constant one of the two callers happens to agree with",
-                "every rendered capability section carries its own Promise, Type, Required Verification, Surfaces, EC Dimensions, Gate Inventory, and Dependencies rather than a shared one, asserted on both re-rendering paths -- format migration and README relocation -- against values made pairwise distinct per capability, down to the surface kind and the EC dimension kind, which are separate reads from the command and summary beside them and stayed constant while the assembled item varied, with the three list-shaped fields read as the exact item list each renders rather than as a block the section contains, because containment pins what a field starts with and nothing after it and appending a duplicate item after either render loop passed on every document including the one that declares two",
+                "every rendered capability section carries its own Promise, Type, Required Verification, Surfaces, EC Dimensions, Gate Inventory, and Dependencies rather than a shared one, asserted on both re-rendering paths -- format migration and README relocation -- against values made pairwise distinct per capability, down to the surface kind and the EC dimension kind, which are separate reads from the command and summary beside them and stayed constant while the assembled item varied, and down to the arity of a surface's own command list, which is itself a loop and was composed at one element by every document, leaving its join separator, its order and its traversal all free until one capability declared two commands in a single item, with the three list-shaped fields read as the exact item list each renders rather than as a block the section contains, because containment pins what a field starts with and nothing after it and appending a duplicate item after either render loop passed on every document including the one that declares two",
                 "the Dependencies field is asserted in both directions, present for the two capabilities that declare one and absent for the four that do not, because no capability declared one at all and the whole block was deletable while the product's own carry-through comment names product dependencies, with one of the two declaring more than one dependency, out of sorted order and with a repeat, and asserted as the whole rendered block, because both declaring capabilities previously carried exactly one and rendering only the first left the loop, the sort, and the deduplication of that parse all rendering the identical document",
                 "a capability's Surfaces, EC Dimensions, and Gate Inventory keep every item in declaration order, asserted as the exact item list on the one input where a capability declares two of each, because every other document declares exactly one item per list and rendering only the first element of each is byte-identical on those",
-                "the canonical capability section renders its fields in the order the product emits them, asserted as the whole block from `ID:` to the blank line before the work-root table, on two capabilities of the same document -- one declaring two of every list field and no dependency, one declaring one of each and a dependency, so the conditional field that renders last is bound both when it is emitted and when it is not -- because every other assertion on this renderer reads one field at a time and reversing the four conditional blocks left all of them green",
+                "the canonical capability section renders its fields in the order the product emits them, asserted as the whole block from `ID:` to the blank line before the work-root table, on two capabilities of the same document -- one declaring two of every list field and no dependency, one declaring one of each and a dependency, so the conditional field that renders last is bound both when it is emitted and when it is not -- because every other assertion on this renderer reads one field at a time and reversing the four conditional blocks left all of them green, and again on the one document that classifies, over three subjects spanning both feature-class values and the absence of one, because a block equality binds the position only of the fields the block contains and `Feature Class` renders in the middle of a block no subject of the two-item document declares",
                 "every cell of every work-root row survives relocation, asserted on the one input whose eight rows differ in Kind, Impl, Verification, Maturity, and Gate / Evidence, so none of those five cells can be the constant the other inputs all happen to write",
                 "the Capability Index Maturity column is asserted on the relocation branch as well, against each capability's own Required Verification, because that branch derives it rather than carrying it and the derivation stopped being constant once the fixture varied the field it reads",
                 "a promise containing a pipe is escaped into the Capability Index Notes cell it falls back into, asserted through a row reader that splits on unescaped pipes only, so an unescaped pipe adds a column and fails to parse rather than being silently absorbed",
                 "the README a section-shaped capability contract was relocated out of keeps only a forwarding pointer and keeps everything that was never part of that contract, asserted on every section-shaped relocation, so relocation can neither leave a second divergent copy of the contract behind nor truncate the README around it",
                 "every Capability Index cell a capability arrived with is carried through per capability, asserted across all five non-identity columns on an input that differs in every column and every row, which is the branch on which a Production value the product did not derive is reachable -- the derived Production and Maturity values are reachable on the index-less branch too and are asserted there separately",
-                "a relocated capability keeps its own Status, the prose prelude above its fields, and the Impl and Verification columns derived from that status, asserted on the one input whose capabilities are not uniformly verified -- three distinct derived pairs across four statuses, so neither column can be a constant",
+                "a relocated capability keeps its own Status, the prose prelude above its fields, the prose postlude a different capability of that same document carries below its work-root table -- the other half of a carry-through rule that was asserted on one side only, leaving the whole postlude renderer deletable -- and the Impl and Verification columns derived from that status, asserted on the one input whose capabilities are not uniformly verified -- three distinct derived pairs across four statuses, so neither column can be a constant",
                 "the Capability Index header row and its alignment row are asserted as exact literals, because every reader of that table finds its columns by name and would keep passing against a renamed column or a moved right-alignment",
                 "the derived Production column is asserted as `not_ready` for every capability of every index-less document -- six capabilities across five documents -- because that derivation runs on every such document and its answer was read back by nothing",
                 "the Capability Index is recognized at either heading level the parser accepts, asserted on a `##` index whose columns come through identically to the `###` index every other document here writes, so the level-2 arm of that guard is not free",
@@ -1185,8 +1205,8 @@ def verify(case_id: str) -> list[str]:
                 "the document relocation creates is asserted as its whole declared frame -- the project title, Brief, the machine-readable-contract note, and the Capabilities heading in that order -- against a project name that appears nowhere in the input, so a frame that dropped a heading, reordered them, or hard-coded the title cannot pass",
                 "the forwarding pointer left in the emptied README is asserted as its exact block including the relative link to CAPABILITIES.md, because a pointer that names the contract without linking to it is not a pointer",
                 "a README that already carries an authored `## Capability Contract` heading keeps it verbatim and gains no second pointer, which is the early return in the residue renderer that every other input leaves unentered and the reason a second migrate run is idempotent",
-                "a surface and an EC dimension that declare a command but no summary render the command-only form, asserted on the one input that declares one, because every other document declares both halves for every item and three of the four arms of each item renderer were never entered",
-                "a capability that declared no gate inventory gets the one its claims imply, asserted as the exact item list of the rendered field across four capabilities of the same document -- one deriving a single gate, one deriving five refs from two work roots, drawn from both halves of the derivation -- two gates spread across the two roots, three fixtures spread across them with the first root carrying two of its own -- and declared so that the rendered order differs from the declared order, so that joining the list is distinguishable from keeping only its first or only its last element, collecting the claim fixtures before the capability gates from collecting them in work-root order, truncating either half to one ref from rendering it whole, and walking the claims in reverse from walking them in order, because composing the two halves at one ref apiece leaves all four of those truncations rendering the identical document, one whose work-root cell is not backticked and therefore derives through the claim-fixture half of the derivation rather than the claim-gate half, and one declaring only empty-table spellings that gets the single `-` placeholder with its own work-root gate not derived in behind it",
+                "a surface and an EC dimension that declare a command but no summary render the command-only form, and a surface and an EC dimension that declare a summary but no command render the summary-only form on a second capability of that same input, because every other document declares both halves for every item and three of the four arms of each item renderer were never entered -- the command-less arms staying deletable in a way that drops the surface kind and drops the EC dimension name the re-parse needs to read the item back at all",
+                "a capability that declared no gate inventory gets the one its claims imply, asserted as the exact item list of the rendered field across four capabilities of the same document -- one deriving a single gate, one deriving five refs from two work roots, drawn from both halves of the derivation -- two gates spread across the two roots with one of those roots declaring both of its backticked commands inside a single piece, because a gate id is numbered within one work root and two gates on two different roots are each the first of their own, three fixtures spread across them with the first root carrying two of its own -- and declared so that the rendered order differs from the declared order, so that joining the list is distinguishable from keeping only its first or only its last element, collecting the claim fixtures before the capability gates from collecting them in work-root order, truncating either half to one ref from rendering it whole, and walking the claims in reverse from walking them in order, because composing the two halves at one ref apiece leaves all four of those truncations rendering the identical document, one whose work-root cell is not backticked and therefore derives through the claim-fixture half of the derivation rather than the claim-gate half, and one declaring only empty-table spellings that gets the single `-` placeholder with its own work-root gate not derived in behind it",
                 "a capability with no declared gate inventory and nothing to derive one from renders the placeholder through the derivation's own empty arm, asserted on its own document because the document `aw capability migrate` writes for that input is one `aw capability report` then rejects, named as the exact claim that has neither a gate nor a fixture",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
