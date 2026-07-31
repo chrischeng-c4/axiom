@@ -1883,15 +1883,21 @@ fn condition<'a>(facts: &'a [ConditionFact], type_: &str) -> &'a ConditionFact {
 
 /// AC2: every replica is up, so without the peer-identity verdict this CR would
 /// report `Ready=True` — a replicated group advertising itself as healthy while
-/// having no authenticated way to replicate. The condition has to name the
-/// Secret, because "not ready" that does not say what to create is a support
-/// ticket, not a status.
+/// having no authenticated way to replicate. An unset `spec.peerTlsSecret` on a
+/// replicated CR reports `Ready=False/PeerIdentityNotConfigured` and
+/// `PeerIdentityReady=False/PeerTlsSecretNotNamed`, naming the field and the
+/// required keys.
 #[test]
-fn a_replicated_cr_without_peer_material_is_not_ready_and_names_the_secret() {
-    let l = lumen("search", replicated_spec(Some("search-peer-tls")));
+fn a_replicated_cr_with_no_peer_secret_named_is_not_ready_and_says_which_keys_it_needs() {
+    let l = lumen("search", replicated_spec(None));
+    let expected_msg = format!(
+        "replicasPerShard={} requires spec.peerTlsSecret naming a Secret with {}; \
+         replicated Raft traffic has no plaintext fallback",
+        l.spec.replicas_per_shard,
+        lumen::operator::render::PEER_TLS_KEYS.join(", ")
+    );
     let context = serde_json::json!({
-        lumen::operator::reconcile::PEER_IDENTITY_CONTEXT_KEY:
-            "Secret acme/search-peer-tls named by spec.peerTlsSecret does not exist",
+        lumen::operator::reconcile::PEER_IDENTITY_CONTEXT_KEY: expected_msg,
     });
 
     // 6 shards x 3 replicas: every serving pod is up.
@@ -1901,16 +1907,29 @@ fn a_replicated_cr_without_peer_material_is_not_ready_and_names_the_secret() {
     assert_eq!(ready.status, ConditionStatus::False, "got: {facts:?}");
     assert_eq!(ready.reason, "PeerIdentityNotConfigured");
     assert!(
-        ready.message.contains("search-peer-tls"),
-        "the Ready message must name the Secret, got: {facts:?}"
+        ready.message.contains("spec.peerTlsSecret"),
+        "the Ready message must name the spec field, got: {facts:?}"
     );
+    for key in lumen::operator::render::PEER_TLS_KEYS {
+        assert!(
+            ready.message.contains(key),
+            "the Ready message must name required key {key}, got: {facts:?}"
+        );
+    }
+
     let peer = condition(&facts, "PeerIdentityReady");
     assert_eq!(peer.status, ConditionStatus::False);
-    assert_eq!(peer.reason, "PeerTlsSecretUnusable");
+    assert_eq!(peer.reason, "PeerTlsSecretNotNamed");
     assert!(
-        peer.message.contains("search-peer-tls"),
-        "got: {facts:?}"
+        peer.message.contains("spec.peerTlsSecret"),
+        "the PeerIdentityReady message must name the spec field, got: {facts:?}"
     );
+    for key in lumen::operator::render::PEER_TLS_KEYS {
+        assert!(
+            peer.message.contains(key),
+            "the PeerIdentityReady message must name required key {key}, got: {facts:?}"
+        );
+    }
 }
 
 /// The satisfied case, so the condition above is a verdict rather than a

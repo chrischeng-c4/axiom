@@ -686,179 +686,29 @@ fn spawn_auth_delegator_sweep_loop(client: Client) {
     });
 }
 
-/// Seam for the one read the peer-identity check needs (#2890), abstracted the
-/// same way [`AuthDelegatorControl`] abstracts the auth-delegation writes so
-/// the verdict is testable without an API server.
-#[async_trait::async_trait]
-trait PeerIdentityControl: Send + Sync {
-    /// The keys present in `namespace/name`, or `None` when no such Secret
-    /// exists. An `Err` is a genuinely unreadable Secret — RBAC, a broken
-    /// connection — which is not the same fact as "absent" and must not be
-    /// reported as one.
-    async fn secret_keys(&self, namespace: &str, name: &str) -> anyhow::Result<Option<Vec<String>>>;
-}
-
-/// Production [`PeerIdentityControl`]: a real namespaced Secret read.
-struct KubePeerIdentityControl {
-    client: Client,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
-#[async_trait::async_trait]
-impl PeerIdentityControl for KubePeerIdentityControl {
-    async fn secret_keys(&self, namespace: &str, name: &str) -> anyhow::Result<Option<Vec<String>>> {
-        let api: Api<k8s_openapi::api::core::v1::Secret> =
-            Api::namespaced(self.client.clone(), namespace);
-        match api.get(name).await {
-            Ok(secret) => {
-                let mut keys: Vec<String> = secret
-                    .data
-                    .unwrap_or_default()
-                    .into_keys()
-                    .chain(secret.string_data.unwrap_or_default().into_keys())
-                    .collect();
-                keys.sort();
-                keys.dedup();
-                Ok(Some(keys))
-            }
-            Err(kube::Error::Api(err)) if err.code == 404 => Ok(None),
-            Err(err) => Err(err.into()),
-        }
-    }
-}
-
 /// Why this replicated instance has no usable Raft peer identity, if it has
 /// none (#2890 R4).
 ///
 /// `Some(_)` is a fail-closed verdict: a `replicasPerShard > 1` instance whose
-/// `spec.peerTlsSecret` is unset, missing from the cluster, short a key, or
-/// unreadable. Every message names the Secret and, where it applies, the exact
-/// keys — an operator reading the condition should not have to guess which of
-/// the three the Secret is missing.
+/// `spec.peerTlsSecret` is unset.
 ///
 /// Single-replica instances run no consensus link and are always `None`: there
 /// is no peer to authenticate.
-async fn check_peer_identity(control: &dyn PeerIdentityControl, lumen: &Lumen) -> Option<String> {
+fn check_peer_identity(lumen: &Lumen) -> Option<String> {
     if !lumen.spec.peer_identity_required() {
         return None;
     }
-    let namespace = lumen.namespace().unwrap_or_else(|| "default".to_string());
-    let Some(secret) = lumen.spec.peer_tls_secret.as_deref() else {
+    if lumen.spec.peer_tls_secret.is_none() {
         return Some(format!(
             "replicasPerShard={} requires spec.peerTlsSecret naming a Secret with {}; \
              replicated Raft traffic has no plaintext fallback",
             lumen.spec.replicas_per_shard,
             render::PEER_TLS_KEYS.join(", ")
         ));
-    };
-    match control.secret_keys(&namespace, secret).await {
-        Ok(Some(keys)) => {
-            let missing: Vec<&str> = render::PEER_TLS_KEYS
-                .iter()
-                .copied()
-                .filter(|key| !keys.iter().any(|present| present == key))
-                .collect();
-            (!missing.is_empty()).then(|| {
-                format!(
-                    "Secret {namespace}/{secret} is missing key(s) {}",
-                    missing.join(", ")
-                )
-            })
-        }
-        Ok(None) => Some(format!(
-            "Secret {namespace}/{secret} named by spec.peerTlsSecret does not exist"
-        )),
-        Err(err) => Some(format!("read Secret {namespace}/{secret}: {err}")),
     }
+    None
 }
 
-/// Seam for the one read the client trust-bundle publication needs (#3113 R4).
-///
-/// Separate from [`PeerIdentityControl`] because it wants a different thing:
-/// that check asks which keys exist, this one asks for a key's contents. A
-/// trait that returned the bytes for both would hand the peer check the peer
-/// Secret's private key so it could count its keys.
-#[async_trait::async_trait]
-trait ServingTrustControl: Send + Sync {
-    /// The value of `key` in `namespace/name`, `None` when the Secret or the
-    /// key is absent. `Err` is unreadable — RBAC, a broken connection — which
-    /// is a different fact and must not be reported as absence.
-    async fn secret_value(
-        &self,
-        namespace: &str,
-        name: &str,
-        key: &str,
-    ) -> anyhow::Result<Option<String>>;
-}
-
-/// Production [`ServingTrustControl`]: a real namespaced Secret read.
-struct KubeServingTrustControl {
-    client: Client,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
-#[async_trait::async_trait]
-impl ServingTrustControl for KubeServingTrustControl {
-    async fn secret_value(
-        &self,
-        namespace: &str,
-        name: &str,
-        key: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let api: Api<k8s_openapi::api::core::v1::Secret> =
-            Api::namespaced(self.client.clone(), namespace);
-        match api.get(name).await {
-            Ok(secret) => {
-                if let Some(raw) = secret.data.as_ref().and_then(|d| d.get(key)) {
-                    // `data` is base64 in the wire object; `kube` has already
-                    // decoded it into bytes, so the only thing left is that a
-                    // PEM is text.
-                    return Ok(Some(String::from_utf8(raw.0.clone())?));
-                }
-                Ok(secret
-                    .string_data
-                    .as_ref()
-                    .and_then(|d| d.get(key))
-                    .cloned())
-            }
-            Err(kube::Error::Api(err)) if err.code == 404 => Ok(None),
-            Err(err) => Err(err.into()),
-        }
-    }
-}
-
-/// The ConfigMap republishing this instance's serving CA, if there is one to
-/// republish (#3113 R4).
-///
-/// `Ok(None)` means no serving certificate was configured, which is the local
-/// and kind case and not a fault. `Err(_)` names why an instance that asked for
-/// one has no anchor to hand its callers — and the caller leaves
-/// `status.clientTrustBundle` unset, because a reference published ahead of its
-/// material sends callers to mount an empty volume.
-async fn client_trust_bundle_child(
-    control: &dyn ServingTrustControl,
-    lumen: &Lumen,
-) -> Result<Option<serde_json::Value>, String> {
-    let Some(secret) = lumen.spec.serving_tls_secret.as_deref() else {
-        return Ok(None);
-    };
-    let namespace = lumen.namespace().unwrap_or_else(|| "default".to_string());
-    let key = render::CLIENT_TRUST_BUNDLE_KEY;
-    match control.secret_value(&namespace, secret, key).await {
-        Ok(Some(pem)) if !pem.trim().is_empty() => {
-            Ok(Some(render::client_trust_bundle(lumen, &pem)))
-        }
-        Ok(Some(_)) => Err(format!(
-            "Secret {namespace}/{secret} carries an empty {key}; callers have no anchor to \
-             verify this instance's serving leaf against"
-        )),
-        Ok(None) => Err(format!(
-            "Secret {namespace}/{secret} named by spec.servingTlsSecret has no {key}; \
-             it must carry the CA that signed the serving leaf, not only the leaf"
-        )),
-        Err(err) => Err(format!("read Secret {namespace}/{secret}: {err}")),
-    }
-}
 
 /// The reconcile-context key carrying [`apply_auth_delegator_binding`]'s
 /// verdict from the plan hook to the condition projection (#2876).
@@ -931,7 +781,7 @@ impl ManagedService for Lumen {
     ) -> impl std::future::Future<Output = anyhow::Result<service_k8s::service::ReconcilePlan>> + Send
     {
         let validation = self.spec.validate();
-        let mut children = render::render(self);
+        let children = render::render(self);
         // #2876: the serving ServiceAccount's `system:auth-delegator` binding
         // is cluster-scoped, so it cannot be one of `children` — those are all
         // applied into the CR's namespace. This hook is where it goes: it is
@@ -951,40 +801,11 @@ impl ManagedService for Lumen {
                     serde_json::Value::String(error),
                 );
             }
-            // #2890 R4: the same shape, one layer down — a read rather than a
-            // write, and reported rather than enforced here. Enforcement is the
-            // serving binary's: a replicated pod with no peer TLS material
-            // refuses to start. This turns that crash-loop into a status an
-            // operator can read, naming the Secret it is waiting for.
-            let peer_control = KubePeerIdentityControl {
-                client: client.clone(),
-            };
-            if let Some(error) = check_peer_identity(&peer_control, &lumen).await {
+            if let Some(error) = check_peer_identity(&lumen) {
                 context.insert(
                     PEER_IDENTITY_CONTEXT_KEY.to_string(),
                     serde_json::Value::String(error),
                 );
-            }
-            // #3113 R4: republish the serving CA where a caller can mount it
-            // without holding the server's private key. Appended to `children`
-            // rather than applied here so it is owned and garbage-collected
-            // like every other child; the status reference follows only when
-            // the object is actually in the plan.
-            let trust_control = KubeServingTrustControl { client };
-            match client_trust_bundle_child(&trust_control, &lumen).await {
-                Ok(Some(config_map)) => {
-                    context.insert(
-                        CLIENT_TRUST_BUNDLE_CONTEXT_KEY.to_string(),
-                        serde_json::Value::String(render::client_trust_bundle_name(&lumen)),
-                    );
-                    children.push(config_map);
-                }
-                Ok(None) => {}
-                Err(why) => tracing::warn!(
-                    error = %why,
-                    "client trust bundle not published; in-cluster callers have no anchor to \
-                     verify this instance's serving leaf"
-                ),
             }
             Ok(service_k8s::service::ReconcilePlan {
                 children,
@@ -1203,12 +1024,12 @@ impl Observation {
         // #2890 R4 AC2: its own condition for the same reason
         // `AuthDelegationReady` is one — a watcher that only reads `Ready`
         // learns nothing about peer identity once something else takes the
-        // Ready slot, and this is the condition that names the Secret.
+        // Ready slot, and this is the condition that names the spec field and required keys.
         let peer_identity = match &self.peer_identity {
             Some(error) => ConditionFact::new(
                 "PeerIdentityReady",
                 ConditionStatus::False,
-                "PeerTlsSecretUnusable",
+                "PeerTlsSecretNotNamed",
                 error.clone(),
             ),
             // True for a single-replica instance too, with a reason that says
@@ -1224,7 +1045,7 @@ impl Observation {
                 "PeerIdentityReady",
                 ConditionStatus::True,
                 "PeerTlsSecretProjected",
-                "instance-scoped peer TLS material is projected onto every Raft member".to_string(),
+                "spec.peerTlsSecret is configured; peer TLS material is required at member startup".to_string(),
             ),
         };
 
@@ -2505,40 +2326,6 @@ mod tests {
 
     // ---- peer TLS Secret check (#2890 R4) ----------------------------------
 
-    /// In-memory [`PeerIdentityControl`]: a `namespace/name -> keys` map, plus
-    /// a switch for the third outcome the trait exists to keep distinct — a
-    /// Secret that cannot be read at all.
-    #[derive(Default)]
-    struct FakePeerIdentityControl {
-        secrets: BTreeMap<String, Vec<String>>,
-        read_fails: bool,
-    }
-
-    impl FakePeerIdentityControl {
-        fn holding(namespace: &str, name: &str, keys: &[&str]) -> Self {
-            let mut control = Self::default();
-            control.secrets.insert(
-                format!("{namespace}/{name}"),
-                keys.iter().map(|k| (*k).to_string()).collect(),
-            );
-            control
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl PeerIdentityControl for FakePeerIdentityControl {
-        async fn secret_keys(
-            &self,
-            namespace: &str,
-            name: &str,
-        ) -> anyhow::Result<Option<Vec<String>>> {
-            if self.read_fails {
-                anyhow::bail!("secrets is forbidden");
-            }
-            Ok(self.secrets.get(&format!("{namespace}/{name}")).cloned())
-        }
-    }
-
     /// A replicated instance naming `secret`, in namespace `acme`.
     fn peer_test_lumen(secret: Option<&str>) -> Lumen {
         let mut lumen = hpa_test_lumen("search", "acme", 1, 3);
@@ -2546,27 +2333,18 @@ mod tests {
         lumen
     }
 
-    #[tokio::test]
-    async fn a_single_replica_instance_is_never_asked_for_peer_material() {
+    #[test]
+    fn a_single_replica_instance_is_never_asked_for_peer_material() {
         let mut lumen = peer_test_lumen(None);
         lumen.spec.replicas_per_shard = 1;
-        // A control that fails every read: if the check consulted it at all,
-        // this would come back as an error string rather than `None`.
-        let control = FakePeerIdentityControl {
-            read_fails: true,
-            ..Default::default()
-        };
-
-        assert_eq!(check_peer_identity(&control, &lumen).await, None);
+        assert_eq!(check_peer_identity(&lumen), None);
     }
 
-    #[tokio::test]
-    async fn a_replicated_instance_with_no_secret_named_says_which_keys_it_needs() {
+    #[test]
+    fn a_replicated_instance_with_no_secret_named_says_which_keys_it_needs() {
         let lumen = peer_test_lumen(None);
-        let control = FakePeerIdentityControl::default();
 
-        let error = check_peer_identity(&control, &lumen)
-            .await
+        let error = check_peer_identity(&lumen)
             .expect("a replicated instance owes peer identity");
 
         assert!(error.contains("spec.peerTlsSecret"), "got: {error}");
@@ -2575,195 +2353,18 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn a_named_secret_that_does_not_exist_is_reported_as_absent() {
+    #[test]
+    fn complete_peer_material_is_no_finding_at_all() {
         let lumen = peer_test_lumen(Some("search-peer-tls"));
-        let control = FakePeerIdentityControl::default();
-
-        let error = check_peer_identity(&control, &lumen).await.unwrap();
-
-        assert!(error.contains("does not exist"), "got: {error}");
-        assert!(error.contains("acme/search-peer-tls"), "got: {error}");
-    }
-
-    /// Half-populated material is its own failure: the Secret exists, so an
-    /// operator looking for a missing object would find nothing wrong.
-    #[tokio::test]
-    async fn a_secret_missing_one_key_names_the_key() {
-        let lumen = peer_test_lumen(Some("search-peer-tls"));
-        let control =
-            FakePeerIdentityControl::holding("acme", "search-peer-tls", &["tls.crt", "tls.key"]);
-
-        let error = check_peer_identity(&control, &lumen).await.unwrap();
-
-        assert!(error.contains("ca.crt"), "got: {error}");
-        assert!(
-            !error.contains("tls.crt"),
-            "the present keys are not the problem: {error}"
-        );
-    }
-
-    /// An unreadable Secret is not an absent one. Reporting RBAC failure as
-    /// "does not exist" would send an operator to create a Secret that is
-    /// already there.
-    #[tokio::test]
-    async fn an_unreadable_secret_is_reported_as_a_read_failure() {
-        let lumen = peer_test_lumen(Some("search-peer-tls"));
-        let control = FakePeerIdentityControl {
-            read_fails: true,
-            ..Default::default()
-        };
-
-        let error = check_peer_identity(&control, &lumen).await.unwrap();
-
-        assert!(error.contains("read Secret"), "got: {error}");
-        assert!(!error.contains("does not exist"), "got: {error}");
-    }
-
-    #[tokio::test]
-    async fn complete_peer_material_is_no_finding_at_all() {
-        let lumen = peer_test_lumen(Some("search-peer-tls"));
-        let control = FakePeerIdentityControl::holding(
-            "acme",
-            "search-peer-tls",
-            // A fourth key is the operator's business, not a defect: the
-            // volume projects named items, so it never reaches the pod.
-            &["tls.crt", "tls.key", "ca.crt", "note.txt"],
-        );
-
-        assert_eq!(check_peer_identity(&control, &lumen).await, None);
+        assert_eq!(check_peer_identity(&lumen), None);
     }
 
     // ---- client trust-bundle publication (#3113 R4) ------------------------
-
-    /// In-memory [`ServingTrustControl`]: a `namespace/name` -> `key -> value`
-    /// map, plus the unreadable-Secret switch the trait exists to keep apart
-    /// from absence.
-    #[derive(Default)]
-    struct FakeServingTrustControl {
-        secrets: BTreeMap<String, BTreeMap<String, String>>,
-        read_fails: bool,
-    }
-
-    impl FakeServingTrustControl {
-        fn holding(namespace: &str, name: &str, entries: &[(&str, &str)]) -> Self {
-            let mut control = Self::default();
-            control.secrets.insert(
-                format!("{namespace}/{name}"),
-                entries
-                    .iter()
-                    .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-                    .collect(),
-            );
-            control
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl ServingTrustControl for FakeServingTrustControl {
-        async fn secret_value(
-            &self,
-            namespace: &str,
-            name: &str,
-            key: &str,
-        ) -> anyhow::Result<Option<String>> {
-            if self.read_fails {
-                anyhow::bail!("secrets is forbidden");
-            }
-            Ok(self
-                .secrets
-                .get(&format!("{namespace}/{name}"))
-                .and_then(|entries| entries.get(key))
-                .cloned())
-        }
-    }
-
-    const ANCHOR: &str = "-----BEGIN CERTIFICATE-----\nanchor\n-----END CERTIFICATE-----\n";
 
     fn serving_trust_lumen(secret: Option<&str>) -> Lumen {
         let mut lumen = hpa_test_lumen("search", "acme", 1, 1);
         lumen.spec.serving_tls_secret = secret.map(str::to_string);
         lumen
-    }
-
-    /// The anchor is republished into a ConfigMap that carries the CA and
-    /// nothing else — no `tls.key`, which is the whole point of not sending
-    /// callers to the serving Secret.
-    #[tokio::test]
-    async fn the_published_anchor_carries_the_ca_and_no_private_key() {
-        let lumen = serving_trust_lumen(Some("search-serving-tls"));
-        let control = FakeServingTrustControl::holding(
-            "acme",
-            "search-serving-tls",
-            &[("ca.crt", ANCHOR), ("tls.crt", "leaf"), ("tls.key", "KEY")],
-        );
-
-        let child = client_trust_bundle_child(&control, &lumen)
-            .await
-            .expect("a readable anchor publishes")
-            .expect("a configured instance publishes one");
-
-        assert_eq!(child["kind"], "ConfigMap");
-        assert_eq!(child["metadata"]["name"], "search-client-ca");
-        assert_eq!(child["metadata"]["namespace"], "acme");
-        assert_eq!(child["data"]["ca.crt"], ANCHOR);
-        let rendered = child.to_string();
-        assert!(
-            !rendered.contains("tls.key") && !rendered.contains("KEY"),
-            "the republished anchor must carry no private key: {rendered}"
-        );
-    }
-
-    /// Local and kind instances serve no certificate. Nothing to republish is
-    /// not a fault, and must not be reported as one.
-    #[tokio::test]
-    async fn an_instance_with_no_serving_secret_publishes_nothing_and_fails_nothing() {
-        let lumen = serving_trust_lumen(None);
-        // A control that fails every read: consulting it would surface here.
-        let control = FakeServingTrustControl {
-            read_fails: true,
-            ..Default::default()
-        };
-
-        assert_eq!(client_trust_bundle_child(&control, &lumen).await, Ok(None));
-    }
-
-    /// A Secret holding the leaf but not the CA that signed it: the anchor a
-    /// caller needs is exactly the key that is missing, so the message names
-    /// it rather than the object.
-    #[tokio::test]
-    async fn a_serving_secret_without_the_ca_names_the_missing_key() {
-        let lumen = serving_trust_lumen(Some("search-serving-tls"));
-        let control = FakeServingTrustControl::holding(
-            "acme",
-            "search-serving-tls",
-            &[("tls.crt", "leaf"), ("tls.key", "KEY")],
-        );
-
-        let why = client_trust_bundle_child(&control, &lumen)
-            .await
-            .expect_err("no anchor means no publication");
-
-        assert!(why.contains("ca.crt"), "got: {why}");
-        assert!(why.contains("acme/search-serving-tls"), "got: {why}");
-    }
-
-    /// An unreadable Secret is not an absent key — the remediation is RBAC,
-    /// not editing the Secret.
-    #[tokio::test]
-    async fn an_unreadable_serving_secret_is_reported_as_a_read_failure() {
-        let lumen = serving_trust_lumen(Some("search-serving-tls"));
-        let control = FakeServingTrustControl {
-            read_fails: true,
-            ..Default::default()
-        };
-
-        let why = client_trust_bundle_child(&control, &lumen)
-            .await
-            .expect_err("an unreadable Secret publishes nothing");
-
-        assert!(why.contains("read Secret"), "got: {why}");
-        assert!(!why.contains("has no"), "got: {why}");
     }
 
     /// The status reference follows the object, not the spec. A reconcile that
@@ -2789,6 +2390,32 @@ mod tests {
             published["status"]["clientTrustBundle"],
             json!({ "configMap": "search-client-ca", "key": "ca.crt" })
         );
+    }
+
+    #[test]
+    fn check_peer_identity_message_pins_spec_field_required_keys_and_replica_count() {
+        let lumen = peer_test_lumen(None);
+        let error = check_peer_identity(&lumen).expect("replicated CR without peerTlsSecret must return error");
+        assert!(error.contains("spec.peerTlsSecret"), "message must name spec field: {error}");
+        assert!(
+            error.contains(&format!("replicasPerShard={}", lumen.spec.replicas_per_shard)),
+            "message must state replicasPerShard value: {error}"
+        );
+        for key in render::PEER_TLS_KEYS {
+            assert!(error.contains(key), "message must name required key {key}: {error}");
+        }
+        assert!(
+            error.contains("replicated Raft traffic has no plaintext fallback"),
+            "message must state tail rationale: {error}"
+        );
+
+        // Single-replica instance owes no peer identity
+        let single = hpa_test_lumen("search", "acme", 1, 1);
+        assert_eq!(check_peer_identity(&single), None);
+
+        // Replicated instance naming spec.peerTlsSecret returns None
+        let configured = peer_test_lumen(Some("search-peer-tls"));
+        assert_eq!(check_peer_identity(&configured), None);
     }
 }
 // CODEGEN-END
