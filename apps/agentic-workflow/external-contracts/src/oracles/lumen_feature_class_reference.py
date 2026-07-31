@@ -414,6 +414,24 @@ assert tuple(sorted(set(_MULTI_DEPENDENCY_DECLARED))) != tuple(
     "parse renders the same bytes as the author's own order"
 )
 
+#: Per-capability surface *command list*, keyed by title; members absent from
+#: this map declare the single command their member tuple names.
+#:
+#: `render_surface_field_items` (`capability.rs:9153-9172`) joins a surface's
+#: whole command vector with `" + "`. Every member declared exactly one command,
+#: which leaves both halves of that composition unobservable at once:
+#: `.join(" ~~ ")` and `.take(1)` after `.commands.iter()` each render the
+#: byte-identical document. The earlier round raised the *item* list to two and
+#: left the list *inside* the item at one.
+#:
+#: The values are Lumen's own: `apps/lumen/README.md:156` declares
+#: `` HTTP: `POST /index`, `POST /search` `` for this capability, so the
+#: two-command shape is the production input, not an invented one. This
+#: repository's own `apps/agentic-workflow/CAPABILITIES.md:39` carries six.
+MEMBER_SURFACE_COMMANDS = {
+    "Search Core": ("POST /index", "POST /search"),
+}
+
 #: Defaults for the synthetic members some fixtures splice in (registry-spanning
 #: probes and the like). Those documents are built to falsify a different rule and
 #: never have these fields read back, so they keep the historical values.
@@ -461,14 +479,26 @@ def _member_rendered_dependencies(title: str) -> tuple[str, ...]:
     return tuple(sorted(set(_member_dependencies(title))))
 
 
+def _member_surface_commands(title: str, surface: str) -> tuple[str, ...]:
+    """The commands a member's single surface declares, in the authored order."""
+    return MEMBER_SURFACE_COMMANDS.get(title, (surface,))
+
+
 def _member_surface_item(title: str, surface: str, promise: str) -> str:
     """The exact `Surfaces:` item a member declares, and must get back.
 
     Restated here rather than in the fixture text so the authored document and
     the expectation cannot drift apart into an assertion that pins the oracle to
     itself.
+
+    The command half is a *list* joined with `" + "`, which is the renderer's own
+    composition (`capability.rs:9153-9160`) and the one member declaring two is
+    what makes both the separator and the traversal observable.
     """
-    return f"{_member_surface_kind(title)}: `{surface}` - {promise.lower().rstrip('.')}."
+    commands = " + ".join(
+        f"`{command}`" for command in _member_surface_commands(title, surface)
+    )
+    return f"{_member_surface_kind(title)}: {commands} - {promise.lower().rstrip('.')}."
 
 
 def _member_ec_dimension_item(title: str, cap_id: str) -> str:
@@ -2341,6 +2371,29 @@ assert len({MEMBER_SURFACE_KIND[member[0]] for member in _ALL_MEMBERS}) == len(
     _ALL_MEMBERS
 ), "MEMBER_SURFACE_KIND must be pairwise distinct across members"
 
+#: And the command half is a list of its own, one level *inside* the item. The
+#: multi-item document raised the item list to two and left this one at one,
+#: which is the same arity blind spot one nesting level down.
+_MULTI_COMMAND_SURFACES = tuple(
+    member[0]
+    for member in _ALL_MEMBERS
+    if len(_member_surface_commands(member[0], member[3])) > 1
+)
+assert _MULTI_COMMAND_SURFACES, (
+    "some member has to declare a surface with more than one command, or "
+    "`.take(1)` on the command vector renders the identical document"
+)
+for _title in _MULTI_COMMAND_SURFACES:
+    _commands = _member_surface_commands(_title, "")
+    assert len(set(_commands)) == len(_commands), (
+        f"{_title!r} must declare distinct commands, or keeping the first and "
+        f"keeping the last render the same item"
+    )
+    assert not any(" - " in command for command in _commands), (
+        f"{_title!r} must not write the summary separator inside a command, or "
+        f"the parse cuts the item somewhere other than where it renders it"
+    )
+
 
 def assert_sections_carry_their_own_contract(
     migrated: str,
@@ -2466,6 +2519,7 @@ def _section_readme(
     preludes: tuple[str | None, ...] | None = None,
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
     multi_item_title: str | None = None,
+    postludes: tuple[str | None, ...] | None = None,
 ) -> str:
     """A README whose capability contract is canonical `###` sections.
 
@@ -2497,6 +2551,14 @@ def _section_readme(
             heading = f"### {member[0]}\n\n"
             assert section.startswith(heading), section
             section = heading + prelude + "\n\n" + section[len(heading) :]
+        postlude = None if postludes is None else postludes[index]
+        if postlude is not None:
+            # Below the work-root table, which is the last machine table in the
+            # block: `markdown_capability_prose_around_machine_tables`
+            # (`capability.rs:10966-10988`) reads the prelude from the lines
+            # above the first one and the postlude from the lines below the last.
+            assert section.endswith("|\n"), section
+            section = section + "\n" + postlude + "\n"
         body += section
     return f"""# Lumen
 
@@ -2723,41 +2785,92 @@ MULTI_ITEM_OVERRIDES = {
 }
 
 
-#: Relocation input where one capability declares a Surface and an EC Dimension
-#: as a command with *no* summary.
+#: Relocation input carrying both *partial* item shapes: one capability declares
+#: a Surface and an EC Dimension as a command with no summary, another declares
+#: each as a summary with no command.
 #:
-#: `render_surface_field_items` (`capability.rs:9153-9174`) and
-#: `render_ec_dimension_field_items` (`capability.rs:9176-9198`) are each a
+#: `render_surface_field_items` (`capability.rs:9153-9172`) and
+#: `render_ec_dimension_field_items` (`capability.rs:9176-9196`) are each a
 #: four-arm match on whether the item has commands and whether it has a summary.
 #: Every other document here declares both halves for every item, so only the
 #: two-field arm was ever entered. The command-only arm -- the shape an author
 #: writes when the command *is* the description -- could be replaced by
 #: `String::new()`, which drops the surface out of the migrated contract
 #: entirely while every other assertion here still passes.
+#:
+#: Adding the command-only shape did not reach the summary-only arm, and a
+#: later round confirmed it: replacing `format!("{}: {}", kind, summary)` with
+#: `summary.to_string()` in either renderer still rendered this whole fixture
+#: byte for byte. That arm drops the `kind`/`dimension` prefix, and for the
+#: dimension renderer the prefix is exactly what `parse_ec_dimension_kind`
+#: (`capability.rs:11705-11715`) reads back -- an item losing it stops parsing as
+#: a dimension at all on the next migration. Both partial shapes therefore live
+#: on one document, on two different capabilities, so neither is asserted by a
+#: leg that also has the other's answer in front of it.
 NO_SUMMARY_TITLE = "Security Hardening"
 _NO_SUMMARY_MEMBER = next(
     member for member in _ALL_MEMBERS if member[0] == NO_SUMMARY_TITLE
 )
-NO_SUMMARY_SURFACE_ITEM = (
-    f"{_member_surface_kind(NO_SUMMARY_TITLE)}: `{_NO_SUMMARY_MEMBER[3]}`"
+NO_SUMMARY_SURFACE_ITEM = "{}: {}".format(
+    _member_surface_kind(NO_SUMMARY_TITLE),
+    " + ".join(
+        f"`{command}`"
+        for command in _member_surface_commands(NO_SUMMARY_TITLE, _NO_SUMMARY_MEMBER[3])
+    ),
 )
 NO_SUMMARY_EC_DIMENSION_ITEM = (
     f"{_member_ec_dimension(NO_SUMMARY_TITLE)}: "
     f"`{_member_ec_runner(NO_SUMMARY_TITLE)}`"
 )
-NO_SUMMARY_ITEM_OVERRIDES = {
+
+#: The other half: an item whose author wrote a description and no command at
+#: all. A different capability from the command-only one, so the two arms are
+#: never satisfied by the same section.
+NO_COMMAND_TITLE = "Standard Operational Endpoints"
+assert NO_COMMAND_TITLE != NO_SUMMARY_TITLE, (
+    "the two partial shapes have to sit on different capabilities, or one "
+    "section's assertion answers for both arms"
+)
+NO_COMMAND_SURFACE_ITEM = (
+    f"{_member_surface_kind(NO_COMMAND_TITLE)}: "
+    "the archetype health and readiness probe set."
+)
+NO_COMMAND_EC_DIMENSION_ITEM = (
+    f"{_member_ec_dimension(NO_COMMAND_TITLE)}: "
+    "the readiness probe contract, carried without a runner."
+)
+for _label, _item in (
+    ("surface", NO_COMMAND_SURFACE_ITEM),
+    ("EC dimension", NO_COMMAND_EC_DIMENSION_ITEM),
+):
+    assert "`" not in _item, (
+        f"the summary-only {_label} must carry no backticked command, or "
+        f"`extract_backtick_values` puts it back on the two-field arm"
+    )
+    assert " - " not in _item, (
+        f"the summary-only {_label} must not carry the two-field separator "
+        f"either, or the round trip is not the arm under test"
+    )
+
+PARTIAL_ITEM_OVERRIDES = {
     NO_SUMMARY_TITLE: {
         "surfaces": (NO_SUMMARY_SURFACE_ITEM,),
         "ec_dimensions": (NO_SUMMARY_EC_DIMENSION_ITEM,),
-    }
+    },
+    NO_COMMAND_TITLE: {
+        "surfaces": (NO_COMMAND_SURFACE_ITEM,),
+        "ec_dimensions": (NO_COMMAND_EC_DIMENSION_ITEM,),
+    },
 }
 
 
-def _no_summary_readme() -> str:
+def _partial_item_readme() -> str:
     document = UNCLASSIFIED_SECTION_README
     for declared, replacement in (
         (MEMBER_SURFACE_ITEM[NO_SUMMARY_TITLE], NO_SUMMARY_SURFACE_ITEM),
         (MEMBER_EC_DIMENSION_ITEM[NO_SUMMARY_TITLE], NO_SUMMARY_EC_DIMENSION_ITEM),
+        (MEMBER_SURFACE_ITEM[NO_COMMAND_TITLE], NO_COMMAND_SURFACE_ITEM),
+        (MEMBER_EC_DIMENSION_ITEM[NO_COMMAND_TITLE], NO_COMMAND_EC_DIMENSION_ITEM),
     ):
         marker = f"- {declared}\n"
         assert document.count(marker) == 1, (declared, document.count(marker))
@@ -2769,7 +2882,7 @@ def _no_summary_readme() -> str:
     return document
 
 
-NO_SUMMARY_SECTION_README = _no_summary_readme()
+PARTIAL_ITEM_SECTION_README = _partial_item_readme()
 
 
 def assert_relocation_carries_a_command_only_item(migrated: str) -> None:
@@ -2793,6 +2906,30 @@ def assert_relocation_carries_a_command_only_item(migrated: str) -> None:
     ):
         assert expected in body, (
             f"relocated section {NO_SUMMARY_TITLE!r} lost its command-only "
+            f"{label}; expected {expected!r}, section was:\n{body}"
+        )
+
+
+def assert_relocation_carries_a_summary_only_item(migrated: str) -> None:
+    """An item declared as summary-only keeps its kind, and gains no command.
+
+    The mirror of the leg above, and the arm it does not reach. Both renderers
+    answer a command-less item with `kind: summary`, and the prefix is the whole
+    of what that arm adds: dropping it leaves the summary alone on the line,
+    which for `EC Dimensions:` is an item the next parse no longer recognises as
+    a dimension.
+
+    Asserted on the exact item, so an implementation that fell through to the
+    command-bearing arm -- rendering a stray `: ` or an empty pair of backticks
+    -- is a different document too.
+    """
+    body = _capability_section_body(migrated, NO_COMMAND_TITLE)
+    for label, expected in (
+        ("surface", f"Surfaces:\n- {NO_COMMAND_SURFACE_ITEM}\n"),
+        ("EC dimension", f"EC Dimensions:\n- {NO_COMMAND_EC_DIMENSION_ITEM}\n"),
+    ):
+        assert expected in body, (
+            f"relocated section {NO_COMMAND_TITLE!r} lost its summary-only "
             f"{label}; expected {expected!r}, section was:\n{body}"
         )
 
@@ -2832,7 +2969,14 @@ def assert_relocation_carries_every_list_item(migrated: str) -> None:
 #: its position unbound -- or always does, leaving the shape of a section without
 #: it unbound.
 CANONICAL_BLOCK_DEPENDENT_TITLE = "Lexical Search"
-CANONICAL_BLOCK_TITLES = (MULTI_ITEM_TITLE, CANONICAL_BLOCK_DEPENDENT_TITLE)
+#: Subject -> the `Feature Class` its section renders, on the multi-item
+#: document. Nothing there is classified, which is itself an assertion: the line
+#: is conditional and a renderer emitting one would be attributing a class
+#: nobody wrote.
+CANONICAL_BLOCK_SUBJECTS = {
+    MULTI_ITEM_TITLE: None,
+    CANONICAL_BLOCK_DEPENDENT_TITLE: None,
+}
 assert _member_dependencies(CANONICAL_BLOCK_DEPENDENT_TITLE), (
     f"{CANONICAL_BLOCK_DEPENDENT_TITLE!r} has to declare a dependency, or the "
     "position of the field that renders last is not bound by this assertion"
@@ -2842,19 +2986,63 @@ assert not _member_dependencies(MULTI_ITEM_TITLE), (
     "conditional last field is never compared"
 )
 
+#: The same comparison on the one document that declares classes, and why it is
+#: needed at all.
+#:
+#: The multi-item document classifies nothing, so `Feature Class:` was bound
+#: only in the direction of absence: moving the whole conditional block
+#: (`capability.rs:9030-9032`) to any other position in the renderer left every
+#: subject byte-identical, because none of them emits the line. Every other
+#: reader of that field finds it with a position-blind `startswith`. The fix for
+#: the *last* conditional field therefore missed the conditional field that
+#: renders in the middle.
+#:
+#: Three subjects: one declaring each of the two class values, so a renderer
+#: printing a constant class is a different document, and one declaring none, so
+#: the absent direction stays bound on this document too.
+MIXED_CANONICAL_BLOCK_SUBJECTS = {
+    "Search Core": "core",
+    "Contract Gate Wiring": "non_core",
+    "Standard Operational Endpoints": None,
+}
+assert {
+    value for value in MIXED_CANONICAL_BLOCK_SUBJECTS.values() if value is not None
+} == {"core", "non_core"}, (
+    "both class values have to be compared in place, or a renderer emitting a "
+    "constant class satisfies the block"
+)
+assert None in MIXED_CANONICAL_BLOCK_SUBJECTS.values(), (
+    "one subject has to declare no class, or a renderer emitting the field "
+    "unconditionally is never a different document"
+)
+for _title, _declared in MIXED_CANONICAL_BLOCK_SUBJECTS.items():
+    assert (
+        MIXED_SECTION_CLASSES[[member[0] for member in _ALL_MEMBERS].index(_title)]
+        == _declared
+    ), (
+        f"{_title!r} is expected to render {_declared!r}, but the mixed-class "
+        f"document does not declare that for it"
+    )
+assert any(_member_dependencies(title) for title in MIXED_CANONICAL_BLOCK_SUBJECTS), (
+    "one subject here has to declare a dependency too, or this document only "
+    "ever compares blocks whose last field is absent"
+)
 
-def _expected_canonical_field_block(title: str, items: dict[str, tuple[str, ...]]) -> str:
+
+def _expected_canonical_field_block(
+    title: str,
+    items: dict[str, tuple[str, ...]],
+    feature_class: str | None,
+) -> str:
     """`render_markdown_capability_section_at_level`'s whole field block, restated.
 
     Everything the renderer emits between the heading and the work-root table
-    (`capability.rs:9021-9062`), in the order it emits it, ending with the blank
+    (`capability.rs:9020-9062`), in the order it emits it, ending with the blank
     line it pushes before the table.
 
-    No `Feature Class:` line: the multi-item document declares no class for any
-    capability, and relocation does not derive one into the section field. That
-    absence is asserted rather than skipped, because the line is conditional
-    (`capability.rs:9030-9032`) and a renderer that emitted a class nobody
-    declared would be attributing one.
+    `Feature Class:` is emitted only when the capability carries one
+    (`capability.rs:9030-9032`), so the caller says which, and both directions
+    are compared in place rather than by a position-blind line search.
     """
     cap_id = next(member[1] for member in _ALL_MEMBERS if member[0] == title)
     block = (
@@ -2862,6 +3050,10 @@ def _expected_canonical_field_block(title: str, items: dict[str, tuple[str, ...]
         f"Root WI: {SECTION_RELOCATION_WI[title]}\n"
         f"Status: verified\n"
         f"Type: {_member_type(title)}\n"
+    )
+    if feature_class is not None:
+        block += f"Feature Class: {feature_class}\n"
+    block += (
         f"Required Verification: {_member_required_verification(title)}\n"
         f"Promise:\n{MEMBER_PROMISE[title]}\n"
     )
@@ -2873,7 +3065,10 @@ def _expected_canonical_field_block(title: str, items: dict[str, tuple[str, ...]
     return block + "\n"
 
 
-def assert_relocation_renders_the_canonical_field_block(migrated: str) -> None:
+def assert_relocation_renders_the_canonical_field_block(
+    migrated: str,
+    subjects: dict[str, str | None],
+) -> None:
     """The canonical section's fields render in the order the product emits them.
 
     Every other assertion on this renderer reads one field at a time -- a
@@ -2893,8 +3088,14 @@ def assert_relocation_renders_the_canonical_field_block(migrated: str) -> None:
     the work-root and status legs, and cutting at it makes this an equality over
     everything the field block contains -- including a field the renderer must
     *not* emit and a blank line it must.
+
+    Run on two documents rather than one. The first revision compared only
+    subjects that declare no `Feature Class`, which bound that conditional
+    field's absence and left its *position* free: the block can be emitted
+    anywhere in the field order and no subject notices. The second document
+    supplies subjects that declare one, in both spellings.
     """
-    for title in CANONICAL_BLOCK_TITLES:
+    for title, feature_class in subjects.items():
         body = _capability_section_body(migrated, title)
         head, table, _ = body.partition("| Work Root |")
         assert table, (
@@ -2908,7 +3109,7 @@ def assert_relocation_renders_the_canonical_field_block(migrated: str) -> None:
             )
             for field in LIST_FIELDS
         }
-        expected = _expected_canonical_field_block(title, items)
+        expected = _expected_canonical_field_block(title, items, feature_class)
         assert head == expected, (
             f"relocated section {title!r} is not the field block the renderer "
             f"emits; expected:\n{expected!r}\ngot:\n{head!r}"
@@ -2975,6 +3176,39 @@ VARIED_STATUS_PRELUDES: tuple[str | None, ...] = tuple(
     VARIED_PRELUDE if member[0] == VARIED_PRELUDE_TITLE else None
     for member in _ALL_MEMBERS
 )
+#: The other side of the same rule, and the side no document declared.
+#:
+#: `markdown_capability_prose_around_machine_tables` (`capability.rs:10966-10988`)
+#: returns a *pair*: the prose above the first machine table and the prose below
+#: the last one. Only the first was ever declared here, so the whole block that
+#: re-emits the second (`capability.rs:9124-9129`) could be deleted and every
+#: assertion still passed -- migration silently dropping whatever an author wrote
+#: under a capability's work-root table. The product parses it and its own
+#: colocated `--lib` invariant covers a fenced-code case of it, which is exactly
+#: the boundary this project does not get to lean on: a rule observable in the
+#: migrated document is this case's to bind.
+#:
+#: On a different capability from the prelude, so "prose is carried" cannot be
+#: satisfied by one section's blob appearing somewhere, and neither piece is the
+#: document's last section -- the postlude of a last section would be bounded by
+#: the end of the document rather than by the next heading.
+VARIED_POSTLUDE_TITLE = _ALL_MEMBERS[4][0]
+VARIED_POSTLUDE = (
+    "Rollout order is transport first, then identity; both stay behind the "
+    "hardening flag until the negative suite is green."
+)
+assert VARIED_POSTLUDE_TITLE != VARIED_PRELUDE_TITLE, (
+    "the two prose sides have to sit on different capabilities, or carrying "
+    "one section's prose answers for both"
+)
+assert VARIED_POSTLUDE_TITLE != _ALL_MEMBERS[-1][0], (
+    "the postlude must not sit on the document's last section, whose end is "
+    "the end of the document rather than the next heading"
+)
+VARIED_STATUS_POSTLUDES: tuple[str | None, ...] = tuple(
+    VARIED_POSTLUDE if member[0] == VARIED_POSTLUDE_TITLE else None
+    for member in _ALL_MEMBERS
+)
 #: Work-root cells that make every capability's gap read `InProgress`.
 #:
 #: `capability_gap_status_from_table` (`capability.rs:11862-11881`) resolves
@@ -3003,7 +3237,12 @@ VARIED_STATUS_SECTION_README = _section_readme(
     "Lumen README-resident capability contract, statuses not uniform.",
     statuses=VARIED_STATUSES,
     preludes=VARIED_STATUS_PRELUDES,
+    postludes=VARIED_STATUS_POSTLUDES,
     work_root_cells=_IN_PROGRESS_WORK_ROOT_CELLS,
+)
+assert VARIED_STATUS_SECTION_README.count(VARIED_POSTLUDE) == 1, (
+    "the varied-status document must actually declare the postlude, or its "
+    "assertion pins nothing"
 )
 
 #: What each status derives for the two index columns that read it, restated
@@ -3120,6 +3359,26 @@ def assert_relocation_carries_per_capability_status(migrated: str) -> None:
     assert migrated.count(VARIED_PRELUDE) == 1, (
         "the prelude belongs to exactly one capability; emitting it more than "
         "once would mean prose is being copied rather than carried"
+    )
+
+    # And the other side of the same pair. The parse returns prelude *and*
+    # postlude; only the prelude was ever declared, which left the block that
+    # re-emits the postlude deletable.
+    postlude_body = _capability_section_body(migrated, VARIED_POSTLUDE_TITLE)
+    assert postlude_body.endswith(f"\n\n{VARIED_POSTLUDE}\n"), (
+        f"relocated section {VARIED_POSTLUDE_TITLE!r} lost the prose written "
+        f"under its work-root table; section was:\n{postlude_body}"
+    )
+    assert migrated.count(VARIED_POSTLUDE) == 1, (
+        "the postlude belongs to exactly one capability too"
+    )
+    assert VARIED_PRELUDE not in postlude_body, (
+        "the two prose sides must stay on their own capabilities, or one of "
+        "them is being copied rather than carried"
+    )
+    assert VARIED_POSTLUDE not in prelude_body, (
+        "the two prose sides must stay on their own capabilities, or one of "
+        "them is being copied rather than carried"
     )
 
 
@@ -3868,6 +4127,7 @@ MULTI_GATE_INVENTORY_PIECES = (
     (
         "evidence/lexical-search-recall.md",
         "`aw ec check --project demo`",
+        "`aw ec verify --project demo --stage td`",
     ),
 )
 MULTI_GATE_INVENTORY_CELLS = tuple(
@@ -3917,6 +4177,101 @@ assert any(
     "one work root has to contribute more than one fixture, or truncating a "
     "single claim's fixture list renders the identical document"
 )
+assert any(
+    sum(1 for piece in pieces if _is_gate_piece(piece)) > 1
+    for pieces in MULTI_GATE_INVENTORY_PIECES
+), (
+    "one work root has to contribute more than one *gate*, or the id rule for "
+    "a claim's second gate (`capability.rs:11903-11907`) is never reached"
+)
+
+
+#: What `capability_claim_evidence_from_table` (`capability.rs:11887-11919`) has
+#: to build for the multi-gate capability, keyed by work root -- which is also
+#: the claim id and the `proves` value.
+#:
+#: A claim's *first* gate is `<gap>-gate` and every later one is
+#: `<gap>-gate-<n>`. Until one work root declared two gates, that branch was
+#: unreachable from this whole fixture: collapsing the id rule to a bare
+#: `<gap>-gate` rendered every document byte for byte. It is not cosmetic -- two
+#: gates sharing an id is a hard error the checker bails on
+#: (`capability.rs:10231-10238`), so the collapse turns a legitimate two-gate
+#: work root, which this repository's own `CAPABILITIES.md` carries, into a
+#: refused contract.
+#:
+#: Derived from the declared pieces by the product's own rule rather than written
+#: out, so the expectation cannot be edited into agreement with a changed
+#: fixture.
+MULTI_GATE_CLAIM_EVIDENCE = {
+    work_root: {
+        "gates": tuple(
+            (
+                f"{work_root}-gate" if position == 0
+                else f"{work_root}-gate-{position + 1}",
+                piece.strip("`"),
+            )
+            for position, piece in enumerate(
+                piece for piece in pieces if _is_gate_piece(piece)
+            )
+        ),
+        "fixtures": tuple(
+            piece for piece in pieces if not _is_gate_piece(piece)
+        ),
+    }
+    for work_root, pieces in zip(
+        next(
+            member[4]
+            for member in _ALL_MEMBERS
+            if member[0] == MULTI_GATE_INVENTORY_TITLE
+        ),
+        MULTI_GATE_INVENTORY_PIECES,
+    )
+}
+
+
+def assert_derived_claims_carry_their_own_gates(report: dict[str, Any]) -> None:
+    """Each derived claim's gates and fixtures are its own work root's.
+
+    The migrated document renders the *union* of a capability's refs as one
+    `Gate Inventory:` field, so nothing in it can see which claim a ref came
+    from, what id the gate was given, or which work root it proves. All three
+    are read off the report instead, per claim, as exact ordered lists.
+
+    The gate id is the reason this leg exists. Every work root in this fixture
+    carried at most one gate, which left the numbering branch unreachable and a
+    real two-gate work root -- the shape
+    `apps/agentic-workflow/CAPABILITIES.md:147` carries -- rendering two gates
+    with the same id, which the checker refuses outright.
+    """
+    capability = next(
+        item
+        for item in report["capabilities"]
+        if item["title"] == MULTI_GATE_INVENTORY_TITLE
+    )
+    claims = {claim["id"]: claim for claim in capability["claims"]}
+    assert set(claims) == set(MULTI_GATE_CLAIM_EVIDENCE), (
+        f"{MULTI_GATE_INVENTORY_TITLE!r} must derive one claim per work root; "
+        f"got {sorted(claims)}, expected {sorted(MULTI_GATE_CLAIM_EVIDENCE)}"
+    )
+    for work_root, expected in MULTI_GATE_CLAIM_EVIDENCE.items():
+        claim = claims[work_root]
+        rendered_gates = tuple(
+            (gate["id"], gate["command"]) for gate in claim["gates"]
+        )
+        assert rendered_gates == expected["gates"], (
+            f"claim {work_root!r} must carry the gates {expected['gates']!r}, "
+            f"in that order and nothing else; got {rendered_gates!r}"
+        )
+        assert all(gate["proves"] == work_root for gate in claim["gates"]), (
+            f"every gate of claim {work_root!r} proves that work root; got "
+            f"{[gate['proves'] for gate in claim['gates']]!r}"
+        )
+        rendered_fixtures = tuple(claim["fixtures"])
+        assert rendered_fixtures == expected["fixtures"], (
+            f"claim {work_root!r} must carry the fixtures "
+            f"{expected['fixtures']!r}, in that order and nothing else; got "
+            f"{rendered_fixtures!r}"
+        )
 
 #: The fourth capability whose declared inventory is stripped, and the only one
 #: whose work-root `Gate / Evidence` cell is *not* backticked.
