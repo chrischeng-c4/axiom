@@ -1333,6 +1333,30 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 yaml_gap_cap.read_text(encoding="utf-8")
             )
 
+        # The three vocabularies that decide what a `key: value` clause means.
+        # Every document above writes the handful of spellings its own subject
+        # needs, so the rest of each vocabulary -- twenty-two surface keys, the
+        # inline EC-dimension split, and all four work-root column enumerations
+        # -- was reachable only by writing them.
+        contract_fields = _lumen_report(
+            root, cap_path, lumen_reference.CONTRACT_FIELD_DOCUMENT
+        )
+        lumen_reference.assert_surface_keys_are_two_independent_vocabularies(
+            contract_fields
+        )
+        lumen_reference.assert_a_semicolon_without_a_key_stays_in_the_summary(
+            contract_fields
+        )
+        lumen_reference.assert_an_inline_semicolon_splits_ec_dimensions(
+            contract_fields
+        )
+        lumen_reference.assert_an_unrecognized_ec_dimension_is_dropped(
+            contract_fields
+        )
+        lumen_reference.assert_each_out_of_vocabulary_cell_raises_its_own_blocker(
+            contract_fields
+        )
+
     after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
     lumen_reference.assert_production_contract_unmutated(before, after)
     return {
@@ -1366,6 +1390,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "alternate_forms": alternate_forms,
         "relocated_sections": relocated_sections,
         "empty_class": empty_class_report,
+        "contract_fields": contract_fields,
     }
 
 
@@ -1505,6 +1530,11 @@ def verify(case_id: str) -> list[str]:
                 "two declared surfaces are one surface only when their kind, their commands, and their summary all agree, asserted as the exact rendered item list across five capabilities of one document -- an exact duplicate that folds, and three pairs each differing in exactly one of the three key fields, which must not -- because every other document here declares each surface once, so the fold ran only on inputs it could not change and every field of its key was droppable without moving a rendered byte; the kind pair is the one round 31 was missing, and its absence was not visible from the count, because the fourth pair -- an unrecognized kind spelled two ways -- *folds*, which binds the case-fold inside the kind term while leaving the term itself deletable, so a key built from the commands and the summary alone reproduced every expectation this leg made until the fifth capability was added; the rendered item of that unrecognized pair carries the *authored* spelling, which is what the kind normalizer's pass-through fallback produces, but that spelling is bound elsewhere already and this label claims no credit for it -- what the pair adds is that the two spellings are one surface",
                 "each `(Impl, Verification)` work-root cell pair reads as one gap status, asserted across five capabilities that own one row apiece so the capability-level summary attributes to that row alone -- the blocked arm through both of its disjuncts, one row blocked on the verification side and one on the implementation side, the `out_of_scope` guard, the `none` spelling of an open row, and the in-progress fallthrough -- because every row this case otherwise declares folds to `closed`, leaving four of the five arms unentered, and because a single blocked row leaves whichever disjunct it does not enter deletable; asserted twice over, once against the gap status named directly by `aw capability report`, which is exact, and once against the Index `Impl` cell it renders through, which is lossy in a way the four subjects expose -- a blocked row and an open row both read `planned` there -- so that binding the internal name alone would leave the fold free to route any status to any cell",
                 "the arms of the gap verification fold are tried in the order the product declares them, asserted on a YAML-fenced capability that is itself `verified` and carries the only two gaps whose rendering depends on that order and on nothing else -- a closed gap reads `verified` rather than `passing`, and a blocked gap still reads `blocked` rather than `verified` -- which together pin the blocked arm ahead of the capability-status arm and the capability-status arm ahead of the closed one; this is what an arm-by-arm assertion structurally cannot express, and it is the whole of what this leg adds: the arm *values* of both folds, and the `epic` kind that marks a gap-derived row, are bound already by the capability that declares no work-root table at all, whose synthetic gap enters the same rendering block -- established by mutating each in turn and finding the case still failed with this leg neutralized, so the five gap statuses declared here are declared to reach the two ordering subjects and this label claims no credit for the rest of them",
+                "the twenty-two spellings that let an inline `;` open a new surface item are asserted as a set, each against the kind it renders as and paired to that kind through its own command rather than by position, so that the right labels against the wrong keys fails; the two vocabularies are asserted to disagree, fifteen spellings folding onto six canonical labels and seven reaching the report verbatim, which is the shape in which a spelling gets added to the separator test and forgotten in the kind fold; and four look-alike words outside the vocabulary are asserted to open no item at all, so that a splitter consulting no vocabulary produces one item and one splitting on every `; ` produces twenty-six",
+                "a `; ` followed by a word outside the surface vocabulary stays inside the summary it was written in, asserted in isolation on a capability declaring a single item so that the clause surviving is the whole observation, rather than only at the tail of a twenty-six-clause line where a truncation would look the same",
+                "EC dimension items split on an inline `;` as well, asserted as two dimensions each keeping its own summary, because every other capability in this case writes one dimension per line and leaves that separator unentered",
+                "an EC dimension whose kind is outside the closed enum reaches the report not at all -- no blocker, no diagnostic, and a contract quietly narrower than the one written -- asserted because it was unbound rather than because it is right; the migrated document re-rendering that same dropped line is measured and deliberately left unasserted, so a fix that rejects the misspelling instead of silently dropping it does not have to break this case twice; the drop is separated from the near miss beside it by declaring `security` rather than `behavior`, because an unrecognized kind falling back to `Behavior` is absorbed into a declared behavior item and reads identically to being dropped, and that same choice makes this the only capability in the case that declares dimensions without declaring behavior, which is the only input on which the synthesized runner-less behavior dimension is observable at all",
+                "each of the four work-root columns validates its own cell, asserted as four blockers in document order with every message pinned whole because the vocabulary each one names is the assertion\'s content, across four rows that break one column apiece so that a single validator firing four times fails; the capability still parses and still reports its own surface, which is what separates validating every row from abandoning the section at the first bad cell",
                 "Lumen's production capability contract is byte-identical before and after the fixture run -- a property of this external contract rather than of `aw capability`, listed so a reader can see the fixture is barred from mutating a real project's contract, and counting toward nothing the product promises",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
