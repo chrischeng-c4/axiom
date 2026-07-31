@@ -2173,8 +2173,14 @@ def _section_titles(migrated: str) -> list[str]:
     ]
 
 
-def assert_migration_reaches_a_fixed_point(migrated: str) -> None:
+def assert_migration_index_and_sections_agree_on_order(migrated: str) -> None:
     """The migrated index and the migrated sections are in the same order.
+
+    Named for what it asserts. This was `assert_migration_reaches_a_fixed_point`
+    for twenty-nine rounds, and it does not run migration twice: order agreement
+    is a *precondition* for convergence, not convergence. The rule the old name
+    claimed is bound by
+    `assert_migration_is_idempotent_at_its_fixed_point` instead.
 
     Migration groups the capability *sections* under the two roots but renders
     the *index* from its own pass. If that pass followed raw document order
@@ -2202,6 +2208,151 @@ def assert_migration_reaches_a_fixed_point(migrated: str) -> None:
     assert section_titles == list(GROUPED_TITLES), (
         f"migration must render core-then-non-core, got {section_titles}"
     )
+
+
+#: The sentence the migrate tick emits once there is nothing left to migrate,
+#: as a format string over the document it examined. Asserted whole and with
+#: the path substituted, so a constant reassurance that names no document --
+#: which is what an unconditional early return would emit -- cannot pass.
+MIGRATION_FIXED_POINT_STDOUT = "{cap_path} already uses canonical Markdown capability format"
+
+#: The exact ordered `(status, changed, kind)` triples migration is expected to
+#: emit before it converges, one entry per arrival path. `kind` is pinned
+#: because the two migrations are separate phases in a required order -- a
+#: contract sitting in the README is relocated first and reformatted second --
+#: and because a single tick performing both would report one triple, not two.
+MIGRATION_TICKS_FROM_README = (
+    ("migrated", True, "location_migration_required"),
+    ("migrated", True, "format_migration_required"),
+)
+#: The same for a contract already resident in CAPABILITIES.md: no relocation
+#: is due, so the format phase is the whole of the work.
+MIGRATION_TICKS_FROM_CAPABILITIES = (("migrated", True, "format_migration_required"),)
+
+#: How many ticks the driver runs past convergence. Two, not one, so that
+#: "unchanged" is asserted to *stay* unchanged: a tick that alternates between
+#: rewriting and not rewriting reports a clean no-op every other run.
+MIGRATION_TICKS_PAST_CONVERGENCE = 2
+
+
+def assert_migration_is_idempotent_at_its_fixed_point(
+    ticks: list[tuple[dict, str]],
+    expected_migrating_ticks: tuple[tuple[str, bool, str], ...],
+    *,
+    subject: str,
+) -> None:
+    """Migration converges, and the tick that reports no change made none.
+
+    `ticks` is `(envelope, document text)` per `aw capability migrate` run, in
+    order, driven until the envelope stops reporting a change plus
+    `MIGRATION_TICKS_PAST_CONVERGENCE` further runs.
+
+    Convergence is the property that makes migration safe to re-run, and it was
+    bound by nothing: every leg here migrates exactly once and reads the result.
+    A tick that rewrote the document on every invocation -- or one that reported
+    `unchanged` while still writing -- passed all of them, and would keep
+    passing while `aw capability migrate` never terminated for an adopter
+    driving it to completion.
+
+    Four separable things are asserted, because the interesting failures are not
+    all the same failure:
+
+    * The migrating prefix is the exact ordered triple list, so a run that
+      skipped a phase, ran them in the other order, or performed both in one
+      tick is caught. `changed` and `status` are pinned alongside `kind`
+      because `kind` names the *check that ran*, not its outcome: the product
+      reports `format_migration_required` on the tick that migrates and on the
+      tick that finds nothing to do alike. That is asserted below rather than
+      left as a comment, so a later revision cannot quietly start reading
+      `kind` as the discriminator and believe it has bound something.
+    * Every tick after the prefix reports `unchanged` / `changed is False` and
+      emits the fixed-point sentence naming its own document. These are one
+      observation, not three: the product derives `changed` from whether its
+      own stdout starts with `"migrated "`, and `status` from `changed`. They
+      are asserted together anyway, because the derivation is a product detail
+      the contract does not promise and a future revision computing `changed`
+      from the filesystem would leave the envelope fields unpinned.
+    * The document is byte-identical from the last migrating tick onward. This
+      is the only half that can catch a migration which rewrites the file while
+      reporting a no-op -- precisely because `changed` is a re-read of stdout
+      rather than an observation of the document, a tick that returned the
+      fixed-point sentence and wrote anyway would report `unchanged` and pass
+      every envelope assertion above it.
+    * The loop stopped after exactly the expected phases plus the runs past
+      convergence. The driver ticks until it has seen
+      `MIGRATION_TICKS_PAST_CONVERGENCE` consecutive no-ops, under a bound, so
+      the tick count is an observation rather than a constant: a migration
+      needing a third phase, or one never converging and stopping at the bound,
+      lands on a different length.
+
+    What is deliberately *not* asserted is the content of the converged
+    document. Two defects reachable from these inputs -- #3264, which drops
+    every `Root WI` during the format phase, and #3265, which truncates a
+    promise at `markdown_cell`'s own `\\|` escape when the index table is read
+    back -- are preserved at the fixed point. Pinning the converged bytes would
+    hold both losses in place. Idempotence is orthogonal to them: fixing either
+    changes what the fixed point contains, not that there is one.
+    """
+    expected_length = len(expected_migrating_ticks) + MIGRATION_TICKS_PAST_CONVERGENCE
+    assert len(ticks) == expected_length, (
+        f"{subject}: the tick loop ran {len(ticks)} times where {expected_length} "
+        f"was expected -- {len(expected_migrating_ticks)} migrating phase(s) "
+        f"followed by {MIGRATION_TICKS_PAST_CONVERGENCE} consecutive no-ops; a "
+        f"longer run means migration needed a phase it is not supposed to need, "
+        f"or never converged and stopped at the driver's bound"
+    )
+
+    observed = [
+        (envelope.get("status"), envelope.get("changed"), envelope.get("result", {}).get("kind"))
+        for envelope, _document in ticks
+    ]
+    migrating = observed[: len(expected_migrating_ticks)]
+    assert migrating == list(expected_migrating_ticks), (
+        f"{subject}: migration did not run the phases it is required to run, in "
+        f"order; expected {list(expected_migrating_ticks)} got {migrating}"
+    )
+
+    settled = ticks[len(expected_migrating_ticks) :]
+    assert len(settled) >= MIGRATION_TICKS_PAST_CONVERGENCE, (
+        f"{subject}: {len(settled)} tick(s) observed past the migrating phases, "
+        f"fewer than the {MIGRATION_TICKS_PAST_CONVERGENCE} an alternating "
+        f"rewrite would survive"
+    )
+    for offset, (envelope, _document) in enumerate(settled):
+        tick = len(expected_migrating_ticks) + offset + 1
+        assert envelope.get("status") == "unchanged", (
+            f"{subject}: tick {tick} reports status={envelope.get('status')!r}, so "
+            f"migration has not converged"
+        )
+        assert envelope.get("changed") is False, (
+            f"{subject}: tick {tick} reports changed={envelope.get('changed')!r}, so "
+            f"migration has not converged"
+        )
+        stdout = (envelope.get("result", {}).get("stdout") or "").strip()
+        expected_stdout = MIGRATION_FIXED_POINT_STDOUT.format(
+            cap_path=envelope.get("cap_path")
+        )
+        assert stdout == expected_stdout, (
+            f"{subject}: tick {tick} does not report its own document as already "
+            f"canonical; expected {expected_stdout!r} got {stdout!r}"
+        )
+
+    settled_kind = settled[0][0].get("result", {}).get("kind")
+    last_migrating_kind = expected_migrating_ticks[-1][2]
+    assert settled_kind == last_migrating_kind, (
+        f"{subject}: the converged tick reports kind={settled_kind!r} where the "
+        f"last migrating tick reported {last_migrating_kind!r}; `kind` names the "
+        f"check that ran and cannot be read as whether it changed anything, and "
+        f"an assertion that read it that way would bind nothing"
+    )
+
+    converged_document = ticks[len(expected_migrating_ticks) - 1][1]
+    for offset, (_envelope, document) in enumerate(settled):
+        tick = len(expected_migrating_ticks) + offset + 1
+        assert document == converged_document, (
+            f"{subject}: tick {tick} reported no change but rewrote the document; "
+            f"{len(converged_document)} bytes before, {len(document)} after"
+        )
 
 
 #: The legacy row title -> `Active WI` mapping, derived from `_LEGACY_ROWS` so a
