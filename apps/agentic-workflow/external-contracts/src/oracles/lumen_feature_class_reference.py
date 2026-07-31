@@ -6483,20 +6483,24 @@ def assert_relocation_derives_a_missing_gate_inventory(migrated: str) -> None:
     work-root command -- not `-`, which is what a collapsed derivation renders.
 
     `MULTI_GATE_INVENTORY_TITLE` declared nothing and has *two* work roots, so
-    its derived field is the only two-item list here. Every other capability that
-    reaches the derivation has one work root, where joining the list, keeping its
-    first element and keeping its last are byte-identical; two distinct refs
-    asserted in exact order separate all three.
+    its derived field is the only multi-item list here -- three fixtures then
+    four gates, read from the tuple rather than from this sentence, which stated
+    an arity of two that the constant outgrew. Every other capability that
+    reaches the derivation has one work root and one ref, where joining the list,
+    keeping its first element and keeping its last are byte-identical; a list
+    this long asserted in exact order separates all three.
 
-    It is also the only capability whose two refs come from *different* halves of
-    the derivation -- a gate from the first work root, a fixture from the second
-    -- so the order the two halves are collected in is asserted rather than
-    assumed. Everywhere else each capability draws from one half only, so the
-    fixture half and the gate half never share a list and swapping the two
-    collections renders the identical document. The declaration order is the
-    reverse of the rendered order on purpose: fixtures come first however they
-    were declared, so an implementation that emitted refs in work-root order
-    fails here too.
+    It is also the only capability drawing from *both* halves of the derivation,
+    and it draws from both in both work roots -- root one contributes one gate
+    and two fixtures, root two one fixture and three gates, one of those two
+    gates arriving in a single `;`-separated cell -- so neither the order the
+    halves are collected in nor the order the roots are walked in can be assumed.
+    Everywhere else each capability draws from one half only, so the fixture half
+    and the gate half never share a list and swapping the two collections renders
+    the identical document. The declaration order interleaves the two kinds on
+    purpose: all three fixtures come first however they were declared, so an
+    implementation that emitted refs in work-root order, or that stably preserved
+    declaration order, fails here too.
 
     `FIXTURE_INVENTORY_TITLE` declared nothing and its work-root cell is not
     backticked, so it parses as a claim *fixture* rather than a claim gate. The
@@ -7216,6 +7220,13 @@ def assert_verified_split_is_non_degenerate(report: dict[str, Any]) -> None:
     something: if core and non-core happened to agree, a transposed or duplicated
     field would satisfy every equality here.
     """
+    # This document is the reference shape, so it must raise nothing of its own.
+    # Added in round 41: the leg read no blockers at all, which left assertion
+    # 8's "no document raises a blocker the fixture did not name" unbound for
+    # exactly the report where a spurious finding would be least expected and so
+    # least likely to be noticed.
+    assert document_blockers(report) == [], report
+
     assert report["core_verified_count"] == len(CORE_IDS), report
     assert report["non_core_verified_count"] == len(NON_CORE_IDS), report
     assert report["core_verified_claim_count"] == CORE_CLAIM_COUNT, report
@@ -8221,10 +8232,15 @@ def assert_each_out_of_vocabulary_cell_raises_its_own_blocker(
     capability, and the count assertion below is what separates that from
     validating every row.
     """
-    blockers = [b for b in report.get("blockers") or [] if "`Bad Cells`" in b]
+    # Subtraction, not a substring whitelist. Until round 41 this filtered on
+    # ``"`Bad Cells`" in b``, which owned only the blockers it wrote: a fifth
+    # blocker phrased without that substring was invisible here, and assertion 8
+    # nevertheless claimed every document's findings were separated from the
+    # scratch environment by subtraction. `document_blockers` removes exactly the
+    # environment prefixes and asserts that set, so the comparison below is now
+    # over *every* blocker this document caused.
+    blockers = document_blockers(report)
     assert tuple(blockers) == BAD_CELL_BLOCKERS, blockers
-    # Not `>= 4`: the fixture's own environment contributes unrelated blockers
-    # (no Python EC or TD manifest), and this leg owns only the ones it wrote.
     assert report["capability_count"] == len(_CONTRACT_FIELD_SUBJECTS), report
     assert report["status"] == "blocked", report
     bad_cells = _capability_by_id(report, "bad-cells")
@@ -8553,6 +8569,14 @@ def assert_machine_tables_declare_surfaces_and_dimensions(
     absorbed behind it. That is the same silent drop as the contract-field route
     (#3274), reached through the other parser.
     """
+    # Every column spelling here is in vocabulary and every guard below is about
+    # what parsed, not about what was rejected, so this document must contribute
+    # no blocker of its own. Added in round 41 for the same reason as the leg on
+    # the verified split: the whole vocabulary walk ran without ever reading
+    # `blockers`, so a parser that emitted a spurious finding per alias satisfied
+    # every assertion here while falsifying assertion 8.
+    assert document_blockers(report) == [], report
+
     for cap_id, expected in MACHINE_TABLE_SURFACES.items():
         surfaces = _capability_by_id(report, cap_id)["surfaces"]
         assert surfaces == expected, (cap_id, surfaces, expected)
