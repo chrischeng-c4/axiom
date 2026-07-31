@@ -155,7 +155,14 @@ def _capability(
     gate_items = [f"tech-design/{cap_id}.md"]
     if multi_item:
         surface_items.append(MULTI_ITEM_SURFACE_ITEM)
-        dimension_items.append(MULTI_ITEM_EC_DIMENSION_ITEM)
+        # Prepended rather than appended, because EC dimensions are the one list
+        # field whose rendered order is *not* the declared order:
+        # `dedupe_ec_dimensions` collapses them through a `BTreeMap` keyed by
+        # kind, so they come back in `CapabilityEcDimensionKind` order. This
+        # member's own dimension is `behavior` and its second is `security`,
+        # which is already that order, so appending left the sort and the
+        # declared order rendering the identical document.
+        dimension_items.insert(0, MULTI_ITEM_EC_DIMENSION_ITEM)
         gate_items.append(MULTI_ITEM_GATE_INVENTORY_ITEM)
     surfaces_field = "".join(f"- {item}\n" for item in surface_items)
     dimensions_field = "".join(f"- {item}\n" for item in dimension_items)
@@ -2951,6 +2958,26 @@ MULTI_ITEM_OVERRIDES = {
         ),
     }
 }
+# Surfaces and Gate Inventory render in declaration order; EC dimensions render
+# in `CapabilityEcDimensionKind` order, because `dedupe_ec_dimensions` collapses
+# them through a `BTreeMap`. The declaration in `_section` therefore prepends the
+# second dimension and appends the other two, so this document distinguishes the
+# sort from declaration order rather than agreeing with both.
+assert (
+    MULTI_ITEM_OVERRIDES[MULTI_ITEM_TITLE]["ec_dimensions"][0]
+    != MULTI_ITEM_EC_DIMENSION_ITEM
+), (
+    "the multi-item member must declare its EC dimensions in an order the sort "
+    "does not agree with, or the sort renders the identical document"
+)
+assert (
+    MULTI_ITEM_OVERRIDES[MULTI_ITEM_TITLE]["surfaces"][-1] == MULTI_ITEM_SURFACE_ITEM
+    and MULTI_ITEM_OVERRIDES[MULTI_ITEM_TITLE]["gate_inventory"][-1]
+    == MULTI_ITEM_GATE_INVENTORY_ITEM
+), (
+    "the two list fields that do keep declaration order must still expect their "
+    "second item last, or the two rules are not being told apart"
+)
 
 
 #: Relocation input carrying both *partial* item shapes: one capability declares
@@ -3508,6 +3535,108 @@ def _alias_spelling_readme() -> str:
 
 
 ALIAS_SPELLING_SECTION_README = _alias_spelling_readme()
+
+
+#: The two capabilities whose EC dimension is declared as two same-kind halves,
+#: and the order each declares them in.
+#:
+#: `dedupe_ec_dimensions` (`capability.rs:11652-11674`) collapses a capability's
+#: dimensions into a `BTreeMap` keyed by kind, and fills the first occurrence's
+#: empty fields from the later ones: an empty `runner` takes the later item's
+#: runner, an empty `summary` takes the later item's summary. Every document in
+#: this fixture declares at most one item per kind, so the map never merged
+#: anything and both fills were deletable without changing a rendered byte.
+#:
+#: The two fills are separately observable only in opposite declaration orders,
+#: because the fill always runs on the *first* occurrence. `Search Core` writes
+#: the summary half first, so only the runner fill has work to do; `Contract Gate
+#: Wiring` writes the command half first, so only the summary fill does. One
+#: capability binds one fill and leaves the other free.
+SAME_KIND_EC_DIMENSION_ORDER = {
+    "Search Core": ("summary", "command"),
+    "Contract Gate Wiring": ("command", "summary"),
+}
+assert len({order for order in SAME_KIND_EC_DIMENSION_ORDER.values()}) == 2, (
+    "the two capabilities must declare their halves in opposite orders, or one "
+    "of the two fills is never the reason for the merged item"
+)
+assert len({_member_ec_dimension(title) for title in SAME_KIND_EC_DIMENSION_ORDER}) == 2, (
+    "the two capabilities must use different dimension kinds, or their merges "
+    "share a map entry in a document that declares them both"
+)
+
+
+def _same_kind_ec_dimension_halves(title: str) -> tuple[str, ...]:
+    """The two half-items whose merge must reconstruct the canonical item.
+
+    Neither half is a legal contract item on its own: one carries a summary with
+    no runner, the other a runner with no summary. Their merge is asserted as the
+    *default* single-item expectation, with no override, because the canonical
+    item is exactly what a correct merge produces -- so a merge that dropped
+    either half renders a shorter item, and a merge that did not happen at all
+    renders two items where one is expected.
+    """
+    dimension = _member_ec_dimension(title)
+    cap_id = _ALIAS_CAP_ID[title]
+    halves = {
+        "summary": f"{dimension}: {cap_id} {dimension} gate.",
+        "command": f"{dimension}: `{_member_ec_runner(title)}`",
+    }
+    return tuple(halves[half] for half in SAME_KIND_EC_DIMENSION_ORDER[title])
+
+
+for _same_kind_title in SAME_KIND_EC_DIMENSION_ORDER:
+    _same_kind_halves = _same_kind_ec_dimension_halves(_same_kind_title)
+    assert len(_same_kind_halves) == 2, _same_kind_title
+    for _same_kind_half in _same_kind_halves:
+        assert _same_kind_half != MEMBER_EC_DIMENSION_ITEM[_same_kind_title], (
+            f"{_same_kind_title!r} must declare halves, not the whole item, or "
+            f"the merge has nothing to reconstruct"
+        )
+        assert _same_kind_half.startswith(
+            f"{_member_ec_dimension(_same_kind_title)}:"
+        ), (_same_kind_title, _same_kind_half)
+    assert "`" not in _same_kind_halves[
+        SAME_KIND_EC_DIMENSION_ORDER[_same_kind_title].index("summary")
+    ], f"{_same_kind_title!r}'s summary half must carry no runner"
+
+
+def _same_kind_ec_dimension_readme() -> str:
+    """A README in which two capabilities split one dimension across two items.
+
+    Built by rewriting the canonical declaration in place, the way the alias and
+    partial-item documents are, so nothing about the rest of the contract moves
+    and the merge is the only difference from the baseline relocation input.
+
+    The two capabilities are chosen for their dimension kinds -- `behavior` and
+    `stability` -- so the merged entries occupy different keys of the same map,
+    and for their opposite declaration orders, so each of the two fills is the
+    sole reason for its own merged item.
+    """
+    document = _section_readme(
+        _ALL_MEMBERS,
+        (None,) * len(_ALL_MEMBERS),
+        "Lumen README-resident capability contract, split EC dimension items.",
+    )
+    for title, halves in (
+        (title, _same_kind_ec_dimension_halves(title))
+        for title in SAME_KIND_EC_DIMENSION_ORDER
+    ):
+        marker = f"- {MEMBER_EC_DIMENSION_ITEM[title]}\n"
+        assert document.count(marker) == 1, (title, document.count(marker))
+        document = document.replace(
+            marker, "".join(f"- {half}\n" for half in halves), 1
+        )
+    for title in SAME_KIND_EC_DIMENSION_ORDER:
+        assert MEMBER_EC_DIMENSION_ITEM[title] not in document, (
+            f"{title!r} must declare only halves in this document, or the merged "
+            f"item is present in the input and the expectation is not a claim "
+            f"about the merge"
+        )
+    return document
+
+
+SAME_KIND_EC_DIMENSION_SECTION_README = _same_kind_ec_dimension_readme()
 
 
 #: Relocation input in which three capabilities declare no work-root table.
