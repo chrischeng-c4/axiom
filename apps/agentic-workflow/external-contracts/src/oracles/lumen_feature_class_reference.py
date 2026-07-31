@@ -3224,6 +3224,292 @@ def assert_relocation_carries_every_list_item(migrated: str) -> None:
         )
 
 
+def _normalized_kind_token(value: str) -> str:
+    """The product's `normalize_table_token` (`capability.rs:11946-11953`).
+
+    Restated rather than approximated: the spelling comparison below is only
+    meaningful if it folds a token the same way the parse does.
+    """
+    return "".join(
+        ch for ch in value.strip().strip("`") if ch.isascii() and ch.isalnum()
+    ).lower()
+
+
+#: Canonical surface kind -> every spelling `normalize_surface_kind`
+#: (`capability.rs:11692-11703`) folds into it.
+#:
+#: Restated from the product rather than derived from it, so an arm that quietly
+#: disappears is a failing expectation instead of a narrower one.
+SURFACE_KIND_ALIASES = {
+    "CLI": ("cli", "command", "commands"),
+    "HTTP": ("http", "api", "rest"),
+    "SDK": ("sdk",),
+    "UI": ("ui", "webui", "web"),
+    "Config": ("config", "configuration"),
+    "FileFormat": ("fileformat", "file", "format"),
+}
+
+#: Canonical EC dimension kind -> every spelling `parse_ec_dimension_kind`
+#: (`capability.rs:11705-11715`) folds into it, keyed in
+#: `CapabilityEcDimensionKind` declaration order (`capability.rs:654-659`),
+#: which is the order `dedupe_ec_dimensions`' `BTreeMap` renders them in.
+EC_DIMENSION_ALIASES = {
+    "behavior": ("behavior", "behaviour", "functional", "function", "render"),
+    "efficiency": ("efficiency", "performance", "perf"),
+    "security": ("security", "secure"),
+    "stability": ("stability", "resilience", "reliability"),
+}
+assert set(EC_DIMENSION_ALIASES) == set(MEMBER_EC_DIMENSION.values()), (
+    "EC_DIMENSION_ALIASES must be keyed by the same canonical vocabulary the "
+    "members declare, or the two maps describe different enums"
+)
+
+#: The spellings the other documents already author, and therefore already bind:
+#: `HTTP` and `CLI` fold through the arm that names them, and every member's EC
+#: dimension is written in its canonical spelling.
+_AUTHORED_SURFACE_SPELLINGS = frozenset(
+    _normalized_kind_token(MEMBER_SURFACE_KIND[member[0]]) for member in _ALL_MEMBERS
+)
+_AUTHORED_EC_DIMENSION_SPELLINGS = frozenset(
+    MEMBER_EC_DIMENSION[member[0]] for member in _ALL_MEMBERS
+)
+
+#: Alias spelling -> the canonical kind it must fold into, for every spelling no
+#: other document writes. These are the arms this document exists to reach: with
+#: only the canonical spelling ever authored, each `|` alternative in both match
+#: tables was deletable without changing any rendered byte.
+_SURFACE_ALIASES_TO_BIND = {
+    alias: canonical
+    for canonical, aliases in SURFACE_KIND_ALIASES.items()
+    for alias in aliases
+    if alias not in _AUTHORED_SURFACE_SPELLINGS
+}
+_EC_DIMENSION_ALIASES_TO_BIND = {
+    alias: canonical
+    for canonical, aliases in EC_DIMENSION_ALIASES.items()
+    for alias in aliases
+    if alias not in _AUTHORED_EC_DIMENSION_SPELLINGS
+}
+
+#: Title -> the alias spellings its `Surfaces:` items are authored with. A
+#: capability may declare several, because 13 unbound spellings do not fit one
+#: per capability across six members and a second document would cost a second
+#: migration run to bind three more arms.
+ALIAS_SPELLING_SURFACES = {
+    _ALL_MEMBERS[0][0]: ("api", "rest", "sdk"),
+    _ALL_MEMBERS[1][0]: ("ui", "command", "commands"),
+    _ALL_MEMBERS[2][0]: ("webui", "web", "config"),
+    _ALL_MEMBERS[3][0]: ("configuration", "file", "format"),
+    _ALL_MEMBERS[4][0]: ("fileformat",),
+}
+
+#: Surface-kind spellings `parse_markdown_contract_field_line`
+#: (`capability.rs:10920`) also accepts as the *name* of the `Surfaces:` field.
+#:
+#: An item written as its own `- command: ...` line is read as a second
+#: declaration of the field rather than as an item of it: the kind token is
+#: consumed as the field name and only the remainder is kept, so the item
+#: reaches `normalize_surface_kind` with the `("CLI", piece)` default already
+#: substituted for the kind the author wrote. The rendered document is right by
+#: coincidence -- the default happens to be the kind those two spellings fold
+#: into -- which is exactly why a mutant that deleted both arms survived a
+#: document declaring them one per line.
+#:
+#: Declared behind a spelling that is not a field key, on a `;`-joined line, the
+#: token survives to the fold and the arms are entered.
+FIELD_KEY_COLLIDING_SURFACE_SPELLINGS = frozenset({"command", "commands"})
+_SINGLE_LINE_SURFACE_TITLES = frozenset(
+    title
+    for title, aliases in ALIAS_SPELLING_SURFACES.items()
+    if FIELD_KEY_COLLIDING_SURFACE_SPELLINGS & set(aliases)
+)
+for _title in _SINGLE_LINE_SURFACE_TITLES:
+    assert (
+        ALIAS_SPELLING_SURFACES[_title][0]
+        not in FIELD_KEY_COLLIDING_SURFACE_SPELLINGS
+    ), (
+        f"{_title!r} leads its `;`-joined surface line with a spelling that is "
+        f"also a field key, which puts the whole line back on the branch that "
+        f"eats the kind token"
+    )
+
+#: Title -> the alias spellings its `EC Dimensions:` items are authored with.
+#:
+#: No capability names two aliases of the *same* canonical kind: those two
+#: dimensions would be merged by `dedupe_ec_dimensions` into one rendered item,
+#: which is a different rule with a different expectation. Within a capability
+#: the spellings are deliberately *not* in canonical order, because the rendered
+#: order comes from a `BTreeMap` over the enum rather than from the document --
+#: authoring them in order would leave a parse that preserved document order
+#: rendering the identical list.
+ALIAS_SPELLING_EC_DIMENSIONS = {
+    _ALL_MEMBERS[0][0]: ("secure", "behaviour", "resilience", "perf"),
+    _ALL_MEMBERS[1][0]: ("functional", "performance", "reliability"),
+    _ALL_MEMBERS[2][0]: ("function",),
+    _ALL_MEMBERS[3][0]: ("render",),
+}
+assert {
+    alias for aliases in ALIAS_SPELLING_SURFACES.values() for alias in aliases
+} == set(_SURFACE_ALIASES_TO_BIND), (
+    "the alias document must author every surface-kind spelling no other "
+    "document authors, or the arms it leaves out stay deletable"
+)
+assert {
+    alias for aliases in ALIAS_SPELLING_EC_DIMENSIONS.values() for alias in aliases
+} == set(_EC_DIMENSION_ALIASES_TO_BIND), (
+    "the alias document must author every EC dimension spelling no other "
+    "document authors, or the arms it leaves out stay deletable"
+)
+for _title, _aliases in ALIAS_SPELLING_EC_DIMENSIONS.items():
+    _kinds = [_EC_DIMENSION_ALIASES_TO_BIND[_alias] for _alias in _aliases]
+    assert len(set(_kinds)) == len(_kinds), (
+        f"{_title!r} declares two spellings of the same EC dimension kind; "
+        f"`dedupe_ec_dimensions` merges those into one item and the expectation "
+        f"below would be asserting the merge instead of the alias table"
+    )
+assert (
+    [
+        _EC_DIMENSION_ALIASES_TO_BIND[_alias]
+        for _alias in ALIAS_SPELLING_EC_DIMENSIONS[_ALL_MEMBERS[0][0]]
+    ]
+    != sorted(
+        (
+            _EC_DIMENSION_ALIASES_TO_BIND[_alias]
+            for _alias in ALIAS_SPELLING_EC_DIMENSIONS[_ALL_MEMBERS[0][0]]
+        ),
+        key=tuple(EC_DIMENSION_ALIASES).index,
+    )
+), (
+    "at least one capability must author its dimensions out of canonical order, "
+    "or a parse that preserved document order renders the identical list"
+)
+
+
+def _alias_surface_item(cap_id: str, alias: str) -> tuple[str, str]:
+    """The `(authored, rendered)` pair for one aliased surface item.
+
+    Only the leading kind token differs. Commands and summary are carried
+    through verbatim, so an implementation that canonicalised the whole item --
+    or rewrote the summary to name the canonical kind -- is a different
+    document.
+    """
+    body = f"`aw {cap_id} --{alias}` - {cap_id} surface declared as {alias}."
+    return f"{alias}: {body}", f"{_SURFACE_ALIASES_TO_BIND[alias]}: {body}"
+
+
+def _alias_ec_dimension_item(cap_id: str, alias: str) -> tuple[str, str]:
+    """The `(authored, rendered)` pair for one aliased EC dimension item."""
+    body = f"`{cap_id}-{alias}-gate` - {cap_id} {alias} gate."
+    return f"{alias}: {body}", f"{_EC_DIMENSION_ALIASES_TO_BIND[alias]}: {body}"
+
+
+_ALIAS_CAP_ID = {member[0]: member[1] for member in _ALL_MEMBERS}
+_ALIAS_AUTHORED_SURFACES = {}
+_ALIAS_RENDERED_SURFACES = {}
+for _title, _aliases in ALIAS_SPELLING_SURFACES.items():
+    _pairs = [_alias_surface_item(_ALIAS_CAP_ID[_title], _alias) for _alias in _aliases]
+    # `dedupe_surfaces` (`capability.rs:11676-11689`) keys on the normalized
+    # kind plus the commands plus the summary, so items that fold to the same
+    # kind survive only because each carries its own command and summary. It
+    # filters in place rather than sorting, so the rendered order is the
+    # authored order.
+    _ALIAS_AUTHORED_SURFACES[_title] = tuple(pair[0] for pair in _pairs)
+    _ALIAS_RENDERED_SURFACES[_title] = tuple(pair[1] for pair in _pairs)
+
+_ALIAS_AUTHORED_EC_DIMENSIONS = {}
+_ALIAS_RENDERED_EC_DIMENSIONS = {}
+for _title, _aliases in ALIAS_SPELLING_EC_DIMENSIONS.items():
+    _pairs = [
+        (_alias, _alias_ec_dimension_item(_ALIAS_CAP_ID[_title], _alias))
+        for _alias in _aliases
+    ]
+    _ALIAS_AUTHORED_EC_DIMENSIONS[_title] = tuple(pair[1][0] for pair in _pairs)
+    _ALIAS_RENDERED_EC_DIMENSIONS[_title] = tuple(
+        pair[1][1]
+        for pair in sorted(
+            _pairs,
+            key=lambda pair: tuple(EC_DIMENSION_ALIASES).index(
+                _EC_DIMENSION_ALIASES_TO_BIND[pair[0]]
+            ),
+        )
+    )
+
+#: Per-capability rendered expectations for the alias document, in the
+#: `item_overrides` shape `assert_sections_carry_their_own_contract` takes.
+#:
+#: `Gate Inventory:` is deliberately absent from every entry: it carries no kind
+#: token, so it stays on the default single-item expectation and this document
+#: keeps binding it alongside the two it varies.
+ALIAS_SPELLING_OVERRIDES = {
+    title: {
+        key: items
+        for key, items in (
+            ("surfaces", _ALIAS_RENDERED_SURFACES.get(title)),
+            ("ec_dimensions", _ALIAS_RENDERED_EC_DIMENSIONS.get(title)),
+        )
+        if items is not None
+    }
+    for title in set(ALIAS_SPELLING_SURFACES) | set(ALIAS_SPELLING_EC_DIMENSIONS)
+}
+
+
+def _alias_spelling_readme() -> str:
+    """A README whose surface and EC dimension kinds are written as aliases.
+
+    Both kind fields are parsed through a fold table -- `normalize_surface_kind`
+    for surfaces, `parse_ec_dimension_kind` for EC dimensions -- and every other
+    document in this fixture authors only the spelling the table returns. That
+    made each table a near-identity on this fixture's inputs: deleting the
+    `"api" | "rest"` alternatives, or the `"behaviour" | "functional"` ones,
+    rendered a byte-identical document, because no input ever took those arms.
+
+    The EC dimension table fails *silently* when an arm is missing: an
+    unrecognized kind returns `None` and the item is dropped, not carried
+    through unfolded. So an alias whose arm is gone does not render a differently
+    spelled item -- it renders no item at all, and only an expectation that
+    names the exact list catches it.
+
+    Built by rewriting the canonical items in place, the same way the
+    partial-item document is: the alias affects the authored kind token only, so
+    the rendered expectation stays the canonical item and no new declaration
+    machinery is needed.
+
+    Two members keep a passthrough kind (`Identity`, `MCP`), which the fold table
+    does not name and returns unchanged, so this document also holds the `_ =>`
+    arm against the aliased ones.
+
+    The `command` and `commands` spellings are declared on a `;`-joined line
+    rather than one per line, for the reason on
+    `FIELD_KEY_COLLIDING_SURFACE_SPELLINGS`: written as their own line they are
+    read as the *name* of the field and never reach the fold at all, and the
+    default the parse substitutes is the very kind they would have folded into,
+    so a document declaring them per line renders correctly with both arms
+    deleted. That is the shape this document exists to rule out, so getting it
+    wrong here would have been the defect it is written against.
+    """
+    document = _section_readme(
+        _ALL_MEMBERS,
+        (None,) * len(_ALL_MEMBERS),
+        "Lumen README-resident capability contract, aliased kind spellings.",
+    )
+    for declared_by_title, authored_by_title, single_line_titles in (
+        (MEMBER_SURFACE_ITEM, _ALIAS_AUTHORED_SURFACES, _SINGLE_LINE_SURFACE_TITLES),
+        (MEMBER_EC_DIMENSION_ITEM, _ALIAS_AUTHORED_EC_DIMENSIONS, frozenset()),
+    ):
+        for title, authored in authored_by_title.items():
+            marker = f"- {declared_by_title[title]}\n"
+            assert document.count(marker) == 1, (title, document.count(marker))
+            if title in single_line_titles:
+                block = "- " + "; ".join(authored) + "\n"
+            else:
+                block = "".join(f"- {item}\n" for item in authored)
+            document = document.replace(marker, block, 1)
+    return document
+
+
+ALIAS_SPELLING_SECTION_README = _alias_spelling_readme()
+
+
 #: The capabilities whose whole rendered field block is asserted as one string on
 #: the multi-item document, and why those two.
 #:
@@ -3544,14 +3830,26 @@ EFFICIENCY_SLOT_BLOCK = _efficiency_slot_block(
 #: assert that used to sit under the push carrier said so out loud, requiring
 #: the slot to land on a capability declaring some *other* dimension. A fixture
 #: invariant that positively guarantees an arm is never entered is not coverage
-#: of that arm; deleting the attach arm's two lines left every document here
-#: byte for byte identical, while a real project that had already declared an
-#: `efficiency` dimension would have had a second one appended beside it.
+#: of that arm.
 #:
-#: A fourth capability, so the two arms are told apart by which section changed
-#: rather than by which of two shapes one section took. Its two fields differ
-#: from the push carrier's, so the two blocks cannot be confused for one another
-#: and each is still asserted to appear exactly once.
+#: What this carrier binds is narrower than "the attach arm", and the difference
+#: was established by experiment rather than assumed. Deleting the attach arm on
+#: its own renders this document byte for byte: the push arm then appends a
+#: second `efficiency` dimension, and `dedupe_ec_dimensions`
+#: (`capability.rs:11651-11673`) folds it straight back into the declared one,
+#: filling the empty `efficiency_backfill` and discarding the generated runner
+#: and summary because the declared ones are non-empty. Deleting that fill on
+#: its own renders it byte for byte too, because the attach arm already set the
+#: field. The two mechanisms are redundant, so *no* external contract can
+#: separate them; what a document can bind is that the slot survives at all on a
+#: capability that already declares an `efficiency` dimension, which fails as
+#: soon as both are removed. That is the claim asserted here, and the redundancy
+#: itself is reported as a product finding rather than papered over.
+#:
+#: A fourth capability, so the push arm's effect is told apart by which section
+#: changed rather than by which of two shapes one section took. Its two fields
+#: differ from the push carrier's, so the two blocks cannot be confused for one
+#: another and each is still asserted to appear exactly once.
 EFFICIENCY_ATTACH_TITLE = _ALL_MEMBERS[1][0]
 EFFICIENCY_ATTACH_OPERATING_POINT = "p95 < 12ms at 300 rps, single replica"
 EFFICIENCY_ATTACH_CUBE = "cube/lexical-search.json"
