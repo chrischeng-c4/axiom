@@ -53,9 +53,9 @@ Type: DeveloperTool
 Surfaces:
 - CLI: `aw wi` - the planning fixture surface.
 EC Dimensions:
-- behavior: `true` - planning behavior fixture gate.
-- efficiency: `true` - planning efficiency fixture gate.
-- stability: `true` - planning stability fixture gate.
+- behavior: `gate-behavior` - planning behavior fixture gate.
+- efficiency: `gate-efficiency` - planning efficiency fixture gate.
+- stability: `gate-stability` - planning stability fixture gate.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -66,8 +66,8 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Planning ready | change | - | implemented | verified | smoke | `true` |
-| Planning epic | epic | - | implemented | verified | smoke | `true` |
+| Planning ready | change | - | implemented | verified | smoke | `gate-ready` |
+| Planning epic | epic | - | implemented | verified | smoke | `gate-epic` |
 """
 
 
@@ -127,6 +127,14 @@ def _capability_snapshot() -> dict[str, Any]:
         # pinned to the parsed structure: one capability identity, its declared
         # type, every per-dimension gate command, and the exact ordered set of
         # Work Root claim slugs and their derived gate ids.
+        #
+        # The five commands in the document -- three EC-dimension runners and
+        # two Work Root Gate/Evidence cells -- are pairwise distinct on purpose.
+        # Until round 32 all five were the same string `true`, which bound the
+        # dimension *names* and the gate *ids* while leaving the command-to-key
+        # binding free: an implementation emitting one constant runner, or
+        # transposing runners across dimensions, passed both tuple comparisons
+        # unchanged. Distinct values are what make the pairing observable.
         capabilities = report["capabilities"]
         assert len(capabilities) == 1, capabilities
         capability = capabilities[0]
@@ -139,9 +147,9 @@ def _capability_snapshot() -> dict[str, Any]:
             (dimension["dimension"], dimension["runner"])
             for dimension in capability["ec_dimensions"]
         ] == [
-            ("behavior", "true"),
-            ("efficiency", "true"),
-            ("stability", "true"),
+            ("behavior", "gate-behavior"),
+            ("efficiency", "gate-efficiency"),
+            ("stability", "gate-stability"),
         ], capability["ec_dimensions"]
         assert [claim["id"] for claim in capability["claims"]] == [
             "planning-ready",
@@ -150,8 +158,8 @@ def _capability_snapshot() -> dict[str, Any]:
         assert [
             (gate["id"], gate["command"]) for gate in capability["verification"]
         ] == [
-            ("planning-ready-gate", "true"),
-            ("planning-epic-gate", "true"),
+            ("planning-ready-gate", "gate-ready"),
+            ("planning-epic-gate", "gate-epic"),
         ], capability["verification"]
         assert capability["release_scope"] is True, capability
         assert report["capability_count"] == 1, report["capability_count"]
@@ -164,10 +172,37 @@ def _capability_snapshot() -> dict[str, Any]:
         ], capability["production_blockers"]
         assert [entry["project"] for entry in sweep["projects"]] == ["demo"], sweep
         swept = sweep["projects"][0]
-        assert swept["report_status"] == report["status"], (swept, report["status"])
+        # Two of these four comparisons used to read `swept[x] == report[x]`,
+        # and two of those could not fail.
+        #
+        # `report.status` is forced to "blocked" whenever the report carries any
+        # blocker, and a scratch project always carries the Python EC and TD
+        # inventory blockers, so the status is a constant in this fixture: an
+        # implementation that hardcoded `report_status: "blocked"` in
+        # `capability_sweep_project` passed a self-comparison. Both sides are
+        # pinned to the literal instead, which at least refutes a projection
+        # that reports some *other* constant.
+        #
+        # What that still does not bind, and nothing in this case does, is the
+        # branch where the two legitimately disagree: on current successful
+        # verify evidence the projection overwrites `report_status` to
+        # "healthy", flips `loop_status` to "done", and raises both verified
+        # counts to their totals. Reaching it needs a fixture project with real
+        # Python EC and TD manifests and committed verify evidence matching the
+        # fixture's own git HEAD -- a whole scratch repository, not a document.
+        # It is disclosed rather than claimed.
+        assert report["status"] == "blocked", report["status"]
+        assert swept["report_status"] == "blocked", swept
+        # These two are anchored: `capability_count` and `claim_count` are
+        # pinned to literals above, so the equality carries those literals
+        # through to the projection.
         assert swept["capability_count"] == report["capability_count"], swept
         assert swept["claim_count"] == report["claim_count"], swept
-        assert swept["verified_claim_count"] == report["verified_claim_count"], swept
+        # `verified_claim_count` has no such anchor -- no claim gate has run, so
+        # both sides are zero and the equality is `0 == 0`. Pinned to the
+        # literal for the same reason as the status.
+        assert report["verified_claim_count"] == 0, report
+        assert swept["verified_claim_count"] == 0, swept
         return {"initialized": initialized, "report": report, "sweep": sweep}
 
 
@@ -1398,8 +1433,8 @@ def verify(case_id: str) -> list[str]:
             _lumen_feature_class_snapshot()
             assertions = [
                 "the field-style capability contract parses into one exact capability id, title, type, status, and promise",
-                "every declared EC dimension keeps its exact gate command and every Work Root row becomes an exactly named claim and gate",
-                "the sweep projection reports the same capability and claim counts and the same status as the report",
+                "every declared EC dimension keeps its exact gate command and every Work Root row becomes an exactly named claim and gate, asserted as ordered `(name, command)` pairs over five pairwise-distinct commands -- three dimension runners and two Gate/Evidence cells -- because until round 32 all five were the same string, which bound the dimension names and the gate ids while leaving the command-to-key binding free: a projection emitting one constant runner, or transposing the runners across the dimensions, satisfied both comparisons unchanged",
+                "the sweep projection carries the report's capability and claim counts, and its status and verified claim count are pinned to the literals the fixture forces rather than compared against the report's own copy of them, because a scratch project always carries the Python EC and TD inventory blockers and a report with any blocker is `blocked`, so a projection that hardcoded the status passed a self-comparison and the verified claim count compared zero against zero; the branch on which the two legitimately disagree -- current successful verify evidence rewriting the status to `healthy`, the loop status to `done`, and both verified counts to their totals -- needs a fixture carrying real Python EC and TD manifests and committed evidence matching its own git HEAD, and is bound by nothing here",
                 "the Lumen reference fixture attributes its domain search promises to core and every archetype service baseline to non-core, with the capability and claim pairs each summing to their retained total",
                 "each of the four trait-derived baselines is rejected as a blocker when declared core, naming that exact capability",
                 "the same rejection holds for baselines the fixture does not otherwise carry, chosen to span both registries the baseline set unions -- one supplied only by the capability families and two supplied only by the archetype traits -- so deleting either registry is observable rather than masked by ids that both supply",
@@ -1467,10 +1502,10 @@ def verify(case_id: str) -> list[str]:
                 "a document whose capability contract has not been written yet -- no capability section and no legacy row -- renders neither canonical feature root, because every other input here declares one or the other and the guard for an empty registry was therefore only ever entered with something to render, making it deletable; asserted as byte equality against the whole migrated document rather than as the absence of the two root headings alone, because the interesting failure adds content, which pins in the same string that the legacy level-2 index heading is demoted to the canonical level-3 one and that an index with nothing to list carries a single synthesized row named after the project; the input carries that legacy heading deliberately, because a contract-less document with a canonical frame is answered \"already canonical\" before the renderer is reached, so it leaves the guard unentered and the byte equality holds for a reason unrelated to it",
                 "two EC dimension items of the same kind are merged into the one item their halves reconstruct, asserted through the ordinary single-item expectation on a document where two capabilities each declare a summary-only item and a command-only item of one kind -- so a merge that dropped either half renders a shorter item and a merge that did not happen renders two items where one is expected -- with the two capabilities declaring their halves in opposite orders and on different kinds, because the merge fills only the *first* occurrence's empty fields and one order therefore exercises only the runner fill and the other only the summary fill, both of which every other document here left deletable by declaring at most one item per kind",
                 "aw capability migrate converges, and the tick that reports no change made none, asserted as the exact ordered list of migrating phases followed by two consecutive no-op runs on both arrival paths -- a README-resident contract, which is relocated and then feature-class migrated, and a resident classified document, which takes the format phase alone -- each arrival path pinned to its own ordered phase list, which is what the second subject adds and the whole of what it adds: the two halves of the conjunction that answers \"already canonical\" turned out to be bound elsewhere already, established by dropping each half in turn and finding the case still failed with this leg neutralized, so this label claims no credit for them; the no-op ticks are pinned to `unchanged`, to `changed: false`, and to the fixed-point sentence naming their own document, which are one observation rather than three -- the product derives `changed` from whether its own stdout starts with `migrated ` and derives `status` from `changed` -- and separately to byte equality against the last migrating tick, which is therefore the only half able to catch a tick that rewrote the document while reporting a no-op, since a `changed` flag re-read from stdout cannot contradict the sentence it was read from; every other leg here migrates exactly once and reads the result, so a migration that rewrote its input on every invocation satisfied all of them and would keep satisfying them while the command never terminated for an adopter driving it to completion; the tick count is itself an observation rather than a constant, the driver ticking until it has seen the no-ops under a bound rather than a fixed number of times, so a migration needing a phase it should not need and one never converging land on different lengths; `kind` is asserted to be the same on the last migrating tick and on the first converged one, because it names the check that ran rather than its outcome, and an assertion reading it as the outcome would bind nothing; and the converged content is deliberately not pinned, because the fixed point preserves the Root WI erasure of #3264 and the escaped-pipe truncation of #3265, and asserting those bytes would hold both losses in place",
-                "two declared surfaces are one surface only when their kind, their commands, and their summary all agree, asserted as the exact rendered item list across four capabilities of one document -- an exact duplicate that folds, and three pairs differing in exactly one field of the dedupe key that must not -- because every other document here declares each surface once, so the fold ran only on inputs it could not change and two of its three key fields were droppable without moving a rendered byte, as was the case-fold the third is read through; the rendered item of the unrecognized-kind pair is asserted to carry the *authored* spelling, which is what the kind normalizer's pass-through fallback produces, but that spelling is bound elsewhere already and this label claims no credit for it -- what the pair adds is that the two spellings are one surface",
-                "each `(Impl, Verification)` work-root cell pair reads as one gap status, asserted across four capabilities that own one row apiece so the capability-level summary attributes to that row alone -- the `blocked` disjunct on the verification side, the `out_of_scope` guard, the `none` spelling of an open row, and the in-progress fallthrough -- because every row this case otherwise declares folds to `closed`, leaving four of the five arms unentered; asserted twice over, once against the gap status named directly by `aw capability report`, which is exact, and once against the Index `Impl` cell it renders through, which is lossy in a way the four subjects expose -- a blocked row and an open row both read `planned` there -- so that binding the internal name alone would leave the fold free to route any status to any cell",
+                "two declared surfaces are one surface only when their kind, their commands, and their summary all agree, asserted as the exact rendered item list across five capabilities of one document -- an exact duplicate that folds, and three pairs each differing in exactly one of the three key fields, which must not -- because every other document here declares each surface once, so the fold ran only on inputs it could not change and every field of its key was droppable without moving a rendered byte; the kind pair is the one round 31 was missing, and its absence was not visible from the count, because the fourth pair -- an unrecognized kind spelled two ways -- *folds*, which binds the case-fold inside the kind term while leaving the term itself deletable, so a key built from the commands and the summary alone reproduced every expectation this leg made until the fifth capability was added; the rendered item of that unrecognized pair carries the *authored* spelling, which is what the kind normalizer's pass-through fallback produces, but that spelling is bound elsewhere already and this label claims no credit for it -- what the pair adds is that the two spellings are one surface",
+                "each `(Impl, Verification)` work-root cell pair reads as one gap status, asserted across five capabilities that own one row apiece so the capability-level summary attributes to that row alone -- the blocked arm through both of its disjuncts, one row blocked on the verification side and one on the implementation side, the `out_of_scope` guard, the `none` spelling of an open row, and the in-progress fallthrough -- because every row this case otherwise declares folds to `closed`, leaving four of the five arms unentered, and because a single blocked row leaves whichever disjunct it does not enter deletable; asserted twice over, once against the gap status named directly by `aw capability report`, which is exact, and once against the Index `Impl` cell it renders through, which is lossy in a way the four subjects expose -- a blocked row and an open row both read `planned` there -- so that binding the internal name alone would leave the fold free to route any status to any cell",
                 "the arms of the gap verification fold are tried in the order the product declares them, asserted on a YAML-fenced capability that is itself `verified` and carries the only two gaps whose rendering depends on that order and on nothing else -- a closed gap reads `verified` rather than `passing`, and a blocked gap still reads `blocked` rather than `verified` -- which together pin the blocked arm ahead of the capability-status arm and the capability-status arm ahead of the closed one; this is what an arm-by-arm assertion structurally cannot express, and it is the whole of what this leg adds: the arm *values* of both folds, and the `epic` kind that marks a gap-derived row, are bound already by the capability that declares no work-root table at all, whose synthetic gap enters the same rendering block -- established by mutating each in turn and finding the case still failed with this leg neutralized, so the five gap statuses declared here are declared to reach the two ordering subjects and this label claims no credit for the rest of them",
-                "Lumen's production capability contract is byte-identical before and after the fixture run",
+                "Lumen's production capability contract is byte-identical before and after the fixture run -- a property of this external contract rather than of `aw capability`, listed so a reader can see the fixture is barred from mutating a real project's contract, and counting toward nothing the product promises",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
             assertions = [
