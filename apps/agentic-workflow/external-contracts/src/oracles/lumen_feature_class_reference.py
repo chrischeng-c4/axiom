@@ -88,6 +88,28 @@ LUMEN_PRODUCTION_CONTRACT_PATHS = (
     "apps/lumen/README.md",
 )
 
+#: The capability fields an author may legally omit, each guarded by its own
+#: emptiness check inside `render_markdown_capability_section_at_level`.
+#:
+#: Named as a closed set rather than left implicit, so that adding a fifth
+#: optional field to the product without extending the fixture is a mismatch a
+#: reader can see rather than a silently unbound guard.
+WITHHOLDABLE_FIELDS = frozenset(
+    {"type", "surfaces", "ec_dimensions", "required_verification"}
+)
+
+#: `CapabilityStatus` (`capability.rs:453-460`), restated as a closed set.
+#:
+#: Restated rather than sampled: two of the six columns of the Capability Index
+#: are derived from the status by a `match` over this enum, so a fixture that
+#: declares four of the six leaves two arms of each derivation unreached and
+#: freely rewritable. The set is what lets the varied-status document below
+#: assert that it walks the enum instead of asserting that it declares several
+#: values.
+CAPABILITY_STATUSES = frozenset(
+    {"candidate", "confirmed", "auditing", "blocked", "verified", "retired"}
+)
+
 
 def _capability(
     *,
@@ -101,8 +123,9 @@ def _capability(
     status: str = "verified",
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
     multi_item: bool = False,
-    no_surfaces: bool = False,
+    withheld: frozenset[str] = frozenset(),
 ) -> str:
+    assert withheld <= WITHHOLDABLE_FIELDS, sorted(withheld - WITHHOLDABLE_FIELDS)
     if work_root_cells is None:
         rows = "\n".join(
             f"| {root} | change | - | implemented | verified | smoke | `true` |"
@@ -135,13 +158,29 @@ def _capability(
         dimension_items.append(MULTI_ITEM_EC_DIMENSION_ITEM)
         gate_items.append(MULTI_ITEM_GATE_INVENTORY_ITEM)
     surfaces_field = "".join(f"- {item}\n" for item in surface_items)
-    # No field at all, not an empty one -- the same distinction `class_field`
-    # draws above. `render_markdown_capability_section_at_level` guards the
-    # whole block on `!capability.surfaces.is_empty()`, and with every fixture
-    # capability declaring one, forcing that guard to `true` rendered the
-    # identical document.
-    surfaces_block = "" if no_surfaces else f"Surfaces:\n{surfaces_field}"
     dimensions_field = "".join(f"- {item}\n" for item in dimension_items)
+    # No field at all, not an empty one -- the same distinction `class_field`
+    # draws above.
+    #
+    # Four of a capability's fields are optional at the input, and
+    # `render_markdown_capability_section_at_level` guards each of them on its
+    # own emptiness check. Every capability of every document here declared all
+    # four, so all four guards were free in the direction of absence: forcing
+    # any one of them to `true` rendered the identical document. They are
+    # withheld through one mechanism rather than four flags because the defect
+    # that produced this fix was a fix applied to `Surfaces:` alone while its
+    # three siblings in the same block stayed unbound -- a per-field flag is the
+    # shape that let the other three be forgotten.
+    type_block = "" if "type" in withheld else f"Type: {_member_type(title)}\n"
+    surfaces_block = "" if "surfaces" in withheld else f"Surfaces:\n{surfaces_field}"
+    dimensions_block = (
+        "" if "ec_dimensions" in withheld else f"EC Dimensions:\n{dimensions_field}"
+    )
+    required_block = (
+        ""
+        if "required_verification" in withheld
+        else f"Required Verification: {_member_required_verification(title)}\n"
+    )
     gates_field = "".join(f"- {item}\n" for item in gate_items)
     dependencies = _member_dependencies(title)
     dependencies_field = (
@@ -152,12 +191,9 @@ def _capability(
     return f"""{heading} {title}
 
 ID: {cap_id}
-Type: {_member_type(title)}
-{class_field}{surfaces_block}EC Dimensions:
-{dimensions_field}{dependencies_field}Root WI: -
+{type_block}{class_field}{surfaces_block}{dimensions_block}{dependencies_field}Root WI: -
 Status: {status}
-Required Verification: {_member_required_verification(title)}
-Promise:
+{required_block}Promise:
 {promise}
 Gate Inventory:
 {gates_field}
@@ -312,10 +348,16 @@ MEMBER_TYPE = {
 #: declares two maturities, because the field parses as a list
 #: (`parse_maturity_list`, `capability.rs:11786-11790`) and a renderer that
 #: printed only the first would otherwise be indistinguishable.
+#:
+#: No member declares the bare `smoke` that `capability_maturity_summary`
+#: substitutes when the field is absent. That is deliberate: the varied-status
+#: document withholds this field from one capability, and if the withholding
+#: capability's declared value were also `smoke`, "the fallback was substituted"
+#: and "the declared value was carried" would render the same cell.
 MEMBER_REQUIRED_VERIFICATION = {
     "Search Core": "conformance",
     "Lexical Search": "smoke, conformance",
-    "Standard Operational Endpoints": "smoke",
+    "Standard Operational Endpoints": "conformance, negative",
     "Kubernetes-Native Deployment": "corpus",
     "Security Hardening": "negative",
     "Contract Gate Wiring": "dogfood",
@@ -566,19 +608,40 @@ def _member_type_for_id(cap_id: str) -> str:
     return _member_type(_TITLE_BY_ID.get(cap_id, ""))
 
 
-for _map_name, _member_map in (
+#: Which per-member field maps are pairwise distinct across the six document
+#: members, and which cannot be.
+#:
+#: The distinction is not a matter of care taken. `MEMBER_EC_DIMENSION` draws
+#: from `EcDimensionKind`, a closed four-value enum, and no assignment of four
+#: values to six members is injective -- so the strongest available statement
+#: about that map is that it *covers* its enum, not that it separates its
+#: members. The other four maps draw from vocabularies large enough to be
+#: pairwise distinct, and are.
+#:
+#: Stated as a guard rather than left to prose because the prose got it wrong:
+#: the durable evidence for this case claimed values "pairwise distinct per
+#: capability, down to the surface kind and the EC dimension kind", which was
+#: true of the surface kind and impossible of the dimension kind. A `> 1` guard
+#: cannot tell those two situations apart, so it accepted the map and the label
+#: describing it went unchallenged for eight rounds.
+_PAIRWISE_DISTINCT_MEMBER_MAPS = (
     ("MEMBER_TYPE", MEMBER_TYPE),
     ("MEMBER_REQUIRED_VERIFICATION", MEMBER_REQUIRED_VERIFICATION),
     ("MEMBER_EC_RUNNER", MEMBER_EC_RUNNER),
     ("MEMBER_SURFACE_KIND", MEMBER_SURFACE_KIND),
-    ("MEMBER_EC_DIMENSION", MEMBER_EC_DIMENSION),
-):
+)
+_ENUM_COVERING_MEMBER_MAPS = (("MEMBER_EC_DIMENSION", MEMBER_EC_DIMENSION),)
+for _map_name, _member_map in _PAIRWISE_DISTINCT_MEMBER_MAPS + _ENUM_COVERING_MEMBER_MAPS:
     assert {
         member[0] for member in _CORE_MEMBERS + _NON_CORE_MEMBERS
     } <= set(_member_map), f"{_map_name} must cover every document member"
-    assert len({_member_map[member[0]] for member in _CORE_MEMBERS + _NON_CORE_MEMBERS}) > 1, (
-        f"{_map_name} must not be a singleton across the six document members, "
-        f"or the field it feeds is satisfiable by a constant"
+for _map_name, _member_map in _PAIRWISE_DISTINCT_MEMBER_MAPS:
+    _values = [_member_map[member[0]] for member in _CORE_MEMBERS + _NON_CORE_MEMBERS]
+    assert len(set(_values)) == len(_values), (
+        f"{_map_name} draws from a vocabulary wide enough to separate all six "
+        f"document members and must do so; a repeat means a renderer that "
+        f"answered for the wrong capability could still render this document. "
+        f"Repeated: {sorted({v for v in _values if _values.count(v) > 1})}"
     )
 
 
@@ -589,7 +652,7 @@ def _section(
     status: str = "verified",
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
     multi_item: bool = False,
-    no_surfaces: bool = False,
+    withheld: frozenset[str] = frozenset(),
 ) -> str:
     title, cap_id, promise, surface, work_roots = member
     return _capability(
@@ -603,7 +666,7 @@ def _section(
         status=status,
         work_root_cells=work_root_cells,
         multi_item=multi_item,
-        no_surfaces=no_surfaces,
+        withheld=withheld,
     )
 
 
@@ -2548,14 +2611,41 @@ def assert_sections_carry_their_own_contract(
                 f"section {title!r} declared no dependencies, so rendering the "
                 f"field at all invents an edge; section was:\n{body}"
             )
-        for label, expected in (
-            ("promise", f"Promise:\n{MEMBER_PROMISE[title]}\n"),
-            ("type", f"Type: {_member_type(title)}\n"),
+        # The scalar fields. Two of the three are optional at the input and are
+        # therefore addressable by an override, in both directions: `None` says
+        # the capability declared nothing and the renderer must emit nothing,
+        # and a string says the capability declared nothing and the renderer
+        # must emit *that* -- which is a different rule and a different defect
+        # when it breaks. `Type:` takes the first form and
+        # `Required Verification:` the second, because the renderer substitutes
+        # `capability_maturity_summary`'s fallback for the latter and simply
+        # omits the former.
+        for label, key, field, declared in (
+            ("promise", None, "Promise", f"\n{MEMBER_PROMISE[title]}"),
+            ("type", "type", "Type", f" {_member_type(title)}"),
             (
                 "required verification",
-                f"Required Verification: {_member_required_verification(title)}\n",
+                "required_verification",
+                "Required Verification",
+                f" {_member_required_verification(title)}",
             ),
         ):
+            if key is not None and key in overrides:
+                substituted = overrides[key]
+                if substituted is None:
+                    assert f"{field}:" not in body, (
+                        f"section {title!r} declared no {field}, so rendering "
+                        f"the field states a contract the author did not "
+                        f"write; section was:\n{body}"
+                    )
+                    continue
+                expected = f"{field}: {substituted}\n"
+                assert expected in body, (
+                    f"section {title!r} declared no {field} and must render the "
+                    f"substituted {expected!r}; section was:\n{body}"
+                )
+                continue
+            expected = f"{field}:{declared}\n"
             assert expected in body, (
                 f"section {title!r} did not carry its own {label} "
                 f"{expected!r}; section was:\n{body}"
@@ -2596,7 +2686,7 @@ def _section_readme(
     work_root_cells: dict[str, tuple[str, str, str, str, str]] | None = None,
     multi_item_title: str | None = None,
     postludes: tuple[str | None, ...] | None = None,
-    no_surfaces_title: str | None = None,
+    withheld_by_title: dict[str, frozenset[str]] | None = None,
 ) -> str:
     """A README whose capability contract is canonical `###` sections.
 
@@ -2620,7 +2710,7 @@ def _section_readme(
             status=status,
             work_root_cells=work_root_cells,
             multi_item=member[0] == multi_item_title,
-            no_surfaces=member[0] == no_surfaces_title,
+            withheld=(withheld_by_title or {}).get(member[0], frozenset()),
         ).replace(
             "Root WI: -", f"Root WI: {SECTION_RELOCATION_WI[member[0]]}"
         )
@@ -3331,18 +3421,45 @@ def assert_relocation_carries_every_work_root_cell(migrated: str) -> None:
 #: `blocked` is the one status that changes `Impl`; `candidate` and `auditing`
 #: change `Verification` without changing `Impl`, so the two columns are
 #: falsified independently rather than moving together.
+#:
+#: The tuple is a permutation of the whole status enum, one member per status,
+#: rather than a sample of it. Sampling was the defect: with `confirmed` and
+#: `retired` undeclared, their two arms of `capability_verification_summary`
+#: (`capability.rs:9296-9306`) were unreached, and rewriting either of them to
+#: `"verified"` rendered every document here byte for byte -- a retired
+#: capability reading as verified in the index is the exact misreport the column
+#: exists to prevent. A closed enum walked exhaustively is the only shape that
+#: does not have to be revisited when a later round asks which arms were missed.
 VARIED_STATUSES = (
     "blocked",
     "verified",
     "candidate",
-    "verified",
+    "confirmed",
     "auditing",
-    "verified",
+    "retired",
 )
 assert len(VARIED_STATUSES) == len(_ALL_MEMBERS)
+assert set(VARIED_STATUSES) == CAPABILITY_STATUSES, (
+    "the varied-status document must walk the whole status enum; "
+    f"missing {sorted(CAPABILITY_STATUSES - set(VARIED_STATUSES))}, "
+    f"unknown {sorted(set(VARIED_STATUSES) - CAPABILITY_STATUSES)}"
+)
+assert len(set(VARIED_STATUSES)) == len(VARIED_STATUSES), (
+    "one capability per status, or a repeated status cannot be told apart from "
+    "a renderer that answers for whichever capability it saw first"
+)
+#: The one status the report's totals treat differently from every other, which
+#: is a property of this document alone -- every other relocation shape here
+#: leaves the status at its member default and has none.
+VARIED_STATUS_RETIRED_TITLES = frozenset(
+    member[0]
+    for member, status in zip(_ALL_MEMBERS, VARIED_STATUSES)
+    if status == "retired"
+)
+assert len(VARIED_STATUS_RETIRED_TITLES) == 1, sorted(VARIED_STATUS_RETIRED_TITLES)
 #: Exactly one capability carries prose. One rather than all, so "the prelude is
 #: carried" cannot be confused with "some constant prose is emitted everywhere".
-VARIED_PRELUDE_TITLE = _ALL_MEMBERS[1][0]
+VARIED_PRELUDE_TITLE = _ALL_MEMBERS[0][0]
 VARIED_PRELUDE = (
     "Ranked retrieval is the promise this project is bought for; the analyzer "
     "pipeline below is subordinate to it."
@@ -3399,41 +3516,94 @@ assert VARIED_POSTLUDE_TITLE != _ALL_MEMBERS[-1][0], (
 EFFICIENCY_SLOT_TITLE = _ALL_MEMBERS[3][0]
 EFFICIENCY_SLOT_OPERATING_POINT = "p99 < 45ms at 1.2k rps, 3 replicas"
 EFFICIENCY_SLOT_CUBE = "cube/kubernetes-native-deployment.json"
+
+
 #: `####`, one level below the `###` capability sections of this input. At the
 #: capability level it would close the section rather than sit inside it.
-EFFICIENCY_SLOT_BLOCK = (
-    "#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n"
-    "\n"
-    f"Operating point: {EFFICIENCY_SLOT_OPERATING_POINT}\n"
-    f"Cube: {EFFICIENCY_SLOT_CUBE}\n"
+def _efficiency_slot_block(operating_point: str, cube: str) -> str:
+    return (
+        "#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n"
+        "\n"
+        f"Operating point: {operating_point}\n"
+        f"Cube: {cube}\n"
+    )
+
+
+EFFICIENCY_SLOT_BLOCK = _efficiency_slot_block(
+    EFFICIENCY_SLOT_OPERATING_POINT, EFFICIENCY_SLOT_CUBE
+)
+#: The other arm of the same merge, and the arm the fixture's own guard used to
+#: certify unreachable.
+#:
+#: `merge_efficiency_backfill_slot` (`capability.rs:11632-11650`) branches on
+#: whether the capability already declares an `efficiency` dimension. When it
+#: does not, the slot is *pushed* as a new dimension; when it does, the slot is
+#: *attached* to the existing one (`dimension.efficiency_backfill = Some(slot);
+#: return;`) and the dimension list is left exactly as authored. The push arm is
+#: `EFFICIENCY_SLOT_TITLE` above. Nothing reached the attach arm -- and the
+#: assert that used to sit under the push carrier said so out loud, requiring
+#: the slot to land on a capability declaring some *other* dimension. A fixture
+#: invariant that positively guarantees an arm is never entered is not coverage
+#: of that arm; deleting the attach arm's two lines left every document here
+#: byte for byte identical, while a real project that had already declared an
+#: `efficiency` dimension would have had a second one appended beside it.
+#:
+#: A fourth capability, so the two arms are told apart by which section changed
+#: rather than by which of two shapes one section took. Its two fields differ
+#: from the push carrier's, so the two blocks cannot be confused for one another
+#: and each is still asserted to appear exactly once.
+EFFICIENCY_ATTACH_TITLE = _ALL_MEMBERS[1][0]
+EFFICIENCY_ATTACH_OPERATING_POINT = "p95 < 12ms at 300 rps, single replica"
+EFFICIENCY_ATTACH_CUBE = "cube/lexical-search.json"
+EFFICIENCY_ATTACH_BLOCK = _efficiency_slot_block(
+    EFFICIENCY_ATTACH_OPERATING_POINT, EFFICIENCY_ATTACH_CUBE
+)
+assert EFFICIENCY_ATTACH_BLOCK != EFFICIENCY_SLOT_BLOCK, (
+    "the two slot carriers must declare different operating points, or "
+    "'each block was re-emitted once' cannot be counted per block"
 )
 for _label, _other in (
     ("prelude", VARIED_PRELUDE_TITLE),
     ("postlude", VARIED_POSTLUDE_TITLE),
+    ("efficiency attach slot", EFFICIENCY_ATTACH_TITLE),
 ):
     assert EFFICIENCY_SLOT_TITLE != _other, (
         f"the efficiency slot must not share a capability with the {_label}, "
         f"or carrying one answers for the other"
     )
+for _label, _other in (
+    ("prelude", VARIED_PRELUDE_TITLE),
+    ("postlude", VARIED_POSTLUDE_TITLE),
+):
+    assert EFFICIENCY_ATTACH_TITLE != _other, (
+        f"the efficiency attach slot must not share a capability with the "
+        f"{_label}, or carrying one answers for the other"
+    )
 #: The merge's own effect on the contract, which is not prose at all:
 #: `merge_efficiency_backfill_slot` (`capability.rs:11632-11650`) appends an
 #: `efficiency` EC dimension when the capability declares none. This carrier
-#: declares `behavior`, so the appended item is observable; had it been the
-#: capability whose declared dimension is already `efficiency`, the merge would
-#: have left the list untouched and that arm would stay unreached.
+#: declares `behavior`, so the appended item is observable.
 EFFICIENCY_SLOT_MERGED_DIMENSION = "efficiency: aw-generated efficiency backfill slot"
 assert _member_ec_dimension(EFFICIENCY_SLOT_TITLE) != "efficiency", (
-    "the efficiency slot has to land on a capability that declares some other "
-    "dimension, or the merge's append arm is never entered"
+    "the push carrier has to declare some other dimension, or the merge's "
+    "append arm is never entered"
+)
+assert _member_ec_dimension(EFFICIENCY_ATTACH_TITLE) == "efficiency", (
+    "the attach carrier has to be the capability that already declares an "
+    "`efficiency` dimension, which is the whole guard on the attach arm"
 )
 
+_VARIED_STATUS_POSTLUDE_BY_TITLE = {
+    VARIED_POSTLUDE_TITLE: VARIED_POSTLUDE,
+    EFFICIENCY_SLOT_TITLE: EFFICIENCY_SLOT_BLOCK.rstrip("\n"),
+    EFFICIENCY_ATTACH_TITLE: EFFICIENCY_ATTACH_BLOCK.rstrip("\n"),
+}
+assert len(_VARIED_STATUS_POSTLUDE_BY_TITLE) == 3, (
+    "three distinct capabilities carry something below their work-root table, "
+    "or two of the three routes share a section and answer for each other"
+)
 VARIED_STATUS_POSTLUDES: tuple[str | None, ...] = tuple(
-    VARIED_POSTLUDE
-    if member[0] == VARIED_POSTLUDE_TITLE
-    else EFFICIENCY_SLOT_BLOCK.rstrip("\n")
-    if member[0] == EFFICIENCY_SLOT_TITLE
-    else None
-    for member in _ALL_MEMBERS
+    _VARIED_STATUS_POSTLUDE_BY_TITLE.get(member[0]) for member in _ALL_MEMBERS
 )
 #: Work-root cells that make every capability's gap read `InProgress`.
 #:
@@ -3451,38 +3621,94 @@ VARIED_STATUS_POSTLUDES: tuple[str | None, ...] = tuple(
 #: `partial` arm needs both halves at once: a status that is neither `verified`
 #: nor `blocked` (or the status arms answer first), and a gap that is open. This
 #: is the one document that already varies the status half.
+#: The one capability whose gaps are all closed while its status is not
+#: `verified`, which is the only way to reach the second disjunct of
+#: `capability_impl_summary` (`capability.rs:9277-9280`).
+#:
+#: That function answers `implemented` for a `verified` capability from the
+#: status alone, before the gaps are read. Every capability in this fixture was
+#: either `verified` -- answered by the first disjunct -- or in progress, so the
+#: second one, "not verified, but every gap is closed or deferred", was
+#: unreachable: deleting it rendered every document here byte for byte, and a
+#: project that had finished the work but not yet re-verified read as `partial`.
+#: It sits on the `retired` member: work that is finished and no longer verified
+#: is exactly the state the disjunct describes, and that member is also the one
+#: free of the prose and slot shapes above.
+_CLOSED_GAP_INDEX = 5
+CLOSED_GAP_TITLE = _ALL_MEMBERS[_CLOSED_GAP_INDEX][0]
+assert VARIED_STATUSES[_CLOSED_GAP_INDEX] != "verified", (
+    "the all-closed capability must not be `verified`, or the status arm "
+    "answers before the gaps are consulted and the disjunct stays unreached"
+)
+assert CLOSED_GAP_TITLE not in _VARIED_STATUS_POSTLUDE_BY_TITLE, (
+    "the all-closed capability must not also carry prose or a slot block, or "
+    "one shape's assertion answers for the other"
+)
+_CLOSED_WORK_ROOTS = frozenset(_ALL_MEMBERS[_CLOSED_GAP_INDEX][4])
 _IN_PROGRESS_WORK_ROOT_CELLS = {
-    work_root: ("change", "implemented", "planned", "smoke", "`true`")
+    work_root: (
+        ("change", "implemented", "verified", "smoke", "`true`")
+        if work_root in _CLOSED_WORK_ROOTS
+        else ("change", "implemented", "planned", "smoke", "`true`")
+    )
     for member in _ALL_MEMBERS
     for work_root in member[4]
 }
+assert len(set(_IN_PROGRESS_WORK_ROOT_CELLS.values())) == 2, (
+    "this document has to carry both gap shapes at once, or `partial` and the "
+    "all-closed disjunct cannot both be reached from it"
+)
 
-#: The capability that declares no `Surfaces:` field at all.
+#: The capability that declares none of the four optional fields.
 #:
-#: `render_markdown_capability_section_at_level` guards the whole block on
-#: `!capability.surfaces.is_empty()`; every capability of every document here
-#: declared one, so forcing that guard to `true` rendered the identical
-#: document and the conditional was free in the direction of absence.
+#: `render_markdown_capability_section_at_level` guards each of `Type:`,
+#: `Surfaces:`, `EC Dimensions:` and `Required Verification:` on its own
+#: emptiness check; every capability of every document here declared all four,
+#: so forcing any one of those guards to `true` rendered the identical document
+#: and all four conditionals were free in the direction of absence. An earlier
+#: round bound `Surfaces:` alone and left its three siblings in the same block
+#: untouched, which is why they are withheld together now rather than one per
+#: round.
 #:
-#: It has to be a `candidate`. `validate_capability_contract`
-#: (`capability.rs:10133+`) requires at least one surface for the four
-#: contract-bearing statuses, so on any of those the input is rejected before
-#: the renderer is reached. This document is the one that already varies status,
-#: and its `candidate` member is the only capability across the whole fixture
-#: that can legally declare nothing here.
-NO_SURFACES_TITLE = _ALL_MEMBERS[2][0]
+#: They land on one capability rather than four because only one capability can
+#: legally withhold anything. `validate_capability_contract`
+#: (`capability.rs:10133+`) requires a full contract for the five
+#: contract-bearing statuses, so `candidate` is the single status under which an
+#: author may declare nothing -- and this document declares each status exactly
+#: once. The assertions stay per field, so a product that forgot one guard is
+#: still caught by that guard's own check.
+#:
+#: `Required Verification:` is the field whose absence is *not* silent: the
+#: renderer substitutes the `smoke` fallback of `capability_maturity_summary`
+#: (`capability.rs:9826-9840`), so this capability is also the only carrier for
+#: that fallback. Every other member declares a different maturity, so `smoke`
+#: here cannot be confused with a constant.
+WITHHELD_FIELDS_TITLE = _ALL_MEMBERS[2][0]
+WITHHELD_FIELDS = WITHHOLDABLE_FIELDS
+#: What the renderer substitutes for the withheld `Required Verification:`.
+WITHHELD_REQUIRED_VERIFICATION_FALLBACK = "smoke"
 assert VARIED_STATUSES[2] == "candidate", (
-    "the surface-less capability must be the one whose status exempts it from "
-    "the contract requirement, or the document is rejected rather than rendered"
+    "the field-withholding capability must be the one whose status exempts it "
+    "from the contract requirement, or the document is rejected rather than "
+    "rendered"
+)
+assert _member_required_verification(WITHHELD_FIELDS_TITLE) != (
+    WITHHELD_REQUIRED_VERIFICATION_FALLBACK
+), (
+    "the withholding capability's declared maturity must differ from the "
+    "fallback, or 'the fallback was substituted' cannot be told apart from "
+    "'the declared value was carried'"
 )
 for _label, _other in (
     ("prelude", VARIED_PRELUDE_TITLE),
     ("postlude", VARIED_POSTLUDE_TITLE),
-    ("efficiency slot", EFFICIENCY_SLOT_TITLE),
+    ("efficiency push slot", EFFICIENCY_SLOT_TITLE),
+    ("efficiency attach slot", EFFICIENCY_ATTACH_TITLE),
+    ("all-closed gaps", CLOSED_GAP_TITLE),
 ):
-    assert NO_SURFACES_TITLE != _other, (
-        f"the surface-less capability must not also carry the {_label}; one "
-        f"capability per shape keeps each assertion answering for one rule"
+    assert WITHHELD_FIELDS_TITLE != _other, (
+        f"the field-withholding capability must not also carry the {_label}; "
+        f"one capability per shape keeps each assertion answering for one rule"
     )
 
 VARIED_STATUS_SECTION_README = _section_readme(
@@ -3493,26 +3719,37 @@ VARIED_STATUS_SECTION_README = _section_readme(
     preludes=VARIED_STATUS_PRELUDES,
     postludes=VARIED_STATUS_POSTLUDES,
     work_root_cells=_IN_PROGRESS_WORK_ROOT_CELLS,
-    no_surfaces_title=NO_SURFACES_TITLE,
+    withheld_by_title={WITHHELD_FIELDS_TITLE: WITHHELD_FIELDS},
 )
-_NO_SURFACES_DECLARED = VARIED_STATUS_SECTION_README.split(
-    f"### {NO_SURFACES_TITLE}\n", 1
+_WITHHELD_DECLARED = VARIED_STATUS_SECTION_README.split(
+    f"### {WITHHELD_FIELDS_TITLE}\n", 1
 )[1].split("\n### ", 1)[0]
-assert "Surfaces:" not in _NO_SURFACES_DECLARED, (
-    "the varied-status document must actually withhold the field it asserts "
-    "absent"
-)
-assert VARIED_STATUS_SECTION_README.count("Surfaces:") == len(_ALL_MEMBERS) - 1, (
-    "every other capability of this document must still declare one, or the "
-    "absence is a property of the document rather than of one capability"
-)
+for _field_label in ("Type:", "Surfaces:", "EC Dimensions:", "Required Verification:"):
+    assert _field_label not in _WITHHELD_DECLARED, (
+        f"the varied-status document must actually withhold {_field_label!r}, "
+        f"which it asserts absent from the rendered section"
+    )
+    assert VARIED_STATUS_SECTION_README.count(_field_label) == len(_ALL_MEMBERS) - 1, (
+        f"every other capability of this document must still declare "
+        f"{_field_label!r}, or the absence is a property of the document rather "
+        f"than of one capability"
+    )
 assert VARIED_STATUS_SECTION_README.count(VARIED_POSTLUDE) == 1, (
     "the varied-status document must actually declare the postlude, or its "
     "assertion pins nothing"
 )
-assert VARIED_STATUS_SECTION_README.count(EFFICIENCY_SLOT_BLOCK.rstrip("\n")) == 1, (
-    "the varied-status document must actually declare an efficiency backfill "
-    "slot, or its assertion pins nothing"
+for _slot_label, _slot_block in (
+    ("push", EFFICIENCY_SLOT_BLOCK),
+    ("attach", EFFICIENCY_ATTACH_BLOCK),
+):
+    assert VARIED_STATUS_SECTION_README.count(_slot_block.rstrip("\n")) == 1, (
+        f"the varied-status document must actually declare the {_slot_label} "
+        f"arm's efficiency backfill slot, or its assertion pins nothing"
+    )
+assert EFFICIENCY_SLOT_MERGED_DIMENSION not in VARIED_STATUS_SECTION_README, (
+    "the merged dimension is the product's addition; declaring it in the input "
+    "would make 'the merge appended it' indistinguishable from 'the author "
+    "wrote it'"
 )
 
 #: What the efficiency merge does to the *contract*, as opposed to the block.
@@ -3522,6 +3759,13 @@ assert VARIED_STATUS_SECTION_README.count(EFFICIENCY_SLOT_BLOCK.rstrip("\n")) ==
 #: the slot. Declared as an override rather than folded into `MEMBER_EC_
 #: DIMENSION_ITEM`, because it is the product's addition and not the author's --
 #: writing it into the member table would make the two indistinguishable.
+#: Its counterpart on the attach carrier is the *absence* of that addition: the
+#: attach arm stores the slot on the dimension the author already declared and
+#: leaves the list at arity one. Stated as an explicit override equal to the
+#: declared list rather than left to the default, because "unchanged" is the
+#: whole observable of that arm -- a product that fell through to the push arm
+#: would render a second `efficiency` item here, and the assertion below reads
+#: the list rather than merely finding the declared item somewhere in it.
 VARIED_STATUS_OVERRIDES = {
     EFFICIENCY_SLOT_TITLE: {
         "ec_dimensions": (
@@ -3529,10 +3773,21 @@ VARIED_STATUS_OVERRIDES = {
             EFFICIENCY_SLOT_MERGED_DIMENSION,
         ),
     },
-    #: The empty override: this capability declared no surfaces, so the renderer
-    #: must emit no `Surfaces:` field -- asserted as absence rather than by
-    #: skipping the capability, which would stop binding its other six fields.
-    NO_SURFACES_TITLE: {"surfaces": ()},
+    EFFICIENCY_ATTACH_TITLE: {
+        "ec_dimensions": (MEMBER_EC_DIMENSION_ITEM[EFFICIENCY_ATTACH_TITLE],),
+    },
+    #: The empty overrides: this capability declared none of the four optional
+    #: fields, so the renderer must emit none of them -- asserted as absence
+    #: rather than by skipping the capability, which would stop binding its
+    #: remaining fields. `required_verification` is the one exception: its
+    #: absence is filled by the renderer rather than propagated, so it is
+    #: asserted as the substituted fallback instead of as an empty tuple.
+    WITHHELD_FIELDS_TITLE: {
+        "surfaces": (),
+        "type": None,
+        "ec_dimensions": (),
+        "required_verification": WITHHELD_REQUIRED_VERIFICATION_FALLBACK,
+    },
 }
 
 #: What each status derives for the two index columns that read it, restated
@@ -3540,19 +3795,44 @@ VARIED_STATUS_OVERRIDES = {
 #: rather than imported, because the point is to pin the product's mapping; the
 #: fixture asserts below that the restatement is not degenerate.
 #:
+#: `Verification` is a `match` over the whole status enum, one arm each, so the
+#: table below has one row per status and the document declares each exactly
+#: once. Two of those arms -- `confirmed` and `retired` -- were undeclared until
+#: this round and freely rewritable to `"verified"`.
+#:
 #: `Impl` reads the status *and* the gaps: `blocked` and `verified` are answered
-#: by the status arms before the gaps are consulted, while `candidate` and
-#: `auditing` fall through to them -- and with `_IN_PROGRESS_WORK_ROOT_CELLS`
-#: those two derive `partial` rather than the `implemented` an all-closed
-#: document gives them.
-_STATUS_INDEX_COLUMNS = {
-    "verified": ("implemented", "verified"),
-    "blocked": ("blocked", "blocked"),
-    "candidate": ("partial", "planned"),
-    "auditing": ("partial", "planned"),
+#: by the status arms before the gaps are consulted, while the other four fall
+#: through to them. The gap half is therefore a second key, not a constant, and
+#: the same status derives different `Impl` answers on different gap shapes --
+#: which is what `CLOSED_GAP_TITLE` supplies for `auditing`.
+_STATUS_VERIFICATION_COLUMN = {
+    "verified": "verified",
+    "blocked": "blocked",
+    "candidate": "planned",
+    "confirmed": "planned",
+    "auditing": "planned",
+    "retired": "blocked",
 }
+assert set(_STATUS_VERIFICATION_COLUMN) == CAPABILITY_STATUSES, (
+    "the restatement of `capability_verification_summary` must cover every arm "
+    "of the enum it restates"
+)
+#: `capability_impl_summary` in the same restated form. The status arms answer
+#: first; everything else is decided by the gaps, which is why this is keyed by
+#: the pair rather than by the status alone.
+_STATUS_IMPL_COLUMN = {
+    "verified": "implemented",
+    "blocked": "blocked",
+}
+_GAP_IMPL_COLUMN = {"closed": "implemented", "in_progress": "partial"}
 VARIED_STATUS_INDEX_COLUMNS = {
-    member[0]: _STATUS_INDEX_COLUMNS[status]
+    member[0]: (
+        _STATUS_IMPL_COLUMN.get(
+            status,
+            _GAP_IMPL_COLUMN["closed" if member[0] == CLOSED_GAP_TITLE else "in_progress"],
+        ),
+        _STATUS_VERIFICATION_COLUMN[status],
+    )
     for member, status in zip(_ALL_MEMBERS, VARIED_STATUSES)
 }
 assert len(set(VARIED_STATUS_INDEX_COLUMNS.values())) >= 3, (
@@ -3570,6 +3850,18 @@ assert {pair[0] for pair in VARIED_STATUS_INDEX_COLUMNS.values()} == {
     "implemented",
     "partial",
 }, "the varied-status shape must exercise three distinct Impl derivations"
+#: And `implemented` must be derived twice over, once from each disjunct: a
+#: `verified` capability whose gaps are open, and a non-`verified` one whose
+#: gaps are all closed. With only the first, deleting the second disjunct
+#: renders the identical document.
+assert VARIED_STATUS_INDEX_COLUMNS[CLOSED_GAP_TITLE][0] == "implemented", (
+    "the all-closed capability must derive `implemented` through the gap "
+    "disjunct, or that disjunct is still unreached"
+)
+assert (
+    len([title for title, pair in VARIED_STATUS_INDEX_COLUMNS.items() if pair[0] == "implemented"])
+    == 2
+), "one `implemented` per disjunct, so neither answers for the other"
 
 
 def assert_relocation_carries_per_capability_status(migrated: str) -> None:
@@ -3612,9 +3904,21 @@ def assert_relocation_carries_per_capability_status(migrated: str) -> None:
         # because the varied-index document was the only place Maturity was read
         # back and its own docstring wrongly claimed this branch could not
         # produce a varying value.
-        assert row[4] == _member_required_verification(title), (
-            f"index row {title!r} Maturity column: expected its own required "
-            f"verification {_member_required_verification(title)!r}, got {row[4]!r}"
+        # One capability of this document declares no `Required Verification:`
+        # at all, and for it the column is the function's own fallback rather
+        # than a carried value. Both directions are asserted here because the
+        # fallback was the unreached half: with every capability declaring a
+        # maturity, `unwrap_or_else(|| "smoke")` never ran, and rewriting the
+        # literal it substitutes changed nothing. No member declares bare
+        # `smoke`, so the substituted value cannot be mistaken for a carried one.
+        expected_maturity = (
+            WITHHELD_REQUIRED_VERIFICATION_FALLBACK
+            if title == WITHHELD_FIELDS_TITLE
+            else _member_required_verification(title)
+        )
+        assert row[4] == expected_maturity, (
+            f"index row {title!r} Maturity column: expected {expected_maturity!r}, "
+            f"got {row[4]!r}"
         )
         # The Production column's fallback is `capability_production_summary`
         # (`capability.rs:9308-9314`). An earlier round recorded that this
@@ -3682,28 +3986,59 @@ def assert_relocation_carries_per_capability_status(migrated: str) -> None:
     # block is itself a heading at the capability level -- it *bounds* the
     # section it belongs to rather than sitting inside it, and a reader that
     # looked for it in the body would find it missing on a correct product.
-    assert migrated.count(EFFICIENCY_SLOT_BLOCK) == 1, (
-        f"the efficiency backfill slot must be re-emitted exactly once; found "
-        f"{migrated.count(EFFICIENCY_SLOT_BLOCK)} copies of:\n"
-        f"{EFFICIENCY_SLOT_BLOCK}"
-    )
-    # Bounded by the *next capability*, not by the next heading.
-    # `_capability_section_body` stops at the next heading of the rendering
-    # level or shallower, and the block renders at `####` -- so it falls inside
-    # the section on an unclassified document and outside it on a classified
-    # one. Which of those this document is is not what this assertion is about.
-    slot_window = _capability_window(migrated, EFFICIENCY_SLOT_TITLE)
-    assert slot_window.rstrip("\n").endswith(EFFICIENCY_SLOT_BLOCK.rstrip("\n")), (
-        f"the efficiency backfill slot must be re-emitted below "
-        f"{EFFICIENCY_SLOT_TITLE!r}'s work-root table, in the position it was "
-        f"authored; that capability ended with:\n{slot_window[-500:]}"
-    )
-    for other in (VARIED_PRELUDE, VARIED_POSTLUDE):
-        assert other not in slot_window, (
-            "the efficiency slot's capability carries neither prose side, so a "
-            "renderer that emitted prose through the efficiency block -- or the "
-            "block through the prose renderer -- is a different document"
+    #
+    # Both merge arms are read here. They differ only in what the merge does to
+    # the capability's dimension list, so each is asserted against its own
+    # block: the push carrier's list gains the generated item, the attach
+    # carrier's stays exactly as authored.
+    for slot_label, slot_title, slot_block in (
+        ("push", EFFICIENCY_SLOT_TITLE, EFFICIENCY_SLOT_BLOCK),
+        ("attach", EFFICIENCY_ATTACH_TITLE, EFFICIENCY_ATTACH_BLOCK),
+    ):
+        assert migrated.count(slot_block) == 1, (
+            f"the {slot_label} arm's efficiency backfill slot must be "
+            f"re-emitted exactly once; found {migrated.count(slot_block)} "
+            f"copies of:\n{slot_block}"
         )
+        # Bounded by the *next capability*, not by the next heading.
+        # `_capability_section_body` stops at the next heading of the rendering
+        # level or shallower, and the block renders at `####` -- so it falls
+        # inside the section on an unclassified document and outside it on a
+        # classified one. Which of those this document is is not what this
+        # assertion is about.
+        slot_window = _capability_window(migrated, slot_title)
+        assert slot_window.rstrip("\n").endswith(slot_block.rstrip("\n")), (
+            f"the {slot_label} arm's efficiency backfill slot must be "
+            f"re-emitted below {slot_title!r}'s work-root table, in the "
+            f"position it was authored; that capability ended with:\n"
+            f"{slot_window[-500:]}"
+        )
+        for other in (VARIED_PRELUDE, VARIED_POSTLUDE):
+            assert other not in slot_window, (
+                "the efficiency slot's capability carries neither prose side, "
+                "so a renderer that emitted prose through the efficiency block "
+                "-- or the block through the prose renderer -- is a different "
+                "document"
+            )
+
+    # The merge's effect on the contract, asserted from both sides so that
+    # neither arm can answer for the other. The generated dimension belongs to
+    # the push carrier and to nothing else: a product that fell through to the
+    # push arm for a capability already declaring `efficiency` would emit a
+    # second copy here, and one that took the attach arm for the push carrier
+    # would emit none.
+    assert migrated.count(EFFICIENCY_SLOT_MERGED_DIMENSION) == 1, (
+        f"the efficiency merge appends its generated dimension to the one "
+        f"capability that declared no `efficiency` dimension of its own; found "
+        f"{migrated.count(EFFICIENCY_SLOT_MERGED_DIMENSION)} copies"
+    )
+    attach_window = _capability_window(migrated, EFFICIENCY_ATTACH_TITLE)
+    assert EFFICIENCY_SLOT_MERGED_DIMENSION not in attach_window, (
+        f"{EFFICIENCY_ATTACH_TITLE!r} already declares an `efficiency` "
+        f"dimension, so the merge must attach its slot to that dimension "
+        f"rather than append a second one; that capability rendered as:\n"
+        f"{attach_window}"
+    )
 
 
 #: Per-capability Capability Index cells, pairwise distinct in every column.
@@ -4205,7 +4540,11 @@ def assert_relocation_falls_back_to_the_first_work_root_wi(migrated: str) -> Non
 
 
 def assert_relocation_renders_every_capability_section(
-    migrated: str, report: dict[str, Any], *, expected_order: tuple[str, ...]
+    migrated: str,
+    report: dict[str, Any],
+    *,
+    expected_order: tuple[str, ...],
+    retired_titles: frozenset[str] = frozenset(),
 ) -> None:
     """Relocation emits a section for every capability, not just an index.
 
@@ -4228,7 +4567,33 @@ def assert_relocation_renders_every_capability_section(
     parsed = [item["id"] for item in report["capabilities"]]
     expected_ids = [member[1] for member in _ALL_MEMBERS]
     assert sorted(parsed) == sorted(expected_ids), parsed
-    assert report["capability_count"] == len(expected_ids), report
+    # `capability_count` is not `capabilities.len()`. `capability_report`
+    # (`capability.rs:6267-6288`) filters `status != Retired` out of the
+    # capability, verified, and claim totals while still *reporting* the
+    # retired capability in the list -- a retired capability stays visible but
+    # stops counting against the project's percentage. Until this round no
+    # fixture document declared a `retired` capability, so the three filters
+    # were identities and deleting all three left every count unchanged, which
+    # is what let a project keep dragging retired work through its denominator.
+    #
+    # Both totals are asserted, not just the capability one, because they are
+    # three separate filters over the same list: dropping the filter on
+    # `claim_count` alone leaves the capability count right and the claim
+    # percentage wrong.
+    retired = frozenset(retired_titles)
+    assert retired <= set(expected_order), sorted(retired - set(expected_order))
+    counted = [member for member in _ALL_MEMBERS if member[0] not in retired]
+    assert report["capability_count"] == len(counted), (
+        f"`capability_count` counts the capabilities that are not retired: "
+        f"expected {len(counted)} of {len(expected_ids)}, got "
+        f"{report['capability_count']}"
+    )
+    assert report["claim_count"] == sum(len(member[4]) for member in counted), (
+        f"a retired capability's claims leave the claim total with its "
+        f"capability: expected "
+        f"{sum(len(member[4]) for member in counted)}, got "
+        f"{report['claim_count']}"
+    )
     assert document_blockers(report) == [], report["blockers"]
 
 
