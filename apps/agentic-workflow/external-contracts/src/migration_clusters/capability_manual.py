@@ -625,7 +625,9 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         )
         final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
         fixed_point_text = cap_path.read_text(encoding="utf-8")
-        lumen_reference.assert_migration_reaches_a_fixed_point(fixed_point_text)
+        lumen_reference.assert_migration_index_and_sections_agree_on_order(
+            fixed_point_text
+        )
         lumen_reference.assert_migration_derives_the_split(fixed_point_text)
 
         # The section branch's half of tracker-state erasure. Every document
@@ -1167,6 +1169,75 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 empty_registry_cap.read_text(encoding="utf-8"),
             )
 
+        # Convergence of the migrate tick loop. Every leg above migrates exactly
+        # once and reads the result, so a migration that rewrote its input on
+        # every invocation -- or that reported a no-op while still writing --
+        # satisfied all of them, and would keep satisfying them while
+        # `aw capability migrate` never terminated for an adopter driving it to
+        # completion. Driven on both arrival paths, because the guard that
+        # answers "already canonical" is a conjunction of two conditions and
+        # each subject leaves one of them free: a README-resident contract is
+        # relocated and then feature-class migrated, a resident classified
+        # document takes the format phase alone.
+        for subject, idempotence_readme, idempotence_document, expected_ticks in (
+            (
+                "README relocation",
+                lumen_reference.MULTI_ITEM_SECTION_README,
+                None,
+                lumen_reference.MIGRATION_TICKS_FROM_README,
+            ),
+            (
+                "resident non-core-first document",
+                None,
+                lumen_reference.NON_CORE_FIRST_DOCUMENT,
+                lumen_reference.MIGRATION_TICKS_FROM_CAPABILITIES,
+            ),
+        ):
+            with project_fixture() as idempotence_root:
+                if idempotence_readme is not None:
+                    (idempotence_root / "README.md").write_text(
+                        idempotence_readme, encoding="utf-8"
+                    )
+                idempotence_cap = idempotence_root / "CAPABILITIES.md"
+                if idempotence_document is not None:
+                    idempotence_cap.write_text(idempotence_document, encoding="utf-8")
+
+                # Tick until the product has reported no change on that many
+                # consecutive runs, under a bound well above the two phases any
+                # input here can require. The bound keeps a non-converging
+                # migration a failed assertion rather than a hung case; the
+                # oracle asserts the loop stopped for the first reason and not
+                # the second.
+                idempotence_ticks: list[tuple[dict, str]] = []
+                settled_runs = 0
+                while (
+                    settled_runs < lumen_reference.MIGRATION_TICKS_PAST_CONVERGENCE
+                    and len(idempotence_ticks) < 8
+                ):
+                    idempotence_envelope = final_json(
+                        run_aw(
+                            idempotence_root,
+                            "capability",
+                            "migrate",
+                            "--project",
+                            "demo",
+                        )
+                    )
+                    idempotence_ticks.append(
+                        (
+                            idempotence_envelope,
+                            idempotence_cap.read_text(encoding="utf-8"),
+                        )
+                    )
+                    settled_runs = (
+                        settled_runs + 1
+                        if idempotence_envelope.get("changed") is False
+                        else 0
+                    )
+                lumen_reference.assert_migration_is_idempotent_at_its_fixed_point(
+                    idempotence_ticks, expected_ticks, subject=subject
+                )
+
     after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
     lumen_reference.assert_production_contract_unmutated(before, after)
     return {
@@ -1289,7 +1360,7 @@ def verify(case_id: str) -> list[str]:
                 "the migrated legacy document carries none of the Active WI values its rows arrived with, asserted through the index column, every rendered Root WI field, and the absence of the raw values from the whole document, so the delivery-provenance-is-one-way rule is bound on the one input branch whose rows actually supply tracker state",
                 "a retired capability is excluded from both per-class counts and from the retained totals alike, so each per-class pair still sums against a total that genuinely excludes something",
                 "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
-                "aw capability migrate reaches a fixed point on a non-core-first document: the migrated Capability Index and the migrated capability sections list the same capabilities in the same core-then-non-core order, so re-parsing the migrated document cannot render a different index again",
+                "the migrated Capability Index and the migrated capability sections of a non-core-first document list the same capabilities in the same core-then-non-core order, so re-parsing the migrated document cannot render a different index again -- which is a precondition for migration converging and not convergence itself, a distinction this label elided for twenty-nine rounds by claiming a fixed point while migrating exactly once, and which is now asserted separately",
                 "aw capability migrate erases the tracker state a capability section stored, asserted on the one document carrying both a live Root WI field and a live work-root WI at once -- so the field, the work-root cell, and the gap fallback that root_wi_for_capability reads when the field is blank are each separately observable -- while the same document still derives its split and keeps its gate inventory",
                 "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
                 "aw capability migrate relocating a README-resident legacy table into a project with no CAPABILITIES.md preserves each row's tracker state as its Root WI in both the index column and the section field, derives the same core/non-core split, and leaves the README a forwarding pointer instead of the table",
@@ -1328,13 +1399,14 @@ def verify(case_id: str) -> list[str]:
                 "the Root WI fallback is asserted against every spelling the product treats as an empty table value, one spelling per capability, so a fallback that recognizes only the literal `-` leaves the others standing as rendered tracker state",
                 "the document relocation creates is asserted as its whole declared frame -- the project title, Brief, the machine-readable-contract note, and the Capabilities heading in that order -- against a project name that appears nowhere in the input, so a frame that dropped a heading, reordered them, or hard-coded the title cannot pass",
                 "the forwarding pointer left in the emptied README is asserted as its exact block including the relative link to CAPABILITIES.md, because a pointer that names the contract without linking to it is not a pointer",
-                "a README that already carries an authored `## Capability Contract` heading keeps it verbatim and gains no second pointer, which is the early return in the residue renderer that every other input leaves unentered and the reason a second migrate run is idempotent",
+                "a README that already carries an authored `## Capability Contract` heading keeps it verbatim and gains no second pointer, which is the early return in the residue renderer that every other input leaves unentered and the reason a second migrate run does not leave a second pointer behind -- one input's contribution to convergence, not a demonstration of it, which is asserted on its own below",
                 "all three partial shapes of a contract item round-trip as declared, one per capability of the same input -- a command with no summary, a summary with no command, and an item declaring neither half, which renders as the bare kind alone -- because every other document declares both halves for every item, leaving three of the four arms of each item renderer unentered, and the command-less arms deletable in a way that drops the surface kind and drops the EC dimension name the re-parse needs to read the item back at all, with the neither-half capability declared `candidate` because a bare dimension carries no content and the four contract-bearing statuses require one",
                 "a capability that declared no gate inventory gets the one its claims imply, asserted as the exact item list of the rendered field across four capabilities of the same document -- one deriving a single gate, one deriving seven refs from two work roots, drawn from both halves of the derivation -- four gates spread unevenly across the two roots, one root carrying three of them and two of those three declared inside a single `;`-separated piece, because a gate id is numbered within one work root, so gates on two different roots are each the first of their own and only a root carrying more than one reaches the numbering at all, while only a piece carrying more than one command reaches the loop nested inside the piece loop, which composed at one command apiece stayed free after the outer loop was bound; three fixtures spread across them with the first root carrying two of its own -- and declared so that the rendered order differs from the declared order, so that joining the list is distinguishable from keeping only its first or only its last element, collecting the claim fixtures before the capability gates from collecting them in work-root order, truncating either half to one ref from rendering it whole, and walking the claims in reverse from walking them in order, because composing the two halves at one ref apiece leaves all four of those truncations rendering the identical document, one whose work-root cell is not backticked and therefore derives through the claim-fixture half of the derivation rather than the claim-gate half, and one declaring only empty-table spellings that gets the single `-` placeholder with its own work-root gate not derived in behind it",
                 "a capability with no declared gate inventory and nothing to derive one from renders the placeholder through the derivation's own empty arm, asserted on its own document because the document `aw capability migrate` writes for that input is one `aw capability report` then rejects, named as the exact claim that has neither a gate nor a fixture",
                 "format migration supplies the parts of the canonical frame its input is missing, asserted as the whole prefix up to the Capability Index across three inputs missing one part each -- a document with no title, one with no Brief whose lead prose has to be promoted into it, and one with neither, which gets the human-confirmation placeholder instead -- because every other document here arrives with all three parts, so the three repairs were disabled together without changing a rendered byte, and because containment binds that each heading appears somewhere rather than once, in order, and carrying the body it is required to carry, which the author's own prose and the placeholder are indistinguishable under; a fourth input arriving with no Capabilities heading at all binds the heading insertion only, because the authored brief prose of that input does not survive the migration -- reported as #3234 and deliberately asserted in neither direction, since pinning the loss would hold the defect in place and pinning its absence would fail against the shipped product",
                 "a document whose capability contract has not been written yet -- no capability section and no legacy row -- renders neither canonical feature root, because every other input here declares one or the other and the guard for an empty registry was therefore only ever entered with something to render, making it deletable; asserted as byte equality against the whole migrated document rather than as the absence of the two root headings alone, because the interesting failure adds content, which pins in the same string that the legacy level-2 index heading is demoted to the canonical level-3 one and that an index with nothing to list carries a single synthesized row named after the project; the input carries that legacy heading deliberately, because a contract-less document with a canonical frame is answered \"already canonical\" before the renderer is reached, so it leaves the guard unentered and the byte equality holds for a reason unrelated to it",
                 "two EC dimension items of the same kind are merged into the one item their halves reconstruct, asserted through the ordinary single-item expectation on a document where two capabilities each declare a summary-only item and a command-only item of one kind -- so a merge that dropped either half renders a shorter item and a merge that did not happen renders two items where one is expected -- with the two capabilities declaring their halves in opposite orders and on different kinds, because the merge fills only the *first* occurrence's empty fields and one order therefore exercises only the runner fill and the other only the summary fill, both of which every other document here left deletable by declaring at most one item per kind",
+                "aw capability migrate converges, and the tick that reports no change made none, asserted as the exact ordered list of migrating phases followed by two consecutive no-op runs on both arrival paths -- a README-resident contract, which is relocated and then feature-class migrated, and a resident classified document, which takes the format phase alone -- each arrival path pinned to its own ordered phase list, which is what the second subject adds and the whole of what it adds: the two halves of the conjunction that answers \"already canonical\" turned out to be bound elsewhere already, established by dropping each half in turn and finding the case still failed with this leg neutralized, so this label claims no credit for them; the no-op ticks are pinned to `unchanged`, to `changed: false`, and to the fixed-point sentence naming their own document, which are one observation rather than three -- the product derives `changed` from whether its own stdout starts with `migrated ` and derives `status` from `changed` -- and separately to byte equality against the last migrating tick, which is therefore the only half able to catch a tick that rewrote the document while reporting a no-op, since a `changed` flag re-read from stdout cannot contradict the sentence it was read from; every other leg here migrates exactly once and reads the result, so a migration that rewrote its input on every invocation satisfied all of them and would keep satisfying them while the command never terminated for an adopter driving it to completion; the tick count is itself an observation rather than a constant, the driver ticking until it has seen the no-ops under a bound rather than a fixed number of times, so a migration needing a phase it should not need and one never converging land on different lengths; `kind` is asserted to be the same on the last migrating tick and on the first converged one, because it names the check that ran rather than its outcome, and an assertion reading it as the outcome would bind nothing; and the converged content is deliberately not pinned, because the fixed point preserves the Root WI erasure of #3264 and the escaped-pipe truncation of #3265, and asserting those bytes would hold both losses in place",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
