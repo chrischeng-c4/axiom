@@ -953,6 +953,37 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     section_text, declares_any_class=declares_any_class
                 )
 
+        # A derivation with nothing at all to collect. Held apart from the loop
+        # above because `aw capability report` rejects what `aw capability
+        # migrate` writes for this input, while every shape in that loop is
+        # asserted to report clean.
+        with project_fixture() as empty_derivation_root:
+            (empty_derivation_root / "README.md").write_text(
+                lumen_reference.EMPTY_DERIVATION_SECTION_README, encoding="utf-8"
+            )
+            final_json(
+                run_aw(
+                    empty_derivation_root,
+                    "capability",
+                    "migrate",
+                    "--project",
+                    "demo",
+                )
+            )
+            lumen_reference.assert_relocation_renders_an_underivable_gate_inventory(
+                (empty_derivation_root / "CAPABILITIES.md").read_text(encoding="utf-8"),
+                final_json(
+                    run_aw(
+                        empty_derivation_root,
+                        "capability",
+                        "report",
+                        "--project",
+                        "demo",
+                        "--skip-issue-inventory",
+                    )
+                ),
+            )
+
         # One canonical class with no members at all. Both roots must still be
         # emitted: a document missing a root is rejected by the product's own
         # checker, so "emit the roots that have members" would make migration
@@ -1144,7 +1175,8 @@ def verify(case_id: str) -> list[str]:
                 "the forwarding pointer left in the emptied README is asserted as its exact block including the relative link to CAPABILITIES.md, because a pointer that names the contract without linking to it is not a pointer",
                 "a README that already carries an authored `## Capability Contract` heading keeps it verbatim and gains no second pointer, which is the early return in the residue renderer that every other input leaves unentered and the reason a second migrate run is idempotent",
                 "a surface and an EC dimension that declare a command but no summary render the command-only form, asserted on the one input that declares one, because every other document declares both halves for every item and three of the four arms of each item renderer were never entered",
-                "a capability that declared no gate inventory gets the one its work-root gates imply, and a capability that declared only empty-table spellings gets the single `-` placeholder with its own work-root gate not derived in behind it, asserted on the same document because each alone reads as the other's success",
+                "a capability that declared no gate inventory gets the one its claims imply, asserted as the exact item list of the rendered field across four capabilities of the same document -- one deriving a single gate, one deriving two gates from two work roots so that joining the list is distinguishable from keeping only its first or only its last element, one whose work-root cell is not backticked and therefore derives through the claim-fixture half of the derivation rather than the claim-gate half, and one declaring only empty-table spellings that gets the single `-` placeholder with its own work-root gate not derived in behind it",
+                "a capability with no declared gate inventory and nothing to derive one from renders the placeholder through the derivation's own empty arm, asserted on its own document because the document `aw capability migrate` writes for that input is one `aw capability report` then rejects, named as the exact claim that has neither a gate nor a fixture",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
