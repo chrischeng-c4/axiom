@@ -55,6 +55,34 @@ pub async fn serve(
     server_http::serve_h2c(listener, app, shutdown).await;
 }
 
+/// Serve `app` over TLS on `listener`, terminating with whatever `config`
+/// returns at the moment each connection is accepted (#3113 R1).
+///
+/// The same thin delegation as [`serve`], to the same drain semantics, over
+/// [`server_http::serve_tls`]. It is a separate entry point rather than an
+/// option on `serve` because the two differ in exactly one way that matters:
+/// this one has no cleartext branch. A service that fails to supply material
+/// refuses connections; it does not answer them unencrypted.
+///
+/// ALPN comes from the `ServerConfig` the source yields, so the caller decides
+/// whether the port offers `h2` alone or `h2` and `http/1.1`.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
+pub async fn serve_tls(
+    listener: TcpListener,
+    app: axum::Router,
+    config: server_http::ServerConfigSource,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    server_http::serve_tls(
+        listener,
+        app,
+        config,
+        server_http::TlsServerOptions::default(),
+        shutdown,
+    )
+    .await;
+}
+
 #[cfg(test)]
 mod delegation_tests {
     use super::*;

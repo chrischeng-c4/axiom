@@ -81,6 +81,33 @@ fn is_per_hop(name: &HeaderName) -> bool {
     PER_HOP_HEADERS.contains(&name.as_str())
 }
 
+/// A client that connects to `addr` while addressing — and verifying —
+/// `server_name`, against `ca_pem` and nothing else.
+///
+/// This is what makes a forwarded local socket safe to use as a transport. A
+/// port-forward's local end is `127.0.0.1`, but the thing on the far end of it
+/// is a named Service holding a certificate for that name; a client that
+/// verified `127.0.0.1` would be verifying the tunnel rather than what the
+/// tunnel reaches, and the only certificate that could satisfy it is one
+/// nobody should issue. So the URL carries the real name — SNI, hostname
+/// verification, and any `Host` header all follow from it — and only address
+/// resolution is redirected.
+///
+/// The built-in root store is switched off deliberately. A private CA that is
+/// merely *added* to the public roots means any public CA can still vouch for
+/// this name, which is the whole property a private trust domain buys.
+pub fn verifying_client(
+    ca_pem: &str,
+    server_name: &str,
+    addr: SocketAddr,
+) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .tls_built_in_root_certs(false)
+        .add_root_certificate(reqwest::Certificate::from_pem(ca_pem.as_bytes())?)
+        .resolve(server_name, addr)
+        .build()
+}
+
 #[derive(Clone)]
 struct ProxyState {
     upstream: String,
@@ -113,6 +140,21 @@ impl LoopbackProxy {
         upstream: impl Into<String>,
         tokens: Arc<TokenSource>,
     ) -> std::io::Result<Self> {
+        Self::start_with_client(upstream, tokens, reqwest::Client::new()).await
+    }
+
+    /// The same, forwarding through a caller-supplied client.
+    ///
+    /// The client is the seam because "how the upstream is trusted" is not this
+    /// module's question. A private-CA deployment builds one with
+    /// [`verifying_client`]; a plaintext development deployment passes the
+    /// default. Either way what happens to the credential is identical, which
+    /// is why the two share this code path rather than forking it.
+    pub async fn start_with_client(
+        upstream: impl Into<String>,
+        tokens: Arc<TokenSource>,
+        client: reqwest::Client,
+    ) -> std::io::Result<Self> {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
         let addr = listener.local_addr()?;
         let (fatal_tx, fatal_rx) = mpsc::channel(1);
@@ -121,7 +163,7 @@ impl LoopbackProxy {
         let state = ProxyState {
             upstream: upstream.into().trim_end_matches('/').to_string(),
             tokens,
-            client: reqwest::Client::new(),
+            client,
             fatal: fatal_tx,
         };
         let app = axum::Router::new().fallback(forward).with_state(state);

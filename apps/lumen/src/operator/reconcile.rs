@@ -772,9 +772,112 @@ async fn check_peer_identity(control: &dyn PeerIdentityControl, lumen: &Lumen) -
     }
 }
 
+/// Seam for the one read the client trust-bundle publication needs (#3113 R4).
+///
+/// Separate from [`PeerIdentityControl`] because it wants a different thing:
+/// that check asks which keys exist, this one asks for a key's contents. A
+/// trait that returned the bytes for both would hand the peer check the peer
+/// Secret's private key so it could count its keys.
+#[async_trait::async_trait]
+trait ServingTrustControl: Send + Sync {
+    /// The value of `key` in `namespace/name`, `None` when the Secret or the
+    /// key is absent. `Err` is unreadable — RBAC, a broken connection — which
+    /// is a different fact and must not be reported as absence.
+    async fn secret_value(
+        &self,
+        namespace: &str,
+        name: &str,
+        key: &str,
+    ) -> anyhow::Result<Option<String>>;
+}
+
+/// Production [`ServingTrustControl`]: a real namespaced Secret read.
+struct KubeServingTrustControl {
+    client: Client,
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
+#[async_trait::async_trait]
+impl ServingTrustControl for KubeServingTrustControl {
+    async fn secret_value(
+        &self,
+        namespace: &str,
+        name: &str,
+        key: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let api: Api<k8s_openapi::api::core::v1::Secret> =
+            Api::namespaced(self.client.clone(), namespace);
+        match api.get(name).await {
+            Ok(secret) => {
+                if let Some(raw) = secret.data.as_ref().and_then(|d| d.get(key)) {
+                    // `data` is base64 in the wire object; `kube` has already
+                    // decoded it into bytes, so the only thing left is that a
+                    // PEM is text.
+                    return Ok(Some(String::from_utf8(raw.0.clone())?));
+                }
+                Ok(secret
+                    .string_data
+                    .as_ref()
+                    .and_then(|d| d.get(key))
+                    .cloned())
+            }
+            Err(kube::Error::Api(err)) if err.code == 404 => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+/// The ConfigMap republishing this instance's serving CA, if there is one to
+/// republish (#3113 R4).
+///
+/// `Ok(None)` means no serving certificate was configured, which is the local
+/// and kind case and not a fault. `Err(_)` names why an instance that asked for
+/// one has no anchor to hand its callers — and the caller leaves
+/// `status.clientTrustBundle` unset, because a reference published ahead of its
+/// material sends callers to mount an empty volume.
+async fn client_trust_bundle_child(
+    control: &dyn ServingTrustControl,
+    lumen: &Lumen,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(secret) = lumen.spec.serving_tls_secret.as_deref() else {
+        return Ok(None);
+    };
+    let namespace = lumen.namespace().unwrap_or_else(|| "default".to_string());
+    let key = render::CLIENT_TRUST_BUNDLE_KEY;
+    match control.secret_value(&namespace, secret, key).await {
+        Ok(Some(pem)) if !pem.trim().is_empty() => {
+            Ok(Some(render::client_trust_bundle(lumen, &pem)))
+        }
+        Ok(Some(_)) => Err(format!(
+            "Secret {namespace}/{secret} carries an empty {key}; callers have no anchor to \
+             verify this instance's serving leaf against"
+        )),
+        Ok(None) => Err(format!(
+            "Secret {namespace}/{secret} named by spec.servingTlsSecret has no {key}; \
+             it must carry the CA that signed the serving leaf, not only the leaf"
+        )),
+        Err(err) => Err(format!("read Secret {namespace}/{secret}: {err}")),
+    }
+}
+
 /// The reconcile-context key carrying [`apply_auth_delegator_binding`]'s
 /// verdict from the plan hook to the condition projection (#2876).
 const AUTH_DELEGATION_CONTEXT_KEY: &str = "authDelegationError";
+
+/// The reconcile-context key naming the ConfigMap this reconcile published the
+/// client trust anchor into (#3113 R4). Same channel and same reason as the
+/// two verdicts above: publishing is a Secret read plus an apply, and the
+/// status projection is I/O-free by contract.
+pub const CLIENT_TRUST_BUNDLE_CONTEXT_KEY: &str = "clientTrustBundle";
+
+/// Read that back out. Absent = nothing was published this reconcile, so no
+/// reference is claimed.
+fn published_client_trust_bundle(context: &serde_json::Value) -> Option<String> {
+    context
+        .get(CLIENT_TRUST_BUNDLE_CONTEXT_KEY)?
+        .as_str()
+        .map(str::to_string)
+}
 
 /// The same channel for [`check_peer_identity`]'s verdict (#2890). Same reason:
 /// the check is a Secret read, and `observe` is I/O-free by contract.
@@ -828,7 +931,7 @@ impl ManagedService for Lumen {
     ) -> impl std::future::Future<Output = anyhow::Result<service_k8s::service::ReconcilePlan>> + Send
     {
         let validation = self.spec.validate();
-        let children = render::render(self);
+        let mut children = render::render(self);
         // #2876: the serving ServiceAccount's `system:auth-delegator` binding
         // is cluster-scoped, so it cannot be one of `children` — those are all
         // applied into the CR's namespace. This hook is where it goes: it is
@@ -853,12 +956,35 @@ impl ManagedService for Lumen {
             // serving binary's: a replicated pod with no peer TLS material
             // refuses to start. This turns that crash-loop into a status an
             // operator can read, naming the Secret it is waiting for.
-            let peer_control = KubePeerIdentityControl { client };
+            let peer_control = KubePeerIdentityControl {
+                client: client.clone(),
+            };
             if let Some(error) = check_peer_identity(&peer_control, &lumen).await {
                 context.insert(
                     PEER_IDENTITY_CONTEXT_KEY.to_string(),
                     serde_json::Value::String(error),
                 );
+            }
+            // #3113 R4: republish the serving CA where a caller can mount it
+            // without holding the server's private key. Appended to `children`
+            // rather than applied here so it is owned and garbage-collected
+            // like every other child; the status reference follows only when
+            // the object is actually in the plan.
+            let trust_control = KubeServingTrustControl { client };
+            match client_trust_bundle_child(&trust_control, &lumen).await {
+                Ok(Some(config_map)) => {
+                    context.insert(
+                        CLIENT_TRUST_BUNDLE_CONTEXT_KEY.to_string(),
+                        serde_json::Value::String(render::client_trust_bundle_name(&lumen)),
+                    );
+                    children.push(config_map);
+                }
+                Ok(None) => {}
+                Err(why) => tracing::warn!(
+                    error = %why,
+                    "client trust bundle not published; in-cluster callers have no anchor to \
+                     verify this instance's serving leaf"
+                ),
             }
             Ok(service_k8s::service::ReconcilePlan {
                 children,
@@ -892,6 +1018,29 @@ impl ManagedService for Lumen {
             "reshard": obs.reshard,
             "message": format!("{}/{} serving pods ready", obs.serving_ready, obs.desired),
         }})
+    }
+
+    /// #3113 R4: where a caller mounts the anchor, reported only for a
+    /// reconcile that actually put the ConfigMap in the plan.
+    ///
+    /// Derived from the context rather than from `spec.servingTlsSecret`,
+    /// because the two answer different questions: the spec says an anchor was
+    /// asked for, and this field says one exists. Publishing the reference off
+    /// the spec would name a ConfigMap that a missing or unreadable Secret
+    /// stopped anything from creating.
+    fn status_patch_with_context(
+        &self,
+        ready: &ReadyFacts,
+        context: &serde_json::Value,
+    ) -> serde_json::Value {
+        let mut patch = self.status_patch(ready);
+        if let Some(config_map) = published_client_trust_bundle(context) {
+            patch["status"]["clientTrustBundle"] = json!({
+                "configMap": config_map,
+                "key": render::CLIENT_TRUST_BUNDLE_KEY,
+            });
+        }
+        patch
     }
 
     /// #2601: the Kubernetes-convention convergence surface, derived from the
@@ -1412,6 +1561,7 @@ mod tests {
             service_account_name: None,
             service_account_annotations: BTreeMap::new(),
             peer_tls_secret: None,
+            serving_tls_secret: None,
         };
         let mut lumen = Lumen::new("search", spec);
         lumen.metadata.namespace = Some("acme".to_string());
@@ -1998,6 +2148,7 @@ mod tests {
             service_account_name: None,
             service_account_annotations: std::collections::BTreeMap::new(),
             peer_tls_secret: None,
+            serving_tls_secret: None,
         }
     }
 
@@ -2481,6 +2632,163 @@ mod tests {
         );
 
         assert_eq!(check_peer_identity(&control, &lumen).await, None);
+    }
+
+    // ---- client trust-bundle publication (#3113 R4) ------------------------
+
+    /// In-memory [`ServingTrustControl`]: a `namespace/name` -> `key -> value`
+    /// map, plus the unreadable-Secret switch the trait exists to keep apart
+    /// from absence.
+    #[derive(Default)]
+    struct FakeServingTrustControl {
+        secrets: BTreeMap<String, BTreeMap<String, String>>,
+        read_fails: bool,
+    }
+
+    impl FakeServingTrustControl {
+        fn holding(namespace: &str, name: &str, entries: &[(&str, &str)]) -> Self {
+            let mut control = Self::default();
+            control.secrets.insert(
+                format!("{namespace}/{name}"),
+                entries
+                    .iter()
+                    .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                    .collect(),
+            );
+            control
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ServingTrustControl for FakeServingTrustControl {
+        async fn secret_value(
+            &self,
+            namespace: &str,
+            name: &str,
+            key: &str,
+        ) -> anyhow::Result<Option<String>> {
+            if self.read_fails {
+                anyhow::bail!("secrets is forbidden");
+            }
+            Ok(self
+                .secrets
+                .get(&format!("{namespace}/{name}"))
+                .and_then(|entries| entries.get(key))
+                .cloned())
+        }
+    }
+
+    const ANCHOR: &str = "-----BEGIN CERTIFICATE-----\nanchor\n-----END CERTIFICATE-----\n";
+
+    fn serving_trust_lumen(secret: Option<&str>) -> Lumen {
+        let mut lumen = hpa_test_lumen("search", "acme", 1, 1);
+        lumen.spec.serving_tls_secret = secret.map(str::to_string);
+        lumen
+    }
+
+    /// The anchor is republished into a ConfigMap that carries the CA and
+    /// nothing else — no `tls.key`, which is the whole point of not sending
+    /// callers to the serving Secret.
+    #[tokio::test]
+    async fn the_published_anchor_carries_the_ca_and_no_private_key() {
+        let lumen = serving_trust_lumen(Some("search-serving-tls"));
+        let control = FakeServingTrustControl::holding(
+            "acme",
+            "search-serving-tls",
+            &[("ca.crt", ANCHOR), ("tls.crt", "leaf"), ("tls.key", "KEY")],
+        );
+
+        let child = client_trust_bundle_child(&control, &lumen)
+            .await
+            .expect("a readable anchor publishes")
+            .expect("a configured instance publishes one");
+
+        assert_eq!(child["kind"], "ConfigMap");
+        assert_eq!(child["metadata"]["name"], "search-client-ca");
+        assert_eq!(child["metadata"]["namespace"], "acme");
+        assert_eq!(child["data"]["ca.crt"], ANCHOR);
+        let rendered = child.to_string();
+        assert!(
+            !rendered.contains("tls.key") && !rendered.contains("KEY"),
+            "the republished anchor must carry no private key: {rendered}"
+        );
+    }
+
+    /// Local and kind instances serve no certificate. Nothing to republish is
+    /// not a fault, and must not be reported as one.
+    #[tokio::test]
+    async fn an_instance_with_no_serving_secret_publishes_nothing_and_fails_nothing() {
+        let lumen = serving_trust_lumen(None);
+        // A control that fails every read: consulting it would surface here.
+        let control = FakeServingTrustControl {
+            read_fails: true,
+            ..Default::default()
+        };
+
+        assert_eq!(client_trust_bundle_child(&control, &lumen).await, Ok(None));
+    }
+
+    /// A Secret holding the leaf but not the CA that signed it: the anchor a
+    /// caller needs is exactly the key that is missing, so the message names
+    /// it rather than the object.
+    #[tokio::test]
+    async fn a_serving_secret_without_the_ca_names_the_missing_key() {
+        let lumen = serving_trust_lumen(Some("search-serving-tls"));
+        let control = FakeServingTrustControl::holding(
+            "acme",
+            "search-serving-tls",
+            &[("tls.crt", "leaf"), ("tls.key", "KEY")],
+        );
+
+        let why = client_trust_bundle_child(&control, &lumen)
+            .await
+            .expect_err("no anchor means no publication");
+
+        assert!(why.contains("ca.crt"), "got: {why}");
+        assert!(why.contains("acme/search-serving-tls"), "got: {why}");
+    }
+
+    /// An unreadable Secret is not an absent key — the remediation is RBAC,
+    /// not editing the Secret.
+    #[tokio::test]
+    async fn an_unreadable_serving_secret_is_reported_as_a_read_failure() {
+        let lumen = serving_trust_lumen(Some("search-serving-tls"));
+        let control = FakeServingTrustControl {
+            read_fails: true,
+            ..Default::default()
+        };
+
+        let why = client_trust_bundle_child(&control, &lumen)
+            .await
+            .expect_err("an unreadable Secret publishes nothing");
+
+        assert!(why.contains("read Secret"), "got: {why}");
+        assert!(!why.contains("has no"), "got: {why}");
+    }
+
+    /// The status reference follows the object, not the spec. A reconcile that
+    /// published nothing claims nothing — a caller told to mount a ConfigMap
+    /// that does not exist gets an empty volume and a verification failure it
+    /// cannot diagnose.
+    #[test]
+    fn the_status_reference_appears_only_when_something_was_published() {
+        let lumen = serving_trust_lumen(Some("search-serving-tls"));
+        let ready = ready_facts("search", 1);
+
+        let unpublished = lumen.status_patch_with_context(&ready, &json!({}));
+        assert!(
+            unpublished["status"].get("clientTrustBundle").is_none(),
+            "got: {unpublished}"
+        );
+
+        let published = lumen.status_patch_with_context(
+            &ready,
+            &json!({ CLIENT_TRUST_BUNDLE_CONTEXT_KEY: "search-client-ca" }),
+        );
+        assert_eq!(
+            published["status"]["clientTrustBundle"],
+            json!({ "configMap": "search-client-ca", "key": "ca.crt" })
+        );
     }
 }
 // CODEGEN-END

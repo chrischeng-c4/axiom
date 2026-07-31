@@ -144,8 +144,30 @@ Lumen peer pod
   -> mandatory mTLS on :7374
 ```
 
+Serving path:
+
+```text
+in-cluster caller
+  -> https://<instance>.<namespace>.svc:7373 (ClusterIP, never published)
+  -> TLS terminated by the serving pod itself, ALPN h2 / http/1.1
+  -> leaf verified against the operator-published trust anchor
+```
+
 Invariants:
 
+- Serving TLS terminates in the Lumen process. No Ingress, Gateway,
+  LoadBalancer, NodePort, or service mesh terminates it on Lumen's behalf, so
+  no hop between a caller and Lumen carries a request token in the clear.
+- The serving leaf asserts the instance's own Kubernetes Service DNS names and
+  nothing else.
+- A configured serving certificate never degrades to plaintext; the client port
+  refuses connections while no valid leaf is active.
+- The client trust anchor is published without the private key, and replaces
+  the public roots for callers rather than joining them.
+- Serving and peer certificates are distinct material. Neither authenticates on
+  the other's port.
+- Clients authenticate the server with the trust anchor and authenticate
+  themselves with a KSA token; client certificates are not an identity source.
 - GCP credentials stop at kube-apiserver. Lumen rejects Google access tokens,
   Google ID tokens, ADC/GSA credentials, and metadata-server identity tokens.
 - TokenReview must return the expected audience and an exact Kubernetes
@@ -169,8 +191,9 @@ Claims:
   requests pass TokenReview/SAR and invalid or denied requests fail closed.
 - `instance-scoped-raft-peer-identity` — only valid instance peers can use the
   Raft transport, including through rotation and failover.
-- `serving-transport-tls` — the rustls-backed serving transport passes its
-  runtime gate.
+- `serving-transport-tls` — the rustls-backed serving transport terminates
+  private ClusterIP TLS in-process, publishes a key-free trust anchor, and
+  admits no plaintext or unverified path.
 
 Verification:
 
@@ -178,6 +201,8 @@ Verification:
 - `apps/lumen/tests/auth_e2e.rs`
 - `apps/lumen/tests/authz_matrix_e2e.rs`
 - `apps/lumen/tests/operator_render.rs`
+- `apps/lumen/tests/security_lumen_claim_security_tls_rustls.rs`
+- `apps/lumen/tests/serving_tls_rotation.rs`
 - `acceptance/gcp/scripts/run.sh`
 - `acceptance/gcp/scripts/verify-lumen-auth.sh`
 

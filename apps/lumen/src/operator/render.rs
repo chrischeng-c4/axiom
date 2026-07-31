@@ -63,6 +63,68 @@ const PEER_TLS_VOLUME: &str = "lumen-peer-tls";
 /// The three keys the Secret must carry — the same contract Relay and Defer
 /// project, and exactly what `peer_tls::PeerTlsConfig` loads.
 pub const PEER_TLS_KEYS: [&str; 3] = ["tls.crt", "tls.key", "ca.crt"];
+/// Where `spec.servingTlsSecret` is projected (#3113 R2). A separate path from
+/// [`PEER_TLS_MOUNT_PATH`] because the two identities are separate: one mount
+/// per listener means a misconfiguration points a listener at nothing rather
+/// than at the other listener's key.
+const SERVING_TLS_MOUNT_PATH: &str = "/var/run/secrets/lumen-serving";
+/// The pod-local volume carrying it.
+const SERVING_TLS_VOLUME: &str = "lumen-serving-tls";
+/// The three keys the serving Secret must carry — same shape as the peer
+/// Secret, different subject.
+pub const SERVING_TLS_KEYS: [&str; 3] = ["tls.crt", "tls.key", "ca.crt"];
+/// The key holding the PEM anchor in the published client trust-bundle
+/// ConfigMap (#3113 R4).
+pub const CLIENT_TRUST_BUNDLE_KEY: &str = "ca.crt";
+
+/// Name of the private-key-free ConfigMap an in-cluster caller mounts to verify
+/// this instance's serving leaf (#3113 R4).
+///
+/// Derived from the instance name rather than configured: a caller that can
+/// name the Service can name its trust anchor, with nothing to look up and
+/// nothing to keep in sync.
+pub fn client_trust_bundle_name(lumen: &Lumen) -> String {
+    format!("{}-client-ca", instance(lumen))
+}
+
+/// The published anchor itself (#3113 R4): the CA that signed this instance's
+/// serving leaf, republished out of `spec.servingTlsSecret` into a ConfigMap
+/// that carries no private key.
+///
+/// Not part of [`render`]'s unconditional child list, because the PEM is not
+/// something a renderer can know — it lives in a Secret, and reading it is I/O.
+/// The reconcile hook reads it and appends this object, so it is applied,
+/// owned, and garbage-collected exactly like every other child rather than
+/// through a second write path with its own ownership rules.
+///
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn client_trust_bundle(lumen: &Lumen, ca_pem: &str) -> Value {
+    let name = instance(lumen);
+    let ns = namespace(lumen);
+    let cx = ctx(lumen, &name, &ns);
+    json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": cx.meta(&client_trust_bundle_name(lumen), COMPONENT),
+        "data": { CLIENT_TRUST_BUNDLE_KEY: ca_pem },
+    })
+}
+
+/// The Kubernetes Service DNS names the serving leaf answers to (#3113 R2).
+///
+/// Both forms, because both are real: in-cluster callers resolve the short
+/// `<service>.<namespace>.svc` and `lumen connect` addresses the fully
+/// qualified one, and a certificate carrying only one of them fails hostname
+/// verification for half its callers. Kept identical to what
+/// [`super::certificate::serving_profile`] requests — the names the operator
+/// asks for and the names the pod is told to expect are one list, read twice.
+pub fn serving_dns_names(lumen: &Lumen) -> Vec<String> {
+    let (name, ns) = (instance(lumen), namespace(lumen));
+    vec![
+        format!("{name}.{ns}.svc"),
+        format!("{name}.{ns}.svc.cluster.local"),
+    ]
+}
 
 /// Resolve the instance name (defaults to `lumen` only when metadata is absent,
 /// which never happens for a real CR).
@@ -515,6 +577,36 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
             "readOnly": true,
         }));
     }
+    // #3113 R2: the serving leaf, projected the same way and to its own path.
+    // Kubernetes refreshes a projected Secret in place, so a renewed leaf
+    // reaches the container without a new pod — which is what makes R9's
+    // "no Pod rollout" a property of the projection rather than of the
+    // controller's restraint.
+    if let Some(secret) = lumen.spec.serving_tls_secret.as_deref() {
+        volumes.push(json!({
+            "name": SERVING_TLS_VOLUME,
+            "secret": {
+                "secretName": secret,
+                "items": SERVING_TLS_KEYS
+                    .iter()
+                    .map(|key| json!({ "key": key, "path": key }))
+                    .collect::<Vec<_>>(),
+            },
+        }));
+        volume_mounts.push(json!({
+            "name": SERVING_TLS_VOLUME,
+            "mountPath": SERVING_TLS_MOUNT_PATH,
+            "readOnly": true,
+        }));
+    }
+    // Probes follow the port. A kubelet that spoke cleartext to a TLS listener
+    // would read every failed handshake as an unhealthy pod and restart a
+    // container that was serving correctly (#3113 R2/AC2).
+    let probe_scheme = if lumen.spec.serving_tls_secret.is_some() {
+        "HTTPS"
+    } else {
+        "HTTP"
+    };
     let spread = |key: &str| {
         json!({
             "maxSkew": 1,
@@ -571,17 +663,17 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         container_security_context: Some(render::restricted_container_security_context()),
         termination_grace_period_seconds: Some(s.grace_secs),
         readiness_probe: Some(json!({
-            "httpGet": { "path": "/readyz", "port": "http" },
+            "httpGet": { "path": "/readyz", "port": "http", "scheme": probe_scheme },
             "initialDelaySeconds": 5, "periodSeconds": 10,
             "timeoutSeconds": 3, "failureThreshold": 60,
         })),
         liveness_probe: Some(json!({
-            "httpGet": { "path": "/healthz", "port": "http" },
+            "httpGet": { "path": "/healthz", "port": "http", "scheme": probe_scheme },
             "initialDelaySeconds": 15, "periodSeconds": 30,
             "timeoutSeconds": 5, "failureThreshold": 3,
         })),
         startup_probe: Some(json!({
-            "httpGet": { "path": "/healthz", "port": "http" },
+            "httpGet": { "path": "/healthz", "port": "http", "scheme": probe_scheme },
             "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
         })),
         volumes,
@@ -700,6 +792,24 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         env.push(json!({ "name": "LUMEN_PEER_TLS_CERT", "value": format!("{PEER_TLS_MOUNT_PATH}/tls.crt") }));
         env.push(json!({ "name": "LUMEN_PEER_TLS_KEY", "value": format!("{PEER_TLS_MOUNT_PATH}/tls.key") }));
         env.push(json!({ "name": "LUMEN_PEER_TLS_CA", "value": format!("{PEER_TLS_MOUNT_PATH}/ca.crt") }));
+    }
+    // #3113 R1: the serving listener's own four. `LUMEN_TLS=on` is what turns
+    // the client port from h2c into a TLS listener that refuses rather than
+    // downgrades; the paths alone would leave it cleartext, and the flag alone
+    // would leave it with nothing to serve, so all four move together.
+    if lumen.spec.serving_tls_secret.is_some() {
+        env.push(json!({ "name": "LUMEN_TLS", "value": "on" }));
+        env.push(json!({ "name": "LUMEN_TLS_CERT", "value": format!("{SERVING_TLS_MOUNT_PATH}/tls.crt") }));
+        env.push(json!({ "name": "LUMEN_TLS_KEY", "value": format!("{SERVING_TLS_MOUNT_PATH}/tls.key") }));
+        env.push(json!({ "name": "LUMEN_TLS_CA", "value": format!("{SERVING_TLS_MOUNT_PATH}/ca.crt") }));
+        // The names the leaf must answer to, from the operator that asked for
+        // it — the pod has no other way to learn which Service it fronts, and
+        // guessing from its own hostname would accept a certificate issued for
+        // a different Service in the same namespace.
+        env.push(json!({
+            "name": "LUMEN_TLS_SERVER_NAMES",
+            "value": serving_dns_names(lumen).join(","),
+        }));
     }
     // #1387: `LUMEN_WAL=auto` above resolves to `Embedded` (`MemWal::new()`,
     // RAM-only) whenever `resolve_wal_backend` sees no raft cluster context —

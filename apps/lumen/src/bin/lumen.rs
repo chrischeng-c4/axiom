@@ -565,9 +565,48 @@ struct ConnectArgs {
     /// k8s access render` emits that grant.
     #[arg(long, value_name = "NAME")]
     client_sa: Option<String>,
+    /// PEM bundle of the private CA that signed the fleet's serving certificate
+    /// (#3113 R6). This is the `ca.crt` key of the trust-bundle ConfigMap the
+    /// operator publishes at `status.clientTrustBundle` — a ConfigMap, so
+    /// fetching it never means reading a Secret that also holds a private key.
+    ///
+    /// With it, the forwarded socket is spoken to over TLS addressed as
+    /// `--server-name`, verified against this bundle and against no public root.
+    /// The port-forward is transport; the identity being checked is the
+    /// Kubernetes Service's, which is what the certificate actually names.
+    ///
+    /// Requires `--client-sa`: the verifying connection is made by the local
+    /// proxy, and the proxy exists to hold a token. A TLS fleet that accepts no
+    /// credential is not a deployment this command has to serve.
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with = "plaintext",
+        requires = "client_sa"
+    )]
+    ca_file: Option<std::path::PathBuf>,
+    /// The DNS name the serving certificate must present. Defaults to
+    /// `<service>.<namespace>.svc`, which is what the operator requests.
+    ///
+    /// Override it only when the Service is reached under another of its
+    /// certified names (its cluster FQDN, say). `localhost` and `127.0.0.1` are
+    /// not among them, and a leaf that carried either would be a leaf usable
+    /// against every port-forward anyone ever opens.
+    #[arg(long, value_name = "DNS")]
+    server_name: Option<String>,
+    /// Talk to the forwarded port in cleartext — local and kind development,
+    /// where no serving certificate has been issued (#3113 R1).
+    ///
+    /// Required to be said out loud, because the alternative is a default that
+    /// downgrades silently: a production fleet reached without `--ca-file`
+    /// would fail somewhere inside the wrapped command's first request instead
+    /// of here, and the fix would look like a networking problem.
+    #[arg(long)]
+    plaintext: bool,
     /// The command to run with `LUMEN_URL` set to the local end of the
     /// port-forward — and nothing else. Everything after `--`, e.g. `lumen
-    /// connect --namespace prod --cr search -- lumen query collections list`.
+    /// connect --namespace prod --cr search --ca-file ca.crt --client-sa agent
+    /// -- lumen query collections list`.
     #[arg(last = true, required = true)]
     command: Vec<String>,
 }
@@ -1584,6 +1623,29 @@ async fn connect(args: ConnectArgs) -> Result<()> {
         .or_else(|| args.cr.clone())
         .context("--service or --cr is required")?;
 
+    // Which name this connection is *for*, as opposed to which socket it goes
+    // through (#3113 R6). In TLS mode the upstream URL carries the Service's
+    // own DNS name, so SNI, hostname verification, and the `Host` header all
+    // address the identity the serving certificate asserts; only address
+    // resolution points at the tunnel.
+    let server_name = args
+        .server_name
+        .clone()
+        .unwrap_or_else(|| format!("{service}.{}.svc", args.namespace));
+
+    // Settled before anything is spawned: a transport nobody chose is not a
+    // thing to discover after a port-forward is running.
+    if args.ca_file.is_none() && !args.plaintext {
+        anyhow::bail!(
+            "say how this connection is secured: `--ca-file <PATH>` verifies {server_name} \
+             against the fleet's published trust bundle, and `--plaintext` talks to a \
+             development instance that serves no certificate.\nThere is no default because the \
+             wrong one is silent: cleartext against a TLS fleet fails inside the wrapped \
+             command's first request, and reads as a networking problem rather than as a \
+             transport that was never chosen."
+        );
+    }
+
     let local_port = match args.local_port {
         Some(port) => port,
         None => cli_std::connect::free_local_port()?,
@@ -1607,14 +1669,30 @@ async fn connect(args: ConnectArgs) -> Result<()> {
 
     cli_std::connect::wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
 
-    let upstream = format!("http://127.0.0.1:{local_port}");
+    let trust = match &args.ca_file {
+        Some(path) => Some(serving_trust(path, &server_name, local_port)?),
+        None => None,
+    };
+    let upstream = match &trust {
+        Some(_) => format!("https://{server_name}"),
+        None => format!("http://127.0.0.1:{local_port}"),
+    };
+
+    // One probe before anything else runs. Every way TLS goes wrong here —
+    // the wrong CA, the wrong name, an expired leaf, a fleet still serving
+    // cleartext — is a fact about the deployment, and it should be reported
+    // as one rather than surfacing as the wrapped command's first request
+    // failing with a transport error (#3113 R7).
+    if let Some(client) = &trust {
+        probe_serving_tls(client, &server_name, args.ca_file.as_deref()).await?;
+    }
 
     // Mint before spawning anything. A missing RBAC grant is the most common
     // way this command fails, and it should fail here — where the error can
     // name the account and the check — rather than three layers down inside
     // the child's first HTTP response (R6).
     let mut proxy = match &args.client_sa {
-        Some(client_sa) => Some(start_client_proxy(&args, client_sa, &upstream).await?),
+        Some(client_sa) => Some(start_client_proxy(&args, client_sa, &upstream, trust).await?),
         None => None,
     };
 
@@ -1622,13 +1700,20 @@ async fn connect(args: ConnectArgs) -> Result<()> {
         Some(proxy) => {
             eprintln!(
                 "lumen connect: forwarding {} -> {upstream} -> svc/{service}:{} in {}, \
-                 authenticating as serviceaccount {}/{}. The token is held here; the wrapped \
+                 authenticating as serviceaccount {}/{}{}. The token is held here; the wrapped \
                  command sees only the local URL.",
                 proxy.local_url(),
                 args.remote_port,
                 args.namespace,
                 args.namespace,
                 args.client_sa.as_deref().unwrap_or_default(),
+                match &args.ca_file {
+                    Some(path) => format!(
+                        ", verifying {server_name} against {}",
+                        path.display()
+                    ),
+                    None => ", over cleartext (--plaintext)".to_string(),
+                },
             );
             proxy.local_url()
         }
@@ -1720,12 +1805,168 @@ async fn start_client_proxy(
     args: &ConnectArgs,
     client_sa: &str,
     upstream: &str,
+    trust: Option<ServingTrust>,
 ) -> Result<service_auth::k8s::LoopbackProxy> {
     let tokens = client_token_source(args.context.as_deref(), &args.namespace, client_sa).await?;
     first_mint(&tokens, &args.namespace, client_sa).await?;
-    service_auth::k8s::LoopbackProxy::start(upstream, tokens)
+    match trust {
+        Some(client) => {
+            service_auth::k8s::LoopbackProxy::start_with_client(upstream, tokens, client).await
+        }
+        None => service_auth::k8s::LoopbackProxy::start(upstream, tokens).await,
+    }
+    .context("start the local authenticated proxy")
+}
+
+/// The verifying client, where there is one to have.
+///
+/// `--ca-file` requires `--client-sa`, and `--client-sa` requires the
+/// `delegated-auth` feature, so a build without it cannot reach a state where
+/// this holds anything — which is why the placeholder is a unit rather than a
+/// second implementation to keep in step.
+#[cfg(feature = "delegated-auth")]
+type ServingTrust = reqwest::Client;
+#[cfg(not(feature = "delegated-auth"))]
+type ServingTrust = ();
+
+/// The client the proxy forwards through when the fleet serves TLS (#3113 R6).
+///
+/// Two things are deliberately absent. There is no option to skip verification:
+/// the failure this command is most likely to hit is a *correct* refusal, and a
+/// flag that turned it off would turn the private trust domain into decoration.
+/// And the public root store is not merely augmented but switched off — with it
+/// on, any public CA could still vouch for this name.
+#[cfg(feature = "delegated-auth")]
+fn serving_trust(
+    ca_file: &std::path::Path,
+    server_name: &str,
+    local_port: u16,
+) -> Result<ServingTrust> {
+    let pem = std::fs::read_to_string(ca_file).with_context(|| {
+        format!(
+            "read the serving trust bundle {}. This is the `ca.crt` key of the ConfigMap named by \
+             the fleet's `status.clientTrustBundle`: `kubectl -n <namespace> get configmap \
+             <name> -o jsonpath='{{.data.ca\\.crt}}'`",
+            ca_file.display()
+        )
+    })?;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], local_port));
+    service_auth::k8s::verifying_client(&pem, server_name, addr).with_context(|| {
+        format!(
+            "build a client that verifies {server_name} against {}",
+            ca_file.display()
+        )
+    })
+}
+
+/// Reach the far end once, and turn whatever went wrong into something the
+/// caller can act on (#3113 R7).
+///
+/// Each branch names a different deployment fact, because they have different
+/// fixes and a single "handshake failed" would send a caller looking in the
+/// wrong place. None of them offers to stop verifying, and none of them
+/// suggests a certificate for `localhost` — that leaf would be valid against
+/// every port-forward anyone opens, which is the opposite of what naming the
+/// Service buys.
+#[cfg(feature = "delegated-auth")]
+async fn probe_serving_tls(
+    client: &ServingTrust,
+    server_name: &str,
+    ca_file: Option<&std::path::Path>,
+) -> Result<()> {
+    let ca = ca_file
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    let error = match client
+        .get(format!("https://{server_name}/healthz"))
+        .timeout(Duration::from_secs(15))
+        .send()
         .await
-        .context("start the local authenticated proxy")
+    {
+        // Any HTTP answer means the handshake completed, which is all this
+        // probe is about. `/healthz` needs no credential, so a status other
+        // than 200 is the fleet's business and not this command's.
+        Ok(_) => return Ok(()),
+        Err(error) => error,
+    };
+
+    // The useful text is in the source chain — rustls' rejection reason is
+    // several layers below reqwest's "error sending request".
+    let mut detail = error.to_string();
+    let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&error);
+    while let Some(inner) = source {
+        detail = format!("{detail}: {inner}");
+        source = inner.source();
+    }
+    let lowered = detail.to_ascii_lowercase();
+
+    let diagnosis = if lowered.contains("unknownissuer") || lowered.contains("unknown issuer") {
+        format!(
+            "the certificate {server_name} presented was not signed by anything in {ca}. Either \
+             the bundle is from another cluster or CA pool, or the fleet's leaf was issued \
+             outside it — compare `status.clientTrustBundle` on the CR with the file you passed"
+        )
+    } else if lowered.contains("notvalidforname") || lowered.contains("not valid for name") {
+        format!(
+            "the far end holds a certificate that does not name {server_name}. Pass \
+             `--server-name` with one of the names it does hold (the operator requests \
+             `<service>.<namespace>.svc` and its cluster FQDN), or check that `--service`/`--cr` \
+             names the Service you meant"
+        )
+    } else if lowered.contains("expired") {
+        format!(
+            "the certificate {server_name} presented has expired. Renewal is the operator's job \
+             and needs no rollout — check the instance's certificate status and the controller's \
+             logs rather than reissuing by hand"
+        )
+    } else if lowered.contains("corrupt message")
+        || lowered.contains("handshake eof")
+        || lowered.contains("unexpected eof")
+        || lowered.contains("http instead of https")
+    {
+        // The far end read a ClientHello, made nothing of it, and hung up.
+        // That is overwhelmingly one thing: a port serving cleartext.
+        format!(
+            "svc/{server_name} did not complete a TLS handshake and closed the connection, which \
+             is what a port still answering in cleartext does. Use `--plaintext` if that is a \
+             development instance; in production, set `spec.servingTlsSecret` so the operator \
+             issues a serving leaf"
+        )
+    } else {
+        format!("could not complete a TLS handshake with {server_name}: {detail}")
+    };
+
+    anyhow::bail!(
+        "{diagnosis}.\n\
+         The port-forward is only transport: the socket is on 127.0.0.1, but the identity being \
+         verified is the Kubernetes Service's, and that is the one the certificate names. There \
+         is no option to skip that check."
+    )
+}
+
+/// Without `delegated-auth` there is no token to carry and so no proxy to
+/// verify through. Refusing here keeps the flag from looking like it worked.
+#[cfg(not(feature = "delegated-auth"))]
+fn serving_trust(
+    _ca_file: &std::path::Path,
+    _server_name: &str,
+    _local_port: u16,
+) -> Result<ServingTrust> {
+    anyhow::bail!(
+        "--ca-file needs the `delegated-auth` feature (rebuild with \
+         `cargo build -p lumen --features delegated-auth`); this binary has no client that can \
+         verify a private serving certificate"
+    )
+}
+
+/// Unreachable: the only producer of a [`ServingTrust`] in this build fails.
+#[cfg(not(feature = "delegated-auth"))]
+async fn probe_serving_tls(
+    _client: &ServingTrust,
+    _server_name: &str,
+    _ca_file: Option<&std::path::Path>,
+) -> Result<()> {
+    Ok(())
 }
 
 /// The first mint, with Lumen's own remediation attached (#2878, R6).
@@ -1762,6 +2003,7 @@ async fn start_client_proxy(
     _args: &ConnectArgs,
     _client_sa: &str,
     _upstream: &str,
+    _trust: Option<ServingTrust>,
 ) -> Result<service_auth::k8s::LoopbackProxy> {
     anyhow::bail!(
         "--client-sa needs the `delegated-auth` feature (rebuild with \
@@ -2243,17 +2485,23 @@ fn profile_spec_body(body: InstanceBody, image: &str) -> String {
             yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  auth: disabled\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
         InstanceBody::Staging => {
-            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  auth: required\n  peerTlsSecret: lumen-peer-tls\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
+            // #3113 R8: `servingTlsSecret` is stated for the same reason as
+            // `peerTlsSecret` below, but the failure it prevents is the
+            // opposite one. An unstated peer Secret fails closed — the pods
+            // refuse to start and say so. An unstated serving Secret fails
+            // *open*: the client port quietly stays h2c, and a fleet serves
+            // KSA-bearing requests in cleartext while looking healthy.
+            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  auth: required\n  peerTlsSecret: lumen-peer-tls\n  servingTlsSecret: lumen-serving-tls\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
         }
         InstanceBody::Prod => {
             // #2890 R7: `peerTlsSecret` is stated, not defaulted. A replicated
             // profile that stayed silent about it would render a CR whose pods
             // refuse to start — the same reasoning as `auth` above, one port
             // over.
-            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  peerTlsSecret: lumen-peer-tls\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  peerTlsSecret: lumen-peer-tls\n  servingTlsSecret: lumen-serving-tls\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
         }
         InstanceBody::Template => {
-            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  peerTlsSecret: REPLACE_ME__PEER_TLS_SECRET\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  peerTlsSecret: REPLACE_ME__PEER_TLS_SECRET\n  servingTlsSecret: REPLACE_ME__SERVING_TLS_SECRET\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
     }
     yaml
@@ -2283,6 +2531,10 @@ const FLEET_TEMPLATE_DEFAULTS: &str = "\
     \x20   voterCount: REPLACE_ME__VOTER_COUNT\n\
     \x20   logFormat: json\n\
     \x20   auth: required\n\
+    \x20   # Serving leaf every data plane presents on :7373, one Secret name\n\
+    \x20   # per tenant namespace. Stated rather than left out: an unset\n\
+    \x20   # serving Secret is not an error, it is cleartext (#3113).\n\
+    \x20   servingTlsSecret: REPLACE_ME__SERVING_TLS_SECRET\n\
     \x20   # Workload Identity KSA every data plane runs as.\n\
     \x20   serviceAccountName: REPLACE_ME__WORKLOAD_IDENTITY_KSA\n\
     \x20   placement:\n\
@@ -3430,11 +3682,37 @@ async fn serve(args: ServeArgs) -> Result<()> {
         });
     }
 
+    // #3113 R1: the client port's own identity, loaded before the socket binds
+    // so a pod with unusable material fails startup instead of accepting
+    // connections it cannot serve. `None` is the h2c posture — local and kind
+    // development, and the only path to cleartext on this port.
+    let serving_tls = lumen::tls::ServingTlsConfig::from_env()
+        .context("load serving TLS configuration")?
+        .map(|config| {
+            let names = config.dns_names.clone();
+            config.reloadable().map(|tls| (tls, names))
+        })
+        .transpose()
+        .context("activate the serving certificate")?;
+
     let bind = format!("{}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
         .with_context(|| format!("bind {bind}"))?;
-    tracing::info!(addr = %bind, shard_count = args.shard_count.unwrap_or(1), "lumen serve listening");
+    match &serving_tls {
+        Some((tls, names)) => tracing::info!(
+            addr = %bind,
+            shard_count = args.shard_count.unwrap_or(1),
+            tls_generation = tls.generation(),
+            server_names = %names.join(","),
+            "lumen serve listening over TLS"
+        ),
+        None => tracing::info!(
+            addr = %bind,
+            shard_count = args.shard_count.unwrap_or(1),
+            "lumen serve listening"
+        ),
+    }
 
     #[cfg(feature = "raft-wal")]
     let peer_server = if let (Some(host), Some(transport)) =
@@ -3469,27 +3747,38 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // the *start* of termination, not after the full drain window: the pod's
     // termination grace can equal that window, so a post-drain sync may lose
     // the race with Kubernetes' SIGKILL.
-    service_http::serve(
-        listener,
-        app,
-        service_http::shutdown_with_drain(
-            move || {
-                shutdown_engine.start_drain();
-                if let Some(aof) = shutdown_aof {
-                    match aof.lock() {
-                        Ok(mut writer) => {
-                            if let Err(e) = writer.sync() {
-                                tracing::warn!(error = %e, "sync local AOF during shutdown failed");
-                            }
+    let shutdown = service_http::shutdown_with_drain(
+        move || {
+            shutdown_engine.start_drain();
+            if let Some(aof) = shutdown_aof {
+                match aof.lock() {
+                    Ok(mut writer) => {
+                        if let Err(e) = writer.sync() {
+                            tracing::warn!(error = %e, "sync local AOF during shutdown failed");
                         }
-                        Err(_) => tracing::warn!("local AOF writer poisoned during shutdown"),
                     }
+                    Err(_) => tracing::warn!("local AOF writer poisoned during shutdown"),
                 }
-            },
-            grace,
-        ),
-    )
-    .await;
+            }
+        },
+        grace,
+    );
+    match serving_tls {
+        // #3113 R1/R9: the configuration is read per accepted connection, so a
+        // renewed leaf reaches connection N+1 with no rebind and no restart.
+        // `None` from the source refuses the connection — there is deliberately
+        // no branch here that answers it in cleartext instead.
+        Some((tls, _)) => {
+            service_http::serve_tls(
+                listener,
+                app,
+                service_http::config_source(move || tls.server_config()),
+                shutdown,
+            )
+            .await;
+        }
+        None => service_http::serve(listener, app, shutdown).await,
+    }
     #[cfg(feature = "raft-wal")]
     if let Some((shutdown_tx, task)) = peer_server {
         let _ = shutdown_tx.send(());

@@ -62,6 +62,7 @@ fn dev_spec() -> LumenSpec {
         service_account_name: None,
         service_account_annotations: BTreeMap::new(),
         peer_tls_secret: None,
+        serving_tls_secret: None,
     }
 }
 
@@ -95,6 +96,7 @@ fn prod_spec() -> LumenSpec {
         service_account_name: None,
         service_account_annotations: BTreeMap::new(),
         peer_tls_secret: None,
+        serving_tls_secret: None,
     }
 }
 
@@ -1962,6 +1964,292 @@ fn replicated_instance_profiles_state_their_peer_tls_secret() {
     assert!(
         !dev.contains("peerTlsSecret"),
         "the single-replica dev profile runs no consensus link:\n{dev}"
+    );
+}
+
+/// #3113 AC6: the same discipline one port over, for the opposite failure. An
+/// unstated `peerTlsSecret` fails closed — the pods refuse to start and name
+/// what is missing. An unstated `servingTlsSecret` fails *open*: the client
+/// port stays h2c and the profile serves KSA-bearing requests in cleartext
+/// while every readiness probe passes. `dev` is local-only and stays h2c on
+/// purpose.
+#[test]
+fn production_profiles_state_their_serving_tls_secret() {
+    for profile in ["staging", "prod", "template"] {
+        let rendered = run_lumen(&["k8s", "instance", "render", "--profile", profile]);
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.trim_start().starts_with("servingTlsSecret:")),
+            "profile `{profile}` renders no `servingTlsSecret:` line, so it serves \
+             cleartext without saying so:\n{rendered}"
+        );
+    }
+    let dev = run_lumen(&["k8s", "instance", "render", "--profile", "dev"]);
+    assert!(
+        !dev.contains("servingTlsSecret"),
+        "the dev profile is local-only and runs h2c:\n{dev}"
+    );
+
+    // A fleet's `defaults` is a whole LumenSpec, and it is what every tenant
+    // namespace inherits — silence there is cleartext multiplied by the number
+    // of app teams.
+    for profile in ["prod", "template"] {
+        let fleet = run_lumen(&["k8s", "fleet", "render", "--profile", profile]);
+        assert!(
+            fleet
+                .lines()
+                .any(|line| line.trim_start().starts_with("servingTlsSecret:")),
+            "fleet profile `{profile}` hands every tenant a cleartext default:\n{fleet}"
+        );
+    }
+}
+
+// ---- #3113: serving TLS on the private client Service ---------------------
+//
+// The client port carries the same request bodies the peer port carries index
+// mutations for, and until now it carried them in the clear. These assert the
+// four things the operator owes that port: the leaf reaches the pods, the
+// process is told to use it, the kubelet speaks the protocol the port now
+// speaks, and none of it touches the peer identity next door.
+
+/// An instance serving TLS. Built from `prod_spec` because AC1 is a statement
+/// about the production shape, not about a fixture.
+fn serving_tls_spec(secret: Option<&str>) -> LumenSpec {
+    LumenSpec {
+        serving_tls_secret: secret.map(str::to_string),
+        ..prod_spec()
+    }
+}
+
+/// R2/AC2, the volume half. Same `items` discipline as the peer Secret, and a
+/// separate mount path: two listeners reading one directory is how a
+/// misconfiguration ends up serving the peer identity to clients.
+#[test]
+fn serving_tls_secret_projects_exactly_its_three_keys_read_only() {
+    let objs = render(&lumen("search", serving_tls_spec(Some("search-serving-tls"))));
+    let pod = pod_spec(&objs);
+
+    let volume = pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["secret"]["secretName"] == "search-serving-tls")
+        .unwrap_or_else(|| panic!("no serving TLS volume in {pod:#}"));
+    let projected: Vec<&str> = volume["secret"]["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("serving TLS volume must project named items, got {volume:#}"))
+        .iter()
+        .map(|item| item["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        projected,
+        lumen::operator::render::SERVING_TLS_KEYS.to_vec(),
+        "the projected keys must be exactly what the serving listener loads"
+    );
+
+    let mount = pod["containers"][0]["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == volume["name"])
+        .unwrap_or_else(|| panic!("the serving TLS volume is never mounted: {pod:#}"));
+    assert_eq!(mount["readOnly"], true);
+    let mount_path = mount["mountPath"].as_str().unwrap();
+    assert!(
+        !mount_path.starts_with("/var/lib/lumen"),
+        "serving material must not land on the PVC that outlives the pod, got {mount_path}"
+    );
+    assert_ne!(
+        mount_path, "/var/run/secrets/lumen-peer",
+        "the serving leaf and the peer leaf must not share a directory"
+    );
+}
+
+/// R1/AC2, the env half. `LUMEN_TLS=on` is what turns the port from h2c into a
+/// listener that refuses without material; the paths alone would leave it
+/// cleartext, so all four travel together.
+#[test]
+fn serving_tls_secret_sets_the_four_serving_tls_env_vars() {
+    let objs = render(&lumen("search", serving_tls_spec(Some("search-serving-tls"))));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+    let mount_path = container["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "lumen-serving-tls")
+        .unwrap()["mountPath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(env_value(container, "LUMEN_TLS").as_deref(), Some("on"));
+    for (var, key) in [
+        ("LUMEN_TLS_CERT", "tls.crt"),
+        ("LUMEN_TLS_KEY", "tls.key"),
+        ("LUMEN_TLS_CA", "ca.crt"),
+    ] {
+        assert_eq!(
+            env_value(container, var).as_deref(),
+            Some(format!("{mount_path}/{key}").as_str()),
+            "{var} must point at the projected {key}, got env {:?}",
+            env_names(container)
+        );
+    }
+}
+
+/// R2/AC2: probes follow the port. A kubelet still speaking cleartext to a TLS
+/// listener reads every failed handshake as an unhealthy pod and restarts a
+/// container that was serving correctly — a readiness gate that fires *because*
+/// the certificate arrived.
+#[test]
+fn every_probe_speaks_the_scheme_the_client_port_speaks() {
+    for (spec, scheme) in [
+        (serving_tls_spec(Some("search-serving-tls")), "HTTPS"),
+        (serving_tls_spec(None), "HTTP"),
+    ] {
+        let objs = render(&lumen("search", spec));
+        let container = &pod_spec(&objs)["containers"][0];
+        for probe in ["readinessProbe", "livenessProbe", "startupProbe"] {
+            assert_eq!(
+                container[probe]["httpGet"]["scheme"], scheme,
+                "{probe} must speak {scheme}: {:#}",
+                container[probe]
+            );
+            assert_eq!(
+                container[probe]["httpGet"]["port"], "http",
+                "{probe} must stay on the client port"
+            );
+        }
+    }
+}
+
+/// The converse, and R3's separation read from the render: an instance with a
+/// peer identity and no serving certificate gets the peer volume and nothing
+/// else. Without this, "the field is optional" and "the field is ignored" look
+/// identical.
+#[test]
+fn a_peer_identity_alone_renders_no_serving_tls_volume_or_env() {
+    let objs = render(&lumen("search", replicated_spec(Some("search-peer-tls"))));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+
+    assert!(
+        pod["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["name"] == "lumen-peer-tls"),
+        "the peer volume must still be there: {pod:#}"
+    );
+    assert!(
+        pod["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["name"] != "lumen-serving-tls"),
+        "unexpected serving TLS volume: {pod:#}"
+    );
+    for var in ["LUMEN_TLS", "LUMEN_TLS_CERT", "LUMEN_TLS_KEY", "LUMEN_TLS_CA"] {
+        assert!(
+            env_value(container, var).is_none(),
+            "unexpected {var} without a serving certificate"
+        );
+    }
+}
+
+/// R3: both listeners armed, and armed from different Secrets. The two
+/// identities answer different questions — "I am the Service you dialed" and
+/// "I am a member of this Raft group" — and one Secret answering both would let
+/// either listener's material authenticate on the other's port.
+#[test]
+fn serving_and_peer_identities_never_share_material() {
+    let spec = LumenSpec {
+        serving_tls_secret: Some("search-serving-tls".into()),
+        ..replicated_spec(Some("search-peer-tls"))
+    };
+    let objs = render(&lumen("search", spec));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+
+    let serving = env_value(container, "LUMEN_TLS_CERT").expect("serving cert path");
+    let peer = env_value(container, "LUMEN_PEER_TLS_CERT").expect("peer cert path");
+    assert_ne!(
+        serving, peer,
+        "the two listeners must not load the same certificate"
+    );
+    assert_eq!(env_value(container, "LUMEN_PEER_MTLS").as_deref(), Some("on"));
+    let secrets: Vec<&str> = pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v["secret"]["secretName"].as_str())
+        .collect();
+    assert!(
+        secrets.contains(&"search-serving-tls") && secrets.contains(&"search-peer-tls"),
+        "both Secrets must be projected, got {secrets:?}"
+    );
+}
+
+/// AC1: the client Service stays a private ClusterIP. Serving TLS is what makes
+/// a public address *look* defensible, so this is the moment the render most
+/// needs to say it does not want one.
+#[test]
+fn serving_tls_never_renders_a_public_address() {
+    let objs = render(&lumen("search", serving_tls_spec(Some("search-serving-tls"))));
+
+    let service = find(&objs, "Service", "search");
+    let service_type = service["spec"]["type"].as_str().unwrap_or("ClusterIP");
+    assert_eq!(
+        service_type, "ClusterIP",
+        "the client Service must stay private: {service:#}"
+    );
+    for kind in ["Ingress", "Gateway", "HTTPRoute"] {
+        assert!(
+            !objs.iter().any(|o| o["kind"] == kind),
+            "serving TLS terminates in the pod, not in a {kind}"
+        );
+    }
+}
+
+/// R4: the published anchor is a ConfigMap name, derived from the instance and
+/// not from the Secret. A caller sent to the serving Secret for `ca.crt` would
+/// hold the server's private key in order to verify the server.
+#[test]
+fn the_client_trust_bundle_is_named_apart_from_the_serving_secret() {
+    let l = lumen("search", serving_tls_spec(Some("search-serving-tls")));
+
+    let name = lumen::operator::render::client_trust_bundle_name(&l);
+
+    assert_eq!(name, "search-client-ca");
+    assert_ne!(name, "search-serving-tls");
+    assert_eq!(lumen::operator::render::CLIENT_TRUST_BUNDLE_KEY, "ca.crt");
+}
+
+/// R4: the published object is an owner-scoped ConfigMap holding the anchor and
+/// nothing else. Owner-scoped so it is collected with the instance rather than
+/// outliving it as a trust anchor for a fleet that no longer exists.
+#[test]
+fn the_published_client_trust_bundle_is_an_owned_configmap_of_the_anchor_alone() {
+    let l = lumen("search", serving_tls_spec(Some("search-serving-tls")));
+    let anchor = "-----BEGIN CERTIFICATE-----\nanchor\n-----END CERTIFICATE-----\n";
+
+    let cm = lumen::operator::render::client_trust_bundle(&l, anchor);
+
+    assert_eq!(cm["kind"], "ConfigMap");
+    assert_eq!(cm["metadata"]["name"], "search-client-ca");
+    assert_eq!(cm["data"]["ca.crt"], anchor);
+    assert_eq!(
+        cm["data"].as_object().map(|d| d.len()),
+        Some(1),
+        "the anchor is the only thing a verifying caller needs: {}",
+        cm["data"]
+    );
+    assert_eq!(
+        cm["metadata"]["ownerReferences"][0]["kind"], "Lumen",
+        "an anchor that outlives its instance certifies a fleet that is gone: {}",
+        cm["metadata"]
     );
 }
 

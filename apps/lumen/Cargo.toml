@@ -165,7 +165,12 @@ operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s", "b
 # the fail-closed outage arm) compiles and is tested without this feature; only
 # the socket is behind it, so a build that omits it refuses to start under
 # `LUMEN_AUTH=required` rather than serving with authentication it cannot do.
-delegated-auth = ["service-auth/k8s"]
+#
+# It carries `reqwest` because `lumen connect --ca-file` verifies the fleet's
+# serving certificate through the same client the loopback proxy forwards with
+# (#3113 R6); that client is only reachable on this path, which is also the only
+# path that can mint the token it carries.
+delegated-auth = ["service-auth/k8s", "dep:reqwest"]
 # OTLP domain metrics plus service-http's shared trace exporter. Runtime export
 # remains dormant unless LUMEN_OTLP_ENDPOINT is set.
 otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "service-http/otlp"]

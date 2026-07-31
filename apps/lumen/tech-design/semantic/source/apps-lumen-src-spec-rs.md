@@ -39,8 +39,6 @@ Public API manifest for `apps/lumen/src/spec.rs` generated from AST during Score
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#rust-source-unit
-// CODEGEN-BEGIN
 //! Offline, machine-readable self-description for agent integration.
 //!
 //! The `lumen spec` CLI subset emits everything an LLM agent needs to wire
@@ -208,9 +206,10 @@ Use the smallest topic that answers the task:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
 - `lumen llm --topic quickstart` — copy-paste local create → index → search flow.
-- `lumen llm --topic auth` — request-authentication contract: the only mode that
-  starts today (`disabled`), why `required` refuses to, and the Kubernetes
-  TokenReview/SubjectAccessReview model that replaces the retired registry.
+- `lumen llm --topic auth` — request-authentication contract: private ClusterIP
+  TLS and a short-lived Kubernetes ServiceAccount token as two independent
+  checks, `required` vs `disabled`, and the TokenReview/SubjectAccessReview
+  model that replaced the retired bearer/Google registry.
 - `lumen llm --topic deployment` — Kubernetes-native deployment topology:
   StatefulSet, shardCount, replicasPerShard, HPA boundary, reshard workflow,
   and empty-PVC bootstrap.
@@ -223,11 +222,15 @@ Use the smallest topic that answers the task:
   vector metric catalogs.
 - `lumen connect` — manage a `kubectl port-forward` for the duration of a
   wrapped command against a k8s-deployed Lumen instance (`--cr`/`--service` +
-  `--namespace`); hands the child a URL and nothing else, and tears the
-  port-forward down when the command exits.
+  `--namespace`), tearing it down when the command exits. Against an
+  `auth: required` fleet, add `--client-sa` to mint a short-lived
+  audience-bound token and `--ca-file` to verify the server against the
+  operator-published anchor; the token is attached by a loopback proxy, so it
+  reaches no environment variable and no child process.
 - `lumen query index|search|duplicates|collections list` — one-shot query
   wrappers against a reachable node (`--url`/`LUMEN_URL`); request bodies match
-  `lumen spec --shapes`. No credential flag: see `--topic auth`.
+  `lumen spec --shapes`. There is no credential flag by design — run them under
+  `lumen connect`, which owns minting and attaching. See `--topic auth`.
 "#
     .to_string()
 }
@@ -253,6 +256,62 @@ lumen k8s instance render --profile prod --out lumen.yaml
 registries all consume the same image artifact. `k8s crd render` is the
 cluster-scoped API layer, `k8s operator render|run` is the control plane, and
 `k8s instance render` is the app-namespace custom resource.
+
+## Serving transport: private ClusterIP TLS
+Production traffic is **not** published. A Lumen instance is reached at its
+Service DNS name inside the cluster and nowhere else:
+
+```
+LUMEN_URL=https://<instance>.<namespace>.svc:7373
+```
+
+There is no Ingress, no Gateway, no LoadBalancer, no NodePort, and no service
+mesh terminating TLS on lumen's behalf. The serving pod holds the private key
+itself, so the connection a caller authenticates is the connection lumen
+serves. An edge that terminated TLS and re-originated plaintext would leave the
+last hop unauthenticated while every client-side check still passed — and the
+KSA token in `Authorization` would cross that hop in the clear.
+
+Set `spec.servingTlsSecret` to a Secret holding `tls.crt`, `tls.key`, and
+`ca.crt`. The operator projects it into every serving pod and switches the
+client port from h2c to TLS with ALPN `h2, http/1.1`:
+
+```env
+LUMEN_TLS=on
+LUMEN_TLS_CERT=/var/run/secrets/lumen-serving/tls.crt
+LUMEN_TLS_KEY=/var/run/secrets/lumen-serving/tls.key
+LUMEN_TLS_CA=/var/run/secrets/lumen-serving/ca.crt
+LUMEN_TLS_SERVER_NAMES=<instance>.<namespace>.svc,<instance>.<namespace>.svc.cluster.local
+```
+
+The leaf asserts the Service's own two DNS spellings and nothing else. A name
+in the certificate is a name this instance can impersonate, so no node name and
+no external name belongs there. While no valid leaf is active the port refuses
+connections rather than falling back to plaintext.
+
+Callers verify against the anchor alone. The operator republishes `ca.crt` as
+an owner-scoped ConfigMap — never the Secret, which carries `tls.key`, and a
+client that had to read the server's private key in order to verify the server
+has already lost the argument — and reports it once the material exists:
+
+```yaml
+status:
+  clientTrustBundle:
+    configMap: <instance>-client-ca
+    key: ca.crt
+```
+
+Mount that ConfigMap and point the client at it (`lumen connect --ca-file`, or
+`PrivateTrust` in a generated client). Adding it *alongside* the public roots
+is not equivalent: a public CA could then still vouch for the name, which is
+the thing a private trust domain exists to prevent.
+
+`spec.peerTlsSecret` is a separate field for a separate decision — mutual,
+instance-scoped Raft identity on `:7374`. Sharing one Secret between the two
+would let either listener's material authenticate on the other's port.
+
+Omit `spec.servingTlsSecret` only for local and kind development, where the
+client port stays h2c and `spec.auth` is `disabled`.
 
 ## Storage topology knobs
 The operator-owned storage topology has two independent knobs:
@@ -374,33 +433,78 @@ pub fn llm_auth_md() -> String {
         r#"# lumen auth
 
 ## Runtime contract
-There is no working server-side request authentication in this build (#2871).
-The bearer/identity registry it used to load from a mounted file is retired,
-and the Kubernetes TokenReview/SubjectAccessReview verifier that replaces it
-has not landed yet. So a server runs with exactly one setting:
+Two independent checks stand between a caller and a collection, and neither
+substitutes for the other:
+
+- **Transport.** In production the serving port is private TLS on a ClusterIP
+  Service, signed by a private CA. A caller verifies the server; the server does
+  not verify the caller's certificate.
+- **Request identity.** A short-lived, audience-bound Kubernetes ServiceAccount
+  token in `Authorization: Bearer`, answered by the cluster.
+
+Server modes:
 
 ```env
-LUMEN_AUTH=disabled
+LUMEN_AUTH=required        # production: every request is TokenReview'd
+LUMEN_AUTH=disabled        # local and kind only: every request resolves to open
 ```
 
-`LUMEN_AUTH=required` (`spec.auth: required`) does not start: rather than
-serve an API that accepts everyone while claiming to require identity, the
-process exits naming the missing verifier. Treat a Lumen reachable on the
-network today as open, and keep it behind a NetworkPolicy.
+`LUMEN_AUTH=required` proves both delegation grants at startup — that it can
+reach kube-apiserver, and that its own ServiceAccount may create `TokenReview`
+and `SubjectAccessReview` in this namespace. If either fails the process **does
+not start**, naming the missing `system:auth-delegator` binding. Discovering it
+on the first request would mean serving 503s while looking healthy.
 
-Clients only need:
-
-```env
-LUMEN_URL=http://lumen.<namespace>.svc.cluster.local:7373
-```
-
-There is no client credential to configure. An `Authorization` header sent
-today resolves to nothing: the registry a bearer used to be looked up in is
-gone, so a presented token is not a stronger identity than no token — it is
-simply an unknown one, and an open server accepts both.
+There is no third mode and no degradation: a `required` process that loses its
+verifier rejects requests rather than falling back to open.
 
 Probe/spec/scrape routes stay auth-exempt regardless: `/healthz`, `/readyz`,
 `/metrics`, `/openapi.json`, and `/docs`.
+
+## Transport: private ClusterIP TLS, terminated by lumen
+Production traffic is **not** published. There is no Ingress, no Gateway, no
+LoadBalancer, no NodePort, and no service mesh terminating TLS on lumen's
+behalf. The listener holds the private key itself, so the connection a caller
+authenticates is the connection lumen serves — an edge that terminates TLS and
+re-originates plaintext would leave the last hop unauthenticated while the
+client's own check still passed.
+
+```env
+LUMEN_URL=https://<instance>.<namespace>.svc:7373
+```
+
+Set `spec.servingTlsSecret` on the `Lumen` CR and the operator projects the
+leaf, key, and CA into the pods and turns the listener on:
+
+```env
+LUMEN_TLS=on
+LUMEN_TLS_CERT=/var/run/secrets/lumen-serving/tls.crt
+LUMEN_TLS_KEY=/var/run/secrets/lumen-serving/tls.key
+LUMEN_TLS_CA=/var/run/secrets/lumen-serving/ca.crt
+LUMEN_TLS_SERVER_NAMES=<instance>.<namespace>.svc,<instance>.<namespace>.svc.cluster.local
+```
+
+The names in `LUMEN_TLS_SERVER_NAMES` are the Service's own two spellings and
+nothing else. No node name, no external name: a name in the leaf is a name this
+instance can impersonate.
+
+Callers verify against the CA the operator republishes as a ConfigMap — the
+anchor alone, never the private key — reported on the CR once it exists:
+
+```yaml
+status:
+  clientTrustBundle:
+    configMap: <instance>-client-ca
+    key: ca.crt
+```
+
+Mount that ConfigMap and point your client at it. Adding it *alongside* the
+public roots is not equivalent: a public CA could then still vouch for the
+name, which is the thing a private trust domain exists to prevent.
+
+Peer traffic on `:7374` is a separate trust decision with its own material
+(`spec.peerTlsSecret`) — mutual, instance-scoped, and never interchangeable
+with the serving anchor.
 
 ## Kubernetes: who a caller is, is the cluster's answer
 The CRD configures **no** credential source. `spec.tokensSecret`,
@@ -408,30 +512,35 @@ The CRD configures **no** credential source. `spec.tokensSecret`,
 that sets any of them is rejected by the API server's strict decoding rather
 than applied and quietly ignored.
 
-`auth: required` — the default, and today a mode that refuses to start — will
-mean every request carries a short-lived, audience-bound Kubernetes
-ServiceAccount token, obtained from the TokenRequest API. Lumen will answer two
-questions with the cluster, not with a file it was handed:
+Every request under `auth: required` carries a short-lived, audience-bound
+ServiceAccount token obtained from the TokenRequest API, and lumen answers two
+questions with the cluster rather than with a file it was handed:
 
-- **Who is this?** `TokenReview`, with the audience checked. The principal it
-  returns must be exactly `system:serviceaccount:<namespace>:<name>`; nothing
-  else is accepted as an identity.
+- **Who is this?** `TokenReview`, with the audience `lumen.axiom.dev` checked.
+  The principal it returns must be exactly
+  `system:serviceaccount:<namespace>:<name>`; nothing else is accepted as an
+  identity.
 - **May they do this?** `SubjectAccessReview` against the virtual resources
-  `lumencollections` and `lumenadmin` in API group `lumen.axiom.dev`. RBAC in
-  the cluster is the authorization source of truth, so a grant is a Role a
-  reviewer can read, `kubectl auth can-i` can answer, and the audit log
-  records.
+  `lumencollections` and `lumenadmin` in API group `lumen.axiom.dev`, scoped to
+  the serving instance's own namespace. RBAC in the cluster is the
+  authorization source of truth, so a grant is a Role a reviewer can read,
+  `kubectl auth can-i` can answer, and the audit log records.
+
+| Action | Resource | Name | Verb |
+|--------|----------|------|------|
+| read a collection | `lumencollections` | collection id | `get` |
+| write a collection | `lumencollections` | collection id | `update` |
+| administer a collection | `lumencollections` | collection id | `delete` |
+| instance admin | `lumenadmin` | — | per role |
+
+There is no role precedence. `delete` does not imply `get` unless the
+RoleBinding says so.
 
 Nothing is a long-lived secret: tokens are minted per use and expire, so there
 is no registry to rotate, no Secret to sync from Secret Manager, and no CSI
 mount whose refresh behaviour has to be reasoned about. Google user and GSA
 credentials authenticate to the kube-apiserver only — lumen never sees one, and
 never verifies a Google-issued token itself.
-
-Until that verifier lands, none of the above is enforced by lumen. The two
-halves were deliberately not shipped together: the bearer and Google-token
-paths were deleted first (#2871) so neither can survive as a silent fallback
-underneath the replacement.
 
 ## The CLI: kubeconfig authenticates you to Kubernetes, not to Lumen
 Two boundaries, two credentials, and they are never the same string.
@@ -450,21 +559,59 @@ RBAC-authorized to request a token for one explicitly named client
 ServiceAccount, and that token — not your own credential — is what reaches
 Lumen.
 
-None of that is wired yet. In this build the CLI has **no** credential path at
-all (#2873): there is no token flag, no token environment variable, and no
-lookup of a Kubernetes Secret standing behind either. `lumen connect` is a
-port-forward and a process wrapper — its child is handed `LUMEN_URL` and
-nothing else — and `lumen query *` sends no `Authorization` header. Against
-`auth: disabled` that works; against `auth: required` there is nothing to work
-against, because the server refuses to start. The TokenRequest call, and a
-loopback proxy that attaches the header so the child never holds the token,
-arrive in #2878.
+`lumen connect` does exactly that (#2878): it mints the token through your
+kubeconfig, holds it in memory, and attaches it on a loopback proxy so the
+child process is handed `LUMEN_URL` and never the token itself. There is no
+token flag, no token environment variable, and no Kubernetes Secret standing
+behind either.
+
+The port-forward it opens is transport only. The upstream URL keeps the
+Service's real DNS name, so SNI, hostname verification, and `:authority` all
+target the name the certificate asserts while only address resolution points at
+the forwarded loopback socket — `--ca-file` supplies the anchor:
+
+```sh
+lumen connect --namespace search --cr lumen \
+  --client-sa agent --ca-file ./ca.crt -- ./my-app
+```
+
+Verification is never the thing to switch off. There is no insecure flag: a
+server that cannot be verified is a wrong anchor or a wrong name, and both are
+fixable.
 
 ## Generated clients
-Generated Python clients still accept `auth_token="<token>"` and
-`default_headers={"Authorization": "Bearer <token>"}` in `Client` and
-`AsyncClient`. Nothing server-side reads that header today; it is the seam the
-KSA token will travel on.
+`lumen spec gen --lang rust|py|ts` emits a client that takes the same two
+values — the CA bundle and the name it expects the server to assert — and
+verifies against that anchor *instead of* the public roots:
+
+```rust
+Client::with_private_ca(
+    "https://lumen.search.svc:7373",
+    TransportPolicy::default(),
+    PrivateTrust { ca_bundle: "/etc/lumen/ca.crt".into(), server_name: "lumen.search.svc".into() },
+)?
+```
+
+```python
+Client("https://lumen.search.svc:7373",
+       trust=PrivateTrust(ca_bundle="/etc/lumen/ca.crt", server_name="lumen.search.svc"),
+       auth_token=token)
+```
+
+```ts
+const trust = { caBundle: "/etc/lumen/ca.crt", serverName: "lumen.search.svc" };
+const config = { baseUrl: "https://lumen.search.svc:7373",
+                 trust, fetch: await privateCaFetch(trust) };
+```
+
+Construction fails if `server_name` is not the host the base URL addresses: a
+client that verified one name while addressing another would be checking a
+certificate it never actually relies on. No generated client offers a way to
+skip verification.
+
+The KSA token travels as it always did — `auth_token="<token>"` or
+`default_headers={"Authorization": "Bearer <token>"}` on `Client` and
+`AsyncClient`.
 "#,
     );
     out.push_str("\n## Shared auth primitive\n");
@@ -688,14 +835,24 @@ each with a documented alternative:
   itself.
 
 ## Connection
-HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. HTTP/1.1
-is the compatibility/smoke path; the performance target is high-QPS, large
-corpus traffic over pooled HTTP/2 streams, where multiplexing and connection
-reuse dominate per-request overhead. Requests carry no credential in this
-build: the bearer/identity registry is retired and the Kubernetes
-TokenReview/SubjectAccessReview verifier that replaces it has not landed
-(#2871), so a reachable node serves everyone — keep it behind a
-NetworkPolicy. Sharded deployments route on the client:
+Any REST client, no driver. HTTP/1.1 is the compatibility/smoke path; the
+performance target is high-QPS, large corpus traffic over pooled HTTP/2 streams,
+where multiplexing and connection reuse dominate per-request overhead.
+
+- **Production** — `https://<instance>.<namespace>.svc:7373`, a private
+  ClusterIP whose TLS the serving pod terminates itself (ALPN `h2,
+  http/1.1`). Nothing published sits in front of it, so the connection you
+  authenticate is the connection lumen serves. Verify the server against the
+  CA the operator publishes at `status.clientTrustBundle`, in place of the
+  public roots; authenticate yourself with a short-lived, audience-bound
+  Kubernetes ServiceAccount token, sent as the request's bearer credential,
+  which lumen resolves through TokenReview and SubjectAccessReview. The exact
+  header form and how to mint the token are `--topic auth`.
+- **Local / kind development** — `http://localhost:7373`, h2c, `spec.auth:
+  disabled`. Every reachable node serves everyone; keep it off shared
+  networks.
+
+Sharded deployments route on the client:
 `crc32(collection_id) % shard_count`.
 
 ## Do NOT ask lumen to
@@ -763,11 +920,17 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
-Assumes a node at `http://localhost:7373` (`lumen serve`). No request carries
-a credential: the bearer/identity registry is retired and its Kubernetes
-TokenReview/SubjectAccessReview replacement has not landed (#2871), so
-`LUMEN_AUTH=disabled` is the only mode a server starts in and every reachable
-node serves everyone. Clients need `LUMEN_URL` and nothing else.
+Assumes a local node at `http://localhost:7373` (`lumen serve`), which is h2c
+and `LUMEN_AUTH=disabled` — every reachable node serves everyone, so keep it
+off shared networks. Clients need `LUMEN_URL` and nothing else.
+
+A production fleet is not reached this way. It answers only at
+`https://<instance>.<namespace>.svc:7373` inside the cluster, verified against
+the CA at `status.clientTrustBundle`, and each request carries a short-lived
+Kubernetes ServiceAccount token that lumen resolves through
+TokenReview/SubjectAccessReview. The bodies below are unchanged; the URL and
+the `Authorization` header are what differ. See `lumen llm --topic auth` and
+`lumen connect`.
 
 ## 1. Declare a collection
 ```bash
@@ -1301,7 +1464,6 @@ they want — the fix here is this guidance, not new API surface.
     out.push_str(raft_runtime::llm::topic().body);
     out
 }
-// CODEGEN-END
 ````
 
 ## Changes

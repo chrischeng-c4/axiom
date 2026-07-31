@@ -176,7 +176,10 @@ pub use readiness::ReadinessHook;
 pub use server_timing::{server_timing_middleware, ServerTimingDisclosure, ServerTimingExt};
 pub use service_observability::LifecycleMetrics;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
-pub use transport::{serve, trace_layer, PropagatingMakeSpan};
+pub use transport::{serve, serve_tls, trace_layer, PropagatingMakeSpan};
+/// Re-exported so a service can build a [`serve_tls`] configuration source
+/// without depending on `server-http` directly (#3113 R1).
+pub use server_http::{config_source, ServerConfigSource};
 ````
 
 ## Changes

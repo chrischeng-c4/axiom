@@ -373,23 +373,35 @@ fn llm_outline_maps_agent_topics() {
     }
 }
 
-/// #2871: the auth topic is what an agent reads before wiring a client, so it
-/// is the one place a stale credential story does the most damage. It must
-/// state the mode a server actually starts in, say that `required` refuses to
-/// start, and stop handing out a registry file shape to fill in.
+/// The auth topic is what an agent reads before wiring a client, so it is the
+/// one place a stale credential story does the most damage (#3113 AC6). It must
+/// state both halves of the production contract — private ClusterIP TLS the
+/// listener terminates itself, and KSA identity the cluster answers — and stop
+/// handing out a registry file shape to fill in.
 #[test]
-fn llm_auth_states_the_phase_one_contract() {
+fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
     let auth = llm_auth_md();
     assert!(!auth.trim().is_empty(), "auth topic is non-empty");
     for needle in [
+        // Request identity: the cluster answers it, and only for a KSA.
+        "LUMEN_AUTH=required",
         "LUMEN_AUTH=disabled",
-        "does not start",
         "TokenReview",
         "SubjectAccessReview",
+        "system:auth-delegator",
         "system:serviceaccount:<namespace>:<name>",
         "lumencollections",
+        "lumenadmin",
         "tokensSecret",
-        "Client",
+        // Transport: private ClusterIP TLS, terminated by lumen itself.
+        "LUMEN_URL=https://<instance>.<namespace>.svc:7373",
+        "spec.servingTlsSecret",
+        "LUMEN_TLS_SERVER_NAMES",
+        "clientTrustBundle",
+        // Clients, generated and CLI.
+        "--ca-file",
+        "with_private_ca",
+        "PrivateTrust",
         "auth_token",
         "default_headers",
         "Shared auth primitive",
@@ -397,15 +409,32 @@ fn llm_auth_states_the_phase_one_contract() {
     ] {
         assert!(auth.contains(needle), "auth topic missing `{needle}`");
     }
+
+    let lumen_half = auth
+        .split("\n## Shared auth primitive\n")
+        .next()
+        .expect("auth topic has a lumen-authored half");
+
+    // AC6: production is a private ClusterIP the listener terminates. An agent
+    // that reads "Ingress" here builds the one topology where the last hop is
+    // unauthenticated while every client-side check still passes.
+    assert!(
+        lumen_half.contains(
+            "There is no Ingress, no Gateway, no\nLoadBalancer, no NodePort, and no service mesh terminating TLS"
+        ),
+        "each published-edge shape has to be named and ruled out in one breath; \
+         staying silent about them, or listing them separately, reads as a menu"
+    );
+    assert!(
+        lumen_half.contains("Production traffic is **not** published"),
+        "the topic must say what production is before it says what it is not"
+    );
+
     // The registry file shape is gone, not merely deprecated in place: an
     // example an agent can copy is the thing that outlives the prose around it.
     // Only lumen's own half is asserted on — the appended `service-auth` topic
     // is the shared library's contract, still live for the services that have
     // not migrated.
-    let lumen_half = auth
-        .split("\n## Shared auth primitive\n")
-        .next()
-        .expect("auth topic has a lumen-authored half");
     for retired in [
         "token-registry.json",
         "LUMEN_TOKEN_REGISTRY_FILE",
@@ -415,6 +444,14 @@ fn llm_auth_states_the_phase_one_contract() {
         assert!(
             !lumen_half.contains(retired),
             "auth topic still publishes retired registry detail `{retired}`"
+        );
+    }
+
+    // No generated or documented client may be taught to stop checking.
+    for weakening in WEAKENINGS {
+        assert!(
+            !lumen_half.contains(weakening),
+            "auth topic teaches `{weakening}`; verification is never the thing to turn off"
         );
     }
 }
@@ -457,6 +494,58 @@ fn llm_deployment_documents_shard_cluster_topology() {
         assert!(
             deployment.contains(needle),
             "deployment topic missing `{needle}`"
+        );
+    }
+}
+
+/// #3113 AC6: whoever renders the deployment artifacts decides where TLS is
+/// terminated, so the deployment topic — not only the auth topic — has to say
+/// that lumen terminates it itself on a private ClusterIP. An operator who
+/// reads this and reaches for an Ingress builds the one topology where the
+/// last hop carries a bearer token in the clear while every client-side check
+/// still passes.
+#[test]
+fn llm_deployment_states_the_private_clusterip_tls_contract() {
+    let deployment = llm_deployment_md();
+    for needle in [
+        "LUMEN_URL=https://<instance>.<namespace>.svc:7373",
+        "spec.servingTlsSecret",
+        "spec.peerTlsSecret",
+        "LUMEN_TLS_CERT",
+        "LUMEN_TLS_KEY",
+        "LUMEN_TLS_CA",
+        "LUMEN_TLS_SERVER_NAMES",
+        "clientTrustBundle",
+        "--ca-file",
+        "PrivateTrust",
+        // The anchor is published without the key, and replaces the public
+        // roots rather than joining them. Both are the whole point of a
+        // private trust domain, and both are easy to get subtly wrong.
+        "which carries `tls.key`",
+        "alongside* the public roots",
+    ] {
+        assert!(
+            deployment.contains(needle),
+            "deployment topic missing `{needle}`"
+        );
+    }
+
+    assert!(
+        deployment.contains(
+            "There is no Ingress, no Gateway, no LoadBalancer, no NodePort, and no service\nmesh terminating TLS on lumen's behalf."
+        ),
+        "each published-edge shape has to be named and ruled out in one breath; \
+         staying silent about them, or listing them separately, reads as a menu"
+    );
+    assert!(
+        deployment.contains("Production traffic is **not** published"),
+        "the topic must say what production is before it says what it is not"
+    );
+
+    for weakening in WEAKENINGS {
+        assert!(
+            !deployment.contains(weakening),
+            "deployment topic teaches `{weakening}`; verification is never the thing to turn off"
         );
     }
 }
@@ -748,6 +837,37 @@ fn llm_workflow_documents_query_method_first_with_post_fallback() {
     }
 }
 
+/// #3113 AC6: the workflow topic's Connection section is where an agent learns
+/// what URL to build. It used to say lumen speaks cleartext and carries no
+/// credential, full stop — true of a localhost node, and a recipe for sending a
+/// KSA token in the clear at a production fleet. Production and development are
+/// now two named cases, and the production one names the anchor and the check.
+#[test]
+fn llm_workflow_separates_production_tls_from_local_h2c() {
+    let workflow = llm_workflow_md();
+    for needle in [
+        "https://<instance>.<namespace>.svc:7373",
+        "http://localhost:7373",
+        "clientTrustBundle",
+        "TokenReview",
+        "SubjectAccessReview",
+        "in place of the\n  public roots",
+    ] {
+        assert!(
+            workflow.contains(needle),
+            "workflow Connection missing `{needle}`"
+        );
+    }
+    assert!(
+        !workflow.contains("has not landed"),
+        "workflow still claims the KSA verifier is missing"
+    );
+    assert!(
+        !workflow.contains("Requests carry no credential in this"),
+        "workflow still states the retired build-wide no-credential claim as fact"
+    );
+}
+
 /// #1297: the outline must point an agent at QUERY-first search guidance
 /// from the workflow topic entry, mirroring the batch-search outline pointer
 /// (#1271).
@@ -857,16 +977,41 @@ fn llm_quickstart_is_a_copy_paste_end_to_end() {
     assert!(!q.trim().is_empty(), "quickstart is non-empty");
     assert!(q.contains("curl"), "quickstart has runnable curl");
     // #2871: the quickstart used to hand out the production auth env. There is
-    // none to hand out, so it must say the node is open rather than imply a
-    // credential the reader could go find.
+    // none to hand out, so it must say the local node is open rather than imply
+    // a credential the reader could go find.
     assert!(
         !q.contains("LUMEN_TOKEN_REGISTRY_FILE"),
         "quickstart still names the retired registry env"
     );
     assert!(
         q.contains("LUMEN_AUTH=disabled"),
-        "quickstart names the only mode a server starts in"
+        "quickstart names the mode the local node it targets runs in"
     );
+    // #3113 AC6: `disabled` is a property of the localhost node this topic
+    // targets, not of the build. Between #2871 and #2869/#2878 it was both, and
+    // the text said so; leaving that in would tell a reader that the open node
+    // in front of them is the only thing lumen can be, and that reaching a
+    // production fleet the same way is fine.
+    for stale in [
+        "has not landed",
+        "the only mode a server starts in",
+        "has not landed (#2871)",
+    ] {
+        assert!(
+            !q.contains(stale),
+            "quickstart still claims the KSA verifier is missing (`{stale}`)"
+        );
+    }
+    for needle in [
+        "https://<instance>.<namespace>.svc:7373",
+        "clientTrustBundle",
+        "TokenReview",
+    ] {
+        assert!(
+            q.contains(needle),
+            "quickstart does not say how production differs (`{needle}`)"
+        );
+    }
     for path in ["/collections/products", "/index", "/search"] {
         assert!(q.contains(path), "quickstart exercises `{path}`");
     }
@@ -1099,6 +1244,64 @@ fn openapi_exposes_native_offset_prefix_and_search_all_contracts() {
     );
 }
 
+/// #3113 AC6: `lumen llm --topic <t>` renders from the DX contract, not from
+/// the `llm_*_md()` bodies asserted elsewhere in this file — so this is the
+/// text an agent driving the CLI actually receives. Three topics decide
+/// whether it builds a plaintext production path: `authenticate` (what the
+/// token crosses), `deploy-kubernetes` (whether the manifest turns TLS on),
+/// and `connect-kubernetes` (whether the developer path verifies anything).
+/// Each needs the contract in its own topic; an agent reads one, not all.
+#[test]
+fn dx_topics_teach_the_private_clusterip_tls_contract() {
+    let md = |topic: &str| dx::render_llm(topic, cli_std::llm::Format::Md).unwrap();
+
+    let authenticate = md("authenticate");
+    for needle in [
+        "https://<instance>.<namespace>.svc:7373",
+        "status.clientTrustBundle",
+        "in place of the public roots",
+    ] {
+        assert!(
+            authenticate.contains(needle),
+            "`authenticate` topic missing `{needle}`:\n{authenticate}"
+        );
+    }
+
+    let deploy = md("deploy-kubernetes");
+    for needle in [
+        "spec.servingTlsSecret",
+        "spec.peerTlsSecret",
+        "it is cleartext",
+        "Ingress, Gateway, LoadBalancer, NodePort, or mesh TLS terminator",
+    ] {
+        assert!(
+            deploy.contains(needle),
+            "`deploy-kubernetes` topic missing `{needle}`:\n{deploy}"
+        );
+    }
+
+    let connect = md("connect-kubernetes");
+    for needle in ["--ca-file", "SNI", "there is no flag that skips verification"] {
+        assert!(
+            connect.contains(needle),
+            "`connect-kubernetes` topic missing `{needle}`:\n{connect}"
+        );
+    }
+
+    // The one instruction that must never appear: every topic above exists to
+    // make verification possible, so none of them may also teach a way around
+    // it. A single such string turns the whole contract into a suggestion.
+    for topic in ["authenticate", "deploy-kubernetes", "connect-kubernetes"] {
+        let text = md(topic);
+        for weakening in WEAKENINGS {
+            assert!(
+                !text.contains(weakening),
+                "`{topic}` topic teaches `{weakening}`"
+            );
+        }
+    }
+}
+
 #[test]
 fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
     let protocol = dx::llm_protocol();
@@ -1232,4 +1435,106 @@ fn llm_deployment_documents_reshard_convergence_observability() {
         );
     }
 }
+
+/// #3113 R5: every language `lumen spec gen` emits configures a private trust
+/// anchor and the name it expects the server to assert.
+///
+/// Asserted against the client this repository actually ships — generated from
+/// lumen's own committed OpenAPI, through the same target policy `lumen spec
+/// gen` uses — rather than against the emitters' own fixtures, so a generator
+/// change that lands the seam for a toy spec but not for lumen's is caught here.
+#[test]
+fn every_generated_client_takes_a_private_ca_and_the_name_it_verifies() {
+    use openapi_codegen::{generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy};
+
+    const TARGET_POLICY: &str = include_str!("../clients/codegen.toml");
+    let policy = TargetPolicy::from_toml(TARGET_POLICY).expect("client target policy");
+
+    // (language, entrypoint carrying the seam, what the seam has to say)
+    let expected: [(Lang, &str, &[&str]); 3] = [
+        (
+            Lang::Rust,
+            "client.rs",
+            &[
+                "pub struct PrivateTrust {",
+                "pub ca_bundle: std::path::PathBuf,",
+                "pub server_name: String,",
+                ".tls_built_in_root_certs(false)",
+                "if addressed != trust.server_name {",
+            ],
+        ),
+        (
+            Lang::Py,
+            "client.py",
+            &[
+                "class PrivateTrust:",
+                "ca_bundle: str",
+                "server_name: str",
+                "ssl.create_default_context(cafile=trust.ca_bundle)",
+                "if addressed != trust.server_name:",
+            ],
+        ),
+        (
+            Lang::Ts,
+            "runtime.ts",
+            &[
+                "export interface PrivateTrust {",
+                "caBundle: string;",
+                "serverName: string;",
+                "trust?: PrivateTrust;",
+                "if (addressed !== trust.serverName) {",
+            ],
+        ),
+    ];
+
+    for (lang, entry, needles) in expected {
+        let target = policy.resolve(lang, None).expect("pinned target");
+        let opts = GenOptions {
+            lang,
+            target: Some(target),
+            spec_path: std::path::PathBuf::new(),
+            out_dir: std::path::PathBuf::new(),
+            client_name: "createClient".to_string(),
+            http_client: HttpClient::Fetch,
+            emit_types: true,
+            emit_client: true,
+            emit_hooks: matches!(lang, Lang::Ts),
+        };
+        let out = generate_for_target(&openapi_json(), &opts, target).expect("generate client");
+        let file = out
+            .files
+            .iter()
+            .find(|f| f.rel_path == entry)
+            .unwrap_or_else(|| panic!("{lang:?} client emits {entry}"));
+        for needle in needles {
+            assert!(
+                file.contents.contains(needle),
+                "{entry} has no private-CA seam ({needle}): an in-cluster caller would have \
+                 to trust the public roots for a name no public CA can vouch for"
+            );
+        }
+        // The anchor is the fix for an unverifiable server; skipping the check
+        // is not, so no generated client may offer it.
+        for weakening in WEAKENINGS {
+            for generated in &out.files {
+                assert!(
+                    !generated.contents.contains(weakening),
+                    "{} offers {weakening}; verification is never the thing to turn off",
+                    generated.rel_path
+                );
+            }
+        }
+    }
+}
+
+/// Ways a client could be talked into not checking who it is talking to. None of
+/// them may appear in generated output.
+const WEAKENINGS: [&str; 6] = [
+    "danger_accept_invalid_certs",
+    "danger_accept_invalid_hostnames",
+    "check_hostname = False",
+    "CERT_NONE",
+    "rejectUnauthorized: false",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+];
 // CODEGEN-END

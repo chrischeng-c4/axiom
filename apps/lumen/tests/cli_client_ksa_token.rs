@@ -174,14 +174,18 @@ fn answer(grant: &Grant, request: &Recorded) -> (u16, String) {
 /// A recording stand-in for a serving node. Answers every request 200 and
 /// keeps the `Authorization` header it was sent, or the empty string.
 struct RecordingUpstream {
+    port: u16,
     headers: mpsc::Receiver<String>,
     _shutdown: TcpStream,
 }
 
 impl RecordingUpstream {
-    /// Bound to `port` so it can stand where `kubectl port-forward` would.
-    fn start_on(port: u16) -> Self {
-        let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind recording upstream");
+    /// Binds an ephemeral loopback port and reports it. The fake `kubectl`
+    /// forwards the tunnelled port to this one, so nothing here has to guess a
+    /// port number — and no two tests in this binary can pick the same one.
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind recording upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
         let (tx, headers) = mpsc::channel();
         let shutdown = TcpStream::connect(("127.0.0.1", port)).expect("open shutdown channel");
         let (sentinel, _) = listener.accept().expect("accept shutdown channel");
@@ -201,9 +205,14 @@ impl RecordingUpstream {
         });
 
         Self {
+            port,
             headers,
             _shutdown: shutdown,
         }
+    }
+
+    fn port(&self) -> u16 {
+        self.port
     }
 
     fn seen(&self) -> Vec<String> {
@@ -303,21 +312,77 @@ users:
     path
 }
 
-/// A `kubectl` that logs its invocation and, for `port-forward`, stays alive
-/// without binding anything — the recording upstream already holds the port
-/// the forward would have served.
+/// A `kubectl` that records what it was asked to do and, for `port-forward`,
+/// actually forwards: it binds the local port itself and pumps every byte to
+/// the in-process upstream named by `LUMEN_TEST_UPSTREAM_PORT`.
+///
+/// Forwarding for real is what makes the ordering real rather than assumed.
+/// `lumen connect` waits for the local port to accept, and the only thing that
+/// opens it is this process — so a run that got as far as talking to the
+/// upstream provably ran `kubectl` first, and the recorded log is complete by
+/// then. Binding the upstream directly on the forwarded port instead would
+/// leave the port open before `lumen` started, and the invocation record would
+/// be a race.
 fn install_fake_kubectl(dir: &Path, log: &Path) {
+    let forwarder = dir.join("port_forwarder.py");
+    std::fs::write(
+        &forwarder,
+        r#"import socket, sys, threading
+local, upstream = int(sys.argv[1]), int(sys.argv[2])
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("127.0.0.1", local))
+server.listen(64)
+
+def pump(src, dst):
+    try:
+        while True:
+            chunk = src.recv(65536)
+            if not chunk:
+                break
+            dst.sendall(chunk)
+    except OSError:
+        pass
+    finally:
+        try:
+            dst.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+while True:
+    near, _ = server.accept()
+    try:
+        far = socket.create_connection(("127.0.0.1", upstream))
+    except OSError:
+        near.close()
+        continue
+    for a, b in ((near, far), (far, near)):
+        threading.Thread(target=pump, args=(a, b), daemon=True).start()
+"#,
+    )
+    .expect("write port forwarder");
+
     let script = format!(
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "{log}"
+forwarding=
+mapping=
 for a in "$@"; do
-  if [ "$a" = "port-forward" ]; then
-    while true; do sleep 3600; done
-  fi
+  case "$a" in
+    port-forward) forwarding=1 ;;
+    *:*) mapping="$a" ;;
+  esac
 done
+if [ -n "$forwarding" ]; then
+  # `lumen connect` nulls this process's stderr, so a forwarder that died on
+  # startup would otherwise surface only as a bare 30s readiness timeout. Keep
+  # its diagnosis next to the invocation log the assertions already read.
+  exec python3 "{forwarder}" "${{mapping%%:*}}" "$LUMEN_TEST_UPSTREAM_PORT" 2>>"{log}.forwarder"
+fi
 exit 0
 "#,
-        log = log.display()
+        log = log.display(),
+        forwarder = forwarder.display()
     );
     let path = dir.join("kubectl");
     std::fs::write(&path, script).expect("write fake kubectl");
@@ -346,14 +411,6 @@ json.dump({"env": dict(os.environ), "argv": sys.argv[1:], "body": body},
     path
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("reserve a port")
-        .local_addr()
-        .expect("reserved addr")
-        .port()
-}
-
 // ---------------------------------------------------------------------------
 // AC1 + AC4 + AC6
 // ---------------------------------------------------------------------------
@@ -370,8 +427,7 @@ fn connect_mints_for_the_named_account_and_spends_the_token_on_the_childs_behalf
     let apiserver = FakeApiserver::start(Grant::Issue {
         service_account: CLIENT_SA,
     });
-    let forwarded_port = free_port();
-    let upstream = RecordingUpstream::start_on(forwarded_port);
+    let upstream = RecordingUpstream::start();
     let kubeconfig = write_kubeconfig(tmp.path(), &apiserver.url());
     let kubectl_log = tmp.path().join("kubectl.log");
     install_fake_kubectl(&bin, &kubectl_log);
@@ -391,16 +447,16 @@ fn connect_mints_for_the_named_account_and_spends_the_token_on_the_childs_behalf
             std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()),
         )
         .env("KUBECONFIG", &kubeconfig)
+        .env("LUMEN_TEST_UPSTREAM_PORT", upstream.port().to_string())
         .args([
             "connect",
+            "--plaintext",
             "--namespace",
             NAMESPACE,
             "--cr",
             "search",
             "--client-sa",
             CLIENT_SA,
-            "--local-port",
-            &forwarded_port.to_string(),
             "--",
             "python3",
             child.to_str().unwrap(),
@@ -473,8 +529,8 @@ fn connect_mints_for_the_named_account_and_spends_the_token_on_the_childs_behalf
         "#2878 AC4: the child's URL must be loopback, got {url:?}"
     );
     assert!(
-        !url.ends_with(&format!(":{forwarded_port}")),
-        "#2878 AC4: the child was pointed straight at the port-forward, so nothing attached a \
+        !url.ends_with(&format!(":{}", upstream.port())),
+        "#2878 AC4: the child was pointed straight at the upstream, so nothing attached a \
          credential on its behalf: {url}"
     );
     assert!(
@@ -565,8 +621,7 @@ fn a_refused_mint_names_the_caller_the_account_and_the_check_to_run() {
     std::fs::create_dir_all(&bin).expect("create fake bin dir");
 
     let apiserver = FakeApiserver::start(Grant::RefuseAll);
-    let forwarded_port = free_port();
-    let _upstream = RecordingUpstream::start_on(forwarded_port);
+    let upstream = RecordingUpstream::start();
     let kubeconfig = write_kubeconfig(tmp.path(), &apiserver.url());
     install_fake_kubectl(&bin, &tmp.path().join("kubectl.log"));
 
@@ -583,16 +638,16 @@ fn a_refused_mint_names_the_caller_the_account_and_the_check_to_run() {
             std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()),
         )
         .env("KUBECONFIG", &kubeconfig)
+        .env("LUMEN_TEST_UPSTREAM_PORT", upstream.port().to_string())
         .args([
             "connect",
+            "--plaintext",
             "--namespace",
             NAMESPACE,
             "--cr",
             "search",
             "--client-sa",
             "lumen-sibling",
-            "--local-port",
-            &forwarded_port.to_string(),
             "--",
             "true",
         ])
@@ -629,4 +684,492 @@ fn a_refused_mint_names_the_caller_the_account_and_the_check_to_run() {
         stderr.contains("forbidden") || stderr.contains("cannot mint") || stderr.contains("denied"),
         "#2878 R6: the denial should read as a denial:\n{stderr}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// #3113 R6/R7, AC4: the tunnel is loopback, the identity is the Service's
+// ---------------------------------------------------------------------------
+//
+// A port-forward's local end is `127.0.0.1`, and that is the whole reason
+// these tests exist. It is tempting to conclude that a socket on the loopback
+// interface needs no verification, or that the certificate should name
+// `localhost` so that it does. Both conclusions end in the same place: a leaf
+// that authenticates nothing, or a connection that authenticates the tunnel
+// instead of what the tunnel reaches. So `lumen connect` addresses the
+// Kubernetes Service by name and redirects only address resolution — and the
+// assertions below are about what the *server* saw addressed to it, and about
+// what the caller is told when the name does not check out.
+
+/// The Service these tests reach. `<service>.<namespace>.svc` — the default
+/// `lumen connect` derives, and one of the two names the operator requests.
+const SERVICE_DNS: &str = "search.lumen-prod.svc";
+
+/// A throwaway CA, standing in for the private pool #3109 provisions.
+struct TestCa {
+    cert: rcgen::Certificate,
+    key: rcgen::KeyPair,
+}
+
+fn test_ca(common_name: &str) -> TestCa {
+    let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, common_name);
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let key = rcgen::KeyPair::generate().expect("ca key");
+    let cert = params.self_signed(&key).expect("self-sign ca");
+    TestCa { cert, key }
+}
+
+/// A serving leaf for `dns`, signed by `ca`.
+fn test_leaf(ca: &TestCa, dns: &str) -> (String, String) {
+    let mut params =
+        rcgen::CertificateParams::new(vec![dns.to_string()]).expect("leaf params");
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, dns);
+    params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+    let key = rcgen::KeyPair::generate().expect("leaf key");
+    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("sign leaf");
+    (cert.pem(), key.serialize_pem())
+}
+
+/// One request the TLS upstream answered.
+#[derive(Debug, Clone)]
+struct TlsSeen {
+    path: String,
+    host: String,
+    authorization: String,
+}
+
+/// A serving node standing where `kubectl port-forward` would, terminating TLS
+/// with the real [`service_http::serve_tls`] listener over material laid out
+/// the way `spec.servingTlsSecret` projects it.
+///
+/// Not a stub TLS socket: the point is that whatever `lumen connect` builds has
+/// to satisfy the same listener production runs.
+struct TlsUpstream {
+    port: u16,
+    seen: std::sync::Arc<std::sync::Mutex<Vec<TlsSeen>>>,
+    // Held so the projected material outlives the listener reading it.
+    _material: tempfile::TempDir,
+    // Held, never sent on: dropping it is the shutdown edge.
+    _shutdown: tokio::sync::oneshot::Sender<()>,
+}
+
+impl TlsUpstream {
+    fn start(dns: &str, cert_pem: &str, key_pem: &str, ca_pem: &str) -> Self {
+        let material = tempfile::tempdir().expect("material dir");
+        let dir = material.path().to_path_buf();
+        std::fs::write(dir.join("tls.crt"), cert_pem).expect("write cert");
+        std::fs::write(dir.join("tls.key"), key_pem).expect("write key");
+        std::fs::write(dir.join("ca.crt"), ca_pem).expect("write ca");
+
+        let claimed = dns.to_string();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let (ready_tx, ready_rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("upstream runtime");
+            runtime.block_on(async move {
+                lumen::tls::install_default_crypto_provider();
+                let tls = lumen::tls::ServingTlsConfig {
+                    cert: dir.join("tls.crt"),
+                    key: dir.join("tls.key"),
+                    ca: dir.join("ca.crt"),
+                    dns_names: vec![claimed],
+                }
+                .reloadable()
+                .expect("activate the serving leaf");
+                let app = axum::Router::new().fallback(
+                    move |request: axum::http::Request<axum::body::Body>| {
+                        let recorder = recorder.clone();
+                        async move {
+                            let header = |name: &str| {
+                                request
+                                    .headers()
+                                    .get(name)
+                                    .and_then(|v| v.to_str().ok())
+                                    .unwrap_or_default()
+                                    .to_string()
+                            };
+                            recorder.lock().expect("record").push(TlsSeen {
+                                path: request.uri().path().to_string(),
+                                // HTTP/2 carries the authority in the pseudo-
+                                // header the URI exposes; HTTP/1.1 in `Host`.
+                                // Either way this is the name the connection
+                                // was addressed to.
+                                host: request
+                                    .uri()
+                                    .authority()
+                                    .map(|a| a.host().to_string())
+                                    .filter(|h| !h.is_empty())
+                                    .unwrap_or_else(|| header("host")),
+                                authorization: header("authorization"),
+                            });
+                            (axum::http::StatusCode::OK, r#"{"collections":[]}"#)
+                        }
+                    },
+                );
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("bind tls upstream");
+                let _ = ready_tx.send(listener.local_addr().expect("upstream addr").port());
+                service_http::serve_tls(
+                    listener,
+                    app,
+                    service_http::config_source(move || tls.server_config()),
+                    async move {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await;
+            });
+        });
+
+        let port = ready_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("tls upstream binds");
+        Self {
+            port,
+            seen,
+            _material: material,
+            _shutdown: shutdown_tx,
+        }
+    }
+
+    fn port(&self) -> u16 {
+        self.port
+    }
+
+    fn seen(&self) -> Vec<TlsSeen> {
+        self.seen.lock().expect("read records").clone()
+    }
+}
+
+/// Everything a `lumen connect` run needs on disk, in one place.
+struct Fixture {
+    tmp: tempfile::TempDir,
+    bin: PathBuf,
+    kubectl_log: PathBuf,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("create fake bin dir");
+        let kubectl_log = tmp.path().join("kubectl.log");
+        install_fake_kubectl(&bin, &kubectl_log);
+        Self {
+            tmp,
+            bin,
+            kubectl_log,
+        }
+    }
+
+    fn run(
+        &self,
+        apiserver: &FakeApiserver,
+        upstream_port: u16,
+        args: &[&str],
+    ) -> std::process::Output {
+        let kubeconfig = write_kubeconfig(self.tmp.path(), &apiserver.url());
+        let path = format!(
+            "{}:{}",
+            self.bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        Command::new(env!("CARGO_BIN_EXE_lumen"))
+            .env_clear()
+            .env("PATH", &path)
+            .env(
+                "HOME",
+                std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()),
+            )
+            .env("KUBECONFIG", &kubeconfig)
+            .env("LUMEN_TEST_UPSTREAM_PORT", upstream_port.to_string())
+            .args(args)
+            .output()
+            .expect("run lumen connect")
+    }
+}
+
+/// R6/AC4: the socket is loopback, the certificate that satisfied the
+/// connection names the Kubernetes Service, and the token still reaches only
+/// the server.
+#[test]
+fn connect_verifies_the_service_identity_through_the_forwarded_socket() {
+    let fixture = Fixture::new();
+    let apiserver = FakeApiserver::start(Grant::Issue {
+        service_account: CLIENT_SA,
+    });
+    let ca = test_ca("lumen-private-ca");
+    let (cert, key) = test_leaf(&ca, SERVICE_DNS);
+    let upstream = TlsUpstream::start(SERVICE_DNS, &cert, &key, &ca.cert.pem());
+    let ca_file = fixture.tmp.path().join("ca.crt");
+    std::fs::write(&ca_file, ca.cert.pem()).expect("write trust bundle");
+    let child = install_child(fixture.tmp.path());
+    let child_out = fixture.tmp.path().join("child.json");
+
+    let out = fixture.run(
+        &apiserver,
+        upstream.port(),
+        &[
+            "connect",
+            "--namespace",
+            NAMESPACE,
+            "--cr",
+            "search",
+            "--client-sa",
+            CLIENT_SA,
+            "--ca-file",
+            ca_file.to_str().unwrap(),
+            "--",
+            "python3",
+            child.to_str().unwrap(),
+            child_out.to_str().unwrap(),
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        out.status.success(),
+        "#3113 R6: `lumen connect --ca-file` failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let seen = upstream.seen();
+    assert!(
+        seen.iter().any(|r| r.path == "/healthz"),
+        "#3113 R7: the TLS preflight must happen before the child runs: {seen:?}"
+    );
+    let forwarded: Vec<&TlsSeen> = seen.iter().filter(|r| r.path == "/collections").collect();
+    assert_eq!(
+        forwarded.len(),
+        1,
+        "#3113 R6: expected the child's one request to arrive over TLS: {seen:?}"
+    );
+    assert_eq!(
+        forwarded[0].authorization,
+        format!("Bearer {TOKEN_CANARY}"),
+        "#3113 R6: the token must still be attached by the proxy, over TLS"
+    );
+
+    // The identity half: every request was *addressed to* the Service, not to
+    // the loopback address the packets went to. A `Host` of `127.0.0.1` would
+    // mean SNI and hostname verification had been pointed at the tunnel.
+    for record in &seen {
+        assert_eq!(
+            record.host, SERVICE_DNS,
+            "#3113 R6: a request addressed something other than the Service: {record:?}"
+        );
+    }
+
+    // AC4 is unchanged by TLS: the child is handed a loopback URL and no
+    // credential, and the token appears nowhere it can read.
+    let recorded: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&child_out).expect("child wrote its record"))
+            .expect("child record is JSON");
+    let env = recorded["env"].as_object().expect("child env is an object");
+    let url = env["LUMEN_URL"].as_str().unwrap_or_default();
+    assert!(
+        url.starts_with("http://127.0.0.1:"),
+        "#3113 AC4: the child's URL must be the local proxy, got {url:?}"
+    );
+    assert!(
+        !url.contains(SERVICE_DNS),
+        "#3113 AC4: the child was handed a name it cannot resolve: {url}"
+    );
+    for (label, haystack) in [
+        ("child environment", serde_json::to_string(env).unwrap()),
+        ("child argv", recorded["argv"].to_string()),
+        ("lumen stderr", stderr.clone()),
+    ] {
+        assert!(
+            !haystack.contains(TOKEN_CANARY),
+            "#3113 AC4: the minted token reached the {label}:\n{haystack}"
+        );
+    }
+
+    // Still one kubectl invocation: TLS added a trust file to read, not a
+    // cluster round trip.
+    let log = std::fs::read_to_string(&fixture.kubectl_log).unwrap_or_default();
+    let invocations: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(invocations.len(), 1, "{log}");
+    assert!(invocations[0].contains("port-forward"), "{}", invocations[0]);
+}
+
+/// Run `lumen connect --ca-file` against a deployment that will refuse it, and
+/// return the stderr the caller sees. The wrapped command is `true`, so a run
+/// that "succeeds" would prove the refusal did not happen.
+fn refused_connect(ca_pem: &str, upstream_port: u16) -> String {
+    let fixture = Fixture::new();
+    let apiserver = FakeApiserver::start(Grant::Issue {
+        service_account: CLIENT_SA,
+    });
+    let ca_file = fixture.tmp.path().join("ca.crt");
+    std::fs::write(&ca_file, ca_pem).expect("write trust bundle");
+
+    let out = fixture.run(
+        &apiserver,
+        upstream_port,
+        &[
+            "connect",
+            "--namespace",
+            NAMESPACE,
+            "--cr",
+            "search",
+            "--client-sa",
+            CLIENT_SA,
+            "--ca-file",
+            ca_file.to_str().unwrap(),
+            "--",
+            "true",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        !out.status.success(),
+        "#3113 R7: the connection was accepted when it should have been refused:\n{stderr}"
+    );
+    // Whatever the reason, the answer is never to stop checking.
+    for forbidden in [
+        "insecure",
+        "skip-tls-verify",
+        "skip_verify",
+        "danger_accept",
+    ] {
+        assert!(
+            !stderr.to_ascii_lowercase().contains(forbidden),
+            "#3113 R7: the diagnostic offered `{forbidden}` as a way out:\n{stderr}"
+        );
+    }
+    stderr
+}
+
+/// R7: a bundle from another CA pool. The fix is to get the right bundle, and
+/// the message says which two things to compare.
+#[test]
+fn an_unrelated_ca_is_refused_and_named_as_such() {
+    let served = test_ca("the-fleets-ca");
+    let (cert, key) = test_leaf(&served, SERVICE_DNS);
+    let stranger = test_ca("someone-elses-ca");
+    let upstream = TlsUpstream::start(SERVICE_DNS, &cert, &key, &served.cert.pem());
+    let stderr = refused_connect(&stranger.cert.pem(), upstream.port());
+    assert!(
+        stderr.contains("not signed by"),
+        "#3113 R7: an unrelated CA must be diagnosed as a trust mismatch:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("clientTrustBundle"),
+        "#3113 R7/R4: the message must say where the right bundle comes from:\n{stderr}"
+    );
+    let _ = upstream.seen();
+}
+
+/// R7: the right CA, the wrong Service. The message names the flag that fixes
+/// it — and not a certificate for `localhost`, which would be valid against
+/// every port-forward anyone opens.
+#[test]
+fn a_certificate_for_another_service_is_refused_by_name() {
+    let ca = test_ca("the-fleets-ca");
+    let (cert, key) = test_leaf(&ca, "other.lumen-prod.svc");
+    let upstream = TlsUpstream::start("other.lumen-prod.svc", &cert, &key, &ca.cert.pem());
+    let stderr = refused_connect(&ca.cert.pem(), upstream.port());
+    assert!(
+        stderr.contains(SERVICE_DNS) && stderr.contains("--server-name"),
+        "#3113 R7: a name mismatch must name the expected identity and the flag that \
+         overrides it:\n{stderr}"
+    );
+    let _ = upstream.seen();
+    assert!(
+        !stderr.contains("localhost") && !stderr.contains("127.0.0.1 certificate"),
+        "#3113 R7: a localhost certificate is not a remediation path:\n{stderr}"
+    );
+}
+
+/// R7: a fleet still serving cleartext is a deployment fact, and reads as one
+/// rather than as a handshake failure.
+#[test]
+fn a_cleartext_fleet_is_diagnosed_rather_than_reported_as_a_handshake_failure() {
+    let ca = test_ca("the-fleets-ca");
+    let upstream = RecordingUpstream::start();
+    let stderr = refused_connect(&ca.cert.pem(), upstream.port());
+    assert!(
+        stderr.contains("cleartext"),
+        "#3113 R7: a plaintext far end must be named as one:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--plaintext") && stderr.contains("servingTlsSecret"),
+        "#3113 R7: both remediations — development opt-in and production issuance — must \
+         appear:\n{stderr}"
+    );
+    let _ = upstream.seen();
+}
+
+/// R1/R7: cleartext is a decision, not a default, and there is no flag that
+/// turns verification off.
+#[test]
+fn transport_must_be_chosen_and_verification_cannot_be_switched_off() {
+    let fixture = Fixture::new();
+    let apiserver = FakeApiserver::start(Grant::Issue {
+        service_account: CLIENT_SA,
+    });
+
+    let neither = fixture.run(
+        &apiserver,
+        0,
+        &[
+            "connect",
+            "--namespace",
+            NAMESPACE,
+            "--cr",
+            "search",
+            "--",
+            "true",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&neither.stderr).into_owned();
+    assert!(
+        !neither.status.success(),
+        "#3113 R1: a run that names neither --ca-file nor --plaintext must not silently pick \
+         cleartext:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--ca-file") && stderr.contains("--plaintext"),
+        "#3113 R1: the refusal must name both transports:\n{stderr}"
+    );
+
+    let skipped = fixture.run(
+        &apiserver,
+        0,
+        &[
+            "connect",
+            "--namespace",
+            NAMESPACE,
+            "--cr",
+            "search",
+            "--insecure-skip-tls-verify",
+            "--",
+            "true",
+        ],
+    );
+    assert!(
+        !skipped.status.success(),
+        "#3113 R7: `--insecure-skip-tls-verify` must not exist"
+    );
+
+    let help = fixture.run(&apiserver, 0, &["connect", "--help"]);
+    let help = String::from_utf8_lossy(&help.stdout).to_ascii_lowercase();
+    for forbidden in ["insecure", "skip-tls-verify", "no-verify"] {
+        assert!(
+            !help.contains(forbidden),
+            "#3113 R7: `lumen connect --help` advertises `{forbidden}`"
+        );
+    }
 }

@@ -472,6 +472,7 @@ fn connect_hands_the_child_a_url_and_never_reads_a_secret() {
     }
     cmd.args([
         "connect",
+        "--plaintext",
         "--namespace",
         "lumen-acceptance",
         "--cr",

@@ -194,6 +194,7 @@ mod tests {
             service_account_name: None,
             service_account_annotations: BTreeMap::new(),
             peer_tls_secret: Some("lumen-peer-tls".into()),
+            serving_tls_secret: Some("lumen-serving-tls".into()),
         };
         let mut lumen = Lumen::new("lumen", spec);
         lumen.metadata.namespace = Some("lumen".to_string());

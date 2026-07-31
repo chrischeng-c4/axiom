@@ -65,7 +65,7 @@ pub use delegated::{
     fingerprint, AuthRejection, DelegatedAuthConfig, DelegatedAuthError, DelegatedAuthMetrics,
     DelegatedAuthenticator, MissingAudience,
 };
-pub use loopback_proxy::LoopbackProxy;
+pub use loopback_proxy::{verifying_client, LoopbackProxy};
 pub use principal::{
     PrincipalRejection, ReviewedIdentity, ServiceAccountPrincipal, ServiceAccountRef,
     SERVICE_ACCOUNT_PREFIX,

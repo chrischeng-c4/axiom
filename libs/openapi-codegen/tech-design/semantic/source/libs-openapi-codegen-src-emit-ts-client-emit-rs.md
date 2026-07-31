@@ -56,6 +56,11 @@ const FETCH_RUNTIME: &str = r##"export interface ClientConfig {
   baseUrl: string;
   fetch?: typeof fetch;
   headers?: Record<string, string>;
+  /**
+   * Verify the server against a private CA instead of the public roots. Needs a
+   * `fetch` that carries it -- see `privateCaFetch`.
+   */
+  trust?: PrivateTrust;
   transport?: TransportPolicy;
   /**
    * Epic #1296 POST-twin fallback: when true, every generated `QUERY`
@@ -63,6 +68,18 @@ const FETCH_RUNTIME: &str = r##"export interface ClientConfig {
    * the HTTP `QUERY` method (RFC 10008). Off by default.
    */
   usePostFallback?: boolean;
+}
+
+
+export interface PrivateTrust {
+  /** Path to the PEM bundle holding the CA that signed the server's leaf. */
+  caBundle: string;
+  /**
+   * The DNS name the leaf must assert. The base URL has to address this same
+   * name: a client that verified one name while addressing another would be
+   * checking a certificate it never actually relies on.
+   */
+  serverName: string;
 }
 
 export interface TransportPolicy {
@@ -163,8 +180,59 @@ export interface RequestArgs {
   expectBody?: boolean;
 }
 
+
+/**
+ * A private trust anchor is only meaningful if the transport actually consults
+ * it, and if the name being verified is the name being addressed.
+ *
+ * Neither can be arranged after the fact, so both are checked before the first
+ * byte goes out. There is deliberately no option to skip verification: when the
+ * server cannot be verified, the fix is the anchor or the name -- not the check.
+ */
+function assertTrustIsHonoured(config: ClientConfig, carrier: unknown): void {
+  const trust = config.trust;
+  if (!trust) return;
+  const addressed = new URL(config.baseUrl).hostname;
+  if (addressed !== trust.serverName) {
+    throw new Error(
+      `this client would verify ${trust.serverName} while addressing ${addressed}; ` +
+        "point the base URL at the name the certificate asserts",
+    );
+  }
+  if (!carrier) {
+    throw new Error(
+      "config.trust needs a transport that carries it: build one with " +
+        "privateCaFetch(config.trust) and pass it as config.fetch",
+    );
+  }
+}
+
+/**
+ * A `fetch` that verifies the server against `trust.caBundle` and nothing else.
+ *
+ * The public roots are not consulted: a private trust domain merely *added* to
+ * the public set still lets any public CA certify this name.
+ *
+ * Node only, and a function you call rather than something the runtime arranges
+ * itself, because a browser has no way to add a trust anchor -- there the
+ * anchor has to be installed in the platform store instead.
+ */
+export async function privateCaFetch(trust: PrivateTrust): Promise<typeof fetch> {
+  // Non-literal specifiers so a browser bundle never type-resolves these.
+  const fsModule = "node:fs";
+  const undiciModule = "undici";
+  const { readFileSync } = (await import(fsModule)) as any;
+  const { Agent } = (await import(undiciModule)) as any;
+  const dispatcher = new Agent({
+    connect: { ca: readFileSync(trust.caBundle, "utf8"), servername: trust.serverName },
+  });
+  return ((input: any, init?: any) =>
+    fetch(input, { ...init, dispatcher })) as unknown as typeof fetch;
+}
+
 export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
   const doFetch = config.fetch ?? fetch;
+  assertTrustIsHonoured(config, config.fetch);
   const url = new URL(config.baseUrl + args.path);
   if (args.query) {
     for (const [key, value] of Object.entries(args.query)) {
@@ -200,6 +268,11 @@ export interface ClientConfig {
   baseUrl: string;
   axios?: AxiosInstance;
   headers?: Record<string, string>;
+  /**
+   * Verify the server against a private CA instead of the public roots. Needs
+   * an axios instance that carries it -- see `privateCaAxios`.
+   */
+  trust?: PrivateTrust;
   transport?: TransportPolicy;
   /**
    * Epic #1296 POST-twin fallback: when true, every generated `QUERY`
@@ -207,6 +280,18 @@ export interface ClientConfig {
    * the HTTP `QUERY` method (RFC 10008). Off by default.
    */
   usePostFallback?: boolean;
+}
+
+
+export interface PrivateTrust {
+  /** Path to the PEM bundle holding the CA that signed the server's leaf. */
+  caBundle: string;
+  /**
+   * The DNS name the leaf must assert. The base URL has to address this same
+   * name: a client that verified one name while addressing another would be
+   * checking a certificate it never actually relies on.
+   */
+  serverName: string;
 }
 
 export interface TransportPolicy {
@@ -307,8 +392,59 @@ export interface RequestArgs {
   expectBody?: boolean;
 }
 
+
+/**
+ * A private trust anchor is only meaningful if the transport actually consults
+ * it, and if the name being verified is the name being addressed.
+ *
+ * Neither can be arranged after the fact, so both are checked before the first
+ * byte goes out. There is deliberately no option to skip verification: when the
+ * server cannot be verified, the fix is the anchor or the name -- not the check.
+ */
+function assertTrustIsHonoured(config: ClientConfig, carrier: unknown): void {
+  const trust = config.trust;
+  if (!trust) return;
+  const addressed = new URL(config.baseUrl).hostname;
+  if (addressed !== trust.serverName) {
+    throw new Error(
+      `this client would verify ${trust.serverName} while addressing ${addressed}; ` +
+        "point the base URL at the name the certificate asserts",
+    );
+  }
+  if (!carrier) {
+    throw new Error(
+      "config.trust needs a transport that carries it: build one with " +
+        "privateCaAxios(config.trust) and pass it as config.axios",
+    );
+  }
+}
+
+/**
+ * An axios instance that verifies the server against `trust.caBundle` and
+ * nothing else -- the public roots are not consulted, because a private trust
+ * domain merely *added* to the public set still lets any public CA certify this
+ * name.
+ *
+ * Node only: a browser has no way to add a trust anchor.
+ */
+export async function privateCaAxios(trust: PrivateTrust): Promise<AxiosInstance> {
+  // Non-literal specifiers so a browser bundle never type-resolves these.
+  const fsModule = "node:fs";
+  const httpsModule = "node:https";
+  const { readFileSync } = (await import(fsModule)) as any;
+  const https = (await import(httpsModule)) as any;
+  return axios.create({
+    httpsAgent: new https.Agent({
+      ca: readFileSync(trust.caBundle, "utf8"),
+      servername: trust.serverName,
+      rejectUnauthorized: true,
+    }),
+  });
+}
+
 export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
   const instance = config.axios ?? axios.create();
+  assertTrustIsHonoured(config, config.axios);
   const url = new URL(config.baseUrl + args.path);
   const release = await acquireAdmission(config, url);
   try {
@@ -607,6 +743,39 @@ mod tests {
     }
 
     #[test]
+    fn both_runtimes_take_a_private_ca_and_verify_the_name_they_address() {
+        for runtime in [emit_runtime(HttpClient::Fetch), emit_runtime(HttpClient::Axios)] {
+            assert!(runtime.contains("export interface PrivateTrust {"));
+            assert!(runtime.contains("trust?: PrivateTrust;"));
+            assert!(runtime.contains("if (addressed !== trust.serverName) {"));
+            // A trust anchor nothing consults is worse than none: the caller
+            // believes they pinned it. Both runtimes refuse that combination.
+            assert!(runtime.contains("assertTrustIsHonoured(config,"));
+        }
+        assert!(emit_runtime(HttpClient::Fetch)
+            .contains("export async function privateCaFetch(trust: PrivateTrust)"));
+        assert!(emit_runtime(HttpClient::Axios)
+            .contains("export async function privateCaAxios(trust: PrivateTrust)"));
+    }
+
+    #[test]
+    fn no_generated_runtime_offers_to_skip_verification() {
+        for runtime in [emit_runtime(HttpClient::Fetch), emit_runtime(HttpClient::Axios)] {
+            for weakening in [
+                "rejectUnauthorized: false",
+                "NODE_TLS_REJECT_UNAUTHORIZED",
+                "insecure",
+            ] {
+                assert!(
+                    !runtime.contains(weakening),
+                    "generated clients must not ship {weakening}: the fix for an unverifiable \
+                     server is the anchor or the name, not the check"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn runtime_fetch_and_axios() {
         let fetch = emit_runtime(HttpClient::Fetch);
         assert!(fetch.contains("export interface TransportPolicy"));
@@ -630,7 +799,6 @@ mod tests {
         assert!(axios.contains("return response.data;"));
     }
 }
-
 ````
 
 ## Changes

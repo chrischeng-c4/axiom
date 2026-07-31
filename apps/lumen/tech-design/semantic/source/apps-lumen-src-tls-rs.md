@@ -71,6 +71,7 @@ use anyhow::Result;
 const ENV_PREFIX: &str = "LUMEN_PEER";
 
 #[derive(Debug, Clone)]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 pub struct PeerTlsConfig {
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -78,6 +79,7 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     fn from(cfg: peer_tls::PeerTlsConfig) -> Self {
         Self {
@@ -89,6 +91,7 @@ impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     }
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
@@ -100,6 +103,7 @@ impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     }
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
@@ -145,6 +149,99 @@ impl PeerTlsConfig {
     ) -> Result<peer_tls::ReloadableTls> {
         peer_tls::ReloadableTls::required(
             peer_tls::TlsRuntimeProfile::peer(dns_names, spiffe_uris),
+            std::sync::Arc::new(peer_tls::FileMaterialSource::new(
+                &self.cert,
+                &self.key,
+                &self.ca,
+            )),
+        )
+        .map_err(anyhow::Error::from)
+    }
+}
+
+/// The switch that turns the client port into a TLS listener (#3113 R1).
+const SERVING_TLS_ENV: &str = "LUMEN_TLS";
+
+/// Where the serving leaf is projected, for the client port on `:7373`.
+///
+/// A separate type from [`PeerTlsConfig`] and not a mode of it. The peer port's
+/// question is "is the dialer a member of this Raft group", answered by a
+/// client certificate; the client port's question is "is the server the Service
+/// I asked for", answered by this leaf while the *caller* proves itself with a
+/// short-lived ServiceAccount token. There is no `required` flag here because
+/// there is no mutual half to make optional.
+///
+/// ## Env contract
+///
+/// - `LUMEN_TLS=on` — serve TLS. Anything else leaves the port h2c.
+/// - `LUMEN_TLS_CERT` / `LUMEN_TLS_KEY` / `LUMEN_TLS_CA` — the projected leaf,
+///   its key, and the anchor callers are told to trust.
+/// - `LUMEN_TLS_SERVER_NAMES` — comma-separated Service DNS names the leaf must
+///   answer to. Optional; when absent the leaf is accepted for whatever names
+///   it carries.
+#[derive(Debug, Clone)]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
+pub struct ServingTlsConfig {
+    pub cert: PathBuf,
+    pub key: PathBuf,
+    pub ca: PathBuf,
+    /// The Kubernetes Service DNS names callers dial. Checked against the leaf
+    /// at load, so a certificate issued for some *other* Service fails here
+    /// once instead of at every client in turn.
+    pub dns_names: Vec<String>,
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
+impl ServingTlsConfig {
+    /// Load from env. `Ok(None)` means the deployment asked for h2c — the
+    /// local/kind posture, and the only way to get cleartext on this port.
+    ///
+    /// Half a configuration is an error rather than a silent downgrade in
+    /// either direction: paths without the switch would serve cleartext from a
+    /// deployment that projected a certificate, and the switch without paths
+    /// would come up with nothing to present. Both are the same mistake seen
+    /// from opposite sides, and both are worth failing startup over.
+    pub fn from_env() -> Result<Option<Self>> {
+        let on = std::env::var(SERVING_TLS_ENV)
+            .map(|v| v.eq_ignore_ascii_case("on"))
+            .unwrap_or(false);
+        let cert = std::env::var("LUMEN_TLS_CERT").ok().map(PathBuf::from);
+        let key = std::env::var("LUMEN_TLS_KEY").ok().map(PathBuf::from);
+        let ca = std::env::var("LUMEN_TLS_CA").ok().map(PathBuf::from);
+        let dns_names = std::env::var("LUMEN_TLS_SERVER_NAMES")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .collect();
+        match (on, cert, key, ca) {
+            (false, None, None, None) => Ok(None),
+            (true, Some(cert), Some(key), Some(ca)) => Ok(Some(Self {
+                cert,
+                key,
+                ca,
+                dns_names,
+            })),
+            (true, ..) => Err(anyhow::anyhow!(
+                "{SERVING_TLS_ENV}=on but LUMEN_TLS_CERT / LUMEN_TLS_KEY / LUMEN_TLS_CA are not all set"
+            )),
+            (false, ..) => Err(anyhow::anyhow!(
+                "LUMEN_TLS_CERT / LUMEN_TLS_KEY / LUMEN_TLS_CA are set but {SERVING_TLS_ENV} is not `on`; \
+                 the client port would serve cleartext against a projected certificate"
+            )),
+        }
+    }
+
+    /// Bind the projected material to the shared reloadable seam (#3113 R1/R9).
+    ///
+    /// `required`, so a pod with no valid leaf never reaches the accept loop.
+    /// Rotation after that point is [`peer_tls::reload`]'s business — the
+    /// listener re-reads this on every accept, which is what makes a renewal
+    /// cost no restart.
+    pub fn reloadable(&self) -> Result<peer_tls::ReloadableTls> {
+        peer_tls::ReloadableTls::required(
+            peer_tls::TlsRuntimeProfile::serving(self.dns_names.clone()),
             std::sync::Arc::new(peer_tls::FileMaterialSource::new(
                 &self.cert,
                 &self.key,
@@ -223,7 +320,99 @@ LkjT2UdpFBDZGWHwqDRhXX8k
             std::env::remove_var("LUMEN_PEER_TLS_KEY");
             std::env::remove_var("LUMEN_PEER_TLS_CA");
             std::env::remove_var("LUMEN_PEER_MTLS");
+            std::env::remove_var("LUMEN_TLS");
+            std::env::remove_var("LUMEN_TLS_CERT");
+            std::env::remove_var("LUMEN_TLS_KEY");
+            std::env::remove_var("LUMEN_TLS_CA");
+            std::env::remove_var("LUMEN_TLS_SERVER_NAMES");
         }
+    }
+
+    // ---- #3113 R1: the serving port's env contract ------------------------
+    //
+    // Three states, and the two that are neither "TLS" nor "h2c" are errors.
+    // The interesting one is the last: material projected with the switch left
+    // off is the shape in which a deployment believes it is serving TLS and
+    // is not, and nothing downstream would say otherwise.
+
+    #[test]
+    fn serving_tls_from_env_is_none_when_the_deployment_asked_for_h2c() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        assert!(ServingTlsConfig::from_env().unwrap().is_none());
+    }
+
+    #[test]
+    fn serving_tls_from_env_reads_the_paths_and_the_service_names() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        unsafe {
+            std::env::set_var("LUMEN_TLS", "on");
+            std::env::set_var("LUMEN_TLS_CERT", "/var/run/secrets/lumen-serving/tls.crt");
+            std::env::set_var("LUMEN_TLS_KEY", "/var/run/secrets/lumen-serving/tls.key");
+            std::env::set_var("LUMEN_TLS_CA", "/var/run/secrets/lumen-serving/ca.crt");
+            std::env::set_var(
+                "LUMEN_TLS_SERVER_NAMES",
+                "search.acme.svc, search.acme.svc.cluster.local",
+            );
+        }
+        let cfg = ServingTlsConfig::from_env().unwrap().expect("Some");
+        assert_eq!(
+            cfg.cert.to_string_lossy(),
+            "/var/run/secrets/lumen-serving/tls.crt"
+        );
+        assert_eq!(
+            cfg.dns_names,
+            vec![
+                "search.acme.svc".to_string(),
+                "search.acme.svc.cluster.local".to_string()
+            ],
+            "both Service DNS forms, whitespace-tolerant"
+        );
+        clear_env();
+    }
+
+    #[test]
+    fn serving_tls_on_without_material_fails_startup() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        unsafe {
+            std::env::set_var("LUMEN_TLS", "on");
+        }
+        let err = ServingTlsConfig::from_env().unwrap_err().to_string();
+        assert!(err.contains("LUMEN_TLS_CERT"), "{err}");
+        clear_env();
+    }
+
+    #[test]
+    fn projected_material_with_the_switch_off_fails_instead_of_serving_cleartext() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        unsafe {
+            std::env::set_var("LUMEN_TLS_CERT", "/var/run/secrets/lumen-serving/tls.crt");
+        }
+        let err = ServingTlsConfig::from_env().unwrap_err().to_string();
+        assert!(
+            err.contains("cleartext"),
+            "the error must name what would otherwise happen: {err}"
+        );
+        clear_env();
+    }
+
+    /// R3, read from the type: the serving configuration has no mutual half to
+    /// enable. Callers prove themselves with a ServiceAccount token; a client
+    /// certificate on this port would be a second, unrelated answer to a
+    /// question the token already answers.
+    #[test]
+    fn the_serving_profile_never_requires_a_client_certificate() {
+        let profile = peer_tls::TlsRuntimeProfile::serving(["search.acme.svc".to_string()]);
+        assert!(!profile.mutual);
+        assert_eq!(
+            profile.alpn_protocols,
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+            "the client port offers both HTTP/2 and HTTP/1.1"
+        );
+        assert!(peer_tls::TlsRuntimeProfile::peer(["lumen-0".to_string()], std::iter::empty()).mutual);
     }
 
     fn write_tls_fixture(name: &str) -> PeerTlsConfig {

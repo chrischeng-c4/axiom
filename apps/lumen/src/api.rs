@@ -592,8 +592,20 @@ impl AppState {
         license(name = "MIT")
     ),
     servers(
-        (url = "http://lumen-svc:7373", description = "in-cluster ClusterIP"),
-        (url = "http://localhost:7373", description = "local dev")
+        // Production is private ClusterIP TLS the serving pod terminates
+        // itself, so the in-cluster server is `https` and its host is the
+        // Service DNS name the leaf asserts (#3113). A generated client that
+        // took `http://` from here would send its bearer token in the clear
+        // against a port that no longer answers plaintext.
+        (
+            url = "https://{instance}.{namespace}.svc:7373",
+            description = "in-cluster ClusterIP, TLS terminated by lumen",
+            variables(
+                ("instance" = (default = "lumen", description = "Lumen CR / Service name")),
+                ("namespace" = (default = "default", description = "namespace that owns the instance"))
+            )
+        ),
+        (url = "http://localhost:7373", description = "local dev (h2c, auth disabled)")
     ),
     tags(
         (name = "Collections", description = "Schema lifecycle"),
@@ -715,12 +727,16 @@ impl Modify for SecurityAddon {
                         .description(Some(
                             "A short-lived, audience-bound Kubernetes ServiceAccount token, \
                              obtained from the TokenRequest API. There is no configurable \
-                             credential source and no static token to issue: the verifier that \
-                             resolves this header through TokenReview/SubjectAccessReview has not \
-                             landed yet, so `auth: required` currently refuses to start and \
-                             `auth: disabled` ignores the header entirely. A Google access token, \
-                             ID token, ADC credential, or metadata-server token is never accepted \
-                             here.",
+                             credential source and no static token to issue: under \
+                             `auth: required` this header is resolved by the cluster itself, \
+                             through TokenReview for the caller's identity and \
+                             SubjectAccessReview for what that identity may do; under \
+                             `auth: disabled` it is ignored entirely. A Google access token, \
+                             ID token, ADC credential, or metadata-server token is never \
+                             accepted here. The token is a bearer credential, so it is only \
+                             ever sent over the instance's own TLS: production is a private \
+                             ClusterIP the serving pod terminates itself, with no Ingress, \
+                             Gateway, LoadBalancer, NodePort, or mesh in front of it.",
                         ))
                         .build(),
                 ),

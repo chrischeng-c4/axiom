@@ -596,9 +596,12 @@ HTTP/1.1 calls are compatibility and smoke paths; production performance claims
 are about pooled HTTP/2 traffic at volume. The
 three setups, in order of preference:
 
-- **Production (behind TLS) — HTTP/2 by default, for free.** An ingress / mesh
-  terminating TLS negotiates h2 via ALPN, so every client gets it transparently.
-  This is the recommended deployment.
+- **Production (private ClusterIP TLS) — HTTP/2 by default, for free.** Lumen
+  terminates TLS itself on `https://<instance>.<namespace>.svc:7373` and offers
+  ALPN `h2, http/1.1`, so every client gets h2 transparently. Nothing sits in
+  front: no ingress, no mesh, no other TLS terminator (see
+  [Authentication and authorization](#authentication-and-authorization)). This
+  is the recommended deployment.
 - **Cleartext (dev / in-cluster) — h2c is opt-in.** h2c can't auto-negotiate (no
   ALPN), so a client must enable prior-knowledge (see table). A lumen connection
   *pool* over h2c is what the benchmark throughput numbers use.
@@ -616,11 +619,49 @@ three setups, in order of preference:
 
 ### Authentication and authorization
 
-> Security & Access is being replaced and is not yet
-> production-ready. This section defines the target contract. Do not configure
-> or restore the retired bearer registry, Google-token verifier, Secret
-> Manager/CSI auth projection, metadata-server token path, or token
-> environment injection.
+> This section describes what the binary enforces, not a target. The bearer
+> registry, Google-token verifier, Secret Manager/CSI auth projection,
+> metadata-server token path, and token environment injection are removed —
+> the CRD fields that configured them no longer exist, so a manifest that
+> restores one is rejected by the API server rather than quietly ignored.
+
+Two independent checks stand between a caller and a collection, and neither
+substitutes for the other: the **transport** proves which server you reached,
+and the **request identity** proves who is asking.
+
+#### Transport: private ClusterIP TLS, terminated by lumen
+
+Production traffic is **not** published. An instance is reached at its Service
+DNS name inside the cluster and nowhere else:
+
+```text
+LUMEN_URL=https://<instance>.<namespace>.svc:7373
+```
+
+There is no Ingress, no Gateway, no LoadBalancer, no NodePort, and no service
+mesh terminating TLS on lumen's behalf. The serving pod holds the private key
+itself, so the connection a caller authenticates is the connection lumen
+serves — an edge that terminated TLS and re-originated plaintext would carry
+the KSA token over an unauthenticated last hop while every client-side check
+still passed.
+
+`spec.servingTlsSecret` names the Secret holding `tls.crt`, `tls.key`, and
+`ca.crt`; the operator projects it into every serving pod and switches the
+client port from h2c to TLS with ALPN `h2, http/1.1`. The leaf asserts the
+Service's own two DNS spellings and nothing else — a name in the certificate is
+a name the instance can impersonate. While no valid leaf is active the port
+refuses connections rather than falling back to plaintext. Omit the field only
+for local and kind development.
+
+Callers verify against the anchor alone: the operator republishes `ca.crt` as
+an owner-scoped, private-key-free ConfigMap and reports it at
+`status.clientTrustBundle` once the material exists. Mount that and point the
+client at it (`lumen connect --ca-file`, or `PrivateTrust` in a generated
+client). Adding it *alongside* the public roots is not equivalent — a public CA
+could then still vouch for the name, which is what a private trust domain
+exists to prevent.
+
+#### Request identity: a short-lived KSA token the cluster answers for
 
 For `spec.auth: required`, Lumen accepts only a short-lived Kubernetes
 ServiceAccount token with audience `lumen.axiom.dev`:
@@ -678,9 +719,14 @@ Probe/spec/scrape routes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
 Raft peer identity is a separate plane. Replicated traffic on `:7374` requires
 an instance-scoped X.509 certificate and mTLS, with no plaintext fallback. A
 KSA token does not authenticate a peer, and a peer certificate grants no
-collection or admin access. North-south Gateway/Ingress TLS, certificate
-issuance, Google IAM automation, and general user/group management are outside
-the Security & Access capability.
+collection or admin access. `spec.peerTlsSecret` is a separate field from
+`spec.servingTlsSecret` for that reason: sharing one Secret would let either
+listener's material authenticate on the other's port.
+
+Public exposure of any shape — Gateway, Ingress, LoadBalancer, NodePort, VPN,
+or a mesh terminating TLS — is outside the Security & Access capability, as are
+Google IAM automation and general user/group management. So is client mTLS:
+a caller proves who it is with a KSA token, not with a certificate.
 
 ## OpenAPI
 
