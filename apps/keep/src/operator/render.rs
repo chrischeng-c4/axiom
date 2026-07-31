@@ -137,6 +137,7 @@ fn backup_cron_job(keep: &Keep, cx: &RenderCtx) -> Option<Value> {
     }))
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#2414" reason="logic section in render.rs is hand-written pending codegen support">
 /// keep's serving ConfigMap: the config-driven runtime knobs a pod reads (so a
 /// ConfigMap edit can roll pods). Cluster/topology values ride the downward-API
 /// env instead.
@@ -146,6 +147,9 @@ fn configmap(keep: &Keep, cx: &RenderCtx) -> Value {
         "KEEP_PORT": CLIENT_PORT.to_string(),
         "KEEP_SHARDS": keep.spec.engine_shards.to_string(),
         "KEEP_LOG_LEVEL": keep.spec.log_level.clone().unwrap_or_else(|| "info".to_string()),
+        // In-cluster stdout is always the collector-compatible record shape;
+        // `pretty` is a local-development affordance only.
+        "KEEP_LOG_FORMAT": "json",
         "KEEP_BODY_LIMIT": keep.spec.body_limit_bytes.to_string(),
     });
     json!({
@@ -155,6 +159,7 @@ fn configmap(keep: &Keep, cx: &RenderCtx) -> Value {
         "data": data,
     })
 }
+// </HANDWRITE>
 
 /// The sharded, durable serving StatefulSet: the toolkit's downward-API base
 /// (`replicas = shardCount * replicasPerShard`, the raft-runtime env quartet + the
@@ -193,6 +198,7 @@ fn statefulset(keep: &Keep, cx: &RenderCtx, headless: &str) -> Value {
         from_cfg("KEEP_PORT"),
         from_cfg("KEEP_SHARDS"),
         from_cfg("KEEP_LOG_LEVEL"),
+        from_cfg("KEEP_LOG_FORMAT"),
         from_cfg("KEEP_BODY_LIMIT"),
     ];
 

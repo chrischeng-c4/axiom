@@ -18,7 +18,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
 
 use keep::persistence::recovery::RecoveryManager;
 use keep::persistence::{PersistenceConfig, PersistenceHandle};
@@ -429,6 +428,18 @@ struct ServeArgs {
     /// `trace|debug|info|warn|error` (RUST_LOG overrides this).
     #[arg(long, env = "KEEP_LOG_LEVEL", default_value = "info")]
     log_level: String,
+    /// Stdout format: `pretty` for local use or collector-compatible `json`.
+    #[arg(
+        long,
+        env = "KEEP_LOG_FORMAT",
+        default_value = "pretty",
+        value_parser = ["pretty", "json"]
+    )]
+    log_format: String,
+    /// Optional shared OTLP endpoint for trace export; Sift collector routing
+    /// remains entirely deployment-owned.
+    #[arg(long, env = "KEEP_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
     /// Data directory for WAL + snapshots (the disk tier).
     #[arg(long, env = "KEEP_DATA_DIR", default_value = "./data")]
     data_dir: PathBuf,
@@ -741,15 +752,32 @@ async fn k8s(args: K8sArgs) -> Result<()> {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#2414" reason="logic section in keep.rs is hand-written pending codegen support">
 #[cfg(feature = "operator")]
 async fn run_operator() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    // The operator has no flags of its own, so the telemetry contract arrives
+    // entirely through env — the same variables the rendered Deployment sets.
+    let log_format = match std::env::var("KEEP_LOG_FORMAT").as_deref() {
+        Ok("json") => service_http::LogFormat::Json,
+        Ok("pretty") | Err(_) => service_http::LogFormat::Pretty,
+        Ok(value) => anyhow::bail!("KEEP_LOG_FORMAT must be `pretty` or `json`, got `{value}`"),
+    };
+    let config = service_http::HttpConfig::new(
+        "127.0.0.1",
+        0,
+        std::env::var("KEEP_LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
+        log_format,
+        0,
+        0,
+        std::env::var("KEEP_OTLP_ENDPOINT")
+            .ok()
+            .filter(|endpoint| !endpoint.is_empty()),
+    );
+    let identity = service_http::ServiceIdentity::new("keep", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&config, &identity)?;
     keep::operator::run().await
 }
+// </HANDWRITE>
 
 #[cfg(not(feature = "operator"))]
 async fn run_operator() -> Result<()> {
@@ -915,12 +943,28 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#2414" reason="logic section in keep.rs is hand-written pending codegen support">
 /// Run the keep server (the default, no-subcommand path).
 async fn serve_main(args: ServeArgs) -> Result<()> {
-    // RUST_LOG wins; otherwise fall back to --log-level.
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // Stdout is the telemetry boundary: the shared observability shell owns the
+    // schema, resource attributes, and RUST_LOG precedence so every service
+    // emits the one record shape sift ingests.
+    let log_format = match args.log_format.as_str() {
+        "pretty" => service_http::LogFormat::Pretty,
+        "json" => service_http::LogFormat::Json,
+        value => anyhow::bail!("--log-format must be `pretty` or `json`, got `{value}`"),
+    };
+    let config = service_http::HttpConfig::new(
+        args.host.clone(),
+        args.port,
+        args.log_level.clone(),
+        log_format,
+        args.grace_secs,
+        args.body_limit,
+        args.otlp_endpoint.clone().filter(|e| !e.is_empty()),
+    );
+    let identity = service_http::ServiceIdentity::new("keep", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&config, &identity)?;
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
     info!(%addr, shards = args.shards, "starting keep");
@@ -1036,6 +1080,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     info!("shutdown complete");
     Ok(())
 }
+// </HANDWRITE>
 
 fn derive_cluster_config(args: &ServeArgs) -> Result<keep::ClusterConfig> {
     if let Some(cluster) = local_topology_override(args) {
