@@ -1700,13 +1700,23 @@ def assert_migrated_legacy_sections_carry_their_row_content(
     because `_LEGACY_ROWS` is pairwise distinct in every column; a colliding
     column would let a renderer that swapped two rows pass.
 
-    Asserted as the *whole* rendered block rather than as three substrings, for
-    the reason recorded on `_expected_legacy_section_body`: the fields the row
-    does not supply are the readiness constants, and those are precisely the ones
-    a migration must not be free to invent. Byte-exact also pins the field
-    *order* and the absence of any field the renderer does not emit -- a `Type:`
-    line spliced into every migrated legacy section, for instance, is a class the
-    author never declared and the substring form could not see.
+    Asserted as equality against the *whole* rendered block rather than as three
+    substrings, for the reason recorded on `_expected_legacy_section_body`: the
+    fields the row does not supply are the readiness constants, and those are
+    precisely the ones a migration must not be free to invent. Equality also pins
+    the field *order* and the absence of any field or row the renderer does not
+    emit -- a `Type:` line spliced into every migrated legacy section is a class
+    the author never declared, and a second work-root row appended after the
+    emitted one is a claim with a gate the author never wrote (`report` accepts
+    it: `claim_count` goes 1 -> 2 with no blocker). A prefix comparison sees
+    neither, which is why the earlier `startswith` form here was wrong and is
+    recorded as such rather than quietly replaced.
+
+    Compared after `rstrip("\\n")` on both sides, because the block boundary is
+    the next heading rather than a byte offset: the count of blank lines between
+    the last row and the following `###` is section *separation*, not this
+    capability's content, and is pinned by the assertions that read the document
+    frame and the section order.
 
     `tracker_state` is the WI each section is expected to render, which differs
     by entry point: format migration erases document-stored tracker state before
@@ -1719,9 +1729,9 @@ def assert_migrated_legacy_sections_carry_their_row_content(
             title, state, gaps, tracker_state[title], evidence
         )
         body = _capability_section_body(migrated, title)
-        assert body.startswith(expected), (
+        assert body.rstrip("\n") == expected.rstrip("\n"), (
             f"migrated legacy section {title!r} is not the block its row "
-            f"renders; expected it to start with:\n{expected!r}\ngot:\n{body!r}"
+            f"renders; expected:\n{expected!r}\ngot:\n{body!r}"
         )
 
 
@@ -3523,24 +3533,31 @@ def assert_relocation_keeps_an_authored_contract_pointer(readme: str) -> None:
     )
 
 
-#: The two capabilities that declare no `Gate Inventory:` at all, and what the
-#: product must derive for each.
+#: The capabilities whose `Gate Inventory:` this document does not declare, and
+#: what the product must derive for each.
 #:
-#: `capability_gate_inventory` (`capability.rs:9842-9848`) returns the declared
-#: inventory when there is one and otherwise derives it from the capability's
-#: claim fixtures and gate commands; `markdown_field_list_items`
-#: (`capability.rs:9139-9151`) then substitutes a single `-` when that comes back
-#: empty. Every capability in every other document here declares an inventory, so
-#: neither the derivation nor the placeholder was reachable: collapsing the
-#: derivation to `"-"` and deleting the placeholder both rendered identically.
+#: `capability_gate_inventory` (`capability.rs:9842-9863`) returns the declared
+#: inventory when there is one and otherwise derives one by collecting each
+#: claim's fixtures and then each of the capability's gate commands, joined with
+#: `<br>`; `markdown_field_list_items` (`capability.rs:9139-9151`) then
+#: substitutes a single `-` when that comes back empty. Every capability in every
+#: other document here declares an inventory, so neither the derivation nor the
+#: placeholder was reachable: collapsing the derivation to `"-"` and deleting the
+#: placeholder both rendered identically.
 #:
-#: The two are separated deliberately, because they reach the `-` through
-#: different code and fail in opposite directions.
+#: The members below are separated deliberately, because they reach their field
+#: through different code and fail in different directions.
 #:
 #: `DERIVED_INVENTORY_TITLE` declares no inventory at all and has a work root
 #: whose `Gate / Evidence` cell is a backticked command, which becomes a gate and
 #: comes back as the inventory -- so an author who wired gates but wrote no
 #: inventory still gets one.
+#:
+#: `MULTI_GATE_INVENTORY_TITLE` is the same shape at arity two, which is what
+#: makes the `<br>` join falsifiable at all; see its own comment.
+#:
+#: `FIXTURE_INVENTORY_TITLE` reaches the derivation through the claim-fixture
+#: half rather than the capability-gate half; see its own comment.
 #:
 #: `EMPTY_INVENTORY_TITLE` declares an inventory whose every entry is one of the
 #: empty-table-value spellings. `capability_raw_gate_inventory` accepts it -- the
@@ -3551,16 +3568,10 @@ def assert_relocation_keeps_an_authored_contract_pointer(readme: str) -> None:
 #: asserting that gate is absent from the rendered inventory is what separates
 #: "the placeholder was substituted" from "the field was silently re-derived".
 #:
-#: An input with genuinely nothing to derive was tried first and abandoned. Every
-#: rendered section carries a non-empty `Required Verification` --
-#: `capability_maturity_summary` (`capability.rs:9826-9840`) defaults it to
-#: `smoke` -- so on re-parse every capability has a verification contract, which
-#: the checker requires to hold at least one claim, which it requires to hold at
-#: least one gate or fixture, each of which lands back in the derived inventory.
-#: The `refs.is_empty()` arm of `capability_gate_inventory` is therefore not
-#: reachable by any document the product's own checker accepts; only the
-#: placeholder downstream of it is. That is filed as #3215 rather than papered
-#: over with an assertion that could not be written honestly.
+#: The remaining path -- a derivation with genuinely nothing to collect -- is
+#: reached by `EMPTY_DERIVATION_SECTION_README` below rather than by this
+#: document, because the document that reaches it is one `aw capability report`
+#: rejects while this one must stay accepted.
 DERIVED_INVENTORY_TITLE = "Standard Operational Endpoints"
 DERIVED_INVENTORY_GATE = "`aw health --project demo`"
 EMPTY_INVENTORY_TITLE = "Kubernetes-Native Deployment"
@@ -3577,10 +3588,6 @@ assert len(set(EMPTY_INVENTORY_DECLARED_ITEMS)) == len(EMPTY_INVENTORY_DECLARED_
     "two identical spellings would not separate 'filters every empty spelling' "
     "from 'filters the one spelling it knows'"
 )
-DERIVED_INVENTORY_ITEM_OVERRIDES = {
-    DERIVED_INVENTORY_TITLE: {"gate_inventory": DERIVED_INVENTORY_GATE},
-    EMPTY_INVENTORY_TITLE: {"gate_inventory": "-"},
-}
 #: `Impl` for the capability whose only work root is `planned | planned`: that
 #: gap is `Open`, which is neither all-closed nor in-progress, so
 #: `capability_impl_summary` (`capability.rs:9273-9295`) falls through to its
@@ -3595,16 +3602,101 @@ DERIVED_INVENTORY_ITEM_OVERRIDES = {
 EMPTY_INVENTORY_STATUS = "confirmed"
 EMPTY_INVENTORY_IMPL = "planned"
 
-_DERIVED_INVENTORY_WORK_ROOT_CELLS = {
-    work_root: (
-        ("change", "planned", "planned", "smoke", EMPTY_INVENTORY_GATE)
-        if member[0] == EMPTY_INVENTORY_TITLE
-        else ("change", "implemented", "verified", "smoke", DERIVED_INVENTORY_GATE)
-        if member[0] == DERIVED_INVENTORY_TITLE
-        else ("change", "implemented", "verified", "smoke", "`true`")
-    )
-    for member in _ALL_MEMBERS
-    for work_root in member[4]
+#: The third capability whose declared inventory is stripped, and the only one
+#: that reaches the derivation with *two* work roots.
+#:
+#: `capability_gate_inventory` (`capability.rs:9842-9865`) accumulates one `refs`
+#: list across all of a capability's claims and joins it with `<br>`. Every
+#: capability that reaches the derivation elsewhere in this fixture has exactly
+#: one work root, so the join runs at arity 1 -- where `refs.join("<br>")`,
+#: `refs.into_iter().next().unwrap_or_default()` and `refs.pop().unwrap_or_default()`
+#: are byte-identical. Keeping the first element and keeping the last are
+#: *different* mutations and a two-item list separates them only if the two items
+#: are distinct and their order is asserted, so the two gates below are distinct
+#: and asserted in work-root declaration order.
+MULTI_GATE_INVENTORY_TITLE = "Lexical Search"
+MULTI_GATE_INVENTORY_GATES = (
+    "`aw ec verify --project demo`",
+    "`aw td check --project demo`",
+)
+
+#: The fourth capability whose declared inventory is stripped, and the only one
+#: whose work-root `Gate / Evidence` cell is *not* backticked.
+#:
+#: The derivation reads two lists off each claim -- `claim.fixtures` and
+#: `claim.gates` -- and a backticked cell parses as a gate. Every work root in
+#: this document was backticked, so deleting the `claim.fixtures` half of the
+#: derivation changed nothing: half the function was dead against the fixture
+#: while the assertion above read as if it bound the whole of it. A non-backticked
+#: cell parses as a fixture instead, which is the form this repository's own
+#: `apps/agentic-workflow/CAPABILITIES.md` carries, so the input is not exotic.
+FIXTURE_INVENTORY_TITLE = "Security Hardening"
+FIXTURE_INVENTORY_EVIDENCE = "evidence/security-hardening-baseline.md"
+assert "`" not in FIXTURE_INVENTORY_EVIDENCE, (
+    "a backticked cell parses as a gate, which is the half of the derivation "
+    "that was already bound; this one has to reach `claim.fixtures`"
+)
+
+#: Every title whose declared `Gate Inventory` this document strips, so the
+#: rendered field can only be what the derivation produced.
+DERIVED_INVENTORY_STRIPPED_TITLES = (
+    DERIVED_INVENTORY_TITLE,
+    MULTI_GATE_INVENTORY_TITLE,
+    FIXTURE_INVENTORY_TITLE,
+)
+_MULTI_GATE_WORK_ROOTS = next(
+    member[4] for member in _ALL_MEMBERS if member[0] == MULTI_GATE_INVENTORY_TITLE
+)
+assert len(_MULTI_GATE_WORK_ROOTS) == len(MULTI_GATE_INVENTORY_GATES) == 2, (
+    "the arity-1 blind spot is closed by a capability with exactly two work "
+    "roots, one gate each"
+)
+assert len(set(MULTI_GATE_INVENTORY_GATES)) == 2, (
+    "two identical gates would not separate keep-first from keep-last"
+)
+
+
+def _derived_inventory_work_root_cells() -> dict[str, tuple[str, str, str, str, str]]:
+    """The `Gate / Evidence` cell each work root carries in this one document.
+
+    Written as a loop rather than a comprehension because the multi-gate member
+    needs a *different* cell per work root, keyed on the root's position, and the
+    two must not collapse to one value.
+    """
+    cells: dict[str, tuple[str, str, str, str, str]] = {}
+    for member in _ALL_MEMBERS:
+        title = member[0]
+        for position, work_root in enumerate(member[4]):
+            if title == EMPTY_INVENTORY_TITLE:
+                gate = EMPTY_INVENTORY_GATE
+                readiness = ("planned", "planned")
+            elif title == DERIVED_INVENTORY_TITLE:
+                gate = DERIVED_INVENTORY_GATE
+                readiness = ("implemented", "verified")
+            elif title == MULTI_GATE_INVENTORY_TITLE:
+                gate = MULTI_GATE_INVENTORY_GATES[position]
+                readiness = ("implemented", "verified")
+            elif title == FIXTURE_INVENTORY_TITLE:
+                gate = FIXTURE_INVENTORY_EVIDENCE
+                readiness = ("implemented", "verified")
+            else:
+                gate = "`true`"
+                readiness = ("implemented", "verified")
+            cells[work_root] = ("change", readiness[0], readiness[1], "smoke", gate)
+    return cells
+
+
+_DERIVED_INVENTORY_WORK_ROOT_CELLS = _derived_inventory_work_root_cells()
+
+#: What each of these four capabilities renders as the *first* item of its
+#: `Gate Inventory`, for the whole-field-block assertion that runs over every
+#: capability in this document. The exact item list per capability is asserted
+#: separately by `assert_relocation_derives_a_missing_gate_inventory`.
+DERIVED_INVENTORY_ITEM_OVERRIDES = {
+    DERIVED_INVENTORY_TITLE: {"gate_inventory": DERIVED_INVENTORY_GATE},
+    EMPTY_INVENTORY_TITLE: {"gate_inventory": "-"},
+    MULTI_GATE_INVENTORY_TITLE: {"gate_inventory": MULTI_GATE_INVENTORY_GATES[0]},
+    FIXTURE_INVENTORY_TITLE: {"gate_inventory": FIXTURE_INVENTORY_EVIDENCE},
 }
 
 
@@ -3627,7 +3719,7 @@ def _derived_inventory_readme() -> str:
         work_root_cells=_DERIVED_INVENTORY_WORK_ROOT_CELLS,
     )
     replacements = {
-        DERIVED_INVENTORY_TITLE: "",
+        **{title: "" for title in DERIVED_INVENTORY_STRIPPED_TITLES},
         EMPTY_INVENTORY_TITLE: "Gate Inventory:\n"
         + "".join(f"- {item}\n" for item in EMPTY_INVENTORY_DECLARED_ITEMS),
     }
@@ -3641,7 +3733,12 @@ def _derived_inventory_readme() -> str:
 
 
 DERIVED_INVENTORY_SECTION_README = _derived_inventory_readme()
-for _gate in (DERIVED_INVENTORY_GATE, EMPTY_INVENTORY_GATE):
+for _gate in (
+    DERIVED_INVENTORY_GATE,
+    EMPTY_INVENTORY_GATE,
+    FIXTURE_INVENTORY_EVIDENCE,
+    *MULTI_GATE_INVENTORY_GATES,
+):
     assert _gate not in UNCLASSIFIED_SECTION_README, (
         f"{_gate} must not be a string the fixture already writes elsewhere, or "
         "'it was derived' is indistinguishable from 'it was copied'"
@@ -3651,51 +3748,186 @@ for _gate in (DERIVED_INVENTORY_GATE, EMPTY_INVENTORY_GATE):
         "row -- or the rendered inventory cannot be attributed to it"
     )
 del _gate
+for _title in DERIVED_INVENTORY_STRIPPED_TITLES:
+    assert (
+        f"- {MEMBER_GATE_INVENTORY_ITEM[_title]}\n" not in DERIVED_INVENTORY_SECTION_README
+    ), (
+        f"{_title!r} still declares its own gate inventory, so whatever renders "
+        "for it is the declared value carried through, not a derivation"
+    )
+del _title
+
+
+#: Relocation input whose one capability declares no gate inventory *and* whose
+#: only work root carries an empty `Gate / Evidence` cell, so
+#: `capability_gate_inventory` (`capability.rs:9842-9863`) collects no fixture
+#: and no gate and returns through its `refs.is_empty()` arm.
+#:
+#: Held as its own document because `aw capability report` rejects what
+#: `aw capability migrate` writes here -- the emitted claim has neither a gate nor
+#: a fixture, which the checker requires -- and every other relocation shape in
+#: this case asserts an empty document-blocker set. That disagreement between the
+#: two verbs is the point of the fixture and is filed as #3215; it is asserted
+#: rather than disclosed, because a document `migrate` accepts is a document this
+#: case can drive whether or not `report` likes the result.
+EMPTY_DERIVATION_TITLE = "Search Core"
+EMPTY_DERIVATION_CAPABILITY = next(
+    member[1] for member in _ALL_MEMBERS if member[0] == EMPTY_DERIVATION_TITLE
+)
+EMPTY_DERIVATION_CLAIM = next(
+    member[4][0] for member in _ALL_MEMBERS if member[0] == EMPTY_DERIVATION_TITLE
+)
+EMPTY_DERIVATION_BLOCKER = (
+    f"claim `{EMPTY_DERIVATION_CLAIM}` in capability `{EMPTY_DERIVATION_CAPABILITY}` "
+    "requires at least one gate or fixture/inventory reference"
+)
+
+
+def _empty_derivation_readme() -> str:
+    """Strip one capability's declared inventory and empty its work-root cell.
+
+    Both halves are needed and neither alone reaches the arm: with the inventory
+    declared, `capability_raw_gate_inventory` returns before the derivation runs;
+    with the cell populated, the derivation collects it.
+    """
+    cells = {
+        work_root: (
+            ("change", "implemented", "verified", "smoke", "-")
+            if member[0] == EMPTY_DERIVATION_TITLE
+            else ("change", "implemented", "verified", "smoke", "`true`")
+        )
+        for member in _ALL_MEMBERS
+        for work_root in member[4]
+    }
+    document = _section_readme(
+        _ALL_MEMBERS,
+        (None,) * len(_ALL_MEMBERS),
+        "Lumen README-resident capability contract, one capability declaring no "
+        "gate inventory and gating nothing.",
+        work_root_cells=cells,
+    )
+    block = f"Gate Inventory:\n- tech-design/{EMPTY_DERIVATION_CAPABILITY}.md\n"
+    assert document.count(block) == 1, (EMPTY_DERIVATION_TITLE, document.count(block))
+    return document.replace(block, "", 1)
+
+
+EMPTY_DERIVATION_SECTION_README = _empty_derivation_readme()
+
+
+def assert_relocation_renders_an_underivable_gate_inventory(
+    migrated: str, report: dict[str, Any]
+) -> None:
+    """Nothing to derive renders the placeholder, and the checker then rejects it.
+
+    This is the last unentered path through the gate-inventory field:
+    `capability_raw_gate_inventory` returns `None`, and the derivation behind it
+    collects neither a claim fixture nor a capability gate.
+
+    What is bound here is that the arm is *entered* and yields an empty table
+    value -- a marker returned in its place renders as the item `- MARKER`.
+    Deleting the arm outright is not observable and is not claimed to be:
+    `refs.join("<br>")` over an empty list is the empty string, which
+    `markdown_field_list_items` (`capability.rs:9139-9151`) filters away and
+    replaces with the same `-`. The two spellings of "no inventory" collapse
+    downstream, so the assertion says what it can see rather than borrowing the
+    stronger claim from the sibling arms.
+
+    The blocker set is asserted alongside, because it is the reason this document
+    is held apart from every other relocation shape here: `aw capability migrate`
+    writes a capability whose only claim references neither a gate nor a fixture,
+    and `aw capability report` -- reading the document the same run just produced
+    -- rejects exactly that claim. Asserted as the whole ordered document-blocker
+    set, so the disagreement is pinned to one claim rather than to "something was
+    reported". Filed as #3215.
+    """
+    body = _capability_section_body(migrated, EMPTY_DERIVATION_TITLE)
+    items = _gate_inventory_items(body, EMPTY_DERIVATION_TITLE)
+    assert items == ["-"], (
+        f"{EMPTY_DERIVATION_TITLE!r} declared no gate inventory and gates "
+        f"nothing, so the field must render the single placeholder; got "
+        f"{items!r}. Section was:\n{body}"
+    )
+    assert document_blockers(report) == [EMPTY_DERIVATION_BLOCKER], report["blockers"]
+
+
+def _gate_inventory_items(body: str, title: str) -> list[str]:
+    """The `Gate Inventory` field of one rendered section, as its item list.
+
+    Read as a list rather than as a substring so the assertions below can pin
+    what the field *is* -- its length and the order of its entries -- instead of
+    what it contains. A containment check on the first item cannot see a second
+    item dropped, which is exactly the arity blind spot this field carried.
+
+    The field is bounded by the first line that is not an item, because the
+    renderer emits every field of the section into one block and the field that
+    follows this one differs by shape of capability.
+    """
+    marker = "Gate Inventory:\n"
+    assert marker in body, (
+        f"section {title!r} rendered no gate inventory at all; section was:\n{body}"
+    )
+    items = []
+    for line in body.split(marker, 1)[1].splitlines():
+        if not line.startswith("- "):
+            break
+        items.append(line[2:])
+    return items
 
 
 def assert_relocation_derives_a_missing_gate_inventory(migrated: str) -> None:
-    """A capability that declared no gate inventory gets the one its gates imply.
+    """A capability that declared no gate inventory gets the one its claims imply.
 
-    Both arms are asserted on the same document, because they fail in opposite
-    directions and each alone reads as the other's success. The capability that
-    declared nothing must come back carrying *its work-root command* -- not `-`,
-    which is what a collapsed derivation renders. The capability that declared
-    only empty spellings must come back carrying `-` -- not an empty list, which
-    is what deleting the placeholder renders and which is not a document the
-    checker accepts.
+    Four capabilities are asserted on the same document, because they fail in
+    different directions and each alone reads as another's success. Each is
+    asserted as the *exact* item list its field renders, not as a substring of
+    it: a containment check on the first item cannot see a second item dropped,
+    and the derivation's whole output is one joined list.
 
-    The second arm also pins which branch produced the `-`. That capability has a
-    work-root gate of its own, so a renderer that ignored the declared inventory
-    and derived one anyway would render that command here. Asserting it is absent
-    is what separates "the placeholder was substituted" from "the author's empty
-    inventory was quietly replaced".
+    `DERIVED_INVENTORY_TITLE` declared nothing and must come back carrying its
+    work-root command -- not `-`, which is what a collapsed derivation renders.
 
-    The declared-inventory capabilities are left alone in the same document, so
-    "derive one" cannot be satisfied by an implementation that derives one for
-    everybody and discards what the author wrote.
+    `MULTI_GATE_INVENTORY_TITLE` declared nothing and has *two* work roots, so
+    its derived field is the only two-item list here. Every other capability that
+    reaches the derivation has one work root, where joining the list, keeping its
+    first element and keeping its last are byte-identical; two distinct gates
+    asserted in declaration order separate all three.
+
+    `FIXTURE_INVENTORY_TITLE` declared nothing and its work-root cell is not
+    backticked, so it parses as a claim *fixture* rather than a claim gate. The
+    derivation reads both lists; with every cell in this document backticked, the
+    fixture half of it was dead and deleting it changed nothing.
+
+    `EMPTY_INVENTORY_TITLE` declared only empty-table spellings and must come
+    back carrying `-` -- not an empty list, which is what deleting the
+    placeholder renders and which is not a document the checker accepts. That arm
+    also pins which branch produced the `-`: the capability has a work-root gate
+    of its own, so a renderer that ignored the declared inventory and derived one
+    anyway would render that command here. Asserting it is absent from the field
+    while still present in the section separates "the placeholder was
+    substituted" from "the author's empty inventory was quietly replaced".
+
+    The two capabilities that keep their declared inventory are left alone in the
+    same document, so "derive one" cannot be satisfied by an implementation that
+    derives one for everybody and discards what the author wrote.
     """
-    derived = _capability_section_body(migrated, DERIVED_INVENTORY_TITLE)
-    assert f"Gate Inventory:\n- {DERIVED_INVENTORY_GATE}\n" in derived, (
-        f"{DERIVED_INVENTORY_TITLE!r} declared no gate inventory and must derive "
-        f"one from its work-root gate; section was:\n{derived}"
-    )
+    for title, expected_items in (
+        (DERIVED_INVENTORY_TITLE, [DERIVED_INVENTORY_GATE]),
+        (MULTI_GATE_INVENTORY_TITLE, list(MULTI_GATE_INVENTORY_GATES)),
+        (FIXTURE_INVENTORY_TITLE, [FIXTURE_INVENTORY_EVIDENCE]),
+        (EMPTY_INVENTORY_TITLE, ["-"]),
+    ):
+        body = _capability_section_body(migrated, title)
+        items = _gate_inventory_items(body, title)
+        assert items == expected_items, (
+            f"section {title!r} must render the gate inventory "
+            f"{expected_items!r}, in that order and nothing else; got {items!r}. "
+            f"Section was:\n{body}"
+        )
     empty = _capability_section_body(migrated, EMPTY_INVENTORY_TITLE)
-    assert "Gate Inventory:\n- -\n" in empty, (
-        f"{EMPTY_INVENTORY_TITLE!r} declared "
-        f"{list(EMPTY_INVENTORY_DECLARED_ITEMS)!r}, every one of them an empty "
-        "table value, so the field must render the single placeholder; section "
-        f"was:\n{empty}"
-    )
-    inventory_field = empty.split("Gate Inventory:\n", 1)[1].split("Surfaces:", 1)[0]
-    assert EMPTY_INVENTORY_GATE not in inventory_field, (
-        f"{EMPTY_INVENTORY_TITLE!r} declared an empty inventory, so its work-root "
-        f"gate {EMPTY_INVENTORY_GATE} must not be derived into the field; the "
-        f"declared value is what renders. Field was:\n{inventory_field}"
-    )
     assert EMPTY_INVENTORY_GATE in empty, (
         f"{EMPTY_INVENTORY_GATE} has to survive somewhere in "
-        f"{EMPTY_INVENTORY_TITLE!r} -- its work-root row -- or the absence above "
-        f"proves nothing about the inventory; section was:\n{empty}"
+        f"{EMPTY_INVENTORY_TITLE!r} -- its work-root row -- or the absence of it "
+        f"from the inventory above proves nothing; section was:\n{empty}"
     )
     rows = {row[0]: row for row in _index_rows_parsed(migrated)}
     assert rows[EMPTY_INVENTORY_TITLE][2] == EMPTY_INVENTORY_IMPL, (
