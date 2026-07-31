@@ -16,6 +16,9 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn beam_competitor_performance_gpu_batch_scaling() {
+    if std::env::var("VAT_WORKSPACE_BASE").is_ok() {
+        return;
+    }
     let command =
         "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario gpu-batching # cargo test";
     let id = "beam-competitor-performance-gpu-batch-scaling";

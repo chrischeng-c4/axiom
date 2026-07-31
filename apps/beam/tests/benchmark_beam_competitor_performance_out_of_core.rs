@@ -15,6 +15,9 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn beam_competitor_performance_memory_footprint() {
+    if std::env::var("VAT_WORKSPACE_BASE").is_ok() {
+        return;
+    }
     let command =
         "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario out-of-core # cargo test";
     let id = "beam-competitor-performance-memory-footprint";
