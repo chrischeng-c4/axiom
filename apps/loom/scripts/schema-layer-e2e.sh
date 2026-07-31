@@ -16,7 +16,7 @@ LOOM_SCHEMA_LAYER=$SL LOOM_KEEP=$KEEP LOOM_RUNNER=resident LOOM_WORKER_CONCURREN
 trap 'pkill -f target/release/loom; pkill -f target/release/relay-server; pkill -f target/release/keep' EXIT
 for i in $(seq 1 40); do curl -sf $LOOM/healthz>/dev/null 2>&1 && curl -sf $SL/healthz>/dev/null 2>&1 && curl -sf $KEEP/healthz>/dev/null 2>&1 && break; sleep 0.3; done
 echo "=== PUT input + submit an echo run through the schema layer ==="
-printf 'HELLO-SCHEMA' | curl -s -X PUT $KEEP/v1/inputs/slin -H 'content-type: application/octet-stream' --data-binary @- -w ' [%{http_code}]'; echo
+printf 'HELLO-SCHEMA' | curl -s -X PUT $KEEP/inputs/slin -H 'content-type: application/octet-stream' --data-binary @- -w ' [%{http_code}]'; echo
 curl -s -X POST $LOOM/runs -H 'content-type: application/json' -d '{"run_id":"sl1","nodes":[{"id":"a","task_name":"echo","input_refs":["slin"]}]}' -w ' submit[%{http_code}]'; echo
 echo "=== poll: worker(bidi) ⟷ schema-layer ⟷ relay; Done→controller folds ==="
 for i in $(seq 1 30); do

@@ -64,25 +64,25 @@ def put_bytes(url, data):
 
 # ---- keep (claim-check store) ----------------------------------------------
 def keep_put_input(key, data):
-    assert put_bytes(f"{KEEP}/v1/inputs/{key}", data) == 200, f"keep PUT input {key}"
+    assert put_bytes(f"{KEEP}/inputs/{key}", data) == 200, f"keep PUT input {key}"
 
 
 def keep_get_input(key):
     # A claim-check ref names either a producer input or an upstream node's
     # result — try inputs, then fall back to results (inter-node data flow).
-    s, b = get_bytes(f"{KEEP}/v1/inputs/{key}")
+    s, b = get_bytes(f"{KEEP}/inputs/{key}")
     if s == 200:
         return b
-    s, b = get_bytes(f"{KEEP}/v1/results/{key}")
+    s, b = get_bytes(f"{KEEP}/results/{key}")
     return b if s == 200 else b""
 
 
 def keep_put_result(key, data):
-    assert put_bytes(f"{KEEP}/v1/results/{key}", data) == 200, f"keep PUT result {key}"
+    assert put_bytes(f"{KEEP}/results/{key}", data) == 200, f"keep PUT result {key}"
 
 
 def keep_get_result(key):
-    s, b = get_bytes(f"{KEEP}/v1/results/{key}")
+    s, b = get_bytes(f"{KEEP}/results/{key}")
     return b if s == 200 else None
 
 
@@ -98,7 +98,7 @@ _stop = threading.Event()
 
 def worker_loop(worker_id):
     while not _stop.is_set():
-        _, body = post_json(f"{RELAY}/v1/{WORKER_SUBJECT}/lease", {"consumer_id": worker_id})
+        _, body = post_json(f"{RELAY}/{WORKER_SUBJECT}/lease", {"consumer_id": worker_id})
         lease, entry = body.get("lease"), body.get("entry")
         if not lease or not entry:
             time.sleep(0.05)
@@ -115,14 +115,14 @@ def worker_loop(worker_id):
             keep_put_result(result_key, handler(inp))
             _report(run, node, attempt, result_key, failed=False)
         # ack the lease
-        post_json(f"{RELAY}/v1/{WORKER_SUBJECT}/ack",
+        post_json(f"{RELAY}/{WORKER_SUBJECT}/ack",
                   {"lease_id": lease["lease_id"], "epoch": lease["epoch"]})
 
 
 def _report(run, node, attempt, result_key, failed):
     # Completions are published to RELAY (the broker); the loom controller leases
     # `loom.completions` from relay and folds them — loom has no publish endpoint.
-    post_json(f"{RELAY}/v1/{COMPLETIONS}/publish", {
+    post_json(f"{RELAY}/{COMPLETIONS}/publish", {
         "message_id": f"{run}:{node}:{attempt}:done",
         "payload": {
             "run_id": run, "node_id": node, "attempt": attempt,

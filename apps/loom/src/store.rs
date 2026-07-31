@@ -13,8 +13,8 @@ use async_trait::async_trait;
 
 use crate::model::{WorkflowRun, WorkflowRunId};
 
-/// Persistence boundary for loom's workflow state. Async because a multi-voter
-/// raft-backed store ([`crate::cluster`]) commits via consensus — `put` must
+/// Persistence boundary for loom's workflow state. Async because the raft-backed
+/// store ([`crate::raft::RaftRunStore`]) commits via consensus — `put` must
 /// await replication without blocking a runtime worker. The in-memory + file
 /// stores are trivially async.
 #[async_trait]

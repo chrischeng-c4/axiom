@@ -1,6 +1,6 @@
 //! keep client (#14 / #167) — claim-check input/result over keep's HTTP/2 (h2c)
 //! API. Implements the worker's [`KeepStore`]: `get_input` GETs
-//! `/v1/inputs/{id}`, `put_result` PUTs `/v1/results/{id}`. Bytes-first
+//! `/inputs/{id}`, `put_result` PUTs `/results/{id}`. Bytes-first
 //! (octet-stream); keep is plaintext h2c so no TLS is linked.
 
 use async_trait::async_trait;
@@ -27,15 +27,12 @@ impl KeepHttp {
 impl KeepStore for KeepHttp {
     async fn get_input(&self, id: &str) -> anyhow::Result<Option<Vec<u8>>> {
         // A claim-check ref resolves whether it names a producer-supplied input
-        // or an upstream node's result: try /v1/inputs, then fall back to
-        // /v1/results. This is what makes inter-node data flow work (a downstream
+        // or an upstream node's result: try /inputs, then fall back to
+        // /results. This is what makes inter-node data flow work (a downstream
         // node's input_ref is an upstream node's result_ref).
         for ns in ["inputs", "results"] {
-            let resp = self
-                .client
-                .get(format!("{}/v1/{}/{}", self.base, ns, id))
-                .send()
-                .await?;
+            let resp =
+                self.client.get(format!("{}/{}/{}", self.base, ns, id)).send().await?;
             if resp.status().as_u16() == 404 {
                 continue;
             }
@@ -52,7 +49,7 @@ impl KeepStore for KeepHttp {
     async fn put_input(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
         let resp = self
             .client
-            .put(format!("{}/v1/inputs/{}", self.base, id))
+            .put(format!("{}/inputs/{}", self.base, id))
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(bytes)
             .send()
@@ -68,7 +65,7 @@ impl KeepStore for KeepHttp {
     async fn put_result(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
         let resp = self
             .client
-            .put(format!("{}/v1/results/{}", self.base, id))
+            .put(format!("{}/results/{}", self.base, id))
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(bytes)
             .send()

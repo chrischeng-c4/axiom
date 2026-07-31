@@ -122,9 +122,7 @@ pub fn build_envelope(task: &TaskMessage, keep_base: &str, token: String) -> Tas
             bytes: bytes.clone(),
         }
     } else if let Some(first) = task.input_refs.first() {
-        InputSource::KeepUrl {
-            url: format!("{keep_base}/v1/inputs/{}", first.0),
-        }
+        InputSource::KeepUrl { url: format!("{keep_base}/inputs/{}", first.0) }
     } else {
         InputSource::Empty
     };
@@ -136,7 +134,7 @@ pub fn build_envelope(task: &TaskMessage, keep_base: &str, token: String) -> Tas
         task_name: task.task_name.clone(),
         args: task.args.clone(),
         input,
-        result_put_url: format!("{keep_base}/v1/results/{result_key}"),
+        result_put_url: format!("{keep_base}/results/{result_key}"),
         token,
     }
 }
@@ -171,12 +169,12 @@ pub trait TaskSource: Send + Sync {
 /// Router for `loom schema-layer`: the worker-facing bidi work stream + health.
 pub fn router(source: Arc<dyn TaskSource>) -> Router {
     Router::new()
-        .route("/v1/work/stream", post(work_stream))
+        .route("/work/stream", post(work_stream))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(source)
 }
 
-/// POST /v1/work/stream — one bidi h2 stream per worker: TaskEnvelopes down,
+/// POST /work/stream — one bidi h2 stream per worker: TaskEnvelopes down,
 /// UpFrames up. Both half-streams stay open for the session's life.
 async fn work_stream(State(source): State<Arc<dyn TaskSource>>, req: Body) -> Response {
     let (down_tx, mut down_rx) = mpsc::channel::<Vec<u8>>(64);
@@ -412,12 +410,7 @@ impl RelayTaskSource {
                 let mut rx = up_rx;
                 while let Some(b) = rx.recv().await { yield Ok::<Vec<u8>, std::io::Error>(b); }
             });
-            let resp = match client
-                .post(format!("{relay}/v1/{g}/consume"))
-                .body(body)
-                .send()
-                .await
-            {
+            let resp = match client.post(format!("{relay}/{g}/consume")).body(body).send().await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("schema-layer: consume connect {g} failed: {e}");
@@ -491,7 +484,7 @@ impl TaskSource for RelayTaskSource {
             let subj = format!("loom.completions.{}", shard_of(&cm.run_id, self.shards));
             let _ = self
                 .client
-                .post(format!("{}/v1/{subj}/publish", self.relay))
+                .post(format!("{}/{subj}/publish", self.relay))
                 .json(&serde_json::json!({ "message_id": format!("{id}:done"), "payload": cm }))
                 .send()
                 .await;
@@ -580,13 +573,8 @@ mod tests {
             "tok".into(),
         );
         assert_eq!(e.id, "run1:nodeA:2");
-        assert_eq!(
-            e.input,
-            InputSource::KeepUrl {
-                url: "http://keep/v1/inputs/in:7".into()
-            }
-        );
-        assert_eq!(e.result_put_url, "http://keep/v1/results/run1:nodeA:result");
+        assert_eq!(e.input, InputSource::KeepUrl { url: "http://keep/inputs/in:7".into() });
+        assert_eq!(e.result_put_url, "http://keep/results/run1:nodeA:result");
         assert_eq!(e.token, "tok");
 
         // inline input wins over refs
@@ -753,7 +741,7 @@ mod tests {
             .build()
             .unwrap();
         let resp = client
-            .post(format!("http://{addr}/v1/work/stream"))
+            .post(format!("http://{addr}/work/stream"))
             .body(body)
             .send()
             .await
@@ -820,7 +808,7 @@ mod tests {
         let keep_app = {
             let puts = puts.clone();
             Router::new().route(
-                "/v1/inputs/{*id}",
+                "/inputs/{*id}",
                 put(move |AxPath(id): AxPath<String>, body: Bytes| {
                     let puts = puts.clone();
                     async move {

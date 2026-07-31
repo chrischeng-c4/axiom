@@ -28,10 +28,60 @@ use crate::store::{MemStore, RunStore};
 pub struct AppState {
     pub store: Arc<dyn RunStore>,
     pub dispatcher: Arc<dyn Dispatcher>,
+    /// Liveness/readiness + Prometheus counters behind the standard probe routes.
+    pub health: Arc<Health>,
+}
+
+/// Control-plane liveness/readiness + lightweight Prometheus counters, shared
+/// (`Arc`) between the data-plane handlers and the archetype probe routes
+/// (`/readyz` reads `is_draining`; `/metrics` reads the counters).
+#[derive(Default)]
+pub struct Health {
+    draining: std::sync::atomic::AtomicBool,
+    runs_submitted: std::sync::atomic::AtomicU64,
+    node_completions: std::sync::atomic::AtomicU64,
+}
+
+impl Health {
+    /// Flip readiness to draining so `/readyz` reports 503 (graceful drain).
+    pub fn start_drain(&self) {
+        self.draining.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn inc_runs(&self) {
+        self.runs_submitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn inc_completions(&self) {
+        self.node_completions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl service_http::ReadinessHook for Health {
+    fn is_draining(&self) -> bool {
+        self.draining.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl service_http::MetricsProvider for Health {
+    fn render_metrics(&self) -> String {
+        use std::sync::atomic::Ordering::Relaxed;
+        let submitted = self.runs_submitted.load(Relaxed);
+        let completions = self.node_completions.load(Relaxed);
+        format!(
+            "# HELP loom_up 1 if the control plane is serving.\n\
+             # TYPE loom_up gauge\n\
+             loom_up 1\n\
+             # HELP loom_runs_submitted_total Runs accepted via POST /runs.\n\
+             # TYPE loom_runs_submitted_total counter\n\
+             loom_runs_submitted_total {submitted}\n\
+             # HELP loom_node_completions_total Node completions folded via the control API.\n\
+             # TYPE loom_node_completions_total counter\n\
+             loom_node_completions_total {completions}\n"
+        )
+    }
 }
 
 /// One node in a submitted workflow.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct NodeSpec {
     pub id: String,
     pub task_name: String,
@@ -44,35 +94,35 @@ pub struct NodeSpec {
 }
 
 /// `POST /runs` body: a client-supplied run id (idempotency key) + the DAG nodes.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct SubmitRequest {
     pub run_id: String,
     pub nodes: Vec<NodeSpec>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct SubmitResponse {
     pub run_id: String,
     pub status: RunStatus,
     pub node_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct NodeView {
     pub id: String,
     pub state: crate::model::NodeState,
     pub attempt: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct RunView {
     pub run_id: String,
     pub status: RunStatus,
     pub nodes: Vec<NodeView>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct ApiError {
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct ApiError {
     error: String,
 }
 
@@ -133,10 +183,18 @@ fn view(run: &WorkflowRun) -> RunView {
     }
 }
 
-async fn healthz() -> &'static str {
-    "ok"
-}
-
+/// `POST /runs` — submit a workflow run (a DAG of nodes). Root nodes dispatch
+/// immediately; the run advances as node completions arrive.
+#[utoipa::path(
+    post,
+    path = "/runs",
+    tag = "Runs",
+    request_body = SubmitRequest,
+    responses(
+        (status = 201, description = "Run accepted; roots dispatched", body = SubmitResponse),
+        (status = 400, description = "Invalid DAG (empty, duplicate id, or unknown dep)", body = ApiError),
+    )
+)]
 async fn submit(
     State(state): State<AppState>,
     Json(req): Json<SubmitRequest>,
@@ -170,13 +228,14 @@ async fn submit(
         )
             .into_response();
     }
+    state.health.inc_runs();
     (StatusCode::CREATED, Json(resp)).into_response()
 }
 
 /// `POST /runs/{id}/nodes/{node}/complete` body: how a node finished. In
 /// production a relay ack drives this; the endpoint also lets a test/dev worker
 /// report completion directly.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct CompleteRequest {
     /// keep ref to the result payload, if any.
     #[serde(default)]
@@ -234,6 +293,23 @@ async fn apply_node_completion(
     dispatch_ready(run, dispatcher).await.map(|_| ())
 }
 
+/// `POST /runs/{id}/nodes/{node}/complete` — report a node completion, splice in
+/// any runtime fan-out children (#116), and dispatch newly-ready nodes. In
+/// production a relay ack drives this; the endpoint also allows manual completion.
+#[utoipa::path(
+    post,
+    path = "/runs/{id}/nodes/{node}/complete",
+    tag = "Runs",
+    params(
+        ("id" = String, Path, description = "Run id"),
+        ("node" = String, Path, description = "Node id"),
+    ),
+    request_body = CompleteRequest,
+    responses(
+        (status = 200, description = "Updated run view", body = RunView),
+        (status = 404, description = "Unknown run", body = ApiError),
+    )
+)]
 async fn complete_node(
     State(state): State<AppState>,
     Path((id, node)): Path<(String, String)>,
@@ -301,9 +377,21 @@ async fn complete_node(
         )
             .into_response();
     }
+    state.health.inc_completions();
     (StatusCode::OK, Json(v)).into_response()
 }
 
+/// `GET /runs/{id}` — poll a run's status and per-node state.
+#[utoipa::path(
+    get,
+    path = "/runs/{id}",
+    tag = "Runs",
+    params(("id" = String, Path, description = "Run id")),
+    responses(
+        (status = 200, description = "Run view", body = RunView),
+        (status = 404, description = "Unknown run", body = ApiError),
+    )
+)]
 async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.store.get(&WorkflowRunId::new(&id)).await {
         Ok(Some(run)) => (StatusCode::OK, Json(view(&run))).into_response(),
@@ -324,15 +412,65 @@ async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl 
     }
 }
 
-/// The control-plane router over a [`RunStore`].
-pub fn router(store: Arc<dyn RunStore>, dispatcher: Arc<dyn Dispatcher>) -> Router {
+/// The control-plane data-plane router over a [`RunStore`] — the `/runs` API
+/// only. The archetype probe/admin routes are added by [`surface`].
+pub fn router(store: Arc<dyn RunStore>, dispatcher: Arc<dyn Dispatcher>, health: Arc<Health>) -> Router {
     Router::new()
-        .route("/healthz", get(healthz))
         .route("/runs", post(submit))
         .route("/runs/{id}", get(get_run))
         .route("/runs/{id}/nodes/{node}/complete", post(complete_node))
-        .with_state(AppState { store, dispatcher })
+        .with_state(AppState { store, dispatcher, health })
 }
+
+/// The full controller HTTP surface: the archetype probe/admin routes
+/// (`/healthz` `/readyz` `/metrics` `/openapi.json` `/docs`, via
+/// [`service_http::standard_probe_routes`]) merged with the control-plane API.
+/// No outer tracing layer — [`run`] adds it after any raft-peer routes merge in.
+pub fn surface(store: Arc<dyn RunStore>, dispatcher: Arc<dyn Dispatcher>, health: Arc<Health>) -> Router {
+    let metrics: Arc<dyn service_http::MetricsProvider> = health.clone();
+    service_http::standard_probe_routes(health.clone(), Some(metrics), openapi)
+        .merge(router(store, dispatcher, health))
+}
+
+/// The control-plane OpenAPI document — served at `/openapi.json` + `/docs` and
+/// emitted offline by `loom spec`. The single generated-doc accessor the probe
+/// routes and the `spec` CLI both read.
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi as _;
+    ApiDoc::openapi()
+}
+
+/// utoipa-generated OpenAPI for loom's control API. Payload bytes never traverse
+/// loom (claim-check via keep), so the surface is small JSON control messages.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    info(
+        title = "loom",
+        description = "DAG workflow scheduler — the control plane over relay (broker) + keep (store). Small JSON control messages only; payload bytes never traverse loom (claim-check via keep).",
+        license(name = "MIT")
+    ),
+    servers(
+        (url = "http://loom-svc:7474", description = "in-cluster ClusterIP"),
+        (url = "http://localhost:7474", description = "local dev")
+    ),
+    tags((name = "Runs", description = "Workflow run submit / status / completion")),
+    paths(submit, get_run, complete_node),
+    components(schemas(
+        SubmitRequest,
+        NodeSpec,
+        SubmitResponse,
+        RunView,
+        NodeView,
+        CompleteRequest,
+        ApiError,
+        crate::model::KeepRef,
+        crate::model::RunStatus,
+        crate::model::NodeState,
+        crate::runner::RunnerClass,
+        crate::scheduler::FanOutSpec,
+    ))
+)]
+pub struct ApiDoc;
 
 /// Entry point for `loom controller`. Serves the control API h2c on `LOOM_ADDR`
 /// (default `0.0.0.0:7474`). The scheduler loop (relay dispatch + completion
@@ -345,15 +483,41 @@ pub fn run() -> anyhow::Result<()> {
         // single-voter raft (LOOM_RAFT_DIR) > file crash-recovery (LOOM_DATA_DIR)
         // > in-memory. The cluster store also exposes a raft router peers reach.
         let mut raft_router: Option<Router> = None;
-        let store: Arc<dyn RunStore> = if let Ok(peers_env) = std::env::var("LOOM_CLUSTER_PEERS") {
+        let store: Arc<dyn RunStore> = if raft_runtime::replica_mode() {
+            // k8s scale-out (REPLICAS_PER_SHARD > 1): derive node id / voters /
+            // peers from the StatefulSet downward API. `LOOM_PEERS` overrides the
+            // peer DNS to run a multi-node group on one host.
+            let dir = std::env::var("LOOM_RAFT_DIR").unwrap_or_else(|_| "/data/raft".to_string());
+            // The StatefulSet name is POD_NAME without the `-<ordinal>` suffix;
+            // the headless service DNS suffix comes from the injected env. Both
+            // default to the `loom` static-tree names, but derive from the CR
+            // name for operator-managed instances.
+            let pod = std::env::var("POD_NAME").unwrap_or_else(|_| "loom-0".to_string());
+            let prefix = pod
+                .rsplit_once('-')
+                .map(|(p, _)| p.to_string())
+                .unwrap_or_else(|| "loom".to_string());
+            let headless = std::env::var("LOOM_HEADLESS_SERVICE")
+                .unwrap_or_else(|_| format!("{prefix}-headless"));
+            let topo =
+                raft_runtime::ClusterTopology::from_env(&prefix, &headless, 7474, "LOOM_PEERS")?;
+            eprintln!(
+                "loom: raft REPLICA mode — node {}, {} peer(s), dir {dir}",
+                topo.node_id,
+                topo.peers.len()
+            );
+            let rs = crate::raft::RaftRunStore::from_topology(topo, &dir)?;
+            raft_router = Some(rs.router());
+            Arc::new(rs)
+        } else if let Ok(peers_env) = std::env::var("LOOM_CLUSTER_PEERS") {
+            // Local multi-node testing: an explicit `0=url,1=url,…` peer map (all
+            // members incl. self); build the peer map excluding self.
             let id = std::env::var("LOOM_NODE_ID")
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
             let dir =
                 std::env::var("LOOM_RAFT_DIR").unwrap_or_else(|_| format!("/tmp/loom-raft-{id}"));
-            // LOOM_CLUSTER_PEERS = "0=http://h0,1=http://h1,2=http://h2" (all
-            // members incl. self); build the peer map excluding self.
             let mut peers = std::collections::HashMap::new();
             for part in peers_env.split(',') {
                 if let Some((nid, url)) = part.split_once('=') {
@@ -366,12 +530,15 @@ pub fn run() -> anyhow::Result<()> {
             }
             let n_voters = peers.len() as u64 + 1;
             eprintln!("loom: raft CLUSTER node {id}/{n_voters}, peers {peers:?}, dir {dir}");
-            let cs = crate::cluster::RaftClusterStore::spawn(id, n_voters, peers, &dir)?;
-            raft_router = Some(cs.router());
-            Arc::new(cs)
+            let rs = crate::raft::RaftRunStore::cluster(id, n_voters, peers, &dir)?;
+            raft_router = Some(rs.router());
+            Arc::new(rs)
         } else if let Ok(dir) = std::env::var("LOOM_RAFT_DIR") {
-            eprintln!("loom: raft-backed durable store (single-voter) under {dir}");
-            Arc::new(crate::raft::RaftRunStore::open(0, &dir)?)
+            // Single-node durable raft (its own majority) — the archetype default.
+            eprintln!("loom: raft-backed durable store (single-node) under {dir}");
+            let rs = crate::raft::RaftRunStore::single_node(&dir)?;
+            raft_router = Some(rs.router());
+            Arc::new(rs)
         } else if let Ok(dir) = std::env::var("LOOM_DATA_DIR") {
             eprintln!("loom: persisting runs under {dir}");
             Arc::new(crate::store::FileStore::open(&dir)?)
@@ -391,10 +558,15 @@ pub fn run() -> anyhow::Result<()> {
                 Arc::new(MemDispatcher::new())
             }
         };
-        let mut app = router(store.clone(), dispatcher.clone());
+        // Liveness/readiness + metrics carrier, shared with the probe routes.
+        let health = Arc::new(Health::default());
+        // Archetype surface (probes + /openapi.json + /docs) + control API;
+        // raft-peer routes merge in before the outer tracing layer.
+        let mut app = surface(store.clone(), dispatcher.clone(), health.clone());
         if let Some(rr) = raft_router {
             app = app.merge(rr);
         }
+        let app = app.layer(service_http::trace_layer());
         // Completed-DAG GC (#106): reap terminal runs after a retention window.
         // LOOM_GC_RETENTION_SECS (default 3600); 0 disables.
         let gc_retention = std::env::var("LOOM_GC_RETENTION_SECS")
@@ -443,7 +615,7 @@ pub fn run() -> anyhow::Result<()> {
                 ));
             }
         }
-        serve(&addr, app).await
+        serve(&addr, app, health).await
     })
 }
 
@@ -470,7 +642,7 @@ async fn completion_consumer(
             return;
         }
     };
-    let url = format!("{relay_base}/v1/{subject}/consume");
+    let url = format!("{relay_base}/{subject}/consume");
     let idle = std::time::Duration::from_millis(200);
     eprintln!("loom: consuming completions from {url} (bidi /consume)");
     loop {
@@ -567,26 +739,26 @@ async fn apply_completion_msg(
     }
 }
 
-async fn serve(addr: &str, app: Router) -> anyhow::Result<()> {
-    use hyper_util::rt::{TokioExecutor, TokioIo};
-    use hyper_util::server::conn::auto;
-    use tokio::net::TcpListener;
-    use tower::ServiceExt;
-
-    let listener = TcpListener::bind(addr).await?;
+/// Bind `addr` and serve the controller (HTTP/1.1 + h2c on one port) via the
+/// shared [`service_http::serve`] loop, draining gracefully on SIGINT/SIGTERM:
+/// `/readyz` flips to 503, then a grace window (`LOOM_DRAIN_GRACE_SECS`, default
+/// 10s) elapses before the listener closes so k8s stops routing first.
+async fn serve(addr: &str, app: Router, health: Arc<Health>) -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("loom controller listening (h2c) on {addr}");
-    let mut builder = auto::Builder::new(TokioExecutor::new());
-    builder.http2().max_concurrent_streams(4096);
-    loop {
-        let (stream, _peer) = listener.accept().await?;
-        let io = TokioIo::new(stream);
-        let app = app.clone();
-        let svc = hyper::service::service_fn(move |req| app.clone().oneshot(req));
-        let conn = builder.serve_connection_with_upgrades(io, svc).into_owned();
-        tokio::spawn(async move {
-            let _ = conn.await;
-        });
-    }
+    let grace = std::time::Duration::from_secs(
+        std::env::var("LOOM_DRAIN_GRACE_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10),
+    );
+    service_http::serve(
+        listener,
+        app,
+        service_http::shutdown_with_drain(move || health.start_drain(), grace),
+    )
+    .await;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -597,7 +769,13 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_router() -> Router {
-        router(Arc::new(MemStore::new()), Arc::new(MemDispatcher::new()))
+        // The full archetype surface (probes + /openapi.json + /docs) merged
+        // with the control API, so tests exercise what `run` actually serves.
+        surface(
+            Arc::new(MemStore::new()),
+            Arc::new(MemDispatcher::new()),
+            Arc::new(Health::default()),
+        )
     }
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
@@ -612,6 +790,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// The archetype probe/admin surface (`/readyz`, `/metrics`, `/openapi.json`)
+    /// is wired via `service_http::standard_probe_routes` and documents the API.
+    #[tokio::test]
+    async fn standard_endpoints_served() {
+        for (path, want) in [("/readyz", "ok"), ("/metrics", "loom_up 1")] {
+            let resp = test_router()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            let bytes = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+            let body = String::from_utf8(bytes.to_vec()).unwrap();
+            assert!(body.contains(want), "{path} body missing `{want}`: {body}");
+        }
+        let resp = test_router()
+            .oneshot(Request::get("/openapi.json").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let doc = body_json(resp).await;
+        assert_eq!(doc["info"]["title"], "loom");
+        assert!(doc["paths"]["/runs"].is_object(), "control API not documented in OpenAPI");
     }
 
     #[tokio::test]
