@@ -370,13 +370,49 @@ assert {
 #: dependencies as carried through untouched, and the only assertion of that was
 #: a colocated Rust `--lib` invariant.
 #:
-#: Both dependencies point at a capability in the same class as the one
-#: declaring them, so this fixture adds no cross-class dependency edge to
+#: Every dependency points at a capability in the same class as the one
+#: declaring it, so this fixture adds no cross-class dependency edge to
 #: whatever the readiness rules make of one.
+#: This map is what each member *declares*. What the product renders for it is
+#: `_member_rendered_dependencies`, which is not the same list: dependencies are
+#: parsed through a `BTreeSet` (`capability.rs:11721-11731`), so they come back
+#: sorted and deduplicated whatever order the author wrote them in.
+#:
+#: One member declares more than one, because `capability.rs:9055-9060` loops the
+#: whole vector while a fixture giving every declaring member exactly one leaves
+#: `.take(1)` -- a renderer that emits the first dependency and drops the rest --
+#: byte-identical. That is the same arity blind spot `Surfaces`, `EC Dimensions`
+#: and `Gate Inventory` close on their own document; `Dependencies` was left out
+#: of it, and is closed here instead because this field is asserted on every
+#: document rather than on one.
+#:
+#: That member's declaration is deliberately neither sorted nor duplicate-free,
+#: so the two canonicalising halves of the parse are separately observable: in
+#: sorted order, a `Vec` that preserved the author's order would render the same
+#: bytes, and without the repeat, dropping the deduplication would.
 MEMBER_DEPENDENCIES = {
     "Lexical Search": ("search-core",),
-    "Contract Gate Wiring": ("standard-operational-endpoints",),
+    "Contract Gate Wiring": (
+        "standard-operational-endpoints",
+        "security-hardening",
+        "standard-operational-endpoints",
+    ),
 }
+_MULTI_DEPENDENCY_DECLARED = MEMBER_DEPENDENCIES["Contract Gate Wiring"]
+assert len(set(_MULTI_DEPENDENCY_DECLARED)) == 2, (
+    "the member closing the arity gap has to render two distinct dependencies, "
+    "or truncating the dependency loop to its first item is unobservable"
+)
+assert len(_MULTI_DEPENDENCY_DECLARED) > len(set(_MULTI_DEPENDENCY_DECLARED)), (
+    "it has to declare one of them twice, or the deduplication half of the "
+    "parse renders the same bytes as a plain vector"
+)
+assert tuple(sorted(set(_MULTI_DEPENDENCY_DECLARED))) != tuple(
+    dict.fromkeys(_MULTI_DEPENDENCY_DECLARED)
+), (
+    "it has to declare them out of sorted order, or the sorting half of the "
+    "parse renders the same bytes as the author's own order"
+)
 
 #: Defaults for the synthetic members some fixtures splice in (registry-spanning
 #: probes and the like). Those documents are built to falsify a different rule and
@@ -409,7 +445,20 @@ def _member_ec_dimension(title: str) -> str:
 
 
 def _member_dependencies(title: str) -> tuple[str, ...]:
+    """What the member's `Dependencies:` block declares, in the authored order."""
     return MEMBER_DEPENDENCIES.get(title, ())
+
+
+def _member_rendered_dependencies(title: str) -> tuple[str, ...]:
+    """What the product must render back for it.
+
+    `parse_dependency_list` (`capability.rs:11721-11731`) collects the parsed ids
+    into a `BTreeSet` before handing them on, so the rendered block is sorted and
+    deduplicated rather than a copy of what the author wrote. Derived here rather
+    than written out beside the declaration, so the two cannot drift into an
+    expectation that agrees with the fixture only because both were edited.
+    """
+    return tuple(sorted(set(_member_dependencies(title))))
 
 
 def _member_surface_item(title: str, surface: str, promise: str) -> str:
@@ -1712,11 +1761,25 @@ def assert_migrated_legacy_sections_carry_their_row_content(
     neither, which is why the earlier `startswith` form here was wrong and is
     recorded as such rather than quietly replaced.
 
-    Compared after `rstrip("\\n")` on both sides, because the block boundary is
-    the next heading rather than a byte offset: the count of blank lines between
-    the last row and the following `###` is section *separation*, not this
-    capability's content, and is pinned by the assertions that read the document
-    frame and the section order.
+    Compared byte for byte, separator included. `_capability_section_body` cuts
+    at the newline that begins the next heading, so a section the renderer
+    followed with `\\n\\n` gives back a body ending in exactly one `\\n` -- which
+    is what the literal ends with, and the comparison is therefore direct.
+
+    An earlier revision compared after `rstrip("\\n")` on both sides, on the
+    ground that the count of blank lines before the next heading is section
+    *separation* rather than this capability's content and was pinned by the
+    assertions that read the document frame and the section order. That ground
+    was false: collapsing the literal's trailing `\\n\\n` to `\\n` -- which runs
+    the last work-root row up against the following heading, so the table and the
+    heading are one block -- passed on both entry points with the frame and every
+    ordering assertion green. The separator is content, and nothing else here
+    reads it.
+
+    The document's *last* section has no following heading to be cut at, so its
+    body runs to the end of the file and carries whatever the document ends with.
+    It is compared with its own trailing newlines stripped, and named, rather
+    than left to a general `rstrip` that silently covered every section.
 
     `tracker_state` is the WI each section is expected to render, which differs
     by entry point: format migration erases document-stored tracker state before
@@ -1724,12 +1787,15 @@ def assert_migrated_legacy_sections_carry_their_row_content(
     rather than assumed, so this leg can bind both callers without asserting that
     either answer is the right one -- that disagreement is filed separately.
     """
+    last_title = _rendered_capability_titles(migrated)[-1]
     for title, state, gaps, _wi, evidence in _LEGACY_ROWS:
         expected = _expected_legacy_section_body(
             title, state, gaps, tracker_state[title], evidence
         )
         body = _capability_section_body(migrated, title)
-        assert body.rstrip("\n") == expected.rstrip("\n"), (
+        if title == last_title:
+            body, expected = body.rstrip("\n"), expected.rstrip("\n")
+        assert body == expected, (
             f"migrated legacy section {title!r} is not the block its row "
             f"renders; expected:\n{expected!r}\ngot:\n{body!r}"
         )
@@ -2297,6 +2363,23 @@ def assert_sections_carry_their_own_contract(
     because a renderer that emitted the block unconditionally would attribute a
     dependency edge to capabilities that never claimed one.
 
+    One of those two declares more than one, out of sorted order and with a
+    repeat, and is asserted as the *exact* item list its field renders. Both
+    declaring members previously carried exactly one dependency, which left
+    `.take(1)` on the render loop rendering the identical document -- the same
+    arity gap the multi-item document closes for `Surfaces`, `EC Dimensions` and
+    `Gate Inventory`, which this field was left out of. The expectation is
+    `_member_rendered_dependencies`, not the declaration: the parse canonicalises
+    through a `BTreeSet`, and asserting the sorted, deduplicated form is what
+    makes those two steps observable instead of coincidental.
+
+    Read as an item list rather than asserted as a containing block for the
+    reason on `_field_list_items`: the deduplication renders one item *fewer*
+    than the input declares, so a parse that stopped deduplicating appends the
+    repeat after the two items the expectation names -- and the expectation is
+    still a substring of what it renders. That mutation survived the containing
+    form and fails this one.
+
     `item_overrides` lets one input declare a differently *shaped* surface or EC
     dimension item -- a command with no summary -- without exempting that
     capability from the rest of the block. The alternative, skipping the
@@ -2306,14 +2389,13 @@ def assert_sections_carry_their_own_contract(
     for title in titles:
         body = _capability_section_body(migrated, title)
         overrides = (item_overrides or {}).get(title, {})
-        dependencies = _member_dependencies(title)
+        dependencies = _member_rendered_dependencies(title)
         if dependencies:
-            expected_dependencies = "Dependencies:\n" + "".join(
-                f"- {dep}\n" for dep in dependencies
-            )
-            assert expected_dependencies in body, (
-                f"section {title!r} did not carry its own dependencies "
-                f"{expected_dependencies!r}; section was:\n{body}"
+            rendered = _field_list_items(body, title, "Dependencies")
+            assert rendered == list(dependencies), (
+                f"section {title!r} must render the dependencies "
+                f"{list(dependencies)!r}, in that order and nothing else; got "
+                f"{rendered!r}. Section was:\n{body}"
             )
         else:
             assert "Dependencies:" not in body, (
@@ -3553,8 +3635,10 @@ def assert_relocation_keeps_an_authored_contract_pointer(readme: str) -> None:
 #: comes back as the inventory -- so an author who wired gates but wrote no
 #: inventory still gets one.
 #:
-#: `MULTI_GATE_INVENTORY_TITLE` is the same shape at arity two, which is what
-#: makes the `<br>` join falsifiable at all; see its own comment.
+#: `MULTI_GATE_INVENTORY_TITLE` is the same shape at arity two and drawing from
+#: both halves of the derivation at once, which is what makes the `<br>` join and
+#: the order the two halves are collected in falsifiable at all; see its own
+#: comment.
 #:
 #: `FIXTURE_INVENTORY_TITLE` reaches the derivation through the claim-fixture
 #: half rather than the capability-gate half; see its own comment.
@@ -3612,12 +3696,46 @@ EMPTY_INVENTORY_IMPL = "planned"
 #: `refs.into_iter().next().unwrap_or_default()` and `refs.pop().unwrap_or_default()`
 #: are byte-identical. Keeping the first element and keeping the last are
 #: *different* mutations and a two-item list separates them only if the two items
-#: are distinct and their order is asserted, so the two gates below are distinct
-#: and asserted in work-root declaration order.
+#: are distinct and their order is asserted, so the two cells below are distinct
+#: and the rendered order is asserted exactly.
+#:
+#: It is also the only capability that reaches the derivation through *both*
+#: halves at once. The function collects every claim's fixtures first and appends
+#: the capability's gates afterwards, so which half a ref came from decides where
+#: it lands. With one capability deriving gates only and another fixtures only,
+#: the two halves never meet in one list and swapping the two `refs.extend`
+#: blocks renders the identical document -- the arity was fixed and the fixture
+#: half was woken up, but their *composition* stayed unbound. So this capability
+#: declares one of each: a backticked cell, which parses as a gate, on its first
+#: work root, and a bare path, which parses as a fixture, on its second.
+#:
+#: Declared in that order deliberately. With the fixture declared first, the
+#: fixtures-then-gates order and the work-root declaration order coincide, and a
+#: rendering that simply followed declaration order -- which is what swapping the
+#: two blocks produces -- is again byte-identical. Reversed, the two orders
+#: disagree and only one of them is the product's.
 MULTI_GATE_INVENTORY_TITLE = "Lexical Search"
-MULTI_GATE_INVENTORY_GATES = (
+MULTI_GATE_INVENTORY_CELLS = (
     "`aw ec verify --project demo`",
-    "`aw td check --project demo`",
+    "evidence/lexical-search-recall.md",
+)
+#: The same two refs in the order the derivation must render them: the fixture
+#: half first, then the gate half, which is the reverse of the declaration order
+#: above.
+MULTI_GATE_INVENTORY_ITEMS = (
+    MULTI_GATE_INVENTORY_CELLS[1],
+    MULTI_GATE_INVENTORY_CELLS[0],
+)
+assert MULTI_GATE_INVENTORY_CELLS[0].startswith("`") and MULTI_GATE_INVENTORY_CELLS[
+    0
+].endswith("`"), "the first work root's cell has to parse as a gate"
+assert "`" not in MULTI_GATE_INVENTORY_CELLS[1], (
+    "the second work root's cell has to parse as a fixture, or both refs come "
+    "from the gate half and their composition is unbound again"
+)
+assert tuple(reversed(MULTI_GATE_INVENTORY_ITEMS)) == MULTI_GATE_INVENTORY_CELLS, (
+    "the rendered order has to be the reverse of the declared order, or "
+    "'fixtures then gates' and 'declaration order' render the same document"
 )
 
 #: The fourth capability whose declared inventory is stripped, and the only one
@@ -3647,12 +3765,12 @@ DERIVED_INVENTORY_STRIPPED_TITLES = (
 _MULTI_GATE_WORK_ROOTS = next(
     member[4] for member in _ALL_MEMBERS if member[0] == MULTI_GATE_INVENTORY_TITLE
 )
-assert len(_MULTI_GATE_WORK_ROOTS) == len(MULTI_GATE_INVENTORY_GATES) == 2, (
+assert len(_MULTI_GATE_WORK_ROOTS) == len(MULTI_GATE_INVENTORY_CELLS) == 2, (
     "the arity-1 blind spot is closed by a capability with exactly two work "
-    "roots, one gate each"
+    "roots, one ref each"
 )
-assert len(set(MULTI_GATE_INVENTORY_GATES)) == 2, (
-    "two identical gates would not separate keep-first from keep-last"
+assert len(set(MULTI_GATE_INVENTORY_CELLS)) == 2, (
+    "two identical cells would not separate keep-first from keep-last"
 )
 
 
@@ -3674,7 +3792,7 @@ def _derived_inventory_work_root_cells() -> dict[str, tuple[str, str, str, str, 
                 gate = DERIVED_INVENTORY_GATE
                 readiness = ("implemented", "verified")
             elif title == MULTI_GATE_INVENTORY_TITLE:
-                gate = MULTI_GATE_INVENTORY_GATES[position]
+                gate = MULTI_GATE_INVENTORY_CELLS[position]
                 readiness = ("implemented", "verified")
             elif title == FIXTURE_INVENTORY_TITLE:
                 gate = FIXTURE_INVENTORY_EVIDENCE
@@ -3695,7 +3813,7 @@ _DERIVED_INVENTORY_WORK_ROOT_CELLS = _derived_inventory_work_root_cells()
 DERIVED_INVENTORY_ITEM_OVERRIDES = {
     DERIVED_INVENTORY_TITLE: {"gate_inventory": DERIVED_INVENTORY_GATE},
     EMPTY_INVENTORY_TITLE: {"gate_inventory": "-"},
-    MULTI_GATE_INVENTORY_TITLE: {"gate_inventory": MULTI_GATE_INVENTORY_GATES[0]},
+    MULTI_GATE_INVENTORY_TITLE: {"gate_inventory": MULTI_GATE_INVENTORY_ITEMS[0]},
     FIXTURE_INVENTORY_TITLE: {"gate_inventory": FIXTURE_INVENTORY_EVIDENCE},
 }
 
@@ -3737,7 +3855,7 @@ for _gate in (
     DERIVED_INVENTORY_GATE,
     EMPTY_INVENTORY_GATE,
     FIXTURE_INVENTORY_EVIDENCE,
-    *MULTI_GATE_INVENTORY_GATES,
+    *MULTI_GATE_INVENTORY_CELLS,
 ):
     assert _gate not in UNCLASSIFIED_SECTION_README, (
         f"{_gate} must not be a string the fixture already writes elsewhere, or "
@@ -3850,21 +3968,26 @@ def assert_relocation_renders_an_underivable_gate_inventory(
     assert document_blockers(report) == [EMPTY_DERIVATION_BLOCKER], report["blockers"]
 
 
-def _gate_inventory_items(body: str, title: str) -> list[str]:
-    """The `Gate Inventory` field of one rendered section, as its item list.
+def _field_list_items(body: str, title: str, field: str) -> list[str]:
+    """One list-shaped field of a rendered section, as its item list.
 
     Read as a list rather than as a substring so the assertions below can pin
     what the field *is* -- its length and the order of its entries -- instead of
-    what it contains. A containment check on the first item cannot see a second
-    item dropped, which is exactly the arity blind spot this field carried.
+    what it contains. A containment check cannot see an item dropped from the
+    end, nor one appended after the ones it names: the expected block is a
+    substring of a longer rendered block either way. Both were live here. The
+    gate inventory carried the first shape, and the dependency block carried the
+    second -- a parse that stopped deduplicating rendered the repeated dependency
+    a second time, after the two the assertion named, and the containment check
+    did not see it.
 
     The field is bounded by the first line that is not an item, because the
     renderer emits every field of the section into one block and the field that
     follows this one differs by shape of capability.
     """
-    marker = "Gate Inventory:\n"
+    marker = f"{field}:\n"
     assert marker in body, (
-        f"section {title!r} rendered no gate inventory at all; section was:\n{body}"
+        f"section {title!r} rendered no {field!r} at all; section was:\n{body}"
     )
     items = []
     for line in body.split(marker, 1)[1].splitlines():
@@ -3872,6 +3995,11 @@ def _gate_inventory_items(body: str, title: str) -> list[str]:
             break
         items.append(line[2:])
     return items
+
+
+def _gate_inventory_items(body: str, title: str) -> list[str]:
+    """The `Gate Inventory` field of one rendered section, as its item list."""
+    return _field_list_items(body, title, "Gate Inventory")
 
 
 def assert_relocation_derives_a_missing_gate_inventory(migrated: str) -> None:
@@ -3889,8 +4017,18 @@ def assert_relocation_derives_a_missing_gate_inventory(migrated: str) -> None:
     `MULTI_GATE_INVENTORY_TITLE` declared nothing and has *two* work roots, so
     its derived field is the only two-item list here. Every other capability that
     reaches the derivation has one work root, where joining the list, keeping its
-    first element and keeping its last are byte-identical; two distinct gates
-    asserted in declaration order separate all three.
+    first element and keeping its last are byte-identical; two distinct refs
+    asserted in exact order separate all three.
+
+    It is also the only capability whose two refs come from *different* halves of
+    the derivation -- a gate from the first work root, a fixture from the second
+    -- so the order the two halves are collected in is asserted rather than
+    assumed. Everywhere else each capability draws from one half only, so the
+    fixture half and the gate half never share a list and swapping the two
+    collections renders the identical document. The declaration order is the
+    reverse of the rendered order on purpose: fixtures come first however they
+    were declared, so an implementation that emitted refs in work-root order
+    fails here too.
 
     `FIXTURE_INVENTORY_TITLE` declared nothing and its work-root cell is not
     backticked, so it parses as a claim *fixture* rather than a claim gate. The
@@ -3912,7 +4050,7 @@ def assert_relocation_derives_a_missing_gate_inventory(migrated: str) -> None:
     """
     for title, expected_items in (
         (DERIVED_INVENTORY_TITLE, [DERIVED_INVENTORY_GATE]),
-        (MULTI_GATE_INVENTORY_TITLE, list(MULTI_GATE_INVENTORY_GATES)),
+        (MULTI_GATE_INVENTORY_TITLE, list(MULTI_GATE_INVENTORY_ITEMS)),
         (FIXTURE_INVENTORY_TITLE, [FIXTURE_INVENTORY_EVIDENCE]),
         (EMPTY_INVENTORY_TITLE, ["-"]),
     ):
