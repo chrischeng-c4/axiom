@@ -7987,3 +7987,375 @@ def assert_each_out_of_vocabulary_cell_raises_its_own_blocker(
             "summary": "surface of bad-cells",
         }
     ], bad_cells
+
+
+# --- Machine tables and the efficiency contract fields ----------------------
+#
+# A capability may declare its surfaces and EC dimensions as a Markdown *table*
+# instead of as contract fields. Every other document in this case uses the
+# field form, so `parse_markdown_surface_table` and
+# `parse_markdown_ec_dimension_table` were entirely undriven -- both alias sets,
+# both defaults, and the row-drop guard.
+
+#: A capability whose `Status` is `confirmed` is required to declare at least
+#: one surface and at least one EC dimension. Each subject below declares its
+#: own kind as a table and the other as a contract field, so the requirement is
+#: met without a second table competing for the same parser.
+_MACHINE_TABLE_SUBJECTS = (
+    (
+        "Table Surfaces",
+        "table-surfaces",
+        """| Surface | Commands | Owns | Verification |
+|---|---|---|---|
+| CLI | `aw alpha` | owns the alpha path | `aw alpha --check` |
+|  | `aw gamma` | kind column empty, defaults | - |""",
+        "EC Dimensions:\n- behavior: `true` - behaviour of table-surfaces\n",
+    ),
+    (
+        "Alias Surfaces",
+        "alias-surfaces",
+        """| Kind | CLI | Purpose | Gate |
+|---|---|---|---|
+| HTTP | `aw beta` | purpose alias | `aw beta --gate` |""",
+        "EC Dimensions:\n- behavior: `true` - behaviour of alias-surfaces\n",
+    ),
+    (
+        "Two Columns",
+        "two-columns",
+        """| Surface | Commands |
+|---|---|
+| CLI | `aw kept` |
+| HTTP | - |
+| SDK |  |""",
+        "EC Dimensions:\n- behavior: `true` - behaviour of two-columns\n",
+    ),
+    (
+        "Three Columns",
+        "three-columns",
+        """| Surface | Commands | Summary |
+|---|---|---|
+| CLI | `aw kept` | kept |
+| HTTP | - |  |
+| SDK |  |  |""",
+        "EC Dimensions:\n- behavior: `true` - behaviour of three-columns\n",
+    ),
+    (
+        "Dimension Table",
+        "dimension-table",
+        # The out-of-enum row is declared *first* on purpose. `dedupe_ec_dimensions`
+        # merges by kind and keeps the first non-empty field, so an unknown kind
+        # falling back to `Behavior` behind a declared `behavior` row is absorbed
+        # and reads identically to being dropped -- the mutant that keeps the row
+        # survived in exactly that arrangement. Declared first, the fallback would
+        # win the summary, so the drop is observable.
+        """| Dimension | Runner | Summary |
+|---|---|---|
+| nonsense | `aw nonsense` | dropped, not folded into the row below |
+| behavior | `true` | behaviour by table |""",
+        "Surfaces:\n- CLI: `aw dimension-table` - surface of dimension-table\n",
+    ),
+    (
+        "Dimension Aliases",
+        "dimension-aliases",
+        """| Category | Tool | Evidence |
+|---|---|---|
+| security | `aw sec` | security by alias |""",
+        "Surfaces:\n- CLI: `aw dimension-aliases` - surface of dimension-aliases\n",
+    ),
+)
+
+
+def _machine_table_section(title: str, cap_id: str, table: str, field: str) -> str:
+    return f"""#### {title}
+
+ID: {cap_id}
+Root WI: -
+Status: confirmed
+Type: Service
+Feature Class: core
+Required Verification: smoke
+Promise:
+Promise for {cap_id}.
+Current State: Implemented.
+Gate Inventory:
+- `true`
+{field}
+{table}
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| {title} root | change | - | implemented | verified | smoke | `true` |
+
+"""
+
+
+def _machine_table_document() -> str:
+    index = "".join(
+        f"| {title} | - | implemented | planned | smoke | not_ready |"
+        f" Promise for {cap_id}. |\n"
+        for title, cap_id, *_ in _MACHINE_TABLE_SUBJECTS
+    )
+    sections = "".join(
+        _machine_table_section(*subject) for subject in _MACHINE_TABLE_SUBJECTS
+    )
+    return f"""# Demo
+
+## Brief
+
+Machine-readable capability contract for Demo.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+{index}
+### Core Features
+
+{sections}### Non-Core Features
+"""
+
+
+MACHINE_TABLE_DOCUMENT = _machine_table_document()
+
+#: What each table-declared capability reports. Written out per subject rather
+#: than derived, because the derivation would be the implementation.
+MACHINE_TABLE_SURFACES = {
+    "table-surfaces": [
+        {
+            "kind": "CLI",
+            "commands": ["aw alpha"],
+            "summary": "owns the alpha path",
+            "verification": "`aw alpha --check`",
+        },
+        # The kind cell is blank and defaults to `CLI` -- the one default in this
+        # parser that no other input can reach, because a table that declares a
+        # kind column and fills it renders the identical item whatever the
+        # default is.
+        {
+            "kind": "CLI",
+            "commands": ["aw gamma"],
+            "summary": "kind column empty, defaults",
+            "verification": "-",
+        },
+    ],
+    "alias-surfaces": [
+        {
+            "kind": "HTTP",
+            "commands": ["aw beta"],
+            "summary": "purpose alias",
+            "verification": "`aw beta --gate`",
+        }
+    ],
+    # No summary and no verification column, so the drop guard can fire: the two
+    # rows with no command are gone.
+    "two-columns": [{"kind": "CLI", "commands": ["aw kept"]}],
+    # The identical rows plus a third column, and now nothing drops. `table_cell`
+    # returns the literal `-` for a blank cell, so `summary.trim().is_empty()` is
+    # false and the guard cannot fire. The two capabilities differ only in
+    # whether the table has a third column, which is what makes the guard's
+    # column-shape dependence observable at all.
+    "three-columns": [
+        {"kind": "CLI", "commands": ["aw kept"], "summary": "kept"},
+        {"kind": "HTTP", "summary": "-"},
+        {"kind": "SDK", "summary": "-"},
+    ],
+}
+
+MACHINE_TABLE_DIMENSIONS = {
+    # The table route stores the runner cell verbatim; the contract-field route
+    # strips the backticks. Both spellings reach the report, and the divergence
+    # is why a table-declared runner renders double-backticked on migration.
+    "dimension-table": [
+        {
+            "dimension": "behavior",
+            "runner": "`true`",
+            "summary": "behaviour by table",
+            "required_for_production": True,
+        }
+    ],
+    "dimension-aliases": [
+        {
+            "dimension": "security",
+            "runner": "`aw sec`",
+            "summary": "security by alias",
+            "required_for_production": True,
+        },
+        {
+            "dimension": "behavior",
+            "summary": "declared by behavior surfaces or verification contract",
+            "required_for_production": True,
+        },
+    ],
+}
+
+
+def assert_machine_tables_declare_surfaces_and_dimensions(
+    report: dict[str, Any],
+) -> None:
+    """Both table parsers, both alias sets, both defaults, and the drop guard.
+
+    The four surface subjects cover the column vocabulary in two halves --
+    `Surface`/`Commands`/`Owns`/`Verification` and the aliases
+    `Kind`/`CLI`/`Purpose`/`Gate` -- so no single alias carries a column on its
+    own. The blank kind cell reaches the `CLI` default, which a filled column
+    cannot.
+
+    The drop guard is the sharp one. It fires only when the command cell is
+    empty *and* the summary and verification are blank, and `table_cell` returns
+    the literal `-` for a missing or blank cell, so a table that declares a third
+    column can never satisfy it. `Two Columns` and `Three Columns` carry the same
+    rows and disagree about which survive, which is not expressible in one
+    document.
+
+    The dimension table's runner is asserted with its backticks intact, against
+    the field route's stripped spelling elsewhere in this case. The two routes
+    genuinely disagree, and asserting one of them alone would leave a reader --
+    or a refactor -- free to unify them in either direction.
+
+    A row whose dimension kind is outside the enum is dropped here too, and the
+    `Dimension Table` subject declares one -- ahead of its in-vocabulary row, so
+    that a fallback to `Behavior` would win the merged summary rather than being
+    absorbed behind it. That is the same silent drop as the contract-field route
+    (#3274), reached through the other parser.
+    """
+    for cap_id, expected in MACHINE_TABLE_SURFACES.items():
+        surfaces = _capability_by_id(report, cap_id)["surfaces"]
+        assert surfaces == expected, (cap_id, surfaces, expected)
+    for cap_id, expected in MACHINE_TABLE_DIMENSIONS.items():
+        dimensions = _capability_by_id(report, cap_id)["ec_dimensions"]
+        assert dimensions == expected, (cap_id, dimensions, expected)
+    assert report["capability_count"] == len(_MACHINE_TABLE_SUBJECTS), report
+
+
+def assert_migration_leaves_a_machine_table_alone(migrated: str) -> None:
+    """Migration does not convert a machine table into contract fields.
+
+    The table is re-emitted verbatim and no `Surfaces:` field appears beside it,
+    so the surfaces are re-parsed from the table on every read. That is stable
+    and lossless -- it is asserted here because it was unbound, and because the
+    obvious alternative, rendering the parsed items into a `Surfaces:` field,
+    would silently drop each item's `Verification` cell: `render_surface_field_items`
+    has nowhere to put it.
+    """
+    body = _capability_section_body(migrated, "Table Surfaces")
+    assert "Surfaces:" not in body, body
+    for line in _MACHINE_TABLE_SUBJECTS[0][2].splitlines():
+        assert line in body, (line, body)
+
+
+# --- The efficiency contract fields ----------------------------------------
+
+_EFFICIENCY_SUBJECTS = (
+    ("Both Halves", "both-halves", "3M docs", "apps/demo/both.json", "efficiency"),
+    ("Point Only", "point-only", "9M docs", None, "behavior"),
+    ("Cube Only", "cube-only", None, "apps/demo/cube.json", "behavior"),
+)
+
+
+def _efficiency_section(title, cap_id, point, cube, dimension):
+    fields = ""
+    if point is not None:
+        fields += f"Efficiency Operating Point: {point}\n"
+    if cube is not None:
+        fields += f"Efficiency Cube: {cube}\n"
+    runner = "`aw bench`" if dimension == "efficiency" else "`true`"
+    return f"""### {title}
+
+ID: {cap_id}
+Root WI: -
+Status: implemented
+Type: Service
+Feature Class: core
+Promise: Promise for {cap_id}.
+Current State: Partially implemented.
+Required Verification: smoke
+{fields}Surfaces:
+- CLI: `aw {cap_id}` - surface of {cap_id}
+EC Dimensions:
+- {dimension}: {runner} - {dimension} of {cap_id}
+
+| Work Root | Kind | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---|---|---|---|
+| {title} root | change | implemented | verified | smoke | `true` |
+
+"""
+
+
+EFFICIENCY_DOCUMENT = (
+    "# Demo\n\n## Brief\n\nEfficiency contract fields.\n\n## Capabilities\n\n"
+    + "".join(_efficiency_section(*s) for s in _EFFICIENCY_SUBJECTS)
+)
+
+#: The generated section's heading, asserted whole: it carries the instruction
+#: not to hand-edit, which is the only thing telling an author the block is
+#: machine-owned.
+EFFICIENCY_SECTION_HEADING = (
+    "#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)"
+)
+
+
+def assert_efficiency_fields_render_their_generated_section(migrated: str) -> None:
+    """Both halves, each half alone, and the two spellings of the missing half.
+
+    `Efficiency Operating Point:` and `Efficiency Cube:` are contract fields no
+    other document here writes, so the slot parser, the generated section, and
+    the merge that attaches the slot to a dimension were all undriven.
+
+    Three capabilities are needed rather than one. A capability declaring both
+    halves cannot show what a missing half renders as, and the two missing-half
+    spellings are separate literals -- `Cube: -` and `Operating point: -` -- that
+    a renderer could easily produce for only one of them. Each half is declared
+    alone by exactly one capability.
+
+    The merge is exercised in both directions and **claimed in only one**, which
+    is a correction to what this docstring said when the leg was written. `Both
+    Halves` declares an `efficiency` dimension of its own and the slot attaches to
+    it; the other two declare `behavior` only and the merge pushes a generated
+    `efficiency` dimension carrying the product's marker summary. The push arm is
+    observable. The attach arm is not: a merge that *always* pushed leaves `Both
+    Halves` with two efficiency dimensions only until `dedupe_ec_dimensions` runs,
+    and that merge keeps the first non-empty field of each -- so the authored
+    runner and summary win and the report is byte-identical. Measured, not
+    reasoned: the mutant survives. This is the same redundancy the production
+    document's own label already records for this pair, arrived at from the other
+    side.
+
+    What is *not* asserted here is the round trip. The generated section is
+    emitted after the capability's work-root table, so on re-read it lies outside
+    the block `find_efficiency_backfill_section_span` is given and is never seen
+    again -- the slot is text-only from tick 1 onward, and
+    `validate_efficiency_backfill_slots` is unreachable on any canonical
+    document. Filed as #3272. Pinning the render is safe because fixing the round
+    trip does not change the bytes migration emits.
+    """
+    # Read positionally rather than through `_capability_section_body`, which
+    # cannot see these blocks at all: the generated section is emitted after the
+    # capability's work-root table, so its own `####` heading closes the block it
+    # belongs to. That is the whole of #3272, and it is why the section is read
+    # here as a sequence of blocks in document order instead of as a field of the
+    # capability that produced it.
+    lines = migrated.splitlines()
+    blocks = []
+    for index, line in enumerate(lines):
+        if line.strip() != EFFICIENCY_SECTION_HEADING:
+            continue
+        values = {}
+        for follower in lines[index + 1 :]:
+            if follower.startswith("#"):
+                break
+            if ":" in follower:
+                key, _, value = follower.partition(":")
+                values[key.strip()] = value.strip()
+        blocks.append(values)
+    expected = [
+        {
+            "Operating point": point if point is not None else "-",
+            "Cube": cube if cube is not None else "-",
+        }
+        for _title, _cap_id, point, cube, _dimension in _EFFICIENCY_SUBJECTS
+    ]
+    assert blocks == expected, (blocks, expected)
+
+

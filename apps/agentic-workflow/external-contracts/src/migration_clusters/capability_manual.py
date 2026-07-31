@@ -1357,6 +1357,43 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
             contract_fields
         )
 
+        # Surfaces and EC dimensions declared as machine tables rather than as
+        # contract fields. Every document above uses the field form, so both
+        # table parsers -- their alias sets, their defaults, and the row-drop
+        # guard whose reachability depends on the table's column shape -- were
+        # entirely undriven.
+        machine_tables = _lumen_report(
+            root, cap_path, lumen_reference.MACHINE_TABLE_DOCUMENT
+        )
+        lumen_reference.assert_machine_tables_declare_surfaces_and_dimensions(
+            machine_tables
+        )
+        final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
+        lumen_reference.assert_migration_leaves_a_machine_table_alone(
+            cap_path.read_text(encoding="utf-8")
+        )
+
+    # The efficiency contract fields, which only migration renders.
+    with project_fixture() as efficiency_root:
+        (efficiency_root / "README.md").write_text(
+            lumen_reference.EFFICIENCY_DOCUMENT, encoding="utf-8"
+        )
+        efficiency_cap = efficiency_root / "CAPABILITIES.md"
+        for _ in range(3):
+            final_json(
+                run_aw(efficiency_root, "capability", "migrate", "--project", "demo")
+            )
+        lumen_reference.assert_efficiency_fields_render_their_generated_section(
+            efficiency_cap.read_text(encoding="utf-8")
+        )
+        # A leg asserting how the slot merges into an EC dimension was written
+        # here, measured, and removed. Neither of its arms was worth a claim: a
+        # merge that always pushed is collapsed back by `dedupe_ec_dimensions`
+        # and renders the identical report, and a merge that never pushed is
+        # already caught by the production document's own rendered dimension
+        # list. Reading its report and asserting nothing new would have been
+        # scaffolding that looked like coverage.
+
     after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
     lumen_reference.assert_production_contract_unmutated(before, after)
     return {
@@ -1391,6 +1428,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "relocated_sections": relocated_sections,
         "empty_class": empty_class_report,
         "contract_fields": contract_fields,
+        "machine_tables": machine_tables,
     }
 
 
@@ -1535,6 +1573,9 @@ def verify(case_id: str) -> list[str]:
                 "EC dimension items split on an inline `;` as well, asserted as two dimensions each keeping its own summary, because every other capability in this case writes one dimension per line and leaves that separator unentered",
                 "an EC dimension whose kind is outside the closed enum reaches the report not at all -- no blocker, no diagnostic, and a contract quietly narrower than the one written -- asserted because it was unbound rather than because it is right; the migrated document re-rendering that same dropped line is measured and deliberately left unasserted, so a fix that rejects the misspelling instead of silently dropping it does not have to break this case twice; the drop is separated from the near miss beside it by declaring `security` rather than `behavior`, because an unrecognized kind falling back to `Behavior` is absorbed into a declared behavior item and reads identically to being dropped, and that same choice makes this the only capability in the case that declares dimensions without declaring behavior, which is the only input on which the synthesized runner-less behavior dimension is observable at all",
                 "each of the four work-root columns validates its own cell, asserted as four blockers in document order with every message pinned whole because the vocabulary each one names is the assertion\'s content, across four rows that break one column apiece so that a single validator firing four times fails; the capability still parses and still reports its own surface, which is what separates validating every row from abandoning the section at the first bad cell",
+                "surfaces and EC dimensions declared as machine tables rather than as contract fields, covering both parsers\' column vocabularies in two halves so no single alias carries a column alone, the blank kind cell that reaches the `CLI` default a filled column cannot, and the row-drop guard, whose reachability depends on the table\'s column shape: two capabilities carrying the same three rows disagree about which survive, because `table_cell` returns the literal `-` for a blank cell and a table declaring a third column can therefore never satisfy the guard, which is not expressible in one document; the table route\'s runner is asserted with its backticks intact against the field route\'s stripped spelling, because the two routes genuinely disagree and asserting one alone would leave a refactor free to unify them in either direction",
+                "migration re-emits a machine table verbatim and renders no `Surfaces:` field beside it, so table-declared surfaces are re-parsed from the table on every read, asserted because it was unbound and because the obvious alternative -- rendering the parsed items as contract fields -- would silently drop each item\'s Verification cell, which `render_surface_field_items` has nowhere to put",
+                "the `Efficiency Operating Point:` and `Efficiency Cube:` contract fields render into their own generated section, asserted as the ordered sequence of blocks across three capabilities -- both halves, each half alone -- because a capability declaring both cannot show what a missing half renders as and the two missing-half spellings are separate literals a renderer could produce for only one of them; read positionally rather than as a field of the capability that produced it, because the section is emitted after that capability\'s work-root table and its own heading closes the block it belongs to, which is #3272 and is why the round trip is deliberately not asserted here",
                 "Lumen's production capability contract is byte-identical before and after the fixture run -- a property of this external contract rather than of `aw capability`, listed so a reader can see the fixture is barred from mutating a real project's contract, and counting toward nothing the product promises",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
