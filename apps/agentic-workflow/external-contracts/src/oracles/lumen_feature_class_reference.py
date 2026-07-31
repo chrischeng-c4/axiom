@@ -7112,3 +7112,378 @@ def assert_partial_verification_is_attributed_per_class(
     assert document_blockers(report) == [
         f"verification failed for {cap_id}: false" for cap_id in failing_capabilities
     ], (name, report["blockers"])
+
+
+# ---------------------------------------------------------------------------
+# Work-root row reading: surface identity, evidence-cell partition, gap status
+# ---------------------------------------------------------------------------
+
+#: A capability whose `Surfaces:` list declares the same surface twice, and
+#: three near-misses that must *not* fold. `dedupe_surfaces` keys on
+#: `normalize_table_token(kind) : commands.join(",") : summary`, so each field
+#: of that key gets one pair that differs in it alone. Without the pairs, a key
+#: that dropped the summary or the commands still folds the exact duplicate and
+#: nothing observable changes.
+SURFACE_DEDUPE_SUBJECTS = (
+    # (title, cap_id, authored items, expected rendered items)
+    (
+        "Exact Duplicate",
+        "exact-duplicate",
+        ("CLI: `aw one` -- the same item", "CLI: `aw one` -- the same item"),
+        ("- CLI: `aw one` - - the same item",),
+    ),
+    (
+        "Summary Differs",
+        "summary-differs",
+        ("CLI: `aw two` -- first summary", "CLI: `aw two` -- second summary"),
+        (
+            "- CLI: `aw two` - - first summary",
+            "- CLI: `aw two` - - second summary",
+        ),
+    ),
+    (
+        "Command Differs",
+        "command-differs",
+        ("CLI: `aw three` -- shared summary", "CLI: `aw four` -- shared summary"),
+        (
+            "- CLI: `aw three` - - shared summary",
+            "- CLI: `aw four` - - shared summary",
+        ),
+    ),
+    # An unrecognized kind, spelled two ways. `normalize_surface_kind` has no
+    # alias for `Probe`, so its `_ => value.trim()` fallback keeps the authored
+    # spelling verbatim in the render -- while the dedupe key's own
+    # `normalize_table_token` case-folds, so the two spellings are one surface.
+    # The rendered kind is the *first* spelling, which is what pins the fallback
+    # as pass-through rather than canonicalizing.
+    (
+        "Unknown Kind Case",
+        "unknown-kind-case",
+        ("Probe: `aw five` -- shared summary", "probe: `aw five` -- shared summary"),
+        ("- Probe: `aw five` - - shared summary",),
+    ),
+)
+
+#: Deliberately not all-1 and not all-2: a dedupe that folded everything, and
+#: one that folded nothing, are each refuted by the count alone.
+SURFACE_DEDUPE_COUNTS = tuple(len(subject[3]) for subject in SURFACE_DEDUPE_SUBJECTS)
+assert set(SURFACE_DEDUPE_COUNTS) == {1, 2}, SURFACE_DEDUPE_COUNTS
+
+
+def _work_root_row(work_root: str, evidence: str) -> str:
+    return f"| {work_root} | change | implemented | verified | smoke | {evidence} |"
+
+
+def surface_dedupe_document() -> str:
+    """A README whose capabilities exercise every field of the dedupe key."""
+    sections = []
+    for title, cap_id, authored, _expected in SURFACE_DEDUPE_SUBJECTS:
+        items = "\n".join(f"- {item}" for item in authored)
+        sections.append(
+            f"""### {title}
+
+ID: {cap_id}
+Root WI: -
+Status: implemented
+Type: Service
+Feature Class: core
+Promise: Promise for {cap_id}.
+Current State: Partially implemented.
+Required Verification: smoke
+Surfaces:
+{items}
+EC Dimensions:
+- behavior: `true` -- behaviour of {cap_id}
+
+| Work Root | Kind | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---|---|---|---|
+{_work_root_row(f"{title} root", "`true`")}
+
+"""
+        )
+    return (
+        "# Demo\n\n## Brief\n\nSurface identity under migration.\n\n"
+        "## Capabilities\n\n" + "".join(sections)
+    )
+
+
+SURFACE_DEDUPE_DOCUMENT = surface_dedupe_document()
+
+
+def _rendered_surface_items(migrated: str, title: str) -> list[str]:
+    body = _capability_section_body(migrated, title)
+    items: list[str] = []
+    collecting = False
+    for line in body.splitlines():
+        if line.startswith("Surfaces:"):
+            collecting = True
+            continue
+        if collecting:
+            if line.startswith("- "):
+                items.append(line)
+            elif line.strip():
+                break
+    return items
+
+
+def assert_surface_identity_is_the_whole_declared_item(migrated: str) -> None:
+    """Two declared surfaces are one surface only when kind, commands, and
+    summary all agree.
+
+    `dedupe_surfaces` builds its key from three fields. A key that dropped any
+    one of them still collapses an exact duplicate, which is the only shape the
+    rest of this case ever declares -- so the fold looked bound while two of its
+    three fields were free. Each subject here differs from its partner in
+    exactly one field, so dropping that field from the key merges a pair the
+    document declares as two, and the rendered item count moves.
+
+    The unrecognized-kind subject binds a second thing: the key case-folds
+    (`Probe` and `probe` are one surface) while the *render* does not (the item
+    reads `Probe`, the authored spelling). Those are two different normalizers
+    over the same token, and asserting only the count would leave the render
+    free to canonicalize the kind to anything it liked.
+    """
+    for title, _cap_id, _authored, expected in SURFACE_DEDUPE_SUBJECTS:
+        rendered = _rendered_surface_items(migrated, title)
+        assert rendered == list(expected), (title, rendered, list(expected))
+
+
+#: One work-root row per gap status, each in its own capability so the
+#: capability-level fold in `capability_impl_summary` attributes to that row
+#: alone. `capability report` names the gap status directly, which is a sharper
+#: observable than the folded Index cell -- both are asserted.
+#:
+#: (title, cap_id, Impl cell, Verification cell, expected gap status, expected
+#:  rendered Index Impl cell)
+GAP_STATUS_SUBJECTS = (
+    ("Blocked Row", "blocked-row", "implemented", "blocked", "blocked", "planned"),
+    ("Deferred Row", "deferred-row", "out_of_scope", "planned", "deferred", "implemented"),
+    ("Open Row", "open-row", "planned", "none", "open", "planned"),
+    ("In Progress Row", "in-progress-row", "partial", "planned", "in_progress", "partial"),
+)
+
+#: The four statuses are distinct, so no two subjects can be satisfied by one
+#: arm; the Index cells are deliberately *not* distinct (Blocked and Open both
+#: fold to `planned`), which is why the gap status is asserted by name too.
+assert len({subject[4] for subject in GAP_STATUS_SUBJECTS}) == len(GAP_STATUS_SUBJECTS)
+
+
+def gap_status_document() -> str:
+    sections = []
+    for title, cap_id, impl, verification, _status, _index in GAP_STATUS_SUBJECTS:
+        sections.append(
+            f"""### {title}
+
+ID: {cap_id}
+Root WI: -
+Status: implemented
+Type: Service
+Feature Class: core
+Promise: Promise for {cap_id}.
+Current State: Partially implemented.
+Required Verification: smoke
+Surfaces:
+- CLI: `aw {cap_id}` -- surface of {cap_id}
+EC Dimensions:
+- behavior: `true` -- behaviour of {cap_id}
+
+| Work Root | Kind | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---|---|---|---|
+| {title} root | change | {impl} | {verification} | smoke | `true` |
+
+"""
+        )
+    return (
+        "# Demo\n\n## Brief\n\nWork-root status folding.\n\n"
+        "## Capabilities\n\n" + "".join(sections)
+    )
+
+
+GAP_STATUS_DOCUMENT = gap_status_document()
+
+
+def assert_work_root_cells_fold_into_gap_status(
+    report: dict[str, Any], migrated: str
+) -> None:
+    """Each `(Impl, Verification)` cell pair reads as one gap status.
+
+    `capability_gap_status_from_table` is a five-arm match and the rest of this
+    case only ever declares rows that reach `Closed`. The four arms below are
+    entered by one row each: the `blocked` disjunct on the verification side,
+    the `out_of_scope` guard, the `none` spelling of an open row, and the
+    catch-all in-progress fallthrough.
+
+    Asserted twice over. The gap status is named directly by `capability
+    report`, which is exact. The Index `Impl` cell is the rendered consequence
+    through `capability_impl_summary`, which is lossy -- `blocked` and `open`
+    both fold to `planned` -- but it is what an adopter reads, and binding only
+    the internal name would leave the fold free to route any status anywhere.
+    """
+    statuses = {}
+    for item in report["capabilities"]:
+        for gap in item.get("gaps") or []:
+            statuses[gap["id"]] = gap.get("status")
+
+    expected_statuses = {
+        _slugify(f"{title} root"): status
+        for title, _cap_id, _impl, _verification, status, _index in GAP_STATUS_SUBJECTS
+    }
+    for gap_id, expected in expected_statuses.items():
+        assert statuses.get(gap_id) == expected, (gap_id, statuses.get(gap_id), expected)
+
+    index_impl = {
+        row[0]: row[2]
+        for row in _index_rows_parsed(migrated)
+    }
+    for title, _cap_id, _impl, _verification, _status, expected_cell in GAP_STATUS_SUBJECTS:
+        assert index_impl.get(title) == expected_cell, (
+            title,
+            index_impl.get(title),
+            expected_cell,
+        )
+
+
+#: The YAML reading form is the only one that produces a capability with gaps
+#: and *no* work roots, which is the sole route into `gap_status_to_impl` and
+#: `gap_status_to_verification` -- the table route pushes a work-root row
+#: alongside every gap it derives, so the `work_roots.is_empty()` guard above
+#: those two functions never opens for it.
+YAML_GAP_STATUSES = ("open", "in_progress", "blocked", "closed", "deferred")
+
+#: gap status -> rendered `Impl` cell, under a capability that is not verified.
+YAML_GAP_IMPL = {
+    "open": "planned",
+    "in_progress": "partial",
+    "blocked": "blocked",
+    "closed": "implemented",
+    "deferred": "out_of_scope",
+}
+
+#: gap status -> rendered `Verification` cell, under a capability that is not
+#: verified.
+YAML_GAP_VERIFICATION = {
+    "open": "planned",
+    "in_progress": "planned",
+    "blocked": "blocked",
+    "closed": "passing",
+    "deferred": "blocked",
+}
+
+assert set(YAML_GAP_IMPL) == set(YAML_GAP_STATUSES)
+assert set(YAML_GAP_VERIFICATION) == set(YAML_GAP_STATUSES)
+#: Five distinct impl cells: the impl fold is a bijection over the statuses, so
+#: any two arms swapped is observable.
+assert len(set(YAML_GAP_IMPL.values())) == len(YAML_GAP_STATUSES)
+
+#: The verification fold is *not* a bijection, and its arms are ordered. These
+#: two subjects pin the order, which arm-by-arm assertions cannot: under a
+#: verified capability a closed gap reads `verified` rather than `passing`
+#: (the capability-status arm precedes the closed arm), while a blocked gap
+#: still reads `blocked` (the blocked arm precedes the capability-status arm).
+YAML_VERIFIED_GAP_VERIFICATION = {"closed": "verified", "blocked": "blocked"}
+assert YAML_VERIFIED_GAP_VERIFICATION["closed"] != YAML_GAP_VERIFICATION["closed"]
+assert YAML_VERIFIED_GAP_VERIFICATION["blocked"] == YAML_GAP_VERIFICATION["blocked"]
+
+YAML_GAP_CANDIDATE = ("Every Gap Status", "every-gap-status")
+YAML_GAP_VERIFIED = ("Verified Capability", "verified-capability")
+
+
+def _yaml_gap_capability(
+    title: str, cap_id: str, status: str, gap_statuses: tuple[str, ...]
+) -> str:
+    gaps = "\n".join(
+        f"""  - id: {cap_id}-{gap}
+    status: {gap}
+    summary: "{gap} gap of {cap_id}\""""
+        for gap in gap_statuses
+    )
+    return f"""## Capability: {title}
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: {cap_id}
+status: {status}
+feature_class: core
+capability_type: Service
+promise: "Promise for {cap_id}."
+current_state: "Implemented."
+surfaces:
+  - kind: CLI
+    commands: ["lumen serve"]
+    summary: "{cap_id} surface."
+ec_dimensions:
+  - dimension: behavior
+    gate: "true"
+    summary: "{cap_id} behavior gate."
+gaps:
+{gaps}
+```
+
+"""
+
+
+YAML_GAP_DOCUMENT = (
+    "# Demo\n\n## Brief\n\nYAML gap-status rendering.\n\n"
+    "## Capabilities\n\n### Core Features\n\n### Non-Core Features\n\n"
+    + _yaml_gap_capability(*YAML_GAP_CANDIDATE, "candidate", YAML_GAP_STATUSES)
+    + _yaml_gap_capability(
+        *YAML_GAP_VERIFIED, "verified", tuple(YAML_VERIFIED_GAP_VERIFICATION)
+    )
+)
+
+
+def _rendered_work_root_rows(migrated: str, title: str) -> list[list[str]]:
+    body = _capability_section_body(migrated, title)
+    rows = []
+    for line in body.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = _split_escaped_row(line)
+        if not cells or cells[0] in {"Work Root"} or set(cells[0]) <= {"-", ":"}:
+            continue
+        rows.append(cells)
+    return rows
+
+
+def assert_gap_status_renders_its_own_work_root_row(migrated: str) -> None:
+    """A capability with gaps and no work roots renders one row per gap.
+
+    This is the YAML reading form's own rendering path, and the table form
+    cannot reach it: every gap the table route derives arrives with a work-root
+    row beside it, so the `work_roots.is_empty()` guard is closed. Both folds
+    below were therefore free in their entirety.
+
+    All five statuses are declared. The impl fold is asserted as a bijection --
+    five statuses, five distinct cells -- so no two arms can be swapped. The
+    verification fold is not a bijection and its arms are *ordered*, so a second
+    capability declares the two gaps whose rendering depends on that order: under
+    a verified capability a closed gap reads `verified` and a blocked gap still
+    reads `blocked`. Together those pin the blocked arm ahead of the
+    capability-status arm and the capability-status arm ahead of the closed one.
+
+    The row `Kind` is asserted as `epic`, which is what distinguishes a
+    gap-derived row from the `change` rows the table route emits: without it a
+    renderer that fell back to the table path would satisfy every cell above.
+    """
+    for (title, cap_id), status_map, verification_map in (
+        (YAML_GAP_CANDIDATE, YAML_GAP_STATUSES, YAML_GAP_VERIFICATION),
+        (
+            YAML_GAP_VERIFIED,
+            tuple(YAML_VERIFIED_GAP_VERIFICATION),
+            YAML_VERIFIED_GAP_VERIFICATION,
+        ),
+    ):
+        rows = _rendered_work_root_rows(migrated, title)
+        expected = [
+            [
+                f"{gap} gap of {cap_id}",
+                "epic",
+                "-",
+                YAML_GAP_IMPL[gap],
+                verification_map[gap],
+                "smoke",
+                "-",
+            ]
+            for gap in status_map
+        ]
+        assert rows == expected, (title, rows, expected)

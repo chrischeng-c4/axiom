@@ -1238,6 +1238,66 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     idempotence_ticks, expected_ticks, subject=subject
                 )
 
+        # Surface identity. Every other document here declares each surface
+        # once, so the fold that collapses duplicates ran on inputs it could
+        # never change, and two of its key's three fields were free.
+        with project_fixture() as dedupe_root:
+            (dedupe_root / "README.md").write_text(
+                lumen_reference.SURFACE_DEDUPE_DOCUMENT, encoding="utf-8"
+            )
+            dedupe_cap = dedupe_root / "CAPABILITIES.md"
+            for _ in range(3):
+                final_json(
+                    run_aw(dedupe_root, "capability", "migrate", "--project", "demo")
+                )
+            lumen_reference.assert_surface_identity_is_the_whole_declared_item(
+                dedupe_cap.read_text(encoding="utf-8")
+            )
+
+        # `(Impl, Verification)` cell pairs folding into a gap status. Four of
+        # the five arms are reached only by vocabulary this case never
+        # otherwise writes, and each subject owns exactly one row so the
+        # capability-level summary attributes to it alone.
+        with project_fixture() as gap_status_root:
+            (gap_status_root / "README.md").write_text(
+                lumen_reference.GAP_STATUS_DOCUMENT, encoding="utf-8"
+            )
+            gap_status_cap = gap_status_root / "CAPABILITIES.md"
+            for _ in range(3):
+                final_json(
+                    run_aw(gap_status_root, "capability", "migrate", "--project", "demo")
+                )
+            gap_status_report = final_json(
+                run_aw(
+                    gap_status_root,
+                    "capability",
+                    "report",
+                    "--project",
+                    "demo",
+                    "--skip-issue-inventory",
+                )
+            )
+            lumen_reference.assert_work_root_cells_fold_into_gap_status(
+                gap_status_report, gap_status_cap.read_text(encoding="utf-8")
+            )
+
+        # Gaps with no work roots, which only the YAML reading form produces --
+        # the table route derives a work-root row beside every gap, closing the
+        # guard above the two status folds for good. Both were free in their
+        # entirety, including the order their arms are tried in.
+        with project_fixture() as yaml_gap_root:
+            (yaml_gap_root / "README.md").write_text(
+                lumen_reference.YAML_GAP_DOCUMENT, encoding="utf-8"
+            )
+            yaml_gap_cap = yaml_gap_root / "CAPABILITIES.md"
+            for _ in range(3):
+                final_json(
+                    run_aw(yaml_gap_root, "capability", "migrate", "--project", "demo")
+                )
+            lumen_reference.assert_gap_status_renders_its_own_work_root_row(
+                yaml_gap_cap.read_text(encoding="utf-8")
+            )
+
     after = lumen_reference.digest_production_contract(REPOSITORY_ROOT)
     lumen_reference.assert_production_contract_unmutated(before, after)
     return {
@@ -1407,6 +1467,9 @@ def verify(case_id: str) -> list[str]:
                 "a document whose capability contract has not been written yet -- no capability section and no legacy row -- renders neither canonical feature root, because every other input here declares one or the other and the guard for an empty registry was therefore only ever entered with something to render, making it deletable; asserted as byte equality against the whole migrated document rather than as the absence of the two root headings alone, because the interesting failure adds content, which pins in the same string that the legacy level-2 index heading is demoted to the canonical level-3 one and that an index with nothing to list carries a single synthesized row named after the project; the input carries that legacy heading deliberately, because a contract-less document with a canonical frame is answered \"already canonical\" before the renderer is reached, so it leaves the guard unentered and the byte equality holds for a reason unrelated to it",
                 "two EC dimension items of the same kind are merged into the one item their halves reconstruct, asserted through the ordinary single-item expectation on a document where two capabilities each declare a summary-only item and a command-only item of one kind -- so a merge that dropped either half renders a shorter item and a merge that did not happen renders two items where one is expected -- with the two capabilities declaring their halves in opposite orders and on different kinds, because the merge fills only the *first* occurrence's empty fields and one order therefore exercises only the runner fill and the other only the summary fill, both of which every other document here left deletable by declaring at most one item per kind",
                 "aw capability migrate converges, and the tick that reports no change made none, asserted as the exact ordered list of migrating phases followed by two consecutive no-op runs on both arrival paths -- a README-resident contract, which is relocated and then feature-class migrated, and a resident classified document, which takes the format phase alone -- each arrival path pinned to its own ordered phase list, which is what the second subject adds and the whole of what it adds: the two halves of the conjunction that answers \"already canonical\" turned out to be bound elsewhere already, established by dropping each half in turn and finding the case still failed with this leg neutralized, so this label claims no credit for them; the no-op ticks are pinned to `unchanged`, to `changed: false`, and to the fixed-point sentence naming their own document, which are one observation rather than three -- the product derives `changed` from whether its own stdout starts with `migrated ` and derives `status` from `changed` -- and separately to byte equality against the last migrating tick, which is therefore the only half able to catch a tick that rewrote the document while reporting a no-op, since a `changed` flag re-read from stdout cannot contradict the sentence it was read from; every other leg here migrates exactly once and reads the result, so a migration that rewrote its input on every invocation satisfied all of them and would keep satisfying them while the command never terminated for an adopter driving it to completion; the tick count is itself an observation rather than a constant, the driver ticking until it has seen the no-ops under a bound rather than a fixed number of times, so a migration needing a phase it should not need and one never converging land on different lengths; `kind` is asserted to be the same on the last migrating tick and on the first converged one, because it names the check that ran rather than its outcome, and an assertion reading it as the outcome would bind nothing; and the converged content is deliberately not pinned, because the fixed point preserves the Root WI erasure of #3264 and the escaped-pipe truncation of #3265, and asserting those bytes would hold both losses in place",
+                "two declared surfaces are one surface only when their kind, their commands, and their summary all agree, asserted as the exact rendered item list across four capabilities of one document -- an exact duplicate that folds, and three pairs differing in exactly one field of the dedupe key that must not -- because every other document here declares each surface once, so the fold ran only on inputs it could not change and two of its three key fields were droppable without moving a rendered byte, as was the case-fold the third is read through; the rendered item of the unrecognized-kind pair is asserted to carry the *authored* spelling, which is what the kind normalizer's pass-through fallback produces, but that spelling is bound elsewhere already and this label claims no credit for it -- what the pair adds is that the two spellings are one surface",
+                "each `(Impl, Verification)` work-root cell pair reads as one gap status, asserted across four capabilities that own one row apiece so the capability-level summary attributes to that row alone -- the `blocked` disjunct on the verification side, the `out_of_scope` guard, the `none` spelling of an open row, and the in-progress fallthrough -- because every row this case otherwise declares folds to `closed`, leaving four of the five arms unentered; asserted twice over, once against the gap status named directly by `aw capability report`, which is exact, and once against the Index `Impl` cell it renders through, which is lossy in a way the four subjects expose -- a blocked row and an open row both read `planned` there -- so that binding the internal name alone would leave the fold free to route any status to any cell",
+                "the arms of the gap verification fold are tried in the order the product declares them, asserted on a YAML-fenced capability that is itself `verified` and carries the only two gaps whose rendering depends on that order and on nothing else -- a closed gap reads `verified` rather than `passing`, and a blocked gap still reads `blocked` rather than `verified` -- which together pin the blocked arm ahead of the capability-status arm and the capability-status arm ahead of the closed one; this is what an arm-by-arm assertion structurally cannot express, and it is the whole of what this leg adds: the arm *values* of both folds, and the `epic` kind that marks a gap-derived row, are bound already by the capability that declares no work-root table at all, whose synthetic gap enters the same rendering block -- established by mutating each in turn and finding the case still failed with this leg neutralized, so the five gap statuses declared here are declared to reach the two ordering subjects and this label claims no credit for the rest of them",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":
