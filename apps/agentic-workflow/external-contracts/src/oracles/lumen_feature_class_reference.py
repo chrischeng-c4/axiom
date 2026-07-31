@@ -5283,8 +5283,15 @@ def _no_notes_column_document() -> str:
     fixture here, and not for the obvious reason -- writing a blank cell does not
     reach it either, because `table_cell` (`capability.rs:12134-12140`) turns an
     empty cell into `-`, which is not empty and renders straight back as `-`.
-    The only input that reaches it is an index table with no `Notes` column at
-    all, where `notes_idx` is `None` and the field defaults to the empty string.
+    What this input uniquely reaches is the `.filter(|notes| !notes.trim().is_empty())`
+    arm: an index table with no `Notes` column at all, where the summary *is*
+    present but `notes_idx` is `None`, so the field defaults to the empty string
+    and the filter discards it. The `unwrap_or` itself is not unique to this
+    document -- every index-less relocation reaches it with `index_summary ==
+    None`, and there are fourteen of those at module scope. An earlier revision
+    of this docstring claimed this was the only input reaching the fallback,
+    which is false in a way that matters: it would have made deleting the filter
+    look like it could only break this one leg.
 
     That is a real authoring shape -- a hand-written index carrying only the
     readiness columns -- and the promise fallback is what keeps such a row from
@@ -6996,19 +7003,29 @@ SIBLING_HEADING_DOCUMENT = (
 def assert_sibling_heading_closes_the_root(report: dict[str, Any]) -> None:
     """A heading at the root's own level ends that root's membership scope.
 
-    This is one of the two assertions in the case falsified by an
-    *over*-reporting implementation rather than an under-reporting one, which is
-    why it exists: most documents here are asserted against the blockers they
-    should raise, so a containment rule that swallowed too much of the document
-    would go unnoticed. Tightening the scope test by one comparison makes this
-    document raise a capability-under-both-roots finding that is simply untrue.
+    It is falsified by an *over*-reporting implementation rather than an
+    under-reporting one, which is why it exists: most documents here are
+    asserted against the blockers they should raise, so a containment rule that
+    swallowed too much of the document would go unnoticed. Tightening the scope
+    test by one comparison makes this document raise a
+    capability-under-both-roots finding that is simply untrue.
 
-    The other is `assert_fenced_headings_are_not_read_as_structure`, whose empty
-    blocker list is reachable only while the fenced-line mask holds -- without
-    it that document raises a duplicate-root finding and a both-roots finding
-    that are equally untrue. An earlier revision of this docstring called this
-    leg the only one, which understated the case by exactly one and would have
-    made removing the fenced-heading document look free.
+    This docstring deliberately no longer counts how many other legs share that
+    direction. Two successive revisions of it stated a count -- "the only one",
+    then "one of the two" -- and both were wrong, because the property is not
+    local to this leg: *every* assertion here that pins an exact blocker list is
+    falsified by an implementation reporting more than the document says, and
+    that set changes whenever a leg is added. `document_blockers(...) == []`
+    alone holds at ten sites. If the exact membership ever matters to a reader,
+    enumerate it from the source rather than trusting a sentence; enumerating it
+    by inspection is what produced both wrong answers.
+
+    What is worth naming instead is the guard, because it is the one an
+    unrelated cleanup could plausibly delete. `assert_unclassified_defaults_to_non_core`
+    and `assert_legacy_rows_are_attributed_to_non_core` are the two legs that
+    bind the `declares_any_class` early return at `capability.rs:10048`, which
+    keeps every pre-migration document in the repository from being spammed with
+    untrue missing-root blockers. Remove that return and both go red.
     """
     assert document_blockers(report) == [], report["blockers"]
     assert_feature_class_attribution(report)
