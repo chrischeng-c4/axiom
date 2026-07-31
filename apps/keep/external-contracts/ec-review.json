@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "project": "keep",
+  "source_digest": "sha256:12bc4c84179b03e9d84cfa03930951a67fedaff918542c2296be311720f5c63a",
+  "decision": "needs_revision",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer",
+  "reviewed_at": "2026-07-23T00:11:46.611195+00:00",
+  "summary": "Independent semantic review of Keep's two current EC cases and the WI #2414 capability claim that triggered this lifecycle. No EC case binds `cross-service-delivery-verification` / `keep-sift-operational-telemetry-adoption`, so the current digest cannot authorize the structured-stdout, W3C correlation, Sift-agnostic boundary, or real Sift collector/query acceptance criteria. Separately, the production-required competitor-performance case is categorized as efficiency but its VAT runner only delegates three Keep cargo test binaries through meter test; meter test forwards the child exit and defines no throughput, latency, RSS, CPU, baseline, or competitor verdict. The RuntimeTool capability contracts also require behavior, efficiency, and stability coverage, while competitor-performance has only an efficiency case and security-hardening has only a non-production security case. Both contracts rely on meta-assertions about tool ownership/isolation rather than complete observable product outcomes, and neither gate proves a nonzero test/evidence count. These gaps permit uncaptured telemetry, slow or incomplete behavior, and zero-test execution to remain green, so all six semantic axes are unsatisfied for this digest.",
+  "checklist": {
+    "capability_claim_coverage": false,
+    "required_dimensions": false,
+    "assertions_specific": false,
+    "oracle_independent": false,
+    "loopholes_checked": false,
+    "false_green_risk_checked": false
+  },
+  "findings": [
+    "WI #2414 aligns to capability `cross-service-delivery-verification` and claim `keep-sift-operational-telemetry-adoption`, with acceptance criteria for real `axiom.service.log.v1` stdout, W3C correlation, a Sift-agnostic producer boundary, and a nonzero Sift collector/query journey, but neither that capability/claim nor any corresponding EC case exists in Keep's capability contract or `external-contracts/**`. Add the capability claim to the canonical capability contract and draft/fill behavior and integration EC cases whose commands run `cargo test -p keep --test structured_stdout_traceparent` and the real six-service `cargo test -p sift --test vat_service_observability_e2e` journey with exact nonzero producer, accepted-record, query-result, and rejected-record assertions; TD requirements alone are not the semantic oracle.",
+    "EC case `keep-competitor-performance-meter-gate` / claim `vat-meter-runtime-gate` does not exercise the performance guarantee it names: `apps/keep/vat.toml#meter-efficiency` runs `meter test` over `http_api`, `collections_api`, and `durability`, while meter test only forwards the cargo-test exit code and applies no throughput, latency, CPU, RSS, regression-baseline, or Redis/Dragonfly oracle. Revise the EC case and VAT runner to execute a reproducible meter bench/measure or peer-comparison gate with committed thresholds and an independent baseline; otherwise narrow the capability promise so it makes no performance or competitor claim.",
+    "Capability `competitor-performance` is typed `RuntimeTool`, whose required EC dimensions are behavior, efficiency, and stability, but the EC inventory contains only the efficiency case `keep-competitor-performance-meter-gate`. Add separate behavior and stability cases with concrete externally observable commands and assertions; running functional tests inside the efficiency-labelled case does not create those missing dimensions.",
+    "Capability `security-hardening` is typed `RuntimeTool`, whose required EC dimensions are behavior, efficiency, and stability, yet its inventory has only `keep-security-hardening-guard-scan` in category security and marks that case `required_for_production: false`. Revise `security-evidence.md` to provide the capability's required dimension cases, or correct the capability classification/production contract before resubmitting review; the current single advisory scan cannot semantically close the typed capability.",
+    "The assertions in `keep-competitor-performance-meter-gate` are meta-claims (`meter owns the pass/fail evidence`, VAT isolation, and competitor comparison deferred to dogfood) rather than falsifiable product outcomes. Replace them with named workload parameters, minimum throughput or maximum latency/resource values, baseline/peer identity, allowed variance, and exact report fields whose violation causes a nonzero gate.",
+    "The performance oracle is not independent: pass/fail is currently defined solely by Keep's own in-repository functional tests, with no measured external baseline or peer result despite the README promise that performance stays tied to engine/resource gates and Redis/Dragonfly comparison. Bind the case to an independently versioned baseline or executable peer comparison and make the evaluator consume that evidence rather than cargo-test success.",
+    "Both VAT runners retain a zero-test/empty-evidence loophole. Cargo test succeeds when selected binaries execute zero tests, meter test merely forwards that success, and the guard case does not assert `files_scanned`, `evidence_count`, or an exact runtime test count. Make each gate fail closed unless the expected nonzero tests and evidence records ran, and assert those counts plus the required observable results so an empty implementation or filtered-out suite cannot pass."
+  ],
+  "target_path": "apps/keep/external-contracts/competitor-performance/efficiency/perf-gate.md"
+}
