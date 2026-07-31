@@ -3683,6 +3683,233 @@ def assert_relocation_synthesizes_an_absent_work_root_table(migrated: str) -> No
         )
 
 
+#: The note `aw capability migrate` writes under a `## Capabilities` heading it
+#: had to supply itself.
+CANONICAL_CAPABILITIES_NOTE = (
+    "Canonical field-style capability contracts below are machine-readable input "
+    "for `aw capability`; YAML and legacy tables are migration input only."
+)
+#: The placeholder the frame repair leaves where a human has to write the brief.
+CANONICAL_BRIEF_TODO = (
+    "<!-- TODO: Add the human-confirmed project brief before publishing. -->"
+)
+
+
+def _frame_capability(cap_id: str) -> str:
+    return (
+        f"### {cap_id.title()}\n\n"
+        f"ID: {cap_id}\n"
+        f"Root WI: #1\n"
+        f"Status: candidate\n"
+        f"Promise:\n"
+        f"Probe promise for {cap_id}.\n"
+    )
+
+
+#: Format-migration inputs whose canonical frame is incomplete, one defect each.
+#:
+#: `ensure_canonical_readme_scaffold` (`capability.rs:8647-8662`) supplies a
+#: missing `# <Project>` title, a missing `## Brief`, and a missing
+#: `## Capabilities` heading. Every other document in this case arrives with all
+#: three, so all three repairs could be disabled at once without changing a
+#: rendered byte -- migration would quietly emit a document with no title and no
+#: brief, and the relocation leg's exact-frame assertion, which pins the frame
+#: relocation *builds*, says nothing about the frame migration *repairs*.
+#:
+#: The brief repair has two arms and both are declared here: a title followed by
+#: lead prose becomes a `## Brief` carrying that prose, and a title followed by
+#: nothing gets the human-confirmation placeholder instead.
+FRAME_NO_TITLE_BRIEF = "Probe: the title is missing."
+FRAME_NO_TITLE_DOCUMENT = (
+    f"## Brief\n\n{FRAME_NO_TITLE_BRIEF}\n\n"
+    f"## Capabilities\n\n{_frame_capability('alpha')}"
+)
+FRAME_LEAD_PROSE = "Lead prose that must become the Brief."
+FRAME_LEAD_PROSE_DOCUMENT = (
+    f"# Demo\n\n{FRAME_LEAD_PROSE}\n\n"
+    f"## Capabilities\n\n{_frame_capability('beta')}"
+)
+FRAME_NO_BRIEF_DOCUMENT = f"# Demo\n\n## Capabilities\n\n{_frame_capability('gamma')}"
+#: The one input that arrives with no `## Capabilities` heading at all.
+#:
+#: Its authored brief prose does not survive the migration: the strip that
+#: removes the capability sections takes the whole prefix with it when there is
+#: no `## Capabilities` heading to stop at, and the repair then writes the
+#: placeholder over it. That is a product defect, reported as #3234 and
+#: deliberately not asserted here in either direction -- asserting the loss
+#: would pin the defect in place, and asserting its absence would fail on the
+#: unfixed product. What is asserted is the heading repair alone.
+FRAME_NO_CAPABILITIES_DOCUMENT = (
+    f"# Demo\n\n## Brief\n\nAuthored brief prose.\n\n{_frame_capability('delta')}"
+)
+
+_FRAME_TAIL = f"## Capabilities\n\n{CANONICAL_CAPABILITIES_NOTE}\n\n"
+#: The exact frame each of those inputs must be repaired into, up to the index.
+FRAME_REPAIRS: dict[str, tuple[str, str]] = {
+    "no_title": (
+        FRAME_NO_TITLE_DOCUMENT,
+        f"# Demo\n\n## Brief\n\n{FRAME_NO_TITLE_BRIEF}\n\n{_FRAME_TAIL}",
+    ),
+    "lead_prose": (
+        FRAME_LEAD_PROSE_DOCUMENT,
+        f"# Demo\n\n## Brief\n\n{FRAME_LEAD_PROSE}\n\n{_FRAME_TAIL}",
+    ),
+    "no_brief": (
+        FRAME_NO_BRIEF_DOCUMENT,
+        f"# Demo\n\n## Brief\n\n{CANONICAL_BRIEF_TODO}\n\n{_FRAME_TAIL}",
+    ),
+    "no_capabilities_heading": (
+        FRAME_NO_CAPABILITIES_DOCUMENT,
+        f"# Demo\n\n## Brief\n\n{CANONICAL_BRIEF_TODO}\n\n{_FRAME_TAIL}",
+    ),
+}
+assert not FRAME_NO_TITLE_DOCUMENT.startswith("# "), "the no-title input has a title"
+assert "## Brief" not in FRAME_LEAD_PROSE_DOCUMENT
+assert "## Brief" not in FRAME_NO_BRIEF_DOCUMENT
+assert "## Capabilities" not in FRAME_NO_CAPABILITIES_DOCUMENT
+for _frame_label, (_frame_input, _frame_output) in FRAME_REPAIRS.items():
+    assert CANONICAL_CAPABILITIES_NOTE not in _frame_input, _frame_label
+    assert CANONICAL_BRIEF_TODO not in _frame_input, _frame_label
+#: The three repairs are distinguishable: no two inputs share an expected frame
+#: except the two that legitimately converge on the placeholder brief.
+assert len({expected for _, expected in FRAME_REPAIRS.values()}) == 3
+
+
+def assert_format_migration_repairs_the_canonical_frame(
+    migrated: str, *, expected: str, label: str
+) -> None:
+    """The frame migration has to supply is asserted as one exact block.
+
+    Asserted as the whole prefix up to `### Capability Index` rather than as
+    three `in` checks, for the reason the relocation frame is: containment binds
+    that each heading appears somewhere, not that they appear once, in order,
+    and with the body each is required to carry. The brief in particular is
+    either the author's own prose or the human-confirmation placeholder, and
+    those two are the same assertion under containment.
+    """
+    marker = "### Capability Index"
+    assert migrated.count(marker) == 1, (
+        f"[{label}] the migrated document must carry exactly one capability "
+        f"index, document was:\n{migrated}"
+    )
+    frame = migrated[: migrated.index(marker)]
+    assert frame == expected, (
+        f"[{label}] migration repaired the canonical frame wrongly;\n"
+        f"expected:\n{expected!r}\ngot:\n{frame!r}"
+    )
+
+
+#: A document whose capability contract has not been written yet, shaped so the
+#: renderer actually runs on it.
+#:
+#: `render_capability_registry` (`capability.rs:8596-8598`) breaks out of the
+#: two-root loop when a document declares neither a capability section nor a
+#: legacy row, so an empty registry does not acquire a `### Core Features` and a
+#: `### Non-Core Features` root with no members. Every other document in this
+#: case declares one or the other, so without this leg the guard was entered
+#: only with something to render.
+#:
+#: The obvious input -- a bare `## Capabilities` heading with nothing under it --
+#: does not reach the guard at all. `apply_capability_format_migration_tick`
+#: (`capability.rs:13010`) returns "already uses canonical Markdown capability
+#: format" before rendering anything, because neither
+#: `requires_format_migration` nor `requires_feature_class_migration` fires on a
+#: document with no contract to migrate. A mutation that deletes the guard
+#: survives such an input: the document is byte-identical either way, for a
+#: reason that has nothing to do with the guard.
+#:
+#: The legacy `## Capability Index` heading is what makes the input reach it.
+#: `markdown_capability_document_needs_canonicalization`
+#: (`capability.rs:10294-10296`) treats a level-2 `Capability Index` as
+#: non-canonical on its own, so migration runs, renders, and takes the guarded
+#: branch with both `capabilities` and `legacy_rows` empty.
+EMPTY_REGISTRY_DOCUMENT = """# Demo
+
+## Brief
+
+A project whose capability contract has not been written yet.
+
+## Capabilities
+
+## Capability Index
+
+## Contributing
+
+See CONTRIBUTING.md.
+"""
+
+#: What migration writes for `EMPTY_REGISTRY_DOCUMENT`, byte for byte.
+#:
+#: Three separate rules are pinned by this one string. The legacy `## Capability
+#: Index` heading is demoted to the canonical `### Capability Index`. The index
+#: table is emitted with its header row and a single synthesized placeholder row
+#: named after the project (`capability.rs:8990-8994`), which is the product's
+#: answer to "an index with no capabilities to list". And no feature root
+#: appears anywhere -- the guard's branch.
+EMPTY_REGISTRY_MIGRATED = (
+    "# Demo\n"
+    "\n"
+    "## Brief\n"
+    "\n"
+    "A project whose capability contract has not been written yet.\n"
+    "\n"
+    "## Capabilities\n"
+    "\n"
+    "### Capability Index\n"
+    "\n"
+    "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n"
+    "|---|---:|---|---|---|---|---|\n"
+    "| Demo Capability | - | planned | planned | smoke | not_ready | candidate |\n"
+    "\n"
+    "\n"
+    "## Contributing\n"
+    "\n"
+    "See CONTRIBUTING.md.\n"
+)
+assert "Capability Index" in EMPTY_REGISTRY_DOCUMENT, (
+    "the empty-registry input must carry the legacy index heading that makes "
+    "migration reach the renderer"
+)
+assert "### Capability Index" not in EMPTY_REGISTRY_DOCUMENT, (
+    "the empty-registry input must carry the *legacy* level-2 index heading"
+)
+assert "Demo Capability" not in EMPTY_REGISTRY_DOCUMENT, (
+    "the placeholder row must be the product's invention, not the input's"
+)
+
+
+def assert_an_empty_registry_gains_no_feature_roots(
+    envelope: dict[str, Any], migrated: str
+) -> None:
+    """A registry with no contract in it renders no feature roots.
+
+    Asserted two ways because the interesting failure adds content rather than
+    removing it. The document must equal `EMPTY_REGISTRY_MIGRATED` byte for
+    byte, and neither canonical feature root may appear anywhere in it. The byte
+    equality is the strictly stronger claim; the two named roots are asserted
+    beside it so a failure says which root was invented instead of printing a
+    whole-document diff.
+
+    The envelope is asserted to report a real migration, which is what keeps the
+    leg honest: a `unchanged` run would mean the renderer never executed and the
+    byte equality proved nothing about the guard.
+    """
+    assert envelope.get("status") == "migrated", (
+        f"the empty-registry input must actually reach the renderer, "
+        f"got status {envelope.get('status')!r}"
+    )
+    assert envelope.get("changed") is True, envelope.get("changed")
+    for root in ("### Core Features", "### Non-Core Features"):
+        assert root not in migrated, (
+            f"an empty registry must not gain the {root!r} root, "
+            f"document was:\n{migrated}"
+        )
+    assert migrated == EMPTY_REGISTRY_MIGRATED, (
+        f"migration must render a contract-less registry exactly, got:\n"
+        f"{migrated!r}\nexpected:\n{EMPTY_REGISTRY_MIGRATED!r}"
+    )
+
+
 #: The capabilities whose whole rendered field block is asserted as one string on
 #: the multi-item document, and why those two.
 #:
