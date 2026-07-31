@@ -1079,8 +1079,13 @@ def registry_spanning_baseline_core_document(cap_id: str) -> str:
     """Falsifier 1 again, on a baseline this fixture does not otherwise carry.
 
     The capability is added under the core root rather than promoted out of the
-    non-core root, because Lumen does not own it: the claim under test is about
-    the baseline registry, not about Lumen's membership. Every other capability
+    non-core root, because this fixture's membership does not carry it: the
+    claim under test is about the baseline registry, not about Lumen's
+    membership. (All three of these ids *are* Lumen's own capabilities --
+    `apps/lumen/README.md:784`, `:818`, `:851` -- as the module docstring says
+    of every id here; an earlier revision of this comment claimed the opposite
+    to justify the same shape, which was both false and unnecessary.) Every
+    other capability
     keeps its correct class, so the single expected blocker is this rule and not
     a side effect of rearranging the document.
     """
@@ -1246,8 +1251,12 @@ def assert_production_contract_unmutated(
 
 
 #: A scratch project has no Python EC or TD inventory, so every report carries
-#: exactly these three blockers regardless of the document. They are subtracted
-#: by prefix (the messages embed a temporary path).
+#: the first two of these no matter what the document contains. The third, the
+#: td capability scan, is *conditional* -- see `document_blockers` below, where
+#: only the first two are required -- because `report` scans TD refs only for a
+#: document that parsed at least one capability section, so a legacy-only shape
+#: structurally cannot emit it. All three are subtracted by prefix (the messages
+#: embed a temporary path); only the first two are asserted present.
 #:
 #: Subtraction, not a whitelist of feature-class wordings. A whitelist silently
 #: drops any finding phrased outside it — the duplicate-root message
@@ -1353,7 +1362,7 @@ def assert_unclassified_defaults_to_non_core(report: dict[str, Any]) -> None:
     This is the report of `UNCLASSIFIED_DOCUMENT` *before* migration: no root, no
     field, nothing to parse. The default is the whole rule under test, so it is
     asserted through the totals rather than only through the per-item field --
-    flipping the default to core moves all six capabilities and all seven claims
+    flipping the default to core moves all six capabilities and all eight claims
     across, which no other assertion in this fixture would see, because every
     other document it runs states its own answer.
 
@@ -3947,9 +3956,13 @@ def assert_relocation_synthesizes_an_absent_work_root_table(migrated: str) -> No
     are *added* by independent `if` blocks, so a condition that stopped
     excluding the others would append a second row to a table that already had
     the right one, and any assertion reading a single row would still pass. The
-    four capabilities that do declare work roots are asserted here too, for the
+    three capabilities that do declare work roots are asserted here too, for the
     same reason from the other side -- their tables must stay exactly what they
-    authored.
+    authored. Three, not four: this document has six capabilities and
+    `NO_WORK_ROOT_TITLES` holds three of them, so the split is three synthesized
+    against three authored. The loop below walks `_ALL_MEMBERS`, so all six are
+    held to whole-table equality either way; the count is the reader's map of
+    how far the authored half reaches, and it was wrong.
 
     Note that this document's `claim_count` is the same integer as every other
     one's: a synthesized row is a claim when the emitted document is read back,
@@ -4018,10 +4031,26 @@ FRAME_NO_BRIEF_DOCUMENT = f"# Demo\n\n## Capabilities\n\n{_frame_capability('gam
 #: Its authored brief prose does not survive the migration: the strip that
 #: removes the capability sections takes the whole prefix with it when there is
 #: no `## Capabilities` heading to stop at, and the repair then writes the
-#: placeholder over it. That is a product defect, reported as #3234 and
-#: deliberately not asserted here in either direction -- asserting the loss
-#: would pin the defect in place, and asserting its absence would fail on the
-#: unfixed product. What is asserted is the heading repair alone.
+#: placeholder over it. That is a product defect, reported as #3234.
+#:
+#: **This subject pins that loss.** An earlier revision of this comment claimed
+#: the opposite -- that the defect was "deliberately not asserted here in either
+#: direction" and that "what is asserted is the heading repair alone" -- and
+#: that was false in a way the expectation below makes plain: the expected frame
+#: names `CANONICAL_BRIEF_TODO` where the input authored `Authored brief
+#: prose.`, and `assert_format_migration_repairs_the_canonical_frame` compares
+#: the whole prefix byte for byte. Fixing #3234 will fail this leg until this
+#: expectation is updated with it.
+#:
+#: That is the correct outcome under this case's stated policy, which is why the
+#: expectation stays and the comment changes rather than the reverse: pin a
+#: defect that sits *inside* the property the leg asserts, decline one that sits
+#: outside it. This leg's property is that migration supplies the canonical
+#: frame's missing parts, and the brief is one of those parts -- there is no way
+#: to assert the frame exactly while excusing the part of it this input gets
+#: wrong. The defects this case genuinely declines to pin (#3264, #3265,
+#: #3272, #3274, and the converged-bytes cases) are outside their legs'
+#: properties; #3234 is not, and listing it beside them was the error.
 FRAME_NO_CAPABILITIES_DOCUMENT = (
     f"# Demo\n\n## Brief\n\nAuthored brief prose.\n\n{_frame_capability('delta')}"
 )
@@ -4651,12 +4680,22 @@ assert len(set(_IN_PROGRESS_WORK_ROOT_CELLS.values())) == 2, (
 #: untouched, which is why they are withheld together now rather than one per
 #: round.
 #:
-#: They land on one capability rather than four because only one capability can
-#: legally withhold anything. `validate_capability_contract`
-#: (`capability.rs:10133+`) requires a full contract for the five
-#: contract-bearing statuses, so `candidate` is the single status under which an
-#: author may declare nothing -- and this document declares each status exactly
-#: once. The assertions stay per field, so a product that forgot one guard is
+#: They land on one capability rather than four because a capability can only
+#: legally withhold anything under a status that exempts it.
+#: `validate_capability_contract` (`capability.rs:10135-10141`) requires a full
+#: contract for **four** contract-bearing statuses -- `confirmed`, `auditing`,
+#: `blocked`, `verified` -- out of the six-value enum, so **two** statuses exempt
+#: an author from declaring anything: `candidate` and `retired`. This document
+#: declares each status exactly once, and the withholding capability is the
+#: `candidate` one.
+#:
+#: The `retired` arm is therefore a legal second carrier of these four
+#: emptiness guards and this fixture does not use it: the `retired` capability
+#: here declares all four fields. That is a disclosed gap, not coverage. It is
+#: not worth closing by moving the withholding to `retired`, which would only
+#: swap which arm is unexercised; closing it means a second withholding
+#: capability, and the document is constrained to one capability per status.
+#: The assertions stay per field, so a product that forgot one guard is
 #: still caught by that guard's own check.
 #:
 #: `Required Verification:` is the field whose absence is *not* silent: the
@@ -4910,12 +4949,21 @@ def assert_relocation_carries_per_capability_status(migrated: str) -> None:
         # `release_scope: false` (`capability.rs:10773`) and the only thing that
         # raises it (`capability.rs:8400-8410`) raises `index_summary` with it,
         # which routes the render past this fallback entirely -- so no
-        # markdown-authored capability reaches the arm. The *function* is called
-        # for every capability in every
-        # index-less document here -- six capabilities across five documents --
-        # and its `not_ready` answer was read back by nothing, so replacing the
-        # whole body with the constant `"ready"` shipped a table declaring six
-        # unwritten contracts production-ready with every assertion still green.
+        # markdown-authored capability reaches the arm. The assertion below is
+        # made on this document's six rows. Other legs here read a Production
+        # cell too -- the legacy index's tail, and the carried-through index --
+        # so "the only index this case reads back" would be false; what is true
+        # is that this is the only place `capability_production_summary`'s own
+        # answer is read, the legacy `not_ready` being emitted by the hardcoded
+        # legacy-row branch (`capability.rs:8942-8948`) rather than derived.
+        # The *function* runs on every capability of every
+        # index-less document here -- fourteen six-capability relocation READMEs
+        # at module scope alone, not five, which an earlier revision of this
+        # comment claimed three times over -- and its `not_ready` answer was
+        # read back by nothing, so replacing the whole body with the constant
+        # `"ready"` shipped tables declaring unwritten contracts production-ready
+        # on all of them with every assertion still green. That is the mutant's
+        # blast radius, not this leg's reach.
         assert row[5] == "not_ready", (
             f"index row {title!r} Production column: a capability parsed out of "
             f"Markdown is never in release scope, so the derived column must "
@@ -5086,8 +5134,8 @@ def _varied_index_document() -> str:
     calls `capability_production_summary` for every capability in every
     index-less document, and its answer -- `not_ready`, because
     `parse_markdown_capability_block` hardcodes `release_scope: false`
-    (`capability.rs:10773`) -- is rendered into all six rows of five relocation
-    documents. What is genuinely unreachable is the *`ready` arm* of that
+    (`capability.rs:10773`) -- is rendered into all six rows of fourteen
+    index-less relocation documents. What is genuinely unreachable is the *`ready` arm* of that
     function, which is a narrower statement about one arm rather than about the
     column, and is disclosed as an unreached branch (filed as #3214) rather than
     dressed up as coverage. `Maturity` was never in question either: its fallback is the
@@ -5133,6 +5181,15 @@ def assert_migration_carries_every_index_column(migrated: str) -> None:
     Not "an index table is emitted" and not "the row count is right" -- the
     columns other than `Capability` and `Root WI` were rewritable to constants
     without failing anything.
+
+    Five of the six non-identity columns, not all of them. `Root WI` is the
+    sixth and is deliberately outside this assertion: this document writes `-`
+    in all six of its rows, so there is no authored value to carry, and what
+    the product renders there is the first-work-root fallback rather than a
+    carried cell. Binding it would mean asserting the fallback a second time
+    under a label that says carry-through. The authored-`Root WI` carry-through
+    is not covered by this case; the fallback itself is, on
+    `WORK_ROOT_WI_SECTION_README`.
     """
     rows = {row[0]: row for row in _index_rows_parsed(migrated)}
     assert set(rows) == set(VARIED_INDEX_CELLS), sorted(rows)
@@ -5434,7 +5491,14 @@ assert SHADOWED_WORK_ROOT_WIS, (
 #: spellings of `n/a`. Cycled across the fixture's capabilities below so each is
 #: exercised by a real document rather than by the one spelling every author in
 #: this fixture happened to write.
-EMPTY_TABLE_VALUE_SPELLINGS = ("-", "n/a", "N/A")
+#:
+#: All four, including the empty value. `is_empty_table_value` is
+#: `trimmed.is_empty() || matches!(trimmed, "-" | "n/a" | "N/A")`, and an
+#: earlier revision listed the empty string here in prose while cycling only
+#: the three visible spellings -- so the `is_empty()` disjunct was named as
+#: covered and driven by nothing. A blank `Root WI:` is a legal authored shape,
+#: not a theoretical one.
+EMPTY_TABLE_VALUE_SPELLINGS = ("-", "n/a", "N/A", "")
 
 
 def _work_root_wi_readme() -> str:
@@ -5446,12 +5510,14 @@ def _work_root_wi_readme() -> str:
     own `Root WI`, so the second branch is unreachable from them and an
     implementation that deleted it entirely renders identically.
 
-    The blank is written three ways, cycling `EMPTY_TABLE_VALUE_SPELLINGS`. The
-    predicate that decides "this field is absent" is one closed match, and with
-    every capability writing `-` the two `n/a` arms were free: dropping them
+    The blank is written all four ways, cycling `EMPTY_TABLE_VALUE_SPELLINGS`
+    across six capabilities. The predicate that decides "this field is absent"
+    is one closed disjunction, and with every capability writing `-` the two
+    `n/a` arms and the `is_empty()` arm were all free: dropping the `n/a` arms
     makes `Root WI: n/a` read as a *declared* WI, so the fallback stops firing
-    and the literal string `n/a` ships into the contract as tracker state. A
-    fixture that writes one spelling cannot see that, and `n/a` in a
+    and the literal string `n/a` ships into the contract as tracker state, and
+    dropping `is_empty()` does the same to a field left blank. A fixture that
+    writes one spelling cannot see any of that, and `n/a` or a blank in a
     hand-written README is at least as likely as `-`.
     """
     document = UNCLASSIFIED_SECTION_README
@@ -5482,8 +5548,12 @@ def assert_relocation_falls_back_to_the_first_work_root_wi(migrated: str) -> Non
     renders its first work root's WI rather than the `-` it declared, in the
     index column and in the section field alike. And that it takes the *first*
     one: `lexical-search` has two work roots, and the second one's WI must
-    appear nowhere in the document -- otherwise "the first non-empty WI wins"
-    is indistinguishable from "some WI wins".
+    never be chosen as any capability's `Root WI` -- otherwise "the first
+    non-empty WI wins" is indistinguishable from "some WI wins". Not "appears
+    nowhere in the document", which an earlier revision of this docstring said
+    and which would be a wrong contract: the shadowed WI is asserted *present*
+    forty lines below, in the work-root row it came from. It lost the election;
+    its row still has to survive.
     """
     rows = _index_rows_parsed(migrated)
     assert [row[0] for row in rows] == list(UNCLASSIFIED_SECTION_TITLES), (
@@ -5507,11 +5577,14 @@ def assert_relocation_falls_back_to_the_first_work_root_wi(migrated: str) -> Non
             f"{shadowed} belongs to a second work root and must not be chosen "
             f"as any capability's Root WI"
         )
-    # The input wrote its blanks three ways, and none of them may survive as a
-    # declared value. Without this, an implementation that stopped recognizing
-    # `n/a` as empty would keep the fallback firing for the `-` capabilities --
-    # satisfying every assertion above for four of six -- while shipping the
-    # literal string `n/a` as the other two capabilities' tracker state.
+    # The input wrote its blanks all four ways, and none of them may survive as
+    # a declared value. Without this, an implementation that stopped recognizing
+    # `n/a` as empty would keep the fallback firing for the two `-` capabilities
+    # and the blank one -- satisfying every assertion above for three of six --
+    # while shipping the literal string `n/a` as the other two capabilities'
+    # tracker state. The blank spelling is checked as `"Root WI: \n"`, which is
+    # the trailing-space form the input writes; it cannot match a rendered
+    # `Root WI: #70`.
     for spelling in EMPTY_TABLE_VALUE_SPELLINGS:
         assert f"Root WI: {spelling}\n" not in migrated, (
             f"a relocated section still renders the empty spelling {spelling!r} "
@@ -7641,16 +7714,26 @@ EC Dimensions:
 """
 
 
+#: The word that opens the spelling walk. Deliberately outside both
+#: vocabularies: the leading key of a `Surfaces:` item is parsed before the
+#: separator ever runs (`capability.rs:11340-11370`) and consults no vocabulary,
+#: so a spelling placed here is bound as a *leading* key and not as a separator
+#: key. Every spelling used to be indexed from this position, which left the
+#: first of the twenty-two -- `cli` -- never written after a `; ` and its arm of
+#: `is_surface_contract_key` freely deletable with this case green.
+_SPELLING_WALK_LEAD_KEY = "probe"
+
+
 def _spelling_walk_surface_field() -> str:
     """One `Surfaces:` line carrying every key spelling and every control word.
 
     They share a line rather than taking one each because the rule under test is
     what an inline `;` does, which a one-item-per-line document cannot reach.
+    All twenty-two spellings sit *after* a `; ` for that reason, behind a lead
+    clause whose key is in neither vocabulary.
     """
-    clauses = [f"{SURFACE_KEY_SPELLINGS[0]}: `aw s0` - item 0"]
-    for index, word in enumerate(
-        SURFACE_KEY_SPELLINGS[1:] + NON_SURFACE_KEY_WORDS, start=1
-    ):
+    clauses = [f"{_SPELLING_WALK_LEAD_KEY}: `aw lead` - lead item"]
+    for index, word in enumerate(SURFACE_KEY_SPELLINGS + NON_SURFACE_KEY_WORDS):
         clauses.append(f"{word}: `aw s{index}` - item {index}")
     return "- " + "; ".join(clauses)
 
@@ -7771,11 +7854,19 @@ def _capability_by_id(report: dict[str, Any], cap_id: str) -> dict[str, Any]:
 def assert_surface_keys_are_two_independent_vocabularies(
     report: dict[str, Any],
 ) -> None:
-    """Every key spelling opens its own item; no other word does.
+    """Every key spelling opens its own item after a `; `; no other word does.
 
-    One line declares twenty-two key spellings and four look-alikes. Each clause
-    carries a distinct command, so the spelling that opened an item is
-    recoverable from the item itself and the spelling-to-kind pairing is bound
+    One line declares twenty-two key spellings and four look-alikes, all of them
+    after a `; `, behind a lead clause whose key (`probe`) is in neither
+    vocabulary. The lead exists so that no spelling is spent on the leading-key
+    position, which is parsed before the separator runs and consults no
+    vocabulary at all: a spelling written there is bound as a leading key and
+    leaves its separator arm deletable. It also makes the leading-key parse's
+    own indifference to the vocabulary observable, since `probe` reaches the
+    report as a kind.
+
+    Each clause carries a distinct command, so the spelling that opened an item
+    is recoverable from the item itself and the spelling-to-kind pairing is bound
     rather than just the multiset of kinds -- the failure mode where a renderer
     emits the right labels against the wrong keys.
 
@@ -7788,11 +7879,11 @@ def assert_surface_keys_are_two_independent_vocabularies(
     The four control words are the other half: they sit in the trailing item's
     summary, and their backticked commands are harvested into that item. That
     makes the negative observable -- an implementation that split on every `; `
-    would produce twenty-six items, and one that consulted no vocabulary at all
-    would produce one.
+    would produce twenty-seven items, and one that consulted no vocabulary at
+    all would produce one.
     """
     surfaces = _capability_by_id(report, "spelling-walk")["surfaces"]
-    assert len(surfaces) == len(SURFACE_KEY_SPELLINGS), surfaces
+    assert len(surfaces) == len(SURFACE_KEY_SPELLINGS) + 1, surfaces
 
     by_command = {}
     for item in surfaces:
@@ -7800,6 +7891,16 @@ def assert_surface_keys_are_two_independent_vocabularies(
         assert commands, item
         by_command[commands[0]] = item
     assert len(by_command) == len(surfaces), surfaces
+
+    # The lead clause. Its key is in neither vocabulary and it still opens the
+    # first item, carrying its own spelling through as the kind, because the
+    # leading-key parse never consults `is_surface_contract_key`.
+    lead = by_command.get("aw lead")
+    assert lead is not None, surfaces
+    assert lead["kind"] == _SPELLING_WALK_LEAD_KEY, lead
+    assert lead["summary"] == "lead item", lead
+    assert _SPELLING_WALK_LEAD_KEY not in SURFACE_KEY_SPELLINGS
+    assert _SPELLING_WALK_LEAD_KEY not in NON_SURFACE_KEY_WORDS
 
     for index, spelling in enumerate(SURFACE_KEY_SPELLINGS):
         item = by_command.get(f"aw s{index}")
@@ -7849,7 +7950,7 @@ def assert_a_semicolon_without_a_key_stays_in_the_summary(
     """The negative in isolation, on a summary that reads like prose.
 
     The spelling walk above proves the vocabulary is consulted, but its control
-    words sit at the tail of a twenty-six-clause line where a truncation would
+    words sit at the tail of a twenty-seven-clause line where a truncation would
     look the same. This capability declares one item whose summary contains a
     single `; note: ` and nothing else, so the clause's survival is the whole
     observation.
@@ -7892,11 +7993,23 @@ def assert_an_inline_semicolon_splits_ec_dimensions(report: dict[str, Any]) -> N
 def assert_an_unrecognized_ec_dimension_is_dropped(report: dict[str, Any]) -> None:
     """A dimension whose kind is outside the enum does not reach the report.
 
-    The drop is silent: no blocker, no diagnostic, and the capability still
-    reports as if the author had written one dimension. That is asserted here
-    because it was unbound, not because it is obviously right -- an author who
-    misspells a dimension kind gets a contract quietly narrower than the one
-    they wrote. Filed as a defect rather than pinned as intent.
+    The drop is silent, and both halves of that are asserted: the item is absent
+    from `ec_dimensions`, and no blocker names this capability -- in either of
+    the two spellings the product uses for one -- or the misspelling it dropped.
+    Both spellings, because they belong to different blocker families: the
+    document-level findings name a capability by its id (`capability.rs:10094`),
+    while the per-capability validators a dimension-kind rejection would sit
+    beside name it by its *title*, which is what this file's own
+    `BAD_CELL_BLOCKERS` pins ("capability `Bad Cells` work root ..."). Probing
+    the id alone would certify silence against a product that had told the
+    author, in the spelling it would most likely have used.
+    The second half is the one that makes the first mean something --
+    a report that dropped the item *and* rejected the document would be a product
+    that told the author, and the dimension list alone cannot tell the two apart.
+    The capability still reports as if the author had written one dimension.
+    Asserted here because it was unbound, not because it is obviously right -- an
+    author who misspells a dimension kind gets a contract quietly narrower than
+    the one they wrote. Filed as a defect rather than pinned as intent.
 
     The declared dimension is `security` rather than `behavior` so that the drop
     is distinguishable from the near miss beside it. `parse_ec_dimension_kind`
@@ -7932,6 +8045,16 @@ def assert_an_unrecognized_ec_dimension_is_dropped(report: dict[str, Any]) -> No
             "required_for_production": True,
         },
     ], dimensions
+    # Asserted non-vacuously: this document raises four blockers of its own from
+    # the bad-cell rows, so the loop below runs against a populated list rather
+    # than an empty one. A blocker list that went empty would break the count
+    # here before the silence claim could pass for the wrong reason.
+    blockers = report["blockers"]
+    assert len(blockers) >= len(BAD_CELL_BLOCKERS), blockers
+    for blocker in blockers:
+        assert "dimension-unknown" not in blocker, blocker
+        assert "Dimension Unknown" not in blocker, blocker
+        assert "nonsense" not in blocker, blocker
 
 
 #: One blocker per out-of-vocabulary cell, in the order the rows are written.
@@ -8062,6 +8185,37 @@ _MACHINE_TABLE_SUBJECTS = (
 | security | `aw sec` | security by alias |""",
         "Surfaces:\n- CLI: `aw dimension-aliases` - surface of dimension-aliases\n",
     ),
+    # `find_table_column` matches on exact normalized equality, so each spelling
+    # in each alias set is a separately deletable arm. The two subjects above
+    # cover two spellings per column, which leaves the third spelling of five
+    # columns unwritten by any document in this case. These two carry four of
+    # those five: `Command` singular and `Evidence` on the surface side,
+    # `EC Dimension` and `Contract` on the dimension side.
+    #
+    # The fifth -- `Command` as a dimension runner column -- is deliberately
+    # absent, because no document can reach it. `parse_markdown_surface_table`
+    # accepts a `command` column and is tried first, so a dimension table headed
+    # `Command` is claimed as a surface table: the dimension is lost and a
+    # phantom `CLI` surface appears in its place. That is filed as #3280; until
+    # it is resolved this case binds four of the five third spellings, and the
+    # durable label says so.
+    (
+        "Third Surface Aliases",
+        "third-surface-aliases",
+        """| Surface | Command | Summary | Evidence |
+|---|---|---|---|
+| SDK | `aw delta` | third command and verification aliases | `aw delta --evidence` |""",
+        "EC Dimensions:\n- behavior: `true` - behaviour of third-surface-aliases\n",
+    ),
+    (
+        "Third Dimension Aliases",
+        "third-dimension-aliases",
+        """| EC Dimension | Tool | Contract |
+|---|---|---|
+| stability | `aw stab` | stability by third alias |""",
+        "Surfaces:\n- CLI: `aw third-dimension-aliases`"
+        " - surface of third-dimension-aliases\n",
+    ),
 )
 
 
@@ -8119,6 +8273,22 @@ Machine-readable capability contract for Demo.
 
 MACHINE_TABLE_DOCUMENT = _machine_table_document()
 
+#: Each subject's own table rows -- its header and its data rows, without the
+#: `|---|` separator, which is a substring of the work-root separator that
+#: legitimately survives relocation. Derived from the subject rather than
+#: written out, because what is wanted here is exactly "the rows this subject
+#: wrote", and a hand-copied list would drift the moment a subject is edited.
+_MACHINE_TABLE_ROWS = {
+    title: tuple(
+        line
+        for line in table.strip().splitlines()
+        if line.strip(" |-:\t")
+    )
+    for title, _cap_id, table, _fields in _MACHINE_TABLE_SUBJECTS
+}
+assert all(len(rows) >= 2 for rows in _MACHINE_TABLE_ROWS.values()), _MACHINE_TABLE_ROWS
+assert len(_MACHINE_TABLE_ROWS) == len(_MACHINE_TABLE_SUBJECTS), _MACHINE_TABLE_ROWS
+
 #: What each table-declared capability reports. Written out per subject rather
 #: than derived, because the derivation would be the implementation.
 MACHINE_TABLE_SURFACES = {
@@ -8161,6 +8331,16 @@ MACHINE_TABLE_SURFACES = {
         {"kind": "HTTP", "summary": "-"},
         {"kind": "SDK", "summary": "-"},
     ],
+    # `Command` singular and `Evidence` -- the third spelling of the command and
+    # verification alias sets, which the two subjects above leave unwritten.
+    "third-surface-aliases": [
+        {
+            "kind": "SDK",
+            "commands": ["aw delta"],
+            "summary": "third command and verification aliases",
+            "verification": "`aw delta --evidence`",
+        }
+    ],
 }
 
 MACHINE_TABLE_DIMENSIONS = {
@@ -8188,26 +8368,54 @@ MACHINE_TABLE_DIMENSIONS = {
             "required_for_production": True,
         },
     ],
+    # `EC Dimension` and `Contract` -- the third spelling of the dimension key
+    # and summary alias sets. The third runner spelling, `Command`, is
+    # unreachable (#3280) and no subject can carry it.
+    "third-dimension-aliases": [
+        {
+            "dimension": "stability",
+            "runner": "`aw stab`",
+            "summary": "stability by third alias",
+            "required_for_production": True,
+        },
+        {
+            "dimension": "behavior",
+            "summary": "declared by behavior surfaces or verification contract",
+            "required_for_production": True,
+        },
+    ],
 }
 
 
 def assert_machine_tables_declare_surfaces_and_dimensions(
     report: dict[str, Any],
 ) -> None:
-    """Both table parsers, both alias sets, both defaults, and the drop guard.
+    """Both table parsers, every alias spelling, both defaults, and the drop guard.
 
-    The four surface subjects cover the column vocabulary in two halves --
-    `Surface`/`Commands`/`Owns`/`Verification` and the aliases
-    `Kind`/`CLI`/`Purpose`/`Gate` -- so no single alias carries a column on its
-    own. The blank kind cell reaches the `CLI` default, which a filled column
-    cannot.
+    `find_table_column` matches on exact normalized equality, so each spelling of
+    each column is a separately deletable arm and a spelling no document writes
+    is bound by nothing. The surface subjects therefore walk the whole vocabulary
+    across three groups -- `Surface`/`Commands`/`Owns`/`Verification`, the
+    aliases `Kind`/`CLI`/`Purpose`/`Gate`, and the third spellings `Command` and
+    `Evidence` -- so no single alias carries a column on its own. The blank kind
+    cell reaches the `CLI` default, which a filled column cannot.
+
+    The dimension subjects do the same for `Dimension`/`Runner`/`Summary`,
+    `Category`/`Tool`/`Evidence` and `EC Dimension`/`Contract`, which is every
+    spelling but one. `Command` as a dimension runner column is unreachable: the
+    surface parser accepts that column too and is tried first, so such a table is
+    claimed as a surface table -- the dimension is lost and a phantom `CLI`
+    surface takes its place (#3280). No document can bind it, and none here
+    pretends to.
 
     The drop guard is the sharp one. It fires only when the command cell is
-    empty *and* the summary and verification are blank, and `table_cell` returns
-    the literal `-` for a missing or blank cell, so a table that declares a third
-    column can never satisfy it. `Two Columns` and `Three Columns` carry the same
-    rows and disagree about which survive, which is not expressible in one
-    document.
+    empty *and* the summary and verification are both blank. `table_cell`
+    returns the literal `-` for a blank cell of a column the table *declares*,
+    while an undeclared column yields the empty string, so declaring either a
+    summary or a verification column puts a `-` in the guard's way and the guard
+    can never fire on that table. `Two Columns` and `Three Columns` carry the
+    same rows and disagree about which survive, which is not expressible in one
+    table -- it takes the pair.
 
     The dimension table's runner is asserted with its backticks intact, against
     the field route's stripped spelling elsewhere in this case. The two routes
@@ -8229,20 +8437,217 @@ def assert_machine_tables_declare_surfaces_and_dimensions(
     assert report["capability_count"] == len(_MACHINE_TABLE_SUBJECTS), report
 
 
-def assert_migration_leaves_a_machine_table_alone(migrated: str) -> None:
-    """Migration does not convert a machine table into contract fields.
+def assert_a_canonical_machine_table_document_short_circuits(
+    before: str, after: str, envelope: dict[str, Any]
+) -> None:
+    """Migration declines a document already in canonical form, byte for byte.
 
-    The table is re-emitted verbatim and no `Surfaces:` field appears beside it,
-    so the surfaces are re-parsed from the table on every read. That is stable
-    and lossless -- it is asserted here because it was unbound, and because the
-    obvious alternative, rendering the parsed items into a `Surfaces:` field,
-    would silently drop each item's `Verification` cell: `render_surface_field_items`
-    has nowhere to put it.
+    `MACHINE_TABLE_DOCUMENT` carries both feature roots and a `Feature Class` on
+    every capability, so `aw capability migrate` short-circuits: the envelope
+    answers `unchanged` / `changed: false` and no renderer runs at all.
+
+    Those two envelope fields are one observation, not two -- `capability.rs`
+    derives `changed` from whether its own stdout starts with `"migrated "` and
+    derives `status` from `changed` -- so the byte equality below is the
+    independent half, and the only one able to catch a run that rewrote the
+    document while reporting a no-op. Asserted anyway, because a short circuit
+    that stopped announcing itself would be a protocol change an adopter reads.
+
+    This leg therefore claims nothing about what migration *renders*; the leg it
+    replaces did, reading the untouched file and reporting the absence of a
+    rendered `Surfaces:` field as a product property. It was a property of its
+    own input, satisfied by a command that did nothing --
+    `assert_relocation_renders_a_machine_table_as_contract_fields` below drives
+    the route that does render, and reaches the opposite answer.
+
+    The whole document is compared as one string because per-line containment is
+    what let that pass: it binds neither order nor adjacency nor the absence of
+    additions, and the table's own separator `|---|---|---|---|` is a substring
+    of the work-root separator beside it, so even that line's containment was
+    satisfied by a table this leg is not about.
     """
-    body = _capability_section_body(migrated, "Table Surfaces")
-    assert "Surfaces:" not in body, body
-    for line in _MACHINE_TABLE_SUBJECTS[0][2].splitlines():
-        assert line in body, (line, body)
+    assert envelope["status"] == "unchanged", envelope
+    assert envelope["changed"] is False, envelope
+    assert after == before, (before, after)
+
+
+#: The exact contract-field block README relocation renders in place of each
+#: machine table, written out per subject rather than derived from the table.
+#:
+#: Two product defects show in these lines and are pinned as they render, with
+#: the issue named, so that fixing either one fails this leg by design rather
+#: than silently widening what it accepts:
+#:
+#: * every `- CLI: ... ` item has lost its `Verification` cell, because
+#:   `render_surface_field_items` renders three of a surface's four fields and
+#:   has nowhere to put the fourth (#3276);
+#: * all three table-declared dimensions render with **doubled** backticks
+#:   around their runner, because the table parser keeps the cell's backticks
+#:   and the renderer wraps unconditionally (#3278). Three, not two: the
+#:   `Third Dimension Aliases` subject this round added is one of them.
+#:
+#: Pinning a defect as it renders is the opposite of what this case does for
+#: #3264, #3265, #3272 and #3274, and the difference is where the defect
+#: sits relative to the property the leg claims. Those four sit *outside* it --
+#: a converged document's bytes, a round trip, a re-render on another route --
+#: so pinning them would hold a loss in place inside an assertion that is not
+#: about it. These two sit *inside* it: this leg's property is that relocation
+#: renders each machine table as exactly this block, and there is no way to
+#: assert a block exactly while excusing two of its lines. The weaker
+#: alternative -- assert only the fields that survive -- is the shape that
+#: produced the vacuous leg this one replaces.
+_RELOCATED_MACHINE_TABLE_BLOCKS = {
+    "Table Surfaces": (
+        "Surfaces:",
+        "- CLI: `aw alpha` - owns the alpha path",
+        "- CLI: `aw gamma` - kind column empty, defaults",
+        "EC Dimensions:",
+        "- behavior: `true` - behaviour of table-surfaces",
+    ),
+    "Alias Surfaces": (
+        "Surfaces:",
+        "- HTTP: `aw beta` - purpose alias",
+        "EC Dimensions:",
+        "- behavior: `true` - behaviour of alias-surfaces",
+    ),
+    "Two Columns": (
+        "Surfaces:",
+        "- CLI: `aw kept`",
+        "EC Dimensions:",
+        "- behavior: `true` - behaviour of two-columns",
+    ),
+    # The two rows the drop guard removed on the report side stay removed
+    # through the render, and the two the declared `Summary` column kept come
+    # back carrying the literal `-` that `table_cell` returned for their blank
+    # cell. The guard and the render agree, which is the half of this pair a
+    # reader would otherwise have to take on trust.
+    "Three Columns": (
+        "Surfaces:",
+        "- CLI: `aw kept` - kept",
+        "- HTTP: -",
+        "- SDK: -",
+        "EC Dimensions:",
+        "- behavior: `true` - behaviour of three-columns",
+    ),
+    "Dimension Table": (
+        "Surfaces:",
+        "- CLI: `aw dimension-table` - surface of dimension-table",
+        "EC Dimensions:",
+        "- behavior: ``true`` - behaviour by table",
+    ),
+    "Dimension Aliases": (
+        "Surfaces:",
+        "- CLI: `aw dimension-aliases` - surface of dimension-aliases",
+        "EC Dimensions:",
+        "- security: ``aw sec`` - security by alias",
+    ),
+    "Third Surface Aliases": (
+        "Surfaces:",
+        "- SDK: `aw delta` - third command and verification aliases",
+        "EC Dimensions:",
+        "- behavior: `true` - behaviour of third-surface-aliases",
+    ),
+    "Third Dimension Aliases": (
+        "Surfaces:",
+        "- CLI: `aw third-dimension-aliases` - surface of third-dimension-aliases",
+        "EC Dimensions:",
+        "- stability: ``aw stab`` - stability by third alias",
+    ),
+}
+
+
+def _contract_field_block(body: str) -> list[str]:
+    """The unbroken run of contract-field lines a relocated section renders.
+
+    Read as the ordered line list from the first `Surfaces:` or `EC Dimensions:`
+    header to the blank line that ends the run, so an item inserted, reordered,
+    or dropped anywhere inside it fails.
+    """
+    lines = body.splitlines()
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if line in ("Surfaces:", "EC Dimensions:")
+    ]
+    assert starts, body
+    block: list[str] = []
+    for line in lines[starts[0] :]:
+        if not line.strip():
+            break
+        block.append(line)
+    return block
+
+
+def assert_relocation_renders_a_machine_table_as_contract_fields(
+    relocated: str, report: dict[str, Any]
+) -> None:
+    """The route that does render turns every machine table into fields.
+
+    Relocating the identical contract out of `README.md` rewrites all eight
+    tables as `Surfaces:` and `EC Dimensions:` items and leaves no table
+    behind, which is the behaviour the leg this replaces asserted does not
+    happen. Each block is compared as its exact ordered line list.
+
+    Two contract fields do not survive the round trip, and the report is
+    asserted alongside the rendered text so the loss is visible as a parsed
+    value and not only as a missing substring. These two loops are not a second
+    copy of the text comparison above: that one reads the migrated *document*,
+    these read the *report* `aw capability report` parses back out of it, and a
+    product can lose a field on one surface without losing it on the other.
+
+    * no relocated surface carries a `verification` any more (#3276). Four
+      surfaces across three capabilities declared one; the loop runs over all
+      five capabilities whose surfaces were tables, so the two that declared no
+      verification column contribute a true-but-empty check and are named here
+      rather than counted as coverage;
+    * the three capabilities whose *dimensions* were tables lose their runner
+      (#3278), while the five whose dimensions were contract fields keep
+      theirs -- the contrast is what attributes the loss to the table route
+      rather than to relocation in general.
+
+    The out-of-enum `nonsense` dimension is gone from the document as well. On
+    the contract-field route that line is re-rendered and merely reaches no
+    reader (#3274); here the drop happens before the render, so relocation
+    deletes it. Same defect, destructive on this route.
+    """
+    for title, expected in _RELOCATED_MACHINE_TABLE_BLOCKS.items():
+        body = _capability_section_body(relocated, title)
+        # Each subject's own table rows, not two hardcoded header spellings.
+        # `| Surface |` and `| Dimension |` matched five of these eight headers
+        # and missed every alias-headed one -- including `| EC Dimension | Tool
+        # | Contract |`, which does not contain `| Dimension |` -- so the
+        # negative that carries this leg's whole point went unchecked exactly
+        # where this round's new coverage lives. The separator row is excluded
+        # deliberately: `|---|---|---|` is a substring of the work-root
+        # separator beside it, so asserting its absence would fail on a correct
+        # product for a reason that has nothing to do with this leg.
+        for row in _MACHINE_TABLE_ROWS[title]:
+            assert row not in body, (title, row, body)
+        assert _contract_field_block(body) == list(expected), (
+            title,
+            _contract_field_block(body),
+            list(expected),
+        )
+    assert "nonsense" not in relocated, relocated
+
+    # #3276: four surfaces across three capabilities declared a verification
+    # cell and none survives. Keyed off `MACHINE_TABLE_SURFACES` so a subject
+    # added to one and forgotten in the other is not silently skipped here --
+    # which means the two capabilities that declared no verification column are
+    # walked too, and contribute nothing.
+    for cap_id in MACHINE_TABLE_SURFACES:
+        for surface in _capability_by_id(report, cap_id)["surfaces"]:
+            assert "verification" not in surface, (cap_id, surface)
+
+    # #3278: the capabilities whose *dimensions* were tables lose their runner,
+    # and the ones whose dimensions were contract fields keep theirs. The
+    # contrast is what attributes the loss to the table route.
+    for _, cap_id, *_ in _MACHINE_TABLE_SUBJECTS:
+        declared = _capability_by_id(report, cap_id)["ec_dimensions"][0]
+        if cap_id in MACHINE_TABLE_DIMENSIONS:
+            assert "runner" not in declared, (cap_id, declared)
+        else:
+            assert declared["runner"] == "true", (cap_id, declared)
 
 
 # --- The efficiency contract fields ----------------------------------------
@@ -8336,24 +8741,30 @@ def assert_efficiency_fields_render_their_generated_section(migrated: str) -> No
     # belongs to. That is the whole of #3272, and it is why the section is read
     # here as a sequence of blocks in document order instead of as a field of the
     # capability that produced it.
+    # Each block is compared as its exact ordered line list, not as a mapping of
+    # the lines that happened to contain a colon. A dict binds neither the order
+    # of the two fields nor the blank lines that frame them, and it silently
+    # discards any line the renderer added without one -- so a section emitting
+    # `Cube` above `Operating point`, or emitting a third line of prose between
+    # them, read identically to a correct one.
     lines = migrated.splitlines()
     blocks = []
     for index, line in enumerate(lines):
         if line.strip() != EFFICIENCY_SECTION_HEADING:
             continue
-        values = {}
+        block = []
         for follower in lines[index + 1 :]:
             if follower.startswith("#"):
                 break
-            if ":" in follower:
-                key, _, value = follower.partition(":")
-                values[key.strip()] = value.strip()
-        blocks.append(values)
+            block.append(follower)
+        blocks.append(block)
     expected = [
-        {
-            "Operating point": point if point is not None else "-",
-            "Cube": cube if cube is not None else "-",
-        }
+        [
+            "",
+            f"Operating point: {point if point is not None else '-'}",
+            f"Cube: {cube if cube is not None else '-'}",
+            "",
+        ]
         for _title, _cap_id, point, cube, _dimension in _EFFICIENCY_SUBJECTS
     ]
     assert blocks == expected, (blocks, expected)
