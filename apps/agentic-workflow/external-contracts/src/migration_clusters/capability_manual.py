@@ -524,7 +524,12 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         # constants, which would collapse three distinct legacy capabilities
         # into three identical-looking sections.
         lumen_reference.assert_migrated_legacy_sections_carry_their_row_content(
-            legacy_migrated
+            legacy_migrated,
+            # Format migration erases document-stored tracker state, asserted
+            # directly one leg above, so every section must render `Root WI: -`.
+            tracker_state={
+                title: "-" for title in lumen_reference.LEGACY_ROW_TRACKER_STATE
+            },
         )
         # The negative half: migration must emit a document the checker accepts,
         # not merely one containing the right substrings.
@@ -646,11 +651,11 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         # renderer that ignored `capability.index_summary` and printed one
         # constant row per capability produced the byte-identical table. This
         # input differs in every column and every row, which is what makes the
-        # per-capability carry-through observable at all -- and it is the only
-        # branch on which `Maturity` and `Production` are reachable, because the
-        # fallback derives them from a verification contract this fixture does
-        # not declare and from a `release_scope` that is false whenever no index
-        # table exists.
+        # per-capability carry-through observable at all. It is *not*, as an
+        # earlier revision claimed, the only branch on which `Production` is
+        # reachable: the fallback renders that column for every capability of
+        # every index-less document. What this branch alone reaches is a
+        # `Production` value the product did not derive.
         cap_path.write_text(
             lumen_reference.VARIED_INDEX_DOCUMENT, encoding="utf-8"
         )
@@ -660,6 +665,29 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
             varied_index_text
         )
         lumen_reference.assert_migration_derives_the_split(varied_index_text)
+
+        # The same index, written at the other heading level the parser accepts.
+        # Every index-carrying document above writes `###`, so the level-2 arm
+        # of that guard was free and an author's `## Capability Index` would be
+        # read as no index at all.
+        cap_path.write_text(
+            lumen_reference.LEVEL_2_INDEX_DOCUMENT, encoding="utf-8"
+        )
+        final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
+        lumen_reference.assert_migration_carries_every_index_column(
+            cap_path.read_text(encoding="utf-8")
+        )
+
+        # And the same index with its `Notes` column removed, which is the only
+        # input that reaches the promise fallback behind that cell: a blank cell
+        # does not, because `table_cell` turns an empty cell into `-`.
+        cap_path.write_text(
+            lumen_reference.NO_NOTES_COLUMN_DOCUMENT, encoding="utf-8"
+        )
+        final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
+        lumen_reference.assert_migration_falls_back_to_the_promise_for_notes(
+            cap_path.read_text(encoding="utf-8")
+        )
 
         # Migration fills silence only. A class the author already stated has to
         # survive even where the derivation would have chosen the other one,
@@ -699,6 +727,21 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
             relocated_text = relocation_cap.read_text(encoding="utf-8")
             lumen_reference.assert_readme_relocation_preserves_tracker_state(
                 relocation_readme.read_text(encoding="utf-8"), relocated_text
+            )
+            # Same renderer as the format-migration leg, reached from the other
+            # entry point and -- unlike that one -- with tracker state live, so
+            # the byte-exact block is asserted here against the rows' own WIs.
+            # Binding it twice is what keeps `Root WI` a *read* rather than a
+            # constant either caller happens to agree with.
+            lumen_reference.assert_migrated_legacy_sections_carry_their_row_content(
+                relocated_text,
+                tracker_state=lumen_reference.LEGACY_ROW_TRACKER_STATE,
+            )
+            lumen_reference.assert_relocated_document_is_the_declared_frame(
+                relocated_text
+            )
+            lumen_reference.assert_readme_residue_forwards_to_the_contract(
+                relocation_readme.read_text(encoding="utf-8")
             )
             # And the relocated document must be one the checker accepts, not
             # merely one carrying the right substrings.
@@ -774,6 +817,24 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 False,
                 lumen_reference.UNCLASSIFIED_SECTION_TITLES,
             ),
+            (
+                "no_summary",
+                lumen_reference.NO_SUMMARY_SECTION_README,
+                False,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
+            ),
+            (
+                "existing_pointer",
+                lumen_reference.EXISTING_POINTER_SECTION_README,
+                False,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
+            ),
+            (
+                "derived_inventory",
+                lumen_reference.DERIVED_INVENTORY_SECTION_README,
+                False,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
+            ),
         ):
             with project_fixture() as section_root:
                 section_readme = section_root / "README.md"
@@ -818,8 +879,29 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 # through field block is at risk on this path too -- and on a
                 # different call site from the format-migration one above.
                 lumen_reference.assert_sections_carry_their_own_contract(
-                    section_text, expected_order
+                    section_text,
+                    expected_order,
+                    item_overrides={
+                        "no_summary": lumen_reference.NO_SUMMARY_ITEM_OVERRIDES,
+                        "derived_inventory": (
+                            lumen_reference.DERIVED_INVENTORY_ITEM_OVERRIDES
+                        ),
+                    }.get(name),
                 )
+                if name == "derived_inventory":
+                    # Every capability in every other document declares a gate
+                    # inventory, so neither the derivation behind a missing one
+                    # nor the `-` placeholder for an empty one was reachable.
+                    lumen_reference.assert_relocation_derives_a_missing_gate_inventory(
+                        section_text
+                    )
+                if name == "no_summary":
+                    # Every other document declares both a command and a summary
+                    # for every surface and dimension, so three of the four arms
+                    # of each item renderer were never entered.
+                    lumen_reference.assert_relocation_carries_a_command_only_item(
+                        section_text
+                    )
                 # Relocation is a move, not a copy. Only the legacy-table shape
                 # ever re-read the README it emptied, so on every section-shaped
                 # input the residue write was unobservable and leaving the whole
@@ -827,6 +909,14 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 lumen_reference.assert_section_relocation_empties_the_readme(
                     section_readme.read_text(encoding="utf-8"), expected_order
                 )
+                if name == "existing_pointer":
+                    # The residue's early return. Every other input arrives
+                    # without a `## Capability Contract` heading, so the branch
+                    # that recognizes one -- and therefore idempotence across a
+                    # second migrate run -- was never entered.
+                    lumen_reference.assert_relocation_keeps_an_authored_contract_pointer(
+                        section_readme.read_text(encoding="utf-8")
+                    )
                 if name == "varied_work_root":
                     # Every other document writes one constant work-root row for
                     # all eight roots, which leaves five of the row's seven cells
@@ -1035,7 +1125,7 @@ def verify(case_id: str) -> list[str]:
                 "a relocated capability with no declared Root WI falls back to its first work root's WI in both the index column and the section field, with the second work root's WI appearing nowhere, which is the branch of that resolution every Root-WI-declaring input leaves unreachable",
                 "aw capability migrate emits the two canonical feature roots exactly when its input classified something, asserted in both directions across relocation shapes that differ in that one property, so neither an unconditional renderer nor one that never emits them can pass",
                 "a retired capability is excluded from the verified capability and verified claim counts as well, asserted under --verify where those two accumulators are populated and the classes differ in both, which is the half of the retired filter an unverified report holds vacuously",
-                "each legacy row's own Current State, Gaps, and Evidence land in the capability section it becomes, asserted per row against pairwise-distinct cells, so migration cannot turn three distinct legacy capabilities into three sections describing the same thing",
+                "each legacy row's own Current State, Gaps, and Evidence land in the capability section it becomes, asserted as the whole byte-exact section body per row against pairwise-distinct cells rather than as substrings, and bound on both entry points -- format migration, where document-stored tracker state is erased and every Root WI must therefore render `-`, and README relocation, where it is live and each row's own WI must render -- so no field of the rendered section can be a constant one of the two callers happens to agree with",
                 "every rendered capability section carries its own Promise, Type, Required Verification, Surfaces, EC Dimensions, Gate Inventory, and Dependencies rather than a shared one, asserted on both re-rendering paths -- format migration and README relocation -- against values made pairwise distinct per capability, down to the surface kind and the EC dimension kind, which are separate reads from the command and summary beside them and stayed constant while the assembled item varied",
                 "the Dependencies field is asserted in both directions, present for the two capabilities that declare one and absent for the four that do not, because no capability declared one at all and the whole block was deletable while the product's own carry-through comment names product dependencies",
                 "a capability's Surfaces, EC Dimensions, and Gate Inventory keep every item in declaration order, asserted on the one input where a capability declares two of each, because every other document declares exactly one item per list and rendering only the first element of each is byte-identical on those",
@@ -1043,8 +1133,18 @@ def verify(case_id: str) -> list[str]:
                 "the Capability Index Maturity column is asserted on the relocation branch as well, against each capability's own Required Verification, because that branch derives it rather than carrying it and the derivation stopped being constant once the fixture varied the field it reads",
                 "a promise containing a pipe is escaped into the Capability Index Notes cell it falls back into, asserted through a row reader that splits on unescaped pipes only, so an unescaped pipe adds a column and fails to parse rather than being silently absorbed",
                 "the README a section-shaped capability contract was relocated out of keeps only a forwarding pointer and keeps everything that was never part of that contract, asserted on every section-shaped relocation, so relocation can neither leave a second divergent copy of the contract behind nor truncate the README around it",
-                "every Capability Index cell a capability arrived with is carried through per capability, asserted across all five non-identity columns on an input that differs in every column and every row, which is the only branch on which Production is reachable at all -- Maturity is reachable on the derived branch too and is asserted there separately",
+                "every Capability Index cell a capability arrived with is carried through per capability, asserted across all five non-identity columns on an input that differs in every column and every row, which is the branch on which a Production value the product did not derive is reachable -- the derived Production and Maturity values are reachable on the index-less branch too and are asserted there separately",
                 "a relocated capability keeps its own Status, the prose prelude above its fields, and the Impl and Verification columns derived from that status, asserted on the one input whose capabilities are not uniformly verified -- three distinct derived pairs across four statuses, so neither column can be a constant",
+                "the Capability Index header row and its alignment row are asserted as exact literals, because every reader of that table finds its columns by name and would keep passing against a renamed column or a moved right-alignment",
+                "the derived Production column is asserted as `not_ready` for every capability of every index-less document -- six capabilities across five documents -- because that derivation runs on every such document and its answer was read back by nothing",
+                "the Capability Index is recognized at either heading level the parser accepts, asserted on a `##` index whose columns come through identically to the `###` index every other document here writes, so the level-2 arm of that guard is not free",
+                "a Capability Index that declares no Notes column at all falls back to each capability's own promise in that cell, which is the only input that reaches the fallback -- a blank cell does not, because an empty cell is read as `-` -- with the four columns the document still declares carried through unchanged",
+                "the Root WI fallback is asserted against every spelling the product treats as an empty table value, one spelling per capability, so a fallback that recognizes only the literal `-` leaves the others standing as rendered tracker state",
+                "the document relocation creates is asserted as its whole declared frame -- the project title, Brief, the machine-readable-contract note, and the Capabilities heading in that order -- against a project name that appears nowhere in the input, so a frame that dropped a heading, reordered them, or hard-coded the title cannot pass",
+                "the forwarding pointer left in the emptied README is asserted as its exact block including the relative link to CAPABILITIES.md, because a pointer that names the contract without linking to it is not a pointer",
+                "a README that already carries an authored `## Capability Contract` heading keeps it verbatim and gains no second pointer, which is the early return in the residue renderer that every other input leaves unentered and the reason a second migrate run is idempotent",
+                "a surface and an EC dimension that declare a command but no summary render the command-only form, asserted on the one input that declares one, because every other document declares both halves for every item and three of the four arms of each item renderer were never entered",
+                "a capability that declared no gate inventory gets the one its work-root gates imply, and a capability that declared only empty-table spellings gets the single `-` placeholder with its own work-root gate not derived in behind it, asserted on the same document because each alone reads as the other's success",
                 "Lumen's production capability contract is byte-identical before and after the fixture run",
             ]
         elif case_id == "capability-control-plane-missing-readme-initialization":

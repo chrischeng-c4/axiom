@@ -1603,6 +1603,7 @@ def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
         f"the migrated legacy index and its sections cover different "
         f"capabilities; index={sorted(index_titles)} sections={sorted(section_titles)}"
     )
+    assert_legacy_index_rows_read_unverified(migrated)
 
     # Column 2 -- the rendered `Root WI` -- is asserted by
     # `assert_migration_erases_legacy_row_tracker_state`, and the history of
@@ -1646,8 +1647,47 @@ def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
     # the conclusion of an exhausted search rather than its premise.
 
 
-def assert_migrated_legacy_sections_carry_their_row_content(migrated: str) -> None:
-    """Each legacy row's own cells land in the section it becomes.
+def _legacy_row_id(title: str) -> str:
+    return title.strip().lower().replace(" ", "-")
+
+
+def _expected_legacy_section_body(
+    title: str, state: str, gaps: str, wi: str, evidence: str
+) -> str:
+    """`render_legacy_capability_section`'s whole literal, for one row.
+
+    Restated as one block rather than as a handful of substrings because the
+    renderer *is* one `format!` literal (`capability.rs:9209-9223`): every field
+    in it that the row does not supply -- `Status`, `Required Verification`, and
+    the four readiness cells of the work-root row -- is a constant the product
+    chose, and a per-substring assertion on the row-derived cells leaves all of
+    them free. That is not a cosmetic gap: `Required Verification: smoke` and
+    `planned | planned | smoke` are what mark a freshly migrated legacy row as
+    unverified, and rewriting them to `implemented | verified | conformance`
+    makes `aw capability migrate` mint a green readiness claim for a contract no
+    one has written yet.
+    """
+    cap_id = _legacy_row_id(title)
+    feature_class = "core" if cap_id in LEGACY_CORE_ROW_IDS else "non_core"
+    return (
+        f"\nID: {cap_id}\n"
+        f"Root WI: {wi}\n"
+        f"Status: candidate\n"
+        f"Feature Class: {feature_class}\n"
+        f"Required Verification: smoke\n"
+        f"Promise:\n{state}\n"
+        f"Gate Inventory:\n- {evidence}\n"
+        f"\n"
+        f"| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n"
+        f"|---|---|---:|---|---|---|---|\n"
+        f"| {gaps} | epic | {wi} | planned | planned | smoke | {evidence} |\n"
+    )
+
+
+def assert_migrated_legacy_sections_carry_their_row_content(
+    migrated: str, *, tracker_state: dict[str, str]
+) -> None:
+    """Each legacy row's own cells land in the section it becomes, and nothing else does.
 
     `render_legacy_capability_section` (`capability.rs:9209-9223`) is one format
     literal that reads five cells off the row. Only the evidence cell was bound;
@@ -1659,20 +1699,29 @@ def assert_migrated_legacy_sections_carry_their_row_content(migrated: str) -> No
     Asserted per row against that row's own cells, which is only discriminating
     because `_LEGACY_ROWS` is pairwise distinct in every column; a colliding
     column would let a renderer that swapped two rows pass.
+
+    Asserted as the *whole* rendered block rather than as three substrings, for
+    the reason recorded on `_expected_legacy_section_body`: the fields the row
+    does not supply are the readiness constants, and those are precisely the ones
+    a migration must not be free to invent. Byte-exact also pins the field
+    *order* and the absence of any field the renderer does not emit -- a `Type:`
+    line spliced into every migrated legacy section, for instance, is a class the
+    author never declared and the substring form could not see.
+
+    `tracker_state` is the WI each section is expected to render, which differs
+    by entry point: format migration erases document-stored tracker state before
+    rendering, README relocation preserves it. The expectation is passed in
+    rather than assumed, so this leg can bind both callers without asserting that
+    either answer is the right one -- that disagreement is filed separately.
     """
     for title, state, gaps, _wi, evidence in _LEGACY_ROWS:
+        expected = _expected_legacy_section_body(
+            title, state, gaps, tracker_state[title], evidence
+        )
         body = _capability_section_body(migrated, title)
-        assert f"Promise:\n{state}\n" in body, (
-            f"migrated legacy section {title!r} lost its Current State "
-            f"{state!r}; section was:\n{body}"
-        )
-        assert f"| {gaps} | epic |" in body, (
-            f"migrated legacy section {title!r} lost its Gaps {gaps!r} as the "
-            f"name of its work root; section was:\n{body}"
-        )
-        assert f"- {evidence}\n" in body, (
-            f"migrated legacy section {title!r} lost its Evidence {evidence!r}; "
-            f"section was:\n{body}"
+        assert body.startswith(expected), (
+            f"migrated legacy section {title!r} is not the block its row "
+            f"renders; expected it to start with:\n{expected!r}\ngot:\n{body!r}"
         )
 
 
@@ -1787,6 +1836,63 @@ def assert_migration_derives_the_split(migrated: str) -> None:
         _assert_declared_class(migrated, cap_id, expected)
 
 
+#: The five trailing cells `render_capability_index`'s legacy branch writes for
+#: every migrated row (`capability.rs:8941-8948`).
+#:
+#: None of them comes off the row: they are the constants the product chose to
+#: mark a just-migrated legacy capability as *not yet verified*. Nothing read
+#: them back, so the whole readiness half of the migrated index could be flipped
+#: green -- `implemented | verified | conformance | ready` -- and `aw capability
+#: migrate` would ship a table asserting production readiness for capabilities
+#: whose contract has not been written, with this fixture's gate still passing.
+LEGACY_INDEX_ROW_TAIL = (
+    "planned",
+    "planned",
+    "smoke",
+    "not_ready",
+    "migrated from legacy table; confirm promise",
+)
+
+
+def assert_legacy_index_rows_read_unverified(migrated: str) -> None:
+    """Every migrated legacy index row still reads as unverified and unready."""
+    rows = _index_rows_parsed(migrated)
+    assert len(rows) == LEGACY_ROW_COUNT, rows
+    columns = ("Impl", "Verification", "Maturity", "Production", "Notes")
+    for row in rows:
+        actual = tuple(row[2:7])
+        assert actual == LEGACY_INDEX_ROW_TAIL, (
+            f"migrated legacy index row {row[0]!r} must read as unverified; "
+            f"expected {dict(zip(columns, LEGACY_INDEX_ROW_TAIL))}, got "
+            f"{dict(zip(columns, actual))}"
+        )
+
+
+#: The Capability Index header row and separator, exactly as the renderer writes
+#: them (`capability.rs:8936-8940`).
+#:
+#: Pinned as literal text because this header is not decoration: it is the key
+#: `parse_capability_index_summaries` reads the columns back by
+#: (`find_table_column`, `capability.rs:9351-9356`). Every assertion drawn from
+#: `_index_rows_parsed` locates its cells *positionally*, so renaming a column
+#: changes nothing any of them can see -- while the document the rename produces
+#: is one the product's own parser can no longer key, and the next `aw capability
+#: migrate` over it silently replaces the orphaned column with `-`.
+INDEX_HEADER_ROW = (
+    "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |"
+)
+INDEX_SEPARATOR_ROW = "|---|---:|---|---|---|---|---|"
+
+
+def assert_index_header_is_the_declared_contract(migrated: str) -> None:
+    """The rendered index carries the header its own parser keys on."""
+    expected = f"### Capability Index\n\n{INDEX_HEADER_ROW}\n{INDEX_SEPARATOR_ROW}\n"
+    assert expected in migrated, (
+        f"the rendered Capability Index must carry the declared header and "
+        f"separator; expected:\n{expected!r}\ndocument was:\n{migrated}"
+    )
+
+
 def _index_rows_parsed(migrated: str) -> list[list[str]]:
     """Every Capability Index row as its list of cells, in document order.
 
@@ -1800,6 +1906,11 @@ def _index_rows_parsed(migrated: str) -> list[list[str]]:
     Reading it with a naive `split("|")` would silently absorb that extra column
     and the corrupted table would still parse.
     """
+    # Every caller of this helper reads a *rendered* document, and every one of
+    # them addresses its cells by position -- so the header the columns are named
+    # by is invisible to all of them. Pinned here rather than at each call site
+    # so a new leg that parses rows cannot forget it.
+    assert_index_header_is_the_declared_contract(migrated)
     start = migrated.index("### Capability Index")
     rest = migrated[start + len("### Capability Index") :]
     end = rest.find("\n### ")
@@ -1998,6 +2109,88 @@ def assert_readme_relocation_preserves_tracker_state(readme: str, migrated: str)
     assert "| Capability | Current State |" not in readme, readme
 
 
+#: The title a relocated document and its residue pointer must carry. Relocation
+#: titles the document after the *project*, not after the README it moved the
+#: contract out of -- every fixture README here is headed `# Lumen` while the
+#: fixture project is `demo`, so the two are deliberately different strings and
+#: an implementation that echoed the README H1 would be visible.
+RELOCATION_PROJECT_TITLE = "Demo"
+assert RELOCATION_PROJECT_TITLE not in LEGACY_TABLE_DOCUMENT, (
+    "the relocation title must not already appear in the input document, or "
+    "'the product titled it correctly' is satisfied by copying the input"
+)
+
+
+#: The exact frame `render_relocated_capability_document` (`capability.rs:13127-13137`)
+#: wraps a relocated contract in: the title, a `## Brief` naming the project, and
+#: the `## Capabilities` preamble that tells a reader which of the three input
+#: dialects the document below is.
+RELOCATED_DOCUMENT_FRAME = (
+    "# {title}\n"
+    "\n"
+    "## Brief\n"
+    "\n"
+    "Machine-readable capability contract for {title}.\n"
+    "\n"
+    "## Capabilities\n"
+    "\n"
+    "Canonical field-style capability contracts below are machine-readable input "
+    "for `aw capability`; YAML and legacy tables are migration input only.\n"
+    "\n"
+)
+
+
+def assert_relocated_document_is_the_declared_frame(migrated: str) -> None:
+    """A relocated contract opens with the frame the product promises, byte for byte.
+
+    Everything else in this fixture reads the relocated document by *searching*
+    it -- for a section, a row, an id -- so the frame the product writes around
+    that content was never read at all. Both prose blocks were free: the `##
+    Brief` body could be rewritten to `TODO.` and the `## Capabilities` preamble,
+    which is the only thing telling a reader that the contract below is canonical
+    field style rather than migration input, could be dropped entirely. Neither
+    is decoration: relocation is the step that turns a human README into the
+    machine-readable document `aw capability` parses, and the frame is what says
+    so.
+
+    Asserted as a prefix rather than by containment so the heading *order* is
+    pinned too -- a document whose `## Capabilities` preceded its `## Brief`
+    would satisfy three containment checks and still be the wrong document.
+    """
+    expected = RELOCATED_DOCUMENT_FRAME.format(title=RELOCATION_PROJECT_TITLE)
+    assert migrated.startswith(expected), (
+        f"relocated document did not open with the declared frame; expected it "
+        f"to start with:\n{expected!r}\ngot:\n{migrated[: len(expected) + 120]!r}"
+    )
+
+
+#: What the residue pointer must forward *to*. Held as its own constant because
+#: the href is the whole point of the pointer: a heading that reads
+#: "Capability Contract" while linking somewhere else is worse than no pointer.
+README_CONTRACT_HREF = "[CAPABILITIES.md](CAPABILITIES.md)"
+
+
+def assert_readme_residue_forwards_to_the_contract(readme: str) -> None:
+    """The residue's pointer names the file the contract actually moved to.
+
+    `render_readme_capability_migration_residue` (`capability.rs:13142-13170`)
+    appends a heading, a sentence, and a link. Only the heading text and the bare
+    string `CAPABILITIES.md` were bound, and both survive an implementation that
+    retargets the href -- `[CAPABILITIES.md](docs/nowhere.md)` still contains
+    `CAPABILITIES.md` and still carries the heading. The residue is the *only*
+    thing left in the README after relocation takes the table away, so a broken
+    href is the difference between a reader finding the contract and losing it.
+    """
+    expected = (
+        f"{README_CONTRACT_POINTER}\n\nMachine-readable capability contract for "
+        f"{RELOCATION_PROJECT_TITLE}. Full contract:\n{README_CONTRACT_HREF}.\n"
+    )
+    assert expected in readme, (
+        f"residue did not carry the pointer block; expected:\n{expected!r}\n"
+        f"README was:\n{readme}"
+    )
+
+
 #: Per-capability tracker state for the section-shaped relocation fixtures. The
 #: values are distinct so a renderer that emitted one capability's `Root WI` for
 #: every row could not satisfy the assertions drawn from them.
@@ -2055,7 +2248,10 @@ assert len({MEMBER_SURFACE_KIND[member[0]] for member in _ALL_MEMBERS}) == len(
 
 
 def assert_sections_carry_their_own_contract(
-    migrated: str, titles: tuple[str, ...]
+    migrated: str,
+    titles: tuple[str, ...],
+    *,
+    item_overrides: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Every rendered capability section carries its *own* contract fields.
 
@@ -2090,9 +2286,16 @@ def assert_sections_carry_their_own_contract(
     for the two members that declare one, absent for the four that do not --
     because a renderer that emitted the block unconditionally would attribute a
     dependency edge to capabilities that never claimed one.
+
+    `item_overrides` lets one input declare a differently *shaped* surface or EC
+    dimension item -- a command with no summary -- without exempting that
+    capability from the rest of the block. The alternative, skipping the
+    capability, would trade the arm this binds for the six fields it stops
+    binding on that document.
     """
     for title in titles:
         body = _capability_section_body(migrated, title)
+        overrides = (item_overrides or {}).get(title, {})
         dependencies = _member_dependencies(title)
         if dependencies:
             expected_dependencies = "Dependencies:\n" + "".join(
@@ -2114,14 +2317,19 @@ def assert_sections_carry_their_own_contract(
                 "required verification",
                 f"Required Verification: {_member_required_verification(title)}\n",
             ),
-            ("surfaces", f"Surfaces:\n- {MEMBER_SURFACE_ITEM[title]}\n"),
+            (
+                "surfaces",
+                f"Surfaces:\n- {overrides.get('surfaces', MEMBER_SURFACE_ITEM[title])}\n",
+            ),
             (
                 "EC dimensions",
-                f"EC Dimensions:\n- {MEMBER_EC_DIMENSION_ITEM[title]}\n",
+                "EC Dimensions:\n- "
+                f"{overrides.get('ec_dimensions', MEMBER_EC_DIMENSION_ITEM[title])}\n",
             ),
             (
                 "gate inventory",
-                f"Gate Inventory:\n- {MEMBER_GATE_INVENTORY_ITEM[title]}\n",
+                "Gate Inventory:\n- "
+                f"{overrides.get('gate_inventory', MEMBER_GATE_INVENTORY_ITEM[title])}\n",
             ),
         ):
             assert expected in body, (
@@ -2376,6 +2584,80 @@ assert MULTI_ITEM_SECTION_README.count(MULTI_ITEM_SURFACE_ITEM) == 1, (
 )
 
 
+#: Relocation input where one capability declares a Surface and an EC Dimension
+#: as a command with *no* summary.
+#:
+#: `render_surface_field_items` (`capability.rs:9153-9174`) and
+#: `render_ec_dimension_field_items` (`capability.rs:9176-9198`) are each a
+#: four-arm match on whether the item has commands and whether it has a summary.
+#: Every other document here declares both halves for every item, so only the
+#: two-field arm was ever entered. The command-only arm -- the shape an author
+#: writes when the command *is* the description -- could be replaced by
+#: `String::new()`, which drops the surface out of the migrated contract
+#: entirely while every other assertion here still passes.
+NO_SUMMARY_TITLE = "Security Hardening"
+_NO_SUMMARY_MEMBER = next(
+    member for member in _ALL_MEMBERS if member[0] == NO_SUMMARY_TITLE
+)
+NO_SUMMARY_SURFACE_ITEM = (
+    f"{_member_surface_kind(NO_SUMMARY_TITLE)}: `{_NO_SUMMARY_MEMBER[3]}`"
+)
+NO_SUMMARY_EC_DIMENSION_ITEM = (
+    f"{_member_ec_dimension(NO_SUMMARY_TITLE)}: "
+    f"`{_member_ec_runner(NO_SUMMARY_TITLE)}`"
+)
+NO_SUMMARY_ITEM_OVERRIDES = {
+    NO_SUMMARY_TITLE: {
+        "surfaces": NO_SUMMARY_SURFACE_ITEM,
+        "ec_dimensions": NO_SUMMARY_EC_DIMENSION_ITEM,
+    }
+}
+
+
+def _no_summary_readme() -> str:
+    document = UNCLASSIFIED_SECTION_README
+    for declared, replacement in (
+        (MEMBER_SURFACE_ITEM[NO_SUMMARY_TITLE], NO_SUMMARY_SURFACE_ITEM),
+        (MEMBER_EC_DIMENSION_ITEM[NO_SUMMARY_TITLE], NO_SUMMARY_EC_DIMENSION_ITEM),
+    ):
+        marker = f"- {declared}\n"
+        assert document.count(marker) == 1, (declared, document.count(marker))
+        document = document.replace(marker, f"- {replacement}\n", 1)
+    assert " - " not in NO_SUMMARY_SURFACE_ITEM, (
+        "the command-only item must carry no summary separator, or it is not "
+        "the arm this document exists to reach"
+    )
+    return document
+
+
+NO_SUMMARY_SECTION_README = _no_summary_readme()
+
+
+def assert_relocation_carries_a_command_only_item(migrated: str) -> None:
+    """An item declared as command-only round-trips as command-only.
+
+    Two things have to hold and neither implies the other. The item must still
+    be *there* -- the arm that renders it is separately deletable, and deleting
+    it makes migration silently drop a declared surface. And it must not have
+    acquired a summary the author never wrote, which is what an implementation
+    that fell through to the two-field arm with an empty summary produces: a
+    trailing ` - ` that reads as an empty description.
+
+    Asserted on the exact item rather than by containment of the command,
+    because the command string alone also appears in the capability's work-root
+    and gate-inventory cells.
+    """
+    body = _capability_section_body(migrated, NO_SUMMARY_TITLE)
+    for label, expected in (
+        ("surface", f"Surfaces:\n- {NO_SUMMARY_SURFACE_ITEM}\n"),
+        ("EC dimension", f"EC Dimensions:\n- {NO_SUMMARY_EC_DIMENSION_ITEM}\n"),
+    ):
+        assert expected in body, (
+            f"relocated section {NO_SUMMARY_TITLE!r} lost its command-only "
+            f"{label}; expected {expected!r}, section was:\n{body}"
+        )
+
+
 def assert_relocation_carries_every_list_item(migrated: str) -> None:
     """A capability's list fields keep *every* item, in order, not just the first.
 
@@ -2471,23 +2753,52 @@ VARIED_STATUS_PRELUDES: tuple[str | None, ...] = tuple(
     VARIED_PRELUDE if member[0] == VARIED_PRELUDE_TITLE else None
     for member in _ALL_MEMBERS
 )
+#: Work-root cells that make every capability's gap read `InProgress`.
+#:
+#: `capability_gap_status_from_table` (`capability.rs:11862-11881`) resolves
+#: `implemented` + `planned` to neither `Closed` nor `Open` nor `Deferred` nor
+#: `Blocked`, so it falls through to `InProgress` -- and `InProgress` is the
+#: *only* gap state that makes `capability_impl_summary` return `partial`.
+#: Every relocation document here wrote `implemented | verified` for every work
+#: root, which closes every gap, so the `partial` arm was unreachable from this
+#: whole fixture: rewriting it to `"planned"` changed nothing. `partial` is what
+#: distinguishes a capability whose work has started from one that has not, so
+#: collapsing it into `planned` makes an in-flight capability read as untouched.
+#:
+#: Applied to the varied-status document rather than to a new one, because the
+#: `partial` arm needs both halves at once: a status that is neither `verified`
+#: nor `blocked` (or the status arms answer first), and a gap that is open. This
+#: is the one document that already varies the status half.
+_IN_PROGRESS_WORK_ROOT_CELLS = {
+    work_root: ("change", "implemented", "planned", "smoke", "`true`")
+    for member in _ALL_MEMBERS
+    for work_root in member[4]
+}
+
 VARIED_STATUS_SECTION_README = _section_readme(
     _ALL_MEMBERS,
     (None,) * len(_ALL_MEMBERS),
     "Lumen README-resident capability contract, statuses not uniform.",
     statuses=VARIED_STATUSES,
     preludes=VARIED_STATUS_PRELUDES,
+    work_root_cells=_IN_PROGRESS_WORK_ROOT_CELLS,
 )
 
 #: What each status derives for the two index columns that read it, restated
 #: from `capability_impl_summary` and `capability_verification_summary`. Restated
 #: rather than imported, because the point is to pin the product's mapping; the
 #: fixture asserts below that the restatement is not degenerate.
+#:
+#: `Impl` reads the status *and* the gaps: `blocked` and `verified` are answered
+#: by the status arms before the gaps are consulted, while `candidate` and
+#: `auditing` fall through to them -- and with `_IN_PROGRESS_WORK_ROOT_CELLS`
+#: those two derive `partial` rather than the `implemented` an all-closed
+#: document gives them.
 _STATUS_INDEX_COLUMNS = {
     "verified": ("implemented", "verified"),
     "blocked": ("blocked", "blocked"),
-    "candidate": ("implemented", "planned"),
-    "auditing": ("implemented", "planned"),
+    "candidate": ("partial", "planned"),
+    "auditing": ("partial", "planned"),
 }
 VARIED_STATUS_INDEX_COLUMNS = {
     member[0]: _STATUS_INDEX_COLUMNS[status]
@@ -2498,8 +2809,16 @@ assert len(set(VARIED_STATUS_INDEX_COLUMNS.values())) >= 3, (
     "Verification) pairs, or a constant column is indistinguishable from a "
     "derived one"
 )
-assert len({pair[0] for pair in VARIED_STATUS_INDEX_COLUMNS.values()}) > 1
 assert len({pair[1] for pair in VARIED_STATUS_INDEX_COLUMNS.values()}) > 1
+#: `Impl` has four possible answers and this document must exercise three of
+#: them, including `partial`. The fourth, `planned`, needs a capability with no
+#: work roots at all, which is a different document shape; it is asserted on the
+#: derived-inventory fixture below rather than left implied.
+assert {pair[0] for pair in VARIED_STATUS_INDEX_COLUMNS.values()} == {
+    "blocked",
+    "implemented",
+    "partial",
+}, "the varied-status shape must exercise three distinct Impl derivations"
 
 
 def assert_relocation_carries_per_capability_status(migrated: str) -> None:
@@ -2545,6 +2864,26 @@ def assert_relocation_carries_per_capability_status(migrated: str) -> None:
         assert row[4] == _member_required_verification(title), (
             f"index row {title!r} Maturity column: expected its own required "
             f"verification {_member_required_verification(title)!r}, got {row[4]!r}"
+        )
+        # The Production column's fallback is `capability_production_summary`
+        # (`capability.rs:9308-9314`). An earlier round recorded that this
+        # column "is reachable only on the carried-through branch". That was
+        # wrong, and the correction matters more than the assertion: what is
+        # unreachable from this fixture is the function's `ready` *arm* (filed as
+        # #3214), because `parse_markdown_capability_block` hardcodes
+        # `release_scope: false` (`capability.rs:10773`) and the only thing that
+        # raises it (`capability.rs:8400-8410`) raises `index_summary` with it,
+        # which routes the render past this fallback entirely -- so no
+        # markdown-authored capability reaches the arm. The *function* is called
+        # for every capability in every
+        # index-less document here -- six capabilities across five documents --
+        # and its `not_ready` answer was read back by nothing, so replacing the
+        # whole body with the constant `"ready"` shipped a table declaring six
+        # unwritten contracts production-ready with every assertion still green.
+        assert row[5] == "not_ready", (
+            f"index row {title!r} Production column: a capability parsed out of "
+            f"Markdown is never in release scope, so the derived column must "
+            f"read 'not_ready', got {row[5]!r}"
         )
         assert row[6] == MEMBER_PROMISE[title], (
             f"index row {title!r} Notes column must fall back to that "
@@ -2620,14 +2959,20 @@ def _varied_index_document() -> str:
     Format migration, not relocation: this input already carries a `Capability
     Index`, so every capability gets an `index_summary` and the renderer takes
     the carried-through branch rather than the derived-from-status fallback.
-    `Production` is reachable *only* on this branch: the fallback derives it
-    from `release_scope`, which `parse` sets true only from an index summary and
-    which is therefore false for every capability in a document with no index
-    table. `Maturity` is not -- its fallback is the capability's own
-    `Required Verification`, which this fixture varies per member, so the
-    relocation shapes render six different Maturity cells through the other
-    branch. `assert_relocation_carries_per_capability_status` binds those; this
-    document binds only the carried-through form.
+
+    An earlier revision claimed `Production` was reachable *only* on this
+    branch. That is false and was refuted by a surviving mutant: the fallback
+    calls `capability_production_summary` for every capability in every
+    index-less document, and its answer -- `not_ready`, because
+    `parse_markdown_capability_block` hardcodes `release_scope: false`
+    (`capability.rs:10773`) -- is rendered into all six rows of five relocation
+    documents. What is genuinely unreachable is the *`ready` arm* of that
+    function, which is a narrower statement about one arm rather than about the
+    column, and is disclosed as an unreached branch (filed as #3214) rather than
+    dressed up as coverage. `Maturity` was never in question either: its fallback is the
+    capability's own `Required Verification`, which this fixture varies per
+    member. `assert_relocation_carries_per_capability_status` binds both derived
+    columns; this document binds only the carried-through form.
     """
     rows = "\n".join(
         "| {title} | - | {impl} | {verification} | {maturity} | {production} | {notes} |".format(
@@ -2676,6 +3021,100 @@ def assert_migration_carries_every_index_column(migrated: str) -> None:
         assert actual == expected, (
             f"index row {title!r} lost its own cells: expected "
             f"{dict(zip(columns, expected))}, got {dict(zip(columns, actual))}"
+        )
+
+
+def _level_2_index_document() -> str:
+    """`VARIED_INDEX_DOCUMENT` with its index heading written at level 2.
+
+    `parse_capability_index_summaries` (`capability.rs:9316-9385`) accepts a
+    `Capability Index` heading at level 2 *or* level 3, and is run over the whole
+    document body (`capability.rs:8399`), so both are reachable. Every
+    index-carrying fixture here wrote `###`, which left the level-2 arm free:
+    restricting the guard to level 3 makes an author's `## Capability Index`
+    parse as no index at all, so every carried cell is silently replaced by the
+    derived fallback and the document comes back saying different things about
+    every capability than it said going in.
+    """
+    document = VARIED_INDEX_DOCUMENT
+    heading = "### Capability Index\n"
+    assert document.count(heading) == 1, document
+    return document.replace(heading, "## Capability Index\n", 1)
+
+
+LEVEL_2_INDEX_DOCUMENT = _level_2_index_document()
+
+
+def _no_notes_column_document() -> str:
+    """`VARIED_INDEX_DOCUMENT` with the `Notes` column removed from the index.
+
+    The `Notes` cell is the one index column with a fallback of its own: when
+    the summary carries no note, the renderer prints the capability's *promise*
+    instead (`capability.rs:8972-8977`). That fallback was unreachable from every
+    fixture here, and not for the obvious reason -- writing a blank cell does not
+    reach it either, because `table_cell` (`capability.rs:12134-12140`) turns an
+    empty cell into `-`, which is not empty and renders straight back as `-`.
+    The only input that reaches it is an index table with no `Notes` column at
+    all, where `notes_idx` is `None` and the field defaults to the empty string.
+
+    That is a real authoring shape -- a hand-written index carrying only the
+    readiness columns -- and the promise fallback is what keeps such a row from
+    coming out blank. Deleting the emptiness filter renders `-` for all six.
+    """
+    document = VARIED_INDEX_DOCUMENT
+    header = (
+        "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n"
+        "|---|---:|---|---|---|---|---|\n"
+    )
+    assert document.count(header) == 1, document
+    document = document.replace(
+        header,
+        "| Capability | Root WI | Impl | Verification | Maturity | Production |\n"
+        "|---|---:|---|---|---|\n",
+        1,
+    )
+    for title, cells in VARIED_INDEX_CELLS.items():
+        row = f"| {title} | - | " + " | ".join(cells[:4]) + f" | {cells[4]} |"
+        assert document.count(row) == 1, (title, row)
+        document = document.replace(
+            row, f"| {title} | - | " + " | ".join(cells[:4]) + " |", 1
+        )
+    for _title, cells in VARIED_INDEX_CELLS.items():
+        assert cells[4] not in document, (
+            f"the note {cells[4]!r} must not survive anywhere in the input, or "
+            f"the promise fallback is not what the assertion observes"
+        )
+    return document
+
+
+NO_NOTES_COLUMN_DOCUMENT = _no_notes_column_document()
+
+
+def assert_migration_falls_back_to_the_promise_for_notes(migrated: str) -> None:
+    """With no `Notes` column declared, each row's note is its own promise.
+
+    Asserted per capability against pairwise-distinct promises, so a renderer
+    that printed one capability's promise into every row is a different
+    document, and asserted alongside the four columns the same rows *did*
+    declare -- otherwise "the notes are the promises" is also satisfied by an
+    implementation that discarded the index summary entirely and derived all six
+    columns, which is the opposite failure.
+    """
+    rows = {row[0]: row for row in _index_rows_parsed(migrated)}
+    assert set(rows) == set(VARIED_INDEX_CELLS), sorted(rows)
+    for title, cells in VARIED_INDEX_CELLS.items():
+        carried = tuple(rows[title][2:6])
+        assert carried == cells[:4], (
+            f"index row {title!r} lost the columns it did declare: expected "
+            f"{cells[:4]}, got {carried}"
+        )
+        # `_index_rows_parsed` unescapes `\|` back to `|`, so the cell compares
+        # against the promise as written -- including the one that contains a
+        # pipe, whose escaping is asserted separately.
+        expected_note = MEMBER_PROMISE[title]
+        assert rows[title][6] == expected_note, (
+            f"index row {title!r} declared no note, so it must fall back to its "
+            f"own promise; expected {expected_note!r}, got {rows[title][6]!r}"
         )
 
 
@@ -2817,6 +3256,14 @@ assert SHADOWED_WORK_ROOT_WIS, (
 )
 
 
+#: The closed set of spellings `is_empty_table_value` (`capability.rs:11960-11963`)
+#: treats as "this cell says nothing": the empty string, `-`, and the two
+#: spellings of `n/a`. Cycled across the fixture's capabilities below so each is
+#: exercised by a real document rather than by the one spelling every author in
+#: this fixture happened to write.
+EMPTY_TABLE_VALUE_SPELLINGS = ("-", "n/a", "N/A")
+
+
 def _work_root_wi_readme() -> str:
     """The section README with every `Root WI` blank and the work roots numbered.
 
@@ -2825,11 +3272,26 @@ def _work_root_wi_readme() -> str:
     the capability's work roots. Every other relocation input here declares its
     own `Root WI`, so the second branch is unreachable from them and an
     implementation that deleted it entirely renders identically.
+
+    The blank is written three ways, cycling `EMPTY_TABLE_VALUE_SPELLINGS`. The
+    predicate that decides "this field is absent" is one closed match, and with
+    every capability writing `-` the two `n/a` arms were free: dropping them
+    makes `Root WI: n/a` read as a *declared* WI, so the fallback stops firing
+    and the literal string `n/a` ships into the contract as tracker state. A
+    fixture that writes one spelling cannot see that, and `n/a` in a
+    hand-written README is at least as likely as `-`.
     """
     document = UNCLASSIFIED_SECTION_README
-    for wi in SECTION_RELOCATION_WI.values():
-        document = document.replace(f"Root WI: {wi}", "Root WI: -")
+    for index, wi in enumerate(SECTION_RELOCATION_WI.values()):
+        blank = EMPTY_TABLE_VALUE_SPELLINGS[index % len(EMPTY_TABLE_VALUE_SPELLINGS)]
+        assert document.count(f"Root WI: {wi}\n") == 1, wi
+        document = document.replace(f"Root WI: {wi}\n", f"Root WI: {blank}\n", 1)
     assert "Root WI: #" not in document, document
+    for spelling in EMPTY_TABLE_VALUE_SPELLINGS:
+        assert f"Root WI: {spelling}\n" in document, (
+            f"every empty-value spelling must be exercised by a real capability; "
+            f"{spelling!r} is missing"
+        )
     for work_root, wi in WORK_ROOT_WI.items():
         marker = f"| {work_root} | change | - |"
         assert document.count(marker) == 1, (work_root, document.count(marker))
@@ -2871,6 +3333,16 @@ def assert_relocation_falls_back_to_the_first_work_root_wi(migrated: str) -> Non
         assert f"Root WI: {shadowed}" not in migrated, (
             f"{shadowed} belongs to a second work root and must not be chosen "
             f"as any capability's Root WI"
+        )
+    # The input wrote its blanks three ways, and none of them may survive as a
+    # declared value. Without this, an implementation that stopped recognizing
+    # `n/a` as empty would keep the fallback firing for the `-` capabilities --
+    # satisfying every assertion above for four of six -- while shipping the
+    # literal string `n/a` as the other two capabilities' tracker state.
+    for spelling in EMPTY_TABLE_VALUE_SPELLINGS:
+        assert f"Root WI: {spelling}\n" not in migrated, (
+            f"a relocated section still renders the empty spelling {spelling!r} "
+            f"as its Root WI instead of falling back to its first work root"
         )
     # The work-root table's own `WI` cell, which is a different assignment from
     # the field the fallback feeds (`capability.rs:9074` versus `:9023`).
@@ -2973,6 +3445,11 @@ def assert_section_relocation_empties_the_readme(
     """
     assert README_CONTRACT_POINTER in readme, readme
     assert "CAPABILITIES.md" in readme, readme
+    assert readme.count(f"\n{README_CONTRACT_POINTER}\n") == 1, (
+        f"the residue must carry exactly one contract pointer, got "
+        f"{readme.count(chr(10) + README_CONTRACT_POINTER + chr(10))}; "
+        f"README was:\n{readme}"
+    )
     for landmark in ("# Lumen", "## Brief", "## Contributing", "See CONTRIBUTING.md."):
         assert landmark in readme, (
             f"relocation must keep {landmark!r}, which was never part of the "
@@ -2988,6 +3465,243 @@ def assert_section_relocation_empties_the_readme(
             f"relocation left {member[1]!r}'s contract fields in the README; "
             f"README was:\n{readme}"
         )
+
+
+#: The author's own contract pointer, worded differently from the product's, so
+#: "the README ends up with a pointer" cannot be satisfied by either of the two
+#: branches indifferently.
+AUTHORED_CONTRACT_POINTER_BODY = (
+    "The machine-readable contract lives in [CAPABILITIES.md](CAPABILITIES.md); "
+    "this section is maintained by hand."
+)
+
+
+def _existing_pointer_readme() -> str:
+    """A section-shaped README that already carries a `## Capability Contract`.
+
+    `render_readme_capability_migration_residue` (`capability.rs:13147-13149`)
+    opens with an early return for exactly this input: a README that already
+    declares the pointer heading gets its sections stripped and nothing
+    appended. Every other relocation input here arrives without the heading, so
+    that branch was never entered, and disabling it renders a README with *two*
+    `## Capability Contract` sections -- the author's and the product's, saying
+    different things.
+
+    This is the shape a second `aw capability migrate` run sees, so the branch is
+    what makes relocation idempotent rather than accumulating.
+    """
+    document = UNCLASSIFIED_SECTION_README
+    marker = "## Contributing\n"
+    assert document.count(marker) == 1, document
+    return document.replace(
+        marker,
+        f"## Capability Contract\n\n{AUTHORED_CONTRACT_POINTER_BODY}\n\n{marker}",
+        1,
+    )
+
+
+EXISTING_POINTER_SECTION_README = _existing_pointer_readme()
+
+
+def assert_relocation_keeps_an_authored_contract_pointer(readme: str) -> None:
+    """A README that already pointed at its contract keeps its own wording.
+
+    The single-pointer count is asserted for every relocation shape; this is the
+    other half, and it is the half that says *which* pointer survived. A residue
+    that dropped the author's section and substituted the product's boilerplate
+    would still carry exactly one pointer, and would still have silently
+    rewritten prose the author maintains by hand.
+    """
+    assert AUTHORED_CONTRACT_POINTER_BODY in readme, (
+        f"relocation overwrote the pointer the README already carried; README "
+        f"was:\n{readme}"
+    )
+    generated = "Machine-readable capability contract for "
+    assert generated not in readme, (
+        f"relocation appended its own pointer to a README that already had one; "
+        f"README was:\n{readme}"
+    )
+
+
+#: The two capabilities that declare no `Gate Inventory:` at all, and what the
+#: product must derive for each.
+#:
+#: `capability_gate_inventory` (`capability.rs:9842-9848`) returns the declared
+#: inventory when there is one and otherwise derives it from the capability's
+#: claim fixtures and gate commands; `markdown_field_list_items`
+#: (`capability.rs:9139-9151`) then substitutes a single `-` when that comes back
+#: empty. Every capability in every other document here declares an inventory, so
+#: neither the derivation nor the placeholder was reachable: collapsing the
+#: derivation to `"-"` and deleting the placeholder both rendered identically.
+#:
+#: The two are separated deliberately, because they reach the `-` through
+#: different code and fail in opposite directions.
+#:
+#: `DERIVED_INVENTORY_TITLE` declares no inventory at all and has a work root
+#: whose `Gate / Evidence` cell is a backticked command, which becomes a gate and
+#: comes back as the inventory -- so an author who wired gates but wrote no
+#: inventory still gets one.
+#:
+#: `EMPTY_INVENTORY_TITLE` declares an inventory whose every entry is one of the
+#: empty-table-value spellings. `capability_raw_gate_inventory` accepts it -- the
+#: joined `-<br>n/a` is not itself an empty table value -- so the raw branch wins
+#: and derivation never runs; `markdown_field_list_items` then filters both
+#: entries away and has to substitute the placeholder. Its work root carries a
+#: gate of its own, so the derivation *would* have produced something had it run:
+#: asserting that gate is absent from the rendered inventory is what separates
+#: "the placeholder was substituted" from "the field was silently re-derived".
+#:
+#: An input with genuinely nothing to derive was tried first and abandoned. Every
+#: rendered section carries a non-empty `Required Verification` --
+#: `capability_maturity_summary` (`capability.rs:9826-9840`) defaults it to
+#: `smoke` -- so on re-parse every capability has a verification contract, which
+#: the checker requires to hold at least one claim, which it requires to hold at
+#: least one gate or fixture, each of which lands back in the derived inventory.
+#: The `refs.is_empty()` arm of `capability_gate_inventory` is therefore not
+#: reachable by any document the product's own checker accepts; only the
+#: placeholder downstream of it is. That is filed as #3215 rather than papered
+#: over with an assertion that could not be written honestly.
+DERIVED_INVENTORY_TITLE = "Standard Operational Endpoints"
+DERIVED_INVENTORY_GATE = "`aw health --project demo`"
+EMPTY_INVENTORY_TITLE = "Kubernetes-Native Deployment"
+EMPTY_INVENTORY_GATE = "`aw conf check --project demo`"
+#: The declared entries for `EMPTY_INVENTORY_TITLE`: two *different* empty-table
+#: spellings, so an implementation that only recognises the literal `-` leaves
+#: `n/a` behind and renders a one-item inventory instead of the placeholder.
+EMPTY_INVENTORY_DECLARED_ITEMS = ("-", "n/a")
+assert all(item in EMPTY_TABLE_VALUE_SPELLINGS for item in EMPTY_INVENTORY_DECLARED_ITEMS), (
+    "the declared entries have to be spellings the product treats as empty, or "
+    "the placeholder is not what is under test"
+)
+assert len(set(EMPTY_INVENTORY_DECLARED_ITEMS)) == len(EMPTY_INVENTORY_DECLARED_ITEMS), (
+    "two identical spellings would not separate 'filters every empty spelling' "
+    "from 'filters the one spelling it knows'"
+)
+DERIVED_INVENTORY_ITEM_OVERRIDES = {
+    DERIVED_INVENTORY_TITLE: {"gate_inventory": DERIVED_INVENTORY_GATE},
+    EMPTY_INVENTORY_TITLE: {"gate_inventory": "-"},
+}
+#: `Impl` for the capability whose only work root is `planned | planned`: that
+#: gap is `Open`, which is neither all-closed nor in-progress, so
+#: `capability_impl_summary` (`capability.rs:9273-9295`) falls through to its
+#: last arm. The varied-status document exercises the other three; this is the
+#: fourth.
+#:
+#: Reaching it needs the status too. That function short-circuits to
+#: `implemented` for a `verified` capability whatever its gaps say, which is what
+#: every other section in this document is, so the status here is `confirmed`:
+#: still a status the checker requires a full contract for, so nothing is
+#: relaxed, but not one that answers the question before the gaps are consulted.
+EMPTY_INVENTORY_STATUS = "confirmed"
+EMPTY_INVENTORY_IMPL = "planned"
+
+_DERIVED_INVENTORY_WORK_ROOT_CELLS = {
+    work_root: (
+        ("change", "planned", "planned", "smoke", EMPTY_INVENTORY_GATE)
+        if member[0] == EMPTY_INVENTORY_TITLE
+        else ("change", "implemented", "verified", "smoke", DERIVED_INVENTORY_GATE)
+        if member[0] == DERIVED_INVENTORY_TITLE
+        else ("change", "implemented", "verified", "smoke", "`true`")
+    )
+    for member in _ALL_MEMBERS
+    for work_root in member[4]
+}
+
+
+def _derived_inventory_readme() -> str:
+    """Drop one capability's declared inventory and empty another's.
+
+    The rewrite addresses the block by the same rule `_capability` wrote it, and
+    asserts the rewrite matched, so a change to the section builder surfaces here
+    instead of silently leaving both capabilities declaring an inventory.
+    """
+    document = _section_readme(
+        _ALL_MEMBERS,
+        (None,) * len(_ALL_MEMBERS),
+        "Lumen README-resident capability contract, one capability declaring no "
+        "gate inventory and one declaring an empty inventory.",
+        statuses=tuple(
+            EMPTY_INVENTORY_STATUS if member[0] == EMPTY_INVENTORY_TITLE else "verified"
+            for member in _ALL_MEMBERS
+        ),
+        work_root_cells=_DERIVED_INVENTORY_WORK_ROOT_CELLS,
+    )
+    replacements = {
+        DERIVED_INVENTORY_TITLE: "",
+        EMPTY_INVENTORY_TITLE: "Gate Inventory:\n"
+        + "".join(f"- {item}\n" for item in EMPTY_INVENTORY_DECLARED_ITEMS),
+    }
+    for title, replacement in replacements.items():
+        cap_id = next(member[1] for member in _ALL_MEMBERS if member[0] == title)
+        block = f"Gate Inventory:\n- {MEMBER_GATE_INVENTORY_ITEM[title]}\n"
+        assert block == f"Gate Inventory:\n- tech-design/{cap_id}.md\n", title
+        assert document.count(block) == 1, (title, document.count(block))
+        document = document.replace(block, replacement, 1)
+    return document
+
+
+DERIVED_INVENTORY_SECTION_README = _derived_inventory_readme()
+for _gate in (DERIVED_INVENTORY_GATE, EMPTY_INVENTORY_GATE):
+    assert _gate not in UNCLASSIFIED_SECTION_README, (
+        f"{_gate} must not be a string the fixture already writes elsewhere, or "
+        "'it was derived' is indistinguishable from 'it was copied'"
+    )
+    assert DERIVED_INVENTORY_SECTION_README.count(_gate) == 1, (
+        f"{_gate} has to appear exactly once in the input -- in its own work-root "
+        "row -- or the rendered inventory cannot be attributed to it"
+    )
+del _gate
+
+
+def assert_relocation_derives_a_missing_gate_inventory(migrated: str) -> None:
+    """A capability that declared no gate inventory gets the one its gates imply.
+
+    Both arms are asserted on the same document, because they fail in opposite
+    directions and each alone reads as the other's success. The capability that
+    declared nothing must come back carrying *its work-root command* -- not `-`,
+    which is what a collapsed derivation renders. The capability that declared
+    only empty spellings must come back carrying `-` -- not an empty list, which
+    is what deleting the placeholder renders and which is not a document the
+    checker accepts.
+
+    The second arm also pins which branch produced the `-`. That capability has a
+    work-root gate of its own, so a renderer that ignored the declared inventory
+    and derived one anyway would render that command here. Asserting it is absent
+    is what separates "the placeholder was substituted" from "the author's empty
+    inventory was quietly replaced".
+
+    The declared-inventory capabilities are left alone in the same document, so
+    "derive one" cannot be satisfied by an implementation that derives one for
+    everybody and discards what the author wrote.
+    """
+    derived = _capability_section_body(migrated, DERIVED_INVENTORY_TITLE)
+    assert f"Gate Inventory:\n- {DERIVED_INVENTORY_GATE}\n" in derived, (
+        f"{DERIVED_INVENTORY_TITLE!r} declared no gate inventory and must derive "
+        f"one from its work-root gate; section was:\n{derived}"
+    )
+    empty = _capability_section_body(migrated, EMPTY_INVENTORY_TITLE)
+    assert "Gate Inventory:\n- -\n" in empty, (
+        f"{EMPTY_INVENTORY_TITLE!r} declared "
+        f"{list(EMPTY_INVENTORY_DECLARED_ITEMS)!r}, every one of them an empty "
+        "table value, so the field must render the single placeholder; section "
+        f"was:\n{empty}"
+    )
+    inventory_field = empty.split("Gate Inventory:\n", 1)[1].split("Surfaces:", 1)[0]
+    assert EMPTY_INVENTORY_GATE not in inventory_field, (
+        f"{EMPTY_INVENTORY_TITLE!r} declared an empty inventory, so its work-root "
+        f"gate {EMPTY_INVENTORY_GATE} must not be derived into the field; the "
+        f"declared value is what renders. Field was:\n{inventory_field}"
+    )
+    assert EMPTY_INVENTORY_GATE in empty, (
+        f"{EMPTY_INVENTORY_GATE} has to survive somewhere in "
+        f"{EMPTY_INVENTORY_TITLE!r} -- its work-root row -- or the absence above "
+        f"proves nothing about the inventory; section was:\n{empty}"
+    )
+    rows = {row[0]: row for row in _index_rows_parsed(migrated)}
+    assert rows[EMPTY_INVENTORY_TITLE][2] == EMPTY_INVENTORY_IMPL, (
+        f"{EMPTY_INVENTORY_TITLE!r}'s only work root is open, so Impl must "
+        f"derive {EMPTY_INVENTORY_IMPL!r}, got {rows[EMPTY_INVENTORY_TITLE][2]!r}"
+    )
 
 
 def assert_relocation_root_emission(
