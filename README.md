@@ -20,6 +20,7 @@ details.
 | [cube](apps/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
 | [mesh](apps/mesh/README.md) | Mesh is the relationship/property-graph service in the Axiom service stack. |
 | [beam](apps/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
+| [workbench](apps/workbench/README.md) | Terminal-first desktop workbench that launches Claude Code, Codex, or AGY through their native CLIs in a real PTY and adds read-only context beside the session — without owning vendor sessions or AW lifecycle state. |
 | [arena](apps/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
 | [guard](apps/guard/README.md) | Security posture gate for the cclab ecosystem. |
 | [rig](apps/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
