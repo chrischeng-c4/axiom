@@ -8,80 +8,47 @@ struct DeclaredCall {
 }
 
 const DECLARED_CALLS: &[DeclaredCall] = &[
-    // Custom resources
+    // Custom resources (Lumen CRD & Fleet)
     DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "get", resource_name: None },
     DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "list", resource_name: None },
     DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "watch", resource_name: None },
     DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "update", resource_name: None },
     DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "patch", resource_name: None },
     DeclaredCall { api_group: "lumen.dev", resource: "lumens", verb: "delete", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumens/status", verb: "get", resource_name: None },
     DeclaredCall { api_group: "lumen.dev", resource: "lumens/status", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets", verb: "get", resource_name: None },
     DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets", verb: "list", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets", verb: "watch", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets", verb: "update", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets/status", verb: "get", resource_name: None },
     DeclaredCall { api_group: "lumen.dev", resource: "lumenfleets/status", verb: "patch", resource_name: None },
-    // Core resources
+    // Core resources (Namespace check + rendered children server-side apply)
     DeclaredCall { api_group: "", resource: "namespaces", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "", resource: "namespaces", verb: "list", resource_name: None },
-    DeclaredCall { api_group: "", resource: "namespaces", verb: "watch", resource_name: None },
-    DeclaredCall { api_group: "", resource: "services", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "", resource: "services", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "", resource: "services", verb: "update", resource_name: None },
     DeclaredCall { api_group: "", resource: "services", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "", resource: "services", verb: "delete", resource_name: None },
-    DeclaredCall { api_group: "", resource: "configmaps", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "", resource: "configmaps", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "", resource: "configmaps", verb: "update", resource_name: None },
     DeclaredCall { api_group: "", resource: "configmaps", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "", resource: "configmaps", verb: "delete", resource_name: None },
-    DeclaredCall { api_group: "", resource: "serviceaccounts", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "", resource: "serviceaccounts", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "", resource: "serviceaccounts", verb: "update", resource_name: None },
     DeclaredCall { api_group: "", resource: "serviceaccounts", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "", resource: "serviceaccounts", verb: "delete", resource_name: None },
-    // Workloads
-    DeclaredCall { api_group: "apps", resource: "deployments", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "apps", resource: "deployments", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "apps", resource: "deployments", verb: "update", resource_name: None },
-    DeclaredCall { api_group: "apps", resource: "deployments", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "apps", resource: "deployments", verb: "delete", resource_name: None },
+    // Workloads (StatefulSet readiness check + server-side apply)
     DeclaredCall { api_group: "apps", resource: "statefulsets", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "apps", resource: "statefulsets", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "apps", resource: "statefulsets", verb: "update", resource_name: None },
     DeclaredCall { api_group: "apps", resource: "statefulsets", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "apps", resource: "statefulsets", verb: "delete", resource_name: None },
-    // Batch
-    DeclaredCall { api_group: "batch", resource: "cronjobs", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "batch", resource: "cronjobs", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "batch", resource: "cronjobs", verb: "update", resource_name: None },
+    // Batch (CronJob server-side apply)
     DeclaredCall { api_group: "batch", resource: "cronjobs", verb: "patch", resource_name: None },
-    DeclaredCall { api_group: "batch", resource: "cronjobs", verb: "delete", resource_name: None },
-    // Autoscaling & Policy
+    // Autoscaling & Policy (HPA existence get & prune delete; PDB server-side apply)
     DeclaredCall { api_group: "autoscaling", resource: "horizontalpodautoscalers", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "autoscaling", resource: "horizontalpodautoscalers", verb: "create", resource_name: None },
-    DeclaredCall { api_group: "policy", resource: "poddisruptionbudgets", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "policy", resource: "poddisruptionbudgets", verb: "create", resource_name: None },
-    // Networking
+    DeclaredCall { api_group: "autoscaling", resource: "horizontalpodautoscalers", verb: "delete", resource_name: None },
+    DeclaredCall { api_group: "policy", resource: "poddisruptionbudgets", verb: "patch", resource_name: None },
+    // Networking (NetworkPolicy existence get, server-side apply patch, & prune delete)
     DeclaredCall { api_group: "networking.k8s.io", resource: "networkpolicies", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "networking.k8s.io", resource: "networkpolicies", verb: "create", resource_name: None },
-    // Monitoring
-    DeclaredCall { api_group: "monitoring.coreos.com", resource: "servicemonitors", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "monitoring.coreos.com", resource: "prometheusrules", verb: "get", resource_name: None },
-    // Coordination
+    DeclaredCall { api_group: "networking.k8s.io", resource: "networkpolicies", verb: "patch", resource_name: None },
+    DeclaredCall { api_group: "networking.k8s.io", resource: "networkpolicies", verb: "delete", resource_name: None },
+    // Monitoring (ServiceMonitor & PrometheusRule server-side apply)
+    DeclaredCall { api_group: "monitoring.coreos.com", resource: "servicemonitors", verb: "patch", resource_name: None },
+    DeclaredCall { api_group: "monitoring.coreos.com", resource: "prometheusrules", verb: "patch", resource_name: None },
+    // Coordination (Leader election LeaseManager)
     DeclaredCall { api_group: "coordination.k8s.io", resource: "leases", verb: "get", resource_name: None },
     DeclaredCall { api_group: "coordination.k8s.io", resource: "leases", verb: "create", resource_name: None },
     DeclaredCall { api_group: "coordination.k8s.io", resource: "leases", verb: "update", resource_name: None },
-    // Events
+    // Events (Reconcile event recorder)
     DeclaredCall { api_group: "events.k8s.io", resource: "events", verb: "create", resource_name: None },
     DeclaredCall { api_group: "events.k8s.io", resource: "events", verb: "patch", resource_name: None },
-    // RBAC
-    DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterrolebindings", verb: "get", resource_name: None },
-    DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterrolebindings", verb: "create", resource_name: None },
+    // RBAC (KubeAuthDelegatorControl list/patch/delete + auth-delegator bind)
+    DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterrolebindings", verb: "list", resource_name: None },
+    DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterrolebindings", verb: "patch", resource_name: None },
     DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterrolebindings", verb: "delete", resource_name: None },
     DeclaredCall { api_group: "rbac.authorization.k8s.io", resource: "clusterroles", verb: "bind", resource_name: Some("system:auth-delegator") },
 ];
