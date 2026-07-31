@@ -3510,6 +3510,179 @@ def _alias_spelling_readme() -> str:
 ALIAS_SPELLING_SECTION_README = _alias_spelling_readme()
 
 
+#: Relocation input in which three capabilities declare no work-root table.
+#:
+#: A capability's work-root table is rendered by four blocks
+#: (`capability.rs:9065-9126`), not one, and every document above declares at
+#: least one work root for every capability -- which is the first block. The
+#: three others synthesize a row when the table would otherwise be empty, and
+#: none of them was ever entered here: deleting all three left every rendered
+#: byte of every document unchanged.
+#:
+#: Two capabilities keep a live `Root WI`, so the section parse pushes a
+#: synthetic gap (`capability.rs:10724-10731`) and the *gap* block renders the
+#: row; a third blanks it, so there is no gap either and the fully synthesized
+#: `{title} root` row is the only thing its table carries. Two gap-derived rows
+#: rather than one because the verification cell is a fold over `(gap status,
+#: capability status)` (`capability.rs:9916-9927`) whose `verified` arm and
+#: whose `planned` fallback would otherwise be the same string on every row of
+#: the document.
+_NO_WORK_ROOT_GAP_MEMBERS = (_ALL_MEMBERS[2], _ALL_MEMBERS[3])
+_NO_WORK_ROOT_SYNTHETIC_MEMBER = _ALL_MEMBERS[4]
+#: The one capability whose gap-derived row must not read `verified`.
+NO_WORK_ROOT_PLANNED_TITLE = _NO_WORK_ROOT_GAP_MEMBERS[1][0]
+NO_WORK_ROOT_STATUSES = tuple(
+    "candidate" if member[0] == NO_WORK_ROOT_PLANNED_TITLE else "verified"
+    for member in _ALL_MEMBERS
+)
+#: The capability that declares no tracker state either, and so renders `-`.
+NO_WORK_ROOT_BLANKED_TITLES = frozenset({_NO_WORK_ROOT_SYNTHETIC_MEMBER[0]})
+#: Every capability that declares no work-root table, and therefore no claims.
+NO_WORK_ROOT_TITLES = frozenset(
+    member[0]
+    for member in _NO_WORK_ROOT_GAP_MEMBERS + (_NO_WORK_ROOT_SYNTHETIC_MEMBER,)
+)
+
+
+def _work_root_table(member: tuple[Any, ...]) -> str:
+    """The work-root table `_capability` writes for one member, verbatim."""
+    rows = "".join(
+        f"| {root} | change | - | implemented | verified | smoke | `true` |\n"
+        for root in member[4]
+    )
+    return (
+        "| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n"
+        "|---|---|---:|---|---|---|---|\n"
+        f"{rows}"
+    )
+
+
+def _no_work_root_readme() -> str:
+    document = _section_readme(
+        _ALL_MEMBERS,
+        (None,) * len(_ALL_MEMBERS),
+        "Lumen README-resident capability contract, some work roots undeclared.",
+        statuses=NO_WORK_ROOT_STATUSES,
+    )
+    for member in _NO_WORK_ROOT_GAP_MEMBERS + (_NO_WORK_ROOT_SYNTHETIC_MEMBER,):
+        table = _work_root_table(member)
+        assert document.count(table) == 1, (member[0], document.count(table))
+        document = document.replace(table, "", 1)
+    blanked = f"Root WI: {SECTION_RELOCATION_WI[_NO_WORK_ROOT_SYNTHETIC_MEMBER[0]]}\n"
+    assert document.count(blanked) == 1, blanked
+    return document.replace(blanked, "Root WI: -\n", 1)
+
+
+NO_WORK_ROOT_SECTION_README = _no_work_root_readme()
+
+_NO_WORK_ROOT_STATUS_BY_TITLE = dict(
+    zip((member[0] for member in _ALL_MEMBERS), NO_WORK_ROOT_STATUSES)
+)
+
+
+def _no_work_root_table(member: tuple[Any, ...]) -> str:
+    """The whole work-root table this document must render for one capability."""
+    title, cap_id = member[0], member[1]
+    inventory = f"tech-design/{cap_id}.md"
+    if title in NO_WORK_ROOT_BLANKED_TITLES:
+        # No work roots, no claims and no gaps either: the row is synthesized
+        # from the capability itself, and its WI is the `-` the fallback
+        # produces when there is no gap to read one off.
+        rows = f"| {title} root | epic | - | planned | planned | smoke | {inventory} |\n"
+    elif title in NO_WORK_ROOT_TITLES:
+        verification = (
+            "verified"
+            if _NO_WORK_ROOT_STATUS_BY_TITLE[title] == "verified"
+            else "planned"
+        )
+        rows = (
+            f"| {title} root work | epic | {SECTION_RELOCATION_WI[title]} | "
+            f"planned | {verification} | smoke | {inventory} |\n"
+        )
+    else:
+        rows = "".join(
+            f"| {root} | change | - | implemented | verified | smoke | `true` |\n"
+            for root in member[4]
+        )
+    return (
+        "| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n"
+        "|---|---|---:|---|---|---|---|\n"
+        f"{rows}"
+    )
+
+
+#: The whole rendered table, per capability, for the no-work-root document.
+NO_WORK_ROOT_TABLES = {
+    member[0]: _no_work_root_table(member) for member in _ALL_MEMBERS
+}
+assert (
+    len(
+        {
+            NO_WORK_ROOT_TABLES[title].splitlines()[2]
+            for title in NO_WORK_ROOT_TITLES
+        }
+    )
+    == 3
+), "the three synthesized rows must be pairwise distinct"
+
+
+def _rendered_work_root_table(migrated: str, title: str) -> str:
+    body = _capability_section_body(migrated, title)
+    marker = "| Work Root |"
+    assert body.count(marker) == 1, (
+        f"relocated section {title!r} must render exactly one work-root table, "
+        f"section was:\n{body}"
+    )
+    lines: list[str] = []
+    for line in body[body.index(marker) :].splitlines():
+        if not line.startswith("|"):
+            break
+        lines.append(line)
+    return "".join(f"{line}\n" for line in lines)
+
+
+def assert_relocation_synthesizes_an_absent_work_root_table(migrated: str) -> None:
+    """A capability that declares no work root still renders a described row.
+
+    The work-root table is written by four blocks (`capability.rs:9065-9126`),
+    and every other document here gives every capability at least one work root
+    -- which is the first block, and the only one those documents can enter. The
+    other three synthesize the table when it would otherwise be empty, and all
+    three could be deleted without changing a rendered byte anywhere in this
+    case.
+
+    Two of the three are reachable from a section-shaped README. A capability
+    with no work-root table but a live `Root WI` gets a synthetic gap
+    (`capability.rs:10724-10731`), so the *gap* block describes it, carrying the
+    tracker state and a verification cell folded from the capability's status.
+    One that declares neither has no gap either, and the last block names it
+    from the capability's own title with `-` for a WI. The third block, which
+    renders one row per contract claim, is unreachable this way and is bound on
+    the YAML leg instead.
+
+    Asserted as the whole table per capability, not as a substring: these rows
+    are *added* by independent `if` blocks, so a condition that stopped
+    excluding the others would append a second row to a table that already had
+    the right one, and any assertion reading a single row would still pass. The
+    four capabilities that do declare work roots are asserted here too, for the
+    same reason from the other side -- their tables must stay exactly what they
+    authored.
+
+    Note that this document's `claim_count` is the same integer as every other
+    one's: a synthesized row is a claim when the emitted document is read back,
+    so the count cannot distinguish a row that was described from a row that was
+    invented. The table text is the only place this behavior is observable.
+    """
+    for member in _ALL_MEMBERS:
+        title = member[0]
+        rendered = _rendered_work_root_table(migrated, title)
+        expected = NO_WORK_ROOT_TABLES[title]
+        assert rendered == expected, (
+            f"relocated section {title!r} rendered the wrong work-root table;\n"
+            f"expected:\n{expected}\ngot:\n{rendered}"
+        )
+
+
 #: The capabilities whose whole rendered field block is asserted as one string on
 #: the multi-item document, and why those two.
 #:
@@ -4668,7 +4841,10 @@ def _rendered_capability_titles(migrated: str) -> list[str]:
 
 
 def assert_relocation_preserves_section_tracker_state(
-    migrated: str, *, expected_order: tuple[str, ...]
+    migrated: str,
+    *,
+    expected_order: tuple[str, ...],
+    blanked_titles: frozenset[str] = frozenset(),
 ) -> None:
     """Relocating a section-shaped README preserves each capability's `Root WI`.
 
@@ -4691,14 +4867,25 @@ def assert_relocation_preserves_section_tracker_state(
         f"the relocated index must list every capability in render order, "
         f"got {[row[0] for row in rows]}"
     )
+    # `blanked_titles` are the capabilities that declared no tracker state, so
+    # `-` is what preserving it means for them. Passed per document rather than
+    # skipped, so the rule stays quantified over every capability.
+    assert blanked_titles <= set(expected_order), sorted(
+        blanked_titles - set(expected_order)
+    )
+
+    def _expected_wi(title: str) -> str:
+        return "-" if title in blanked_titles else SECTION_RELOCATION_WI[title]
+
     for row in rows:
-        expected = SECTION_RELOCATION_WI[row[0]]
+        expected = _expected_wi(row[0])
         assert row[1] == expected, (
             f"relocated index row {row[0]!r} lost its tracker state; "
             f"expected {expected!r}, got {row[1]!r}"
         )
-    for title, wi in SECTION_RELOCATION_WI.items():
+    for title in SECTION_RELOCATION_WI:
         body = _capability_section_body(migrated, title)
+        wi = _expected_wi(title)
         assert f"Root WI: {wi}\n" in body, (
             f"relocated section {title!r} lost its tracker state; "
             f"expected 'Root WI: {wi}', section was:\n{body}"
@@ -4886,6 +5073,11 @@ def assert_relocation_renders_every_capability_section(
         f"expected {len(counted)} of {len(expected_ids)}, got "
         f"{report['capability_count']}"
     )
+    # Quantified over every document including the no-work-root one, where the
+    # count holds for a different reason: the row the renderer synthesizes for a
+    # capability that declared no work root is a claim when the emitted document
+    # is read back, so the total is the same integer the authored tables would
+    # have produced.
     assert report["claim_count"] == sum(len(member[4]) for member in counted), (
         f"a retired capability's claims leave the claim total with its "
         f"capability: expected "

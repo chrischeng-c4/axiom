@@ -847,6 +847,16 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 False,
                 lumen_reference.UNCLASSIFIED_SECTION_TITLES,
             ),
+            # Every document above gives every capability a work-root table, so
+            # only the first of the four blocks that render one was ever
+            # entered. The three that synthesize a row for a capability with no
+            # work roots were all deletable together.
+            (
+                "no_work_root",
+                lumen_reference.NO_WORK_ROOT_SECTION_README,
+                False,
+                lumen_reference.UNCLASSIFIED_SECTION_TITLES,
+            ),
         ):
             with project_fixture() as section_root:
                 section_readme = section_root / "README.md"
@@ -882,7 +892,16 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                     )
                 else:
                     lumen_reference.assert_relocation_preserves_section_tracker_state(
-                        section_text, expected_order=expected_order
+                        section_text,
+                        expected_order=expected_order,
+                        # One capability of the no-work-root document declares
+                        # no tracker state at all, which is what makes the
+                        # last-resort synthesized row reachable.
+                        blanked_titles=(
+                            lumen_reference.NO_WORK_ROOT_BLANKED_TITLES
+                            if name == "no_work_root"
+                            else frozenset()
+                        ),
                     )
                 lumen_reference.assert_relocation_renders_every_capability_section(
                     section_text,
@@ -959,6 +978,10 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
                 lumen_reference.assert_section_relocation_empties_the_readme(
                     section_readme.read_text(encoding="utf-8"), expected_order
                 )
+                if name == "no_work_root":
+                    lumen_reference.assert_relocation_synthesizes_an_absent_work_root_table(
+                        section_text
+                    )
                 if name == "existing_pointer":
                     # The residue's early return. Every other input arrives
                     # without a `## Capability Contract` heading, so the branch
@@ -1229,6 +1252,7 @@ def verify(case_id: str) -> list[str]:
                 "a capability's Surfaces, EC Dimensions, and Gate Inventory keep every item in declaration order, asserted as the exact item list on the one input where a capability declares two of each, because every other document declares exactly one item per list and rendering only the first element of each is byte-identical on those",
                 "the canonical capability section renders its fields in the order the product emits them, asserted as the whole block from `ID:` to the blank line before the work-root table, on two capabilities of the same document -- one declaring two of every list field and no dependency, one declaring one of each and a dependency, so the conditional field that renders last is bound both when it is emitted and when it is not -- because every other assertion on this renderer reads one field at a time and reversing the four conditional blocks left all of them green, and again on the one document that classifies, over three subjects spanning both feature-class values and the absence of one, because a block equality binds the position only of the fields the block contains and `Feature Class` renders in the middle of a block no subject of the two-item document declares",
                 "every cell of every work-root row survives relocation, asserted on the one input whose eight rows differ in Kind, Impl, Verification, Maturity, and Gate / Evidence, so none of those five cells can be the constant the other inputs all happen to write",
+                "a capability that declares no work-root table still renders a described row, asserted as the whole rendered table per capability on a document where three capabilities declare none -- two keeping a live Root WI, whose row is synthesized from the gap the parse adds for such a capability and carries that tracker state together with a verification cell folded from the capability's own status, one of those two declared verified and the other not so the fold's two answers are distinguishable, and one declaring no tracker state either, whose row is named from the capability's own title and carries the `-` the WI resolution falls back to -- because every other document here gives every capability at least one work root, which is the first of the four blocks that render this table, leaving the three that synthesize a row for an otherwise empty one deletable together without changing a rendered byte; asserted as the whole table rather than as a row it must contain, because those blocks append independently and a condition that stopped excluding the others would leave the right row in place beside a second invented one, and the four capabilities that do declare work roots are held to their authored rows in the same equality; the remaining block, which renders one row per contract claim, is not reachable from a section-shaped README and is not claimed here; and no count stands in for any of this, because a synthesized row is read back as a claim and leaves the report's claim total exactly where the authored tables would have",
                 "the Capability Index Maturity column is asserted on the relocation branch as well, against each capability's own Required Verification, because that branch derives it rather than carrying it and the derivation stopped being constant once the fixture varied the field it reads",
                 "a promise containing a pipe is escaped into the Capability Index Notes cell it falls back into, asserted through a row reader that splits on unescaped pipes only, so an unescaped pipe adds a column and fails to parse rather than being silently absorbed",
                 "the README a section-shaped capability contract was relocated out of keeps only a forwarding pointer and keeps everything that was never part of that contract, asserted on every section-shaped relocation, so relocation can neither leave a second divergent copy of the contract behind nor truncate the README around it",
