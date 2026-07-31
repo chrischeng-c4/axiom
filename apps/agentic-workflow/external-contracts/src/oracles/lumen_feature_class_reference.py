@@ -1777,9 +1777,13 @@ def assert_migrated_legacy_sections_carry_their_row_content(
     reads it.
 
     The document's *last* section has no following heading to be cut at, so its
-    body runs to the end of the file and carries whatever the document ends with.
-    It is compared with its own trailing newlines stripped, and named, rather
-    than left to a general `rstrip` that silently covered every section.
+    body runs to the end of the file and keeps the `\\n` the cut consumes for
+    every other section. A revision that named that section and compared it after
+    `rstrip("\\n")` on both sides was still an exemption: appending one more
+    newline to the end of the whole document (`render_capability_registry`) is
+    exactly the byte that section's body ends with, and it passed. The last
+    section is compared against the same block plus that one newline instead, so
+    the document's own ending is bound rather than skipped.
 
     `tracker_state` is the WI each section is expected to render, which differs
     by entry point: format migration erases document-stored tracker state before
@@ -1794,7 +1798,7 @@ def assert_migrated_legacy_sections_carry_their_row_content(
         )
         body = _capability_section_body(migrated, title)
         if title == last_title:
-            body, expected = body.rstrip("\n"), expected.rstrip("\n")
+            expected += "\n"
         assert body == expected, (
             f"migrated legacy section {title!r} is not the block its row "
             f"renders; expected:\n{expected!r}\ngot:\n{body!r}"
@@ -2315,6 +2319,21 @@ for _field_name, _field_map in (
         f"{_field_name} must be pairwise distinct across members, or a renderer "
         f"that emitted one capability's value for all of them still passes"
     )
+#: The three list-shaped fields, in the order
+#: `render_markdown_capability_section_at_level` emits them, and the
+#: `item_overrides` key each is addressed by.
+LIST_FIELDS = ("Gate Inventory", "Surfaces", "EC Dimensions")
+_OVERRIDE_KEYS = {
+    "Gate Inventory": "gate_inventory",
+    "Surfaces": "surfaces",
+    "EC Dimensions": "ec_dimensions",
+}
+_DECLARED_LIST_ITEMS = {
+    "Gate Inventory": MEMBER_GATE_INVENTORY_ITEM,
+    "Surfaces": MEMBER_SURFACE_ITEM,
+    "EC Dimensions": MEMBER_EC_DIMENSION_ITEM,
+}
+
 #: Distinctness of the assembled item is not enough: `kind`, `commands` and
 #: `summary` are three separate reads, and varying only the command text leaves
 #: the kind read satisfiable by a literal. Asserted on the sub-field itself.
@@ -2380,9 +2399,20 @@ def assert_sections_carry_their_own_contract(
     still a substring of what it renders. That mutation survived the containing
     form and fails this one.
 
-    `item_overrides` lets one input declare a differently *shaped* surface or EC
-    dimension item -- a command with no summary -- without exempting that
-    capability from the rest of the block. The alternative, skipping the
+    The three list-shaped fields are read the same way, for the same reason, and
+    that was a later correction. They were asserted as containing blocks --
+    `Surfaces:\\n- <item>\\n` -- which pins the first item and nothing after it.
+    Appending a duplicate of the first item after either render loop
+    (`capability.rs:9043-9054`) rendered a document every assertion here still
+    accepted, on the multi-item document too, because its expectation named the
+    two declared items and the third followed them. `Gate Inventory:` escaped
+    only because one leg of the derived-inventory document already read it as a
+    list. All three are now read as item lists and compared for equality, so a
+    field is what it renders rather than what it starts with.
+
+    `item_overrides` lets one input declare differently *shaped* items -- a
+    command with no summary -- or a different *number* of them, without exempting
+    that capability from the rest of the block. The alternative, skipping the
     capability, would trade the arm this binds for the six fields it stops
     binding on that document.
     """
@@ -2409,24 +2439,22 @@ def assert_sections_carry_their_own_contract(
                 "required verification",
                 f"Required Verification: {_member_required_verification(title)}\n",
             ),
-            (
-                "surfaces",
-                f"Surfaces:\n- {overrides.get('surfaces', MEMBER_SURFACE_ITEM[title])}\n",
-            ),
-            (
-                "EC dimensions",
-                "EC Dimensions:\n- "
-                f"{overrides.get('ec_dimensions', MEMBER_EC_DIMENSION_ITEM[title])}\n",
-            ),
-            (
-                "gate inventory",
-                "Gate Inventory:\n- "
-                f"{overrides.get('gate_inventory', MEMBER_GATE_INVENTORY_ITEM[title])}\n",
-            ),
         ):
             assert expected in body, (
                 f"section {title!r} did not carry its own {label} "
                 f"{expected!r}; section was:\n{body}"
+            )
+        for field in LIST_FIELDS:
+            expected_items = list(
+                overrides.get(
+                    _OVERRIDE_KEYS[field], (_DECLARED_LIST_ITEMS[field][title],)
+                )
+            )
+            rendered = _field_list_items(body, title, field)
+            assert rendered == expected_items, (
+                f"section {title!r} must render the {field} items "
+                f"{expected_items!r}, in that order and nothing else; got "
+                f"{rendered!r}. Section was:\n{body}"
             )
 
 
@@ -2675,6 +2703,25 @@ assert MULTI_ITEM_SECTION_README.count(MULTI_ITEM_SURFACE_ITEM) == 1, (
     "assertion pins nothing"
 )
 
+#: The exact item lists the multi-item capability must render, for the
+#: whole-block assertion that runs over every capability of every document.
+#: Without them that assertion would expect one item where this document
+#: declares two, so the arity this document exists to bind would be asserted in
+#: only one place instead of two.
+MULTI_ITEM_OVERRIDES = {
+    MULTI_ITEM_TITLE: {
+        "surfaces": (MEMBER_SURFACE_ITEM[MULTI_ITEM_TITLE], MULTI_ITEM_SURFACE_ITEM),
+        "ec_dimensions": (
+            MEMBER_EC_DIMENSION_ITEM[MULTI_ITEM_TITLE],
+            MULTI_ITEM_EC_DIMENSION_ITEM,
+        ),
+        "gate_inventory": (
+            MEMBER_GATE_INVENTORY_ITEM[MULTI_ITEM_TITLE],
+            MULTI_ITEM_GATE_INVENTORY_ITEM,
+        ),
+    }
+}
+
 
 #: Relocation input where one capability declares a Surface and an EC Dimension
 #: as a command with *no* summary.
@@ -2700,8 +2747,8 @@ NO_SUMMARY_EC_DIMENSION_ITEM = (
 )
 NO_SUMMARY_ITEM_OVERRIDES = {
     NO_SUMMARY_TITLE: {
-        "surfaces": NO_SUMMARY_SURFACE_ITEM,
-        "ec_dimensions": NO_SUMMARY_EC_DIMENSION_ITEM,
+        "surfaces": (NO_SUMMARY_SURFACE_ITEM,),
+        "ec_dimensions": (NO_SUMMARY_EC_DIMENSION_ITEM,),
     }
 }
 
@@ -2757,31 +2804,114 @@ def assert_relocation_carries_every_list_item(migrated: str) -> None:
     whole vector. With one item per list everywhere else, `.take(1)` on any of
     them was indistinguishable from rendering all of them.
 
-    Asserted as the two items adjacent and in declaration order, so an
-    implementation that renders both but reorders or interleaves them is a
-    different document too.
+    Asserted as the exact item list each field renders, so an implementation that
+    renders both but reorders them, or renders a third the author never declared,
+    is a different document too. The earlier form asserted the two items as a
+    *containing* block, which pins what the field starts with and nothing after
+    it: appending a duplicate of the first item after the render loop passed.
     """
     body = _capability_section_body(migrated, MULTI_ITEM_TITLE)
-    for label, expected in (
-        (
-            "surfaces",
-            f"Surfaces:\n- {MEMBER_SURFACE_ITEM[MULTI_ITEM_TITLE]}\n"
-            f"- {MULTI_ITEM_SURFACE_ITEM}\n",
-        ),
-        (
-            "EC dimensions",
-            f"EC Dimensions:\n- {MEMBER_EC_DIMENSION_ITEM[MULTI_ITEM_TITLE]}\n"
-            f"- {MULTI_ITEM_EC_DIMENSION_ITEM}\n",
-        ),
-        (
-            "gate inventory",
-            f"Gate Inventory:\n- tech-design/kubernetes-native-deployment.md\n"
-            f"- {MULTI_ITEM_GATE_INVENTORY_ITEM}\n",
-        ),
-    ):
-        assert expected in body, (
-            f"relocated section {MULTI_ITEM_TITLE!r} lost the second item of its "
-            f"{label} {expected!r}; section was:\n{body}"
+    overrides = MULTI_ITEM_OVERRIDES[MULTI_ITEM_TITLE]
+    for field in LIST_FIELDS:
+        expected_items = list(overrides[_OVERRIDE_KEYS[field]])
+        rendered = _field_list_items(body, MULTI_ITEM_TITLE, field)
+        assert rendered == expected_items, (
+            f"relocated section {MULTI_ITEM_TITLE!r} must render the {field} "
+            f"items {expected_items!r}, in that order and nothing else; got "
+            f"{rendered!r}. Section was:\n{body}"
+        )
+
+
+#: The capabilities whose whole rendered field block is asserted as one string on
+#: the multi-item document, and why those two.
+#:
+#: `MULTI_ITEM_TITLE` declares two of every list field and no dependency;
+#: `CANONICAL_BLOCK_DEPENDENT_TITLE` declares one of each *and* a dependency. Two
+#: capabilities rather than one because `Dependencies:` is the last field and is
+#: emitted conditionally, so a single subject either never renders it -- leaving
+#: its position unbound -- or always does, leaving the shape of a section without
+#: it unbound.
+CANONICAL_BLOCK_DEPENDENT_TITLE = "Lexical Search"
+CANONICAL_BLOCK_TITLES = (MULTI_ITEM_TITLE, CANONICAL_BLOCK_DEPENDENT_TITLE)
+assert _member_dependencies(CANONICAL_BLOCK_DEPENDENT_TITLE), (
+    f"{CANONICAL_BLOCK_DEPENDENT_TITLE!r} has to declare a dependency, or the "
+    "position of the field that renders last is not bound by this assertion"
+)
+assert not _member_dependencies(MULTI_ITEM_TITLE), (
+    f"{MULTI_ITEM_TITLE!r} has to declare none, or a section that omits the "
+    "conditional last field is never compared"
+)
+
+
+def _expected_canonical_field_block(title: str, items: dict[str, tuple[str, ...]]) -> str:
+    """`render_markdown_capability_section_at_level`'s whole field block, restated.
+
+    Everything the renderer emits between the heading and the work-root table
+    (`capability.rs:9021-9062`), in the order it emits it, ending with the blank
+    line it pushes before the table.
+
+    No `Feature Class:` line: the multi-item document declares no class for any
+    capability, and relocation does not derive one into the section field. That
+    absence is asserted rather than skipped, because the line is conditional
+    (`capability.rs:9030-9032`) and a renderer that emitted a class nobody
+    declared would be attributing one.
+    """
+    cap_id = next(member[1] for member in _ALL_MEMBERS if member[0] == title)
+    block = (
+        f"\nID: {cap_id}\n"
+        f"Root WI: {SECTION_RELOCATION_WI[title]}\n"
+        f"Status: verified\n"
+        f"Type: {_member_type(title)}\n"
+        f"Required Verification: {_member_required_verification(title)}\n"
+        f"Promise:\n{MEMBER_PROMISE[title]}\n"
+    )
+    for field in LIST_FIELDS:
+        block += f"{field}:\n" + "".join(f"- {item}\n" for item in items[field])
+    dependencies = _member_rendered_dependencies(title)
+    if dependencies:
+        block += "Dependencies:\n" + "".join(f"- {item}\n" for item in dependencies)
+    return block + "\n"
+
+
+def assert_relocation_renders_the_canonical_field_block(migrated: str) -> None:
+    """The canonical section's fields render in the order the product emits them.
+
+    Every other assertion on this renderer reads one field at a time -- a
+    containing line for the scalars, an item list for the three list fields --
+    and none of them can see the *order* the fields are emitted in. Reversing the
+    four conditional field blocks so `Dependencies`, `EC Dimensions`, `Surfaces`
+    and `Gate Inventory` render in that order left every one of those assertions
+    green, because each still found its own field somewhere in the section.
+
+    The legacy renderer's leg has compared its whole block for exactly this
+    reason since the revision that replaced its prefix check
+    (`_expected_legacy_section_body`); the canonical renderer, which is the one
+    almost every document here exercises, was never given the same treatment.
+
+    Compared as the whole segment before the work-root table rather than as a
+    prefix of the section: the table is bounded content of its own, asserted by
+    the work-root and status legs, and cutting at it makes this an equality over
+    everything the field block contains -- including a field the renderer must
+    *not* emit and a blank line it must.
+    """
+    for title in CANONICAL_BLOCK_TITLES:
+        body = _capability_section_body(migrated, title)
+        head, table, _ = body.partition("| Work Root |")
+        assert table, (
+            f"section {title!r} rendered no work-root table, so there is no "
+            f"field block to bound; section was:\n{body}"
+        )
+        overrides = MULTI_ITEM_OVERRIDES.get(title, {})
+        items = {
+            field: overrides.get(
+                _OVERRIDE_KEYS[field], (_DECLARED_LIST_ITEMS[field][title],)
+            )
+            for field in LIST_FIELDS
+        }
+        expected = _expected_canonical_field_block(title, items)
+        assert head == expected, (
+            f"relocated section {title!r} is not the field block the renderer "
+            f"emits; expected:\n{expected!r}\ngot:\n{head!r}"
         )
 
 
@@ -3706,36 +3836,86 @@ EMPTY_INVENTORY_IMPL = "planned"
 #: the two halves never meet in one list and swapping the two `refs.extend`
 #: blocks renders the identical document -- the arity was fixed and the fixture
 #: half was woken up, but their *composition* stayed unbound. So this capability
-#: declares one of each: a backticked cell, which parses as a gate, on its first
-#: work root, and a bare path, which parses as a fixture, on its second.
+#: declares cells of both kinds: a backticked piece parses as a gate, a bare one
+#: as a fixture.
 #:
-#: Declared in that order deliberately. With the fixture declared first, the
-#: fixtures-then-gates order and the work-root declaration order coincide, and a
-#: rendering that simply followed declaration order -- which is what swapping the
-#: two blocks produces -- is again byte-identical. Reversed, the two orders
-#: disagree and only one of them is the product's.
+#: One of each was not enough either. Composing the halves at one ref apiece left
+#: three narrower truncations rendering the identical document: `.take(1)` on the
+#: gate half, `.take(1)` on a claim's fixtures, and visiting the claims in
+#: reverse. A `Gate / Evidence` cell splits on `<br>`
+#: (`capability.rs:11921-11925`), so one work root can carry several pieces of
+#: either kind, and the two halves are widened without changing any capability's
+#: work-root count -- which the per-class claim arithmetic elsewhere is pinned
+#: to. The declaration below therefore spreads *two* gates across the two work
+#: roots, spreads *three* fixtures across them, and gives the first work root two
+#: fixtures of its own, so each of those three truncations drops a different ref.
+#:
+#: The order is chosen deliberately. The first piece declared is a gate and the
+#: first item rendered is a fixture, so the fixtures-then-gates order and the
+#: declaration order disagree; a rendering that simply followed declaration order
+#: -- which is what swapping the two `refs.extend` blocks produces -- is a
+#: different document. The two fixtures on the first root come before the fixture
+#: on the second, so reversing the claim walk is a different document too.
 MULTI_GATE_INVENTORY_TITLE = "Lexical Search"
-MULTI_GATE_INVENTORY_CELLS = (
-    "`aw ec verify --project demo`",
-    "evidence/lexical-search-recall.md",
+#: The `Gate / Evidence` pieces each of the two work roots declares, in
+#: declaration order. Joined with `<br>` into one cell per root.
+MULTI_GATE_INVENTORY_PIECES = (
+    (
+        "`aw ec verify --project demo`",
+        "evidence/lexical-search-planner.md",
+        "evidence/lexical-search-analyzer.md",
+    ),
+    (
+        "evidence/lexical-search-recall.md",
+        "`aw ec check --project demo`",
+    ),
 )
-#: The same two refs in the order the derivation must render them: the fixture
-#: half first, then the gate half, which is the reverse of the declaration order
-#: above.
-MULTI_GATE_INVENTORY_ITEMS = (
-    MULTI_GATE_INVENTORY_CELLS[1],
-    MULTI_GATE_INVENTORY_CELLS[0],
+MULTI_GATE_INVENTORY_CELLS = tuple(
+    "<br>".join(pieces) for pieces in MULTI_GATE_INVENTORY_PIECES
 )
-assert MULTI_GATE_INVENTORY_CELLS[0].startswith("`") and MULTI_GATE_INVENTORY_CELLS[
-    0
-].endswith("`"), "the first work root's cell has to parse as a gate"
-assert "`" not in MULTI_GATE_INVENTORY_CELLS[1], (
-    "the second work root's cell has to parse as a fixture, or both refs come "
-    "from the gate half and their composition is unbound again"
+
+
+def _is_gate_piece(piece: str) -> bool:
+    """A backticked cell piece parses as a claim gate; a bare one as a fixture."""
+    return piece.startswith("`") and piece.endswith("`")
+
+
+_MULTI_GATE_DECLARED = tuple(
+    piece for pieces in MULTI_GATE_INVENTORY_PIECES for piece in pieces
 )
-assert tuple(reversed(MULTI_GATE_INVENTORY_ITEMS)) == MULTI_GATE_INVENTORY_CELLS, (
-    "the rendered order has to be the reverse of the declared order, or "
+#: The same refs in the order the derivation must render them: every claim's
+#: fixtures in claim order first, then the capability's gates.
+MULTI_GATE_INVENTORY_ITEMS = tuple(
+    [piece for piece in _MULTI_GATE_DECLARED if not _is_gate_piece(piece)]
+    + [piece for piece in _MULTI_GATE_DECLARED if _is_gate_piece(piece)]
+)
+assert len(set(_MULTI_GATE_DECLARED)) == len(_MULTI_GATE_DECLARED), (
+    "two identical pieces would not separate keep-first from keep-last"
+)
+assert MULTI_GATE_INVENTORY_ITEMS != _MULTI_GATE_DECLARED, (
+    "the rendered order has to differ from the declared order, or "
     "'fixtures then gates' and 'declaration order' render the same document"
+)
+assert sum(
+    1 for pieces in MULTI_GATE_INVENTORY_PIECES if any(map(_is_gate_piece, pieces))
+) == 2, (
+    "both work roots have to contribute a gate, or truncating the gate half to "
+    "its first ref renders the identical document"
+)
+assert sum(
+    1
+    for pieces in MULTI_GATE_INVENTORY_PIECES
+    if any(not _is_gate_piece(piece) for piece in pieces)
+) == 2, (
+    "both work roots have to contribute a fixture, or the order the claims are "
+    "walked in is unobservable"
+)
+assert any(
+    sum(1 for piece in pieces if not _is_gate_piece(piece)) > 1
+    for pieces in MULTI_GATE_INVENTORY_PIECES
+), (
+    "one work root has to contribute more than one fixture, or truncating a "
+    "single claim's fixture list renders the identical document"
 )
 
 #: The fourth capability whose declared inventory is stripped, and the only one
@@ -3767,10 +3947,7 @@ _MULTI_GATE_WORK_ROOTS = next(
 )
 assert len(_MULTI_GATE_WORK_ROOTS) == len(MULTI_GATE_INVENTORY_CELLS) == 2, (
     "the arity-1 blind spot is closed by a capability with exactly two work "
-    "roots, one ref each"
-)
-assert len(set(MULTI_GATE_INVENTORY_CELLS)) == 2, (
-    "two identical cells would not separate keep-first from keep-last"
+    "roots, each carrying pieces of both kinds"
 )
 
 
@@ -3806,15 +3983,16 @@ def _derived_inventory_work_root_cells() -> dict[str, tuple[str, str, str, str, 
 
 _DERIVED_INVENTORY_WORK_ROOT_CELLS = _derived_inventory_work_root_cells()
 
-#: What each of these four capabilities renders as the *first* item of its
-#: `Gate Inventory`, for the whole-field-block assertion that runs over every
-#: capability in this document. The exact item list per capability is asserted
-#: separately by `assert_relocation_derives_a_missing_gate_inventory`.
+#: What each of these four capabilities renders as its `Gate Inventory`, for the
+#: whole-field-block assertion that runs over every capability in this document.
+#: `assert_relocation_derives_a_missing_gate_inventory` asserts the same lists
+#: again with the derivation's own reasoning attached; here they are what keeps
+#: the four derived fields from being exempted from the block assertion.
 DERIVED_INVENTORY_ITEM_OVERRIDES = {
-    DERIVED_INVENTORY_TITLE: {"gate_inventory": DERIVED_INVENTORY_GATE},
-    EMPTY_INVENTORY_TITLE: {"gate_inventory": "-"},
-    MULTI_GATE_INVENTORY_TITLE: {"gate_inventory": MULTI_GATE_INVENTORY_ITEMS[0]},
-    FIXTURE_INVENTORY_TITLE: {"gate_inventory": FIXTURE_INVENTORY_EVIDENCE},
+    DERIVED_INVENTORY_TITLE: {"gate_inventory": (DERIVED_INVENTORY_GATE,)},
+    EMPTY_INVENTORY_TITLE: {"gate_inventory": ("-",)},
+    MULTI_GATE_INVENTORY_TITLE: {"gate_inventory": MULTI_GATE_INVENTORY_ITEMS},
+    FIXTURE_INVENTORY_TITLE: {"gate_inventory": (FIXTURE_INVENTORY_EVIDENCE,)},
 }
 
 
@@ -3855,7 +4033,7 @@ for _gate in (
     DERIVED_INVENTORY_GATE,
     EMPTY_INVENTORY_GATE,
     FIXTURE_INVENTORY_EVIDENCE,
-    *MULTI_GATE_INVENTORY_CELLS,
+    *_MULTI_GATE_DECLARED,
 ):
     assert _gate not in UNCLASSIFIED_SECTION_README, (
         f"{_gate} must not be a string the fixture already writes elsewhere, or "
