@@ -7529,3 +7529,461 @@ def assert_gap_status_renders_its_own_work_root_row(migrated: str) -> None:
             for gap in status_map
         ]
         assert rows == expected, (title, rows, expected)
+
+
+# --- Contract-field vocabularies -------------------------------------------
+#
+# A `Surfaces:` item and an `EC Dimensions:` item are both `key: value` clauses,
+# and both are read by a hand-written parser rather than a serde enum. Three
+# separate vocabularies decide what those parsers do, and every other document
+# in this case writes only the handful of spellings its own subject needs, so
+# the rest of each vocabulary was free.
+
+#: Every spelling `is_surface_contract_key` accepts, in the order the document
+#: writes them. Membership decides one thing only: whether an inline `;` opens a
+#: new surface item. It is deliberately *not* the same set as the one
+#: `normalize_surface_kind` folds -- the last seven here are carried by the
+#: separator test and not folded by the renderer, so they reach the report
+#: verbatim. Binding them together is the point: two vocabularies that look like
+#: one are exactly the shape in which a spelling gets added to one and forgotten
+#: in the other.
+SURFACE_KEY_SPELLINGS = (
+    "cli",
+    "command",
+    "commands",
+    "http",
+    "api",
+    "rest",
+    "sdk",
+    "ui",
+    "webui",
+    "web",
+    "config",
+    "configuration",
+    "fileformat",
+    "file",
+    "format",
+    "agent",
+    "agents",
+    "browser",
+    "browsere2e",
+    "webe2e",
+    "webappe2e",
+    "e2e",
+)
+
+#: The kind each spelling above reaches the report as. Fifteen fold onto six
+#: canonical labels; the last seven are carried verbatim. Each spelling is
+#: paired to its kind through the command in the same item rather than by
+#: position in a list, so a renderer that emitted the right *multiset* of kinds
+#: against the wrong spellings fails.
+SURFACE_KIND_BY_SPELLING = {
+    "cli": "CLI",
+    "command": "CLI",
+    "commands": "CLI",
+    "http": "HTTP",
+    "api": "HTTP",
+    "rest": "HTTP",
+    "sdk": "SDK",
+    "ui": "UI",
+    "webui": "UI",
+    "web": "UI",
+    "config": "Config",
+    "configuration": "Config",
+    "fileformat": "FileFormat",
+    "file": "FileFormat",
+    "format": "FileFormat",
+    "agent": "agent",
+    "agents": "agents",
+    "browser": "browser",
+    "browsere2e": "browsere2e",
+    "webe2e": "webe2e",
+    "webappe2e": "webappe2e",
+    "e2e": "e2e",
+}
+
+#: Words that look exactly like a surface key -- lowercase, followed by `: `,
+#: after a `; ` -- and are not in the vocabulary. They must not open an item.
+#: Without them the separator test is satisfied by an implementation that splits
+#: on every `; ` it finds and never consults the vocabulary at all.
+NON_SURFACE_KEY_WORDS = ("note", "nonsense", "gate", "runner")
+
+
+def _contract_field_section(
+    title: str,
+    cap_id: str,
+    surfaces: str,
+    dimensions: str,
+    rows: tuple[str, ...],
+) -> str:
+    return f"""#### {title}
+
+ID: {cap_id}
+Root WI: -
+Status: confirmed
+Type: Service
+Feature Class: core
+Required Verification: smoke
+Promise:
+Promise for {cap_id}.
+Current State: Implemented.
+Gate Inventory:
+- `true`
+Surfaces:
+{surfaces}
+EC Dimensions:
+{dimensions}
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+{chr(10).join(rows)}
+
+"""
+
+
+def _spelling_walk_surface_field() -> str:
+    """One `Surfaces:` line carrying every key spelling and every control word.
+
+    They share a line rather than taking one each because the rule under test is
+    what an inline `;` does, which a one-item-per-line document cannot reach.
+    """
+    clauses = [f"{SURFACE_KEY_SPELLINGS[0]}: `aw s0` - item 0"]
+    for index, word in enumerate(
+        SURFACE_KEY_SPELLINGS[1:] + NON_SURFACE_KEY_WORDS, start=1
+    ):
+        clauses.append(f"{word}: `aw s{index}` - item {index}")
+    return "- " + "; ".join(clauses)
+
+
+#: The index at which the control words begin -- the last key spelling opens the
+#: item that swallows all four of them.
+_TRAILING_SPELLING_INDEX = len(SURFACE_KEY_SPELLINGS) - 1
+
+_CONTRACT_FIELD_SUBJECTS = (
+    (
+        "Spelling Walk",
+        "spelling-walk",
+        _spelling_walk_surface_field(),
+        "- behavior: `true` - behaviour of spelling-walk",
+        None,
+    ),
+    (
+        "Semi Keeps",
+        "semi-keeps",
+        "- CLI: `aw semi-keeps` - runs a step; note: this clause stays attached",
+        "- behavior: `true` - behaviour of semi-keeps",
+        None,
+    ),
+    (
+        "Dimension Split",
+        "dimension-split",
+        "- CLI: `aw dimension-split` - surface of dimension-split",
+        "- behavior: `true` - behaviour of dimension-split;"
+        " security: `true` - security of it",
+        None,
+    ),
+    (
+        "Dimension Unknown",
+        "dimension-unknown",
+        "- CLI: `aw dimension-unknown` - surface of dimension-unknown",
+        # Declared `security`, not `behavior`, and that is the whole point of
+        # the subject: `dedupe_ec_dimensions` merges items by kind and keeps the
+        # first non-empty field of each, so an unknown kind falling back to
+        # `Behavior` beside a declared `behavior` item is absorbed into it and
+        # leaves the report byte-identical to the drop. Against a declared
+        # `security` the fallback surfaces as a second item.
+        "- security: `true` - security of dimension-unknown\n"
+        "- nonsense: `true` - dropped?",
+        None,
+    ),
+    (
+        "Bad Cells",
+        "bad-cells",
+        "- CLI: `aw bad-cells` - surface of bad-cells",
+        "- behavior: `true` - behaviour of bad-cells",
+        (
+            "| Bad kind of bad-cells | bug | - | implemented | verified"
+            " | smoke | `true` |",
+            "| Bad impl of bad-cells | change | - | mystery | verified"
+            " | smoke | `true` |",
+            "| Bad verif of bad-cells | change | - | implemented | unknown"
+            " | smoke | `true` |",
+            "| Bad maturity of bad-cells | change | - | implemented | verified"
+            " | fuzzy | `true` |",
+        ),
+    ),
+)
+
+
+def _contract_field_document() -> str:
+    index = "".join(
+        f"| {title} | - | implemented | planned | smoke | not_ready |"
+        f" Promise for {cap_id}. |\n"
+        for title, cap_id, *_ in _CONTRACT_FIELD_SUBJECTS
+    )
+    sections = "".join(
+        _contract_field_section(
+            title,
+            cap_id,
+            surfaces,
+            dimensions,
+            rows or (f"| {title} root | change | - | implemented | verified"
+                     " | smoke | `true` |",),
+        )
+        for title, cap_id, surfaces, dimensions, rows in _CONTRACT_FIELD_SUBJECTS
+    )
+    return f"""# Demo
+
+## Brief
+
+Machine-readable capability contract for Demo.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+{index}
+### Core Features
+
+{sections}### Non-Core Features
+"""
+
+
+#: Reported, not migrated. Migration lifts a backticked token out of a surface
+#: item's summary into that item's command list without removing it from the
+#: summary, so the trailing item below comes back reporting nine commands where
+#: five were declared. It settles there -- the duplication is one-shot, not
+#: unbounded -- but asserting the post-migration command list would hold the
+#: defect in place, so this document is asserted on the reading route instead.
+#: Filed as #3273.
+CONTRACT_FIELD_DOCUMENT = _contract_field_document()
+
+
+def _capability_by_id(report: dict[str, Any], cap_id: str) -> dict[str, Any]:
+    for capability in report.get("capabilities") or []:
+        if capability.get("id") == cap_id:
+            return capability
+    raise AssertionError((cap_id, report))
+
+
+def assert_surface_keys_are_two_independent_vocabularies(
+    report: dict[str, Any],
+) -> None:
+    """Every key spelling opens its own item; no other word does.
+
+    One line declares twenty-two key spellings and four look-alikes. Each clause
+    carries a distinct command, so the spelling that opened an item is
+    recoverable from the item itself and the spelling-to-kind pairing is bound
+    rather than just the multiset of kinds -- the failure mode where a renderer
+    emits the right labels against the wrong keys.
+
+    The two vocabularies are asserted to disagree. The last seven spellings open
+    an item and are then rendered verbatim, because the separator test carries
+    them and the kind fold does not. Asserting the labels alone would be
+    satisfied by one vocabulary doing both jobs, which is the shape in which a
+    spelling gets added to one and forgotten in the other.
+
+    The four control words are the other half: they sit in the trailing item's
+    summary, and their backticked commands are harvested into that item. That
+    makes the negative observable -- an implementation that split on every `; `
+    would produce twenty-six items, and one that consulted no vocabulary at all
+    would produce one.
+    """
+    surfaces = _capability_by_id(report, "spelling-walk")["surfaces"]
+    assert len(surfaces) == len(SURFACE_KEY_SPELLINGS), surfaces
+
+    by_command = {}
+    for item in surfaces:
+        commands = item["commands"]
+        assert commands, item
+        by_command[commands[0]] = item
+    assert len(by_command) == len(surfaces), surfaces
+
+    for index, spelling in enumerate(SURFACE_KEY_SPELLINGS):
+        item = by_command.get(f"aw s{index}")
+        assert item is not None, (spelling, index, surfaces)
+        assert item["kind"] == SURFACE_KIND_BY_SPELLING[spelling], (spelling, item)
+        if index < _TRAILING_SPELLING_INDEX:
+            assert item["commands"] == [f"aw s{index}"], item
+            assert item["summary"] == f"item {index}", item
+
+    # The fold is many-to-one and the carry-through is not, and both have to be
+    # visible. Fifteen spellings collapse onto six labels; seven survive as
+    # themselves. A renderer that folded all twenty-two, or none, fails here.
+    folded = {
+        spelling
+        for spelling in SURFACE_KEY_SPELLINGS
+        if SURFACE_KIND_BY_SPELLING[spelling] != spelling
+    }
+    assert len(folded) == 15, sorted(folded)
+    assert len({SURFACE_KIND_BY_SPELLING[s] for s in folded}) == 6, sorted(folded)
+    carried = set(SURFACE_KEY_SPELLINGS) - folded
+    assert carried == {
+        "agent",
+        "agents",
+        "browser",
+        "browsere2e",
+        "webe2e",
+        "webappe2e",
+        "e2e",
+    }, sorted(carried)
+
+    trailing = by_command[f"aw s{_TRAILING_SPELLING_INDEX}"]
+    expected_commands = [f"aw s{_TRAILING_SPELLING_INDEX}"] + [
+        f"aw s{_TRAILING_SPELLING_INDEX + offset}"
+        for offset in range(1, len(NON_SURFACE_KEY_WORDS) + 1)
+    ]
+    assert trailing["commands"] == expected_commands, trailing
+    expected_summary = f"item {_TRAILING_SPELLING_INDEX}"
+    for offset, word in enumerate(NON_SURFACE_KEY_WORDS, start=1):
+        index = _TRAILING_SPELLING_INDEX + offset
+        expected_summary += f"; {word}: `aw s{index}` - item {index}"
+    assert trailing["summary"] == expected_summary, trailing
+
+
+def assert_a_semicolon_without_a_key_stays_in_the_summary(
+    report: dict[str, Any],
+) -> None:
+    """The negative in isolation, on a summary that reads like prose.
+
+    The spelling walk above proves the vocabulary is consulted, but its control
+    words sit at the tail of a twenty-six-clause line where a truncation would
+    look the same. This capability declares one item whose summary contains a
+    single `; note: ` and nothing else, so the clause's survival is the whole
+    observation.
+    """
+    surfaces = _capability_by_id(report, "semi-keeps")["surfaces"]
+    assert surfaces == [
+        {
+            "kind": "CLI",
+            "commands": ["aw semi-keeps"],
+            "summary": "runs a step; note: this clause stays attached",
+        }
+    ], surfaces
+
+
+def assert_an_inline_semicolon_splits_ec_dimensions(report: dict[str, Any]) -> None:
+    """EC dimensions split on `;` too, and the split is not the surface rule.
+
+    Every other document here writes one dimension per line, which leaves the
+    inline separator unreached. The two dimensions are declared on one line and
+    must arrive as two, each keeping its own summary -- a splitter that dropped
+    the tail, or one that kept the line whole, fails.
+    """
+    dimensions = _capability_by_id(report, "dimension-split")["ec_dimensions"]
+    assert dimensions == [
+        {
+            "dimension": "behavior",
+            "runner": "true",
+            "summary": "behaviour of dimension-split",
+            "required_for_production": True,
+        },
+        {
+            "dimension": "security",
+            "runner": "true",
+            "summary": "security of it",
+            "required_for_production": True,
+        },
+    ], dimensions
+
+
+def assert_an_unrecognized_ec_dimension_is_dropped(report: dict[str, Any]) -> None:
+    """A dimension whose kind is outside the enum does not reach the report.
+
+    The drop is silent: no blocker, no diagnostic, and the capability still
+    reports as if the author had written one dimension. That is asserted here
+    because it was unbound, not because it is obviously right -- an author who
+    misspells a dimension kind gets a contract quietly narrower than the one
+    they wrote. Filed as a defect rather than pinned as intent.
+
+    The declared dimension is `security` rather than `behavior` so that the drop
+    is distinguishable from the near miss beside it. `parse_ec_dimension_kind`
+    returning `Behavior` for an unrecognized kind, instead of `None`, produces a
+    byte-identical report when a `behavior` item is already declared, because
+    `dedupe_ec_dimensions` merges by kind and keeps the first non-empty field of
+    each. Against a declared `security` the fallback surfaces as a second item.
+
+    Migration is not asserted on this document. Measured separately, `capability
+    migrate` re-renders the dropped line into `CAPABILITIES.md`, so the document
+    keeps a clause no consumer reads -- the same shape as the generated
+    Efficiency section of #3272. Binding that here would hold it in place.
+
+    Filed as #3274.
+    """
+    dimensions = _capability_by_id(report, "dimension-unknown")["ec_dimensions"]
+    assert dimensions == [
+        {
+            "dimension": "security",
+            "runner": "true",
+            "summary": "security of dimension-unknown",
+            "required_for_production": True,
+        },
+        # Synthesized, not declared, and carrying no runner: a capability that
+        # declares no behavior dimension is given one anyway. This is the only
+        # capability in the case that declares dimensions without declaring
+        # `behavior`, so it is the only input on which the synthesis is
+        # observable at all -- everywhere else the declared item occupies the
+        # slot and the fallback is indistinguishable from doing nothing.
+        {
+            "dimension": "behavior",
+            "summary": "declared by behavior surfaces or verification contract",
+            "required_for_production": True,
+        },
+    ], dimensions
+
+
+#: One blocker per out-of-vocabulary cell, in the order the rows are written.
+#: The messages are pinned whole because each names the vocabulary it rejected
+#: against, and those four enumerations are the assertion's content -- a message
+#: pinned only by its prefix leaves the expected-value list free.
+BAD_CELL_BLOCKERS = (
+    "capability `Bad Cells` work root `Bad kind of bad-cells` has invalid Kind"
+    " `bug`; expected epic, subepic, or change — fix the Kind cell"
+    " (`aw capability check --project <project>` for remediation guidance)",
+    "capability `Bad Cells` work root `Bad impl of bad-cells` has invalid Impl"
+    " `mystery`; expected planned, partial, implemented, blocked, or out_of_scope"
+    " — fix the Impl cell"
+    " (`aw capability check --project <project>` for remediation guidance)",
+    "capability `Bad Cells` work root `Bad verif of bad-cells` has invalid"
+    " Verification `unknown`; expected none, planned, failing, passing, verified,"
+    " or blocked — fix the Verification cell"
+    " (`aw capability check --project <project>` for remediation guidance)",
+    "capability `Bad Cells` work root `Bad maturity of bad-cells` has invalid"
+    " Maturity `fuzzy`; expected none, smoke, conformance, corpus, negative, or"
+    " dogfood — fix the Maturity cell"
+    " (`aw capability check --project <project>` for remediation guidance)",
+)
+
+
+def assert_each_out_of_vocabulary_cell_raises_its_own_blocker(
+    report: dict[str, Any],
+) -> None:
+    """Four bad cells in four columns raise four blockers, in document order.
+
+    Every work-root cell every other document here writes is in vocabulary, so
+    all four column validators ran only on inputs that could not fail them. Each
+    row breaks exactly one column, which is what attributes a blocker to a
+    validator: a single row breaking all four would be satisfied by one validator
+    firing four times.
+
+    The capability still parses and still reports. A reader that abandoned the
+    section on the first bad cell would raise one blocker and drop the
+    capability, and the count assertion below is what separates that from
+    validating every row.
+    """
+    blockers = [b for b in report.get("blockers") or [] if "`Bad Cells`" in b]
+    assert tuple(blockers) == BAD_CELL_BLOCKERS, blockers
+    # Not `>= 4`: the fixture's own environment contributes unrelated blockers
+    # (no Python EC or TD manifest), and this leg owns only the ones it wrote.
+    assert report["capability_count"] == len(_CONTRACT_FIELD_SUBJECTS), report
+    assert report["status"] == "blocked", report
+    bad_cells = _capability_by_id(report, "bad-cells")
+    assert bad_cells["surfaces"] == [
+        {
+            "kind": "CLI",
+            "commands": ["aw bad-cells"],
+            "summary": "surface of bad-cells",
+        }
+    ], bad_cells
