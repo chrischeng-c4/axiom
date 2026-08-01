@@ -705,4 +705,23 @@ jq -n \
      verified_at: $verified_at
    }' > "$EVIDENCE_DIR/lumen-auth-acceptance.json"
 
+# SPEC-MANAGED: apps/lumen/tech-design/src/lumen/work_items/wi_12_18_lumen_auth_phase_2_prove_two_hop_ksa_rbac_authorization_on.py
+# HANDWRITE-BEGIN tracker="#2879"
+lumen_auth_redaction_audit_and_destroy() {
+  "${LUMEN_AUTH_REDACTION_AUDITOR:?required}" \
+    --evidence-root "$EVIDENCE_DIR" \
+    --credential-dir "$SECRET_DIR" \
+    --output "${LUMEN_AUTH_REDACTION_AUDIT_PATH:?required}"
+  rm -rf "$SECRET_DIR"
+  SECRET_DIR=""
+}
+if [[ -n "${LUMEN_AUTH_REDACTION_AUDITOR:-}" || -n "${LUMEN_AUTH_REDACTION_AUDIT_PATH:-}" ]]; then
+  [[ -n "${LUMEN_AUTH_REDACTION_AUDITOR:-}" && -n "${LUMEN_AUTH_REDACTION_AUDIT_PATH:-}" ]] || {
+    echo "LUMEN_AUTH_REDACTION_AUDITOR and LUMEN_AUTH_REDACTION_AUDIT_PATH must be set together" >&2
+    exit 1
+  }
+  lumen_auth_redaction_audit_and_destroy
+fi
+# HANDWRITE-END
+
 echo ">> two-hop KSA/RBAC authorization proved on GKE"
