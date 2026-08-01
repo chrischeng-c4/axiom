@@ -564,6 +564,216 @@ command = "uv run --frozen --offline --project apps/agentic-workflow/external-co
 evidence_paths = ["evidence/work-item-planning-epic-to-change-atomization.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "work-item-planning-wi-linear-authoring-without-crrr"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "wi-linear-authoring-without-crrr"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-wi-linear-authoring-without-crrr.py"
+promise = "WI and draft authoring terminate at validation, with review/arbitrate/runtime roles removed and legacy review fields retained only for compatibility"
+oracle = "Native Python black-box assertions inspect the live wi --help surface and drive create-to-validate through the real CLI, including a legacy review_count field injected into tracker state and a genuine validation-failure control."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-wi-linear-authoring-without-crrr"
+evidence_paths = ["evidence/work-item-planning-wi-linear-authoring-without-crrr.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-remote-wi-create-authoring-continuity"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "remote-wi-create-authoring-continuity"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-remote-wi-create-authoring-continuity.py"
+promise = "configured remote creation mirrors the canonical tracker id into workspace lifecycle state, the accepted fill projects back to the tracker before validation, and validation terminates with an executable done envelope"
+oracle = "A disposable local HTTP server fakes the remote tracker; native Python black-box assertions observe the create/fill-apply/validate CLI sequence, asserting the tracker PATCH lands strictly before validation runs."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-remote-wi-create-authoring-continuity"
+evidence_paths = ["evidence/work-item-planning-remote-wi-create-authoring-continuity.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-epic-child-graph-terminal-rollup"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "epic-child-graph-terminal-rollup"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-epic-child-graph-terminal-rollup.py"
+promise = "open epics discover tracker-backed parent relations across machine labels and legacy body prose, dispatch unfinished children, close after every child is terminal, and re-atomize only when no covering child graph exists"
+oracle = "Native Python black-box assertions drive aw goal wi dispatch and aw wi plan atomize across label-owned, legacy-body-owned, and covered/uncovered epic fixtures."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-child-graph-terminal-rollup"
+evidence_paths = ["evidence/work-item-planning-epic-child-graph-terminal-rollup.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-agent-backed-inventory-plan-review"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "agent-backed-inventory-plan-review"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-agent-backed-inventory-plan-review.py"
+promise = "epicize/atomize/prioritize default to digest-bound independent agent review, reject same-agent and chain-tampered evidence, preserve explicit human-only policy, and authorize only a chain-valid next command from accepted evidence"
+oracle = "Native Python black-box assertions drive aw wi atomize/plan-review/plan-answer/plan-apply under default and human-only review backing, including same-agent and manifest-tamper negative controls."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-agent-backed-inventory-plan-review"
+evidence_paths = ["evidence/work-item-planning-agent-backed-inventory-plan-review.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-legacy-wi-type-decoding-baseline"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "legacy-wi-type-decoding-baseline"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-legacy-wi-type-decoding-baseline.py"
+promise = "legacy bug/enhancement/refactor/test labels remain decode-only aliases for change without mutating tracker history"
+oracle = "Native Python black-box assertions inject legacy-typed tracker frontmatter on disk and drive wi show/list, with an unrecognized-type negative control and a canonical-epic differentiation control."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-legacy-wi-type-decoding-baseline"
+evidence_paths = ["evidence/work-item-planning-legacy-wi-type-decoding-baseline.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-issue-platform-epic-change-graph-invariants"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "issue-platform-epic-change-graph-invariants"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-issue-platform-epic-change-graph-invariants.py"
+promise = "aw wi graph projects deterministic ownership, priority inheritance, dependency, duplicate, and sibling-supersession state without tracker writes and fails closed on invalid open-change ownership"
+oracle = "Native Python black-box assertions build a full owned-change fixture and inspect the live wi graph JSON projection, then independently invalidate it with an unowned change and a cross-epic supersession to prove the fail-closed path."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-issue-platform-epic-change-graph-invariants"
+evidence_paths = ["evidence/work-item-planning-issue-platform-epic-change-graph-invariants.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-parent-ownership-reference-extraction"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "parent-ownership-reference-extraction"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-parent-ownership-reference-extraction.py"
+promise = "body and label parent prefixes share one extractor, the first #<digits> reference wins over trailing prose or later dependency mentions, bare id/slug/path compatibility remains, and empty syntax documentation creates no phantom declaration"
+oracle = "Native Python black-box assertions resolve a real epic through four distinct body/label parent-prefix surfaces via the live wi graph JSON, then use the missing_epic_parent diagnostic's related field as an observable proxy for exactly which reference string a non-resolving declaration extracted, proving first-hash-wins, path compatibility, and no-phantom-declaration from documentation prose."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-parent-ownership-reference-extraction"
+evidence_paths = ["evidence/work-item-planning-parent-ownership-reference-extraction.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-body-dependency-declaration-extraction"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "body-dependency-declaration-extraction"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-body-dependency-declaration-extraction.py"
+promise = "canonical labels remain authoritative, only declaration-shaped legacy body lines create dependency edges, graph and planning-lane decoding share one parser, and explanatory prose plus syntax examples create none"
+oracle = "Native Python black-box assertions resolve a canonical depends-on: label through the live wi graph JSON and the wi plan artifact's lane/dependencies fields, prove a body bare-slug line and explanatory prose/syntax-example text extract nothing on either surface, and prove a declaration-shaped hash body line produces a missing_relation_target diagnostic that is byte-for-byte identical between wi graph and a single wi plan --stage normalize call, showing both surfaces decode through the same extractor."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-body-dependency-declaration-extraction"
+evidence_paths = ["evidence/work-item-planning-body-dependency-declaration-extraction.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-deterministic-staged-epic-change-planner"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "deterministic-staged-epic-change-planner"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-deterministic-staged-epic-change-planner.py"
+promise = "aw wi plan holds one stable root id while relaying normalize, reconcile, atomize, and strict zero-diff verify; compatibility planning verbs enter that same root, review and human decisions are separate evidence steps, and only plan-apply writes the tracker"
+oracle = "Native Python black-box assertions walk one aw wi plan root id through normalize/reconcile/atomize/agent-review/human-plan-answer/plan-apply/verify, snapshotting a live wi list before each step to prove only plan-apply writes the tracker and verify reproduces the same digest on a second call, then prove reconcile's human decision gate is conditional (auto-advances with nothing to infer, blocks when a child has an inherited priority), and that epicize/atomize/prioritize land on the identical root id and stage as the direct aw wi plan --stage verb."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-deterministic-staged-epic-change-planner"
+evidence_paths = ["evidence/work-item-planning-deterministic-staged-epic-change-planner.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-epic-verification-inventory-authoring-contract"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "epic-verification-inventory-authoring-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-epic-verification-inventory-authoring-contract.py"
+promise = "epic full-section authoring admits the planner-owned Verification Inventory and promotion fails closed until every Requirement has a concrete Gate and Oracle"
+oracle = "Native Python black-box assertions create a draft epic with no Verification Inventory and confirm draft creation is valid by construction, confirm the live wi fill-section brief demands Verification Inventory for an epic but never mentions it for a change, confirm wi validate fails closed naming every unmapped requirement, confirm partial coverage still fails naming only the remaining requirement, and confirm full coverage flips wi validate to passed with state_promoted=true and an observable draft-to-open tracker transition."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-verification-inventory-authoring-contract"
+evidence_paths = ["evidence/work-item-planning-epic-verification-inventory-authoring-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-atomized-requirement-dependency-publication"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "atomized-requirement-dependency-publication"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-atomized-requirement-dependency-publication.py"
+promise = "optional Verification Inventory Depends On declarations fail closed on invalid graphs, survive independent review as symbolic proposal edges, publish prerequisites first, and resolve to real tracker labels"
+oracle = "Native Python black-box assertions fail an epic's own wi validate closed on an unresolvable Depends On target and separately on a dependency cycle, then atomize a validated epic with two dependency-linked uncovered requirements and inspect both the on-disk plan's proposed_changes dependencies and the pending review manifest's per-mutation add_labels/order fields for a genuine symbolic proposal-id edge ordered prerequisite-first, then accept/human-confirm/apply and confirm the published dependent's depends-on label resolves through a live wi show to the exact prerequisite change."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-atomized-requirement-dependency-publication"
+evidence_paths = ["evidence/work-item-planning-atomized-requirement-dependency-publication.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-prefix-safe-planning-transaction-recovery"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "prefix-safe-planning-transaction-recovery"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-prefix-safe-planning-transaction-recovery.py"
+promise = "prefix-overlapping symbolic proposal ids resolve longest-first, accepted plan bytes survive canonical-stage advancement, marker-owned retries repair exact reviewed managed graph labels without duplicate creates, and unresolved dependencies on open changes invalidate the graph"
+oracle = "Native Python black-box assertions publish ten uncovered requirements where requirement-9 depends on requirement-10 and confirm the resolved depends-on label names requirement-10's real change rather than requirement-1's even though requirement-1's symbolic id is a byte-prefix of requirement-10's, then apply an accepted plan twice in a row and confirm the second apply creates nothing and leaves every change identity unchanged, then externally corrupt the dependent's live depends-on label and reapply the same accepted evidence a third time and confirm the label is repaired to the exact original prerequisite with zero duplicate changes created, and finally confirm a change carrying a depends-on label naming an unresolvable id fails wi graph closed with a missing_relation_target diagnostic naming that exact id."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-prefix-safe-planning-transaction-recovery"
+evidence_paths = ["evidence/work-item-planning-prefix-safe-planning-transaction-recovery.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-digest-bound-project-planning-transaction"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "digest-bound-project-planning-transaction"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-digest-bound-project-planning-transaction.py"
+promise = "accepted project-plan review binds the exact tracker snapshot and ordered mutation manifest, fails drift before writes, preserves duplicate/superseded history, and retries through tracker idempotency markers without duplicate issues"
+oracle = "Native Python black-box assertions retitle a reviewed epic after acceptance and confirm plan-apply rejects the drifted tracker snapshot before any write, then corrupt only an accepted decision file's source_digest and confirm plan-apply rejects it as stale before any tracker read while the same decision with its genuine digest restored still applies the reviewed change set, then label one change duplicate-of another and a second pair supersedes/superseded-by and confirm the reconciled plan and aw wi graph both record the relations while every named change remains open and present in the tracker, and finally confirm a supersedes relation crossing an epic boundary fails aw wi graph closed with a supersession_not_sibling diagnostic."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-digest-bound-project-planning-transaction"
+evidence_paths = ["evidence/work-item-planning-digest-bound-project-planning-transaction.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-prioritized-reviewed-graph-goal-selection"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "prioritized-reviewed-graph-goal-selection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-prioritized-reviewed-graph-goal-selection.py"
+promise = "the reviewed issue graph is the goal selector input, so epic direction, ready child order, terminal rollup, and invalid-graph remediation stay deterministic across both the epic root (aw goal wi) and the backlog root (aw goal backlog)"
+oracle = "Native Python black-box assertions drive both aw goal wi <epic-id> and aw goal backlog --project <project> against the same reviewed graph and confirm they agree: an inverted-priority epic pair makes both roots dispatch the identical change; a dependency-blocked leaf is parked by both roots in favor of the identical ready sibling, with the epic root naming the block in completion.missing; an epic whose sole change just closed makes the backlog root delegate via next.command to aw goal wi on that exact epic rather than compute its own terminal rollup, and calling that delegated command is what actually resolves to aw wi close <epic> --push; and a corrupted on-disk plan-digest manifest makes both roots fail closed with the identical blocked diagnosis and bare-replan remedy."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-prioritized-reviewed-graph-goal-selection"
+evidence_paths = ["evidence/work-item-planning-prioritized-reviewed-graph-goal-selection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-legacy-backlog-reconciliation-and-plan-convergence"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "legacy-backlog-reconciliation-and-plan-convergence"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-legacy-backlog-reconciliation-and-plan-convergence.py"
+promise = "Parent: #<epic>. imports without mutation, unowned legacy changes require an explicit existing owner or tracker revision instead of invented bootstrap epics, and only authoritative ## Requirements drives atomization while closed changes remain valid coverage; strict graph plus zero-diff verify is digest-stable and duplicate-free"
+oracle = "Native Python black-box assertions drive aw wi against disposable fixture projects and confirm: a legacy Parent: <epic>. body-only declaration resolves ownership and converges via exactly one deterministic non-HITL canonicalize mutation with no human decision ever required; a genuinely unowned change fails aw wi graph closed and atomize reroutes to reconcile whose HITL choices are exactly the real epics plus revise, never an invented bootstrap epic; only ## Requirements produce atomization entries (Scope/Acceptance Criteria prose never leaks in) and a closed change covers only the requirement its title actually matches, leaving an unrelated sibling requirement a genuine gap that atomize alone proposes for; and once every requirement is covered by closed changes, a brand new planning root proposes nothing new, aw wi graph stays strictly valid, and two verify calls on that fresh root are digest-identical."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-legacy-backlog-reconciliation-and-plan-convergence"
+evidence_paths = ["evidence/work-item-planning-legacy-backlog-reconciliation-and-plan-convergence.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "workflow-root-runner-parent-rollup-routing"
 artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
