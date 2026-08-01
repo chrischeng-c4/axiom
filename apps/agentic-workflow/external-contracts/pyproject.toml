@@ -953,3 +953,87 @@ oracle = "The Python EC compiles the complete public TD AST, pins the 1002-modul
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-td-global-artifact-identity"
 evidence_paths = ["evidence/python-td-global-artifact-identity.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-capability-project-sweep"
+artifact_id = "artifact:capability-control-plane/public-contract"
+capability_id = "capability-control-plane"
+use_case_id = "capability-project-sweep"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-capability-project-sweep.py"
+promise = "Capability sweep reports one entry per configured project, groups projects that land in the identical (status, next action) shape into a single human review queue entry, splits a project whose shape diverges into its own distinct entry, and human mode renders the same sweep as a readable queue summary."
+oracle = "An isolated two-project fixture drives the real aw capability sweep command in both JSON and human modes and independently asserts project count, group count and membership, and the human-readable queue summary line."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-project-sweep"
+evidence_paths = ["evidence/capability-control-plane-capability-project-sweep.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-agent-facing-dx-baseline-trait"
+artifact_id = "artifact:capability-control-plane/public-contract"
+capability_id = "capability-control-plane"
+use_case_id = "agent-facing-dx-baseline-trait"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-agent-facing-dx-baseline-trait.py"
+promise = "An explicit agent_facing profile trait derives the developer-agent-experience baseline capability requirement; a project missing that derived baseline capability reports the exact missing-baseline remediation blocker; and declaring the derived baseline capability in the capability document clears the remediation blocker."
+oracle = "An isolated fixture with an agent_facing profile trait drives the real aw capability report command with and without the derived baseline capability declared, independently asserting the exact missing-baseline blocker text appears and then clears."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-agent-facing-dx-baseline-trait"
+evidence_paths = ["evidence/capability-control-plane-agent-facing-dx-baseline-trait.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-one-way-wi-reference-direction"
+artifact_id = "artifact:capability-control-plane/public-contract"
+capability_id = "capability-control-plane"
+use_case_id = "one-way-wi-reference-direction"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-one-way-wi-reference-direction.py"
+promise = "An open capability gap with neither a doc-stored WI reference nor any tracker WI routes to WI creation; a WI that declares its capability/claim alignment in its own body resolves as tracker-side WI evidence without the capability document's WI cell ever being mutated; and a stale, unresolvable doc-stored WI reference degrades to advisory unknown-state evidence instead of a hard failure."
+oracle = "Three isolated single-capability fixtures drive the real aw capability report command with include-issue-inventory and independently assert wi_evidence, wi_refs, next_action routing, and byte-identical capability document content before and after WI creation."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-one-way-wi-reference-direction"
+evidence_paths = ["evidence/capability-control-plane-one-way-wi-reference-direction.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-default-cap-path-flips-to-capabilities-md"
+artifact_id = "artifact:capability-control-plane/public-contract"
+capability_id = "capability-control-plane"
+use_case_id = "default-cap-path-flips-to-capabilities-md"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-default-cap-path-flips-to-capabilities-md.py"
+promise = "With no cap_path override, capability report resolves cap_path to <project path>/CAPABILITIES.md by default; an explicit [[projects]].cap_path entry overrides that default; a README-resident project with no CAPABILITIES.md degrades to a location-migration advisory finding rather than a hard parse failure; and aw capability migrate relocates README-resident capability structure into CAPABILITIES.md while leaving a Capability Contract pointer behind in the README."
+oracle = "Three isolated project fixtures (default path, explicit override, README-resident) drive the real aw capability report and aw capability migrate commands and independently assert resolved cap_path, next_action routing, blocker text, and the migrated document/README content."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-default-cap-path-flips-to-capabilities-md"
+evidence_paths = ["evidence/capability-control-plane-default-cap-path-flips-to-capabilities-md.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+artifact_id = "artifact:capability-control-plane/public-contract"
+capability_id = "capability-control-plane"
+use_case_id = "capability-catalog-and-td-claim-linkage-consistency"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
+promise = "A production EC case with no capability_id is rejected as unmapped; a case referencing an unknown capability or an unknown claim under a known capability is rejected by id; a case that correctly names a real capability and claim becomes that claim's ec_case_ids evidence; and the read-only claim reconciliation producer independently reports supplemental drift evidence over the real inventory rather than acting as claim closure's sole oracle."
+oracle = "An isolated fixture declares four EC cases (unmapped, unknown-capability, unknown-claim, correctly-mapped) and drives the real aw health claims command, independently asserting exact blocker text and ec_case_ids; the real repository-root claim_reconciliation.py producer is independently run and asserted clean over the live inventory."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+evidence_paths = ["evidence/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-python-artifact-readiness"
+artifact_id = "artifact:capability-control-plane/public-contract"
+capability_id = "capability-control-plane"
+use_case_id = "python-artifact-readiness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-python-artifact-readiness.py"
+promise = "Capability report and health spec expose the identical python_artifact/python_spec readiness projection; a project with no Python TD/EC inventory reports the exact missing-inventory blockers with an aw ec check remediation; a required EC case with missing evidence reports the exact missing-evidence blocker with an aw ec verify --stage td remediation; and writing real evidence for the missing case clears the blocker and flips readiness to ready in both surfaces."
+oracle = "An isolated fixture progresses from no inventory, to a skeleton with missing evidence, to a skeleton with real evidence, driving the real aw capability report and aw health spec commands at each stage and independently asserting projection equality, exact blocker text, and next_command remediation."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-python-artifact-readiness"
+evidence_paths = ["evidence/capability-control-plane-python-artifact-readiness.json"]

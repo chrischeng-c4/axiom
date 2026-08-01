@@ -560,12 +560,6 @@
       "owner_wi": 2665,
       "cases": [
         {
-          "id": "capability-control-plane-capability-project-sweep",
-          "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_capability_project_sweep.rs",
-          "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/capability.rs"
-        },
-        {
           "id": "capability-control-plane-capability-readiness-reporting",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_capability_readiness_reporting.rs",
           "migration_status": "rust_invariant",
