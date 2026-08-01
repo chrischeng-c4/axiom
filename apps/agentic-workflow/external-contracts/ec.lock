@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-01T08:21:10.938639+00:00"
-ir_digest = "sha256:0c7d62f42e534baa579c0a9c81027e9b50f9808e895ed654b3894e19189d7086"
-source_digest = "sha256:30f3077c72c055e99b7396fdda963d68ea274c1a45b92b64175143568c3d6676"
+generated_at = "2026-08-01T14:19:14.498233+00:00"
+ir_digest = "sha256:0690513bc53ed9add43ba49a1e3d10633fd67b78a52d95b056a7876402ae672d"
+source_digest = "sha256:3d518ddb17bed01d3912205e75f07587b47525224c506dfedd74f78299096618"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:4ccccc75fa803bd29e4533ce74253911e0bd1c733f0d7cf2d0c84ab595052047"
+digest = "sha256:110fb22bbe445b478782c8b810dc276e458e03a8887e9cf8376bfd672e00e3a0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -33,6 +33,22 @@ path = "apps/agentic-workflow/external-contracts/src/cases/aw-health-default-ful
 digest = "sha256:8b80cd6aefc17ce610a0f71ae2223a31c1b0324d343221d7d7105c89f1bf4d5e"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-agent-facing-dx-baseline-trait.py"
+digest = "sha256:cd910e759576b4ddd18b51f93c41bfb4e8af1dfc3df9750671aeecb40eba36e6"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
+digest = "sha256:fb351fa6135f2ef3f9b910abbea0660aedaf294dfd5782b334999cc9364e52c9"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-project-sweep.py"
+digest = "sha256:16e38378d295b5ec3f583c5e1be98d96a3b088b230af19fbb8551fa53400a2c7"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-default-cap-path-flips-to-capabilities-md.py"
+digest = "sha256:0a352fc55795899a2bcbf5c115371fda32281d5d87af1ac0586d6d9d36d00e1b"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-markdown-capability-schema.py"
 digest = "sha256:90f2067dce49ba14fdd3b9d8bb2dcadd14a40470c297bb801a7204f364aaeb8c"
 
@@ -41,12 +57,20 @@ path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-pl
 digest = "sha256:eb9fbf4e2e203a9519792d26aa8bffe2530f6294ffa4961d9ba1fa8cd05bbbb6"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-one-way-wi-reference-direction.py"
+digest = "sha256:22ce0150c54e71c7a89cf5b55b5ed72f57c83ce6b816f0be638a5e1454cca187"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-efficiency.py"
 digest = "sha256:51860e142b2698bf0e4a9e8c0c72c4aa2991368ae83b07e9a6e79636dc097b94"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-stability.py"
 digest = "sha256:fa6c757eeeee988586ce20ebc59f89e5629bdcc18b56941c5b87592949be1bab"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py"
+digest = "sha256:79b16720d91ce8707295ac13714d3c041824d244adc040a75f38baea886cf48c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
@@ -475,6 +499,86 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:929291db593b8a87d85de51930483d24c4996893756f6c419e84e64ead43e5e0"
 
 [[cases]]
+id = "capability-control-plane-agent-facing-dx-baseline-trait"
+capability_id = "capability-control-plane"
+claim_id = "agent-facing-dx-baseline-trait"
+contract_id = "capability-control-plane-agent-facing-dx-baseline-trait"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-agent-facing-dx-baseline-trait"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-agent-facing-dx-baseline-trait.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-agent-facing-dx-baseline-trait"
+required_for_production = true
+assertions = [
+    "An explicit agent_facing profile trait derives the developer-agent-experience baseline capability requirement; a project missing that derived baseline capability reports the exact missing-baseline remediation blocker; and declaring the derived baseline capability in the capability document clears the remediation blocker.",
+    "artifact: artifact:capability-control-plane/public-contract",
+    "oracle: An isolated fixture with an agent_facing profile trait drives the real aw capability report command with and without the derived baseline capability declared, independently asserting the exact missing-baseline blocker text appears and then clears.",
+    "target: rust",
+]
+evidence_digest = "sha256:df7ad953a606459fe447bf970db4980590ff64218430b49ecfcdefc7b8a67d0b"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:74ce20a801875d8244955478cb112782a9fa96dcf0482fc3d0297422eb3b9110"
+
+[[cases]]
+id = "capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+capability_id = "capability-control-plane"
+claim_id = "capability-catalog-and-td-claim-linkage-consistency"
+contract_id = "capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+required_for_production = true
+assertions = [
+    "A production EC case with no capability_id is rejected as unmapped; a case referencing an unknown capability or an unknown claim under a known capability is rejected by id; a case that correctly names a real capability and claim becomes that claim's ec_case_ids evidence; and the read-only claim reconciliation producer independently reports supplemental drift evidence over the real inventory rather than acting as claim closure's sole oracle.",
+    "artifact: artifact:capability-control-plane/public-contract",
+    "oracle: An isolated fixture declares four EC cases (unmapped, unknown-capability, unknown-claim, correctly-mapped) and drives the real aw health claims command, independently asserting exact blocker text and ec_case_ids; the real repository-root claim_reconciliation.py producer is independently run and asserted clean over the live inventory.",
+    "target: rust",
+]
+evidence_digest = "sha256:2e1c1c86b2bf53b20908d355b2b89b9ab376bfb788f76522842dd7e9e96c942a"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c4ea2904b0a7a6d6d10a0b9d8004eebdceda898bed474b59178889bdf38329dc"
+
+[[cases]]
+id = "capability-control-plane-capability-project-sweep"
+capability_id = "capability-control-plane"
+claim_id = "capability-project-sweep"
+contract_id = "capability-control-plane-capability-project-sweep"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-capability-project-sweep"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-project-sweep.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-project-sweep"
+required_for_production = true
+assertions = [
+    "Capability sweep reports one entry per configured project, groups projects that land in the identical (status, next action) shape into a single human review queue entry, splits a project whose shape diverges into its own distinct entry, and human mode renders the same sweep as a readable queue summary.",
+    "artifact: artifact:capability-control-plane/public-contract",
+    "oracle: An isolated two-project fixture drives the real aw capability sweep command in both JSON and human modes and independently asserts project count, group count and membership, and the human-readable queue summary line.",
+    "target: rust",
+]
+evidence_digest = "sha256:402543c910bef37aa4b74f45a678cde44c2359fa48eddce4ed6bba41671ec134"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ff234be14f5a968dccf4a75ba3d2daab39f2345f08e5b00e9f582df1f9b43f4d"
+
+[[cases]]
+id = "capability-control-plane-default-cap-path-flips-to-capabilities-md"
+capability_id = "capability-control-plane"
+claim_id = "default-cap-path-flips-to-capabilities-md"
+contract_id = "capability-control-plane-default-cap-path-flips-to-capabilities-md"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-default-cap-path-flips-to-capabilities-md"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-default-cap-path-flips-to-capabilities-md.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-default-cap-path-flips-to-capabilities-md"
+required_for_production = true
+assertions = [
+    "With no cap_path override, capability report resolves cap_path to <project path>/CAPABILITIES.md by default; an explicit [[projects]].cap_path entry overrides that default; a README-resident project with no CAPABILITIES.md degrades to a location-migration advisory finding rather than a hard parse failure; and aw capability migrate relocates README-resident capability structure into CAPABILITIES.md while leaving a Capability Contract pointer behind in the README.",
+    "artifact: artifact:capability-control-plane/public-contract",
+    "oracle: Three isolated project fixtures (default path, explicit override, README-resident) drive the real aw capability report and aw capability migrate commands and independently assert resolved cap_path, next_action routing, blocker text, and the migrated document/README content.",
+    "target: rust",
+]
+evidence_digest = "sha256:ee1a6113a76967717b6ec90c56cc7e90b7902722a766cf19b2f6bf9c4e3eff43"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:5fdbf212417ac037eb456f64eb7b2cd9ae5c59f650ed0bba1dceb72ea3ead1a0"
+
+[[cases]]
 id = "capability-control-plane-markdown-capability-schema"
 capability_id = "capability-control-plane"
 claim_id = "markdown-capability-schema"
@@ -513,6 +617,26 @@ assertions = [
 evidence_digest = "sha256:05131a04367e286ff5500cd876e6c0fd96ac5898f98b8806a175c77dff6ac33e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:3fc83bfe01275f476d77efa079e17f850b9300dde0d696470c1a8f27f657a239"
+
+[[cases]]
+id = "capability-control-plane-one-way-wi-reference-direction"
+capability_id = "capability-control-plane"
+claim_id = "one-way-wi-reference-direction"
+contract_id = "capability-control-plane-one-way-wi-reference-direction"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-one-way-wi-reference-direction"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-one-way-wi-reference-direction.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-one-way-wi-reference-direction"
+required_for_production = true
+assertions = [
+    "An open capability gap with neither a doc-stored WI reference nor any tracker WI routes to WI creation; a WI that declares its capability/claim alignment in its own body resolves as tracker-side WI evidence without the capability document's WI cell ever being mutated; and a stale, unresolvable doc-stored WI reference degrades to advisory unknown-state evidence instead of a hard failure.",
+    "artifact: artifact:capability-control-plane/public-contract",
+    "oracle: Three isolated single-capability fixtures drive the real aw capability report command with include-issue-inventory and independently assert wi_evidence, wi_refs, next_action routing, and byte-identical capability document content before and after WI creation.",
+    "target: rust",
+]
+evidence_digest = "sha256:bb82b5d3457ac3a5c83114a997aa1e03b132c4c333782d69aa8640093bfebd45"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7652e7db1592f340124b191a16e26fe956b32fff9b4177295b70ce08f4dd7117"
 
 [[cases]]
 id = "capability-control-plane-operational-efficiency"
@@ -555,6 +679,26 @@ assertions = [
 evidence_digest = "sha256:32ee6c7ab59e2eb6f1fe61bdc1a0daece6ed7cdf5759bc5793923fd0e4a77718"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:e46f84b9c9abc06e7f3a9e3075811a84f22c9eb0f0fd43441e30bc2d056cf73c"
+
+[[cases]]
+id = "capability-control-plane-python-artifact-readiness"
+capability_id = "capability-control-plane"
+claim_id = "python-artifact-readiness"
+contract_id = "capability-control-plane-python-artifact-readiness"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-python-artifact-readiness"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-python-artifact-readiness"
+required_for_production = true
+assertions = [
+    "Capability report and health spec expose the identical python_artifact/python_spec readiness projection; a project with no Python TD/EC inventory reports the exact missing-inventory blockers with an aw ec check remediation; a required EC case with missing evidence reports the exact missing-evidence blocker with an aw ec verify --stage td remediation; and writing real evidence for the missing case clears the blocker and flips readiness to ready in both surfaces.",
+    "artifact: artifact:capability-control-plane/public-contract",
+    "oracle: An isolated fixture progresses from no inventory, to a skeleton with missing evidence, to a skeleton with real evidence, driving the real aw capability report and aw health spec commands at each stage and independently asserting projection equality, exact blocker text, and next_command remediation.",
+    "target: rust",
+]
+evidence_digest = "sha256:56db76bb3ca394a5888f9693c51eada8fdaa2eea4d1f7009ebd5b773a91fc9a7"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:0acc421b61de9d49fa3b7101ccad41b1f7e8ae24a21cfb15a34080c4a09d87f0"
 
 [[cases]]
 id = "capability-scoped-dependency-verification"
