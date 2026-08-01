@@ -78,6 +78,73 @@ NON_CORE_IDS = (
 CORE_CLAIM_COUNT = 3
 NON_CORE_CLAIM_COUNT = 5
 
+#: The four scalar fields the reference document's field-style contract declares
+#: per capability, keyed by id: `(title, capability_type, promise)`. Status is
+#: not carried here because every capability of this document declares
+#: `verified`; see `assert_field_style_contract_parses_every_field` for what
+#: that costs and what covers it instead.
+#:
+#: Added in round 42. The case's first published claim has always been that the
+#: field-style contract "parses into one exact capability id, title, type,
+#: status, and promise", and until this constant existed only `id` was read
+#: back: `assert_feature_class_attribution` checks ids, classes and counts and
+#: nothing else, and no other leg reads a per-capability `title`,
+#: `capability_type`, or `promise` at all.
+REFERENCE_FIELD_CONTRACT = {
+    "search-core": (
+        "Search Core",
+        "Service",
+        "Index caller-owned records and return ranked external_ids only.",
+    ),
+    "lexical-search": (
+        "Lexical Search",
+        "DeveloperTool",
+        "Answer BM25 text queries through the analyzer-backed planner.",
+    ),
+    "standard-operational-endpoints": (
+        "Standard Operational Endpoints",
+        "Devops",
+        "Expose the standard health and readiness endpoints.",
+    ),
+    "kubernetes-native-deployment": (
+        "Kubernetes-Native Deployment",
+        "RuntimeTool",
+        "Deploy as a Kubernetes-native workload.",
+    ),
+    "security-hardening": (
+        "Security Hardening",
+        "SecurityTool",
+        "Enforce the archetype security baseline.",
+    ),
+    "ec-gates-configured": (
+        "Contract Gate Wiring",
+        "AgentFirst",
+        "Carry configured external-contract gates | one inventory entry per "
+        "gate.\nRefuse an inventory whose entries and gates disagree.",
+    ),
+}
+
+#: Every field must be pairwise distinct across the six capabilities, or a
+#: parser that transposed one across two capabilities would render the same
+#: report. The type column is the strongest of the three here: the document
+#: declares six *different* types, so the six-value type vocabulary is walked
+#: once per capability rather than repeated.
+assert set(REFERENCE_FIELD_CONTRACT) == set(CORE_IDS) | set(NON_CORE_IDS), sorted(
+    REFERENCE_FIELD_CONTRACT
+)
+for _column, _index in (("title", 0), ("capability_type", 1), ("promise", 2)):
+    _values = [fields[_index] for fields in REFERENCE_FIELD_CONTRACT.values()]
+    assert len(set(_values)) == len(_values), (_column, _values)
+
+#: And at least one title must not be derivable from its own id, or an
+#: implementation that title-cased the id would satisfy every comparison above.
+#: `ec-gates-configured` is titled `Contract Gate Wiring`, which shares no word
+#: with it.
+assert any(
+    not set(title.lower().split()) & set(cap_id.split("-"))
+    for cap_id, (title, _type, _promise) in REFERENCE_FIELD_CONTRACT.items()
+), REFERENCE_FIELD_CONTRACT
+
 #: A real Lumen capability that is *not* a trait-derived baseline, used to
 #: falsify the field/root agreement rule without also tripping the baseline
 #: rule. Keeping the two falsifiers independent is the point.
@@ -1366,6 +1433,44 @@ def assert_feature_class_attribution(report: dict[str, Any]) -> None:
     # below: whatever rule rejects them must stay silent here, or "rejected"
     # would carry no information.
     assert document_blockers(report) == [], report["blockers"]
+
+
+def assert_field_style_contract_parses_every_field(report: dict[str, Any]) -> None:
+    """Each field-style capability parses into its own title, type and promise.
+
+    This is the case's first published claim, and until round 42 the only part
+    of it that was read back was the id. `assert_feature_class_attribution`
+    checks ids, feature classes and counts; nothing anywhere in this case read a
+    per-capability `title`, `capability_type` or `promise`. An implementation
+    that blanked every title, dropped the type field, or echoed one capability's
+    promise onto all six satisfied every assertion here while the label told a
+    reader those five fields were exactly parsed.
+
+    All three columns are pairwise distinct across the six capabilities (guarded
+    where the constant is defined), so a transposition is detectable in each.
+    The type column is the strongest: this document declares six *different*
+    types, so the whole type vocabulary is walked once per capability.
+
+    Status is asserted but claims less, and the difference is worth stating
+    rather than burying. Every capability of this document declares `verified`,
+    so the six comparisons catch a parser that dropped the field or substituted
+    a constant, and cannot catch a transposition -- there is nothing to
+    transpose. The document that walks the six-value status enum one capability
+    per status is the relocation fixture, and the arms of the derivation it
+    feeds are asserted there.
+    """
+    by_id = {item["id"]: item for item in report["capabilities"]}
+    assert set(by_id) == set(REFERENCE_FIELD_CONTRACT), sorted(by_id)
+    for cap_id, (title, cap_type, promise) in REFERENCE_FIELD_CONTRACT.items():
+        item = by_id[cap_id]
+        assert item["title"] == title, (cap_id, item["title"], title)
+        assert item.get("capability_type") == cap_type, (
+            cap_id,
+            item.get("capability_type"),
+            cap_type,
+        )
+        assert item["promise"] == promise, (cap_id, item["promise"], promise)
+        assert item["status"] == "verified", (cap_id, item["status"])
 
 
 def assert_unclassified_defaults_to_non_core(report: dict[str, Any]) -> None:
