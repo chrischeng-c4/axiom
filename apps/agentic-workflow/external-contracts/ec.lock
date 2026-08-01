@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-01T03:13:36.309344+00:00"
-ir_digest = "sha256:5b0d8dbab02b1a8c9f0ce00b1f2f7c9f9705186b80d54e41d359b9abffe873f7"
-source_digest = "sha256:9003b487dd6d30760af0f17e7de93f8c031e1800f8cab71ac52685079e6dc9ab"
+generated_at = "2026-08-01T08:21:10.938639+00:00"
+ir_digest = "sha256:0c7d62f42e534baa579c0a9c81027e9b50f9808e895ed654b3894e19189d7086"
+source_digest = "sha256:30f3077c72c055e99b7396fdda963d68ea274c1a45b92b64175143568c3d6676"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:6d98fc95d5c122279c541625a94c5c128625e5963a5d4fdbe3c4e73defe35af8"
+digest = "sha256:4ccccc75fa803bd29e4533ce74253911e0bd1c733f0d7cf2d0c84ab595052047"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -415,7 +415,7 @@ digest = "sha256:0634512466756b2fffba795535c8c03a0ef65617c6601325ef30c0c3d7e6044
 [[cases]]
 id = "aw-core-client-operational-efficiency"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
-claim_id = "aw-core-client-operational-efficiency"
+claim_id = "core-concept-model-and-invariants"
 contract_id = "aw-core-client-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-operational-efficiency"
@@ -431,12 +431,12 @@ assertions = [
 ]
 evidence_digest = "sha256:ca2f1f38d54198d9d3831cb1803ad13d0ce51cb116f6211ab9a606cadcea528c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7279686f48f76ccc859af33b7744e9fa5c1a99016f205f527bd1c000c1f14c49"
+digest = "sha256:d1c4452d5404c9c81d191e9b7af0a7ac8560171501f726f6bf5bfae6e5bc7180"
 
 [[cases]]
 id = "aw-core-client-operational-stability"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
-claim_id = "aw-core-client-operational-stability"
+claim_id = "core-concept-model-and-invariants"
 contract_id = "aw-core-client-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-operational-stability"
@@ -452,7 +452,7 @@ assertions = [
 ]
 evidence_digest = "sha256:9bdf407dabd12d5d329b8894a8427493491e93b72a8046fca94d4c13f9d3d15b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bceca9a4359e83c0695ceeaa7757def0b423d2f896ae537a5b12332ca25f01e2"
+digest = "sha256:afe2597b8f654d66eb280d02f70d9c9202ddefb706c26140a044b324f3f68b49"
 
 [[cases]]
 id = "aw-health-default-full-verification-smoke"
@@ -517,7 +517,7 @@ digest = "sha256:3fc83bfe01275f476d77efa079e17f850b9300dde0d696470c1a8f27f657a23
 [[cases]]
 id = "capability-control-plane-operational-efficiency"
 capability_id = "capability-control-plane"
-claim_id = "capability-control-plane-operational-efficiency"
+claim_id = "capability-readiness-reporting"
 contract_id = "capability-control-plane-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-operational-efficiency"
@@ -533,12 +533,12 @@ assertions = [
 ]
 evidence_digest = "sha256:bafdbe99846715b5fecc2eda70a2b8c2720f115cdb94a6a03c8f950c52202c5c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:25c003ccebf05417c6bf9fbfa5b9be5ab0040a520844d8e83a8acceb4a44d968"
+digest = "sha256:ddd8e98fab7d928263c9c0769c8e0619078e9586fec6c778fe416148c2b93c46"
 
 [[cases]]
 id = "capability-control-plane-operational-stability"
 capability_id = "capability-control-plane"
-claim_id = "capability-control-plane-operational-stability"
+claim_id = "capability-readiness-reporting"
 contract_id = "capability-control-plane-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-control-plane-operational-stability"
@@ -554,7 +554,7 @@ assertions = [
 ]
 evidence_digest = "sha256:32ee6c7ab59e2eb6f1fe61bdc1a0daece6ed7cdf5759bc5793923fd0e4a77718"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:adf8a3a34826d481baeb0ef6d7c4aba97aa071ab0e23a600ce0cc5094aa993e5"
+digest = "sha256:e46f84b9c9abc06e7f3a9e3075811a84f22c9eb0f0fd43441e30bc2d056cf73c"
 
 [[cases]]
 id = "capability-scoped-dependency-verification"
@@ -659,7 +659,7 @@ digest = "sha256:1c80b7dd352ab520e4b32ff80bf31fe7d4e604960646335eb6054419cf4e8d2
 [[cases]]
 id = "existing-project-standardization-operational-efficiency"
 capability_id = "existing-project-standardization"
-claim_id = "existing-project-standardization-operational-efficiency"
+claim_id = "project-health-no-regression"
 contract_id = "existing-project-standardization-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:existing-project-standardization-operational-efficiency"
@@ -675,12 +675,12 @@ assertions = [
 ]
 evidence_digest = "sha256:0372e38e5adcfb4e07e9348e2228b35afa94876e25fa3d4f8dd7e4d3509ecd16"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:896359ced12aafdd154a24390f1f204bab81e4cc97128aee91de4f95c2bd57fa"
+digest = "sha256:fed25a88a8def1d3329ace280862053f000a0730c9f7b1b396ae0145dc9470c5"
 
 [[cases]]
 id = "existing-project-standardization-operational-stability"
 capability_id = "existing-project-standardization"
-claim_id = "existing-project-standardization-operational-stability"
+claim_id = "project-health-no-regression"
 contract_id = "existing-project-standardization-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:existing-project-standardization-operational-stability"
@@ -696,7 +696,7 @@ assertions = [
 ]
 evidence_digest = "sha256:a8d4c2b4a07a926b835aec0e2135c8f480b310ba0a4318c18ab81cb6fadf7c14"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:31ffd12ebc571d8ac76ff3c3c6ff49526d16aadd3c74ef7633e6188e4f774f2b"
+digest = "sha256:04d56cf871b6ed892a5f035728acb691954606dae53a23c662d302df664aa569"
 
 [[cases]]
 id = "external-fixture-reports-advisory-gap"
@@ -741,7 +741,7 @@ digest = "sha256:18a77c78d9414c7f898da987eeb7920313e87b8e667cf0a4b1456644eda2777
 [[cases]]
 id = "manual-evidence-artifacts-operational-efficiency"
 capability_id = "manual-evidence-artifacts"
-claim_id = "manual-evidence-artifacts-operational-efficiency"
+claim_id = "manual-runner-output-convention"
 contract_id = "manual-evidence-artifacts-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:manual-evidence-artifacts-operational-efficiency"
@@ -757,12 +757,12 @@ assertions = [
 ]
 evidence_digest = "sha256:1435a452d4b2f39ebd63b3a6af24b1879d9ac17100a5bce7a9fa781c76b8bba8"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1600aa29130aa227b13dc5f7ec781c88cf6e9c8ab1e4127bc9582dc5004f244f"
+digest = "sha256:99dba3d468b7adec44dc7ed38ccddff705d22116ac47087c9d0885b721b67932"
 
 [[cases]]
 id = "manual-evidence-artifacts-operational-stability"
 capability_id = "manual-evidence-artifacts"
-claim_id = "manual-evidence-artifacts-operational-stability"
+claim_id = "manual-runner-output-convention"
 contract_id = "manual-evidence-artifacts-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:manual-evidence-artifacts-operational-stability"
@@ -778,7 +778,7 @@ assertions = [
 ]
 evidence_digest = "sha256:b335ced3899d499f862349b1c25bf2ff694640223d5a75dab8aef2691adaf7fb"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2f0c5b5c68966605da4e16a186ff10ea4bef498f1a4279c89a83f31a0dd59046"
+digest = "sha256:688ffb9c0ccc7072b2ee71c33d5916b7dbdc6d7d5c30b4eeadd7f4191c5b8724"
 
 [[cases]]
 id = "manual-evidence-schema-python-contract"
@@ -843,7 +843,7 @@ digest = "sha256:af8452eef8a194f76f16438ff470b831d280678e99014a1ad2212c90c7b5ee5
 [[cases]]
 id = "project-local-td-and-ec-gates-operational-efficiency"
 capability_id = "project-local-td-and-ec-gates"
-claim_id = "project-local-td-and-ec-gates-operational-efficiency"
+claim_id = "project-local-td-root-resolver"
 contract_id = "project-local-td-and-ec-gates-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:project-local-td-and-ec-gates-operational-efficiency"
@@ -859,12 +859,12 @@ assertions = [
 ]
 evidence_digest = "sha256:8290ac59a6d8bf671efb2a5648b75b8deabea76542fe5d016252dac153006554"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3efb29be51350e8a09b7a670d7a0074adee2bf40138bfbdb4416c87e5bc97063"
+digest = "sha256:ea902c9653dd88c6389f3287dd154df0db164d679f7577b8bc3c7ebfb01739a3"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-operational-stability"
 capability_id = "project-local-td-and-ec-gates"
-claim_id = "project-local-td-and-ec-gates-operational-stability"
+claim_id = "project-local-td-root-resolver"
 contract_id = "project-local-td-and-ec-gates-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:project-local-td-and-ec-gates-operational-stability"
@@ -880,7 +880,7 @@ assertions = [
 ]
 evidence_digest = "sha256:a1100bc16bd92ea8eaa80370b258e094c95d347eab81012291930ab9fcbf4b2d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c73916fd3ca19aabf8919962a6f4f550b566048cd005f3c422146624e4175ddc"
+digest = "sha256:038fc7b4fc5d08919b4ffed9ef5de5ddbdc03f75e459bcd25f5a936a316729c0"
 
 [[cases]]
 id = "python-ec-cache-safe-discovery"
@@ -1147,7 +1147,7 @@ digest = "sha256:ca14878a57b836573f8318d6f76ff604ebd9a3dd38258b62e6f591ef95cf52f
 [[cases]]
 id = "td-cb-lifecycle-automation-operational-efficiency"
 capability_id = "td-cb-lifecycle-automation"
-claim_id = "td-cb-lifecycle-automation-operational-efficiency"
+claim_id = "terminal-ec-process-liveness"
 contract_id = "td-cb-lifecycle-automation-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-cb-lifecycle-automation-operational-efficiency"
@@ -1163,12 +1163,12 @@ assertions = [
 ]
 evidence_digest = "sha256:c4338943f46a5078f7876e4bbc66dcf9cfc82661dbe838f45e2baf9de5066ad3"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d699a88151f6216cda039ca8301c6e5018ca4201f58d2b16e5bfc4ed2b34ee2a"
+digest = "sha256:6a4a36275a440091e75afadea3f620b620877a384169ed81178392003baf6313"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-operational-stability"
 capability_id = "td-cb-lifecycle-automation"
-claim_id = "td-cb-lifecycle-automation-operational-stability"
+claim_id = "terminal-ec-process-liveness"
 contract_id = "td-cb-lifecycle-automation-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-cb-lifecycle-automation-operational-stability"
@@ -1184,7 +1184,7 @@ assertions = [
 ]
 evidence_digest = "sha256:89bfd484b4a234e67a0e5f94ef479bf389316f210c50bc1b42da86891bad7068"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:86eef5affaee89f36c1cd18ea71071efc32e09a76f15c97d1adb3cebc1c71beb"
+digest = "sha256:1357482d0a5e182a5394f1da04965dface32cf5cfc9c2aad361efc5486ef3c35"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-remove-td-merge-command"
@@ -1569,7 +1569,7 @@ digest = "sha256:e4004de0f23957d45fd6f8bc8b7b717b699cef2e9bf710a8db5bd6b00e91b19
 [[cases]]
 id = "work-item-planning-operational-efficiency"
 capability_id = "work-item-planning"
-claim_id = "work-item-planning-operational-efficiency"
+claim_id = "capability-to-epic-planning"
 contract_id = "work-item-planning-operational-efficiency"
 dimension = "efficiency"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-planning-operational-efficiency"
@@ -1585,12 +1585,12 @@ assertions = [
 ]
 evidence_digest = "sha256:a56ad699f2f3e99c7a9c28c51b3e0dc7e09a9a0f4f04af3cc87d342ba0f0aa61"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:340db0fbc7cd734e64d2846ba9ce71fb1deed23a944268b427b01cf6ba6bc3de"
+digest = "sha256:cc6a6b70a7643b46589fd5a700874118af248dde0c7560c7c348a30d476e4548"
 
 [[cases]]
 id = "work-item-planning-operational-stability"
 capability_id = "work-item-planning"
-claim_id = "work-item-planning-operational-stability"
+claim_id = "capability-to-epic-planning"
 contract_id = "work-item-planning-operational-stability"
 dimension = "stability"
 source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-planning-operational-stability"
@@ -1606,7 +1606,7 @@ assertions = [
 ]
 evidence_digest = "sha256:4a3a2c087ad4a3320cb4e4238812f2f0c2aa179ad47c8b5576eb92b8a6363a81"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a632625e2b7d49a3f4140b0958b04edcb5a26df9e4621c1565be92a9a736171f"
+digest = "sha256:257ebf267d8b8f5a560b8630180002a14d8bd77fd9bfbc31a5450e8e5527f5d7"
 
 [[cases]]
 id = "work-item-report-triage"
