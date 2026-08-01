@@ -268,6 +268,10 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
 
         report = _lumen_report(root, cap_path, lumen_reference.REFERENCE_DOCUMENT)
         lumen_reference.assert_feature_class_attribution(report)
+        # The label's claim has always been "id, title, type, status, and
+        # promise" -- assert_feature_class_attribution above reads only id and
+        # feature_class. This is the other four.
+        lumen_reference.assert_field_style_contract_parses_every_field(report)
 
         # Every baseline the fixture names, not one representative: the claim is
         # that archetype baselines are always non-core.
@@ -1617,7 +1621,7 @@ def verify(case_id: str) -> list[str]:
                 "aw capability migrate renders one capability section per capability on that same branch, asserted through both the relocated text and a re-report of it, so a relocation emitting a complete-looking Capability Index over no contract at all cannot pass, with the re-report's capability and claim totals pinned to the counts that exclude the one retired capability the varied-status document declares while its section is still rendered and its id still listed, so the totals cannot be read off the length of the list they are reported beside",
                 "aw capability migrate renders core, then non-core, then whatever declared nothing, asserted on the one relocation shape whose three render groups are all populated and whose grouped order differs from its input order, with the Capability Index and the capability sections -- two separate passes over the same group array -- pinned both to each other and to that grouped order",
                 "aw capability migrate emits both canonical feature roots when one class has no members, asserted on the only input shape where a populated-roots-only renderer differs from a both-roots renderer, and the emitted document is accepted by a follow-up report",
-                "aw capability next renders the same core/non-core split its own report computes, through a coverage object built by a separate JSON literal, with the four populated operands non-zero and pairwise distinct",
+                "aw capability next renders the same core/non-core split its own report computes, through a coverage object built by a separate JSON literal, with the four populated operands non-zero and pairwise distinct; the same equality is also asserted over the four verified operands, but `aw capability next` has no `--verify`, so those four are zero on both sides and that half of the claim is real but not falsifiable",
                 "each trait-derived baseline nested under Core Features while declaring no Feature Class at all is rejected by that exact blocker, which is the half of the effective-class rule that resolves the class from the containing root rather than from the field",
                 "the same placement is read the same way when both feature roots are written in a different case, asserted as the identical blocker and the identical class-partitioned counts as its canonical-cased twin, because an unrecognized root does not misclassify but disappears -- and every other document here writes its roots in exact canonical case",
                 "aw capability report resolves every human spelling of Feature Class -- backticked, hyphenated, camel-cased, case-folded, and the root headings themselves -- to its canonical class with the same per-class counts and no blocker, exercised in waves because one document holds one spelling per capability, which is the accepting half of the parser the mistyped-value assertion only binds the refusal of",
