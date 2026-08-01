@@ -108,10 +108,16 @@ test_cmd = "true"
         encoding="utf-8",
     )
     alpha_cap_path = alpha / "CAPABILITIES.md"
+    beta_cap_path = beta / "CAPABILITIES.md"
     if alpha_has_capability_doc:
         alpha_cap_path.write_text(_capability_document(), encoding="utf-8")
     elif alpha_cap_path.exists():
         alpha_cap_path.unlink()
+    # Keep beta's configured path present but unreadable as UTF-8. This creates
+    # an env_blocked shape through a different cause than alpha's absent path,
+    # and in the split scenario keeps both configured paths present while
+    # their exact status/next-action shapes diverge.
+    beta_cap_path.write_bytes(b"\xff")
 
 
 def _sweep(root: Path, *, human: bool = False) -> subprocess.CompletedProcess[str]:
@@ -142,27 +148,68 @@ def verify() -> list[str]:
         same_shape = _sweep_json(root)
         assert same_shape["project_count"] == 2, same_shape
         assert len(same_shape["projects"]) == 2, same_shape
-        assert len(same_shape["groups"]) == 1, same_shape
-        only_group = same_shape["groups"][0]
-        assert only_group["count"] == 2, only_group
-        assert set(only_group["projects"]) == {"alpha", "beta"}, only_group
+        assert same_shape["groups"] == [
+            {
+                "status": "blocked",
+                "next_action_kind": "env_blocked",
+                "next_action_group": "env_blocked",
+                "count": 2,
+                "projects": ["alpha", "beta"],
+            }
+        ], same_shape
+        same_projects = {entry["project"]: entry for entry in same_shape["projects"]}
+        assert sorted(same_projects) == ["alpha", "beta"], same_shape
+        for project in ("alpha", "beta"):
+            entry = same_projects[project]
+            assert entry["report_status"] == "blocked", entry
+            assert entry["loop_status"] == "blocked", entry
+            assert entry["next_action_kind"] == "env_blocked", entry
+            assert entry["next_action_group"] == "env_blocked", entry
+        assert "No such file or directory" in same_projects["alpha"]["next_action"][
+            "reason"
+        ], same_shape
+        assert "valid UTF-8" in same_projects["beta"]["next_action"]["reason"], (
+            same_shape
+        )
+        assert not (root / "projects/alpha/CAPABILITIES.md").exists()
+        assert (root / "projects/beta/CAPABILITIES.md").is_file()
 
         _write_fixture(root, alpha_has_capability_doc=True)
         split_shape = _sweep_json(root)
         assert split_shape["project_count"] == 2, split_shape
-        assert len(split_shape["groups"]) == 2, split_shape
-        for group in split_shape["groups"]:
-            assert group["count"] == 1, split_shape
-        grouped_projects = sorted(
-            group["projects"][0] for group in split_shape["groups"]
-        )
-        assert grouped_projects == ["alpha", "beta"], split_shape
+        assert split_shape["groups"] == [
+            {
+                "status": "blocked",
+                "next_action_kind": "env_blocked",
+                "next_action_group": "env_blocked",
+                "count": 1,
+                "projects": ["beta"],
+            },
+            {
+                "status": "blocked",
+                "next_action_kind": "run_verify",
+                "next_action_group": "run_verify",
+                "count": 1,
+                "projects": ["alpha"],
+            },
+        ], split_shape
+        split_projects = {entry["project"]: entry for entry in split_shape["projects"]}
+        assert split_projects["alpha"]["loop_status"] == "continue", split_shape
+        assert split_projects["alpha"]["next_action_kind"] == "run_verify", split_shape
+        assert split_projects["alpha"]["next_action_group"] == "run_verify", split_shape
+        assert split_projects["beta"]["loop_status"] == "blocked", split_shape
+        assert split_projects["beta"]["next_action_kind"] == "env_blocked", split_shape
+        assert split_projects["beta"]["next_action_group"] == "env_blocked", split_shape
+        assert (root / "projects/alpha/CAPABILITIES.md").is_file()
+        assert (root / "projects/beta/CAPABILITIES.md").is_file()
 
         human = _sweep(root, human=True)
-        assert human.stdout.startswith("capability sweep: "), human.stdout
-        assert "projects complete]" in human.stdout.splitlines()[0], human.stdout
-        assert "alpha" in human.stdout, human.stdout
-        assert "beta" in human.stdout, human.stdout
+        assert human.returncode == 0, (human.stdout, human.stderr)
+        assert human.stdout == (
+            "capability sweep: blocked [0/2 projects complete]\n"
+            "blocked:env_blocked [1] beta\n"
+            "blocked:run_verify [1] alpha\n"
+        ), human.stdout
 
     return list(ASSERTIONS)
 
