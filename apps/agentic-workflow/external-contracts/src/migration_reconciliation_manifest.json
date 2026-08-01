@@ -758,12 +758,6 @@
           "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
-          "id": "workflow-root-runner-cli-workflow-chain",
-          "legacy_test_path": "apps/agentic-workflow/tests/behavior_workflow_root_runner_cli_workflow_chain.rs",
-          "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/chain.rs"
-        },
-        {
           "id": "workflow-root-runner-parent-rollup-routing",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_workflow_root_runner_parent_rollup_routing.rs",
           "migration_status": "native",

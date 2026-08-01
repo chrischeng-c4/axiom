@@ -183,6 +183,7 @@ def _report(root: Path) -> dict[str, object]:
         "--include-issue-inventory",
         expect_success=None,
     )
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
     return final_json(completed)
 
 
@@ -255,6 +256,21 @@ def verify() -> list[str]:
         )
         assert entry["issue_type"] == "unknown", entry
         assert entry["state"] == "unknown", entry
+        assert entry["title"] == "", entry
+        assert report["status"] == "blocked", report
+        assert report["blockers"] == [], report
+        assert report["next_action"]["kind"] == "reconcile_wi_refs", report
+        assert report["next_action"]["capability_id"] == "demo-capability", report
+        assert report["next_action"]["gap_id"] == "fix-red-claim", report
+        assert report["next_action"]["command"] == "aw wi plan --project demo", report
+        assert report["next_action"]["requires_hitl"] is False, report
+        assert report["next_action"]["reason"] == (
+            "active WI reference is not present in project issue inventory; "
+            "sync or recreate a bounded WI before the EC-first TD/codegen "
+            "lifecycle; once the correct WI id is known, resolve without a raw "
+            "file edit via `aw capability set-wi-ref --project demo --capability "
+            "demo-capability --claim fix-red-claim --wi <id>`"
+        ), report
 
     return list(ASSERTIONS)
 

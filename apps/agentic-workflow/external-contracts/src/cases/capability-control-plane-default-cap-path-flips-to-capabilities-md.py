@@ -201,11 +201,46 @@ def verify() -> list[str]:
         ), migrated
 
         cap_body = (root / "project" / "CAPABILITIES.md").read_text(encoding="utf-8")
-        assert "demo-capability" in cap_body, cap_body
+        assert cap_body.startswith("# Demo\n\n## Brief\n"), cap_body
+        assert cap_body.count("### Capability Index") == 1, cap_body
+        assert (
+            "| Demo | - | implemented | verified | smoke | ready | "
+            "cap_path resolution fixture |" in cap_body
+        ), cap_body
+        assert cap_body.count("ID: demo-capability") == 1, cap_body
+        assert "Root WI: -\nStatus: verified\nType: DeveloperTool" in cap_body, cap_body
+        assert "Required Verification: smoke" in cap_body, cap_body
+        assert (
+            "Promise:\nExpose one capability used only to prove cap_path resolution."
+            in cap_body
+        ), cap_body
+        assert "Gate Inventory:\n- `true`" in cap_body, cap_body
+        assert (
+            "Surfaces:\n- CLI: `aw capability report --project demo` - reports "
+            "capability evidence."
+            in cap_body
+        ), cap_body
+        assert (
+            "EC Dimensions:\n- behavior: `true` - isolated black-box "
+            "cap_path contract."
+            in cap_body
+        ), cap_body
+        assert (
+            "| Demo coverage | change | - | implemented | verified | smoke | `true` |"
+            in cap_body
+        ), cap_body
 
         readme_body = (root / "project" / "README.md").read_text(encoding="utf-8")
-        assert "## Capability Contract" in readme_body, readme_body
-        assert "[CAPABILITIES.md](CAPABILITIES.md)" in readme_body, readme_body
+        assert readme_body == (
+            "# Demo Capabilities\n\n"
+            "## Brief\n\n"
+            "Isolated cap_path resolution fixture.\n\n"
+            "## Capability Contract\n\n"
+            "Machine-readable capability contract for Demo. Full contract:\n"
+            "[CAPABILITIES.md](CAPABILITIES.md).\n"
+        ), readme_body
+        assert "## Capabilities" not in readme_body, readme_body
+        assert "demo-capability" not in readme_body, readme_body
 
         after_migrate = _report(root)
         joined_blockers = " ".join(after_migrate["blockers"])

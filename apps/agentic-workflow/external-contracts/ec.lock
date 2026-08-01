@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-01T14:19:14.498233+00:00"
-ir_digest = "sha256:0690513bc53ed9add43ba49a1e3d10633fd67b78a52d95b056a7876402ae672d"
-source_digest = "sha256:3d518ddb17bed01d3912205e75f07587b47525224c506dfedd74f78299096618"
+generated_at = "2026-08-01T17:40:15.210375+00:00"
+ir_digest = "sha256:cb512850709223011cfa9e0e8f1dc9580a206ed6954b9d2c9ce5b5d64e70f999"
+source_digest = "sha256:45be03395a7ea7e205807f86df39db224b9e064265e5eb881c67f5fd0f035518"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:110fb22bbe445b478782c8b810dc276e458e03a8887e9cf8376bfd672e00e3a0"
+digest = "sha256:b9e68365ca46f6ba7694ddb48ed31a7682bbc7c9952f2decb072dbffe4759e5b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -34,19 +34,19 @@ digest = "sha256:8b80cd6aefc17ce610a0f71ae2223a31c1b0324d343221d7d7105c89f1bf4d5
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-agent-facing-dx-baseline-trait.py"
-digest = "sha256:cd910e759576b4ddd18b51f93c41bfb4e8af1dfc3df9750671aeecb40eba36e6"
+digest = "sha256:76fa19ec6021d9c105e0afbe58bca72c6e05f1b67e8a5bc3e6fbb7c83d7aefbc"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
-digest = "sha256:fb351fa6135f2ef3f9b910abbea0660aedaf294dfd5782b334999cc9364e52c9"
+digest = "sha256:fb3537840388ff8b4492c8c6ad0df7dc7958b90b5ce2694304b3e4e53a4e3326"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-project-sweep.py"
-digest = "sha256:16e38378d295b5ec3f583c5e1be98d96a3b088b230af19fbb8551fa53400a2c7"
+digest = "sha256:b8ce95d6432cf3cd3ec6f19b378e234ed9d8c0677b88d65aa9319bd118651df9"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-default-cap-path-flips-to-capabilities-md.py"
-digest = "sha256:0a352fc55795899a2bcbf5c115371fda32281d5d87af1ac0586d6d9d36d00e1b"
+digest = "sha256:148c07581cd8fe902ce668870526b78bee8e08a3f83ef69dcffcb146943a9737"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-markdown-capability-schema.py"
@@ -58,7 +58,7 @@ digest = "sha256:eb9fbf4e2e203a9519792d26aa8bffe2530f6294ffa4961d9ba1fa8cd05bbbb
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-one-way-wi-reference-direction.py"
-digest = "sha256:22ce0150c54e71c7a89cf5b55b5ed72f57c83ce6b816f0be638a5e1454cca187"
+digest = "sha256:5a8d1b83c9b15c388efdc93cd61caf58d03e049e43580116b7b338e9eac554e9"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-efficiency.py"
@@ -70,7 +70,7 @@ digest = "sha256:fa6c757eeeee988586ce20ebc59f89e5629bdcc18b56941c5b87592949be1ba
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py"
-digest = "sha256:79b16720d91ce8707295ac13714d3c041824d244adc040a75f38baea886cf48c"
+digest = "sha256:6224b2fcb7e6534ec4d426c96b14770b8e354fa277929e47f2f7d8374db53734"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
@@ -295,6 +295,10 @@ digest = "sha256:d98340ceb2562c4435d3dbce0eb13980632f276a000fc24037770d12897646b
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-vocabulary.py"
 digest = "sha256:57b3d90b5de8a0f6496a0eb504f7e02fe684c002bbb7473946f7fa34c1793b2c"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-cli-workflow-chain.py"
+digest = "sha256:a9712b691123f701156d5accf9341ef9365ce516f33b7a698dc0002c835316f6"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-parent-rollup-routing.py"
@@ -529,14 +533,14 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-contr
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
 required_for_production = true
 assertions = [
-    "A production EC case with no capability_id is rejected as unmapped; a case referencing an unknown capability or an unknown claim under a known capability is rejected by id; a case that correctly names a real capability and claim becomes that claim's ec_case_ids evidence; and the read-only claim reconciliation producer independently reports supplemental drift evidence over the real inventory rather than acting as claim closure's sole oracle.",
+    "A production EC case with no capability_id is rejected as unmapped; a case referencing an unknown capability or an unknown claim under a known capability is rejected by id; a case that correctly names a real capability and claim becomes that claim's ec_case_ids evidence; and the read-only claim reconciliation producer independently reports exact missing, duplicate, and misbound copied-inventory drift without replacing claim closure as the primary oracle.",
     "artifact: artifact:capability-control-plane/public-contract",
-    "oracle: An isolated fixture declares four EC cases (unmapped, unknown-capability, unknown-claim, correctly-mapped) and drives the real aw health claims command, independently asserting exact blocker text and ec_case_ids; the real repository-root claim_reconciliation.py producer is independently run and asserted clean over the live inventory.",
+    "oracle: An isolated fixture drives real aw health claims for unmapped, unknown, mapped, missing, duplicate, and misbound edges; then an independently computed exact live mapping is frozen, candidate inventories are copied and perturbed, and claim_reconciliation.py must emit exact clean/missing/duplicate/unexpected mapping records for those explicit inputs.",
     "target: rust",
 ]
-evidence_digest = "sha256:2e1c1c86b2bf53b20908d355b2b89b9ab376bfb788f76522842dd7e9e96c942a"
+evidence_digest = "sha256:bc019fd0210262dd0f51b121ba404ed3b89940b7424bd3f7c14553347a96c090"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c4ea2904b0a7a6d6d10a0b9d8004eebdceda898bed474b59178889bdf38329dc"
+digest = "sha256:c2435865907e07bc8317c42dd71ad2302644974c0b854635583cae02cc5503d0"
 
 [[cases]]
 id = "capability-control-plane-capability-project-sweep"
@@ -693,12 +697,12 @@ required_for_production = true
 assertions = [
     "Capability report and health spec expose the identical python_artifact/python_spec readiness projection; a project with no Python TD/EC inventory reports the exact missing-inventory blockers with an aw ec check remediation; a required EC case with missing evidence reports the exact missing-evidence blocker with an aw ec verify --stage td remediation; and writing real evidence for the missing case clears the blocker and flips readiness to ready in both surfaces.",
     "artifact: artifact:capability-control-plane/public-contract",
-    "oracle: An isolated fixture progresses from no inventory, to a skeleton with missing evidence, to a skeleton with real evidence, driving the real aw capability report and aw health spec commands at each stage and independently asserting projection equality, exact blocker text, and next_command remediation.",
+    "oracle: An isolated fixture executes a non-empty verifier to produce canonical evidence, then independently perturbs JSON syntax, protocol, case identity, source and implementation digests, declared command, exit status, and executed assertion count while comparing the exact shared capability/health projection and remediation.",
     "target: rust",
 ]
-evidence_digest = "sha256:56db76bb3ca394a5888f9693c51eada8fdaa2eea4d1f7009ebd5b773a91fc9a7"
+evidence_digest = "sha256:8722ce73412929fd16ae36f7208bf0143e88fc35fb08f98b315cfd6f7cd40320"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0acc421b61de9d49fa3b7101ccad41b1f7e8ae24a21cfb15a34080c4a09d87f0"
+digest = "sha256:733a7d54448a5523e07c531d546da83cc41729be90019924d1b5c1e115f506c1"
 
 [[cases]]
 id = "capability-scoped-dependency-verification"
@@ -1831,6 +1835,26 @@ assertions = [
 evidence_digest = "sha256:50407b46886d6289ddf16fd650668d9dcd295f0bceb09330df3ca4608fea3e52"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:f3344dc573177cb3f81fd31b29539cbfb6bc280b9c7292ce96b04b7381eec568"
+
+[[cases]]
+id = "workflow-root-runner-cli-workflow-chain"
+capability_id = "workflow-root-runner"
+claim_id = "cli-workflow-chain"
+contract_id = "workflow-root-runner-cli-workflow-chain"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-cli-workflow-chain"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-cli-workflow-chain.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-cli-workflow-chain"
+required_for_production = true
+assertions = [
+    "Every next.command a fresh Change root emits while walking its EC-first phase progression from aw goal wi through aw ec check and aw ec draft is a live, executable aw CLI invocation, distinguishable from a chain-invalid command that omits a clap-required argument.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions build a fresh, fully valid Change work item, dispatch it through the real aw goal wi envelope, and literally capture and re-execute each emitted next.command against the same real binary across three real hops (ec check pre-scaffold, ec draft, ec check post-scaffold), asserting each parses and executes as its real subcommand rather than a clap usage rejection; a bare command independently known to omit a clap-required argument is executed as a negative control and must produce the exact clap 'required arguments were not provided' rejection this check exists to catch.",
+    "target: rust",
+]
+evidence_digest = "sha256:1421fe4c7c5a06c0e5ef0013a7a6cc697982b590060b40ef2d3c135a8e9a27cf"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f8faa92e44a56ff9506ebeb08994c35eafce090b2b93a0876028f7611947977e"
 
 [[cases]]
 id = "workflow-root-runner-parent-rollup-routing"

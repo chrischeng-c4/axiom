@@ -18,6 +18,7 @@ TARGET_COMMAND = (
     "--case capability-control-plane-agent-facing-dx-baseline-trait"
 )
 ASSERTIONS = (
+    "a project without the agent_facing trait does not derive or require the developer-agent-experience baseline capability",
     "an explicit agent_facing profile trait derives the developer-agent-experience baseline capability",
     "a project missing the derived baseline capability reports the exact missing-baseline remediation blocker",
     "declaring the derived baseline capability in the capability document clears the remediation blocker",
@@ -101,7 +102,9 @@ Gate Inventory:
 {baseline_section}"""
 
 
-def _write_fixture(root: Path, *, with_baseline: bool) -> None:
+def _write_fixture(
+    root: Path, *, agent_facing: bool, with_baseline: bool
+) -> None:
     project = root / "project"
     (root / ".git").mkdir(exist_ok=True)
     project.mkdir(parents=True, exist_ok=True)
@@ -126,12 +129,14 @@ test_cmd = "true"
 """,
         encoding="utf-8",
     )
-    (project / "aw.toml").write_text(
+    project_config = (
         """[capability.profile]
 traits = ["agent_facing"]
-""",
-        encoding="utf-8",
+"""
+        if agent_facing
+        else "# no capability profile traits\n"
     )
+    (project / "aw.toml").write_text(project_config, encoding="utf-8")
     (project / "CAPABILITIES.md").write_text(
         _capability_document(with_baseline=with_baseline), encoding="utf-8"
     )
@@ -166,13 +171,30 @@ def verify() -> list[str]:
     with tempfile.TemporaryDirectory(prefix="aw-python-dx-trait-") as raw_tmp:
         root = Path(raw_tmp)
 
-        _write_fixture(root, with_baseline=False)
-        missing = _report(root)
-        assert MISSING_BASELINE_BLOCKER in missing["blockers"], missing
+        _write_fixture(root, agent_facing=False, with_baseline=False)
+        no_trait = _report(root)
+        assert MISSING_BASELINE_BLOCKER not in no_trait["blockers"], no_trait
+        assert all(
+            capability["id"] != "developer-agent-experience"
+            for capability in no_trait["capabilities"]
+        ), no_trait
 
-        _write_fixture(root, with_baseline=True)
+        _write_fixture(root, agent_facing=True, with_baseline=False)
+        missing = _report(root)
+        assert missing["blockers"].count(MISSING_BASELINE_BLOCKER) == 1, missing
+        assert all(
+            capability["id"] != "developer-agent-experience"
+            for capability in missing["capabilities"]
+        ), missing
+
+        _write_fixture(root, agent_facing=True, with_baseline=True)
         remediated = _report(root)
         assert MISSING_BASELINE_BLOCKER not in remediated["blockers"], remediated
+        assert [
+            capability["id"]
+            for capability in remediated["capabilities"]
+            if capability["id"] == "developer-agent-experience"
+        ] == ["developer-agent-experience"], remediated
 
     return list(ASSERTIONS)
 

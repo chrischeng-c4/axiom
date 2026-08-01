@@ -578,6 +578,20 @@ command = "uv run --frozen --offline --project apps/agentic-workflow/external-co
 evidence_paths = ["evidence/workflow-root-runner-parent-rollup-routing.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "workflow-root-runner-cli-workflow-chain"
+artifact_id = "artifact:workflow-root-runner/public-contract"
+capability_id = "workflow-root-runner"
+use_case_id = "cli-workflow-chain"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/workflow-root-runner-cli-workflow-chain.py"
+promise = "Every next.command a fresh Change root emits while walking its EC-first phase progression from aw goal wi through aw ec check and aw ec draft is a live, executable aw CLI invocation, distinguishable from a chain-invalid command that omits a clap-required argument."
+oracle = "Black-box Python assertions build a fresh, fully valid Change work item, dispatch it through the real aw goal wi envelope, and literally capture and re-execute each emitted next.command against the same real binary across three real hops (ec check pre-scaffold, ec draft, ec check post-scaffold), asserting each parses and executes as its real subcommand rather than a clap usage rejection; a bare command independently known to omit a clap-required argument is executed as a negative control and must produce the exact clap 'required arguments were not provided' rejection this check exists to catch."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-cli-workflow-chain"
+evidence_paths = ["evidence/workflow-root-runner-cli-workflow-chain.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "aw-core-client-operational-efficiency"
 artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
@@ -1018,8 +1032,8 @@ use_case_id = "capability-catalog-and-td-claim-linkage-consistency"
 dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
-promise = "A production EC case with no capability_id is rejected as unmapped; a case referencing an unknown capability or an unknown claim under a known capability is rejected by id; a case that correctly names a real capability and claim becomes that claim's ec_case_ids evidence; and the read-only claim reconciliation producer independently reports supplemental drift evidence over the real inventory rather than acting as claim closure's sole oracle."
-oracle = "An isolated fixture declares four EC cases (unmapped, unknown-capability, unknown-claim, correctly-mapped) and drives the real aw health claims command, independently asserting exact blocker text and ec_case_ids; the real repository-root claim_reconciliation.py producer is independently run and asserted clean over the live inventory."
+promise = "A production EC case with no capability_id is rejected as unmapped; a case referencing an unknown capability or an unknown claim under a known capability is rejected by id; a case that correctly names a real capability and claim becomes that claim's ec_case_ids evidence; and the read-only claim reconciliation producer independently reports exact missing, duplicate, and misbound copied-inventory drift without replacing claim closure as the primary oracle."
+oracle = "An isolated fixture drives real aw health claims for unmapped, unknown, mapped, missing, duplicate, and misbound edges; then an independently computed exact live mapping is frozen, candidate inventories are copied and perturbed, and claim_reconciliation.py must emit exact clean/missing/duplicate/unexpected mapping records for those explicit inputs."
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
 evidence_paths = ["evidence/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.json"]
@@ -1033,7 +1047,7 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/capability-control-plane-python-artifact-readiness.py"
 promise = "Capability report and health spec expose the identical python_artifact/python_spec readiness projection; a project with no Python TD/EC inventory reports the exact missing-inventory blockers with an aw ec check remediation; a required EC case with missing evidence reports the exact missing-evidence blocker with an aw ec verify --stage td remediation; and writing real evidence for the missing case clears the blocker and flips readiness to ready in both surfaces."
-oracle = "An isolated fixture progresses from no inventory, to a skeleton with missing evidence, to a skeleton with real evidence, driving the real aw capability report and aw health spec commands at each stage and independently asserting projection equality, exact blocker text, and next_command remediation."
+oracle = "An isolated fixture executes a non-empty verifier to produce canonical evidence, then independently perturbs JSON syntax, protocol, case identity, source and implementation digests, declared command, exit status, and executed assertion count while comparing the exact shared capability/health projection and remediation."
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-python-artifact-readiness"
 evidence_paths = ["evidence/capability-control-plane-python-artifact-readiness.json"]
