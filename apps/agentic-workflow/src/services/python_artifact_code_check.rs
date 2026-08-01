@@ -579,6 +579,48 @@ pub(crate) fn project_has_bounded_native_handwrite(
     Ok(project_bounded_native_handwrite_paths(project_root, project, target)?.is_some())
 }
 
+/// Resolve native HANDWRITE paths explicitly bound to one work item by a
+/// Python TD. Unlike [`project_bounded_native_handwrite_paths`], this is not a
+/// Python-v1 generated-target ownership query: acceptance harnesses and other
+/// root-level native sources may be outside a configured target workspace and
+/// intentionally carry no inline HANDWRITE marker.
+pub(crate) fn project_declared_native_handwrite_paths(
+    project_root: &Path,
+    project: &str,
+    wi: &str,
+) -> Result<Option<Vec<String>>> {
+    let row = project_registry::resolve_project_config_row(project_root, project)?;
+    let td_root = configured_td_root(project_root, &row.name)?;
+    let ir = compile_python_td_project(&td_root)?;
+    let mut paths = ir
+        .modules
+        .iter()
+        .filter(|module| module.work_item.as_deref() == Some(wi))
+        .flat_map(|module| module.native_handwrite_targets.iter().cloned())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Ok(None);
+    }
+
+    let canonical_root = project_root
+        .canonicalize()
+        .with_context(|| format!("canonicalize repository root {}", project_root.display()))?;
+    for path in &paths {
+        let candidate = project_root.join(path);
+        let canonical = candidate.canonicalize().with_context(|| {
+            format!("declared native HANDWRITE target `{path}` for work item `{wi}` does not exist")
+        })?;
+        if !canonical.starts_with(&canonical_root) || !canonical.is_file() {
+            anyhow::bail!(
+                "declared native HANDWRITE target `{path}` for work item `{wi}` must resolve to a regular repository file"
+            );
+        }
+    }
+    Ok(Some(paths))
+}
+
 pub(crate) fn project_bounded_native_handwrite_paths(
     project_root: &Path,
     project: &str,

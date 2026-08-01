@@ -220,6 +220,17 @@ pub struct PythonTdModule {
     /// `__aw_public_contract__ = True`. Public artifacts must have a matching
     /// EC identity; internal implementation artifacts remain TD-only.
     pub public_contract: bool,
+    /// Optional work-item binding for an explicitly declared native HANDWRITE
+    /// target. The binding stays separate from the artifact identity because a
+    /// release/acceptance harness can be a bounded implementation witness
+    /// without being a DDD artifact itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_item: Option<String>,
+    /// Repository-relative native HANDWRITE paths owned by `work_item`.
+    /// These are explicit TD declarations, not inferred from the target
+    /// project's language or a whole-worktree marker scan.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub native_handwrite_targets: Vec<String>,
     /// Executable public behavior identities derived from top-level Python
     /// functions. Python uses snake_case while EC use_case_id uses kebab-case.
     /// Internal modules always project an empty list.
@@ -361,6 +372,7 @@ pub fn compile_python_td_project(project_root: &Path) -> Result<PythonTdIr> {
         .collect::<Result<Vec<_>>>()?;
     modules.sort_by(|left, right| left.id.cmp(&right.id));
     validate_unique_artifact_ids(&modules)?;
+    validate_unique_native_handwrite_targets(&modules)?;
     validate_local_imports(&modules)?;
     // Spans are diagnostic provenance, not semantic input. Preserve them in
     // the emitted IR while excluding them from the digest so whitespace-only
@@ -466,6 +478,15 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
         .replace('\\', "/");
     let artifact_id = explicit_artifact_id(&source, path)?;
     let public_contract = explicit_public_contract(&source, path)?;
+    let work_item = explicit_work_item(tree.root_node(), &source, path)?;
+    let native_handwrite_targets =
+        explicit_native_handwrite_targets(tree.root_node(), &source, path)?;
+    if !native_handwrite_targets.is_empty() && work_item.is_none() {
+        bail!(
+            "Python TD diagnostic [native-handwrite-without-work-item] {}: __aw_native_handwrite_targets__ requires one quoted __aw_work_item__ binding",
+            path.display()
+        );
+    }
     if public_contract && artifact_id.is_none() {
         bail!(
             "Python TD diagnostic [public-contract-without-artifact-id] {}: __aw_public_contract__ = True requires one explicit __aw_artifact_id__",
@@ -581,6 +602,8 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
         id,
         artifact_id,
         public_contract,
+        work_item,
+        native_handwrite_targets,
         public_behaviors,
         path: rel.clone(),
         role: role_for_path(&rel),
@@ -589,6 +612,171 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
         cli,
         codegen,
     })
+}
+
+fn explicit_work_item(root: Node<'_>, source: &str, path: &Path) -> Result<Option<String>> {
+    let mut values = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        let Some(assignment) = direct_named_child(child, "assignment") else {
+            continue;
+        };
+        let Some(left) = assignment.child_by_field_name("left") else {
+            continue;
+        };
+        if node_text(left, source) != "__aw_work_item__" {
+            continue;
+        }
+        let Some(right) = assignment.child_by_field_name("right") else {
+            continue;
+        };
+        if right.kind() != "string" {
+            return diagnostic(
+                path,
+                right,
+                "invalid-work-item",
+                "declare __aw_work_item__ as one quoted issue id",
+            );
+        }
+        let value = quoted_literal(node_text(right, source)).with_context(|| {
+            format!(
+                "Python TD diagnostic [invalid-work-item] {}: __aw_work_item__ must be one simple quoted issue id",
+                path.display()
+            )
+        })?;
+        values.push(value.to_string());
+    }
+    if values.is_empty() {
+        return Ok(None);
+    }
+    if values.len() != 1 || values[0].trim().is_empty() {
+        bail!(
+            "Python TD diagnostic [invalid-work-item] {}: declare one non-empty __aw_work_item__ per module",
+            path.display()
+        );
+    }
+    Ok(Some(values.remove(0)))
+}
+
+fn explicit_native_handwrite_targets(
+    root: Node<'_>,
+    source: &str,
+    path: &Path,
+) -> Result<Vec<String>> {
+    let mut declarations = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        let Some(assignment) = direct_named_child(child, "assignment") else {
+            continue;
+        };
+        let Some(left) = assignment.child_by_field_name("left") else {
+            continue;
+        };
+        if node_text(left, source) != "__aw_native_handwrite_targets__" {
+            continue;
+        }
+        let Some(right) = assignment.child_by_field_name("right") else {
+            continue;
+        };
+        if !matches!(right.kind(), "tuple" | "list") {
+            return diagnostic(
+                path,
+                right,
+                "invalid-native-handwrite-targets",
+                "declare __aw_native_handwrite_targets__ as one literal tuple/list of repository-relative paths",
+            );
+        }
+        let mut targets = Vec::new();
+        let mut items = right.walk();
+        for item in right.named_children(&mut items) {
+            if item.kind() != "string" {
+                return diagnostic(
+                    path,
+                    item,
+                    "invalid-native-handwrite-targets",
+                    "use only quoted repository-relative paths in __aw_native_handwrite_targets__",
+                );
+            }
+            let value = quoted_literal(node_text(item, source)).with_context(|| {
+                format!(
+                    "Python TD diagnostic [invalid-native-handwrite-targets] {}: target paths must be simple quoted strings",
+                    path.display()
+                )
+            })?;
+            let candidate = Path::new(value);
+            if value.is_empty()
+                || candidate.is_absolute()
+                || candidate.components().any(|component| {
+                    matches!(
+                        component,
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                    )
+                })
+            {
+                bail!(
+                    "Python TD diagnostic [unsafe-native-handwrite-target] {}: `{value}` must be a repository-relative path without `..`",
+                    path.display()
+                );
+            }
+            let normalized = candidate
+                .components()
+                .filter_map(|component| match component {
+                    Component::Normal(component) => Some(component.to_string_lossy().into_owned()),
+                    Component::CurDir => None,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_) => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            if normalized.is_empty() {
+                bail!(
+                    "Python TD diagnostic [unsafe-native-handwrite-target] {}: `{value}` must name a repository file",
+                    path.display()
+                );
+            }
+            targets.push(normalized);
+        }
+        declarations.push(targets);
+    }
+    if declarations.is_empty() {
+        return Ok(Vec::new());
+    }
+    if declarations.len() != 1 || declarations[0].is_empty() {
+        bail!(
+            "Python TD diagnostic [invalid-native-handwrite-targets] {}: declare one non-empty __aw_native_handwrite_targets__ tuple/list per module",
+            path.display()
+        );
+    }
+    let mut targets = declarations.remove(0);
+    targets.sort();
+    if targets.windows(2).any(|pair| pair[0] == pair[1]) {
+        bail!(
+            "Python TD diagnostic [duplicate-native-handwrite-target] {}: __aw_native_handwrite_targets__ must not repeat paths",
+            path.display()
+        );
+    }
+    Ok(targets)
+}
+
+fn validate_unique_native_handwrite_targets(modules: &[PythonTdModule]) -> Result<()> {
+    let mut owners = BTreeMap::<(String, String), &str>::new();
+    for module in modules {
+        let Some(work_item) = module.work_item.as_deref() else {
+            continue;
+        };
+        for target in &module.native_handwrite_targets {
+            let key = (work_item.to_string(), target.clone());
+            if let Some(existing) = owners.insert(key.clone(), module.path.as_str()) {
+                bail!(
+                    "Python TD diagnostic [duplicate-native-handwrite-target] work item `{}` target `{}` is declared by both {} and {}",
+                    key.0,
+                    key.1,
+                    existing,
+                    module.path,
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn explicit_public_behaviors(
@@ -1679,6 +1867,70 @@ mod tests {
         let ir = compile_python_td_project(root.path()).unwrap();
         assert!(ir.modules[0].public_contract);
         assert_eq!(ir.modules[0].public_behaviors, vec!["contract"]);
+    }
+
+    #[test]
+    fn native_handwrite_targets_are_projected_with_their_work_item_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("acceptance.py"),
+            "__aw_work_item__ = \"42\"\n__aw_native_handwrite_targets__ = (\"acceptance/verify-demo.sh\",)\n",
+        )
+        .unwrap();
+
+        let ir = compile_python_td_project(root.path()).unwrap();
+        assert_eq!(ir.modules[0].work_item.as_deref(), Some("42"));
+        assert_eq!(
+            ir.modules[0].native_handwrite_targets,
+            vec!["acceptance/verify-demo.sh"]
+        );
+    }
+
+    #[test]
+    fn native_handwrite_targets_require_a_work_item_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("acceptance.py"),
+            "__aw_native_handwrite_targets__ = (\"acceptance/verify-demo.sh\",)\n",
+        )
+        .unwrap();
+
+        let error = compile_python_td_project(root.path())
+            .expect_err("native target without a work-item binding must fail")
+            .to_string();
+        assert!(
+            error.contains("[native-handwrite-without-work-item]"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn duplicate_native_handwrite_target_across_modules_is_rejected_after_normalization() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("first.py"),
+            "__aw_work_item__ = \"42\"\n__aw_native_handwrite_targets__ = (\"acceptance/verify-demo.sh\",)\n",
+        )
+        .unwrap();
+        fs::write(
+            src.join("second.py"),
+            "__aw_work_item__ = \"42\"\n__aw_native_handwrite_targets__ = (\"./acceptance/verify-demo.sh\",)\n",
+        )
+        .unwrap();
+
+        let error = compile_python_td_project(root.path())
+            .expect_err("the same normalized target cannot be owned twice")
+            .to_string();
+        assert!(
+            error.contains("[duplicate-native-handwrite-target]"),
+            "{error}"
+        );
     }
 
     #[test]

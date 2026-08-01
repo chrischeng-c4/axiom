@@ -515,27 +515,22 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
         std::process::exit(2);
     }
 
-    let python_project = issue.labels.iter().find_map(|label| {
-        label
-            .strip_prefix("project:")
-            .or_else(|| label.strip_prefix("app:"))
-            .or_else(|| label.strip_prefix("lib:"))
-            .map(str::trim)
-            .filter(|project| !project.is_empty())
-            .and_then(|project| {
-                crate::services::project_registry::resolve_project_config_row(
-                    &project_root,
-                    project,
-                )
-                .ok()
-                .filter(|row| {
-                    row.effective_artifact_model()
-                        == crate::models::project::ProjectArtifactModel::PythonV1
-                })
-                .map(|row| row.name)
-            })
-    });
-    if python_project.is_some() && enumerate_worktree_markers(&worktree_abs).is_empty() {
+    let backend = LocalBackend::from_project_root(&worktree_abs);
+    let issue = Some(issue);
+    let (markers, change_paths, spec_path, declared_native_scope) =
+        match markers_for_issue_scope(&args, issue.as_ref(), &worktree_abs) {
+            Ok(queue) => queue,
+            Err(e) => {
+                emit_error(&slug, &e.to_string())?;
+                std::process::exit(2);
+            }
+        };
+
+    // An explicitly declared target can contain no HANDWRITE marker at all
+    // (for example, a complete root-level acceptance script). Preserve that
+    // marker-free native transition, but route marker-bearing declarations
+    // through the normal payload loop below using their exact declared scope.
+    if declared_native_scope && markers.is_empty() {
         crate::cli::ec::persist_python_native_fill(
             &project_root,
             &slug,
@@ -555,19 +550,6 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Look up the spec_path from the explicit CLI arg, issue frontmatter, or
-    // the unique TD spec touched by this branch. If none is available, preserve
-    // the legacy all-marker behavior.
-    let backend = LocalBackend::from_project_root(&worktree_abs);
-    let issue = Some(issue);
-    let (markers, change_paths, spec_path) =
-        match markers_for_active_td(&args, issue.as_ref(), &worktree_abs) {
-            Ok(queue) => queue,
-            Err(e) => {
-                emit_error(&slug, &e.to_string())?;
-                std::process::exit(2);
-            }
-        };
     let spec_path = spec_path.unwrap_or_default();
     crate::cli::td::td_activate_inplace_for_scoped_mutation(&project_root, &slug)?;
 
@@ -686,6 +668,38 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn labels_declared_native_handwrite_paths(
+    project_root: &Path,
+    labels: &[String],
+    wi: &str,
+) -> Result<Option<Vec<String>>> {
+    let mut paths = Vec::new();
+    for label in labels {
+        let Some(project) = label
+            .strip_prefix("project:")
+            .or_else(|| label.strip_prefix("app:"))
+            .or_else(|| label.strip_prefix("lib:"))
+            .map(str::trim)
+            .filter(|project| !project.is_empty())
+        else {
+            continue;
+        };
+        let Some(project_paths) =
+            crate::services::python_artifact_code_check::project_declared_native_handwrite_paths(
+                project_root,
+                project,
+                wi,
+            )?
+        else {
+            continue;
+        };
+        paths.extend(project_paths);
+    }
+    paths.sort();
+    paths.dedup();
+    Ok((!paths.is_empty()).then_some(paths))
+}
+
 fn marker_free_fill_can_commit_evidence(phase: Option<&str>) -> bool {
     phase.is_some_and(|phase| {
         crate::issues::types::td_phase::is_post_gen(phase)
@@ -748,6 +762,36 @@ fn markers_for_active_td(
         markers_and_changes.1,
         spec_path,
     ))
+}
+
+/// Resolve the marker queue owned by this WI. A Python TD can explicitly bind
+/// root-level or target-native HANDWRITE files in any project language; that
+/// declaration is an exact scope and takes precedence over the TD Changes
+/// fallback for both brief and apply modes.
+fn markers_for_issue_scope(
+    args: &CbFillArgs,
+    issue: Option<&crate::issues::Issue>,
+    worktree_abs: &Path,
+) -> Result<(
+    Vec<HandwriteMarkerEntry>,
+    Option<Vec<String>>,
+    Option<String>,
+    bool,
+)> {
+    if let Some(issue) = issue {
+        if let Some(native_paths) =
+            labels_declared_native_handwrite_paths(worktree_abs, &issue.labels, &args.slug)?
+        {
+            return Ok((
+                disambiguate_marker_ids(enumerate_markers_for_scope(worktree_abs, &native_paths)),
+                Some(native_paths),
+                None,
+                true,
+            ));
+        }
+    }
+    let (markers, change_paths, spec_path) = markers_for_active_td(args, issue, worktree_abs)?;
+    Ok((markers, change_paths, spec_path, false))
 }
 
 /// Fill payload paths are keyed by marker id, while the gap remains the shared
@@ -955,7 +999,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     // match. Callers must rebuild the marker list (which now uses the
     // R1-disambiguated ids) and re-dispatch with the correct id.
     // @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic-resolve_marker_file
-    let (markers, _, _) = match markers_for_active_td(&args, issue.as_ref(), &worktree_abs) {
+    let (markers, _, _, _) = match markers_for_issue_scope(&args, issue.as_ref(), &worktree_abs) {
         Ok(queue) => queue,
         Err(e) => {
             emit_error(&slug, &e.to_string())?;
@@ -1018,7 +1062,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         .with_context(|| format!("writing source {}", source_abs.display()))?;
     // Re-enumerate against the same active TD scope. A foreign marker must
     // not block this work item's terminal code-check.
-    let (remaining, _, _) = match markers_for_active_td(&args, issue.as_ref(), &worktree_abs) {
+    let (remaining, _, _, _) = match markers_for_issue_scope(&args, issue.as_ref(), &worktree_abs) {
         Ok(queue) => queue,
         Err(e) => {
             emit_error(&slug, &e.to_string())?;
@@ -1720,6 +1764,104 @@ mod tests {
         assert!(!marker_free_fill_can_commit_evidence(Some(
             "td_contract_in_progress"
         )));
+    }
+
+    #[test]
+    fn bounded_native_handwrite_routing_is_independent_of_project_language() {
+        let root = tempfile::tempdir().unwrap();
+        let td = root
+            .path()
+            .join("apps/demo/tech-design/src/demo/acceptance.py");
+        let target = root.path().join("acceptance/verify-demo.sh");
+        std::fs::create_dir_all(td.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "demo"
+path = "apps/demo"
+td_path = "apps/demo/tech-design"
+
+[[projects.workspaces]]
+paths = ["apps/demo/**"]
+target = "rust"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            td,
+            r#"__aw_work_item__ = "42"
+__aw_native_handwrite_targets__ = ("acceptance/verify-demo.sh",)
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            target,
+            "# HANDWRITE-BEGIN gap=\"missing-generator:demo\" reason=\"fixture\"\n# HANDWRITE-END\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            labels_declared_native_handwrite_paths(root.path(), &["app:demo".to_string()], "42",)
+                .unwrap(),
+            Some(vec!["acceptance/verify-demo.sh".to_string()])
+        );
+
+        let mut issue: crate::issues::Issue = serde_json::from_value(serde_json::json!({
+            "type": "change",
+            "title": "fixture",
+            "state": "open",
+        }))
+        .unwrap();
+        issue.labels = vec!["app:demo".to_string()];
+        issue.slug = "42".to_string();
+        let args = CbFillArgs {
+            slug: "42".to_string(),
+            spec_path: None,
+            apply: false,
+            marker: None,
+            json: false,
+            force: false,
+        };
+        let (markers, scope, _, declared) =
+            markers_for_issue_scope(&args, Some(&issue), root.path()).unwrap();
+        assert!(declared);
+        assert_eq!(scope, Some(vec!["acceptance/verify-demo.sh".to_string()]));
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].source_path, "acceptance/verify-demo.sh");
+    }
+
+    #[test]
+    fn declared_native_handwrite_scope_rejects_missing_target() {
+        let root = tempfile::tempdir().unwrap();
+        let td = root
+            .path()
+            .join("apps/demo/tech-design/src/demo/acceptance.py");
+        std::fs::create_dir_all(td.parent().unwrap()).unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "demo"
+path = "apps/demo"
+td_path = "apps/demo/tech-design"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            td,
+            r#"__aw_work_item__ = "42"
+__aw_native_handwrite_targets__ = ("acceptance/missing.sh",)
+"#,
+        )
+        .unwrap();
+
+        let error =
+            labels_declared_native_handwrite_paths(root.path(), &["app:demo".to_string()], "42")
+                .expect_err("a declared target that does not exist must fail closed")
+                .to_string();
+        assert!(error.contains("does not exist"), "{error}");
     }
 
     #[test]

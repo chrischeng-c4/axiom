@@ -5609,10 +5609,10 @@ async fn run_check_lifecycle_terminal(
         // guard below so it's always available — the touched-scope
         // standardization gate that follows needs this WI's own Changes
         // paths regardless of which phase reached terminal code-check.
-        let mut marker_gate_scope: Vec<String> = Vec::new();
+        let mut td_marker_gate_scope: Vec<String> = Vec::new();
         for spec_abs in &slug_spec_paths {
             if let Ok(content) = std::fs::read_to_string(spec_abs) {
-                marker_gate_scope.extend(crate::cli::cb_fill::extract_change_paths_from_spec(
+                td_marker_gate_scope.extend(crate::cli::cb_fill::extract_change_paths_from_spec(
                     &content,
                 ));
             }
@@ -5623,32 +5623,37 @@ async fn run_check_lifecycle_terminal(
         // further down — both need this WI's own touched-file set (branch
         // diff ∪ spec Changes paths) and previously each called
         // `cb_fill::resolve_touched_scope` independently.
-        // A Python-v1 bounded HANDWRITE target has an explicit native source
-        // denominator. Use that denominator instead of the persistent
+        // A Python TD can declare a bounded native HANDWRITE target for any
+        // project language. Use that explicit denominator instead of the persistent
         // app/lib branch's whole diff: EC and TD Python sources are verifier
         // artifacts, while unrelated historical branch changes must not
         // become this WI's CB ownership scope.
-        let python_native_scope = project_label_for_wi(&issue).and_then(|project| {
-            let row = crate::services::project_registry::resolve_project_config_row(
+        let declared_native_scope =
+            match crate::cli::cb_fill::labels_declared_native_handwrite_paths(
                 project_root,
-                project,
-            )
-            .ok()?;
-            (row.effective_artifact_model()
-                == crate::models::project::ProjectArtifactModel::PythonV1)
-                .then_some(())?;
-            let target =
-                crate::cli::run::python_artifact_codegen_target(project_root, project).ok()?;
-            crate::services::python_artifact_code_check::project_bounded_native_handwrite_paths(
-                project_root,
-                project,
-                target,
-            )
-            .ok()
-            .flatten()
-        });
-        let touched_scope = python_native_scope.unwrap_or_else(|| {
-            crate::cli::cb_fill::resolve_touched_scope(project_root, &marker_gate_scope)
+                &issue.labels,
+                slug,
+            ) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    let env = serde_json::json!({
+                        "action": "error",
+                        "error_kind": "declared_native_handwrite_unverifiable",
+                        "slug": slug,
+                        "message": format!(
+                            "cb check refused because declared native HANDWRITE targets could not be verified: {error:#}"
+                        ),
+                        "next": { "command": format!("aw cb fill {slug}") },
+                    });
+                    println!("{}", serde_json::to_string(&env)?);
+                    return Ok(true);
+                }
+            };
+        let marker_gate_scope = declared_native_scope
+            .as_deref()
+            .unwrap_or(&td_marker_gate_scope);
+        let touched_scope = declared_native_scope.clone().unwrap_or_else(|| {
+            crate::cli::cb_fill::resolve_touched_scope(project_root, &td_marker_gate_scope)
         });
 
         // Clean-touched-scope precondition (issue #807 / #1275): refuse to
@@ -5740,8 +5745,7 @@ async fn run_check_lifecycle_terminal(
         // entirely).
         if phase != td_phase::CB_FILLED {
             if let Err(message) =
-                crate::cli::cb_fill::run_cb_check_gate_scoped(project_root, &marker_gate_scope)
-                    .await
+                crate::cli::cb_fill::run_cb_check_gate_scoped(project_root, marker_gate_scope).await
             {
                 let env = serde_json::json!({
                     "action": "error",
