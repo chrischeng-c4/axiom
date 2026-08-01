@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-01T17:40:15.210375+00:00"
-ir_digest = "sha256:cb512850709223011cfa9e0e8f1dc9580a206ed6954b9d2c9ce5b5d64e70f999"
-source_digest = "sha256:45be03395a7ea7e205807f86df39db224b9e064265e5eb881c67f5fd0f035518"
+generated_at = "2026-08-01T19:26:07.420577+00:00"
+ir_digest = "sha256:b1c400ce6a40ec27dba835a46a76c4a16b552408115b5180b57d4c8534987086"
+source_digest = "sha256:59855932ebc73661de6f238c66edfcfbd0a63058d67de7a820f590e79218b4f0"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:b9e68365ca46f6ba7694ddb48ed31a7682bbc7c9952f2decb072dbffe4759e5b"
+digest = "sha256:96681ebf58f725a932384eaaafa42e4106fcd2921840a30ff659540713b7330f"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -301,8 +301,44 @@ path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-
 digest = "sha256:a9712b691123f701156d5accf9341ef9365ce516f33b7a698dc0002c835316f6"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-closed-workflow-lock-release.py"
+digest = "sha256:471b9ffaaa671b8f7701d4b42a1d616037427719d0ff7ca0da9cfbd6396f1b2b"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-goal-unified-loop-verb.py"
+digest = "sha256:7c0544e2a69b6c526099eb7890c964c69ef4b1c00aa3ad29052f6228019107ca"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-parent-rollup-routing.py"
 digest = "sha256:67950bcb80c00f3491e3fb632636c209f294c401eabadb7928e8fc8e95f40f20"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-prioritized-reviewed-graph-goal-selection.py"
+digest = "sha256:517a50c23e0d1f82aa890ea926725d3a448bd8a0034c0991b7c491d22c86d1b4"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-python-artifact-goal-flow.py"
+digest = "sha256:9375e36fd48ae37a21e0a8282d6830f88071ce6ea4ce49fce10596bed860dbaa"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-python-artifact-model-compatibility-parser.py"
+digest = "sha256:9cf9f8091350a65df6f5441b59b8850955f4dcb749c344ef4c0ca1918caa7f73"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-python-artifact-protocol.py"
+digest = "sha256:72718d94854d64183f65d285dbe2de3527b901b0a5c14d74c7a3f8e593e03b16"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-python-only-artifact-model-routing.py"
+digest = "sha256:49b333516e307e5ddc67d36738a23c7982ebe0e3154270f89d9d39b754a6c268"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-runtime-envelope-backward-compatibility.py"
+digest = "sha256:2a3d52c8f76f07b119bed907ce46ac46c30f5551df7da8c5d854f2c138d349e2"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-wi-ec-td-root-loop.py"
+digest = "sha256:d85eebfa879b215c36de711a05e3e82e4b982f1ffebafbcada8b649bc91ec522"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/claim_reconciliation.py"
@@ -1857,6 +1893,46 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:f8faa92e44a56ff9506ebeb08994c35eafce090b2b93a0876028f7611947977e"
 
 [[cases]]
+id = "workflow-root-runner-closed-workflow-lock-release"
+capability_id = "workflow-root-runner"
+claim_id = "closed-workflow-lock-release"
+contract_id = "workflow-root-runner-closed-workflow-lock-release"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-closed-workflow-lock-release"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-closed-workflow-lock-release.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-closed-workflow-lock-release"
+required_for_production = true
+assertions = [
+    "Lock discovery reads the configured tracker so closed/rejected work items cannot retain a stale local workflow-lock projection that blocks unrelated TD/CB work.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions build a fresh, fully valid Change work item, plant a genuine score:locked label and locked score:workflow-state projection block directly on its on-disk local-backend issue file (the exact shape the real TD lock writer produces), and independently confirm via the live aw health surface that this raises the blocker count by exactly one while the work item is open. The assertions then close the work item through the real aw wi close command, confirm the stale label and projection remain byte-for-byte intact on disk (proving no write-time scrub occurred), and independently confirm aw health's blocker count returns to the pre-lock baseline with no blocker naming that work item.",
+    "target: rust",
+]
+evidence_digest = "sha256:e829aaa2dc7e73bd073ef8f705c5a89f2eeedd2d75f7f03d7a4224c0a54e484a"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c0ff5a4df4a405b77cc95dc0b161d0884e60d3191cd90baf85c254e9df639088"
+
+[[cases]]
+id = "workflow-root-runner-goal-unified-loop-verb"
+capability_id = "workflow-root-runner"
+claim_id = "goal-unified-loop-verb"
+contract_id = "workflow-root-runner-goal-unified-loop-verb"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-goal-unified-loop-verb"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-goal-unified-loop-verb.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-goal-unified-loop-verb"
+required_for_production = true
+assertions = [
+    "aw goal is the single loop verb with a closed four-leaf root-type enum, re-homing the retired aw wi run and aw capability run verbs and adding backlog drain; Agentic Workflow uses the same Python-first root admission.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions run the retired aw wi run <id> clap leaf against a real work item and confirm it exits non-zero with a structured retired_verb envelope naming the exact live aw goal wi <id> replacement, then run that exact replacement for real and confirm it produces a genuine, non-retired envelope. The assertions repeat the same two-step proof for the retired aw capability run --project <p> project-wide rollup form and its aw goal capability --project <p> --non-interactive --max-ticks 1 replacement. Finally the assertions call the fourth, genuinely new aw goal backlog --project <p> leaf directly and confirm it dispatches into real backlog-drain-specific logic reporting its own backlog root kind, distinct from the retired_verb action and from a wi/capability root.",
+    "target: rust",
+]
+evidence_digest = "sha256:0dd1440c2750474034f20dad89569c3855171fa5a8d350deccb5b1c1945a4b0c"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:38b87e9268d26e78b2c5a5ac4c737e7d0063424eab6ae7a332ba82ede874ed33"
+
+[[cases]]
 id = "workflow-root-runner-parent-rollup-routing"
 capability_id = "workflow-root-runner"
 claim_id = "parent-rollup-routing"
@@ -1875,3 +1951,143 @@ assertions = [
 evidence_digest = "sha256:1635f249fc0d7f3450cb9f633835c2b1db78591e8d7e7f4748302275eea6c8f0"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:05688b4eccaad7544477db5103f704dc8ee515df52880638fb205b2f82de131e"
+
+[[cases]]
+id = "workflow-root-runner-prioritized-reviewed-graph-goal-selection"
+capability_id = "workflow-root-runner"
+claim_id = "prioritized-reviewed-graph-goal-selection"
+contract_id = "workflow-root-runner-prioritized-reviewed-graph-goal-selection"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-prioritized-reviewed-graph-goal-selection"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-prioritized-reviewed-graph-goal-selection.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-prioritized-reviewed-graph-goal-selection"
+required_for_production = true
+assertions = [
+    "Epic and backlog roots consume the same accepted published graph, choose epic priority before ready child priority, park blocked leaves, roll terminal epics up, and fail closed on stale or invalid graph metadata without re-atomizing.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions publish a reviewed graph with two differently prioritized epics whose ready changes invert that ordering and confirm the live aw goal backlog selection picks the higher-priority epic's own change regardless of its change-level priority. The assertions then publish a single epic whose highest-priority change depends on a still-open sibling and confirm the live selection skips it for the lower-priority ready sibling while recording a dependency-blocked reason naming the blocker. The assertions then close an epic's only change after publish, with no re-planning, and confirm the live selection rolls up to the epic itself. Finally the assertions directly corrupt the published transaction manifest's own plan digest on disk and confirm the live selection fails closed with a blocked envelope whose remediation is a bare aw wi plan --project <p> --json full replan, never a --stage atomize resume of the stale transaction.",
+    "target: rust",
+]
+evidence_digest = "sha256:575c1410104bc181507ef37df5e20a1e43c4af1d36ba9e115728517af5b840b3"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:94d82b2e940964082830a9a747b80fc4e579c152d4a0e0e9cc69e35dcc933b27"
+
+[[cases]]
+id = "workflow-root-runner-python-artifact-goal-flow"
+capability_id = "workflow-root-runner"
+claim_id = "python-artifact-goal-flow"
+contract_id = "workflow-root-runner-python-artifact-goal-flow"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-python-artifact-goal-flow"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-python-artifact-goal-flow.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-python-artifact-goal-flow"
+required_for_production = true
+assertions = [
+    "Every project follows the EC-first Python progression from direct EC check through TD compilation, target generation, CB checks, and terminal EC verification.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions validate a real Change work item and confirm its live aw goal wi next.command starts EC-first. The assertions then directly relabel that same real, on-disk work item through the full canonical phase sequence -- ec_checked, ec_reviewed, td_compiled, ec_td_green, both real spellings of the generated-target phase, cb_filled, cb_checked, and ec_cb_green -- confirming at each hop that the identical live surface produces the exact real command prefix that stage's own production routing table emits, ending in a real terminal aw wi close --push invocation, so every stage the claim names is proven to be a live, reachable command in one connected table rather than an isolated or aspirational one.",
+    "target: rust",
+]
+evidence_digest = "sha256:d380d3031d74fbe8531e3171963203da4a803b08d73b126902f6869e0f37d69d"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cb4f926e242256984375a0eb1809d7079cb3413cf51b60d1dccc297f72e5f734"
+
+[[cases]]
+id = "workflow-root-runner-python-artifact-model-compatibility-parser"
+capability_id = "workflow-root-runner"
+claim_id = "python-artifact-model-compatibility-parser"
+contract_id = "workflow-root-runner-python-artifact-model-compatibility-parser"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-python-artifact-model-compatibility-parser"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-python-artifact-model-compatibility-parser.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-python-artifact-model-compatibility-parser"
+required_for_production = true
+assertions = [
+    "Historical `legacy` / `python-v1` spec_model configuration remains readable without giving a local overlay or a stale value authority to disable the canonical Python lifecycle.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions independently configure a real root aw.toml project row with spec_model omitted, set to the historical legacy spelling, and set to the historical python-v1 spelling, and confirm through the live aw health surface's full untruncated report that all three produce byte-identical Python-lifecycle advisory notes. The assertions then independently combine a stale root spec_model with a genuinely discovered project-local overlay aw.toml (apps/<name>/aw.toml) that omits spec_model, confirming the two-file merge still produces the identical notes. Finally the assertions independently configure an unrecognized spec_model value and confirm the same real surface fails closed with a distinct configuration-parse rejection, unlike every accepted spelling exercised above.",
+    "target: rust",
+]
+evidence_digest = "sha256:ff5ad3f82f57ca99cc2d62e929270cfdf3dba5622b1fb45442accf2b5ca4f2b8"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:8b96ea986b5585168c03cd38988c2b483fe141b70fe7ae42e2d36380e6eab1b8"
+
+[[cases]]
+id = "workflow-root-runner-python-artifact-protocol"
+capability_id = "workflow-root-runner"
+claim_id = "python-artifact-protocol"
+contract_id = "workflow-root-runner-python-artifact-protocol"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-python-artifact-protocol"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-python-artifact-protocol.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-python-artifact-protocol"
+required_for_production = true
+assertions = [
+    "CPython Python-v1 artifacts declare safe source, dependency, entrypoint, and evidence boundaries in pyproject.toml before later TD or EC adapters consume them.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions build a real project-local external-contracts pyproject.toml declaring [tool.aw.python-artifact] with a valid entrypoint/source_roots/dependency_files/evidence_dir plus a matching uv.lock and unit test, and independently confirm the real aw ec check surface structurally accepts it. The assertions then mutate only the entrypoint to a path that escapes the project root and independently confirm aw ec check fails closed with the exact protocol error, then independently mutate only dependency_files to drop the required uv.lock entry and confirm a second, distinct fail-closed error, before restoring both declarations and confirming the identical project passes the identical check again.",
+    "target: rust",
+]
+evidence_digest = "sha256:cb2af9e6a5c07b0d00c299ced9c826eee96942c19dc5c7af467c27629150dd79"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:16852130573bf61253e7c78c1ff9e9373464f725324b2cc42c48f9b4e3460e35"
+
+[[cases]]
+id = "workflow-root-runner-python-only-artifact-model-routing"
+capability_id = "workflow-root-runner"
+claim_id = "python-only-artifact-model-routing"
+contract_id = "workflow-root-runner-python-only-artifact-model-routing"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-python-only-artifact-model-routing"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-python-only-artifact-model-routing.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-python-only-artifact-model-routing"
+required_for_production = true
+assertions = [
+    "Omitted and explicit legacy spec_model values resolve to the Python artifact lifecycle, and stale legacy tracker phases restart at EC-first Python authoring rather than section-payload TD.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions validate a real Change work item with no spec_model configured anywhere and confirm its live aw goal wi next.command is the canonical Python-artifact table's exact EC-first command. The assertions then directly relabel that same real, on-disk work item with a stale, pre-EC-first tracker phase and confirm the identical EC-first command is produced again, never an aw td command. Finally the assertions relabel the identical work item with a genuinely current, recognized phase and confirm the same routing table produces a real aw td check invocation, proving the stale-phase result is specific to that phase being unrecognized rather than TD being categorically unreachable.",
+    "target: rust",
+]
+evidence_digest = "sha256:1a5a92f7ced58835eeef6c612be8437a2b5f11d359264194bcb66a41a7b5d8e2"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:126341d30784185f806ff58f9d49b4575d6af3371f33b8a694167a2408240a24"
+
+[[cases]]
+id = "workflow-root-runner-runtime-envelope-backward-compatibility"
+capability_id = "workflow-root-runner"
+claim_id = "runtime-envelope-backward-compatibility"
+contract_id = "workflow-root-runner-runtime-envelope-backward-compatibility"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-runtime-envelope-backward-compatibility"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-runtime-envelope-backward-compatibility.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-runtime-envelope-backward-compatibility"
+required_for_production = true
+assertions = [
+    "The optional artifact_quality_profile field on the live workflow runner envelope is backward compatible: it carries a fully schema-shaped object for a live dispatch hop and is structurally absent (not null) once the root reaches a done envelope, with every other required envelope field present and correctly typed in both cases.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions build a fresh, fully valid Change work item, capture its first live aw goal wi dispatch envelope and independently validate the full artifact_quality_profile schema (artifact_kind/intent_read/audience/quality_dials/source_policy/preflight_gate_set) plus every other required envelope key, then close the root with the real aw wi close command and capture a second live aw goal wi envelope, asserting the profile key and its raw JSON text are both entirely absent while every other required envelope key remains present and correctly typed.",
+    "target: rust",
+]
+evidence_digest = "sha256:19d9a7bb1f268ac01cf36e772e6f56ac0e67651cee6d89ef31a7ea1d7fd3aabe"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:5ef2f9b00d296cd520790888dad29e6213ef5260d7bbe00156993e6d6c44b6be"
+
+[[cases]]
+id = "workflow-root-runner-wi-ec-td-root-loop"
+capability_id = "workflow-root-runner"
+claim_id = "wi-ec-td-root-loop"
+contract_id = "workflow-root-runner-wi-ec-td-root-loop"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:workflow-root-runner-wi-ec-td-root-loop"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-wi-ec-td-root-loop.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-wi-ec-td-root-loop"
+required_for_production = true
+assertions = [
+    "A fresh WI root persists through real Python EC draft/check/review/lock transitions and enters TD only after its EC evidence is independently accepted and locked; a clean EC structural check alone does not unlock TD.",
+    "artifact: artifact:workflow-root-runner/public-contract",
+    "oracle: Black-box Python assertions build a fresh, fully valid Change work item and capture its live aw goal wi next.command before any EC work exists (must be an aw ec command, never aw td), walk the real aw ec check/aw ec draft scaffold hops, wire the scaffold into a genuinely checkable and reviewable case, capture the live next.command again once aw ec check is clean (must still be aw ec review, never aw td), then independently accept the aw ec review payload and run aw ec lock, and capture the live next.command a final time, asserting it is now a real aw td invocation and that the loop's own emitted guard literally reads 'EC -> TD'.",
+    "target: rust",
+]
+evidence_digest = "sha256:8b3b83273a9f276563fd7bfaead472d4efb63815123db06f562bab09027a227b"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c1a419b7261be7cd7b02d34a34c9385b8d526f9b4e58714ee4af09abc8f8e7ae"
