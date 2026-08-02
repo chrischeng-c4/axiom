@@ -49,6 +49,7 @@ fn run_authored_unit_tests_with_uv(
             "--frozen",
             "--offline",
             "python",
+            "-B",
             "-m",
             "unittest",
             "discover",
