@@ -3146,11 +3146,20 @@ pub(crate) fn should_emit_section_to_entry(
 pub(crate) fn extract_change_entries(spec_content: &str) -> Vec<ChangeEntry> {
     let mut entries = Vec::new();
 
-    let Some(yaml_content) = extract_section_yaml(spec_content, "Changes")
-        .or_else(|| extract_typed_section_yaml(spec_content, "changes"))
-    else {
-        return entries;
+    let markdown_yaml = extract_section_yaml(spec_content, "Changes")
+        .or_else(|| extract_typed_section_yaml(spec_content, "changes"));
+    let (yaml_content, python_td_changes) = match markdown_yaml {
+        Some(yaml) => (yaml, false),
+        None => match extract_python_td_changes_yaml(spec_content) {
+            Some(yaml) => (yaml, true),
+            None => return entries,
+        },
     };
+    // Python TD modules declare their bounded target ownership through the
+    // restricted `__aw_changes__` literal. They are never source generators:
+    // their target files are hand-written implementation work for cb fill.
+    // This preserves the existing Python-TD ownership declaration without
+    // inventing CODEGEN markers in pre-existing hand-written source.
 
     // Parse change entries from YAML.
     if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&yaml_content) {
@@ -3174,11 +3183,15 @@ pub(crate) fn extract_change_entries(spec_content: &str) -> Vec<ChangeEntry> {
                     .or_else(|| change.get("file").and_then(|v| v.as_str()));
                 let action = change.get("action").and_then(|v| v.as_str());
                 if let (Some(p), Some(a)) = (path, action) {
-                    let impl_mode = change
-                        .get("impl_mode")
-                        .and_then(|v| v.as_str())
-                        .and_then(ImplMode::from_str)
-                        .unwrap_or(ImplMode::Codegen);
+                    let impl_mode = if python_td_changes {
+                        ImplMode::HandWritten
+                    } else {
+                        change
+                            .get("impl_mode")
+                            .and_then(|v| v.as_str())
+                            .and_then(ImplMode::from_str)
+                            .unwrap_or(ImplMode::Codegen)
+                    };
                     let replaces: Vec<String> = change
                         .get("replaces")
                         .and_then(|v| v.as_sequence())
@@ -3285,6 +3298,31 @@ pub(crate) fn extract_change_entries(spec_content: &str) -> Vec<ChangeEntry> {
     }
 
     entries
+}
+
+/// Extract the YAML payload from the constrained Python TD target declaration.
+///
+/// Python TD is syntax-checked separately from the legacy Markdown TD AST.
+/// Its `__aw_changes__ = """..."""` declaration is nevertheless the
+/// authoritative, bounded write set for an agent-filled CB. Keep the parser
+/// deliberately narrow: only the generated literal assignment is recognized;
+/// arbitrary Python execution, interpolation, and dynamic target selection are
+/// never evaluated here.
+fn extract_python_td_changes_yaml(spec_content: &str) -> Option<String> {
+    let assignment = "__aw_changes__";
+    let offset = spec_content.find(assignment)?;
+    let rest = spec_content[offset + assignment.len()..].trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    let delimiter = if let Some(rest) = rest.strip_prefix("\"\"\"") {
+        ("\"\"\"", rest)
+    } else if let Some(rest) = rest.strip_prefix("'''") {
+        ("'''", rest)
+    } else {
+        return None;
+    };
+    let closing = delimiter.1.find(delimiter.0)?;
+    let yaml = delimiter.1[..closing].trim();
+    (!yaml.is_empty()).then(|| yaml.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -6232,6 +6270,61 @@ changes:
             entries[1].path,
             "apps/agentic-workflow/src/generate/apply.rs"
         );
+    }
+
+    #[test]
+    fn python_td_changes_are_explicit_handwritten_targets() {
+        let spec = r##"Tech design for WI #3340.
+
+__aw_changes__ = """
+changes:
+  - path: apps/agentic-workflow/external-contracts/src/cases/example.py
+    action: modify
+    description: Existing hand-written Python external contract.
+"""
+"##;
+
+        let entries = extract_change_entries(spec);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].path,
+            "apps/agentic-workflow/external-contracts/src/cases/example.py"
+        );
+        assert_eq!(entries[0].action, "modify");
+        assert_eq!(entries[0].impl_mode, ImplMode::HandWritten);
+    }
+
+    #[test]
+    fn apply_tracks_existing_python_td_target_without_codegen_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/work_items/fixture.py");
+        let target = root.join("external-contracts/src/cases/example.py");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r##"Tech design for WI #3340.
+
+__aw_changes__ = """
+changes:
+  - path: external-contracts/src/cases/example.py
+    action: modify
+    description: Existing hand-written Python external contract.
+"""
+"##,
+        )
+        .unwrap();
+        let original = "def verify() -> list[str]:\n    return [\"kept\"]\n";
+        std::fs::write(&target, original).unwrap();
+
+        let report = run_apply(&spec_path, root, false)
+            .expect("explicit Python TD target should enter the HANDWRITE CB path");
+        assert_eq!(report.files.len(), 1, "report: {report:?}");
+        assert!(report.files[0].processed, "report: {report:?}");
+        assert!(!report.files[0].created, "report: {report:?}");
+        assert!(!report.files[0].updated, "report: {report:?}");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), original);
     }
 
     /// Regression test: 'file:' key (backward-compat alias for 'path:') must be accepted.
