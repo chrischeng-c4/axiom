@@ -1,20 +1,23 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:fe582673eda5d18b7e84e5b8e2488271cea37e4197563fe789a3a184b4c581b0",
-  "decision": "accepted",
+  "source_digest": "sha256:cf0259aaa7f15a7882d2a6407987f50582185fd204b91d79defd13166b1da4d6",
+  "decision": "needs_revision",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:/root/ec_review_3325",
-  "reviewed_at": "2026-08-02T04:19:20.029970+00:00",
-  "summary": "Accepted for WI #3325 at source digest sha256:fe582673eda5d18b7e84e5b8e2488271cea37e4197563fe789a3a184b4c581b0. The readiness contract independently derives current source identity, executes a non-empty verifier, compares the exact shared capability/health projection, mutates actual source and command inputs, and pins deterministic blockers for malformed, unsupported, wrong-case, stale-source, stale-implementation, mismatched-command, non-zero-exit, and zero-assertion evidence. No known_failure waiver can mask regressions.",
+  "reviewed_by": "agent:aw-ec-reviewer:/root/ec_semantic_review",
+  "reviewed_at": "2026-08-02T09:28:16.717815+00:00",
+  "summary": "Independent semantic review found two false-green risks: readiness accepts non-exact blocker output, and reconciliation derives its full expected mapping from the inventory under certification.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
-    "assertions_specific": true,
-    "oracle_independent": true,
-    "loopholes_checked": true,
-    "false_green_risk_checked": true
+    "assertions_specific": false,
+    "oracle_independent": false,
+    "loopholes_checked": false,
+    "false_green_risk_checked": false
   },
-  "findings": [],
-  "target_path": "apps/agentic-workflow/external-contracts/pyproject.toml"
+  "findings": [
+    "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py: the missing-inventory and missing-evidence scenarios promise exact blockers but use prefix, membership, and any assertions; require complete ordered blocker arrays and a falsifier for extra or altered blockers.",
+    "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py: the copied-inventory expected mapping is derived from the same canonical pyproject.toml under certification; derive the complete mapping independently and assert the entire inventory under perturbation."
+  ],
+  "target_path": "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py"
 }
