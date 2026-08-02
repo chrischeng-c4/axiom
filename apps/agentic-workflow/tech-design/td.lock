@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T14:14:27.948823+00:00"
-digest = "sha256:d71a9e9a9a4cd9f0f93e68be53c7d72b0ab3d577803b27d1e4813f7b8949ee0f"
-source_digest = "sha256:d71a9e9a9a4cd9f0f93e68be53c7d72b0ab3d577803b27d1e4813f7b8949ee0f"
-ir_digest = "sha256:1937a45fa56f5acd7f59788dc8687458fe184b7eada4a00848f0fa932c99b686"
+generated_at = "2026-08-02T15:34:17.785103+00:00"
+digest = "sha256:455d26320de7bbb9df00e8eee9a51b034b92ebc100e951d86cf86726e817479f"
+source_digest = "sha256:455d26320de7bbb9df00e8eee9a51b034b92ebc100e951d86cf86726e817479f"
+ir_digest = "sha256:eb41da488cd87ba245b8c2465b83f3cee31381fd286ceeb61b9c5b2ca4eb049b"
 
 [[files]]
 path = "pyproject.toml"
@@ -4016,6 +4016,10 @@ path = "src/agentic_workflow/work_items/make_reconciliation_ec_mapping_authority
 digest = "sha256:72e8236a3cbefcde8ba58960af570bcbf7b3dfe35e052194ac926571503285b3"
 
 [[files]]
+path = "src/agentic_workflow/work_items/make_the_shared_service_kit_ec_target_executable_and_owned.py"
+digest = "sha256:393704be1f11aea5f194f100f6c77ed19a8f8cf8921bb1cd92e8aa7898e4cea3"
+
+[[files]]
 path = "src/agentic_workflow/work_items/migration_batch_projection_core_interfaces_01_materialize_the_te.py"
 digest = "sha256:baa5625eb8cd1f8ef19a9734668b9126d34e117b15f711c83485213058912a17"
 
@@ -4030,6 +4034,10 @@ digest = "sha256:01553b838717201f1b15977b334d340ba90a91bcfc7a890eef935f30bb5f5ac
 [[files]]
 path = "src/agentic_workflow/work_items/python_ec_cache_safe_discovery.py"
 digest = "sha256:9e6ca6401a0059e7237d6ae7a9c1f85bc0c00174b7be8adc70fea18394b00256"
+
+[[files]]
+path = "src/agentic_workflow/work_items/repair_stale_python_ec_fixture_evidence_for_capability_reports.py"
+digest = "sha256:b5cb81cbea1c9f0e546bca5c6d09c184a7f2f1b26fadaa0ebf045ce55ed176f4"
 
 [[files]]
 path = "src/agentic_workflow/work_items/report_triage.py"
