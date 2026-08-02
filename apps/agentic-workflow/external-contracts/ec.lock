@@ -3,22 +3,70 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-02T03:53:15.250131+00:00"
-ir_digest = "sha256:c5dd3af19cdf991bfe79004c9e06316e6bed87a34f8d815ac1a925d4cce499e1"
-source_digest = "sha256:04e01f8a4a01b404094ea1878de292c0742d70959fa7e42a5309b3140541a4aa"
+generated_at = "2026-08-02T06:04:22.086987+00:00"
+ir_digest = "sha256:8a0c515b7af8c3357625fb6c8866b3875ccccbc74204ef6a2a709e7463569512"
+source_digest = "sha256:569d46c322400074ddfea56d8b0e9b1495f752da87522d946aec2c595381c8e5"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:fcb6372cae9d2f56ccea17865628b179cc460b35fb411bde71d444b725fc6d34"
+digest = "sha256:2f0e2ee076b9033ac734e71425a33b3b08a68e2e373b1cef8fea26daebdaf3b5"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
 digest = "sha256:99c79a46a93f958f5b96cf50263f3ecd401b3dc9456aa95ac618c70a657a96db"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-agent-first-cli-product-model.py"
+digest = "sha256:5be63cdf6314bd90d3e0c17dc7057b954ae2e19d44e30e6e22cf72d4d54ab68a"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-agent-orientation-surface.py"
+digest = "sha256:600c60bcf333d590584d12e5776c5d535fa8f15883eebbdb326af790f00d8274"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-authored-python-ec-and-td-unit-test-ownership.py"
+digest = "sha256:68ba57a4c3a17426f75ac64e0f1fb087d9412eeef988af39abd53c9aaa1f1b57"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-aw-epic-project-label-dispatch.py"
+digest = "sha256:56619772dfc2d9dbe8fced5350da302ccba81548488521fcacc981345a81e5cd"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-aw-goal-verifiable-condition-loop.py"
+digest = "sha256:fbfa4d0a28af5decab6c89d62567e64aca88fa5b871aa32fbf5e6928a5521bec"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-cli-verb-lifecycle-taxonomy-completeness.py"
+digest = "sha256:978f2a3d2192a6a2b6f27308c4c5cd1235b01767c4b29078ed9fdebbd32ff2a6"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-core-concept-model-phase-less-admission.py"
 digest = "sha256:168182bcf758db1e9c2e84673372c2d4759ea1ba41506a3cdc09c10528292073"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-cross-checkout-chat-command-and-shared-channel-removal.py"
+digest = "sha256:83a472ddf9d0f852b9d113dab0c0d15e1af10655df8a61aed161c832622dcb6b"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-lifecycle-prompt-migration-and-conformance.py"
+digest = "sha256:07f7acd065841748a28de8e6c850926fc4e04107a4651e3f2fbfe5c166df93f4"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-meta-doc-init-sync-check.py"
+digest = "sha256:4d2dca0a0d8f189d8622edb29b5e6d2dfa12cec09125cd391d8b2704fb871861"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-meta-doc-ownership-matrix.py"
+digest = "sha256:fbb2ff41ce432a7da1e25549078712feb85b55a450d5b44a1986b2e2c426d36b"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-multi-agent-change-review-skill.py"
+digest = "sha256:aebde555fcb5440d319167154af8c0aeb2fd200894c023e6c4a0f4d09c6d9c39"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-new-project-epic-configuration-bootstrap.py"
+digest = "sha256:bc28555137342312c7aae5919f9262cc20f6070520197cdd1b96a04ef99601dc"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-operational-efficiency.py"
@@ -27,6 +75,54 @@ digest = "sha256:1da06eb6b7de830ef9630d9f9839991bef9478b7cb6796d4f179595598c7904
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-operational-stability.py"
 digest = "sha256:10f062d0bbead44a17255c7767f0cc40dc31eabd05cd0abc84da777e0d1d4486"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-project-scoped-planner-dev-research-agent-fleet.py"
+digest = "sha256:542ec156d8c9105fecad58e70f92af449058aac630a441eb0b667d89cb6a8001"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-prompt-vocabulary-and-grammar.py"
+digest = "sha256:e178c78788f76b72ef89e30d71c009c930688bf1f8f734b520d6e2b1c0539aee"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-python-spec-health-bypasses-legacy-cb-replay.py"
+digest = "sha256:09458ac875002d3a3dc9110b10b6766e254cc7acbd698463adddadc24507e3f8"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-repo-view-command-and-desktop-product-removal.py"
+digest = "sha256:e7282e4d49f6e5b0ca04d29be71a6d12d75549b0ab22282ced87a870fb2a6b7f"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-stale-binary-reprojection-guard.py"
+digest = "sha256:1a4b9783dee52903898645f39fe337b77a4d3109905254ff83ed192b4859ae0c"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-stale-skill-retirement.py"
+digest = "sha256:b32a0e047caac8e6070cdc8777cf962631d8347a5e6c7ed3debe3577fe5fb563"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-three-host-agent-fleet-projection.py"
+digest = "sha256:fef1ccb7f64a7c1124cc4f66be7407b76385bc56396815e772a23f72fc3cc52c"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-total-health-observation-and-readiness-gate.py"
+digest = "sha256:e62e1e9827e7960c81162ad5a8e4081331f8c59e1be4a3e89182b22996dab496"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-typed-agent-prompt-contract.py"
+digest = "sha256:59f0b1a2ca31149c7324e029e383b969331823d25b848eef941a2c7cf02038d1"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-typed-prompt-ir-and-envelope-projection.py"
+digest = "sha256:74df62976d4cdde959f28a6db745be92a8168085b75949bade61f6ab3e3ddab2"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-workitem-artifact-admission-gate.py"
+digest = "sha256:24fb20dbb87b3eb4dc4edb9911816725a4ef95bb3e21e4c26a3dfcc86595053a"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-workitem-loop-state-model.py"
+digest = "sha256:0f1ab2a8206be9f8571479d3691b13e28dc12bb0faf1bc3a3ad8f2d180ada026"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-health-default-full-verification-smoke.py"
@@ -569,6 +665,126 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:81256852361cf6c6b2aa75089edeea38c3b00f8ad3d845b233da55116838374a"
 
 [[cases]]
+id = "aw-core-client-agent-first-cli-product-model"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "agent-first-cli-product-model"
+contract_id = "aw-core-client-agent-first-cli-product-model"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-agent-first-cli-product-model"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-agent-first-cli-product-model.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-first-cli-product-model"
+required_for_production = true
+assertions = [
+    "the CLI's own product-model narration and the human-facing README both name the current agent-first surface and reject retired-architecture phrases.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives the real aw llm --topic model (--format md and --format json) and reads the real README.md, and independently checks required/forbidden phrases and JSON/Markdown content convergence.",
+    "target: rust",
+]
+evidence_digest = "sha256:b1706daa48c8f1ece4e8a4c6cc758aab1874f4bb0e1ad239d08b44437ca94be1"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:0712fc165bbbcf72eb2e86d227df391470404f324d614c71c15435bb5fa3be2b"
+
+[[cases]]
+id = "aw-core-client-agent-orientation-surface"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "agent-orientation-surface"
+contract_id = "aw-core-client-agent-orientation-surface"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-agent-orientation-surface"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-agent-orientation-surface.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-orientation-surface"
+required_for_production = true
+assertions = [
+    """aw llm's declared "Standard agent commands" outline matches the real CLI surface it claims to orient agents toward.""",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract cross-checks the real aw llm outline text against the real --help output of each named command (aw --help, aw upgrade --help, aw issue --help, aw issue create --help, aw issue comment --help).",
+    "target: rust",
+]
+evidence_digest = "sha256:987b022bda3b50379c99d936528bb1cc3036257260193b8e566b0b9f81430860"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:689fe00d5242e130f99c5faa12195e4d7119ea5dc9632c8e43a92bcbcbfb207a"
+
+[[cases]]
+id = "aw-core-client-authored-python-ec-and-td-unit-test-ownership"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "authored-python-ec-and-td-unit-test-ownership"
+contract_id = "aw-core-client-authored-python-ec-and-td-unit-test-ownership"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-authored-python-ec-and-td-unit-test-ownership"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-authored-python-ec-and-td-unit-test-ownership.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-authored-python-ec-and-td-unit-test-ownership"
+required_for_production = true
+assertions = [
+    "aw td check and aw ec check require and run each artifact's own authored tests/unit/test_*.py during structural check -- unit-test ownership is part of authoring, not a separate phase.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract runs a 5-phase real check against both TD and EC artifact roots, independently proving the real aw td check/aw ec check commands require and execute the authored tests/unit/test_*.py file for each.",
+    "target: rust",
+]
+evidence_digest = "sha256:5b6a7253e36f7b4e9a153964190ae70febfdcf9ef2b2e4d32ba56c24c518882d"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c7453250b39ab1bf38e534bf7068344c0f6dd97a56fc9c6f2d862b2d08511df3"
+
+[[cases]]
+id = "aw-core-client-aw-epic-project-label-dispatch"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "aw-epic-project-label-dispatch"
+contract_id = "aw-core-client-aw-epic-project-label-dispatch"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-aw-epic-project-label-dispatch"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-aw-epic-project-label-dispatch.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-aw-epic-project-label-dispatch"
+required_for_production = true
+assertions = [
+    "an epic's project:/app:/lib: identity label resolves to the correct project and dispatches only that project's ready child; unresolved labels block safely.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives a real 3-project fixture (app:, a second app:, and lib: -- covering all 3 supported prefixes) through the real aw wi plan + aw goal wi pipeline, independently checking that an unlabeled epic blocks with a decision blocker naming all 3 prefixes and a safe aw wi show remediation, and that each project's fully-planned epic dispatches strictly to its own ready child, pairwise never equal to a sibling's.",
+    "target: rust",
+]
+evidence_digest = "sha256:c3fdc1f19c70657efb4d4ce469589648494aaef97753e255cf8a453d798c05fe"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:5550ae74a8a126c86e9cffcc30e038cba8be4eb50524e96a642d9d53ea517467"
+
+[[cases]]
+id = "aw-core-client-aw-goal-verifiable-condition-loop"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "aw-goal-verifiable-condition-loop"
+contract_id = "aw-core-client-aw-goal-verifiable-condition-loop"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-aw-goal-verifiable-condition-loop"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-aw-goal-verifiable-condition-loop.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-aw-goal-verifiable-condition-loop"
+required_for_production = true
+assertions = [
+    "the ad-hoc verifiable-condition loop's done/blocked/gave_up state machine is real against a real gate command.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives the real aw goal set/check against real gate commands (a satisfiable test -f condition and an always-false condition) and independently checks the resulting done/blocked/gave_up states.",
+    "target: rust",
+]
+evidence_digest = "sha256:f5563025594841177adf50ab5011f2e6582e1ce8fe1124759f993c6ee14c03aa"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:641406de159d9234f2d54c26010ec72f3d1e0ec1acc822013f4085d0457eb6b4"
+
+[[cases]]
+id = "aw-core-client-cli-verb-lifecycle-taxonomy-completeness"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "cli-verb-lifecycle-taxonomy-completeness"
+contract_id = "aw-core-client-cli-verb-lifecycle-taxonomy-completeness"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-cli-verb-lifecycle-taxonomy-completeness"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-cli-verb-lifecycle-taxonomy-completeness.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-cli-verb-lifecycle-taxonomy-completeness"
+required_for_production = true
+assertions = [
+    "every currently dispatchable clap leaf verb carries an explicit lifecycle class and mutation classification, with no unclassified verb and no dangling registry entry.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract independently regex-extracts the live VERB_LIFECYCLE_REGISTRY array from the real chain.rs source and independently recurses the real compiled binary's --help tree, and checks exact-set equality plus that every Migration entry has a non-empty sunset_criterion while every Core/Utility entry has an empty one.",
+    "target: rust",
+]
+evidence_digest = "sha256:f8e31716c0a570b2b0f740308a0467b8e1763b0ea4b2e88ae82d4cb826641e88"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f3c8b811e92a3f913184f621c57f89924249df615d9bef9722038f07206ba60e"
+
+[[cases]]
 id = "aw-core-client-core-concept-model-phase-less-admission"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 claim_id = "core-concept-model-and-invariants"
@@ -587,6 +803,126 @@ assertions = [
 evidence_digest = "sha256:fa17638fb6a97c02e9878f1c47883e011af780c74c7546351c07f2ae6d9ec33d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:0634512466756b2fffba795535c8c03a0ef65617c6601325ef30c0c3d7e60441"
+
+[[cases]]
+id = "aw-core-client-cross-checkout-chat-command-and-shared-channel-removal"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "cross-checkout-chat-command-and-shared-channel-removal"
+contract_id = "aw-core-client-cross-checkout-chat-command-and-shared-channel-removal"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-cross-checkout-chat-command-and-shared-channel-removal"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-cross-checkout-chat-command-and-shared-channel-removal.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-cross-checkout-chat-command-and-shared-channel-removal"
+required_for_production = true
+assertions = [
+    "the chat command and its shared cross-checkout channel are fully removed from the CLI surface and from generated assets.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract checks that the real aw --help shows no chat subcommand, that a real aw chat post is rejected, and that a real aw new --force asset refresh deletes stale .claude/skills/aw-chat-listen and .agents/skills/aw-chat-listen directories.",
+    "target: rust",
+]
+evidence_digest = "sha256:8ebb6a431abd64e5c4e4ce9a4b1bcfea9b0530480631a0ee9dc8c2cd98306bdb"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:381d370dddaf8fac89848588ed934c4afccaad472aef5bb274a073f02d3bbe06"
+
+[[cases]]
+id = "aw-core-client-lifecycle-prompt-migration-and-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "lifecycle-prompt-migration-and-conformance"
+contract_id = "aw-core-client-lifecycle-prompt-migration-and-conformance"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-lifecycle-prompt-migration-and-conformance"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-lifecycle-prompt-migration-and-conformance.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-migration-and-conformance"
+required_for_production = true
+assertions = [
+    "Python stages, rollup, HITL blockers, artifact quality, and CB ownership all fail closed through one typed projection.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives three real envelopes (a bare change, a blocked report, and an epic rollup dispatch via a full real aw wi plan pipeline) and independently checks all 5 promise elements plus a shared structural well-formedness invariant (non-overlapping scope, base guards, blocker-resume pairing) across all three.",
+    "target: rust",
+]
+evidence_digest = "sha256:8a4f8e52417ba8ea726239730bbb2f2ae8bfcf608f272aa1f10c8fb89ce6ef5b"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:53a07bb3bde379326772197041098958afe7955e72ce4fc5fd69c56b949af764"
+
+[[cases]]
+id = "aw-core-client-meta-doc-init-sync-check"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "meta-doc-init-sync-check"
+contract_id = "aw-core-client-meta-doc-init-sync-check"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-meta-doc-init-sync-check"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-meta-doc-init-sync-check.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-meta-doc-init-sync-check"
+required_for_production = true
+assertions = [
+    "one producer registry backs skeleton creation, read-only drift detection, and marker-scoped, byte-idempotent repair.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives the real aw meta init/check/sync and independently checks that all 7 canonical skeletons are created, that check is byte-for-byte read-only (SHA-256 before/after) while reporting drift, and that sync restores only the marker span, leaving hand-authored bytes untouched and converging to byte-identical output on repeat.",
+    "target: rust",
+]
+evidence_digest = "sha256:41d1c0894c151d47855fc905f69049d505968bd9989feca9d3b0a318bbce116c"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:010838807ec59ae2485b557a5f77a2a894a9b54c9f7daab16276f37b05f605a7"
+
+[[cases]]
+id = "aw-core-client-meta-doc-ownership-matrix"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "meta-doc-ownership-matrix"
+contract_id = "aw-core-client-meta-doc-ownership-matrix"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-meta-doc-ownership-matrix"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-meta-doc-ownership-matrix.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-meta-doc-ownership-matrix"
+required_for_production = true
+assertions = [
+    "one ownership matrix drives placement, root-allowlist, and required-heading diagnostics together.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract bootstraps a real fixture project via aw meta init, introduces three deliberate violations, and independently checks that the real aw meta check/aw meta sync name exactly the three matrix-driven diagnostic codes and repair only the marker-owned one.",
+    "target: rust",
+]
+evidence_digest = "sha256:4e8cc3a9380f917acfae142d105ff5a8ee1065c23ad4667a1c0d7e785fcd3961"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:3b031c3c02aaed2d64375eaa3c393e4c6bc0f1371ecc5f165c7678bbd73a760d"
+
+[[cases]]
+id = "aw-core-client-multi-agent-change-review-skill"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "multi-agent-change-review-skill"
+contract_id = "aw-core-client-multi-agent-change-review-skill"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-multi-agent-change-review-skill"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-multi-agent-change-review-skill.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-multi-agent-change-review-skill"
+required_for_production = true
+assertions = [
+    "one producer-owned skill projects to Claude Code and Codex/AGY, reviews every cohesive author-owned change set before integration, rejects same-agent approval, and requires fix verification plus focused re-review.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract bootstraps a real project via aw new and independently re-derives the .agents/skills body from the .claude/skills body using the installer's own documented literal-swap transform, checking byte-exact equality plus verbatim promise-text substrings in both trees and identical Codex agents/openai.yaml metadata.",
+    "target: rust",
+]
+evidence_digest = "sha256:7fdaa36d622be10eabbac237ce5595f6f4351333a97b7d6153713afaa2b795d3"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f0e943c48d7411a5526abe9ee2a0f0c1caefdd44f7c5fb0983c3ea7761c1154d"
+
+[[cases]]
+id = "aw-core-client-new-project-epic-configuration-bootstrap"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "new-project-epic-configuration-bootstrap"
+contract_id = "aw-core-client-new-project-epic-configuration-bootstrap"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-new-project-epic-configuration-bootstrap"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-new-project-epic-configuration-bootstrap.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-new-project-epic-configuration-bootstrap"
+required_for_production = true
+assertions = [
+    "a valid unregistered tracker identity routes through idempotent project-local configuration and META-doc producers before atomization.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract dispatches a real epic carrying an unregistered app: label via aw goal wi, independently checking it routes to aw conf init, that a real run creates a genuine apps/<name>/aw.toml, that a second run is byte-identical and reports already-registered, that a real aw meta init genuinely creates README/CONTRIBUTING/CAPABILITIES.md on disk, and that a final re-run of aw goal wi on the same epic proves forward progress to aw wi plan.",
+    "target: rust",
+]
+evidence_digest = "sha256:76f359b727ea2bfa9cf9d435c0ffd4c7312238bc8059d1e8ea339d6ee6f0d93f"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:70dda535628b8f19b70bdd9165925fd5c475e2aed8c5d89c859c737d7728bfac"
 
 [[cases]]
 id = "aw-core-client-operational-efficiency"
@@ -629,6 +965,246 @@ assertions = [
 evidence_digest = "sha256:9bdf407dabd12d5d329b8894a8427493491e93b72a8046fca94d4c13f9d3d15b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:afe2597b8f654d66eb280d02f70d9c9202ddefb706c26140a044b324f3f68b49"
+
+[[cases]]
+id = "aw-core-client-project-scoped-planner-dev-research-agent-fleet"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "project-scoped-planner-dev-research-agent-fleet"
+contract_id = "aw-core-client-project-scoped-planner-dev-research-agent-fleet"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-project-scoped-planner-dev-research-agent-fleet"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-project-scoped-planner-dev-research-agent-fleet.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-project-scoped-planner-dev-research-agent-fleet"
+required_for_production = true
+assertions = [
+    "direct apps/* registry projects plus projects/mamba get independently scoped planner/dev/read-only-research roles on all three hosts with the three approved model profiles, and independent EC review (the fixed aw-ec-reviewer) is preserved.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract builds a fixture aw.toml registry mirroring the ground-truth Rust fixture test_project_role_fleet_uses_registry_scope_and_model_matrix (qualifying rows plus deliberately excluded rows) and drives it through the real aw new --sync-agents/--check-agents, independently checking per-role file presence/absence, per-tier model resolution on all 3 hosts, aw-ec-reviewer untouched, and shared check/drift/resync coverage of a role file.",
+    "target: rust",
+]
+evidence_digest = "sha256:8381001b85288bdd2b7fbc2a86ef2757bcfe4d081aaf72febfeebe98da678c67"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:20c8ebcf305bada0881185c821d7a0ec8f2643df3c941bf20288a116593ab06c"
+
+[[cases]]
+id = "aw-core-client-prompt-vocabulary-and-grammar"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "prompt-vocabulary-and-grammar"
+contract_id = "aw-core-client-prompt-vocabulary-and-grammar"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-prompt-vocabulary-and-grammar"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-prompt-vocabulary-and-grammar.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-prompt-vocabulary-and-grammar"
+required_for_production = true
+assertions = [
+    "the closed blocker/operator vocabulary documented by aw llm --topic prompt is exactly what a real blocked dispatch actually emits.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract cross-checks the real aw llm --topic prompt --format json doc text byte-for-byte against a real blocked report-triage dispatch's agent_prompt text and prompt_contract.blocker.kind.",
+    "target: rust",
+]
+evidence_digest = "sha256:f5f6b54e83f96b03af2321cb3c7fedb973e1d6392a13f98db022f5336f7b14da"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e2c2552026f1d74293143a7c9da6f1a892ee6389bad2cb3819255c28af3c574c"
+
+[[cases]]
+id = "aw-core-client-python-spec-health-bypasses-legacy-cb-replay"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "python-spec-health-bypasses-legacy-cb-replay"
+contract_id = "aw-core-client-python-spec-health-bypasses-legacy-cb-replay"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-python-spec-health-bypasses-legacy-cb-replay"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-python-spec-health-bypasses-legacy-cb-replay.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-python-spec-health-bypasses-legacy-cb-replay"
+required_for_production = true
+assertions = [
+    "PythonV1 spec-driven projects report health via the real spec pipeline and never fall back into legacy CB replay, including under the explicit --verify-traceability/--verify-cb flags.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives the real, live guard PythonV1 project directly via aw health --project guard traceability / cb, independently checking the exact advisory-note text sourced from legacy_health_replay_enabled in project.rs, plus a third phase proving --verify-traceability/--verify-cb explicit flags still don't route through legacy replay.",
+    "target: rust",
+]
+evidence_digest = "sha256:2a8b2223e21095c2524e332cbc48754b85c5f7bf29483d71c5eee191c46bb3a3"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9047cc88319034b7f286ac0e990f7e7020ae918fd8401a06ab3d99bfcefe6287"
+
+[[cases]]
+id = "aw-core-client-repo-view-command-and-desktop-product-removal"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "repo-view-command-and-desktop-product-removal"
+contract_id = "aw-core-client-repo-view-command-and-desktop-product-removal"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-repo-view-command-and-desktop-product-removal"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-repo-view-command-and-desktop-product-removal.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-repo-view-command-and-desktop-product-removal"
+required_for_production = true
+assertions = [
+    "the retired Repo View desktop product is absent from both the CLI dispatch tree and the checked-out source tree.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives the real aw --help/aw view directly, checking that view is absent from the command list and rejected with clap's exit-2 unrecognized-subcommand error, and reads the real repo tree confirming the view-only paths named in the removal's own change list are deleted while sibling files in the same directories survive.",
+    "target: rust",
+]
+evidence_digest = "sha256:4e29dbefcbbd7be1d5176a7b0bf721a3d1f871dc356503b5e4bfa3acfb656b69"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cb29b27064379ddaa66ed363e102418c78ace3996e731263b8dc7e020954b581"
+
+[[cases]]
+id = "aw-core-client-stale-binary-reprojection-guard"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "stale-binary-reprojection-guard"
+contract_id = "aw-core-client-stale-binary-reprojection-guard"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-stale-binary-reprojection-guard"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-stale-binary-reprojection-guard.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-stale-binary-reprojection-guard"
+required_for_production = true
+assertions = [
+    "a stale binary cannot silently re-project its own outdated templates over a newer checkout without an explicit override, and aw meta check routes staleness to a rebuild remediation rather than inviting aw meta sync.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract runs a 4-phase real check: checkout-copy preference eliminates the guard window, no-checkout-copy blocks without --force-stale with content byte-unchanged and a content_regression_blocked finding, --force-stale proceeds, and aw meta check routes to binary_stale/rebuild remediation.",
+    "target: rust",
+]
+evidence_digest = "sha256:cfb5d2982801549d221f3abe260901b536861b3d173de89da8d30b604b2da93d"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e8d849fa2b44fc37863c830538384969eafa18cf92a40cf8cf3fab6c30d54c65"
+
+[[cases]]
+id = "aw-core-client-stale-skill-retirement"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "stale-skill-retirement"
+contract_id = "aw-core-client-stale-skill-retirement"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-stale-skill-retirement"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-stale-skill-retirement.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-stale-skill-retirement"
+required_for_production = true
+assertions = [
+    "the eight named retired skills are removed from templates and pruned from both live skill-tree installers on every install.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract mirrors the ground-truth Rust fixture test_install_skills_prunes_1858_retired_skills exactly: a fresh real aw new never contains any of the 8 names, planting all 8 in both trees and reinstalling with aw new --force prunes all 16, while an unrelated current skill survives.",
+    "target: rust",
+]
+evidence_digest = "sha256:70e2d2b6df7f8b51996af11727a6996bd2f61c0f6c687fa2a0fb4e3465976aeb"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e0ee3a892983b68c587cc61815ed604fc9b3a80a9676d80f11f5e81b42576514"
+
+[[cases]]
+id = "aw-core-client-three-host-agent-fleet-projection"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "three-host-agent-fleet-projection"
+contract_id = "aw-core-client-three-host-agent-fleet-projection"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-three-host-agent-fleet-projection"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-three-host-agent-fleet-projection.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-three-host-agent-fleet-projection"
+required_for_production = true
+assertions = [
+    "one canonical templates/cli/mainthread/agents/*.md source projects the fixed aw-* fleet to .claude/agents, .codex/agents, .agents/agents via a shared per-tier model table, with a genuinely read-only check and a narrow sync flag.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives the real aw new / --check-agents / --sync-agents against a fresh fixture project, independently checking per-tier model strings, before/after content snapshots, a deliberate-drift-then-recheck cycle, and aw.toml byte-equality across the sync.",
+    "target: rust",
+]
+evidence_digest = "sha256:ee39a2a04d57ceced7d58f10357eb4b9a11805c037e5c766f160ee0c94f33d36"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:24da8fb384f50508a7887ded9e0a9ab5fa52c669f8ec885153166e09d2a030c2"
+
+[[cases]]
+id = "aw-core-client-total-health-observation-and-readiness-gate"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "total-health-observation-and-readiness-gate"
+contract_id = "aw-core-client-total-health-observation-and-readiness-gate"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-total-health-observation-and-readiness-gate"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-total-health-observation-and-readiness-gate.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-total-health-observation-and-readiness-gate"
+required_for_production = true
+assertions = [
+    "epic-level aggregate readiness genuinely rolls up its children's health into one two-cell semantic-health model and a global artifact-identity rollup.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives the real aw health rollup output across a real multi-child epic fixture and independently checks the aggregate readiness/rollup fields against each child's own real health state.",
+    "target: rust",
+]
+evidence_digest = "sha256:a898e3bba937b4febb6dadbe897341a7309070265779c6b28a3927b9375c2593"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b8baea9e3e2c6759ca6cd7ff910730fff7ac284d06e093f818f9f7e75b1136a8"
+
+[[cases]]
+id = "aw-core-client-typed-agent-prompt-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "typed-agent-prompt-contract"
+contract_id = "aw-core-client-typed-agent-prompt-contract"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-typed-agent-prompt-contract"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-typed-agent-prompt-contract.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-typed-agent-prompt-contract"
+required_for_production = true
+assertions = [
+    "the vocabulary, typed IR/envelope projection, and lifecycle conformance roadmap is one coherent, currently-live mechanism across many structurally distinct real lifecycle points simultaneously, not three independently-passing but potentially-divergent artifacts.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract dynamically fetches the closed operator/blocker vocabulary fresh from the real aw llm --topic prompt --format json every run and independently checks that fetched vocabulary exactly bounds the real structural DSL text rendered into agent_prompt across four independently obtained real envelopes (a bare change, an unresolved-label epic, a blocked report, and a fully-planned epic's rollup dispatch), including cross-checking two genuinely different real blocker kinds and each envelope's typed blocker line appearing verbatim in that same envelope's agent_prompt.",
+    "target: rust",
+]
+evidence_digest = "sha256:f8e3278434de9383f2ce8ff2b1b2422b27e5648699fc072388594e5b163feb77"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2391bda072bd98a06634939ee323d0b3d1ded2d23826d2ff02e7ab75a687aee8"
+
+[[cases]]
+id = "aw-core-client-typed-prompt-ir-and-envelope-projection"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "typed-prompt-ir-and-envelope-projection"
+contract_id = "aw-core-client-typed-prompt-ir-and-envelope-projection"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-typed-prompt-ir-and-envelope-projection"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-typed-prompt-ir-and-envelope-projection.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-typed-prompt-ir-and-envelope-projection"
+required_for_production = true
+assertions = [
+    "the additive typed prompt_contract retains full agent_prompt string compatibility -- one IR renders both.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract independently reimplements agent_prompt.rs's render()/render_set() from scratch in Python and reconstructs agent_prompt byte-for-byte from prompt_contract on two structurally different real envelopes (a non-blocked change and a blocked report).",
+    "target: rust",
+]
+evidence_digest = "sha256:4a0848a9788301d0757722bcb99a36dc891e0cdeb3ac402b79d5210a02ad47db"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:20f9d0b5391df79e2f506a3b23d00a09fc3dd3e559ca3676ed4caf4e6ccd1518"
+
+[[cases]]
+id = "aw-core-client-workitem-artifact-admission-gate"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "workitem-artifact-admission-gate"
+contract_id = "aw-core-client-workitem-artifact-admission-gate"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-workitem-artifact-admission-gate"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-workitem-artifact-admission-gate.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-artifact-admission-gate"
+required_for_production = true
+assertions = [
+    "WI/EC/TD artifact creation is denied for any slug that does not name a real, state:open WorkItem, and admitted once one does.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives the real aw td create against a nonexistent slug, a real state:draft WorkItem, and the same WorkItem after aw wi validate promotes it to state:open, and independently checks the exact denial/admission text and the presence/absence of a real tech-design/ scaffold on disk.",
+    "target: rust",
+]
+evidence_digest = "sha256:2edd8b25e1234814fc572ccee33add54e061e1aeaab6da606f999dc94a98656c"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:38884de3c52376d90ca90c679ad4fb7982f3bbd5a397a6cf41b1e14ac1840c56"
+
+[[cases]]
+id = "aw-core-client-workitem-loop-state-model"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "workitem-loop-state-model"
+contract_id = "aw-core-client-workitem-loop-state-model"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:aw-core-client-workitem-loop-state-model"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-workitem-loop-state-model.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-loop-state-model"
+required_for_production = true
+assertions = [
+    "aw ec record's red/green loop-state transitions are real and independently observable.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives a real aw ec record --result red then --result green round-trip and independently cross-checks each transition via a separate real aw wi show read.",
+    "target: rust",
+]
+evidence_digest = "sha256:c9fbfa4e9a9ee4054f89098222904429af9aa5c0343f4f86a6ebc23d6466f95d"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:fc2be1f03d49f59e7c59cd64ebd3bf7b9598745a920a3ba32ceadf07e492c805"
 
 [[cases]]
 id = "aw-health-default-full-verification-smoke"
