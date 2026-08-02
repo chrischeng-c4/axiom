@@ -928,6 +928,20 @@ command = "uv run --frozen --offline --project apps/agentic-workflow/external-co
 evidence_paths = ["evidence/workflow-root-runner-prioritized-reviewed-graph-goal-selection.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "workflow-root-runner-root-envelope-planning-base-fidelity"
+artifact_id = "artifact:workflow-root-runner/public-contract"
+capability_id = "workflow-root-runner"
+use_case_id = "root-envelope-completion-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/workflow-root-runner-root-envelope-planning-base-fidelity.py"
+promise = "The capability action envelope's planning_base is the real, live project root resolved for this run, never the historical hardcoded /tmp/aw/test/root stub, so a pending epic planning artifact physically present under that real root is genuinely discovered and blocks WI creation/linking for review."
+oracle = "Black-box Python assertions build a disposable fixture project with one open capability gap and no active WI, and capture the live aw goal capability envelope before any planning artifact exists (dispatch straight to epicize, no payload_path). The assertions then plant a genuinely pending epicize artifact under that same fixture's own real, on-disk project root and capture the identical live command again, independently confirming next.payload_path resolves byte-for-byte to the real artifact just planted, the same real path is independently repeated in the HITL question's own target and question text, completion.missing carries it too, and the literal /tmp/aw/test/root stub never appears anywhere in the full envelope -- a stub planning_base could never resolve to a path living inside this disposable temp directory."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-root-envelope-planning-base-fidelity"
+evidence_paths = ["evidence/workflow-root-runner-root-envelope-planning-base-fidelity.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "aw-core-client-operational-efficiency"
 artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
