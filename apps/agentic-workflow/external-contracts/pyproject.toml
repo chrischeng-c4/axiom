@@ -620,6 +620,20 @@ command = "uv run --frozen --offline --project apps/agentic-workflow/external-co
 evidence_paths = ["evidence/work-item-planning-agent-backed-inventory-plan-review.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "work-item-planning-agent-backed-capability-plan-review"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "agent-backed-capability-plan-review"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-agent-backed-capability-plan-review.py"
+promise = "capability-plan review defaults to digest-bound independent agent review, rejects same-agent evidence, and publishes accepted candidates as distinct work items even when two claim titles collide on the local-backend slug budget"
+oracle = "Native Python black-box assertions drive aw capability sweep --write-wi-plans and aw wi plan-review under default review backing with a same-agent negative control, then independently verify one distinct work item per accepted candidate."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-agent-backed-capability-plan-review"
+evidence_paths = ["evidence/work-item-planning-agent-backed-capability-plan-review.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "work-item-planning-legacy-wi-type-decoding-baseline"
 artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
