@@ -1,0 +1,665 @@
+{
+  "mappings": [
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "authoritative-fixture-blocks-on-regenerability-gap",
+      "dimension": "behavior",
+      "use_case_id": "authoritative-fixture-blocks-on-regenerability-gap"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-core-concept-model-phase-less-admission",
+      "dimension": "behavior",
+      "use_case_id": "core-concept-model-and-invariants"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-operational-efficiency",
+      "dimension": "efficiency",
+      "use_case_id": "core-concept-model-and-invariants"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-operational-stability",
+      "dimension": "stability",
+      "use_case_id": "core-concept-model-and-invariants"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "aw-health-default-full-verification-smoke",
+      "dimension": "behavior",
+      "use_case_id": "aw-health-default-full-verification-smoke"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-agent-facing-dx-baseline-trait",
+      "dimension": "behavior",
+      "use_case_id": "agent-facing-dx-baseline-trait"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-capability-catalog-and-td-claim-linkage-consistency",
+      "dimension": "behavior",
+      "use_case_id": "capability-catalog-and-td-claim-linkage-consistency"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-capability-project-sweep",
+      "dimension": "behavior",
+      "use_case_id": "capability-project-sweep"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-default-cap-path-flips-to-capabilities-md",
+      "dimension": "behavior",
+      "use_case_id": "default-cap-path-flips-to-capabilities-md"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-markdown-capability-schema",
+      "dimension": "behavior",
+      "use_case_id": "markdown-capability-schema"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-missing-readme-initialization",
+      "dimension": "behavior",
+      "use_case_id": "missing-readme-initialization"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-one-way-wi-reference-direction",
+      "dimension": "behavior",
+      "use_case_id": "one-way-wi-reference-direction"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-operational-efficiency",
+      "dimension": "efficiency",
+      "use_case_id": "capability-readiness-reporting"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-operational-stability",
+      "dimension": "stability",
+      "use_case_id": "capability-readiness-reporting"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-control-plane-python-artifact-readiness",
+      "dimension": "behavior",
+      "use_case_id": "python-artifact-readiness"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "capability-scoped-dependency-verification",
+      "dimension": "behavior",
+      "use_case_id": "scoped-dependency-closed-verification"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "coordination-authority",
+      "dimension": "behavior",
+      "use_case_id": "aw-only-coordination-authority"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "coordination-contract-schema",
+      "dimension": "behavior",
+      "use_case_id": "versioned-coordination-contract"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "coordination-event-validation",
+      "dimension": "behavior",
+      "use_case_id": "fail-closed-coordination-event-validation"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "ec-gated-terminal-check-unification-python-contract",
+      "dimension": "behavior",
+      "use_case_id": "td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-authoritative-source-snapshot-projection",
+      "dimension": "behavior",
+      "use_case_id": "authoritative-source-snapshot-projection"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-aw-review-skill-and-doc-projection",
+      "dimension": "behavior",
+      "use_case_id": "aw-review-skill-and-doc-projection"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-brownfield-takeover-surface",
+      "dimension": "behavior",
+      "use_case_id": "brownfield-takeover-surface"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-cb-and-cold-verification-gates",
+      "dimension": "behavior",
+      "use_case_id": "cb-and-cold-verification-gates"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-force-regeneration-project-root-llms-projection",
+      "dimension": "behavior",
+      "use_case_id": "force-regeneration-project-root-llms-projection"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-managed-and-semantic-production-gates",
+      "dimension": "behavior",
+      "use_case_id": "managed-and-semantic-production-gates"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-operational-efficiency",
+      "dimension": "efficiency",
+      "use_case_id": "project-health-no-regression"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-operational-stability",
+      "dimension": "stability",
+      "use_case_id": "project-health-no-regression"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-project-profile-conformance-review",
+      "dimension": "behavior",
+      "use_case_id": "project-profile-conformance-review"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-service-workload-profile-derivation",
+      "dimension": "behavior",
+      "use_case_id": "service-workload-profile-derivation"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-shared-service-kit-conformance-rules",
+      "dimension": "behavior",
+      "use_case_id": "shared-service-kit-conformance-rules"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-shared-service-kit-substrate",
+      "dimension": "behavior",
+      "use_case_id": "shared-service-kit-substrate"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules",
+      "dimension": "behavior",
+      "use_case_id": "structured-observability-and-raft-telemetry-conformance-rules"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-traceability-closure-gate",
+      "dimension": "behavior",
+      "use_case_id": "traceability-closure-gate"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle",
+      "dimension": "behavior",
+      "use_case_id": "xml-handwrite-marker-fill-queue-lifecycle"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "external-fixture-reports-advisory-gap",
+      "dimension": "behavior",
+      "use_case_id": "external-fixture-reports-advisory-gap"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "issue-cache-canonical-change",
+      "dimension": "behavior",
+      "use_case_id": "canonical-change-issue-cache-round-trip"
+    },
+    {
+      "capability_id": "manual-evidence-artifacts",
+      "case_id": "manual-evidence-artifacts-operational-efficiency",
+      "dimension": "efficiency",
+      "use_case_id": "manual-runner-output-convention"
+    },
+    {
+      "capability_id": "manual-evidence-artifacts",
+      "case_id": "manual-evidence-artifacts-operational-stability",
+      "dimension": "stability",
+      "use_case_id": "manual-runner-output-convention"
+    },
+    {
+      "capability_id": "manual-evidence-artifacts",
+      "case_id": "manual-evidence-schema-python-contract",
+      "dimension": "behavior",
+      "use_case_id": "generated-manual-ec-evidence-schema"
+    },
+    {
+      "capability_id": "manual-evidence-artifacts",
+      "case_id": "manual-runner-output-convention-python-contract",
+      "dimension": "behavior",
+      "use_case_id": "manual-runner-output-convention"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "project-health-total-observation",
+      "dimension": "behavior",
+      "use_case_id": "two-cell-ec-and-td-semantic-health"
+    },
+    {
+      "capability_id": "project-local-td-and-ec-gates",
+      "case_id": "project-local-td-and-ec-gates-operational-efficiency",
+      "dimension": "efficiency",
+      "use_case_id": "project-local-td-root-resolver"
+    },
+    {
+      "capability_id": "project-local-td-and-ec-gates",
+      "case_id": "project-local-td-and-ec-gates-operational-stability",
+      "dimension": "stability",
+      "use_case_id": "project-local-td-root-resolver"
+    },
+    {
+      "capability_id": "project-local-td-and-ec-gates",
+      "case_id": "python-ec-cache-safe-discovery",
+      "dimension": "behavior",
+      "use_case_id": "cache-safe-python-ec-source-discovery"
+    },
+    {
+      "capability_id": "project-local-td-and-ec-gates",
+      "case_id": "python-ec-only-authoring",
+      "dimension": "behavior",
+      "use_case_id": "python-only-ec-authoring-lifecycle"
+    },
+    {
+      "capability_id": "capability-control-plane",
+      "case_id": "python-td-claim-linkage",
+      "dimension": "behavior",
+      "use_case_id": "python-td-claim-linkage"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "python-td-global-artifact-identity",
+      "dimension": "behavior",
+      "use_case_id": "global-python-td-artifact-identity"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "self-ec-fixture-loop-gate-python-contract",
+      "dimension": "behavior",
+      "use_case_id": "self-ec-fixture-loop-gate"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "self-hosting-bounded-admission",
+      "dimension": "efficiency",
+      "use_case_id": "self-hosting-root-runner-policy"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "self-hosting-capability-admission",
+      "dimension": "behavior",
+      "use_case_id": "self-hosting-root-runner-policy"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "self-hosting-health-policy",
+      "dimension": "behavior",
+      "use_case_id": "self-hosting-root-runner-policy"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "self-hosting-identity-stability",
+      "dimension": "stability",
+      "use_case_id": "self-hosting-root-runner-policy"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "self-hosting-wi-admission",
+      "dimension": "behavior",
+      "use_case_id": "self-hosting-root-runner-policy"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "shared-cli-issue-report-intake",
+      "dimension": "behavior",
+      "use_case_id": "terminology-first-four-type-wi-taxonomy"
+    },
+    {
+      "capability_id": "existing-project-standardization",
+      "case_id": "standardize-audit-first-contract-test",
+      "dimension": "behavior",
+      "use_case_id": "standardize-audit-first-contract-test"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "td-artifact-producer-cli-fixture",
+      "dimension": "behavior",
+      "use_case_id": "shared-artifact-producer-contract"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "td-cb-lifecycle-automation-operational-efficiency",
+      "dimension": "efficiency",
+      "use_case_id": "terminal-ec-process-liveness"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "td-cb-lifecycle-automation-operational-stability",
+      "dimension": "stability",
+      "use_case_id": "terminal-ec-process-liveness"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "td-cb-lifecycle-automation-remove-td-merge-command",
+      "dimension": "behavior",
+      "use_case_id": "remove-td-merge-command"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "td-create-dirty-persistent-branch",
+      "dimension": "behavior",
+      "use_case_id": "dirty-persistent-branch-td-activation"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "td-existing-workspace-dirty-persistent-branch",
+      "dimension": "behavior",
+      "use_case_id": "dirty-persistent-branch-existing-td-activation"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "terminal-ec-cross-process-single-flight-python-contract",
+      "dimension": "behavior",
+      "use_case_id": "terminal-ec-process-liveness"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "terminal-ec-retry-transition-lease-python-contract",
+      "dimension": "behavior",
+      "use_case_id": "terminal-ec-process-liveness"
+    },
+    {
+      "capability_id": "td-cb-lifecycle-automation",
+      "case_id": "terminal-ec-wrapper-timeout-teardown-python-contract",
+      "dimension": "behavior",
+      "use_case_id": "terminal-ec-process-liveness"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-close-remote-real-cli",
+      "dimension": "behavior",
+      "use_case_id": "wi-close-remote-rehydration"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-create-help-command",
+      "dimension": "behavior",
+      "use_case_id": "capability-to-epic-planning"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-create-help-smoke",
+      "dimension": "behavior",
+      "use_case_id": "wi-create-help-smoke"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-create-remote-flag-tests",
+      "dimension": "behavior",
+      "use_case_id": "wi-create-remote-flag-tests"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-create-remote-unit-command",
+      "dimension": "behavior",
+      "use_case_id": "capability-to-epic-planning"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-remove-agent-estimate-build",
+      "dimension": "behavior",
+      "use_case_id": "capability-to-epic-planning"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-remove-agent-estimate-spec-check",
+      "dimension": "behavior",
+      "use_case_id": "capability-to-epic-planning"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-remove-agent-estimate-unit-command",
+      "dimension": "behavior",
+      "use_case_id": "wi-remove-agent-estimate-unit-command"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-typed-epic-owner",
+      "dimension": "behavior",
+      "use_case_id": "typed-epic-owner-authoring"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "wi-typed-priority-label",
+      "dimension": "behavior",
+      "use_case_id": "typed-priority-label-authoring"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-four-type-taxonomy",
+      "dimension": "behavior",
+      "use_case_id": "terminology-first-four-type-wi-taxonomy"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-intake-health",
+      "dimension": "behavior",
+      "use_case_id": "terminology-first-four-type-wi-taxonomy"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-agent-backed-inventory-plan-review",
+      "dimension": "behavior",
+      "use_case_id": "agent-backed-inventory-plan-review"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-atomized-requirement-dependency-publication",
+      "dimension": "behavior",
+      "use_case_id": "atomized-requirement-dependency-publication"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-body-dependency-declaration-extraction",
+      "dimension": "behavior",
+      "use_case_id": "body-dependency-declaration-extraction"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-deterministic-staged-epic-change-planner",
+      "dimension": "behavior",
+      "use_case_id": "deterministic-staged-epic-change-planner"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-digest-bound-project-planning-transaction",
+      "dimension": "behavior",
+      "use_case_id": "digest-bound-project-planning-transaction"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-epic-child-graph-terminal-rollup",
+      "dimension": "behavior",
+      "use_case_id": "epic-child-graph-terminal-rollup"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-epic-to-change-atomization",
+      "dimension": "behavior",
+      "use_case_id": "epic-to-change-atomization"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-epic-verification-inventory-authoring-contract",
+      "dimension": "behavior",
+      "use_case_id": "epic-verification-inventory-authoring-contract"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-issue-platform-epic-change-graph-invariants",
+      "dimension": "behavior",
+      "use_case_id": "issue-platform-epic-change-graph-invariants"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-legacy-backlog-reconciliation-and-plan-convergence",
+      "dimension": "behavior",
+      "use_case_id": "legacy-backlog-reconciliation-and-plan-convergence"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-legacy-wi-type-decoding-baseline",
+      "dimension": "behavior",
+      "use_case_id": "legacy-wi-type-decoding-baseline"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-operational-efficiency",
+      "dimension": "efficiency",
+      "use_case_id": "capability-to-epic-planning"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-operational-stability",
+      "dimension": "stability",
+      "use_case_id": "capability-to-epic-planning"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-parent-ownership-reference-extraction",
+      "dimension": "behavior",
+      "use_case_id": "parent-ownership-reference-extraction"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-prefix-safe-planning-transaction-recovery",
+      "dimension": "behavior",
+      "use_case_id": "prefix-safe-planning-transaction-recovery"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-prioritized-reviewed-graph-goal-selection",
+      "dimension": "behavior",
+      "use_case_id": "prioritized-reviewed-graph-goal-selection"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-remote-wi-create-authoring-continuity",
+      "dimension": "behavior",
+      "use_case_id": "remote-wi-create-authoring-continuity"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-wi-linear-authoring-without-crrr",
+      "dimension": "behavior",
+      "use_case_id": "wi-linear-authoring-without-crrr"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-report-triage",
+      "dimension": "behavior",
+      "use_case_id": "terminology-first-four-type-wi-taxonomy"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-spike-terminal",
+      "dimension": "behavior",
+      "use_case_id": "terminology-first-four-type-wi-taxonomy"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-type-templates",
+      "dimension": "behavior",
+      "use_case_id": "terminology-first-four-type-wi-taxonomy"
+    },
+    {
+      "capability_id": "work-item-planning",
+      "case_id": "work-item-type-vocabulary",
+      "dimension": "behavior",
+      "use_case_id": "terminology-first-four-type-wi-taxonomy"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-cli-workflow-chain",
+      "dimension": "behavior",
+      "use_case_id": "cli-workflow-chain"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-closed-workflow-lock-release",
+      "dimension": "behavior",
+      "use_case_id": "closed-workflow-lock-release"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-goal-unified-loop-verb",
+      "dimension": "behavior",
+      "use_case_id": "goal-unified-loop-verb"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-parent-rollup-routing",
+      "dimension": "behavior",
+      "use_case_id": "parent-rollup-routing"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-prioritized-reviewed-graph-goal-selection",
+      "dimension": "behavior",
+      "use_case_id": "prioritized-reviewed-graph-goal-selection"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-python-artifact-goal-flow",
+      "dimension": "behavior",
+      "use_case_id": "python-artifact-goal-flow"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-python-artifact-model-compatibility-parser",
+      "dimension": "behavior",
+      "use_case_id": "python-artifact-model-compatibility-parser"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-python-artifact-protocol",
+      "dimension": "behavior",
+      "use_case_id": "python-artifact-protocol"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-python-only-artifact-model-routing",
+      "dimension": "behavior",
+      "use_case_id": "python-only-artifact-model-routing"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-runtime-envelope-backward-compatibility",
+      "dimension": "behavior",
+      "use_case_id": "runtime-envelope-backward-compatibility"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-wi-ec-td-root-loop",
+      "dimension": "behavior",
+      "use_case_id": "wi-ec-td-root-loop"
+    }
+  ],
+  "schema_version": "aw.python-ec.expected-mapping.v1"
+}
