@@ -2,9 +2,9 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T15:34:17.785103+00:00"
-digest = "sha256:455d26320de7bbb9df00e8eee9a51b034b92ebc100e951d86cf86726e817479f"
-source_digest = "sha256:455d26320de7bbb9df00e8eee9a51b034b92ebc100e951d86cf86726e817479f"
+generated_at = "2026-08-02T16:23:54.066912+00:00"
+digest = "sha256:d408d649b67f07c2f3a1defa92263720dbee6a9eb3eaaf42dbcf90c67c2a67ce"
+source_digest = "sha256:d408d649b67f07c2f3a1defa92263720dbee6a9eb3eaaf42dbcf90c67c2a67ce"
 ir_digest = "sha256:eb41da488cd87ba245b8c2465b83f3cee31381fd286ceeb61b9c5b2ca4eb049b"
 
 [[files]]
@@ -4037,7 +4037,7 @@ digest = "sha256:9e6ca6401a0059e7237d6ae7a9c1f85bc0c00174b7be8adc70fea18394b0025
 
 [[files]]
 path = "src/agentic_workflow/work_items/repair_stale_python_ec_fixture_evidence_for_capability_reports.py"
-digest = "sha256:b5cb81cbea1c9f0e546bca5c6d09c184a7f2f1b26fadaa0ebf045ce55ed176f4"
+digest = "sha256:14911c481e24b1932ecf816a31d965f411301c6d86e95caf46eda18ff572fcd3"
 
 [[files]]
 path = "src/agentic_workflow/work_items/report_triage.py"
