@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T13:56:43.013318+00:00"
-digest = "sha256:4ea8097e534645cc1e3125945883ffbfe8c6ad057c009f7fa36b427c7834425f"
-source_digest = "sha256:4ea8097e534645cc1e3125945883ffbfe8c6ad057c009f7fa36b427c7834425f"
-ir_digest = "sha256:e3675e6f9d4ba436b30d2ca917157efa1be10be114821d18b57a1965d2276917"
+generated_at = "2026-08-02T14:14:27.948823+00:00"
+digest = "sha256:d71a9e9a9a4cd9f0f93e68be53c7d72b0ab3d577803b27d1e4813f7b8949ee0f"
+source_digest = "sha256:d71a9e9a9a4cd9f0f93e68be53c7d72b0ab3d577803b27d1e4813f7b8949ee0f"
+ir_digest = "sha256:1937a45fa56f5acd7f59788dc8687458fe184b7eada4a00848f0fa932c99b686"
 
 [[files]]
 path = "pyproject.toml"
@@ -4018,6 +4018,10 @@ digest = "sha256:72e8236a3cbefcde8ba58960af570bcbf7b3dfe35e052194ac926571503285b
 [[files]]
 path = "src/agentic_workflow/work_items/migration_batch_projection_core_interfaces_01_materialize_the_te.py"
 digest = "sha256:baa5625eb8cd1f8ef19a9734668b9126d34e117b15f711c83485213058912a17"
+
+[[files]]
+path = "src/agentic_workflow/work_items/mutation_adequacy_health_descriptor_first_enumeration.py"
+digest = "sha256:a35a9ec50183975e47d1344c7e14d0c19d232b6678ff3814fd5930dd43dc4b95"
 
 [[files]]
 path = "src/agentic_workflow/work_items/parent_reference_extraction.py"
