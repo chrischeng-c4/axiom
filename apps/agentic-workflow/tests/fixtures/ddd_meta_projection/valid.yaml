@@ -1,0 +1,26 @@
+schema_version: aw.ddd-meta-projection.v1
+projections:
+  - surface: capabilities
+    identity: context:workflow
+    facts: [promise]
+    rendered_markdown: "## Capability Control Plane"
+  - surface: readme
+    identity: context:workflow
+    facts: [overview, journey]
+    rendered_markdown: "## Workflow journey"
+  - surface: contributing
+    identity: context:workflow
+    facts: [boundary, authoring-rule]
+    rendered_markdown: "## Authoring boundaries"
+  - surface: ec
+    identity: port:verification/contract-runner
+    facts: [external-truth]
+    rendered_markdown: "## Contract outcome"
+  - surface: td
+    identity: use-case:workflow/plan-change
+    facts: [executable-construction]
+    rendered_markdown: "## TD construction"
+  - surface: source
+    identity: aggregate:workflow/work-item
+    facts: [implementation, unit-test]
+    rendered_markdown: "// WorkItem aggregate"

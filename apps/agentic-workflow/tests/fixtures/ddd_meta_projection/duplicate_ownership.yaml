@@ -1,0 +1,4 @@
+schema_version: aw.ddd-meta-projection.v1
+projections:
+  - { surface: capabilities, identity: context:workflow, facts: [promise] }
+  - { surface: capabilities, identity: context:workflow, facts: [promise] }

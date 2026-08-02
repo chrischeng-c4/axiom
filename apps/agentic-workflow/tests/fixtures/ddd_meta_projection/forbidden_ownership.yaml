@@ -1,0 +1,3 @@
+schema_version: aw.ddd-meta-projection.v1
+projections:
+  - { surface: readme, identity: context:workflow, facts: [promise] }

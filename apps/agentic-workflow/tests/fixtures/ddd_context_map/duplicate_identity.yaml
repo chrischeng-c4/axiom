@@ -1,0 +1,11 @@
+schema_version: aw.ddd-context-map.v1
+nodes:
+  - { id: context:workflow, kind: context }
+  - id: artifact:workflow/capability-contract
+    kind: artifact
+    projections:
+      paths: [CAPABILITIES.md]
+  - id: artifact:workflow/capability-contract
+    kind: artifact
+    projections:
+      paths: [docs/capabilities.md]
