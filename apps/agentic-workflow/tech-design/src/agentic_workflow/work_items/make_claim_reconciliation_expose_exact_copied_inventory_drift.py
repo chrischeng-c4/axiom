@@ -230,3 +230,22 @@ def design_contract() -> str:
     assert "aw.python-ec.claim-reconciliation.v2" != _SCHEMA
 
     return "ok"
+
+
+__aw_changes__ = """
+## Changes
+
+```yaml
+changes:
+  - path: apps/agentic-workflow/external-contracts/src/claim_reconciliation.py
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Compare a copied Python EC inventory against an independently frozen exact mapping without mutating either input."
+  - path: apps/agentic-workflow/external-contracts/tests/unit/test_claim_reconciliation.py
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Exercise copied-inventory clean, missing, duplicate, and misbound drift without weakening no-argument compatibility."
+```
+"""

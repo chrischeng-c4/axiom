@@ -2,9 +2,9 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T07:00:23.535157+00:00"
-digest = "sha256:3b71d90f39f6ba44c22c8a935a5557e9075c220786ce570f98d3bc9a4598f242"
-source_digest = "sha256:3b71d90f39f6ba44c22c8a935a5557e9075c220786ce570f98d3bc9a4598f242"
+generated_at = "2026-08-02T07:27:23.252565+00:00"
+digest = "sha256:bcbb38f60f171c062e28d6a6ca757036cdd6c2d4f1effacff44012097b2c8a98"
+source_digest = "sha256:bcbb38f60f171c062e28d6a6ca757036cdd6c2d4f1effacff44012097b2c8a98"
 ir_digest = "sha256:7ab130e6c06675087ed2a3a46b4bee4798c871582563c02ff21ab5df17957711"
 
 [[files]]
@@ -4001,7 +4001,7 @@ digest = "sha256:c3fcc110756b9a14910ce2e512d71a1dddf57ce13d2cd02018fcd1866f47601
 
 [[files]]
 path = "src/agentic_workflow/work_items/make_claim_reconciliation_expose_exact_copied_inventory_drift.py"
-digest = "sha256:23b33a8f373b90333cc20f381d7923d2e969bd43457696ab3b8671d1bfe08c51"
+digest = "sha256:01f8dd552dd6278f5dac80564bbacdc4384f55725c5269bbf76c11b80e32b024"
 
 [[files]]
 path = "src/agentic_workflow/work_items/migration_batch_projection_core_interfaces_01_materialize_the_te.py"
