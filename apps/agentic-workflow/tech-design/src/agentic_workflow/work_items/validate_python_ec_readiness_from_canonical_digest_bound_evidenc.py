@@ -14,6 +14,19 @@ from typing import Union
 __aw_artifact_id__ = "artifact:capability-control-plane/validate-python-ec-readiness-from-canonical-digest-bound-evidenc-wi-3325"
 __aw_work_item__ = "3325"
 
+__aw_changes__ = """
+## Changes
+
+```yaml
+changes:
+  - path: apps/agentic-workflow/src/services/python_artifact_readiness.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Parse and fail-close canonical digest-bound Python EC evidence before projecting readiness."
+```
+"""
+
 EVIDENCE_PROTOCOL = "aw.python-ec.evidence.v1"
 
 

@@ -2,9 +2,9 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T06:39:08.017205+00:00"
-digest = "sha256:8d41614cf9bb39c97b100f0b40b69a428477be127bd58906d14500481827c4f3"
-source_digest = "sha256:8d41614cf9bb39c97b100f0b40b69a428477be127bd58906d14500481827c4f3"
+generated_at = "2026-08-02T07:00:23.535157+00:00"
+digest = "sha256:3b71d90f39f6ba44c22c8a935a5557e9075c220786ce570f98d3bc9a4598f242"
+source_digest = "sha256:3b71d90f39f6ba44c22c8a935a5557e9075c220786ce570f98d3bc9a4598f242"
 ir_digest = "sha256:7ab130e6c06675087ed2a3a46b4bee4798c871582563c02ff21ab5df17957711"
 
 [[files]]
@@ -4053,7 +4053,7 @@ digest = "sha256:501acbe5056b78c5989f46b740aafd0439b4688e8e6146606402d4c2d543185
 
 [[files]]
 path = "src/agentic_workflow/work_items/validate_python_ec_readiness_from_canonical_digest_bound_evidenc.py"
-digest = "sha256:b96a15cbf899222246e44236567038f18f80f848466e4097b20c4943b6b704db"
+digest = "sha256:c3dce5cabdf39f47544c19787c6f97c0f7e675bbd468126f2191423b6ad8c8c2"
 
 [[files]]
 path = "src/agentic_workflow/work_items/vocabulary.py"
