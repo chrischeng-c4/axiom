@@ -3724,6 +3724,25 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
     Ok(())
 }
 
+/// #3330: fold real, evidence-backed artifact pre-flight gate evaluation
+/// into `aw health`, giving `apply_preflight_gate_report` (previously dead
+/// code with zero production callers) a reachable production caller.
+/// `crate::services::artifact_preflight_health::evaluate` is opt-in per
+/// project -- it returns no reports at all for the overwhelming majority of
+/// projects that have never created `evidence/artifact-preflight/`, so this
+/// axis is a zero-blast-radius no-op everywhere until a project opts in.
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#logic
+pub(crate) fn apply_artifact_preflight_to_report(report: &mut ProjectHealthReport) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let evaluated =
+        crate::services::artifact_preflight_health::evaluate(&project_root, &report.project)?;
+    for gate_report in evaluated {
+        report.apply_preflight_gate_report(gate_report);
+    }
+    report.refresh_takeover_readiness();
+    Ok(())
+}
+
 /// #1828: an outstanding EC review (missing/stale/incomplete evidence, or an
 /// explicit needs_revision decision) is always surfaced as a finding, but
 /// only becomes a hard production blocker under `--verify-ec` when the
@@ -4792,6 +4811,130 @@ mod tests {
         report.claim_closure.evaluated = true;
         report.claim_closure.note = None;
         report
+    }
+
+    /// #3330 AC2 (missing-evidence case): exercises the exact production
+    /// wiring (`ProjectHealthReport::apply_preflight_gate_report`, real
+    /// `PreFlightGateReport::evaluate`) against a fixture that starts fully
+    /// production-ready, isolating that a Hard gate with no accepted
+    /// evidence is what flips `production_ready` false.
+    #[test]
+    fn artifact_preflight_missing_evidence_blocks_production_ready() {
+        use crate::models::artifact_quality::ArtifactKind;
+        use crate::models::preflight::{default_preflight_gates, PreFlightGateReport};
+
+        let mut report = ready_project_health_report("demo");
+        assert!(
+            report.production_ready,
+            "fixture must start production-ready before preflight is applied"
+        );
+
+        let gates = default_preflight_gates(ArtifactKind::CodeArtifact);
+        let evaluated = PreFlightGateReport::evaluate("apps/demo/src/lib.rs", &gates, &[]);
+        report.apply_preflight_gate_report(evaluated);
+
+        assert!(!report.production_ready);
+        assert!(report
+            .production_blockers
+            .iter()
+            .any(|blocker| blocker.contains("code-artifact-test")));
+        assert_eq!(report.preflight_gate_reports.len(), 1);
+        assert_eq!(
+            report.preflight_gate_reports[0].artifact_ref,
+            "apps/demo/src/lib.rs"
+        );
+    }
+
+    /// #3330 AC2 (passing-evidence case): the same wiring as above, but with
+    /// every gate's evidence accepted -- `production_ready` must stay true
+    /// and the passed evidence must be recorded in `preflight_gate_reports`.
+    #[test]
+    fn artifact_preflight_accepted_evidence_keeps_production_ready() {
+        use crate::models::artifact_quality::ArtifactKind;
+        use crate::models::preflight::{
+            default_preflight_gates, PreFlightEvidence, PreFlightEvidenceKind,
+            PreFlightEvidenceStatus, PreFlightGateReport, PreFlightGateStatus,
+        };
+
+        let mut report = ready_project_health_report("demo");
+
+        let gates = default_preflight_gates(ArtifactKind::CodeArtifact);
+        let evidence = vec![
+            PreFlightEvidence {
+                gate_id: "code-artifact-test".to_string(),
+                evidence_kind: PreFlightEvidenceKind::Test,
+                source_ref: "cargo test lib_add".to_string(),
+                status: PreFlightEvidenceStatus::Accepted,
+            },
+            PreFlightEvidence {
+                gate_id: "code-artifact-spec-annotation".to_string(),
+                evidence_kind: PreFlightEvidenceKind::SourceAnnotation,
+                source_ref: "apps/demo/src/lib.rs#L1".to_string(),
+                status: PreFlightEvidenceStatus::Accepted,
+            },
+        ];
+        let evaluated = PreFlightGateReport::evaluate("apps/demo/src/lib.rs", &gates, &evidence);
+        report.apply_preflight_gate_report(evaluated);
+
+        assert!(report.production_ready);
+        assert!(report.production_blockers.is_empty());
+        assert_eq!(report.preflight_gate_reports.len(), 1);
+        assert!(report.preflight_gate_reports[0]
+            .results
+            .iter()
+            .all(|result| result.status == PreFlightGateStatus::Passed));
+    }
+
+    /// #3330 AC1 end-to-end: exercises the actual new production caller
+    /// (`apply_artifact_preflight_to_report`, reached from
+    /// `build_health_report_with_options_and_plan`) against a real on-disk
+    /// `aw.toml` + `evidence/artifact-preflight/` fixture, closing the loop
+    /// from "evaluate() has zero callers" all the way to a populated
+    /// `ProjectHealthReport` -- not just the lower-level helpers exercised
+    /// above.
+    #[test]
+    fn apply_artifact_preflight_to_report_reads_real_evidence_from_disk() {
+        use crate::cli::shell_env::CWD_LOCK;
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev = std::env::current_dir().unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            concat!(
+                "[[projects]]\n",
+                "name = \"demo\"\n",
+                "path = \"apps/demo\"\n",
+                "\n",
+                "[[projects.workspaces]]\n",
+                "name = \"demo\"\n",
+                "paths = [\"apps/demo/**\"]\n",
+                "target = \"rust\"\n",
+            ),
+        )
+        .unwrap();
+        let evidence_dir = tmp.path().join("apps/demo/evidence/artifact-preflight");
+        std::fs::create_dir_all(&evidence_dir).unwrap();
+        std::fs::write(
+            evidence_dir.join("lib.json"),
+            r#"{"artifact_ref": "apps/demo/src/lib.rs", "artifact_kind": "code_artifact", "evidence": []}"#,
+        )
+        .unwrap();
+
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let mut report = ready_project_health_report("demo");
+        let result = apply_artifact_preflight_to_report(&mut report);
+        std::env::set_current_dir(&prev).unwrap();
+
+        result.unwrap();
+        assert_eq!(report.preflight_gate_reports.len(), 1);
+        assert!(!report.production_ready);
+        assert!(report
+            .production_blockers
+            .iter()
+            .any(|blocker| blocker.contains("code-artifact-test")));
     }
 
     #[test]
@@ -5999,4 +6142,25 @@ changes:
       --non-interactive --max-ticks 1` to `aw goal capability --project {}
       --non-interactive --max-ticks 1`, following the retirement of `aw
       capability run` into the unified `aw goal` loop verb.
+  - path: apps/agentic-workflow/src/cli/project.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #3330: wires real, evidence-backed artifact pre-flight gate
+      evaluation into `aw health`, giving `apply_preflight_gate_report`
+      (previously dead code with zero callers at all, production or test)
+      its first callers -- the new `apply_artifact_preflight_to_report`
+      (called unconditionally from `build_health_report_with_options_and_plan`,
+      folding `crate::services::artifact_preflight_health::evaluate`'s
+      opt-in-per-project evidence into `preflight_gate_reports`/
+      `production_blockers`) plus three new unit tests. The new function and
+      its tests are resynced here at the nearest verified byte-identical
+      anchors (`apply_preflight_gate_report`, `ready_project_health_report`);
+      the actual `build_health_report_with_options_and_plan` call site could
+      not be resynced because that whole orchestration function -- and the
+      `HealthPostEvaluationPlan`-driven post-evaluation closure it lives in --
+      predates this mirror and has no equivalent here at all. That gap is
+      pre-existing drift per #848, not introduced by this change; see
+      `src/cli/project.rs` for the real call site.
 ```

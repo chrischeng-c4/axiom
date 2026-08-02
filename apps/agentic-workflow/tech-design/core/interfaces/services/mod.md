@@ -57,6 +57,7 @@ Public API manifest for `apps/agentic-workflow/src/services/mod.rs` generated fr
 //! Services are shared between MCP tools and CLI commands to ensure
 //! consistency and avoid code duplication.
 
+pub mod artifact_preflight_health;
 pub mod file_service;
 pub mod implementation_service;
 pub mod init_change_service;
