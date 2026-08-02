@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-02T16:25:28.054271+00:00"
+generated_at = "2026-08-02T16:36:29.992662+00:00"
 ir_digest = "sha256:c5dd3af19cdf991bfe79004c9e06316e6bed87a34f8d815ac1a925d4cce499e1"
-source_digest = "sha256:5d0136f1d57e42141493d326a489e8ce7299377ad8a1b05ae47abb90ab6fe037"
+source_digest = "sha256:ac6b888a2486ea249aee7ff015cbf8d10db2ae9b4bf06febe2d94e49af0ea300"
 tool_contracts = []
 
 [[sources]]
@@ -142,7 +142,7 @@ digest = "sha256:da278d2fba8c5b2cd946e16433b48427506bd89ccf94f6e6b13a428842be84e
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-shared-service-kit-substrate.py"
-digest = "sha256:a04e5da6272b6eb681b27e560b81b4be00e79bea9f637fe13f27a5fc09244fee"
+digest = "sha256:feea8fc836c7253ab1206fa978db8cbfcebaf96b2b38d26773ae215fa39a3ce2"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules.py"

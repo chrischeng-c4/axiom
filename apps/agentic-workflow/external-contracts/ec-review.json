@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:4f53de7ee37df62e270238d42902696862433990f099c2141fc8b3f4527ae738",
+  "source_digest": "sha256:23d78eb4db578477cdeb652bbc7d0c89d41ed4b7e8d5aa7367fe639237ff9c97",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/ec_review_current",
-  "reviewed_at": "2026-08-02T16:25:24.895384+00:00",
-  "summary": "All three #3344 fixtures establish canonical digest-bound evidence before exercising their public capability-report behavior. Their negative controls corrupt only evidence and prove fail-closed readiness/remediation; the corrected scoped-dependency case additionally pins exit status, the exact blocker, full gate execution, restoration, and the later ready state.",
+  "reviewed_at": "2026-08-02T16:36:26.620008+00:00",
+  "summary": "The newly owned minimal_service Cargo example composes the production service-http, server-http, server-lifecycle, server-tcp, and transport-h2c seams. The unchanged independent EC builds and executes that exact target, probes concrete HTTP behavior, sends a real SIGTERM, and pins readiness drain, grace duration, clean exit, and shutdown output without a compile-only or zero-test path.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -16,5 +16,5 @@
     "false_green_risk_checked": true
   },
   "findings": [],
-  "target_path": "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
+  "target_path": "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-shared-service-kit-substrate.py"
 }
