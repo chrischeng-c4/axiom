@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T07:27:23.252565+00:00"
-digest = "sha256:bcbb38f60f171c062e28d6a6ca757036cdd6c2d4f1effacff44012097b2c8a98"
-source_digest = "sha256:bcbb38f60f171c062e28d6a6ca757036cdd6c2d4f1effacff44012097b2c8a98"
-ir_digest = "sha256:7ab130e6c06675087ed2a3a46b4bee4798c871582563c02ff21ab5df17957711"
+generated_at = "2026-08-02T11:18:36.384551+00:00"
+digest = "sha256:bae471b91d489b8c1e622cbb4c5cb978081bdab72cb3f1dddd296be45ec1503c"
+source_digest = "sha256:bae471b91d489b8c1e622cbb4c5cb978081bdab72cb3f1dddd296be45ec1503c"
+ir_digest = "sha256:47b8720c24de7571932e5b28f4d9b4443bccc214f436ab53fbcd4d2492060af3"
 
 [[files]]
 path = "pyproject.toml"
@@ -3992,6 +3992,10 @@ path = "src/agentic_workflow/work_items/epic_owner_authoring.py"
 digest = "sha256:4bb5278732ab93afa1848cf2c7e950e2c752fea76886239be7e51122a2140d96"
 
 [[files]]
+path = "src/agentic_workflow/work_items/harden_readiness_ec_dynamic_blocker_oracle.py"
+digest = "sha256:31d6f5310bf62968197467a6ed1c5bc813c1f8beba489884f934209f3347fc86"
+
+[[files]]
 path = "src/agentic_workflow/work_items/intake_health.py"
 digest = "sha256:249df6e6f443e28d25ab7b2d29cdd2da76bb3fbc384a84bd06f5a91adcffd68c"
 
@@ -4001,7 +4005,11 @@ digest = "sha256:c3fcc110756b9a14910ce2e512d71a1dddf57ce13d2cd02018fcd1866f47601
 
 [[files]]
 path = "src/agentic_workflow/work_items/make_claim_reconciliation_expose_exact_copied_inventory_drift.py"
-digest = "sha256:01f8dd552dd6278f5dac80564bbacdc4384f55725c5269bbf76c11b80e32b024"
+digest = "sha256:fcf309e98a6216476c2f4a5fa26c6f3c91c1bfcd9fc062852aa86caaacecb5b4"
+
+[[files]]
+path = "src/agentic_workflow/work_items/make_reconciliation_ec_mapping_authority_independent.py"
+digest = "sha256:72e8236a3cbefcde8ba58960af570bcbf7b3dfe35e052194ac926571503285b3"
 
 [[files]]
 path = "src/agentic_workflow/work_items/migration_batch_projection_core_interfaces_01_materialize_the_te.py"
