@@ -242,6 +242,16 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Compare a copied Python EC inventory against an independently frozen exact mapping without mutating either input."
+  - path: apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py
+    action: modify
+    section: external-case
+    impl_mode: hand-written
+    description: "Load a checked-in expected-mapping authority (aw.python-ec.expected-mapping.v1) instead of deriving expectations from canonical/candidate inventory, perturb only copied candidate inventories, and assert full exact mapping plus exact drift findings while keeping no-argument v2 reconciliation supplemental and Rust claim closure authoritative."
+  - path: apps/agentic-workflow/external-contracts/fixtures/claim-reconciliation/capability-catalog-td-claim-linkage-expected-mapping.json
+    action: create
+    section: authority-fixture
+    impl_mode: hand-written
+    description: "Checked-in independent expected-mapping authority using aw.python-ec.expected-mapping.v1 with the complete expected (case_id, capability_id, use_case_id, dimension) inventory for exact copied-inventory reconciliation."
   - path: apps/agentic-workflow/external-contracts/tests/unit/test_claim_reconciliation.py
     action: modify
     section: unit-test
