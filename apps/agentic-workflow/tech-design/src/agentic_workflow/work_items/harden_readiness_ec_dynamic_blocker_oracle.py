@@ -32,6 +32,8 @@ def design_contract() -> str:
     #     display values end at the fixture root path with no OS-error suffix:
     #       "Python EC inventory unavailable: canonicalize Python artifact root <root>/project/external-contracts"
     #       "Python TD inventory unavailable: canonicalize Python TD root <root>/project/tech-design"
+    #     <root> must be the runtime-canonical path (Path.resolve()), because AW
+    #     canonicalizes the path before emitting it (e.g. /var/... -> /private/var/...).
     #     Both public projections (capability-report and health-spec) must
     #     expose an identical ordered two-element array.
     #
@@ -54,7 +56,7 @@ def design_contract() -> str:
     # ────────────────────────────────────────────────────────────────────────
 
     with tempfile.TemporaryDirectory(prefix="aw-td-3337-") as raw_tmp:
-        fixture_root = Path(raw_tmp)
+        fixture_root = Path(raw_tmp).resolve()
         ec_root = fixture_root / "project" / "external-contracts"
         td_root = fixture_root / "project" / "tech-design"
 
