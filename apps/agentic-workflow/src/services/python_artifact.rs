@@ -121,6 +121,8 @@ struct PythonArtifactConfig {
     protocol: String,
     entrypoint: String,
     source_roots: Vec<String>,
+    #[serde(default)]
+    source_files: Vec<String>,
     dependency_files: Vec<String>,
     evidence_dir: String,
 }
@@ -198,7 +200,18 @@ pub fn discover_python_artifact_project(project_root: &Path) -> Result<PythonArt
         require_directory(&source_root, "source_roots")?;
         source_roots.push(source_root);
     }
-    let source_files = collect_python_sources(&source_roots)?;
+    let mut source_files = collect_python_sources(&source_roots)?;
+
+    let mut explicit_source_files = BTreeSet::new();
+    for source_file in &config.source_files {
+        let resolved = resolve_project_path(&root, source_file, "source_files")?;
+        require_regular_file(&resolved, "source_files")?;
+        if !explicit_source_files.insert(resolved) {
+            bail!("Python artifact source_files names duplicate path `{source_file}`");
+        }
+    }
+    source_files.extend(explicit_source_files);
+
     let source_digest = digest_files(&root, &source_files)?;
 
     let mut dependency_files = BTreeSet::new();
@@ -775,6 +788,89 @@ evidence_dir = "evidence"
             first.dependency_lock_digest(),
             second.dependency_lock_digest()
         );
+    }
+
+    #[test]
+    fn declared_source_files_participate_in_source_digest_and_input_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_artifact_fixture(tmp.path(), "[\"pyproject.toml\", \"uv.lock\"]");
+        fs::write(tmp.path().join("uv.lock"), "version = 1\nrevision = 3\n").unwrap();
+        fs::create_dir_all(tmp.path().join("fixtures")).unwrap();
+        let fixture_path = tmp.path().join("fixtures/expected.json");
+        fs::write(&fixture_path, b"{\"count\": 110}\n").unwrap();
+
+        let pyproject_path = tmp.path().join("pyproject.toml");
+        let content = fs::read_to_string(&pyproject_path).unwrap();
+        let updated_content = content.replace(
+            "source_roots = [\"src\"]",
+            "source_roots = [\"src\"]\nsource_files = [\"fixtures/expected.json\"]",
+        );
+        fs::write(&pyproject_path, updated_content).unwrap();
+
+        let first = discover_python_artifact_project(tmp.path()).unwrap();
+        let canonical_fixture = fixture_path.canonicalize().unwrap();
+        assert!(first
+            .input_files()
+            .iter()
+            .any(|input| input.path == canonical_fixture));
+
+        let first_source_digest = first.source_digest().to_string();
+        let first_dep_digest = first.dependency_lock_digest().to_string();
+
+        fs::write(&fixture_path, b"{\"count\": 111}\n").unwrap();
+        let second = discover_python_artifact_project(tmp.path()).unwrap();
+
+        assert_ne!(first.source_digest(), second.source_digest());
+        assert_eq!(
+            first.dependency_lock_digest(),
+            second.dependency_lock_digest()
+        );
+        assert_eq!(first_source_digest, first.source_digest());
+        assert_ne!(first_source_digest, second.source_digest());
+        assert_eq!(first_dep_digest, second.dependency_lock_digest());
+    }
+
+    #[test]
+    fn source_files_rejects_missing_directory_and_duplicate() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_artifact_fixture(tmp.path(), "[\"pyproject.toml\", \"uv.lock\"]");
+        fs::write(tmp.path().join("uv.lock"), "version = 1\nrevision = 3\n").unwrap();
+        fs::create_dir_all(tmp.path().join("fixtures")).unwrap();
+        let fixture_path = tmp.path().join("fixtures/expected.json");
+        fs::write(&fixture_path, b"{}\n").unwrap();
+
+        let pyproject_path = tmp.path().join("pyproject.toml");
+        let content = fs::read_to_string(&pyproject_path).unwrap();
+
+        // Missing file
+        let missing_content = content.replace(
+            "source_roots = [\"src\"]",
+            "source_roots = [\"src\"]\nsource_files = [\"fixtures/missing.json\"]",
+        );
+        fs::write(&pyproject_path, &missing_content).unwrap();
+        assert!(discover_python_artifact_project(tmp.path()).is_err());
+
+        // Directory instead of regular file
+        let dir_content = content.replace(
+            "source_roots = [\"src\"]",
+            "source_roots = [\"src\"]\nsource_files = [\"fixtures\"]",
+        );
+        fs::write(&pyproject_path, &dir_content).unwrap();
+        let err = discover_python_artifact_project(tmp.path())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must be a regular file"), "{err}");
+
+        // Duplicate entry
+        let dup_content = content.replace(
+            "source_roots = [\"src\"]",
+            "source_roots = [\"src\"]\nsource_files = [\"fixtures/expected.json\", \"fixtures/expected.json\"]",
+        );
+        fs::write(&pyproject_path, &dup_content).unwrap();
+        let err = discover_python_artifact_project(tmp.path())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("duplicate"), "{err}");
     }
 }
 // HANDWRITE-END
