@@ -3,10 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-02T12:16:41.329934+00:00"
+generated_at = "2026-08-02T14:44:46.252735+00:00"
 ir_digest = "sha256:c5dd3af19cdf991bfe79004c9e06316e6bed87a34f8d815ac1a925d4cce499e1"
-source_digest = "sha256:df064104866828ccfe5e8ccb549f4c4d4a6a9f8f02a096f14156ce3d1e16edab"
+source_digest = "sha256:8d4bf38f459e3bf4d1dbc6add6f9694a206f6f261e6cf34f7e948ce5f81b17f8"
 tool_contracts = []
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/fixtures/claim-reconciliation/capability-catalog-td-claim-linkage-expected-mapping.json"
+digest = "sha256:eb899f01eab3a5019b655a90a69f53ecd8fae2a18cd0589a73aaf28da1cf891d"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
