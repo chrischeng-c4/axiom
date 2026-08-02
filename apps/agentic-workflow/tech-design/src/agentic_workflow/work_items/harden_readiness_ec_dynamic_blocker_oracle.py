@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
+__aw_changes__ = """
+changes:
+  - path: apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py
+    action: modify
+    description: >
+      Harden this existing production Python EC to assert exact ordered
+      no-inventory and missing-evidence blocker arrays on both projections;
+      use fixture-root-aware anchored full matches; and add
+      extra/reordered/altered blocker negative controls without altering
+      Rust readiness behavior.
+"""
+
 
 __aw_artifact_id__ = "artifact:capability-control-plane/harden-readiness-ec-dynamic-blocker-oracle-wi-3337"
 __aw_work_item__ = "3337"

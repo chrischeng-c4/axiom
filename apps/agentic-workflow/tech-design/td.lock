@@ -2,9 +2,9 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T11:18:36.384551+00:00"
-digest = "sha256:bae471b91d489b8c1e622cbb4c5cb978081bdab72cb3f1dddd296be45ec1503c"
-source_digest = "sha256:bae471b91d489b8c1e622cbb4c5cb978081bdab72cb3f1dddd296be45ec1503c"
+generated_at = "2026-08-02T11:29:58.345517+00:00"
+digest = "sha256:d2d67990ee474da5b9131a56c1b73cc36fb7e2bec0bf2b31ec7a8a9777ee90df"
+source_digest = "sha256:d2d67990ee474da5b9131a56c1b73cc36fb7e2bec0bf2b31ec7a8a9777ee90df"
 ir_digest = "sha256:47b8720c24de7571932e5b28f4d9b4443bccc214f436ab53fbcd4d2492060af3"
 
 [[files]]
@@ -3993,7 +3993,7 @@ digest = "sha256:4bb5278732ab93afa1848cf2c7e950e2c752fea76886239be7e51122a2140d9
 
 [[files]]
 path = "src/agentic_workflow/work_items/harden_readiness_ec_dynamic_blocker_oracle.py"
-digest = "sha256:31d6f5310bf62968197467a6ed1c5bc813c1f8beba489884f934209f3347fc86"
+digest = "sha256:450d7403d87d1000afa5debeacaca95690bbca1644115996245ab675cebbe8a2"
 
 [[files]]
 path = "src/agentic_workflow/work_items/intake_health.py"
