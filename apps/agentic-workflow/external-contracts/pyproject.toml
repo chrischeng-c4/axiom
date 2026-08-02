@@ -1387,3 +1387,185 @@ oracle = "An isolated fixture executes a non-empty verifier to produce canonical
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-python-artifact-readiness"
 evidence_paths = ["evidence/capability-control-plane-python-artifact-readiness.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-brownfield-takeover-surface"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "brownfield-takeover-surface"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-brownfield-takeover-surface.py"
+promise = "The retired standardize CLI namespace is absent from the real binary, and brownfield preservation-audit recording is available under aw td audit-record instead."
+oracle = "The Python external contract drives the real compiled aw binary's dispatch surface and independently checks for the retired standardize subcommand's absence and audit-record's presence."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-brownfield-takeover-surface"
+evidence_paths = ["evidence/existing-project-standardization-brownfield-takeover-surface.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-managed-and-semantic-production-gates"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "managed-and-semantic-production-gates"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-managed-and-semantic-production-gates.py"
+promise = "aw health prioritizes a missing-TD semantic coverage gap over a coexisting generator-primitive HANDWRITE gap and reports the real managed/semantic coverage fraction in its blocker prose."
+oracle = "The Python external contract commits a two-Python-file fixture -- one TD-covered but still HANDWRITE-marked, one wholly uncovered -- and independently checks the real aw health --project <p> blockers output for the exact selected-gap and coverage-fraction literals."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-managed-and-semantic-production-gates"
+evidence_paths = ["evidence/existing-project-standardization-managed-and-semantic-production-gates.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-authoritative-source-snapshot-projection"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "authoritative-source-snapshot-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-authoritative-source-snapshot-projection.py"
+promise = "aw cb gen-source projects a TD Source section's embedded source-snapshot fence onto its target file exactly, overriding the target's own live content, and a repeat pass is an idempotent no-op."
+oracle = "The Python external contract commits a legacy-snapshot TD spec plus a diverging target and an untouched sibling file, then independently inspects two successive aw cb gen-source JSON envelopes, stderr summaries, and on-disk file bytes for the projected value, the untouched sibling, and the idempotent zero-op recheck."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-authoritative-source-snapshot-projection"
+evidence_paths = ["evidence/existing-project-standardization-authoritative-source-snapshot-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-cb-and-cold-verification-gates"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "cb-and-cold-verification-gates"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-cb-and-cold-verification-gates.py"
+promise = "aw cb gen --force-regen --verify-cold derives its cold-rebuild denominator/numerator from codegen Changes entries only, and --verify-cold is a distinct force-regen mode that is mutually exclusive with --verify and unusable without --force-regen."
+oracle = "The Python external contract commits a project with one codegen and one hand-written Changes entry, locks and force-regenerates it, then independently checks the real aw cb gen --verify-cold cold_rebuild ratio plus both its --verify-cold-without-force-regen and --verify-cold-with---verify rejection error literals."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-cb-and-cold-verification-gates"
+evidence_paths = ["evidence/existing-project-standardization-cb-and-cold-verification-gates.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-force-regeneration-project-root-llms-projection"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "force-regeneration-project-root-llms-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-force-regeneration-project-root-llms-projection.py"
+promise = "aw cb gen --force-regen replaces a generic project-root llms placeholder with the canonical TD-first CODEGEN block, leaves a hand-written Changes sibling byte-for-byte untouched, and auto-commits a clean tree with a Cb-Force-Regen trailer."
+oracle = "The Python external contract commits a project whose llms.txt carries a generic placeholder and whose tree has a sibling hand-written source file, locks and force-regenerates it, then independently checks the regenerated file's single CODEGEN block, heading and section order, the untouched sibling's bytes, and the git log trailer plus clean working tree."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-force-regeneration-project-root-llms-projection"
+evidence_paths = ["evidence/existing-project-standardization-force-regeneration-project-root-llms-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-shared-service-kit-substrate"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "shared-service-kit-substrate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-shared-service-kit-substrate.py"
+promise = "The shared server-lifecycle/server-tcp/transport-h2c/service-http substrate, run as a real subprocess, is a genuine HTTP policy shell serving probe/docs routes with real SIGTERM drain-then-grace-window shutdown semantics."
+oracle = "The Python external contract builds and runs libs/service-http's minimal_service example -- the same production composition lumen/keep/relay/loom wire -- as a subprocess, independently probes its HTTP routes and headers, sends a real SIGTERM, and times the /readyz drain flip plus the grace-window-bound process exit and shutdown log line."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-substrate"
+evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-substrate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-service-workload-profile-derivation"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "service-workload-profile-derivation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-service-workload-profile-derivation.py"
+promise = "aw meta sync --repository-product splices a live-rendered trait table over a stale CONTRIBUTING.md placeholder block, and the projected stateful_storage row derives the stateful-service-workload baseline capability and links the StatefulSet/Deployment CONTRIBUTING.md section."
+oracle = "The Python external contract commits a CONTRIBUTING.md fixture whose aw:trait-table markers wrap a stale placeholder row, runs the real aw meta sync --repository-product, and independently checks the spliced block for the placeholder's removal and the stateful_storage row's derived capability and section link."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-service-workload-profile-derivation"
+evidence_paths = ["evidence/existing-project-standardization-service-workload-profile-derivation.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-project-profile-conformance-review"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "project-profile-conformance-review"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-project-profile-conformance-review.py"
+promise = "aw review resolves a project's kind_surface/primary_workload/state_ownership/replication/serving_role profile from its real Cargo dependency graph, citing concrete evidence, rather than a per-project-name or service-shaped default."
+oracle = "The Python external contract commits two projects differing only in an axum dependency, runs the real aw review --project <p> --pretty against each, and independently checks the bare project's all-not_applicable/cli profile against the axum project's fully resolved service profile and its cited dependency-evidence strings."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-project-profile-conformance-review"
+evidence_paths = ["evidence/existing-project-standardization-project-profile-conformance-review.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-shared-service-kit-conformance-rules"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "shared-service-kit-conformance-rules"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-shared-service-kit-conformance-rules.py"
+promise = "aw review's shared-service-kit adoption rule fires a high-severity shared-kit:server-tcp finding naming a hand-rolled TcpListener::bind source when server-tcp is undeclared, and the finding clears once the dependency is added with source unchanged."
+oracle = "The Python external contract commits a served-surface project with a hand-rolled TCP listener and no shared-kit dependency, runs the real aw review --project <p> --pretty before and after adding a server-tcp path dependency, and independently checks the finding's presence/severity/affected path before and its absence after."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-conformance-rules"
+evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-conformance-rules.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "structured-observability-and-raft-telemetry-conformance-rules"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules.py"
+promise = "aw review's mandatory observability-baseline rule fires from a real dependency-graph read regardless of hand-rolled logging code, and its RaftConsensus/leader-ingest-scoped proposal-routing-telemetry rule fires only for that profile shape and clears once real telemetry code is added."
+oracle = "The Python external contract commits a served-surface project and a separate StatefulSet/RaftConsensus-profiled project, runs the real aw review --project <p> --pretty before and after adding a service-observability dependency and a local_proposals telemetry marker respectively, and independently checks each finding's presence and clearance."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules"
+evidence_paths = ["evidence/existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-aw-review-skill-and-doc-projection"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "aw-review-skill-and-doc-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-aw-review-skill-and-doc-projection.py"
+promise = "aw new projects an aw-review/SKILL.md into both the .claude/skills and .agents/skills trees of a freshly bootstrapped project, and its body documents the real aw review --project invocation and the aw health/aw review ownership boundary."
+oracle = "The Python external contract runs the real aw new <name> against an empty target directory and independently checks both projected SKILL.md files for existence and for the literal aw review --project invocation and aw health cross-reference in their bodies."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-aw-review-skill-and-doc-projection"
+evidence_paths = ["evidence/existing-project-standardization-aw-review-skill-and-doc-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "xml-handwrite-marker-fill-queue-lifecycle"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle.py"
+promise = "aw cb gen scaffolds a real XML HANDWRITE marker carrying tracker=\"pending-tracker\" around a hand-written Changes entry's pre-existing non-empty function body, that marker persists into aw cb fill's queued-marker enumeration, and two colliding-gap-id markers within one active TD scope are disambiguated into two distinct queue entries."
+oracle = "The Python external contract drives the real aw wi/td create/td lock/cb gen/cb fill pipeline end-to-end over a two-entry hand-written TD spec anchored to pre-existing Rust functions, and independently checks the generated source for the HANDWRITE marker/tracker/anchor and the cb fill JSON envelope's marker_list for two distinct, correctly gap-prefixed, correctly sourced entries."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle"
+evidence_paths = ["evidence/existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-traceability-closure-gate"
+artifact_id = "artifact:existing-project-standardization/public-contract"
+capability_id = "existing-project-standardization"
+use_case_id = "traceability-closure-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-traceability-closure-gate.py"
+promise = "aw health's standardization pass closes command, TD, source, and CB traceability into one coverage report: it reports an overall TD traceability percent with per-TD internal/orphan gap accounting, a source-and-CB edge count feeding that percent, and an independently reported command-traceability percent, each with its own explicit blocker list."
+oracle = "The Python external contract drives the real aw health --project <fixture> full command against a Legacy-artifact-model fixture project and independently checks the durable health payload for the traceability_percent/command_traceability_percent summary fields and a typed traceability.blockers list, proving the closure computation genuinely ran rather than being skipped or defaulted."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-traceability-closure-gate"
+evidence_paths = ["evidence/existing-project-standardization-traceability-closure-gate.json"]
