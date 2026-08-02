@@ -12112,13 +12112,41 @@ fn parse_markdown_table_row(line: &str) -> Option<Vec<String>> {
     if !trimmed.starts_with('|') || !trimmed[1..].contains('|') {
         return None;
     }
-    Some(
-        trimmed
-            .trim_matches('|')
-            .split('|')
-            .map(|cell| cell.trim().replace("\\|", "|"))
-            .collect(),
-    )
+    Some(split_markdown_table_row_cells(trimmed.trim_matches('|')))
+}
+
+/// Split a markdown table row's inner text into cells on `|`, treating any
+/// `|` that falls inside an open backtick span (`` `...` ``) as literal
+/// cell content rather than a delimiter.
+///
+/// Gate/Evidence cells legitimately hold backtick-quoted shell commands
+/// with real embedded pipes (e.g. `` `aw health | tail -n 1` ``), and
+/// `markdown_cell` already escapes every `|` it writes — inside backticks
+/// or not — on the way out. This mirrors that contract on the way in: a
+/// `|` inside backticks is never a cell delimiter, whether it is bare or
+/// `\`-escaped, and any `\|` that survives splitting still unescapes to a
+/// literal `|`. Without this, the first `|` inside a backtick-quoted
+/// command silently truncates the cell instead of surviving the round
+/// trip (#3331).
+fn split_markdown_table_row_cells(inner: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut in_backtick = false;
+    for ch in inner.chars() {
+        match ch {
+            '`' => {
+                in_backtick = !in_backtick;
+                current.push(ch);
+            }
+            '|' if !in_backtick => {
+                cells.push(current.trim().replace("\\|", "|"));
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    cells.push(current.trim().replace("\\|", "|"));
+    cells
 }
 
 fn is_markdown_separator_row(cells: &[String]) -> bool {
@@ -18367,6 +18395,67 @@ Required Verification: smoke, conformance
                 .remove(0)
                 .feature_class,
             None
+        );
+    }
+
+    #[test]
+    fn parse_markdown_table_row_treats_backtick_quoted_pipes_as_literal() {
+        let cells =
+            parse_markdown_table_row("| Row | `aw health | tail -n 1 | grep -q axes` | done |")
+                .unwrap();
+        assert_eq!(
+            cells,
+            vec![
+                "Row".to_string(),
+                "`aw health | tail -n 1 | grep -q axes`".to_string(),
+                "done".to_string(),
+            ],
+            "a `|` inside a backtick-quoted span must never be treated as a \
+             cell delimiter, bare or escaped (#3331)"
+        );
+    }
+
+    #[test]
+    fn work_root_gate_evidence_survives_a_bare_pipe_inside_backticks() {
+        let fixture = r#"# demo
+
+## Package Manager
+
+| Field | Value |
+|---|---|
+| ID | package-manager |
+| Root WI | #3779 |
+| Status | auditing |
+| Promise | Replace package manager flows. |
+| Required Verification | smoke, conformance |
+| Gate Inventory | apps/jet/validation/pkg-manager.toml |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | `./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes` |
+	"#;
+
+        let before = cap_doc(fixture).capabilities.remove(0);
+        assert_eq!(
+            before.work_roots[0].gate_evidence,
+            "`./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes`",
+            "a bare `|` inside a backtick-quoted shell command in the Gate / \
+             Evidence cell must survive parsing intact instead of silently \
+             truncating at the first inner pipe (#3331)"
+        );
+
+        // The writer already escapes every `|` it writes, inside backticks or
+        // not (`markdown_cell`). The parser must read that escaped form back
+        // to the same literal cell content, so a parse -> render -> parse
+        // cycle is stable and `aw capability migrate` converges instead of
+        // truncating a little more on every run.
+        let rendered = render_markdown_capability_section(&before);
+        let after = cap_doc(&format!("# demo\n\n{rendered}"))
+            .capabilities
+            .remove(0);
+        assert_eq!(
+            after.work_roots[0].gate_evidence,
+            before.work_roots[0].gate_evidence
         );
     }
 
