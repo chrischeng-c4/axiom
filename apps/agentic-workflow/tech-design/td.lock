@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T11:40:16.193605+00:00"
-digest = "sha256:e046ff3acc45c82d7808022391919458b4e5b9eafe2e6f2fceaa0b4e4398cfed"
-source_digest = "sha256:e046ff3acc45c82d7808022391919458b4e5b9eafe2e6f2fceaa0b4e4398cfed"
-ir_digest = "sha256:a83bf46ec6d9c93c0092cc26efcedf965691665edb0ac5a48f61b5e79fcb7ca0"
+generated_at = "2026-08-02T12:18:52.125026+00:00"
+digest = "sha256:20c5ffd8933606d6097e202b040292dca0376e4369d8a28e54e50d0688e888bb"
+source_digest = "sha256:20c5ffd8933606d6097e202b040292dca0376e4369d8a28e54e50d0688e888bb"
+ir_digest = "sha256:ad54ee2c6403e16cd42d1eaec986885dc11aacb51c7bcf72ebbd80fd4535121a"
 
 [[files]]
 path = "pyproject.toml"
@@ -3970,6 +3970,10 @@ digest = "sha256:3b8cf3e8dad497b174b253661b78234a9bf600c34434c1fce3f18222b727e0c
 [[files]]
 path = "src/agentic_workflow/public_contracts/workflow_root_runner.py"
 digest = "sha256:a7b51d8e60b5fa38f0d91b70c6285376b487a40ede00bc0b9544a60ed83f149d"
+
+[[files]]
+path = "src/agentic_workflow/work_items/bind_reconciliation_ec_oracle_fixtures_into_digest_review_inputs.py"
+digest = "sha256:7c51c7ff072bac5e7a561a23542535b4339d67426e04e3017f7a033e4447eb7f"
 
 [[files]]
 path = "src/agentic_workflow/work_items/coordination_authority.py"

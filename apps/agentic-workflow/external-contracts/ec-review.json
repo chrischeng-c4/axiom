@@ -1,23 +1,20 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:cf0259aaa7f15a7882d2a6407987f50582185fd204b91d79defd13166b1da4d6",
-  "decision": "needs_revision",
+  "source_digest": "sha256:56e2feef27d054a41f5e209d59496c14d717479ad75e6cf819b91023ea82d7e3",
+  "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:/root/ec_semantic_review",
-  "reviewed_at": "2026-08-02T09:28:16.717815+00:00",
-  "summary": "Independent semantic review found two false-green risks: readiness accepts non-exact blocker output, and reconciliation derives its full expected mapping from the inventory under certification.",
+  "reviewed_by": "agent:aw-ec-reviewer:/root/ec_review_3339",
+  "reviewed_at": "2026-08-02T12:16:32.155826+00:00",
+  "summary": "The #3339 EC independently proves that explicitly declared non-Python source files participate in the digest-bound Python EC artifact and that a fixture-only mutation invalidates previously valid readiness evidence. The current binary's focused failure is the expected red implementation boundary.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
-    "assertions_specific": false,
-    "oracle_independent": false,
-    "loopholes_checked": false,
-    "false_green_risk_checked": false
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
   },
-  "findings": [
-    "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py: the missing-inventory and missing-evidence scenarios promise exact blockers but use prefix, membership, and any assertions; require complete ordered blocker arrays and a falsifier for extra or altered blockers.",
-    "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py: the copied-inventory expected mapping is derived from the same canonical pyproject.toml under certification; derive the complete mapping independently and assert the entire inventory under perturbation."
-  ],
-  "target_path": "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py"
+  "findings": [],
+  "target_path": "apps/agentic-workflow/external-contracts/pyproject.toml"
 }

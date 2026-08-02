@@ -27,6 +27,7 @@ TARGET_COMMAND = (
 )
 ASSERTIONS = (
     "capability report and health spec expose the identical python_artifact/python_spec readiness projection",
+    "a declared non-Python oracle fixture participates in the EC source digest, so a fixture-only mutation invalidates prior digest-bound evidence",
     "a project with no Python TD/EC inventory reports the exact missing-inventory blockers with an aw ec check remediation",
     "a required EC case with missing evidence reports the exact missing-evidence blocker with an aw ec verify --stage td remediation",
     "executing a non-empty verifier writes canonical current-case evidence that clears the blocker and flips readiness to ready in both surfaces",
@@ -226,6 +227,13 @@ if __name__ == "__main__":
         '    return ["readiness is externally observable"]\n',
         encoding="utf-8",
     )
+    fixture_root = ec_root / "fixtures"
+    fixture_root.mkdir(exist_ok=True)
+    (fixture_root / "readiness-oracle.json").write_text(
+        json.dumps({"schema_version": 1, "oracle": "readiness"}, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
     (ec_root / "pyproject.toml").write_text(
         """[project]
 name = "demo-external-contracts"
@@ -236,6 +244,7 @@ requires-python = ">=3.11"
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src"]
+source_files = ["fixtures/readiness-oracle.json"]
 dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
@@ -357,11 +366,13 @@ def _independent_source_digest(ec_root: Path) -> str:
         "dist",
         ".eggs",
     }
-    files = sorted(
+    files = {
         path
         for path in (ec_root / "src").rglob("*.py")
         if not any(part in ignored for part in path.relative_to(ec_root).parts)
-    )
+    }
+    files.add(ec_root / "fixtures/readiness-oracle.json")
+    files = sorted(files)
     assert files, ec_root
     digest = hashlib.sha256()
     for path in files:
@@ -612,6 +623,25 @@ def verify() -> list[str]:
                 / "project/external-contracts/evidence/readiness.json"
             ).read_text(encoding="utf-8")
         )
+        oracle_path = (
+            root / "project/external-contracts/fixtures/readiness-oracle.json"
+        )
+        original_oracle = oracle_path.read_text(encoding="utf-8")
+        mutated_oracle = original_oracle.replace('"readiness"', '"mutated"')
+        assert mutated_oracle != original_oracle
+        oracle_path.write_text(mutated_oracle, encoding="utf-8")
+        fixture_mutation = _report(root)["python_artifact"]
+        assert fixture_mutation["ec_source_digest"] != valid_evidence["source_digest"], (
+            fixture_mutation,
+            valid_evidence,
+        )
+        _assert_invalid_evidence(
+            root,
+            json.dumps(valid_evidence, indent=2, sort_keys=True) + "\n",
+            blocker="Python EC case `demo-readiness` evidence `evidence/readiness.json` is stale for the current source digest",
+        )
+        oracle_path.write_text(original_oracle, encoding="utf-8")
+        valid_evidence = _execute_fixture_verifier(root)
         invalid_prefix = (
             "Python EC case `demo-readiness` evidence "
             "`evidence/readiness.json`"

@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src", "tests/unit"]
+source_files = ["fixtures/claim-reconciliation/capability-catalog-td-claim-linkage-expected-mapping.json"]
 dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
