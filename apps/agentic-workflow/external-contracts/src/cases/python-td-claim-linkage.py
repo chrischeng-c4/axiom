@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -78,14 +79,67 @@ Gate Inventory:
 """
 
 
+def _compute_source_digest(ec_root: Path) -> str:
+    ignored = {
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        "build",
+        "dist",
+        ".eggs",
+    }
+    files = sorted(
+        path
+        for path in (ec_root / "src").rglob("*.py")
+        if not any(part in ignored for part in path.relative_to(ec_root).parts)
+    )
+    digest = hashlib.sha256()
+    for path in files:
+        relative = path.relative_to(ec_root).as_posix().encode()
+        body = path.read_bytes()
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(len(body).to_bytes(8, byteorder="big"))
+        digest.update(b"\0")
+        digest.update(body)
+    return "sha256:" + digest.hexdigest()
+
+
+def _write_canonical_evidence(ec_root: Path) -> None:
+    source_digest = _compute_source_digest(ec_root)
+    implementation_digest = "sha256:" + hashlib.sha256(
+        (ec_root / "src/cases/claim.py").read_bytes()
+    ).hexdigest()
+    evidence = {
+        "protocol": "aw.python-ec.evidence.v1",
+        "case_id": "python-td-claim-linkage",
+        "mode": "behavior",
+        "source_digest": source_digest,
+        "declared_command": "true",
+        "implementation": "src/cases/claim.py",
+        "implementation_digest": implementation_digest,
+        "exit_code": 0,
+        "assertions": ["claim is externally observable"],
+        "attempts": [{"exit_code": 0, "assertion_count": 1}],
+    }
+    (ec_root / "evidence/claim.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_fixture(root: Path) -> None:
     project = root / "project"
     td_root = project / "tech-design"
     ec_root = project / "external-contracts"
-    (root / ".git").mkdir()
-    (td_root / "src/demo/public_contracts").mkdir(parents=True)
-    (ec_root / "src/cases").mkdir(parents=True)
-    (ec_root / "evidence").mkdir()
+    (root / ".git").mkdir(exist_ok=True)
+    (td_root / "src/demo/public_contracts").mkdir(parents=True, exist_ok=True)
+    (ec_root / "src/cases").mkdir(parents=True, exist_ok=True)
+    (ec_root / "evidence").mkdir(exist_ok=True)
     (root / "aw.toml").write_text(
         """version = "0.4.0"
 interface = "cli"
@@ -150,10 +204,6 @@ capability_refs:
         'def verify() -> list[str]:\n    return ["claim is externally observable"]\n',
         encoding="utf-8",
     )
-    (ec_root / "evidence/claim.json").write_text(
-        '{"protocol":"aw.python-ec.evidence.v1","exit_code":0}\n',
-        encoding="utf-8",
-    )
     (ec_root / "pyproject.toml").write_text(
         """[project]
 name = "demo-external-contracts"
@@ -190,6 +240,7 @@ evidence_paths = ["evidence/claim.json"]
     )
     write_python_artifact_lock(ec_root, name="demo-external-contracts")
     write_python_artifact_unit_test(ec_root, "claim_linkage")
+    _write_canonical_evidence(ec_root)
 
 
 def _report(root: Path) -> dict[str, object]:
@@ -221,6 +272,19 @@ def verify() -> list[str]:
     with tempfile.TemporaryDirectory(prefix="aw-python-claim-linkage-") as raw_tmp:
         root = Path(raw_tmp)
         _write_fixture(root)
+
+        # Negative control / falsifier: incomplete old evidence yields unready status
+        # and routes to run_verify.
+        (root / "project/external-contracts/evidence/claim.json").write_text(
+            '{"protocol":"aw.python-ec.evidence.v1","exit_code":0}\n',
+            encoding="utf-8",
+        )
+        unready_report = _report(root)
+        assert unready_report["python_artifact"]["ready"] is False, unready_report
+        assert unready_report["next_action"]["kind"] == "run_verify", unready_report
+
+        # Restore canonical evidence
+        _write_canonical_evidence(root / "project/external-contracts")
         report = _report(root)
         capability = report["capabilities"][0]
         td_refs = capability["td_refs"]

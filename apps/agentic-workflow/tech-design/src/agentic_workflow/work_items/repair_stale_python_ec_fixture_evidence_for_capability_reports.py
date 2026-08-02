@@ -65,14 +65,27 @@ changes:
       assertions ["<capability_id> fixture"],
       attempts [{"exit_code":0,"assertion_count":1}].
       No pyproject.toml or runner change; evidence_paths already point to
-      evidence/<capability_id>.json. In verify(): add a negative falsifier
-      before _write_python_artifacts is called: write {"status":"passed"} into
-      evidence/leaf.json (after creating the evidence dir but before canonical
-      setup), then invoke the public command _run(tmp, cap_path, "root") with
-      the legacy evidence in place; assert completed.returncode != 0 or
-      json.loads(last_json_line)["python_artifact"]["ready"] is False. Then
-      call _write_python_artifacts to establish canonical evidence and proceed
-      with the existing assertions unchanged.
+      evidence/<capability_id>.json. In verify(): call _write_python_artifacts(tmp)
+      to establish the complete canonical TD/EC inventory and canonical evidence,
+      then overwrite only evidence/leaf.json with the legacy stub
+      {"status":"passed"} to begin the negative falsifier. Invoke the
+      full-project unselected public command _run(tmp, cap_path, None), which
+      runs `aw capability check --project demo --cap-path ... --verify
+      --skip-issue-inventory` (no --capability selector); assert
+      completed.returncode == 1; parse the last JSON line and assert
+      json_report["python_artifact"]["ready"] is False,
+      json_report["next_action"]["kind"] == "run_verify", and that the exact
+      blocker string
+      "Python EC case `leaf-behavior` evidence `evidence/leaf.json` has unsupported protocol"
+      is a member of json_report["python_artifact"]["blockers"].
+      This full-project invocation runs all fixture capability and workspace
+      gates; assert all five marker files exist before proceeding, then unlink
+      them. Re-call _write_python_artifacts(tmp) to restore canonical evidence
+      and proceed with the existing selected-root assertions unchanged. The later
+      full-project no-selector verification must assert
+      json_report["python_artifact"]["ready"] is True and that the exact
+      legacy-evidence blocker string is absent from
+      json_report["python_artifact"]["blockers"].
 
   - path: apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py
     action: modify
@@ -235,13 +248,22 @@ design_details = {
             "case_id='<cap_id>-behavior', declared_command='true', "
             "implementation='src/cases/<cap_id>.py', "
             "assertions=['<cap_id> fixture'], attempts=[{'exit_code':0,'assertion_count':1}].",
-            "5. Negative falsifier in verify(): after (tmp/'external-contracts'/'evidence').mkdir() "
-            "but before _write_python_artifacts, write "
-            "{'status':'passed'} to evidence/leaf.json; "
-            "call _run(tmp, cap_path, 'root'); assert completed.returncode != 0 "
-            "OR assert the JSON output has python_artifact['ready'] is False. "
-            "Then call _write_python_artifacts to establish canonical evidence.",
-            "6. Existing _run / assertion block proceeds unchanged.",
+            "5. Negative falsifier in verify(): call _write_python_artifacts(tmp) to establish "
+            "the complete canonical TD/EC inventory and canonical evidence; then overwrite only "
+            "evidence/leaf.json with {'status':'passed'} (legacy stub). "
+            "Call _run(tmp, cap_path, None), which runs "
+            "`aw capability check --project demo --cap-path ... --verify --skip-issue-inventory` "
+            "(no --capability selector); assert completed.returncode == 1; parse last JSON line "
+            "and assert json_report['python_artifact']['ready'] is False, "
+            "json_report['next_action']['kind'] == 'run_verify', and exact blocker string "
+            "'Python EC case `leaf-behavior` evidence `evidence/leaf.json` has unsupported protocol' "
+            "is a member of json_report['python_artifact']['blockers']. "
+            "Assert all five marker files exist, then unlink them. "
+            "Re-call _write_python_artifacts(tmp) to restore canonical evidence.",
+            "6. Existing selected-root _run / assertion block proceeds unchanged.",
+            "7. Later full-project no-selector verification asserts "
+            "json_report['python_artifact']['ready'] is True and that the exact "
+            "legacy-evidence blocker string is absent from json_report['python_artifact']['blockers'].",
         ],
         "python-td-claim-linkage": [
             "1. _write_fixture writes td_root, ec_root/src/**/*.py, pyproject.toml, uv.lock, unit test.",
@@ -295,11 +317,28 @@ design_details = {
             ],
         },
         "capability-scoped-dependency-verification": {
-            "evidence_written": '{"status":"passed"}',
-            "public_command": "aw capability check --project demo --cap-path ... --verify --skip-issue-inventory --capability root",
+            "evidence_written": '{"status":"passed"} into evidence/leaf.json, after _write_python_artifacts(tmp) has established full canonical inventory',
+            "public_command": "aw capability check --project demo --cap-path ... --verify --skip-issue-inventory (no --capability selector)",
             "exact_assertions": [
-                "completed.returncode != 0  OR  json_report['python_artifact']['ready'] is False",
+                "completed.returncode == 1",
+                "json_report['python_artifact']['ready'] is False",
+                "json_report['next_action']['kind'] == 'run_verify'",
+                "'Python EC case `leaf-behavior` evidence `evidence/leaf.json` has unsupported protocol' in json_report['python_artifact']['blockers']",
+                "all five marker files exist before unlink",
             ],
+            "note": (
+                "The full-project unselected command (_run(tmp, cap_path, None)) evaluates "
+                "project-level Python artifact readiness. The scoped selected command "
+                "(_run(tmp, cap_path, 'root')) intentionally omits python_artifact and "
+                "can return healthy with legacy evidence — it must NOT be used for this falsifier. "
+                "Canonical inventory is established first by _write_python_artifacts(tmp); only "
+                "evidence/leaf.json is then overwritten with the legacy stub. "
+                "After asserting the five markers, unlink them and re-call "
+                "_write_python_artifacts(tmp) to restore canonical evidence before the "
+                "existing selected-root assertions. The later full-project no-selector "
+                "verification asserts ready is True and the exact legacy-evidence blocker "
+                "string is absent."
+            ),
         },
         "python-td-claim-linkage": {
             "evidence_written": '{"protocol":"aw.python-ec.evidence.v1","exit_code":0}',

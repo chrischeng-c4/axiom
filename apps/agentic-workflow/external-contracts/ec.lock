@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-02T14:44:46.252735+00:00"
+generated_at = "2026-08-02T16:25:28.054271+00:00"
 ir_digest = "sha256:c5dd3af19cdf991bfe79004c9e06316e6bed87a34f8d815ac1a925d4cce499e1"
-source_digest = "sha256:8d4bf38f459e3bf4d1dbc6add6f9694a206f6f261e6cf34f7e948ce5f81b17f8"
+source_digest = "sha256:5d0136f1d57e42141493d326a489e8ce7299377ad8a1b05ae47abb90ab6fe037"
 tool_contracts = []
 
 [[sources]]
@@ -62,7 +62,7 @@ digest = "sha256:eb9fbf4e2e203a9519792d26aa8bffe2530f6294ffa4961d9ba1fa8cd05bbbb
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-one-way-wi-reference-direction.py"
-digest = "sha256:5a8d1b83c9b15c388efdc93cd61caf58d03e049e43580116b7b338e9eac554e9"
+digest = "sha256:4cec4eda6ec1ed9a5bc573a903173624e7bafde4cecdf5763f8952331f296d84"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-efficiency.py"
@@ -78,7 +78,7 @@ digest = "sha256:0ee7f43656116452a98246198b4b349c6e18f7a4cdfbf3587fb78210b12542b
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
-digest = "sha256:2dbc5e97d2697e5c258ccfea279b751d0a9561ac8d633bcb4da0388fd380e4ac"
+digest = "sha256:e5512f87e899a92486e3e0e0089c8a46b5c21d2abe9c0759d8423f1c2960458e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
@@ -202,7 +202,7 @@ digest = "sha256:18e870bdecf763ef739aae963be1a5d7fa954d3676b330ef3e1a530b2244880
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py"
-digest = "sha256:230afe98d16c3ada5bda8e76e11dd935182b4c72e8348076d599550a18b0f1dc"
+digest = "sha256:7cabe67328ea44b6c3e2e4884dd616384c79de5489fe562cf38bdf542ef22575"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
