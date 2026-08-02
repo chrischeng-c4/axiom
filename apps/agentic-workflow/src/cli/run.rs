@@ -1927,6 +1927,10 @@ async fn capability_envelope(
         kind: "capability".to_string(),
         id: capability_id.to_string(),
     };
+    let project_root = match crate::find_project_root() {
+        Ok(project_root) => project_root,
+        Err(err) => return capability_root_unrunnable_envelope(root.clone(), root, err),
+    };
     let capability_command =
         format!("aw capability check --project {project} --verify --capability {capability_id}");
     progress.emit(
@@ -1999,7 +2003,7 @@ async fn capability_envelope(
                     report.production_blockers.clone(),
                 );
             }
-            capability_action_envelope(
+            capability_action_envelope_with_planning_base(
                 root.clone(),
                 WorkflowNode {
                     kind: "capability".to_string(),
@@ -2008,6 +2012,7 @@ async fn capability_envelope(
                 project,
                 &report.next_action,
                 capability_completion(false, capability_missing(item, &report.next_action)),
+                &project_root,
             )
         }
         Err(err) => capability_root_unrunnable_envelope(root.clone(), root, err),
@@ -2862,23 +2867,6 @@ async fn ensure_local_lifecycle_issue(project_root: &Path, wi: &str, issue: &Iss
         backend.write(issue).await?;
     }
     Ok(())
-}
-
-fn capability_action_envelope(
-    root: WorkflowNode,
-    current: WorkflowNode,
-    project: &str,
-    action: &CapabilityAction,
-    completion: WorkflowCompletion,
-) -> WorkflowEnvelope {
-    capability_action_envelope_with_planning_base(
-        root,
-        current,
-        project,
-        action,
-        completion,
-        Path::new("/tmp/aw/test/root"),
-    )
 }
 
 fn capability_action_envelope_with_planning_base(
@@ -5354,12 +5342,13 @@ cap_path = "apps/jet/README.md"
             hitl_question: None,
         };
 
-        let envelope = capability_action_envelope(
+        let envelope = capability_action_envelope_with_planning_base(
             root.clone(),
             root,
             "jet",
             &action,
             project_completion(false, vec![action.reason.clone()]),
+            Path::new("/tmp/aw/test/root"),
         );
 
         assert_eq!(envelope.action, "dispatch");
@@ -5938,12 +5927,13 @@ review_status: pending
             hitl_question: Some(question.clone()),
         };
 
-        let envelope = capability_action_envelope(
+        let envelope = capability_action_envelope_with_planning_base(
             root.clone(),
             root,
             "jet",
             &action,
             project_completion(false, vec![action.reason.clone()]),
+            Path::new("/tmp/aw/test/root"),
         );
 
         assert_eq!(envelope.action, "blocked");
