@@ -590,6 +590,18 @@
           "rust_disposition": "removed"
         },
         {
+          "id": "ddd-context-map-contract",
+          "legacy_test_path": "apps/agentic-workflow/tests/ddd_context_map_test.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/context_map/validate.rs"
+        },
+        {
+          "id": "ddd-meta-projection-contract",
+          "legacy_test_path": "apps/agentic-workflow/tests/ddd_meta_projection_test.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/context_map/narrative_projection.rs"
+        },
+        {
           "id": "manual-evidence-artifacts-generated-manual-ec-evidence-schema",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_generated_manual_ec_evidence_schema.rs",
           "migration_status": "rust_invariant",
