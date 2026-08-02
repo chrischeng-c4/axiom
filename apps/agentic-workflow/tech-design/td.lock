@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-02T12:18:52.125026+00:00"
-digest = "sha256:20c5ffd8933606d6097e202b040292dca0376e4369d8a28e54e50d0688e888bb"
-source_digest = "sha256:20c5ffd8933606d6097e202b040292dca0376e4369d8a28e54e50d0688e888bb"
-ir_digest = "sha256:ad54ee2c6403e16cd42d1eaec986885dc11aacb51c7bcf72ebbd80fd4535121a"
+generated_at = "2026-08-02T13:56:43.013318+00:00"
+digest = "sha256:4ea8097e534645cc1e3125945883ffbfe8c6ad057c009f7fa36b427c7834425f"
+source_digest = "sha256:4ea8097e534645cc1e3125945883ffbfe8c6ad057c009f7fa36b427c7834425f"
+ir_digest = "sha256:e3675e6f9d4ba436b30d2ca917157efa1be10be114821d18b57a1965d2276917"
 
 [[files]]
 path = "pyproject.toml"
@@ -4030,6 +4030,10 @@ digest = "sha256:9e6ca6401a0059e7237d6ae7a9c1f85bc0c00174b7be8adc70fea18394b0025
 [[files]]
 path = "src/agentic_workflow/work_items/report_triage.py"
 digest = "sha256:f85448e04222557f2acae6d6b0cda3c6ab340f8fe34afede936e0a7250d478a6"
+
+[[files]]
+path = "src/agentic_workflow/work_items/scope_python_cb_code_checks_to_declared_wi_targets.py"
+digest = "sha256:fee189bae0f8f817663e03c5897d536913642bf231ac4f09d8b3228113aeeb4b"
 
 [[files]]
 path = "src/agentic_workflow/work_items/scoped_capability_verification.py"
