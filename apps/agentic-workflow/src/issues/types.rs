@@ -1068,11 +1068,20 @@ impl Issue {
         if combined.len() <= MAX_SLUG_LEN {
             return combined;
         }
-        let mut cut = MAX_SLUG_LEN;
+        // Truncating alone drops whatever distinguishing tail follows
+        // MAX_SLUG_LEN (e.g. a claim id after a long shared capability-name
+        // prefix) and can silently collapse two different titles onto the
+        // identical slug (#3328). Reserve room for a short content-derived
+        // suffix so two different full `combined` strings essentially never
+        // truncate to the same slug, even when their shared prefix alone
+        // already exceeds the budget.
+        let suffix = format!("-{}", short_digest(&combined));
+        let budget = MAX_SLUG_LEN.saturating_sub(suffix.len());
+        let mut cut = budget;
         while cut > 0 && !combined.is_char_boundary(cut) {
             cut -= 1;
         }
-        combined[..cut].trim_end_matches('-').to_string()
+        format!("{}{}", combined[..cut].trim_end_matches('-'), suffix)
     }
 }
 
@@ -1128,6 +1137,18 @@ fn slugify(s: &str) -> String {
     }
     let short = &trimmed[..cut];
     short.trim_end_matches('-').to_string()
+}
+
+/// Short, deterministic, content-derived slug disambiguator (#3328). Two
+/// different `content` strings that collapse onto the same truncated prefix
+/// in `Issue::default_slug` still diverge here with overwhelming
+/// probability, without needing any knowledge of sibling slugs.
+fn short_digest(content: &str) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(content.as_bytes()))
+        .chars()
+        .take(8)
+        .collect()
 }
 
 #[cfg(test)]
@@ -1210,6 +1231,48 @@ mod tests {
             issue.default_slug(),
             "change-issue-authoring-notation-agent"
         );
+    }
+
+    // #3328: two capability-plan candidate titles under the same capability
+    // share a >45-char prefix ("change-close-capability-claim-<capability>-")
+    // and used to truncate to the identical slug, which let a second
+    // `LocalBackend::create()` silently overwrite the first issue's file.
+    #[test]
+    fn default_slug_disambiguates_titles_sharing_a_long_truncated_prefix() {
+        let mut issue = empty_issue();
+        issue.issue_type = IssueType::Change;
+        issue.github_id = None;
+        issue.gitlab_id = None;
+
+        issue.title =
+            "Close capability claim: Alpha Service / claim-stale-doc-reference".to_string();
+        let slug_one = issue.default_slug();
+
+        issue.title =
+            "Close capability claim: Alpha Service / claim-missing-review-gate".to_string();
+        let slug_two = issue.default_slug();
+
+        assert_ne!(
+            slug_one, slug_two,
+            "distinct titles sharing a long truncated prefix must not collide: {slug_one} vs {slug_two}"
+        );
+        assert!(slug_one.len() <= 45, "{slug_one} exceeds the slug budget");
+        assert!(slug_two.len() <= 45, "{slug_two} exceeds the slug budget");
+        // The shared, still-human-legible prefix survives ahead of the
+        // disambiguating suffix.
+        assert!(slug_one.starts_with("change-close-capability-claim-alpha-"));
+        assert!(slug_two.starts_with("change-close-capability-claim-alpha-"));
+    }
+
+    #[test]
+    fn default_slug_truncation_is_deterministic_for_the_same_title() {
+        let mut issue = empty_issue();
+        issue.issue_type = IssueType::Change;
+        issue.github_id = None;
+        issue.gitlab_id = None;
+        issue.title =
+            "Close capability claim: Alpha Service / claim-stale-doc-reference".to_string();
+        assert_eq!(issue.default_slug(), issue.default_slug());
     }
 
     #[test]

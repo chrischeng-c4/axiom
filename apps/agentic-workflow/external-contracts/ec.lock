@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-02T08:46:11.131868+00:00"
-ir_digest = "sha256:1a920c054cc73696a93aa2ec311e51814c77364bbd76c3af0eaba6a2e7a76f62"
-source_digest = "sha256:ea3a4a5a3d36aee99cc1e23e708280dfdbd864b27bffa0c4a952dfd23ee79add"
+generated_at = "2026-08-02T09:26:51.740352+00:00"
+ir_digest = "sha256:2c6ad1aa423bef4fbeb93f31c4c6f521ff15ddb18111b3295e3f40a7483050da"
+source_digest = "sha256:1ae52aa664e4ce7b361e98012655b4d4c5a7ecc29b4960d3beded24fdcd33be6"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:7833cdaf4b4708dd621521de5fb25767968c2b3d4026a249f91d5f0a61a411d0"
+digest = "sha256:2f97395784c75993745d20b38f6361c6ccd1ea2ec5fa789b055161f9fc98e76c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -415,6 +415,10 @@ digest = "sha256:9fad42475687bc77f698de10f109cdf598ca07724402668382d21ce0f0afc5d
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-intake-health.py"
 digest = "sha256:03fb6a974d393e9bdfd677a50485f41168dc078d7ebec3e5c5efcbe2084fb4e9"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-agent-backed-capability-plan-review.py"
+digest = "sha256:97ef03026b6c8460ce950d83ea27db7d69fe612a76ce819aa3e39533abb3115d"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-agent-backed-inventory-plan-review.py"
@@ -2681,6 +2685,26 @@ assertions = [
 evidence_digest = "sha256:52ec40dbdddd070a326ed359c353757bf1a1ac0d57d330f5f5b09f0271140136"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:e4c5ac4f5186e506be1478ac7b24ae87a78ba3dae0b5eabcc4dcef9e67ffc31c"
+
+[[cases]]
+id = "work-item-planning-agent-backed-capability-plan-review"
+capability_id = "work-item-planning"
+claim_id = "agent-backed-capability-plan-review"
+contract_id = "work-item-planning-agent-backed-capability-plan-review"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-planning-agent-backed-capability-plan-review"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-agent-backed-capability-plan-review.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-agent-backed-capability-plan-review"
+required_for_production = true
+assertions = [
+    "capability-plan review defaults to digest-bound independent agent review, rejects same-agent evidence, and publishes accepted candidates as distinct work items even when two claim titles collide on the local-backend slug budget",
+    "artifact: artifact:work-item-planning/public-contract",
+    "oracle: Native Python black-box assertions drive aw capability sweep --write-wi-plans and aw wi plan-review under default review backing with a same-agent negative control, then independently verify one distinct work item per accepted candidate.",
+    "target: rust",
+]
+evidence_digest = "sha256:33495214162c613400f9cefaca8f11e1fe9fce22e93b070bd0d35e359117732c"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:3981beaaf19250a2585345719adf1ccd820c9edccc8627e75cac49a46069117c"
 
 [[cases]]
 id = "work-item-planning-agent-backed-inventory-plan-review"
