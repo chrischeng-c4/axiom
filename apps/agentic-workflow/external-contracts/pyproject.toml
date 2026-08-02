@@ -1569,3 +1569,339 @@ oracle = "The Python external contract drives the real aw health --project <fixt
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-traceability-closure-gate"
 evidence_paths = ["evidence/existing-project-standardization-traceability-closure-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-workitem-artifact-admission-gate"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "workitem-artifact-admission-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-workitem-artifact-admission-gate.py"
+promise = "WI/EC/TD artifact creation is denied for any slug that does not name a real, state:open WorkItem, and admitted once one does."
+oracle = "The Python external contract drives the real aw td create against a nonexistent slug, a real state:draft WorkItem, and the same WorkItem after aw wi validate promotes it to state:open, and independently checks the exact denial/admission text and the presence/absence of a real tech-design/ scaffold on disk."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-artifact-admission-gate"
+evidence_paths = ["evidence/aw-core-client-workitem-artifact-admission-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-agent-first-cli-product-model"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "agent-first-cli-product-model"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-agent-first-cli-product-model.py"
+promise = "the CLI's own product-model narration and the human-facing README both name the current agent-first surface and reject retired-architecture phrases."
+oracle = "The Python external contract drives the real aw llm --topic model (--format md and --format json) and reads the real README.md, and independently checks required/forbidden phrases and JSON/Markdown content convergence."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-first-cli-product-model"
+evidence_paths = ["evidence/aw-core-client-agent-first-cli-product-model.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-meta-doc-ownership-matrix"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "meta-doc-ownership-matrix"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-meta-doc-ownership-matrix.py"
+promise = "one ownership matrix drives placement, root-allowlist, and required-heading diagnostics together."
+oracle = "The Python external contract bootstraps a real fixture project via aw meta init, introduces three deliberate violations, and independently checks that the real aw meta check/aw meta sync name exactly the three matrix-driven diagnostic codes and repair only the marker-owned one."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-meta-doc-ownership-matrix"
+evidence_paths = ["evidence/aw-core-client-meta-doc-ownership-matrix.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-meta-doc-init-sync-check"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "meta-doc-init-sync-check"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-meta-doc-init-sync-check.py"
+promise = "one producer registry backs skeleton creation, read-only drift detection, and marker-scoped, byte-idempotent repair."
+oracle = "The Python external contract drives the real aw meta init/check/sync and independently checks that all 7 canonical skeletons are created, that check is byte-for-byte read-only (SHA-256 before/after) while reporting drift, and that sync restores only the marker span, leaving hand-authored bytes untouched and converging to byte-identical output on repeat."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-meta-doc-init-sync-check"
+evidence_paths = ["evidence/aw-core-client-meta-doc-init-sync-check.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-cli-verb-lifecycle-taxonomy-completeness"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "cli-verb-lifecycle-taxonomy-completeness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-cli-verb-lifecycle-taxonomy-completeness.py"
+promise = "every currently dispatchable clap leaf verb carries an explicit lifecycle class and mutation classification, with no unclassified verb and no dangling registry entry."
+oracle = "The Python external contract independently regex-extracts the live VERB_LIFECYCLE_REGISTRY array from the real chain.rs source and independently recurses the real compiled binary's --help tree, and checks exact-set equality plus that every Migration entry has a non-empty sunset_criterion while every Core/Utility entry has an empty one."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-cli-verb-lifecycle-taxonomy-completeness"
+evidence_paths = ["evidence/aw-core-client-cli-verb-lifecycle-taxonomy-completeness.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-repo-view-command-and-desktop-product-removal"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "repo-view-command-and-desktop-product-removal"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-repo-view-command-and-desktop-product-removal.py"
+promise = "the retired Repo View desktop product is absent from both the CLI dispatch tree and the checked-out source tree."
+oracle = "The Python external contract drives the real aw --help/aw view directly, checking that view is absent from the command list and rejected with clap's exit-2 unrecognized-subcommand error, and reads the real repo tree confirming the view-only paths named in the removal's own change list are deleted while sibling files in the same directories survive."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-repo-view-command-and-desktop-product-removal"
+evidence_paths = ["evidence/aw-core-client-repo-view-command-and-desktop-product-removal.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-cross-checkout-chat-command-and-shared-channel-removal"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "cross-checkout-chat-command-and-shared-channel-removal"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-cross-checkout-chat-command-and-shared-channel-removal.py"
+promise = "the chat command and its shared cross-checkout channel are fully removed from the CLI surface and from generated assets."
+oracle = "The Python external contract checks that the real aw --help shows no chat subcommand, that a real aw chat post is rejected, and that a real aw new --force asset refresh deletes stale .claude/skills/aw-chat-listen and .agents/skills/aw-chat-listen directories."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-cross-checkout-chat-command-and-shared-channel-removal"
+evidence_paths = ["evidence/aw-core-client-cross-checkout-chat-command-and-shared-channel-removal.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-agent-orientation-surface"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "agent-orientation-surface"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-agent-orientation-surface.py"
+promise = "aw llm's declared \"Standard agent commands\" outline matches the real CLI surface it claims to orient agents toward."
+oracle = "The Python external contract cross-checks the real aw llm outline text against the real --help output of each named command (aw --help, aw upgrade --help, aw issue --help, aw issue create --help, aw issue comment --help)."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-orientation-surface"
+evidence_paths = ["evidence/aw-core-client-agent-orientation-surface.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-prompt-vocabulary-and-grammar"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "prompt-vocabulary-and-grammar"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-prompt-vocabulary-and-grammar.py"
+promise = "the closed blocker/operator vocabulary documented by aw llm --topic prompt is exactly what a real blocked dispatch actually emits."
+oracle = "The Python external contract cross-checks the real aw llm --topic prompt --format json doc text byte-for-byte against a real blocked report-triage dispatch's agent_prompt text and prompt_contract.blocker.kind."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-prompt-vocabulary-and-grammar"
+evidence_paths = ["evidence/aw-core-client-prompt-vocabulary-and-grammar.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-typed-prompt-ir-and-envelope-projection"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "typed-prompt-ir-and-envelope-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-typed-prompt-ir-and-envelope-projection.py"
+promise = "the additive typed prompt_contract retains full agent_prompt string compatibility -- one IR renders both."
+oracle = "The Python external contract independently reimplements agent_prompt.rs's render()/render_set() from scratch in Python and reconstructs agent_prompt byte-for-byte from prompt_contract on two structurally different real envelopes (a non-blocked change and a blocked report)."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-typed-prompt-ir-and-envelope-projection"
+evidence_paths = ["evidence/aw-core-client-typed-prompt-ir-and-envelope-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-lifecycle-prompt-migration-and-conformance"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "lifecycle-prompt-migration-and-conformance"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-lifecycle-prompt-migration-and-conformance.py"
+promise = "Python stages, rollup, HITL blockers, artifact quality, and CB ownership all fail closed through one typed projection."
+oracle = "The Python external contract drives three real envelopes (a bare change, a blocked report, and an epic rollup dispatch via a full real aw wi plan pipeline) and independently checks all 5 promise elements plus a shared structural well-formedness invariant (non-overlapping scope, base guards, blocker-resume pairing) across all three."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-migration-and-conformance"
+evidence_paths = ["evidence/aw-core-client-lifecycle-prompt-migration-and-conformance.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-workitem-loop-state-model"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "workitem-loop-state-model"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-workitem-loop-state-model.py"
+promise = "aw ec record's red/green loop-state transitions are real and independently observable."
+oracle = "The Python external contract drives a real aw ec record --result red then --result green round-trip and independently cross-checks each transition via a separate real aw wi show read."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-loop-state-model"
+evidence_paths = ["evidence/aw-core-client-workitem-loop-state-model.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-aw-epic-project-label-dispatch"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "aw-epic-project-label-dispatch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-aw-epic-project-label-dispatch.py"
+promise = "an epic's project:/app:/lib: identity label resolves to the correct project and dispatches only that project's ready child; unresolved labels block safely."
+oracle = "The Python external contract drives a real 3-project fixture (app:, a second app:, and lib: -- covering all 3 supported prefixes) through the real aw wi plan + aw goal wi pipeline, independently checking that an unlabeled epic blocks with a decision blocker naming all 3 prefixes and a safe aw wi show remediation, and that each project's fully-planned epic dispatches strictly to its own ready child, pairwise never equal to a sibling's."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-aw-epic-project-label-dispatch"
+evidence_paths = ["evidence/aw-core-client-aw-epic-project-label-dispatch.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-new-project-epic-configuration-bootstrap"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "new-project-epic-configuration-bootstrap"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-new-project-epic-configuration-bootstrap.py"
+promise = "a valid unregistered tracker identity routes through idempotent project-local configuration and META-doc producers before atomization."
+oracle = "The Python external contract dispatches a real epic carrying an unregistered app: label via aw goal wi, independently checking it routes to aw conf init, that a real run creates a genuine apps/<name>/aw.toml, that a second run is byte-identical and reports already-registered, that a real aw meta init genuinely creates README/CONTRIBUTING/CAPABILITIES.md on disk, and that a final re-run of aw goal wi on the same epic proves forward progress to aw wi plan."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-new-project-epic-configuration-bootstrap"
+evidence_paths = ["evidence/aw-core-client-new-project-epic-configuration-bootstrap.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-typed-agent-prompt-contract"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "typed-agent-prompt-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-typed-agent-prompt-contract.py"
+promise = "the vocabulary, typed IR/envelope projection, and lifecycle conformance roadmap is one coherent, currently-live mechanism across many structurally distinct real lifecycle points simultaneously, not three independently-passing but potentially-divergent artifacts."
+oracle = "The Python external contract dynamically fetches the closed operator/blocker vocabulary fresh from the real aw llm --topic prompt --format json every run and independently checks that fetched vocabulary exactly bounds the real structural DSL text rendered into agent_prompt across four independently obtained real envelopes (a bare change, an unresolved-label epic, a blocked report, and a fully-planned epic's rollup dispatch), including cross-checking two genuinely different real blocker kinds and each envelope's typed blocker line appearing verbatim in that same envelope's agent_prompt."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-typed-agent-prompt-contract"
+evidence_paths = ["evidence/aw-core-client-typed-agent-prompt-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-three-host-agent-fleet-projection"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "three-host-agent-fleet-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-three-host-agent-fleet-projection.py"
+promise = "one canonical templates/cli/mainthread/agents/*.md source projects the fixed aw-* fleet to .claude/agents, .codex/agents, .agents/agents via a shared per-tier model table, with a genuinely read-only check and a narrow sync flag."
+oracle = "The Python external contract drives the real aw new / --check-agents / --sync-agents against a fresh fixture project, independently checking per-tier model strings, before/after content snapshots, a deliberate-drift-then-recheck cycle, and aw.toml byte-equality across the sync."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-three-host-agent-fleet-projection"
+evidence_paths = ["evidence/aw-core-client-three-host-agent-fleet-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-project-scoped-planner-dev-research-agent-fleet"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "project-scoped-planner-dev-research-agent-fleet"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-project-scoped-planner-dev-research-agent-fleet.py"
+promise = "direct apps/* registry projects plus projects/mamba get independently scoped planner/dev/read-only-research roles on all three hosts with the three approved model profiles, and independent EC review (the fixed aw-ec-reviewer) is preserved."
+oracle = "The Python external contract builds a fixture aw.toml registry mirroring the ground-truth Rust fixture test_project_role_fleet_uses_registry_scope_and_model_matrix (qualifying rows plus deliberately excluded rows) and drives it through the real aw new --sync-agents/--check-agents, independently checking per-role file presence/absence, per-tier model resolution on all 3 hosts, aw-ec-reviewer untouched, and shared check/drift/resync coverage of a role file."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-project-scoped-planner-dev-research-agent-fleet"
+evidence_paths = ["evidence/aw-core-client-project-scoped-planner-dev-research-agent-fleet.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-multi-agent-change-review-skill"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "multi-agent-change-review-skill"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-multi-agent-change-review-skill.py"
+promise = "one producer-owned skill projects to Claude Code and Codex/AGY, reviews every cohesive author-owned change set before integration, rejects same-agent approval, and requires fix verification plus focused re-review."
+oracle = "The Python external contract bootstraps a real project via aw new and independently re-derives the .agents/skills body from the .claude/skills body using the installer's own documented literal-swap transform, checking byte-exact equality plus verbatim promise-text substrings in both trees and identical Codex agents/openai.yaml metadata."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-multi-agent-change-review-skill"
+evidence_paths = ["evidence/aw-core-client-multi-agent-change-review-skill.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-stale-skill-retirement"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "stale-skill-retirement"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-stale-skill-retirement.py"
+promise = "the eight named retired skills are removed from templates and pruned from both live skill-tree installers on every install."
+oracle = "The Python external contract mirrors the ground-truth Rust fixture test_install_skills_prunes_1858_retired_skills exactly: a fresh real aw new never contains any of the 8 names, planting all 8 in both trees and reinstalling with aw new --force prunes all 16, while an unrelated current skill survives."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-stale-skill-retirement"
+evidence_paths = ["evidence/aw-core-client-stale-skill-retirement.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-aw-goal-verifiable-condition-loop"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "aw-goal-verifiable-condition-loop"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-aw-goal-verifiable-condition-loop.py"
+promise = "the ad-hoc verifiable-condition loop's done/blocked/gave_up state machine is real against a real gate command."
+oracle = "The Python external contract drives the real aw goal set/check against real gate commands (a satisfiable test -f condition and an always-false condition) and independently checks the resulting done/blocked/gave_up states."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-aw-goal-verifiable-condition-loop"
+evidence_paths = ["evidence/aw-core-client-aw-goal-verifiable-condition-loop.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-stale-binary-reprojection-guard"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "stale-binary-reprojection-guard"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-stale-binary-reprojection-guard.py"
+promise = "a stale binary cannot silently re-project its own outdated templates over a newer checkout without an explicit override, and aw meta check routes staleness to a rebuild remediation rather than inviting aw meta sync."
+oracle = "The Python external contract runs a 4-phase real check: checkout-copy preference eliminates the guard window, no-checkout-copy blocks without --force-stale with content byte-unchanged and a content_regression_blocked finding, --force-stale proceeds, and aw meta check routes to binary_stale/rebuild remediation."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-stale-binary-reprojection-guard"
+evidence_paths = ["evidence/aw-core-client-stale-binary-reprojection-guard.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-total-health-observation-and-readiness-gate"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "total-health-observation-and-readiness-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-total-health-observation-and-readiness-gate.py"
+promise = "epic-level aggregate readiness genuinely rolls up its children's health into one two-cell semantic-health model and a global artifact-identity rollup."
+oracle = "The Python external contract drives the real aw health rollup output across a real multi-child epic fixture and independently checks the aggregate readiness/rollup fields against each child's own real health state."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-total-health-observation-and-readiness-gate"
+evidence_paths = ["evidence/aw-core-client-total-health-observation-and-readiness-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-authored-python-ec-and-td-unit-test-ownership"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "authored-python-ec-and-td-unit-test-ownership"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-authored-python-ec-and-td-unit-test-ownership.py"
+promise = "aw td check and aw ec check require and run each artifact's own authored tests/unit/test_*.py during structural check -- unit-test ownership is part of authoring, not a separate phase."
+oracle = "The Python external contract runs a 5-phase real check against both TD and EC artifact roots, independently proving the real aw td check/aw ec check commands require and execute the authored tests/unit/test_*.py file for each."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-authored-python-ec-and-td-unit-test-ownership"
+evidence_paths = ["evidence/aw-core-client-authored-python-ec-and-td-unit-test-ownership.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-python-spec-health-bypasses-legacy-cb-replay"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "python-spec-health-bypasses-legacy-cb-replay"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-python-spec-health-bypasses-legacy-cb-replay.py"
+promise = "PythonV1 spec-driven projects report health via the real spec pipeline and never fall back into legacy CB replay, including under the explicit --verify-traceability/--verify-cb flags."
+oracle = "The Python external contract drives the real, live guard PythonV1 project directly via aw health --project guard traceability / cb, independently checking the exact advisory-note text sourced from legacy_health_replay_enabled in project.rs, plus a third phase proving --verify-traceability/--verify-cb explicit flags still don't route through legacy replay."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-python-spec-health-bypasses-legacy-cb-replay"
+evidence_paths = ["evidence/aw-core-client-python-spec-health-bypasses-legacy-cb-replay.json"]
