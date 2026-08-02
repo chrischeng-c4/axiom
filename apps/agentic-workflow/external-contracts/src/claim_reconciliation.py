@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,134 @@ MIGRATION_MANIFEST_PATH = Path(__file__).with_name(
     "migration_reconciliation_manifest.json"
 )
 
+_SCHEMA = "aw.python-ec.expected-mapping.v1"
+_FIELDS = ("case_id", "capability_id", "use_case_id", "dimension")
+
+
+@dataclass(frozen=True)
+class _T:
+    case_id: str
+    capability_id: str
+    use_case_id: str
+    dimension: str
+
+    def d(self) -> dict[str, str]:
+        return {
+            "case_id": self.case_id,
+            "capability_id": self.capability_id,
+            "use_case_id": self.use_case_id,
+            "dimension": self.dimension,
+        }
+
+
+def _parse_toml(text: str) -> tuple[list[_T], list[str]]:
+    try:
+        cases = tomllib.loads(text)["tool"]["aw"]["python-ec"]["cases"]
+        if not isinstance(cases, list):
+            raise TypeError("cases must be a list")
+    except Exception as exc:  # noqa: BLE001
+        return [], [f"malformed candidate TOML: {exc}"]
+    out, errs = [], []
+    for i, c in enumerate(cases):
+        if not isinstance(c, dict):
+            errs.append(f"case[{i}] must be an object")
+            continue
+        row = {
+            "case_id": c.get("id", ""),
+            "capability_id": c.get("capability_id", ""),
+            "use_case_id": c.get("use_case_id", ""),
+            "dimension": c.get("dimension", ""),
+        }
+        bad = [f for f in _FIELDS if not isinstance(row[f], str) or not row[f].strip()]
+        if bad:
+            errs += [f"case[{i}] empty field '{f}'" for f in bad]
+            continue
+        out.append(_T(**{f: str(row[f]) for f in _FIELDS}))
+    return ([], errs) if errs else (out, [])
+
+
+def _parse_json(text: str) -> tuple[list[_T], list[str]]:
+    try:
+        doc = json.loads(text)
+        if not isinstance(doc, dict) or doc.get("schema_version") != _SCHEMA:
+            raise ValueError(f"schema_version must be '{_SCHEMA}'")
+        entries = doc.get("mappings")
+        if not isinstance(entries, list):
+            raise TypeError("mappings must be a list")
+    except Exception as exc:  # noqa: BLE001
+        return [], [f"malformed expected mapping JSON: {exc}"]
+    out, errs = [], []
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict):
+            errs.append(f"expected[{i}] must be an object")
+            continue
+        bad = [
+            f
+            for f in _FIELDS
+            if not isinstance(e.get(f, ""), str) or not str(e.get(f, "")).strip()
+        ]
+        if bad:
+            errs += [f"expected[{i}] empty field '{f}'" for f in bad]
+            continue
+        out.append(_T(**{f: str(e[f]) for f in _FIELDS}))
+    return ([], errs) if errs else (out, [])
+
+
+def _by_case_id(d: dict[str, str]) -> str:
+    return d["case_id"]
+
+
+def reconcile_copied_inventory(
+    candidate_toml: str, expected_mapping_json: str
+) -> dict[str, Any]:
+    """Read-only comparison of a copied candidate inventory against an independent
+    exact mapping. Never mutates either input. No I/O."""
+    cand, ce = _parse_toml(candidate_toml)
+    exp, ee = _parse_json(expected_mapping_json)
+    errs = ce + ee
+    _empty: list[Any] = []
+    if errs:
+        return {
+            "schema_version": _SCHEMA,
+            "status": "drifted",
+            "case_count": 0,
+            "case_mapping": _empty,
+            "findings": {
+                "missing_expected_mappings": _empty,
+                "unexpected_mappings": _empty,
+                "duplicate_case_ids": _empty,
+                "malformed_inputs": sorted(errs),
+                "binding_mismatches": _empty,
+            },
+        }
+    counts: dict[str, int] = {}
+    for t in cand:
+        counts[t.case_id] = counts.get(t.case_id, 0) + 1
+    dups = sorted(k for k, v in counts.items() if v > 1)
+    cs, es = set(cand), set(exp)
+    missing = sorted((t.d() for t in es - cs), key=_by_case_id)
+    unexpected = sorted((t.d() for t in cs - es), key=_by_case_id)
+    uni_cand = {t.case_id: t for t in cand if counts[t.case_id] == 1}
+    uni_exp = {t.case_id: t for t in exp}
+    bmis = sorted(
+        cid for cid in uni_cand if cid in uni_exp and uni_cand[cid] != uni_exp[cid]
+    )
+    mapping = sorted((t.d() for t in cand), key=_by_case_id)
+    clean = not (missing or unexpected or dups or bmis)
+    return {
+        "schema_version": _SCHEMA,
+        "status": "clean" if clean else "drifted",
+        "case_count": len(cand),
+        "case_mapping": mapping,
+        "findings": {
+            "missing_expected_mappings": missing,
+            "unexpected_mappings": unexpected,
+            "duplicate_case_ids": dups,
+            "malformed_inputs": [],
+            "binding_mismatches": bmis,
+        },
+    }
+
 
 def _rust_invariant_case_ids() -> set[str]:
     manifest = json.loads(MIGRATION_MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -42,6 +171,18 @@ def _rust_invariant_case_ids() -> set[str]:
 
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--inventory",
+        type=Path,
+        default=None,
+        help="path to copied candidate pyproject.toml inventory",
+    )
+    parser.add_argument(
+        "--expected-mapping",
+        type=Path,
+        default=None,
+        help="path to expected mappings json document",
+    )
     parser.add_argument(
         "--write",
         action="store_true",
@@ -150,7 +291,9 @@ def _result(text: str) -> dict[str, Any]:
     clean = (
         not generated_block
         and not owned_modules
-        and not any(findings.values())
+        and not findings["synthetic_claim_cases"]
+        and not findings["cargo_delegating_commands"]
+        and not findings["legacy_test_paths"]
     )
     case_count = len(_configured_cases(_inventory_document(text)))
     return {
@@ -175,6 +318,20 @@ def _result(text: str) -> dict[str, Any]:
 
 def main() -> int:
     args = _arguments()
+    if (args.inventory is None) != (args.expected_mapping is None):
+        print(
+            "claim reconciliation failed: both --inventory and --expected-mapping must be provided together",
+            file=__import__("sys").stderr,
+        )
+        raise SystemExit(2)
+
+    if args.inventory is not None and args.expected_mapping is not None:
+        candidate_toml = args.inventory.read_text(encoding="utf-8")
+        expected_mapping_json = args.expected_mapping.read_text(encoding="utf-8")
+        result = reconcile_copied_inventory(candidate_toml, expected_mapping_json)
+        print(json.dumps(result, sort_keys=True))
+        return 0 if result["status"] == "clean" else 1
+
     if args.jobs < 1:
         raise RuntimeError("--jobs must be at least 1")
     text = PYPROJECT_PATH.read_text(encoding="utf-8")
