@@ -5588,7 +5588,8 @@ pub(crate) async fn run_capability_tick(project: &str, args: CapabilityRunArgs) 
         let action = last_report.next_action.clone();
         match action.kind {
             CapabilityActionKind::RunVerify => {
-                let result = run_verification_command(&project_root, &action.command);
+                let result =
+                    run_verification_command_for_project(&project_root, &action.command, project);
                 if args.human {
                     eprintln!("capability verify: {} [{}]", result.command, result.status);
                 }
@@ -6173,7 +6174,7 @@ async fn build_capability_report_inner(
     };
 
     let mut report_items = Vec::new();
-    let mut verification_cache = VerificationCommandCache::default();
+    let mut verification_cache = VerificationCommandCache::for_project(project);
     for capability in document.capabilities.iter().filter(|capability| {
         verification_scope
             .as_ref()
@@ -6545,12 +6546,13 @@ fn capability_verified(
 pub(crate) fn runtime_verified_by_id_from_sections(
     sections: &[CapabilitySection],
     project_root: &Path,
+    project: &str,
     verify: bool,
 ) -> BTreeMap<String, bool> {
     if !verify {
         return BTreeMap::new();
     }
-    let mut verification_cache = VerificationCommandCache::default();
+    let mut verification_cache = VerificationCommandCache::for_project(project);
     sections
         .iter()
         .map(|capability| {
@@ -6878,17 +6880,28 @@ fn capability_verification_results_with_cache(
 /// @spec apps/agentic-workflow/tech-design/specs/4124.md#logic
 #[derive(Default)]
 struct VerificationCommandCache {
+    project: Option<String>,
     results: BTreeMap<String, VerificationRuntimeResult>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/specs/4124.md#logic
 impl VerificationCommandCache {
+    fn for_project(project: &str) -> Self {
+        Self {
+            project: Some(project.to_string()),
+            ..Self::default()
+        }
+    }
+
     fn run(&mut self, project_root: &Path, command: &str) -> VerificationRuntimeResult {
         if let Some(result) = self.results.get(command) {
             return result.clone();
         }
         eprintln!("aw capability verify: running `{command}`");
-        let result = run_verification_command(project_root, command);
+        let result = self.project.as_deref().map_or_else(
+            || run_verification_command(project_root, command),
+            |project| run_verification_command_for_project(project_root, command, project),
+        );
         self.results.insert(command.to_string(), result.clone());
         result
     }
@@ -12769,7 +12782,54 @@ fn extract_hash_numbers(text: &str) -> Vec<u64> {
 }
 
 fn run_verification_command(project_root: &Path, command: &str) -> VerificationRuntimeResult {
+    let project = project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    run_verification_command_for_project(project_root, command, project)
+}
+
+fn run_verification_command_for_project(
+    project_root: &Path,
+    command: &str,
+    project: &str,
+) -> VerificationRuntimeResult {
+    if blocks_self_reentrant_health_command(command, project) {
+        return VerificationRuntimeResult {
+            id: String::new(),
+            command: command.to_string(),
+            status: "fail".to_string(),
+            proves: None,
+            exit_code: None,
+            stdout: None,
+            stderr: Some(format!(
+                "self-reentrant `aw health --project {project}` capability gate rejected before subprocess spawn; replace it with an isolated smoke or external-contract command"
+            )),
+        };
+    }
     run_verification_command_with_timeout(project_root, command, capability_gate_timeout())
+}
+
+fn blocks_self_reentrant_health_command(command: &str, project: &str) -> bool {
+    let tokens = command
+        .split_whitespace()
+        .map(|token| {
+            token.trim_matches(|character: char| {
+                matches!(character, '\'' | '\"' | '`' | '(' | ')' | ';' | '|' | '&')
+            })
+        })
+        .collect::<Vec<_>>();
+    let invokes_aw_health = tokens
+        .windows(2)
+        .any(|pair| (pair[0] == "aw" || pair[0].ends_with("/aw")) && pair[1] == "health");
+    let selects_same_project = tokens
+        .windows(2)
+        .any(|pair| pair[0] == "--project" && pair[1] == project)
+        || tokens
+            .iter()
+            .any(|token| *token == format!("--project={project}"));
+
+    invokes_aw_health && selects_same_project
 }
 
 fn capability_gate_timeout() -> Duration {
@@ -20314,6 +20374,53 @@ out_of_scope: []
         let result =
             run_verification_command(Path::new("."), "printf 'skipping: chromium unavailable\\n'");
         assert_eq!(result.status, "env_blocked");
+    }
+
+    #[test]
+    fn same_project_health_gate_fails_before_subprocess_spawn() {
+        let result = run_verification_command_for_project(
+            Path::new("."),
+            "./target/debug/aw health --project agentic-workflow | tail -n 1",
+            "agentic-workflow",
+        );
+
+        assert_eq!(result.status, "fail");
+        assert_eq!(result.exit_code, None);
+        assert!(result
+            .stderr
+            .as_deref()
+            .unwrap_or("")
+            .contains("rejected before subprocess spawn"));
+    }
+
+    #[test]
+    fn verification_cache_keeps_explicit_project_token_over_worktree_name() {
+        let worktree_root = Path::new("/private/tmp/aw-3362-controller");
+        let mut cache = VerificationCommandCache::for_project("agentic-workflow");
+
+        let result = cache.run(
+            worktree_root,
+            "./target/debug/aw health --project agentic-workflow meta",
+        );
+
+        assert_eq!(result.status, "fail");
+        assert!(result
+            .stderr
+            .as_deref()
+            .unwrap_or("")
+            .contains("rejected before subprocess spawn"));
+    }
+
+    #[test]
+    fn self_reentrant_health_guard_keeps_different_projects_and_non_health_commands() {
+        assert!(!blocks_self_reentrant_health_command(
+            "./target/debug/aw health --project guard",
+            "agentic-workflow"
+        ));
+        assert!(!blocks_self_reentrant_health_command(
+            "cargo test -p agentic-workflow --lib project_health",
+            "agentic-workflow"
+        ));
     }
 
     #[test]

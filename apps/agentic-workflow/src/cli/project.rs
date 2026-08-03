@@ -32,9 +32,10 @@ use crate::models::project::EcBinding;
 
 // @spec apps/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#cli
 #[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Default output is a low-token metrics envelope.
-Use `aw health --project <project> full` for the previous detailed report, or a
-focused section: metrics, capability, meta, gates, tests, ec, mutation, cb, cold, traceability,
+#[command(
+    after_help = r#"Default health runs the full production verification surface and emits a compact,
+payload-backed result envelope. `full` remains an explicit alias; use a focused section to
+limit verification: metrics, capability, meta, gates, tests, ec, mutation, cb, cold, traceability,
 regenerable, api, stack, td-lock, claims, blockers, drift-marker,
 takeover-audit.
 Use `-v/--verbose` to include progress events.
@@ -65,14 +66,15 @@ Output schema (JSON default):
   "axes": { "meta": object, "capability": object, "ec": object, "ec_gen": object, "td": object, "td_gen": object, "drift_marker": object },
   "blockers": object,
   "payload_path": string
-}"#)]
+}"#
+)]
 /// @spec apps/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#cli
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectHealthArgs {
     // Configured project name from [[projects]] in aw.toml.
     #[arg(long)]
     pub project: String,
-    // Optional focused view. Omit for low-token top-level health metrics.
+    // Optional focused view. Omit to run the full production verification surface.
     #[arg(value_enum)]
     pub section: Option<ProjectHealthSection>,
     // Run expensive TD/source/CB traceability closure verification.
@@ -1166,6 +1168,7 @@ fn apply_scoped_production_readiness(
                         crate::cli::capability::runtime_verified_by_id_from_sections(
                             &document.capabilities,
                             &project_root,
+                            &report.project,
                             production_gates_evaluated,
                         )
                     });
@@ -4078,7 +4081,7 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             | ProjectHealthSection::TakeoverAudit => HealthVerificationFlags::none(),
         }
     } else {
-        HealthVerificationFlags::none()
+        HealthVerificationFlags::all()
     }
 }
 
@@ -6173,18 +6176,18 @@ mod tests {
     }
 
     #[test]
-    fn health_without_verify_flags_defaults_to_metrics_only() {
+    fn health_without_verify_flags_defaults_to_full_verification() {
         let flags =
             effective_health_verification_flags(&health_args(false, false, false, false, false));
 
         assert_eq!(
             flags,
             HealthVerificationFlags {
-                traceability: false,
-                cb: false,
-                cold: false,
-                tests: false,
-                ec: false,
+                traceability: true,
+                cb: true,
+                cold: true,
+                tests: true,
+                ec: true,
             }
         );
     }

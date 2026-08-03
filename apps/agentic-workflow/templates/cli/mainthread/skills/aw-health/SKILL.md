@@ -31,12 +31,13 @@ user asks whether a project is healthy, production-ready, blocked, or why
 
 ## Command
 
-`aw health` emits a low-token agent-facing metrics envelope by default and owns
-the readiness gate. Do not add `--json`; it is a deprecated compatibility
-no-op. Use `--human` or `--pretty` only when the user asks for a
-human-readable or debug-formatted report. Use `-v/--verbose` only when progress
-events are useful. Use focused sections such as `regenerable`, `gates`, or
-`blockers` only when detail is needed.
+`aw health` runs the full production verification surface by default and emits
+a compact, payload-backed agent-facing result envelope. `full` remains an
+explicit alias. Do not add `--json`; it is a deprecated compatibility no-op.
+Use `--human` or `--pretty` only when the user asks for a human-readable or
+debug-formatted report. Use `-v/--verbose` only when progress events are
+useful. Use focused sections such as `regenerable`, `gates`, or `blockers` when
+a narrower diagnostic is needed.
 
 ```bash
 aw health --project <project>

@@ -524,7 +524,6 @@ def _health_snapshot(*, authoritative: bool) -> dict[str, Any]:
             "health",
             "--project",
             "fixture",
-            "full",
             "--verbose",
             expect_success=False,
         )
@@ -978,14 +977,20 @@ mutation_source_path = "projects/fixture/src"
         ]
 
     if case_id == "aw-health-default-full-verification-smoke":
+        assert len(snapshot["records"]) > 1
         phases = [record["phase"] for record in snapshot["records"][:-1]]
         assert phases[:2] == ["start", "tests"]
         assert "summary" in phases
+        raw_payload_path = result.get("payload_path")
+        assert isinstance(raw_payload_path, str) and bool(raw_payload_path)
+        payload_path = Path(raw_payload_path)
+        assert payload_path.is_file()
+        assert json.loads(payload_path.read_text(encoding="utf-8")) == payload
         assert payload["test_gates"]["commands"][0]["command"] == "true"
         assert isinstance(payload["blockers"], list)
         return [
-            "health streams progress JSONL before its terminal result",
-            "terminal payload retains blocker and configured-command evidence",
+            "default health invocation streams progress JSONL before its terminal result",
+            "payload-backed terminal result retains blocker and configured-command evidence",
         ]
 
     if case_id == "artifact-preflight-health-rollup":

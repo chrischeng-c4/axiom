@@ -104,19 +104,19 @@ commands:
           - name: verify-traceability
             type: boolean
             default: false
-            description: "Run expensive TD/source/CB traceability closure verification; default health reports this gate as not evaluated."
+            description: "Select expensive TD/source/CB traceability closure verification for a targeted debugging run; any --verify-* flag scopes verification to the selected flags."
           - name: verify-cb
             type: boolean
             default: false
-            description: "Run expensive deterministic CB replay/drift verification; default health reports this gate as not evaluated."
+            description: "Select expensive deterministic CB replay/drift verification for a targeted debugging run; any --verify-* flag scopes verification to the selected flags."
           - name: verify-cold
             type: boolean
             default: false
-            description: "Run expensive TD-only cold rebuild verification for workspaces with verify_cold = true."
+            description: "Select expensive TD-only cold rebuild verification for a targeted debugging run."
           - name: verify-tests
             type: boolean
             default: false
-            description: "Run configured workspace test commands as production release gates."
+            description: "Select configured workspace test commands for a targeted debugging run."
           - name: json
             type: boolean
             default: false

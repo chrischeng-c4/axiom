@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:d97b2ce021e3bd51b978b84203a87f70957bec8b5e39c6f043f2d08160b87949",
+  "source_digest": "sha256:ae176a01cf85fc12b9777a935fc7a5dc9a71818d475c8132011f61d5a0694c27",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:/root/ec_review_current",
-  "reviewed_at": "2026-08-03T13:49:36.802382+00:00",
-  "summary": "Accepted: the shared fixture now uses only a prebuilt native executable, performs a bounded AW-specific --version preflight before requested product arguments, fails closed on missing, non-executable, truncated, non-native, unlaunchable, and wrong-native candidates, and calibrates an independent Cargo/rustup negative control at the same subprocess.run boundary. Legacy callers remain functional.",
+  "reviewed_by": "agent:github-copilot:gpt-5.3-codex:3e4b0c55-ea34-4b12-8898-cce82e6143e3",
+  "reviewed_at": "2026-08-03T15:14:00.205253+00:00",
+  "summary": "Independent GitHub Copilot semantic review of the digest-bound #3362 candidate accepted R1-R4 and AC1-AC4: default health uses all production flags, the smoke is an isolated fixture EC that proves default progress and payload_path, same-project health gates fail before spawn with remediation, and the explicit configured project token prevents linked-worktree-name bypass. No material EC findings.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,6 +15,5 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": [],
-  "target_path": "apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py"
+  "findings": []
 }
