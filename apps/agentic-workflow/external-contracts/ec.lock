@@ -9,6 +9,10 @@ source_digest = "sha256:bf8c8ea8fb6c362cf0b422ea5ceca7d62b4318c537a7395e0a604bab
 tool_contracts = []
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/fixtures/claim-reconciliation/capability-catalog-td-claim-linkage-expected-mapping.json"
+digest = "sha256:eb899f01eab3a5019b655a90a69f53ecd8fae2a18cd0589a73aaf28da1cf891d"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
 digest = "sha256:b916c8aa5c6ff12a420ce303c4ef0fbc74c43d07f5d0970250e44b6a5b390f92"
 
@@ -134,7 +138,7 @@ digest = "sha256:76fa19ec6021d9c105e0afbe58bca72c6e05f1b67e8a5bc3e6fbb7c83d7aefb
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
-digest = "sha256:fb3537840388ff8b4492c8c6ad0df7dc7958b90b5ce2694304b3e4e53a4e3326"
+digest = "sha256:9f0b61c08519400f01934caaf7571e1ec1db556d375f8c497d7919b5cd86f4a9"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-project-sweep.py"
@@ -154,7 +158,7 @@ digest = "sha256:eb9fbf4e2e203a9519792d26aa8bffe2530f6294ffa4961d9ba1fa8cd05bbbb
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-one-way-wi-reference-direction.py"
-digest = "sha256:5a8d1b83c9b15c388efdc93cd61caf58d03e049e43580116b7b338e9eac554e9"
+digest = "sha256:4cec4eda6ec1ed9a5bc573a903173624e7bafde4cecdf5763f8952331f296d84"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-efficiency.py"
@@ -166,11 +170,11 @@ digest = "sha256:fa6c757eeeee988586ce20ebc59f89e5629bdcc18b56941c5b87592949be1ba
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-python-artifact-readiness.py"
-digest = "sha256:6224b2fcb7e6534ec4d426c96b14770b8e354fa277929e47f2f7d8374db53734"
+digest = "sha256:0ee7f43656116452a98246198b4b349c6e18f7a4cdfbf3587fb78210b12542bc"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
-digest = "sha256:2dbc5e97d2697e5c258ccfea279b751d0a9561ac8d633bcb4da0388fd380e4ac"
+digest = "sha256:e5512f87e899a92486e3e0e0089c8a46b5c21d2abe9c0759d8423f1c2960458e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
@@ -234,7 +238,7 @@ digest = "sha256:da278d2fba8c5b2cd946e16433b48427506bd89ccf94f6e6b13a428842be84e
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-shared-service-kit-substrate.py"
-digest = "sha256:a04e5da6272b6eb681b27e560b81b4be00e79bea9f637fe13f27a5fc09244fee"
+digest = "sha256:feea8fc836c7253ab1206fa978db8cbfcebaf96b2b38d26773ae215fa39a3ce2"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules.py"
@@ -298,7 +302,7 @@ digest = "sha256:18e870bdecf763ef739aae963be1a5d7fa954d3676b330ef3e1a530b2244880
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py"
-digest = "sha256:230afe98d16c3ada5bda8e76e11dd935182b4c72e8348076d599550a18b0f1dc"
+digest = "sha256:7cabe67328ea44b6c3e2e4884dd616384c79de5489fe562cf38bdf542ef22575"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
@@ -562,7 +566,7 @@ digest = "sha256:d85eebfa879b215c36de711a05e3e82e4b982f1ffebafbcada8b649bc91ec52
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/claim_reconciliation.py"
-digest = "sha256:a38aa5f3efc1f7c61c0dcde4a4e41a719081ae20ec3493a3f9d41f9974632b26"
+digest = "sha256:0228d93f5b6efce9422808456a14bfd9b60f39eadacffe93d18b6a2271cdb7a7"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/inventory_parity.py"
@@ -646,7 +650,7 @@ digest = "sha256:01e2504a28b926cd338cb337012c3d2839feb4a9f2f425848132415eb0dd8e8
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/tests/unit/test_claim_reconciliation.py"
-digest = "sha256:fe11e0054e83ccefad9583c4f69e81b03ec018481480a89b288479b51de4fadd"
+digest = "sha256:d5697371035df5099881f562b52247d03ad0c40caa3098e34220591095c57e3f"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/tests/unit/test_project_health_contract.py"

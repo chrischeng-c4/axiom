@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -233,6 +234,36 @@ def _goal(
 CAPABILITY_IDS = ("leaf", "middle", "root", "unrelated")
 
 
+def _compute_source_digest(ec_root: Path) -> str:
+    ignored = {
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        "build",
+        "dist",
+        ".eggs",
+    }
+    files = sorted(
+        path
+        for path in (ec_root / "src").rglob("*.py")
+        if not any(part in ignored for part in path.relative_to(ec_root).parts)
+    )
+    digest = hashlib.sha256()
+    for path in files:
+        relative = path.relative_to(ec_root).as_posix().encode()
+        body = path.read_bytes()
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(len(body).to_bytes(8, byteorder="big"))
+        digest.update(b"\0")
+        digest.update(body)
+    return "sha256:" + digest.hexdigest()
+
+
 def _write_python_artifacts(fixture_root: Path) -> None:
     """Write the canonical Python TD and EC pair the capability scan consumes.
 
@@ -243,7 +274,7 @@ def _write_python_artifacts(fixture_root: Path) -> None:
     """
     td_root = fixture_root / "tech-design"
     td_source = td_root / "src"
-    td_source.mkdir()
+    td_source.mkdir(parents=True, exist_ok=True)
     (td_root / "pyproject.toml").write_text(
         """[project]
 name = "scoped-capability-tech-design"
@@ -267,8 +298,8 @@ requires-python = ">=3.11"
     ec_root = fixture_root / "external-contracts"
     case_root = ec_root / "src" / "cases"
     evidence_root = ec_root / "evidence"
-    case_root.mkdir(parents=True)
-    evidence_root.mkdir()
+    case_root.mkdir(parents=True, exist_ok=True)
+    evidence_root.mkdir(parents=True, exist_ok=True)
     (ec_root / "src" / "runner.py").write_text(
         'print("fixture runner")\n',
         encoding="utf-8",
@@ -278,9 +309,6 @@ requires-python = ">=3.11"
             f"def verify_{capability_id}() -> list[str]:\n"
             f'    return ["{capability_id} fixture"]\n',
             encoding="utf-8",
-        )
-        (evidence_root / f"{capability_id}.json").write_text(
-            '{"status":"passed"}\n', encoding="utf-8"
         )
     write_python_artifact_lock(ec_root, name="demo-external-contracts")
     write_python_artifact_unit_test(ec_root, "scoped_capability")
@@ -323,6 +351,28 @@ evidence_paths = ["evidence/{capability_id}.json"]
         ),
         encoding="utf-8",
     )
+
+    source_digest = _compute_source_digest(ec_root)
+    for capability_id in CAPABILITY_IDS:
+        implementation_digest = "sha256:" + hashlib.sha256(
+            (case_root / f"{capability_id}.py").read_bytes()
+        ).hexdigest()
+        evidence = {
+            "protocol": "aw.python-ec.evidence.v1",
+            "case_id": f"{capability_id}-behavior",
+            "mode": "behavior",
+            "source_digest": source_digest,
+            "declared_command": "true",
+            "implementation": f"src/cases/{capability_id}.py",
+            "implementation_digest": implementation_digest,
+            "exit_code": 0,
+            "assertions": [f"{capability_id} fixture"],
+            "attempts": [{"exit_code": 0, "assertion_count": 1}],
+        }
+        (evidence_root / f"{capability_id}.json").write_text(
+            json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _blocked_goal_document() -> str:
@@ -404,6 +454,40 @@ test_cmd = "touch {workspace_marker}"
         assert migrated.returncode == 0, (migrated.stdout, migrated.stderr)
         _write_python_artifacts(tmp)
 
+        # Negative control / falsifier: legacy evidence yields unready status
+        # with specific unsupported protocol blocker on full-project check.
+        (tmp / "external-contracts" / "evidence" / "leaf.json").write_text(
+            '{"status":"passed"}\n', encoding="utf-8"
+        )
+        unready_run = _run(tmp, cap_path, None)
+        assert unready_run.returncode == 1, (unready_run.stdout, unready_run.stderr)
+        unready_lines = [
+            line for line in unready_run.stdout.splitlines() if line.startswith("{")
+        ]
+        assert unready_lines, (unready_run.stdout, unready_run.stderr)
+        unready_report = json.loads(unready_lines[-1])
+        assert unready_report["python_artifact"]["ready"] is False, unready_report
+        assert unready_report["next_action"]["kind"] == "run_verify", unready_report
+        expected_blocker = (
+            "Python EC case `leaf-behavior` evidence `evidence/leaf.json` "
+            "has unsupported protocol"
+        )
+        assert expected_blocker in unready_report["python_artifact"]["blockers"], unready_report
+
+        assert leaf_marker.is_file()
+        assert middle_marker.is_file()
+        assert root_marker.is_file()
+        assert unrelated_marker.is_file()
+        assert workspace_marker.is_file()
+
+        leaf_marker.unlink()
+        middle_marker.unlink()
+        root_marker.unlink()
+        unrelated_marker.unlink()
+        workspace_marker.unlink()
+
+        _write_python_artifacts(tmp)
+
         completed = _run(tmp, cap_path, "root")
         assert completed.returncode == 0, (completed.stdout, completed.stderr)
         output_lines = [
@@ -449,6 +533,8 @@ test_cmd = "touch {workspace_marker}"
         assert full_output_lines
         full_report = json.loads(full_output_lines[-1])
         assert full_report["status"] == "healthy", full_report
+        assert full_report["python_artifact"]["ready"] is True, full_report
+        assert expected_blocker not in full_report["python_artifact"]["blockers"], full_report
         assert workspace_marker.is_file(), (
             full_project.stdout,
             full_project.stderr,

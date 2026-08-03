@@ -457,28 +457,19 @@ def verify() -> list[str]:
     with tempfile.TemporaryDirectory(prefix="aw-claim-reconciliation-copy-") as raw_tmp:
         temp_root = Path(raw_tmp)
         inventory_path = temp_root / "candidate-pyproject.toml"
-        expected_mapping_path = temp_root / "expected-mapping.json"
+        expected_mapping_path = (
+            _repository_root()
+            / "apps/agentic-workflow/external-contracts/fixtures/claim-reconciliation/capability-catalog-td-claim-linkage-expected-mapping.json"
+        )
         canonical_inventory_path = (
             _repository_root()
             / "apps/agentic-workflow/external-contracts/pyproject.toml"
         )
         canonical_inventory = canonical_inventory_path.read_text(encoding="utf-8")
-        expected_records = sorted(
-            (_mapping_record(mapping) for mapping in canonical_mapping),
-            key=lambda record: record["case_id"],
-        )
-        expected_mapping_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": "aw.python-ec.expected-mapping.v1",
-                    "mappings": expected_records,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        expected_doc = json.loads(expected_mapping_path.read_text(encoding="utf-8"))
+        assert expected_doc["schema_version"] == "aw.python-ec.expected-mapping.v1"
+        expected_records = expected_doc["mappings"]
+        assert len(expected_records) == 110
 
         inventory_path.write_text(canonical_inventory, encoding="utf-8")
         copied_clean = _claim_reconciliation_report(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,6 +27,7 @@ TARGET_COMMAND = (
 )
 ASSERTIONS = (
     "capability report and health spec expose the identical python_artifact/python_spec readiness projection",
+    "a declared non-Python oracle fixture participates in the EC source digest, so a fixture-only mutation invalidates prior digest-bound evidence",
     "a project with no Python TD/EC inventory reports the exact missing-inventory blockers with an aw ec check remediation",
     "a required EC case with missing evidence reports the exact missing-evidence blocker with an aw ec verify --stage td remediation",
     "executing a non-empty verifier writes canonical current-case evidence that clears the blocker and flips readiness to ready in both surfaces",
@@ -225,6 +227,13 @@ if __name__ == "__main__":
         '    return ["readiness is externally observable"]\n',
         encoding="utf-8",
     )
+    fixture_root = ec_root / "fixtures"
+    fixture_root.mkdir(exist_ok=True)
+    (fixture_root / "readiness-oracle.json").write_text(
+        json.dumps({"schema_version": 1, "oracle": "readiness"}, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
     (ec_root / "pyproject.toml").write_text(
         """[project]
 name = "demo-external-contracts"
@@ -235,6 +244,7 @@ requires-python = ">=3.11"
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
 source_roots = ["src"]
+source_files = ["fixtures/readiness-oracle.json"]
 dependency_files = ["pyproject.toml", "uv.lock"]
 evidence_dir = "evidence"
 
@@ -356,11 +366,13 @@ def _independent_source_digest(ec_root: Path) -> str:
         "dist",
         ".eggs",
     }
-    files = sorted(
+    files = {
         path
         for path in (ec_root / "src").rglob("*.py")
         if not any(part in ignored for part in path.relative_to(ec_root).parts)
-    )
+    }
+    files.add(ec_root / "fixtures/readiness-oracle.json")
+    files = sorted(files)
     assert files, ec_root
     digest = hashlib.sha256()
     for path in files:
@@ -408,49 +420,192 @@ def _mutated_evidence(
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
 
 
+def _assert_no_inventory_blockers(
+    ec_root: Path,
+    td_root: Path,
+    report_blockers: list[str],
+    health_blockers: list[str],
+) -> None:
+    expected = [
+        f"Python EC inventory unavailable: canonicalize Python artifact root {ec_root}",
+        f"Python TD inventory unavailable: canonicalize Python TD root {td_root}",
+    ]
+    ec_pattern = re.compile(
+        r"Python EC inventory unavailable: canonicalize Python artifact root "
+        + re.escape(str(ec_root))
+    )
+    td_pattern = re.compile(
+        r"Python TD inventory unavailable: canonicalize Python TD root "
+        + re.escape(str(td_root))
+    )
+
+    assert report_blockers == expected, (report_blockers, expected)
+    assert health_blockers == expected, (health_blockers, expected)
+
+    assert len(report_blockers) == 2, report_blockers
+    assert re.fullmatch(ec_pattern, report_blockers[0]) is not None, (
+        report_blockers[0],
+        ec_pattern.pattern,
+    )
+    assert re.fullmatch(td_pattern, report_blockers[1]) is not None, (
+        report_blockers[1],
+        td_pattern.pattern,
+    )
+
+    assert len(health_blockers) == 2, health_blockers
+    assert re.fullmatch(ec_pattern, health_blockers[0]) is not None, (
+        health_blockers[0],
+        ec_pattern.pattern,
+    )
+    assert re.fullmatch(td_pattern, health_blockers[1]) is not None, (
+        health_blockers[1],
+        td_pattern.pattern,
+    )
+
+
+def _assert_missing_evidence_blockers(
+    report_blockers: list[str],
+    health_blockers: list[str],
+) -> None:
+    expected = [
+        "Python EC case `demo-readiness` has missing or empty digest-bound evidence"
+    ]
+    assert report_blockers == expected, (report_blockers, expected)
+    assert health_blockers == expected, (health_blockers, expected)
+
+
 def verify() -> list[str]:
     with tempfile.TemporaryDirectory(prefix="aw-python-artifact-readiness-") as raw_tmp:
-        root = Path(raw_tmp)
+        root = Path(raw_tmp).resolve()
+        ec_root = root / "project" / "external-contracts"
+        td_root = root / "project" / "tech-design"
 
         _write_no_inventory_fixture(root)
         report = _report(root)
         health = _health_spec(root)
         python_artifact = report["python_artifact"]
-        assert python_artifact == health["data"]["python_spec"], (
+        health_spec = health["data"]["python_spec"]
+        assert python_artifact == health_spec, (
             python_artifact,
             health,
         )
         assert python_artifact["enabled"] is True, python_artifact
         assert python_artifact["ready"] is False, python_artifact
-        assert any(
-            blocker.startswith("Python EC inventory unavailable:")
-            for blocker in python_artifact["blockers"]
-        ), python_artifact
-        assert any(
-            blocker.startswith("Python TD inventory unavailable:")
-            for blocker in python_artifact["blockers"]
-        ), python_artifact
+        _assert_no_inventory_blockers(
+            ec_root,
+            td_root,
+            python_artifact["blockers"],
+            health_spec["blockers"],
+        )
         assert python_artifact["next_command"] == "aw ec check --project demo", (
             python_artifact
         )
+
+        expected_no_inventory = [
+            f"Python EC inventory unavailable: canonicalize Python artifact root {ec_root}",
+            f"Python TD inventory unavailable: canonicalize Python TD root {td_root}",
+        ]
+        try:
+            _assert_no_inventory_blockers(
+                ec_root,
+                td_root,
+                expected_no_inventory + ["unexpected extra blocker"],
+                expected_no_inventory + ["unexpected extra blocker"],
+            )
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(
+                "falsifier failed: extra blocker did not trigger oracle assertion"
+            )
+
+        try:
+            _assert_no_inventory_blockers(
+                ec_root,
+                td_root,
+                list(reversed(expected_no_inventory)),
+                list(reversed(expected_no_inventory)),
+            )
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(
+                "falsifier failed: reordered blockers did not trigger oracle assertion"
+            )
+
+        try:
+            _assert_no_inventory_blockers(
+                ec_root,
+                td_root,
+                [
+                    f"Python EC inventory unavailable: canonicalize Python artifact root {ec_root}/extra",
+                    expected_no_inventory[1],
+                ],
+                [
+                    f"Python EC inventory unavailable: canonicalize Python artifact root {ec_root}/extra",
+                    expected_no_inventory[1],
+                ],
+            )
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(
+                "falsifier failed: altered EC blocker suffix did not trigger oracle assertion"
+            )
+
+        try:
+            _assert_no_inventory_blockers(
+                ec_root,
+                td_root,
+                [
+                    expected_no_inventory[0],
+                    f"Python TD inventory unavailable: canonicalize Python TD root {td_root}/extra",
+                ],
+                [
+                    expected_no_inventory[0],
+                    f"Python TD inventory unavailable: canonicalize Python TD root {td_root}/extra",
+                ],
+            )
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(
+                "falsifier failed: altered TD blocker suffix did not trigger oracle assertion"
+            )
 
         _write_skeleton_fixture(root, with_evidence=False)
         missing_evidence_report = _report(root)
         missing_evidence = missing_evidence_report["python_artifact"]
         missing_evidence_health = _health_spec(root)
-        assert missing_evidence == missing_evidence_health["data"]["python_spec"], (
+        missing_evidence_health_spec = missing_evidence_health["data"]["python_spec"]
+        assert missing_evidence == missing_evidence_health_spec, (
             missing_evidence,
             missing_evidence_health,
         )
         assert missing_evidence["enabled"] is True, missing_evidence
         assert missing_evidence["ready"] is False, missing_evidence
-        assert (
-            "Python EC case `demo-readiness` has missing or empty digest-bound evidence"
-            in missing_evidence["blockers"]
-        ), missing_evidence
+        _assert_missing_evidence_blockers(
+            missing_evidence["blockers"],
+            missing_evidence_health_spec["blockers"],
+        )
         assert missing_evidence["next_command"] == (
             "aw ec verify --project demo --stage td"
         ), missing_evidence
+
+        expected_missing = [
+            "Python EC case `demo-readiness` has missing or empty digest-bound evidence"
+        ]
+        try:
+            _assert_missing_evidence_blockers(
+                expected_missing + ["unexpected extra blocker"],
+                expected_missing + ["unexpected extra blocker"],
+            )
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(
+                "falsifier failed: extra missing-evidence blocker did not trigger oracle assertion"
+            )
 
         _write_skeleton_fixture(root, with_evidence=True)
         ready_report = _report(root)
@@ -468,6 +623,25 @@ def verify() -> list[str]:
                 / "project/external-contracts/evidence/readiness.json"
             ).read_text(encoding="utf-8")
         )
+        oracle_path = (
+            root / "project/external-contracts/fixtures/readiness-oracle.json"
+        )
+        original_oracle = oracle_path.read_text(encoding="utf-8")
+        mutated_oracle = original_oracle.replace('"readiness"', '"mutated"')
+        assert mutated_oracle != original_oracle
+        oracle_path.write_text(mutated_oracle, encoding="utf-8")
+        fixture_mutation = _report(root)["python_artifact"]
+        assert fixture_mutation["ec_source_digest"] != valid_evidence["source_digest"], (
+            fixture_mutation,
+            valid_evidence,
+        )
+        _assert_invalid_evidence(
+            root,
+            json.dumps(valid_evidence, indent=2, sort_keys=True) + "\n",
+            blocker="Python EC case `demo-readiness` evidence `evidence/readiness.json` is stale for the current source digest",
+        )
+        oracle_path.write_text(original_oracle, encoding="utf-8")
+        valid_evidence = _execute_fixture_verifier(root)
         invalid_prefix = (
             "Python EC case `demo-readiness` evidence "
             "`evidence/readiness.json`"

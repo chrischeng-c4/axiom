@@ -1,6 +1,6 @@
 """Black-box contract for the shared HTTP service-kit substrate (#3310).
 
-Drives `libs/service-http/examples/minimal_service` -- a real subprocess
+Drives `libs/service-http/examples/minimal_service` -- the owned real subprocess
 wiring only production `service-http` / `server-lifecycle` / `server-tcp` /
 `transport-h2c` types, mirroring `service-http`'s own "what a service wires"
 doc example -- and proves the composed substrate is a genuinely running HTTP

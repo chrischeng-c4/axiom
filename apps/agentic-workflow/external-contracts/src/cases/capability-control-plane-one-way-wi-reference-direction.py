@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import tempfile
 from pathlib import Path
 
@@ -63,6 +65,36 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Fix red claim | change | {wi_cell} | implemented | failing | smoke | `true` |
 """
+
+
+def _compute_source_digest(ec_root: Path) -> str:
+    ignored = {
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        "build",
+        "dist",
+        ".eggs",
+    }
+    files = sorted(
+        path
+        for path in (ec_root / "src").rglob("*.py")
+        if not any(part in ignored for part in path.relative_to(ec_root).parts)
+    )
+    digest = hashlib.sha256()
+    for path in files:
+        relative = path.relative_to(ec_root).as_posix().encode()
+        body = path.read_bytes()
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(len(body).to_bytes(8, byteorder="big"))
+        digest.update(b"\0")
+        digest.update(body)
+    return "sha256:" + digest.hexdigest()
 
 
 def _write_fixture(root: Path, *, wi_cell: str) -> None:
@@ -131,10 +163,6 @@ def demo_claim() -> str:
         'def verify() -> list[str]:\n    return ["claim is externally observable"]\n',
         encoding="utf-8",
     )
-    (ec_root / "evidence/claim.json").write_text(
-        '{"protocol":"aw.python-ec.evidence.v1","exit_code":0}\n',
-        encoding="utf-8",
-    )
     (ec_root / "pyproject.toml").write_text(
         """[project]
 name = "demo-external-contracts"
@@ -172,6 +200,27 @@ evidence_paths = ["evidence/claim.json"]
     write_python_artifact_lock(ec_root, name="demo-external-contracts")
     write_python_artifact_unit_test(ec_root, "claim")
 
+    source_digest = _compute_source_digest(ec_root)
+    implementation_digest = "sha256:" + hashlib.sha256(
+        (ec_root / "src/cases/claim.py").read_bytes()
+    ).hexdigest()
+    evidence = {
+        "protocol": "aw.python-ec.evidence.v1",
+        "case_id": "demo-coverage",
+        "mode": "behavior",
+        "source_digest": source_digest,
+        "declared_command": "true",
+        "implementation": "src/cases/claim.py",
+        "implementation_digest": implementation_digest,
+        "exit_code": 0,
+        "assertions": ["claim is externally observable"],
+        "attempts": [{"exit_code": 0, "assertion_count": 1}],
+    }
+    (ec_root / "evidence/claim.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
 
 def _report(root: Path) -> dict[str, object]:
     completed = run_aw(
@@ -192,13 +241,28 @@ def _demo(report: dict[str, object]) -> dict[str, object]:
 
 
 def verify() -> list[str]:
+    # Negative control / falsifier: incomplete old evidence yields unready status
+    # and routes to run_verify.
+    with tempfile.TemporaryDirectory(prefix="aw-python-wi-ref-unready-") as raw_tmp:
+        root = Path(raw_tmp)
+        _write_fixture(root, wi_cell="-")
+        (root / "project/external-contracts/evidence/claim.json").write_text(
+            '{"protocol":"aw.python-ec.evidence.v1","exit_code":0}\n',
+            encoding="utf-8",
+        )
+        report = _report(root)
+        assert report["python_artifact"]["ready"] is False, report
+        assert report["next_action"]["kind"] == "run_verify", report
+
     # Part A: an open gap with neither a doc-stored WI ref nor any tracker WI
-    # at all has nothing to continue, so it routes to WI creation.
+    # at all has nothing to continue, so it routes to WI creation once
+    # python_artifact readiness is established.
     with tempfile.TemporaryDirectory(prefix="aw-python-wi-ref-a-") as raw_tmp:
         root = Path(raw_tmp)
         _write_fixture(root, wi_cell="-")
         report = _report(root)
         demo = _demo(report)
+        assert report["python_artifact"]["ready"] is True, report
         assert demo.get("wi_evidence", []) == [], demo
         assert report["next_action"]["kind"] == "create_wi", report
         assert report["next_action"]["command"] == "aw wi plan --project demo", report
