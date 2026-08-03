@@ -8,9 +8,81 @@
     },
     {
       "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-agent-first-cli-product-model",
+      "dimension": "behavior",
+      "use_case_id": "agent-first-cli-product-model"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-agent-orientation-surface",
+      "dimension": "behavior",
+      "use_case_id": "agent-orientation-surface"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-authored-python-ec-and-td-unit-test-ownership",
+      "dimension": "behavior",
+      "use_case_id": "authored-python-ec-and-td-unit-test-ownership"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-aw-epic-project-label-dispatch",
+      "dimension": "behavior",
+      "use_case_id": "aw-epic-project-label-dispatch"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-aw-goal-verifiable-condition-loop",
+      "dimension": "behavior",
+      "use_case_id": "aw-goal-verifiable-condition-loop"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-cli-verb-lifecycle-taxonomy-completeness",
+      "dimension": "behavior",
+      "use_case_id": "cli-verb-lifecycle-taxonomy-completeness"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
       "case_id": "aw-core-client-core-concept-model-phase-less-admission",
       "dimension": "behavior",
       "use_case_id": "core-concept-model-and-invariants"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-cross-checkout-chat-command-and-shared-channel-removal",
+      "dimension": "behavior",
+      "use_case_id": "cross-checkout-chat-command-and-shared-channel-removal"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-lifecycle-prompt-migration-and-conformance",
+      "dimension": "behavior",
+      "use_case_id": "lifecycle-prompt-migration-and-conformance"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-meta-doc-init-sync-check",
+      "dimension": "behavior",
+      "use_case_id": "meta-doc-init-sync-check"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-meta-doc-ownership-matrix",
+      "dimension": "behavior",
+      "use_case_id": "meta-doc-ownership-matrix"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-multi-agent-change-review-skill",
+      "dimension": "behavior",
+      "use_case_id": "multi-agent-change-review-skill"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-new-project-epic-configuration-bootstrap",
+      "dimension": "behavior",
+      "use_case_id": "new-project-epic-configuration-bootstrap"
     },
     {
       "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
@@ -23,6 +95,78 @@
       "case_id": "aw-core-client-operational-stability",
       "dimension": "stability",
       "use_case_id": "core-concept-model-and-invariants"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-project-scoped-planner-dev-research-agent-fleet",
+      "dimension": "behavior",
+      "use_case_id": "project-scoped-planner-dev-research-agent-fleet"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-prompt-vocabulary-and-grammar",
+      "dimension": "behavior",
+      "use_case_id": "prompt-vocabulary-and-grammar"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-python-spec-health-bypasses-legacy-cb-replay",
+      "dimension": "behavior",
+      "use_case_id": "python-spec-health-bypasses-legacy-cb-replay"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-repo-view-command-and-desktop-product-removal",
+      "dimension": "behavior",
+      "use_case_id": "repo-view-command-and-desktop-product-removal"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-stale-binary-reprojection-guard",
+      "dimension": "behavior",
+      "use_case_id": "stale-binary-reprojection-guard"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-stale-skill-retirement",
+      "dimension": "behavior",
+      "use_case_id": "stale-skill-retirement"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-three-host-agent-fleet-projection",
+      "dimension": "behavior",
+      "use_case_id": "three-host-agent-fleet-projection"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-total-health-observation-and-readiness-gate",
+      "dimension": "behavior",
+      "use_case_id": "total-health-observation-and-readiness-gate"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-typed-agent-prompt-contract",
+      "dimension": "behavior",
+      "use_case_id": "typed-agent-prompt-contract"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-typed-prompt-ir-and-envelope-projection",
+      "dimension": "behavior",
+      "use_case_id": "typed-prompt-ir-and-envelope-projection"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-workitem-artifact-admission-gate",
+      "dimension": "behavior",
+      "use_case_id": "workitem-artifact-admission-gate"
+    },
+    {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "aw-core-client-workitem-loop-state-model",
+      "dimension": "behavior",
+      "use_case_id": "workitem-loop-state-model"
     },
     {
       "capability_id": "existing-project-standardization",
@@ -272,6 +416,12 @@
     },
     {
       "capability_id": "project-local-td-and-ec-gates",
+      "case_id": "python-ec-fixture-no-cargo-delegation",
+      "dimension": "behavior",
+      "use_case_id": "no-cargo-ec-fixture-execution"
+    },
+    {
+      "capability_id": "project-local-td-and-ec-gates",
       "case_id": "python-ec-only-authoring",
       "dimension": "behavior",
       "use_case_id": "python-only-ec-authoring-lifecycle"
@@ -464,6 +614,12 @@
     },
     {
       "capability_id": "work-item-planning",
+      "case_id": "work-item-planning-agent-backed-capability-plan-review",
+      "dimension": "behavior",
+      "use_case_id": "agent-backed-capability-plan-review"
+    },
+    {
+      "capability_id": "work-item-planning",
       "case_id": "work-item-planning-agent-backed-inventory-plan-review",
       "dimension": "behavior",
       "use_case_id": "agent-backed-inventory-plan-review"
@@ -647,6 +803,12 @@
       "case_id": "workflow-root-runner-python-only-artifact-model-routing",
       "dimension": "behavior",
       "use_case_id": "python-only-artifact-model-routing"
+    },
+    {
+      "capability_id": "workflow-root-runner",
+      "case_id": "workflow-root-runner-root-envelope-planning-base-fidelity",
+      "dimension": "behavior",
+      "use_case_id": "root-envelope-completion-contract"
     },
     {
       "capability_id": "workflow-root-runner",

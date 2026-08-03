@@ -469,7 +469,7 @@ def verify() -> list[str]:
         expected_doc = json.loads(expected_mapping_path.read_text(encoding="utf-8"))
         assert expected_doc["schema_version"] == "aw.python-ec.expected-mapping.v1"
         expected_records = expected_doc["mappings"]
-        assert len(expected_records) == 110
+        assert len(expected_records) == 137
 
         inventory_path.write_text(canonical_inventory, encoding="utf-8")
         copied_clean = _claim_reconciliation_report(

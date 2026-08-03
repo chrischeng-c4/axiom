@@ -307,7 +307,7 @@ class ClaimReconciliationTest(unittest.TestCase):
         res = subject._result(text)
         self.assertEqual(res["schema_version"], "aw.python-ec.claim-reconciliation.v2")
         self.assertEqual(res["status"], "clean")
-        self.assertEqual(res["rust_invariant_case_count"], 5)
+        self.assertEqual(res["rust_invariant_case_count"], 11)
 
 
 if __name__ == "__main__":
