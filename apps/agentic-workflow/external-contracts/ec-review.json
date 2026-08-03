@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:ae176a01cf85fc12b9777a935fc7a5dc9a71818d475c8132011f61d5a0694c27",
+  "source_digest": "sha256:592e9dd3754e594bfb9b1cafea57f19fa86c0640f3116f5395c0b6653732a07f",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:github-copilot:gpt-5.3-codex:3e4b0c55-ea34-4b12-8898-cce82e6143e3",
-  "reviewed_at": "2026-08-03T15:14:00.205253+00:00",
-  "summary": "Independent GitHub Copilot semantic review of the digest-bound #3362 candidate accepted R1-R4 and AC1-AC4: default health uses all production flags, the smoke is an isolated fixture EC that proves default progress and payload_path, same-project health gates fail before spawn with remediation, and the explicit configured project token prevents linked-worktree-name bypass. No material EC findings.",
+  "reviewed_by": "agent:github-copilot:claude-sonnet-4.6:48bf4d30-dc93-43ec-8d1e-e87e407436b5",
+  "reviewed_at": "2026-08-03T16:02:26.475403+00:00",
+  "summary": "Independent, isolation-verified GitHub Copilot review accepted the combined #3326, #3337, #3345 and #3362 EC candidate. It found exact copied-inventory drift falsifiers; fail-closed evidence parsing and cross-surface readiness checks; a real service subprocess with route, Server-Timing and SIGTERM-drain assertions; and default full self-health with isolated smoke/payload plus pre-spawn same-project recursion rejection. The symlinked-AW-name observation is a bounded smoke-guard residual risk, not a material finding.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

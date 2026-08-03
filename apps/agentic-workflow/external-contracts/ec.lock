@@ -3,18 +3,18 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-03T15:14:05.812579+00:00"
+generated_at = "2026-08-03T16:02:30.829248+00:00"
 ir_digest = "sha256:5415b99160730b36c203ca68ec4787cdd4aac47c19a5a91eef2c7a083226055c"
-source_digest = "sha256:bf8c8ea8fb6c362cf0b422ea5ceca7d62b4318c537a7395e0a604bab9a164c28"
+source_digest = "sha256:c913da77331586882911cbac30505896fff693380dc24f004bfe0540bf5c42f7"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/fixtures/claim-reconciliation/capability-catalog-td-claim-linkage-expected-mapping.json"
-digest = "sha256:eb899f01eab3a5019b655a90a69f53ecd8fae2a18cd0589a73aaf28da1cf891d"
+digest = "sha256:858d645ad4a729bcf00f5cfc7b03c93b1bd9501d8a33ba6f535daa350afe9180"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:b916c8aa5c6ff12a420ce303c4ef0fbc74c43d07f5d0970250e44b6a5b390f92"
+digest = "sha256:a55334d8727d5e03f7b3bc32b59e96c3809629d4d63b137c916afa605e5d3e59"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -138,7 +138,7 @@ digest = "sha256:76fa19ec6021d9c105e0afbe58bca72c6e05f1b67e8a5bc3e6fbb7c83d7aefb
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
-digest = "sha256:9f0b61c08519400f01934caaf7571e1ec1db556d375f8c497d7919b5cd86f4a9"
+digest = "sha256:461d362bf8a692ffca4db0c07f8684cd194cf2bd11e9b09ec3317227af710196"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-project-sweep.py"
@@ -650,7 +650,7 @@ digest = "sha256:01e2504a28b926cd338cb337012c3d2839feb4a9f2f425848132415eb0dd8e8
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/tests/unit/test_claim_reconciliation.py"
-digest = "sha256:d5697371035df5099881f562b52247d03ad0c40caa3098e34220591095c57e3f"
+digest = "sha256:e34cf53a81861c819432a459f34c2c96a32ff437976f4453fbe0ee7e5df2f99a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/tests/unit/test_project_health_contract.py"
