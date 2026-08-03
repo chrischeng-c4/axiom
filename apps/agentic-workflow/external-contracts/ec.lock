@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-03T16:02:30.829248+00:00"
+generated_at = "2026-08-03T16:23:12.251820+00:00"
 ir_digest = "sha256:5415b99160730b36c203ca68ec4787cdd4aac47c19a5a91eef2c7a083226055c"
-source_digest = "sha256:c913da77331586882911cbac30505896fff693380dc24f004bfe0540bf5c42f7"
+source_digest = "sha256:77e5caa1b8cf937aba38e1556681c54a83f11cb3f95b50a776091c9ab64e3434"
 tool_contracts = []
 
 [[sources]]
@@ -110,7 +110,7 @@ digest = "sha256:fef1ccb7f64a7c1124cc4f66be7407b76385bc56396815e772a23f72fc3cc52
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-total-health-observation-and-readiness-gate.py"
-digest = "sha256:e62e1e9827e7960c81162ad5a8e4081331f8c59e1be4a3e89182b22996dab496"
+digest = "sha256:30a01e8ed7b52cd6855ca8776bf7c9a93d91fd8010312963459c7e9798f5924b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/aw-core-client-typed-agent-prompt-contract.py"
