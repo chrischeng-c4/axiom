@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-02T09:26:51.740352+00:00"
-ir_digest = "sha256:2c6ad1aa423bef4fbeb93f31c4c6f521ff15ddb18111b3295e3f40a7483050da"
-source_digest = "sha256:1ae52aa664e4ce7b361e98012655b4d4c5a7ecc29b4960d3beded24fdcd33be6"
+generated_at = "2026-08-03T13:47:46.710340+00:00"
+ir_digest = "sha256:5415b99160730b36c203ca68ec4787cdd4aac47c19a5a91eef2c7a083226055c"
+source_digest = "sha256:23cd1300bd111b3691eee5b03dafea1d37131f4d1cdcef751d4cbf591c996995"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:2f97395784c75993745d20b38f6361c6ccd1ea2ec5fa789b055161f9fc98e76c"
+digest = "sha256:b916c8aa5c6ff12a420ce303c4ef0fbc74c43d07f5d0970250e44b6a5b390f92"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -287,6 +287,10 @@ digest = "sha256:89285034fec8c73f38fc5382a8e4ee49ccd6aa4368ed5a7bc01a6f0a8b7847f
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-cache-safe-discovery.py"
 digest = "sha256:9124044826bb09151cfa6bc1f640e53fbb64ff1a33ebdc541d4abc200dba8849"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-fixture-no-cargo-delegation.py"
+digest = "sha256:63446642c09bddd8778bad98b4ec4b68b4eec84ba5ae96b393e08bffbd12bfe0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
@@ -610,7 +614,7 @@ digest = "sha256:9693ee2e5e6e163a225aac83e12463b519c353db331ca94e77623ad7eb8d267
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/td_terminal.py"
-digest = "sha256:af0fb91038dd8bd3c7af3f07b4f5d139d4712aa8f6f93b3d585ad106911d51c9"
+digest = "sha256:0426fc11ab9fcc75e882fa408c984b7dc400cd3e54dbfcc966deb3535b455267"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/work_item_planning.py"
@@ -638,7 +642,7 @@ digest = "sha256:3dc90509a8c8fd1472e80871b5ad17c133e126932d381eb239a7734d55ad824
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py"
-digest = "sha256:bda3f5dbfb3b9be0d585fbde026e5a835dcbbfadc6b809dd87c4e35d21bdf93f"
+digest = "sha256:01e2504a28b926cd338cb337012c3d2839feb4a9f2f425848132415eb0dd8e8a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/tests/unit/test_claim_reconciliation.py"
@@ -647,6 +651,10 @@ digest = "sha256:fe11e0054e83ccefad9583c4f69e81b03ec018481480a89b288479b51de4fad
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/tests/unit/test_project_health_contract.py"
 digest = "sha256:2af8fd91c78a0244e4f8dce292b80ccb55d74e1f4ba78a56d0d2a773d452d98d"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/tests/unit/test_wi_contract_fixture.py"
+digest = "sha256:97971dd0739e9cd1bce1b2ebd96f9bec938b5758a6f54f5056285d26fd8bd2b8"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/uv.lock"
@@ -2041,6 +2049,26 @@ assertions = [
 evidence_digest = "sha256:56991a4d858719e0969f7cb7c6d6a1366c4364f71e86ff5c7f6870cb95b3a802"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:3ad693666422a507857c46a29281db88efe4e1831c7225aee587d536d4eae1cc"
+
+[[cases]]
+id = "python-ec-fixture-no-cargo-delegation"
+capability_id = "project-local-td-and-ec-gates"
+claim_id = "no-cargo-ec-fixture-execution"
+contract_id = "python-ec-fixture-no-cargo-delegation"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-ec-fixture-no-cargo-delegation"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-fixture-no-cargo-delegation.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-fixture-no-cargo-delegation"
+required_for_production = true
+assertions = [
+    "The shared Python EC fixture selects a prebuilt AW executable and fails closed without Cargo build delegation.",
+    "artifact: artifact:project-local-td-and-ec-gates/public-contract",
+    "oracle: The Python external contract calibrates a Cargo/rustup-rejecting interceptor at the exact shared subprocess boundary, then proves an AW-version preflight plus one selected-prebuilt product launch and missing, non-executable, truncated, non-native, and unlaunchable rejection before that product launch.",
+    "target: rust",
+]
+evidence_digest = "sha256:cbbfe3373a64882688b4c1d58dccb1bc0f608d527d9dfdb5e414405877bd79bb"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:bce823fffb806d1e81180250bfa076f7e7697f2ea6c94bedc86801a314e06f19"
 
 [[cases]]
 id = "python-ec-only-authoring"

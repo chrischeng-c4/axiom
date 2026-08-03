@@ -11,11 +11,10 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from wi_contract_fixture import (
-    AW_BINARY,
-    _ensure_aw_binary,
     final_json,
     git_commit_fixture,
     project_fixture,
+    resolve_aw_binary,
     run_aw,
     write_python_artifact_lock,
 )
@@ -163,7 +162,7 @@ def _terminal_fixture(mode: str) -> Iterator[dict[str, Any]]:
 
 def _verify_command(slug: str | None = None) -> list[str]:
     command = [
-        str(AW_BINARY),
+        str(resolve_aw_binary()),
         "ec",
         "verify",
         "--project",
@@ -224,7 +223,7 @@ def _wait_for(path: Path, timeout: float = 5.0) -> None:
 
 
 def _single_flight(*, with_wi: bool, mode: str) -> dict[str, Any]:
-    _ensure_aw_binary()
+    resolve_aw_binary()
     with _terminal_fixture(mode) as fixture:
         root = fixture["root"]
         slug = fixture["slug"] if with_wi else None
@@ -293,7 +292,7 @@ def verify(case_id: str) -> list[str]:
             "the duplicate returns promptly and exactly one Python EC process launches",
         ]
     if case_id == "terminal-ec-wrapper-timeout-teardown-python-contract":
-        _ensure_aw_binary()
+        resolve_aw_binary()
         with _terminal_fixture("no_child") as fixture:
             root = fixture["root"]
             completed = subprocess.run(

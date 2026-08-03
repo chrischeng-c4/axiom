@@ -72,6 +72,20 @@ command = "uv run --frozen --offline --project apps/agentic-workflow/external-co
 evidence_paths = ["evidence/python-ec-cache-safe-discovery.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "python-ec-fixture-no-cargo-delegation"
+artifact_id = "artifact:project-local-td-and-ec-gates/public-contract"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "no-cargo-ec-fixture-execution"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/python-ec-fixture-no-cargo-delegation.py"
+promise = "The shared Python EC fixture selects a prebuilt AW executable and fails closed without Cargo build delegation."
+oracle = "The Python external contract calibrates a Cargo/rustup-rejecting interceptor at the exact shared subprocess boundary, then proves an AW-version preflight plus one selected-prebuilt product launch and missing, non-executable, truncated, non-native, and unlaunchable rejection before that product launch."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-fixture-no-cargo-delegation"
+evidence_paths = ["evidence/python-ec-fixture-no-cargo-delegation.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "work-item-four-type-taxonomy"
 artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"

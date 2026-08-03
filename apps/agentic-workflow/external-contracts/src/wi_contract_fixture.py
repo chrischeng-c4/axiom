@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterator
@@ -16,38 +15,147 @@ from typing import Any
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 AW_BINARY = REPOSITORY_ROOT / "target" / "debug" / "aw"
 EVIDENCE_ROOT = Path(__file__).resolve().parents[1] / "evidence"
-_AW_READY = False
+
+# A Python EC must invoke the controller-provided Rust binary, never turn into
+# an implicit Cargo/rustup build client.  Checking the ordinary executable bit
+# alone would allow a shell script or unrelated command to be launched as AW.
+# The supported AW distribution targets are native Mach-O, ELF, or PE files.
+_NATIVE_EXECUTABLE_MAGICS = frozenset(
+    {
+        b"\x7fELF",
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\xbe\xba\xfe\xca",
+    }
+)
 
 
-def _ensure_aw_binary() -> None:
-    global _AW_READY
-    if _AW_READY:
-        return
-    rustup = shutil.which("rustup")
-    if rustup is None:
-        raise AssertionError("rustup is required to build the AW EC fixture binary")
-    completed = subprocess.run(
-        [
-            rustup,
-            "run",
-            "stable",
-            "cargo",
-            "build",
-            "-p",
-            "agentic-workflow",
-            "--bin",
-            "aw",
-        ],
-        cwd=REPOSITORY_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+def _is_native_aw_executable(candidate: Path) -> bool:
+    """Return whether `candidate` looks like a supported native AW binary."""
+    try:
+        with candidate.open("rb") as stream:
+            header = stream.read(4096)
+    except OSError:
+        return False
+    if header[:4] == b"\x7fELF":
+        return _is_valid_elf_header(header)
+    if header[:4] in _NATIVE_EXECUTABLE_MAGICS:
+        return _is_valid_macho_header(header)
+    if header[:2] == b"MZ":
+        return _is_valid_pe_header(header)
+    return False
+
+
+def _is_valid_elf_header(header: bytes) -> bool:
+    """Reject truncated/corrupt ELF files before they reach `execve`."""
+    if len(header) < 64 or header[4] not in (1, 2) or header[5] not in (1, 2):
+        return False
+    if header[6] != 1:
+        return False
+    endian = "little" if header[5] == 1 else "big"
+    if int.from_bytes(header[20:24], endian) != 1:
+        return False
+    elf_class = header[4]
+    header_size_offset = 40 if elf_class == 1 else 52
+    expected_header_size = 52 if elf_class == 1 else 64
+    return int.from_bytes(
+        header[header_size_offset : header_size_offset + 2], endian
+    ) == expected_header_size
+
+
+def _is_valid_macho_header(header: bytes) -> bool:
+    """Reject truncated/corrupt Mach-O files before they reach `execve`."""
+    magic = header[:4]
+    if magic in (b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe"):
+        minimum_size = 28
+    elif magic in (b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe"):
+        minimum_size = 32
+    else:
+        # A universal/fat header contains a non-zero architecture count plus
+        # at least one complete architecture descriptor.
+        if len(header) < 8:
+            return False
+        endian = "big" if magic == b"\xca\xfe\xba\xbe" else "little"
+        architectures = int.from_bytes(header[4:8], endian)
+        return architectures > 0 and len(header) >= 8 + (architectures * 20)
+    if len(header) < minimum_size:
+        return False
+    endian = "big" if magic[:1] == b"\xfe" else "little"
+    commands = int.from_bytes(header[16:20], endian)
+    commands_size = int.from_bytes(header[20:24], endian)
+    return commands > 0 and commands_size > 0 and len(header) >= minimum_size + commands_size
+
+
+def _is_valid_pe_header(header: bytes) -> bool:
+    """Reject a DOS stub without a PE signature before it is executed."""
+    if len(header) < 64:
+        return False
+    pe_offset = int.from_bytes(header[0x3C:0x40], "little")
+    return pe_offset >= 64 and pe_offset + 4 <= len(header) and header[pe_offset : pe_offset + 4] == b"PE\0\0"
+
+
+def resolve_aw_binary() -> Path:
+    """Resolve and preflight a controller-supplied AW executable without building."""
+    override = os.environ.get("AW_EC_AW_BINARY")
+    candidate = (
+        Path(override).resolve()
+        if override
+        else (REPOSITORY_ROOT / "target" / "debug" / "aw").resolve()
     )
-    if completed.returncode != 0:
+    if not candidate.is_file():
         raise AssertionError(
-            f"failed to build aw:\nstdout={completed.stdout}\nstderr={completed.stderr}"
+            f"Prebuilt AW binary missing or not a regular file at {candidate}. "
+            "The controller or environment must build or supply the executable separately."
         )
-    _AW_READY = True
+    if not os.access(candidate, os.X_OK):
+        raise AssertionError(
+            f"Prebuilt AW binary at {candidate} is not executable. "
+            "The controller or environment must build or supply the executable separately."
+        )
+    if not _is_native_aw_executable(candidate):
+        raise AssertionError(
+            f"Prebuilt AW binary at {candidate} is not a supported native executable. "
+            "The controller or environment must build or supply the executable separately."
+        )
+    _preflight_aw_binary(candidate)
+    return candidate
+
+
+def _preflight_aw_binary(candidate: Path) -> None:
+    """Prove the configured binary launches as AW before running a product command."""
+    try:
+        completed = subprocess.run(
+            [str(candidate), "--version"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise AssertionError(
+            f"Prebuilt AW binary at {candidate} could not execute its AW preflight: {error}. "
+            "The controller or environment must build or supply the executable separately."
+        ) from error
+    version = completed.stdout.strip()
+    if completed.returncode != 0 or not version.startswith("aw "):
+        raise AssertionError(
+            f"Prebuilt AW binary at {candidate} failed AW preflight "
+            f"(exit={completed.returncode}, stdout={version!r}). "
+            "The controller or environment must build or supply the executable separately."
+        )
+
+
+def _ensure_aw_binary() -> Path:
+    """Compatibility preflight for legacy ECs; it never builds the binary.
+
+    Older cases import this helper before invoking the historical `AW_BINARY`
+    constant directly.  Keeping the symbol avoids breaking those production
+    cases while preserving the new controller-owned prebuilt-binary boundary.
+    """
+    return resolve_aw_binary()
 
 
 @contextmanager
@@ -172,14 +280,14 @@ def run_aw(
     expect_success: bool | None = True,
     env_overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    _ensure_aw_binary()
+    aw_binary = resolve_aw_binary()
     env = os.environ.copy()
     env["AW_FIXTURE_LOCAL_BACKEND"] = "1"
     env["AW_DISABLE_CAP"] = "1"
     if env_overrides:
         env.update(env_overrides)
     completed = subprocess.run(
-        [str(AW_BINARY), *args],
+        [str(aw_binary), *args],
         cwd=root,
         env=env,
         text=True,
