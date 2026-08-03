@@ -30,6 +30,7 @@ its own mutation-adequacy declaration) and drives three real phases:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -154,6 +155,60 @@ def duplicate_contract() -> bool:
 """
 
 
+def _compute_source_digest(ec_root: Path) -> str:
+    """Replicate the Rust digest_files algorithm over the fixture EC source_roots=["src"].
+
+    For each file in sorted order: feed relative_path_bytes + NUL +
+    len_u64_be + NUL + file_bytes into a single SHA-256 accumulator.
+    """
+    src_root = ec_root / "src"
+    files = sorted(src_root.rglob("*.py"))
+    hasher = hashlib.sha256()
+    for path in files:
+        relative = path.relative_to(ec_root).as_posix().encode()
+        content = path.read_bytes()
+        hasher.update(relative)
+        hasher.update(b"\x00")
+        hasher.update(len(content).to_bytes(8, "big"))
+        hasher.update(b"\x00")
+        hasher.update(content)
+    return "sha256:" + hasher.hexdigest()
+
+
+def _fixture_health_evidence_payload(ec_root: Path) -> dict[str, object]:
+    source_digest = _compute_source_digest(ec_root)
+    implementation_path = ec_root / "src/cases/fixture-health.py"
+    implementation_digest = "sha256:" + hashlib.sha256(
+        implementation_path.read_bytes()
+    ).hexdigest()
+    assertions = ["fixture health"]
+    assertions_json = json.dumps(assertions, ensure_ascii=True, separators=(",", ":"))
+    assertions_digest = "sha256:" + hashlib.sha256(assertions_json.encode()).hexdigest()
+    return {
+        "assertions": assertions,
+        "attempts": [
+            {
+                "assertion_count": len(assertions),
+                "assertions_digest": assertions_digest,
+                "elapsed_ms": 1,
+                "exit_code": 0,
+            }
+        ],
+        "case_id": "fixture-health",
+        "declared_command": (
+            "uv run --frozen --offline --project projects/fixture/external-contracts"
+            " python projects/fixture/external-contracts/src/runner.py --case fixture-health"
+        ),
+        "exit_code": 0,
+        "implementation": "src/cases/fixture-health.py",
+        "implementation_digest": implementation_digest,
+        "mode": "behavior",
+        "protocol": "aw.python-ec.evidence.v1",
+        "source_digest": source_digest,
+        "threshold_seconds": None,
+    }
+
+
 def _write_fixture(root: Path) -> Path:
     (root / "projects/fixture/src").mkdir(parents=True)
     (root / "aw.toml").write_text(
@@ -219,14 +274,9 @@ verify_cold = false
         project / "external-contracts", name="fixture-external-contracts"
     )
     write_python_artifact_unit_test(project / "external-contracts", "fixture_health")
-    (project / "external-contracts/evidence/fixture-health.json").write_text(
-        json.dumps(
-            {
-                "protocol": "aw.python-ec.evidence.v1",
-                "case_id": "fixture-health",
-                "exit_code": 0,
-            }
-        )
+    ec_root = project / "external-contracts"
+    (ec_root / "evidence/fixture-health.json").write_text(
+        json.dumps(_fixture_health_evidence_payload(ec_root), indent=2, sort_keys=True)
         + "\n",
         encoding="utf-8",
     )
