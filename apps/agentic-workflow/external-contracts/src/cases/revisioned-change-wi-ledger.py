@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -27,12 +28,14 @@ TARGET_COMMAND = (
 ASSERTIONS = (
     "a fresh Change WI shows schema==aw.change-lifecycle.v1, a typed wi_revision "
     "with id/digest/parents (list), null ec/td/cb revisions, ledger head_event_id/epoch, "
-    "list evidence/invalidations, integer iteration, one next.command and next.owner==wi, terminal false",
-    "after aw wi update --body-file the first post-update show returns an updated "
-    "wi_revision digest and ledger head_event_id/epoch; a second independent show "
-    "returns a byte-identical snapshot; next.owner is exactly wi",
-    "a Change WI with a legacy <!-- aw:loop-state ... --> body has a real loop_state "
-    "dict from show, and its causal snapshot has terminal false and one next.command",
+    "list evidence/invalidations, integer iteration, next.command with next.owner==wi, "
+    "terminal false; every aw wi show call leaves the fixture tree byte-identical",
+    "after aw wi update --body-file the first post-update show returns a strictly "
+    "advanced head_event_id AND epoch with next.owner==wi; a second independent show "
+    "returns a byte-identical snapshot; both shows are read-only",
+    "a Change WI with a legacy <!-- aw:loop-state ... --> body has a parsed loop_state "
+    "red last_result dict; its causal snapshot has schema aw.change-lifecycle.v1, "
+    "terminal false, next.owner==migration, and next.command starting with aw ",
 )
 
 _CHANGE_BODY = (
@@ -57,7 +60,7 @@ _LEGACY_LOOP_BODY = (
     'issue_id: "placeholder"\n'
     "iterations:\n"
     '  - {n: 1, action: ec, outcome: "red:behavior", summary: "prior round"}\n'
-    "last_result: {red: {dimension: behavior, why: \"prior round\"}}\n"
+    "last_result: !red {dimension: behavior, why: \"prior round\"}\n"
     "status: iterating\n"
     'next_action: "aw cb gen placeholder"\n'
     "tried: []\n"
@@ -78,13 +81,29 @@ _LEGACY_LOOP_BODY = (
 )
 
 
+def _tree_fp(root: Path) -> str:
+    h = hashlib.sha256()
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            h.update(p.relative_to(root).as_posix().encode())
+            h.update(p.read_bytes())
+    return h.hexdigest()
+
+
+def _show_readonly(root: Path, slug: str) -> dict:
+    before = _tree_fp(root)
+    result = show(root, slug)
+    assert _tree_fp(root) == before, f"aw wi show {slug!r} mutated the fixture tree"
+    return result
+
+
 def _lifecycle(root: Path, slug: str) -> dict:
-    snapshot = show(root, slug)
-    assert "causal_lifecycle" in snapshot, (
+    result = _show_readonly(root, slug)
+    assert "causal_lifecycle" in result, (
         f"causal_lifecycle absent from aw wi show {slug!r} -- "
         "expected failure on pre-#3347 binary"
     )
-    return snapshot["causal_lifecycle"]
+    return result["causal_lifecycle"]
 
 
 def _assert_revision(rev: object, name: str) -> None:
@@ -96,6 +115,7 @@ def _assert_revision(rev: object, name: str) -> None:
 
 def verify() -> list[str]:
     with project_fixture() as root:
+        # Phase 1: fresh Change WI has the approved v1 shape.
         change = create(root, "Causal ledger baseline", "change", "--body", _CHANGE_BODY)
         slug = change["slug"]
         final_json(run_aw(root, "wi", "validate", slug))
@@ -117,6 +137,7 @@ def verify() -> list[str]:
         assert nxt1.get("owner") == "wi", snap1
         assert snap1.get("terminal") is False, snap1
 
+        # Phase 2: body update; read lifecycle only from show, never from update.
         updated_path = root / "updated.md"
         updated_path.write_text(
             _CHANGE_BODY + "\n<!-- updated for ledger phase 2 -->\n",
@@ -128,27 +149,38 @@ def verify() -> list[str]:
         wi_rev2 = snap2a.get("wi_revision", {})
         assert wi_rev2.get("digest") != snap1["wi_revision"].get("digest"), snap2a
         ledger2 = snap2a.get("ledger", {})
-        assert (
-            ledger2.get("head_event_id") != ledger1.get("head_event_id")
-            or ledger2.get("epoch", 0) > ledger1.get("epoch", 0)
-        ), snap2a
+        assert ledger2.get("head_event_id") != ledger1.get("head_event_id"), snap2a
+        assert ledger2.get("epoch", 0) > ledger1.get("epoch", 0), snap2a
         assert snap2a.get("next", {}).get("owner") == "wi", snap2a
 
         snap2b = _lifecycle(root, slug)
         assert snap2b == snap2a, (snap2b, snap2a)
 
+        # Phase 3: legacy loop-state body — prove parsed red record then causal snap.
         legacy = create(
             root, "Legacy loop-state Change", "change", "--body", _LEGACY_LOOP_BODY
         )
         legacy_slug = legacy["slug"]
         final_json(run_aw(root, "wi", "validate", legacy_slug))
-        assert isinstance(show(root, legacy_slug).get("loop_state"), dict), (
-            "loop_state not a dict for legacy WI"
-        )
-        snap_leg = _lifecycle(root, legacy_slug)
+
+        legacy_shown = _show_readonly(root, legacy_slug)
+        loop_st = legacy_shown.get("loop_state")
+        assert isinstance(loop_st, dict), f"loop_state not a dict: {loop_st!r}"
+        assert loop_st.get("last_result") == {
+            "red": {"dimension": "behavior", "why": "prior round"}
+        }, loop_st
+
+        snap_leg = legacy_shown.get("causal_lifecycle")
+        assert snap_leg is not None, legacy_shown
+        assert snap_leg.get("schema") == "aw.change-lifecycle.v1", snap_leg
         assert snap_leg.get("terminal") is False, snap_leg
+        for _rev in ("wi_revision", "ec_revision", "td_revision", "cb_revision"):
+            assert snap_leg.get(_rev) is None, (_rev, snap_leg)
+        assert snap_leg.get("ledger") == {"head_event_id": None, "epoch": 0}, snap_leg
+        assert snap_leg.get("evidence") == [] and snap_leg.get("invalidations") == [] and snap_leg.get("iteration") == 1, snap_leg
         nxt_leg = snap_leg.get("next", {})
-        assert isinstance(nxt_leg.get("command"), str) and nxt_leg["command"], snap_leg
+        assert nxt_leg.get("owner") == "migration", snap_leg
+        assert nxt_leg.get("command") == f"aw wi validate {legacy_slug}", snap_leg
 
     return list(ASSERTIONS)
 

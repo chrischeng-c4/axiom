@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-04T03:03:09.422882+00:00"
+generated_at = "2026-08-04T05:16:18.348171+00:00"
 ir_digest = "sha256:8861daa796da728a5a3191b1cefccd47705d68622d65cf569b49b4b2b8a14eb5"
-source_digest = "sha256:5bbb2195924a675e1a37547aac44af11f40138ac32758e9b000eff4a74fdf105"
+source_digest = "sha256:7b43a78f619423122ec7376309c32f9aa9d848c77632711a8bfdbae82f5c03b1"
 tool_contracts = []
 
 [[sources]]
@@ -310,7 +310,7 @@ digest = "sha256:0cb38e710e0a0fc5bfb1e2b545cbc5cbcf1011252c27ba01e7c386d894e54d2
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/revisioned-change-wi-ledger.py"
-digest = "sha256:88c0dec745562429a4ea57a5e77cf7bf6cc759f54f85da7eea5f4c496ab08a77"
+digest = "sha256:1e45fbd68ea7416f21654b7106f709ed09052d25783d144e4a0cb17819f9ad31"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-ec-fixture-loop-gate-python-contract.py"

@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:c7af617db690f76ea18708ced886bd1e7d49237d13c34423f78d071400a1ea9a",
+  "source_digest": "sha256:2433dbacf2876010d9e7db2cbbe8ea0fdcac96675900ee1a6c66f0f94dc7686f",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "codex-controller",
-  "reviewed_at": "2026-08-04T03:03:03.033589+00:00",
-  "summary": "Independent controller review: the ledger case is bound to the existing WorkItem loop-state use case and gives an implementation-independent, compiled-CLI oracle for the approved public causal_lifecycle projection. It checks the v1 shape, WI drift, deterministic fresh-process hydration, and a real persisted legacy loop-state input. Detailed EC/TD/CB evidence invalidation and rebind flows remain the explicitly named Rust reducer invariants until their later public leaves exist.",
+  "reviewed_by": "agent:aw-ec-reviewer:/root/ec_review_current",
+  "reviewed_at": "2026-08-04T05:16:00.306060+00:00",
+  "summary": "Independent semantic review accepted the Copilot-authored #3347 causal-lifecycle EC. It independently drives the public aw wi create, validate, update and show commands; fingerprints the fixture tree around every show; requires both new head and increasing epoch after semantic WI change; and pins the full legacy zero-head migration projection and parsed red control.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
