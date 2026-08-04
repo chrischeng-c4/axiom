@@ -296,6 +296,11 @@ def _is_literal(node: ast.expr) -> bool:
         return True
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         return all(_is_literal(e) for e in node.elts)
+    if isinstance(node, ast.Dict):
+        # A `**other` spread carries a None key and can smuggle in a symbol.
+        return all(k is not None and _is_literal(k) for k in node.keys) and all(
+            _is_literal(v) for v in node.values
+        )
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         return _is_literal(node.operand)
     return False
