@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:6c879b8d35a88783412799c63abf9a8fcd032757d1fff4acc808aea79d44554d",
+  "source_digest": "sha256:c7af617db690f76ea18708ced886bd1e7d49237d13c34423f78d071400a1ea9a",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:github-copilot:claude-sonnet-4.6:53cf653b-3960-4371-ab91-2f8fd89bd5a1",
-  "reviewed_at": "2026-08-03T16:23:08.492174+00:00",
-  "summary": "Independent isolation-verified GitHub Copilot review accepted #3308. It found all three semantic-health mutation assertions concretely covered, shared field-level health oracles independent, and live fixture evidence bound to the production readiness evaluator by source digest, exact declared command, exact implementation path, implementation digest, attempts, and assertion digest. No concrete stale-evidence or false-green flaw was found.",
+  "reviewed_by": "codex-controller",
+  "reviewed_at": "2026-08-04T03:03:03.033589+00:00",
+  "summary": "Independent controller review: the ledger case is bound to the existing WorkItem loop-state use case and gives an implementation-independent, compiled-CLI oracle for the approved public causal_lifecycle projection. It checks the v1 shape, WI drift, deterministic fresh-process hydration, and a real persisted legacy loop-state input. Detailed EC/TD/CB evidence invalidation and rebind flows remain the explicitly named Rust reducer invariants until their later public leaves exist.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

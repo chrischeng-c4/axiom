@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-03T16:23:12.251820+00:00"
-ir_digest = "sha256:5415b99160730b36c203ca68ec4787cdd4aac47c19a5a91eef2c7a083226055c"
-source_digest = "sha256:77e5caa1b8cf937aba38e1556681c54a83f11cb3f95b50a776091c9ab64e3434"
+generated_at = "2026-08-04T03:03:09.422882+00:00"
+ir_digest = "sha256:8861daa796da728a5a3191b1cefccd47705d68622d65cf569b49b4b2b8a14eb5"
+source_digest = "sha256:5bbb2195924a675e1a37547aac44af11f40138ac32758e9b000eff4a74fdf105"
 tool_contracts = []
 
 [[sources]]
@@ -14,7 +14,7 @@ digest = "sha256:858d645ad4a729bcf00f5cfc7b03c93b1bd9501d8a33ba6f535daa350afe918
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:a55334d8727d5e03f7b3bc32b59e96c3809629d4d63b137c916afa605e5d3e59"
+digest = "sha256:d3a52f01ad9132acc7542770a6b80993840802cc8f3ad6b7df6469face9dccbd"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -307,6 +307,10 @@ digest = "sha256:7cabe67328ea44b6c3e2e4884dd616384c79de5489fe562cf38bdf542ef2257
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
 digest = "sha256:0cb38e710e0a0fc5bfb1e2b545cbc5cbcf1011252c27ba01e7c386d894e54d24"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/revisioned-change-wi-ledger.py"
+digest = "sha256:88c0dec745562429a4ea57a5e77cf7bf6cc759f54f85da7eea5f4c496ab08a77"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-ec-fixture-loop-gate-python-contract.py"
@@ -2133,6 +2137,26 @@ assertions = [
 evidence_digest = "sha256:3a84cf30abb2d42459fe5ce7a61cf0a7766947d49546e46db5ca6d66de699b44"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:9b7fd1ca487f4b493200c267e83b8ef30ceed5f6be4470eb7a2e3602401ef1e7"
+
+[[cases]]
+id = "revisioned-change-wi-ledger"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "workitem-loop-state-model"
+contract_id = "revisioned-change-wi-ledger"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:revisioned-change-wi-ledger"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/revisioned-change-wi-ledger.py"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case revisioned-change-wi-ledger"
+required_for_production = true
+assertions = [
+    "A fresh Change WI exposes a typed aw.change-lifecycle.v1 causal snapshot from aw wi show: typed wi_revision with id/digest/parents (list), null ec/td/cb revisions, ledger head_event_id/epoch, evidence/invalidations lists, integer iteration, next.command with next.owner==wi, and terminal false; a body update advances wi_revision digest and ledger head_event_id/epoch with next.owner still wi, and a second independent show returns the identical snapshot; a Change WI with a legacy loop-state body has a real loop_state dict and a non-terminal causal snapshot with one actionable next.command.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: The Python external contract drives real aw create, wi validate, wi show, and wi update --body-file against an isolated local-backend project; asserts each aw.change-lifecycle.v1 field including parents as a list, iteration as an integer, and next.owner exactly equal to wi; writes updated.md inside the fixture root and reads causal snapshots only from show subprocesses; asserts byte-identity between two independent show calls after the update; and proves legacy loop-state input yields a dict loop_state and a non-terminal causal snapshot without importing production source.",
+    "target: rust",
+]
+evidence_digest = "sha256:766f6b46286c0018976263d1e722265a0e0ce20de0997042d689feae669e1530"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:aee5ceaf30883ee8793572d21ae049ca3916785dc6b05be74a669a4d757fefb7"
 
 [[cases]]
 id = "self-ec-fixture-loop-gate-python-contract"

@@ -1948,3 +1948,17 @@ oracle = "The Python external contract drives the real, live guard PythonV1 proj
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-python-spec-health-bypasses-legacy-cb-replay"
 evidence_paths = ["evidence/aw-core-client-python-spec-health-bypasses-legacy-cb-replay.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "revisioned-change-wi-ledger"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "workitem-loop-state-model"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/revisioned-change-wi-ledger.py"
+promise = "A fresh Change WI exposes a typed aw.change-lifecycle.v1 causal snapshot from aw wi show: typed wi_revision with id/digest/parents (list), null ec/td/cb revisions, ledger head_event_id/epoch, evidence/invalidations lists, integer iteration, next.command with next.owner==wi, and terminal false; a body update advances wi_revision digest and ledger head_event_id/epoch with next.owner still wi, and a second independent show returns the identical snapshot; a Change WI with a legacy loop-state body has a real loop_state dict and a non-terminal causal snapshot with one actionable next.command."
+oracle = "The Python external contract drives real aw create, wi validate, wi show, and wi update --body-file against an isolated local-backend project; asserts each aw.change-lifecycle.v1 field including parents as a list, iteration as an integer, and next.owner exactly equal to wi; writes updated.md inside the fixture root and reads causal snapshots only from show subprocesses; asserts byte-identity between two independent show calls after the update; and proves legacy loop-state input yields a dict loop_state and a non-terminal causal snapshot without importing production source."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case revisioned-change-wi-ledger"
+evidence_paths = ["evidence/revisioned-change-wi-ledger.json"]
