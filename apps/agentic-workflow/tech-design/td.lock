@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-04T03:06:59.666935+00:00"
-digest = "sha256:7d77ac7ffba156d4248698cce0bcbd8d6ce8deaedd9adf09123ab4107addf5c2"
-source_digest = "sha256:7d77ac7ffba156d4248698cce0bcbd8d6ce8deaedd9adf09123ab4107addf5c2"
-ir_digest = "sha256:ac964bf896ec22987d6a1b5a2ebe20cc3387de87cfe18ed741553e88b18459e7"
+generated_at = "2026-08-04T03:37:31.193900+00:00"
+digest = "sha256:9d2831d88f9dd561b2c4f4c3282a22d11605270de8a66abe8b443a30aca9e5c8"
+source_digest = "sha256:9d2831d88f9dd561b2c4f4c3282a22d11605270de8a66abe8b443a30aca9e5c8"
+ir_digest = "sha256:feb20da35832e4a20bcae788daa2146a2232aa927ab1921fdd833316076b470c"
 
 [[files]]
 path = "pyproject.toml"
@@ -3976,6 +3976,14 @@ path = "src/agentic_workflow/work_items/bind_reconciliation_ec_oracle_fixtures_i
 digest = "sha256:7c51c7ff072bac5e7a561a23542535b4339d67426e04e3017f7a033e4447eb7f"
 
 [[files]]
+path = "src/agentic_workflow/work_items/change_wi_lifecycle_hydration.py"
+digest = "sha256:1c913dcfacaf9908d142700d8932a1b08e1eed2ee767af38e8aa99a58e732965"
+
+[[files]]
+path = "src/agentic_workflow/work_items/change_wi_lifecycle_reducer.py"
+digest = "sha256:c4e34e7bc2ac00d0987433659ec956cd9d8470e0d5af47fe0f76de8780542e1e"
+
+[[files]]
 path = "src/agentic_workflow/work_items/coordination_authority.py"
 digest = "sha256:85ce95bab692a9954aef21b65cb29589e4ae5fc7a962c34f0e6b801c3ac3bb25"
 
@@ -4046,6 +4054,10 @@ digest = "sha256:14911c481e24b1932ecf816a31d965f411301c6d86e95caf46eda18ff572fcd
 [[files]]
 path = "src/agentic_workflow/work_items/report_triage.py"
 digest = "sha256:f85448e04222557f2acae6d6b0cda3c6ab340f8fe34afede936e0a7250d478a6"
+
+[[files]]
+path = "src/agentic_workflow/work_items/revisioned_change_wi_ledger.py"
+digest = "sha256:329e5c79457d28f0ff5ef85b9ff337f7ced6599d3868eaf5aa1ba202f0ee3b77"
 
 [[files]]
 path = "src/agentic_workflow/work_items/scope_python_cb_code_checks_to_declared_wi_targets.py"
