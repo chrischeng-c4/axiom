@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-03T14:26:48.535710+00:00"
-digest = "sha256:86bd3c626c86c0becd06783b619957e658f3a88ef6e2de980a6e61709c56be41"
-source_digest = "sha256:86bd3c626c86c0becd06783b619957e658f3a88ef6e2de980a6e61709c56be41"
-ir_digest = "sha256:84fb72ee3724a2a313aeaa84a16e0a9047daf3c6e884d65ca3e5e71a689b63f5"
+generated_at = "2026-08-04T03:06:59.666935+00:00"
+digest = "sha256:7d77ac7ffba156d4248698cce0bcbd8d6ce8deaedd9adf09123ab4107addf5c2"
+source_digest = "sha256:7d77ac7ffba156d4248698cce0bcbd8d6ce8deaedd9adf09123ab4107addf5c2"
+ir_digest = "sha256:ac964bf896ec22987d6a1b5a2ebe20cc3387de87cfe18ed741553e88b18459e7"
 
 [[files]]
 path = "pyproject.toml"
