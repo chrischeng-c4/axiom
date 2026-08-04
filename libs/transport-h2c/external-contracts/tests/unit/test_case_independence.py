@@ -13,6 +13,10 @@ EXPECTED_CASES = {
     "bounded-admission-security": 12,
     "adaptive-connection-sizing-behavior": 14,
     "adaptive-connection-sizing-security": 12,
+    "live-pool-statistics-behavior": 14,
+    "live-pool-statistics-security": 12,
+    "prior-knowledge-client-helpers-behavior": 14,
+    "prior-knowledge-client-helpers-security": 12,
 }
 
 BANNED_IMPORTS = {

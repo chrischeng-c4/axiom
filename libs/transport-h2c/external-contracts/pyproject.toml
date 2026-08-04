@@ -126,3 +126,59 @@ oracle = "Sweeps six concurrencies against a three-core cap and four core counts
 target = "rust"
 command = "adaptive-connection-sizing-security"
 evidence_paths = ["evidence/adaptive-connection-sizing-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "live-pool-statistics-behavior"
+artifact_id = "artifact:transport-h2c/live-pool-statistics-behavior"
+capability_id = "live-pool-statistics"
+use_case_id = "live-pool-statistics"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/live-pool-statistics-behavior.py"
+promise = "One snapshot call reports the whole pool at once: how many connections exist, how many of those are healthy, how many streams are in flight across them, and the cumulative request and error totals. The totals accumulate across the pool rather than per connection, and a connection retired by eviction, shrink, or shutdown carries its counters into the manager instead of discarding them."
+oracle = "Reads all five snapshot fields as one tuple across fourteen pool shapes: empty, single, mixed-health, stream-carrying, and fully populated. Retired requests and retired errors are read both alongside live connections and on an otherwise empty pool, and one row proves the snapshot is computed when asked rather than cached at construction."
+target = "rust"
+command = "live-pool-statistics-behavior"
+evidence_paths = ["evidence/live-pool-statistics-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "live-pool-statistics-security"
+artifact_id = "artifact:transport-h2c/live-pool-statistics-security"
+capability_id = "live-pool-statistics"
+use_case_id = "live-pool-statistics"
+dimension = "security"
+applicability = "td"
+test_path = "src/live-pool-statistics-security.py"
+promise = "The error counter has a proven zero point and does not drift upward on its own, a degraded pool stays distinguishable from a healthy one of the same size, and self-healing never silently resets an operator's error rate or request total. Each of the five reported fields is independently derived and none is an alias of another."
+oracle = "Anchors the zero-error point and repeats the snapshot to show it does not drift, then walks the health count across all four live/dead mixes of a three-connection pool and the in-flight count across three stream loads. Eviction is modelled as a smaller pool plus retired counters, and the totals must be unchanged on both sides."
+target = "rust"
+command = "live-pool-statistics-security"
+evidence_paths = ["evidence/live-pool-statistics-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "prior-knowledge-client-helpers-behavior"
+artifact_id = "artifact:transport-h2c/prior-knowledge-client-helpers-behavior"
+capability_id = "prior-knowledge-client-helpers"
+use_case_id = "prior-knowledge-client-helpers"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/prior-knowledge-client-helpers-behavior.py"
+promise = "For callers who want a client rather than a managed pool, this crate hands out a fixed set of prior-knowledge HTTP/2 cleartext clients round-robin. Successive handouts rotate across every client rather than pinning to the first, the pool size floor is enforced at construction so a zero or negative request still yields one usable client, and a pool sized for a concurrency reuses the same connection-count heuristic as the manager."
+oracle = "Reads the pool size at a positive, zero and negative request, walks a six-deep handout across a three-client pool, resumes a handout from a non-zero cursor, and reads the cursor and index functions directly. The builder dictionary is reduced to a sorted tuple of items so an unset field is visibly absent rather than present as null."
+target = "rust"
+command = "prior-knowledge-client-helpers-behavior"
+evidence_paths = ["evidence/prior-knowledge-client-helpers-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "prior-knowledge-client-helpers-security"
+artifact_id = "artifact:transport-h2c/prior-knowledge-client-helpers-security"
+capability_id = "prior-knowledge-client-helpers"
+use_case_id = "prior-knowledge-client-helpers"
+dimension = "security"
+applicability = "td"
+test_path = "src/prior-knowledge-client-helpers-security.py"
+promise = "No pool size request can produce an empty pool, no handout ever names a client outside the pool, and no client is starved over a full rotation. Prior knowledge is declared whatever the caller's settings, an unset field is omitted rather than transmitted as null, and an explicitly configured zero timeout is still carried."
+oracle = "Sweeps five size requests including two negatives, counts each client's share of a twelve-deep rotation to prove none is starved, and hands out from a cursor of one million to prove the index stays in range. Row 11 distinguishes an explicit zero timeout from an unset one, which a truthiness test rather than a null test would collapse."
+target = "rust"
+command = "prior-knowledge-client-helpers-security"
+evidence_paths = ["evidence/prior-knowledge-client-helpers-security.json"]
