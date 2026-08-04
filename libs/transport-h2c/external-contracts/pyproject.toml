@@ -1,0 +1,72 @@
+[project]
+name = "transport-h2c-external-contracts"
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml", "uv.lock"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "chrischeng"
+efficiency_policy = "optional"
+
+[[tool.aw.python-ec.cases]]
+id = "least-loaded-stream-dispatch-behavior"
+artifact_id = "artifact:transport-h2c/least-loaded-stream-dispatch-behavior"
+capability_id = "least-loaded-stream-dispatch"
+use_case_id = "least-loaded-stream-dispatch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/least-loaded-stream-dispatch-behavior.py"
+promise = "Requests sent into transport-h2c are dispatched to the healthy connection carrying the fewest active streams. The connection pool grows dynamically when the least-loaded connection reaches the configured growth threshold, up to the maximum connection ceiling. Unhealthy connections are skipped during selection, and slot reservation ensures concurrent dial attempts do not breach the pool ceiling."
+oracle = "Verifies least-loaded connection selection, growth threshold evaluation, ceiling enforcement, and slot reservation using exact literal expected values. Case row 4 explicitly verifies that a dead connection with zero in-flight streams is skipped in favor of a healthy connection with active streams."
+target = "rust"
+command = "least-loaded-stream-dispatch-behavior"
+evidence_paths = ["evidence/least-loaded-stream-dispatch-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "least-loaded-stream-dispatch-security"
+artifact_id = "artifact:transport-h2c/least-loaded-stream-dispatch-security"
+capability_id = "least-loaded-stream-dispatch"
+use_case_id = "least-loaded-stream-dispatch"
+dimension = "security"
+applicability = "td"
+test_path = "src/least-loaded-stream-dispatch-security.py"
+promise = "Connection dispatch and pool growth remain strictly bounded under all health configurations and load states. Spurious releases cannot drive connection load readings negative or turn a single connection into a permanent traffic sink. Pool growth and reservation caps are enforced from configured values rather than hardcoded constants."
+oracle = "Evaluates connection dispatch across all eight connection health permutations, verifies growth refusal at maximum capacity across high load values, and confirms that negative load readings from spurious releases saturate at zero rather than pinning traffic to one socket. Case row 8 verifies that an over-released connection does not become permanently preferred."
+target = "rust"
+command = "least-loaded-stream-dispatch-security"
+evidence_paths = ["evidence/least-loaded-stream-dispatch-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "connection-health-recovery-behavior"
+artifact_id = "artifact:transport-h2c/connection-health-recovery-behavior"
+capability_id = "connection-health-recovery"
+use_case_id = "connection-health-recovery"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/connection-health-recovery-behavior.py"
+promise = "Connection errors are classified to identify connection loss, marking failed connections dead and retiring them. Requests failing due to connection loss on the initial attempt are retried exactly once. Background sweeps evict dead connections, shed idle surplus connections, and replenish pool capacity when below the minimum floor."
+oracle = "Verifies error classification for connection loss, single-attempt retry behavior, delivery attempt accounting, and background sweep planning with explicit literal expectations. Case row 7 verifies that a retry on connection loss successfully delivers on the second attempt."
+target = "rust"
+command = "connection-health-recovery-behavior"
+evidence_paths = ["evidence/connection-health-recovery-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "connection-health-recovery-security"
+artifact_id = "artifact:transport-h2c/connection-health-recovery-security"
+capability_id = "connection-health-recovery"
+use_case_id = "connection-health-recovery"
+dimension = "security"
+applicability = "td"
+test_path = "src/connection-health-recovery-security.py"
+promise = "Self-healing and connection sweeps preserve lifetime request/error accounting and never shed connections carrying active streams or drop pool capacity below the configured minimum floor. Retired connections are never resurrected by subsequent operations, and retry budgets strictly limit retries to one attempt."
+oracle = "Tests sweep planning edge cases (busy connections, floor enforcement, keepalive ceiling), lifetime counter preservation across shutdown and eviction, and non-resurrection of dead connections. Case row 11 verifies that a third attempt is never consumed on repeated connection loss."
+target = "rust"
+command = "connection-health-recovery-security"
+evidence_paths = ["evidence/connection-health-recovery-security.json"]
