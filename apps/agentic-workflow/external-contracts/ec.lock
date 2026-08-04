@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-08-04T05:16:18.348171+00:00"
+generated_at = "2026-08-04T07:21:55.583534+00:00"
 ir_digest = "sha256:8861daa796da728a5a3191b1cefccd47705d68622d65cf569b49b4b2b8a14eb5"
-source_digest = "sha256:7b43a78f619423122ec7376309c32f9aa9d848c77632711a8bfdbae82f5c03b1"
+source_digest = "sha256:e1b3e252612c789b9a1369616f79560fff4d4d9669c832b5c6108f12e2380bf1"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/fixtures/claim-reconciliation/capability-catalog-td-claim-linkage-expected-mapping.json"
-digest = "sha256:858d645ad4a729bcf00f5cfc7b03c93b1bd9501d8a33ba6f535daa350afe9180"
+digest = "sha256:53363c737ce827f40f0b4eb4b4e6ea4c160f746db88d840e6e2edc9a847e7f79"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
@@ -138,7 +138,7 @@ digest = "sha256:76fa19ec6021d9c105e0afbe58bca72c6e05f1b67e8a5bc3e6fbb7c83d7aefb
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
-digest = "sha256:461d362bf8a692ffca4db0c07f8684cd194cf2bd11e9b09ec3317227af710196"
+digest = "sha256:c6bad81cb15189f911014a62e0fb997574e2a322833c85a633e80deef89c9a35"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-capability-project-sweep.py"
