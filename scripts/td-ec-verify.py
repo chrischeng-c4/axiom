@@ -458,6 +458,27 @@ def gate_mutations(report: Report, project: Project, mutations_path: Path | None
     # behind by whatever ran before this harness did.
     purge_bytecode(src_root)
 
+    # A case that already fails on unmutated source exits nonzero for every
+    # seed, so it "catches" all of them without observing anything. Measuring
+    # discriminating power against a red baseline reports a number that cannot
+    # be wrong, which is worse than reporting none.
+    red_at_rest = [
+        case["command"]
+        for case in project.cases
+        if run_case(project, case["command"])[0] != 0
+    ]
+    if red_at_rest:
+        report.add(
+            "mutation-suite",
+            False,
+            "baseline is not green — discriminating power is unmeasurable",
+            [
+                f"{command}: fails on unmutated source, so it catches every seed vacuously"
+                for command in red_at_rest
+            ],
+        )
+        return
+
     for mutation in mutations:
         target = src_root / mutation["file"]
         original = target.read_text()
