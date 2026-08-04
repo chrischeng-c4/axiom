@@ -126,3 +126,31 @@ oracle = "Row 1 projects the identical inputs twice and compares the two results
 target = "rust"
 command = "clock-free-condition-projection-security"
 evidence_paths = ["evidence/clock-free-condition-projection-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "owner-scoped-material-projection-behavior"
+artifact_id = "artifact:service-k8s/owner-scoped-material-projection-behavior"
+capability_id = "owner-scoped-material-projection"
+use_case_id = "owner-scoped-material-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/owner-scoped-material-projection-behavior.py"
+promise = "Certificate material is projected into the instance's own namespace as a Secret whose name is derived from the instance and the purpose it serves, owned by the custom resource that asked for it. A trust bundle is a set of anchors keyed by issuer, ordered by issuer id rather than by insertion, and re-adding an issuer replaces its anchor instead of accumulating a second copy. A material write carries the leaf, its private key, and the bundle; a trust-only write carries the bundle alone, so trust can be published before any leaf exists. Reading a Secret back reconstructs the leaf's validity and fingerprint from the certificate itself and the bundle from its annotation. Published status names the issuer, the leaf, the expiry, and the issuers currently trusted."
+oracle = "Row 2 builds the same two anchors in both insertion orders and pins that the issuer sequence is identical, which an implementation preserving insertion order cannot satisfy. Row 3 adds one issuer twice with different anchors and pins both the entry count and the surviving PEM, separating replace from append. Rows 5 and 6 read the key sets of a material write and a trust-only write, so a projector that always writes three keys fails row 6 while one that always writes one fails row 5. Row 11 parses two different leaves through the same injected validity reader and pins that their fingerprints differ, so a fingerprint computed from anything but the DER is visible. Row 16 pins the sixteen-character prefix against a fingerprint whose seventeenth character onward is distinct."
+target = "rust"
+command = "owner-scoped-material-projection-behavior"
+evidence_paths = ["evidence/owner-scoped-material-projection-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "owner-scoped-material-projection-security"
+artifact_id = "artifact:service-k8s/owner-scoped-material-projection-security"
+capability_id = "owner-scoped-material-projection"
+use_case_id = "owner-scoped-material-projection"
+dimension = "security"
+applicability = "td"
+test_path = "src/owner-scoped-material-projection-security.py"
+promise = "A trust-only write never carries a leaf or a private key, so publishing trust cannot leak the material it is meant to anchor. Every projected Secret carries a controlling owner reference with the owner's uid and blocks owner deletion, so material cannot outlive the instance it belongs to. A trust bundle whose annotation disagrees with its PEM contents is emptied rather than guessed at, and an absent or empty annotation yields an empty bundle rather than an unattributed set of anchors. Anything published into status is stripped of PEM blocks, bearer tokens, and projected tokens first. A leaf's validity and fingerprint are read from the certificate rather than from the annotations that accompany it, and a leaf that cannot be read yields no leaf at all rather than a partially reconstructed one."
+oracle = "Row 1 counts the keys of a trust-only write and separately searches its joined values for the private key text, so both an extra key and an inlined key are caught. Row 3 feeds two blocks with one id and one block with two ids and pins that both empty, so an implementation that zips whatever it has fails both halves. Rows 6 through 8 pin the redacted text exactly and separately assert the secret substring is absent, so a redactor that returns a fixed constant still fails row 9, which pins that ordinary text passes through byte-for-byte. Row 12 hands read_state an annotation naming the wrong issuer and pins that validity and fingerprint are unchanged. Row 15 reads CertificateFacts.__annotations__ so a field added later that carries key or PEM material fails the row."
+target = "rust"
+command = "owner-scoped-material-projection-security"
+evidence_paths = ["evidence/owner-scoped-material-projection-security.json"]

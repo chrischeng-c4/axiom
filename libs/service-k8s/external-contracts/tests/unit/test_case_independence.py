@@ -13,6 +13,8 @@ EXPECTED_CASES = {
     "whole-layer-capacity-planning-security": 16,
     "clock-free-condition-projection-behavior": 14,
     "clock-free-condition-projection-security": 12,
+    "owner-scoped-material-projection-behavior": 16,
+    "owner-scoped-material-projection-security": 16,
 }
 
 BANNED_IMPORTS = {

@@ -615,3 +615,406 @@ old = """@dataclass(frozen=True)
 class ConditionFact:"""
 new = """@dataclass
 class ConditionFact:"""
+# service-k8s round K seeded defects — owner-scoped material projection.
+#
+# Controller-authored. Never part of a worker's readable material: these are
+# the answer key for whether the round-K cases observe the design or merely
+# transcribe a table.
+
+# ---------------------------------------------------------- trust bundle
+
+[[mutation]]
+id = "a-pem-block-loses-its-line-structure-when-reassembled"
+intent = "split_pem_blocks joins a block's lines with nothing, so a round-tripped bundle no longer reproduces its own PEM"
+file = "service_k8s/application/trust_bundle.py"
+old = 'blocks.append("\n".join(current))'
+new = 'blocks.append("".join(current))'
+
+[[mutation]]
+id = "anchors-are-ordered-newest-issuer-first"
+intent = "with_anchor sorts descending, so insertion order stops being irrelevant"
+file = "service_k8s/application/trust_bundle.py"
+old = 'pairs.sort(key=lambda pair: pair[0])'
+new = 'pairs.sort(key=lambda pair: pair[0], reverse=True)'
+
+[[mutation]]
+id = "re-adding-an-issuer-appends-a-second-anchor"
+intent = "with_anchor stops evicting the existing entry for that issuer, so a bundle accumulates duplicates"
+file = "service_k8s/application/trust_bundle.py"
+old = 'pairs = [(i, p) for (i, p) in self.entries if i != issuer]'
+new = 'pairs = [(i, p) for (i, p) in self.entries]'
+
+[[mutation]]
+id = "retaining-keeps-exactly-the-issuers-it-was-told-to-drop"
+intent = "retaining inverts its filter, so retirement removes the wrong anchors"
+file = "service_k8s/application/trust_bundle.py"
+old = 'pairs = [(i, p) for (i, p) in self.entries if i in issuers_set]'
+new = 'pairs = [(i, p) for (i, p) in self.entries if i not in issuers_set]'
+
+[[mutation]]
+id = "a-bundle-with-more-blocks-than-ids-is-guessed-at"
+intent = "parse only rejects a shortfall, so surplus PEM blocks are silently paired with the ids it does have"
+file = "service_k8s/application/trust_bundle.py"
+old = 'if len(blocks) != len(ids):'
+new = 'if len(blocks) < len(ids):'
+
+[[mutation]]
+id = "each-anchor-is-separated-by-a-blank-line"
+intent = "to_pem emits an extra newline per anchor, changing the bytes consumers read"
+file = "service_k8s/application/trust_bundle.py"
+old = '''
+        out += "\n"
+'''
+new = '''
+        out += "\n\n"
+'''
+
+[[mutation]]
+id = "the-bundle-annotation-uses-a-separator-parse-cannot-read"
+intent = "annotation joins on a semicolon while parse splits on a comma, so the bundle never round-trips"
+file = "service_k8s/application/trust_bundle.py"
+old = 'return ",".join(issuer.value for issuer in self.issuers())'
+new = 'return ";".join(issuer.value for issuer in self.issuers())'
+
+[[mutation]]
+id = "emptiness-is-inverted"
+intent = "is_empty reports a populated bundle as empty and an empty one as populated"
+file = "service_k8s/application/trust_bundle.py"
+old = 'return len(self.entries) == 0'
+new = 'return len(self.entries) > 0'
+
+[[mutation]]
+id = "membership-answers-for-any-other-issuer"
+intent = "contains tests inequality, so a bundle claims to trust every issuer it does not hold"
+file = "service_k8s/application/trust_bundle.py"
+old = 'return any(i == issuer for (i, _) in self.entries)'
+new = 'return any(i != issuer for (i, _) in self.entries)'
+
+[[mutation]]
+id = "the-issuer-list-comes-back-reversed"
+intent = "issuers() reverses the sorted entries, so the annotation and the bundle disagree on order"
+file = "service_k8s/application/trust_bundle.py"
+old = 'return tuple(i for (i, _) in self.entries)'
+new = 'return tuple(i for (i, _) in reversed(self.entries))'
+
+[[mutation]]
+id = "parse-pairs-each-id-with-the-wrong-anchor"
+intent = "parse zips the ids against the blocks in reverse, so every anchor is attributed to the wrong issuer"
+file = "service_k8s/application/trust_bundle.py"
+old = 'for id_, block in zip(ids, blocks):'
+new = 'for id_, block in zip(ids, tuple(reversed(blocks))):'
+
+[[mutation]]
+id = "a-pem-block-is-never-closed"
+intent = "split_pem_blocks stops recognizing the END line, so no block is ever emitted"
+file = "service_k8s/application/trust_bundle.py"
+old = 'elif line.startswith("-----END"):'
+new = 'elif line.startswith("-----ENDOF"):'
+
+# ------------------------------------------------------------ projection
+
+[[mutation]]
+id = "the-owner-reference-is-not-the-controller"
+intent = "controller drops to false, so Kubernetes stops treating the instance as the managing owner"
+file = "service_k8s/infrastructure/projection.py"
+old = '"controller": True,'
+new = '"controller": False,'
+
+[[mutation]]
+id = "the-owner-reference-stops-blocking-deletion"
+intent = "blockOwnerDeletion drops to false, so material can outlive the instance it belongs to"
+file = "service_k8s/infrastructure/projection.py"
+old = '"blockOwnerDeletion": True,'
+new = '"blockOwnerDeletion": False,'
+
+[[mutation]]
+id = "the-owner-reference-carries-no-uid"
+intent = "the uid is blanked, so garbage collection cannot resolve the owner"
+file = "service_k8s/infrastructure/projection.py"
+old = '"uid": self.uid,'
+new = '"uid": "",'
+
+[[mutation]]
+id = "the-secret-type-requires-a-leaf-to-exist"
+intent = "the Secret becomes kubernetes.io/tls, which cannot represent the trust-only bootstrap write"
+file = "service_k8s/infrastructure/projection.py"
+old = '"type": "Opaque",'
+new = '"type": "kubernetes.io/tls",'
+
+[[mutation]]
+id = "the-component-label-stops-naming-tls"
+intent = "the component label loses its -tls suffix, so selectors that target certificate secrets miss them"
+file = "service_k8s/infrastructure/projection.py"
+old = 'f"{purpose.token}-tls"'
+new = 'f"{purpose.token}-certs"'
+
+[[mutation]]
+id = "the-material-claims-a-different-manager"
+intent = "managed-by names something other than this controller, so ownership auditing points elsewhere"
+file = "service_k8s/infrastructure/projection.py"
+old = 'MANAGED_BY: Final[str] = "service-k8s"'
+new = 'MANAGED_BY: Final[str] = "kubectl"'
+
+[[mutation]]
+id = "the-trust-only-write-carries-the-private-key"
+intent = "the trust-only write gains a key entry, which is exactly the leak the split write exists to prevent"
+file = "service_k8s/infrastructure/projection.py"
+old = 'secret["stringData"] = {TRUST_BUNDLE_KEY: bundle.to_pem()}'
+new = 'secret["stringData"] = {TRUST_BUNDLE_KEY: bundle.to_pem(), PRIVATE_KEY_KEY: "KEYPEM"}'
+
+[[mutation]]
+id = "the-certificate-key-is-renamed"
+intent = "tls.crt is renamed, breaking the deployed consumer contract renewal must never change"
+file = "service_k8s/infrastructure/projection.py"
+old = 'CERT_KEY: Final[str] = "tls.crt"'
+new = 'CERT_KEY: Final[str] = "tls.certificate"'
+
+[[mutation]]
+id = "the-private-key-key-is-renamed"
+intent = "tls.key is renamed, so a pod mounting the secret finds no key"
+file = "service_k8s/infrastructure/projection.py"
+old = 'PRIVATE_KEY_KEY: Final[str] = "tls.key"'
+new = 'PRIVATE_KEY_KEY: Final[str] = "tls.privatekey"'
+
+[[mutation]]
+id = "the-trust-bundle-key-is-renamed"
+intent = "ca.crt is renamed, so trust is published where nothing reads it"
+file = "service_k8s/infrastructure/projection.py"
+old = 'TRUST_BUNDLE_KEY: Final[str] = "ca.crt"'
+new = 'TRUST_BUNDLE_KEY: Final[str] = "ca.bundle"'
+
+[[mutation]]
+id = "the-bundle-annotation-key-drifts"
+intent = "the write and the readback disagree on the annotation name, so every bundle parses as empty"
+file = "service_k8s/infrastructure/projection.py"
+old = 'TRUST_BUNDLE_ANNOTATION: Final[str] = "service-k8s.axiom.dev/trust-bundle"'
+new = 'TRUST_BUNDLE_ANNOTATION: Final[str] = "service-k8s.axiom.dev/bundle"'
+
+[[mutation]]
+id = "the-leaf-issuer-annotation-key-drifts"
+intent = "the leaf issuer claim is written under a name readback does not look for"
+file = "service_k8s/infrastructure/projection.py"
+old = 'LEAF_ISSUER_ANNOTATION: Final[str] = "service-k8s.axiom.dev/leaf-issuer"'
+new = 'LEAF_ISSUER_ANNOTATION: Final[str] = "service-k8s.axiom.dev/issuer"'
+
+[[mutation]]
+id = "the-identity-digest-annotation-key-drifts"
+intent = "the identity digest is written under a name readback does not look for"
+file = "service_k8s/infrastructure/projection.py"
+old = 'IDENTITY_DIGEST_ANNOTATION: Final[str] = "service-k8s.axiom.dev/identity-digest"'
+new = 'IDENTITY_DIGEST_ANNOTATION: Final[str] = "service-k8s.axiom.dev/digest"'
+
+[[mutation]]
+id = "material-lands-in-a-fixed-namespace"
+intent = "the Secret is written to default rather than the instance's own namespace"
+file = "service_k8s/infrastructure/projection.py"
+old = '"namespace": scope.namespace,'
+new = '"namespace": "default",'
+
+[[mutation]]
+id = "the-leaf-fingerprint-is-not-taken-over-the-certificate"
+intent = "parse_leaf digests nothing, so every certificate reports the same fingerprint"
+file = "service_k8s/infrastructure/projection.py"
+old = 'return LeafFacts(not_before, not_after, hex_sha256(der))'
+new = 'return LeafFacts(not_before, not_after, hex_sha256(b""))'
+
+[[mutation]]
+id = "a-leaf-is-reconstructed-only-when-its-digest-claim-is-missing"
+intent = "readback inverts the identity-digest precondition, so a complete secret yields no leaf"
+file = "service_k8s/infrastructure/projection.py"
+old = 'and identity_digest is not None'
+new = 'and identity_digest is None'
+
+[[mutation]]
+id = "a-leaf-is-reconstructed-only-when-its-issuer-claim-is-missing"
+intent = "readback inverts the issuer precondition, so a complete secret yields no leaf"
+file = "service_k8s/infrastructure/projection.py"
+old = 'and issuer is not None'
+new = 'and issuer is None'
+
+[[mutation]]
+id = "the-bundle-is-parsed-only-when-its-bytes-are-undecodable"
+intent = "readback inverts the decode guard, so a readable bundle is dropped"
+file = "service_k8s/infrastructure/projection.py"
+old = '''
+        if text is not None:
+'''
+new = '''
+        if text is None:
+'''
+
+[[mutation]]
+id = "an-unreadable-leaf-propagates-instead-of-yielding-none"
+intent = "readback stops catching LeafParseError, so corrupt bytes crash the reconcile rather than reporting no leaf"
+file = "service_k8s/infrastructure/projection.py"
+old = 'except (UnicodeDecodeError, LeafParseError):'
+new = 'except UnicodeDecodeError:'
+
+# ------------------------------------------------------------ scope / purpose / digest
+
+[[mutation]]
+id = "the-secret-name-leads-with-the-purpose"
+intent = "secret_name reorders its parts, so every projected Secret lands under a name consumers do not mount"
+file = "service_k8s/domain/scope.py"
+old = 'return f"{self.instance}-{purpose.token}-tls"'
+new = 'return f"{purpose.token}-{self.instance}-tls"'
+
+[[mutation]]
+id = "the-peer-purpose-token-is-pluralized"
+intent = "the peer token changes, moving both the Secret name and the component label"
+file = "service_k8s/domain/purpose.py"
+old = 'PEER = "peer"'
+new = 'PEER = "peers"'
+
+[[mutation]]
+id = "the-serving-purpose-token-is-abbreviated"
+intent = "the serving token changes, moving both the Secret name and the component label"
+file = "service_k8s/domain/purpose.py"
+old = 'SERVING = "serving"'
+new = 'SERVING = "serve"'
+
+[[mutation]]
+id = "the-digest-is-truncated-to-half-width"
+intent = "hex_sha256 returns 32 characters, so a fingerprint stops being a full sha256"
+file = "service_k8s/domain/digest.py"
+old = 'return hashlib.sha256(data).hexdigest()'
+new = 'return hashlib.sha256(data).hexdigest()[:32]'
+
+# ---------------------------------------------------------------- status
+
+[[mutation]]
+id = "the-published-fingerprint-is-twice-as-long"
+intent = "short_fingerprint publishes 32 characters, enough to be mistaken for an artifact"
+file = "service_k8s/application/status.py"
+old = 'return fingerprint[:16]'
+new = 'return fingerprint[:32]'
+
+[[mutation]]
+id = "peer-conditions-collide-with-serving-conditions"
+intent = "condition_prefix returns Serving for both purposes, so the two lifecycles overwrite each other"
+file = "service_k8s/application/status.py"
+old = '''
+    return "Peer"
+'''
+new = '''
+    return "Serving"
+'''
+
+[[mutation]]
+id = "the-ready-condition-type-is-shortened"
+intent = "the ready condition is renamed, so existing status readers stop finding it"
+file = "service_k8s/application/status.py"
+old = 'READY_CONDITION: Final[str] = "CertificateReady"'
+new = 'READY_CONDITION: Final[str] = "Ready"'
+
+[[mutation]]
+id = "the-rotating-condition-type-is-shortened"
+intent = "the rotating condition is renamed, so existing status readers stop finding it"
+file = "service_k8s/application/status.py"
+old = 'ROTATING_CONDITION: Final[str] = "CertificateRotating"'
+new = 'ROTATING_CONDITION: Final[str] = "Rotating"'
+
+[[mutation]]
+id = "a-failing-lifecycle-stays-pending-until-the-fifth-attempt"
+intent = "the failure threshold rises, so repeated issuance failures keep reporting Pending"
+file = "service_k8s/application/status.py"
+old = 'elif self.consecutive_failures > 0:'
+new = 'elif self.consecutive_failures > 4:'
+
+[[mutation]]
+id = "the-ready-reason-is-renamed"
+intent = "the ready reason changes, so a reason-matching alert stops firing"
+file = "service_k8s/application/status.py"
+old = 'reason = "Issued"'
+new = 'reason = "Ready"'
+
+[[mutation]]
+id = "the-quiet-rotating-reason-is-renamed"
+intent = "the not-rotating reason changes, so the steady state is reported under a different word"
+file = "service_k8s/application/status.py"
+old = 'rot_reason = "Stable"'
+new = 'rot_reason = "Idle"'
+
+[[mutation]]
+id = "an-active-rotation-reports-itself-as-not-rotating"
+intent = "the rotating condition is published false while a rotation is under way"
+file = "service_k8s/application/status.py"
+old = 'rot_status = ConditionStatus.TRUE'
+new = 'rot_status = ConditionStatus.FALSE'
+
+[[mutation]]
+id = "the-ready-message-prints-the-issuer-wrapper-rather-than-its-value"
+intent = "the message interpolates the IssuerId dataclass, so the published text stops being the issuer name"
+file = "service_k8s/application/status.py"
+old = 'parts.append(f"issuer {self.issuer.value}")'
+new = 'parts.append(f"issuer {self.issuer}")'
+
+[[mutation]]
+id = "the-ready-message-separator-changes"
+intent = "message parts are joined on a comma, colliding with the comma that separates trusted issuers"
+file = "service_k8s/application/status.py"
+old = 'return "; ".join(parts)'
+new = 'return ", ".join(parts)'
+
+[[mutation]]
+id = "the-pem-placeholder-changes"
+intent = "the redaction marker changes, so a status consumer matching on it stops recognizing a redaction"
+file = "service_k8s/application/status.py"
+old = 'out.append("[redacted pem]")'
+new = 'out.append("[pem]")'
+
+[[mutation]]
+id = "a-bearer-token-is-published-with-its-value"
+intent = "the bearer scrubber emits the token it was supposed to replace"
+file = "service_k8s/application/status.py"
+old = 'out.append("Bearer [redacted]")'
+new = 'out.append("Bearer " + segment[:16])'
+
+[[mutation]]
+id = "a-jwt-shaped-string-passes-through"
+intent = "the JWT scrubber keeps the word it classified as a token"
+file = "service_k8s/application/status.py"
+old = 'words.append("[redacted token]" if looks_like_jwt else word)'
+new = 'words.append(word)'
+
+[[mutation]]
+id = "only-very-long-jwt-segments-are-redacted"
+intent = "the per-segment length floor rises, so an ordinary projected token is no longer recognized"
+file = "service_k8s/application/status.py"
+old = 'len(part) >= 8'
+new = 'len(part) >= 32'
+
+[[mutation]]
+id = "redaction-is-a-no-op"
+intent = "redact returns its input, removing the backstop entirely"
+file = "service_k8s/application/status.py"
+old = 'return _strip_jwt(_strip_bearer(_strip_pem(text)))'
+new = 'return text'
+
+[[mutation]]
+id = "an-issuer-rotation-is-reported-under-a-different-reason"
+intent = "the rotation reason mapping changes, so the condition names the wrong trigger"
+file = "service_k8s/application/status.py"
+old = 'IssueReason.ISSUER_ROTATION: "IssuerRotation",'
+new = 'IssueReason.ISSUER_ROTATION: "Rotation",'
+
+[[mutation]]
+id = "an-issuer-rotation-explains-itself-differently"
+intent = "the rotation detail text changes, so the published explanation stops matching the trigger"
+file = "service_k8s/application/status.py"
+old = 'IssueReason.ISSUER_ROTATION: "the configured issuer changed",'
+new = 'IssueReason.ISSUER_ROTATION: "the issuer was rotated",'
+
+[[mutation]]
+id = "rotation-is-reported-for-every-action-except-an-issuance"
+intent = "from_action inverts its action test, so waiting looks like rotating and rotating looks quiet"
+file = "service_k8s/application/status.py"
+old = 'rotating = action.reason if isinstance(action, Issue) else None'
+new = 'rotating = action.reason if not isinstance(action, Issue) else None'
+
+[[mutation]]
+id = "the-failure-message-drops-the-word-consecutive"
+intent = "the failing message changes, so a total is mistaken for a run"
+file = "service_k8s/application/status.py"
+old = '+ " consecutive attempts"'
+new = '+ " attempts"'
