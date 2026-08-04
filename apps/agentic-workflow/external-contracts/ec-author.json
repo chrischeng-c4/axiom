@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:2433dbacf2876010d9e7db2cbbe8ea0fdcac96675900ee1a6c66f0f94dc7686f",
-  "author": "agent:github-copilot:claude-sonnet-4.6:17cf4f0a-eb81-49db-8735-2776d99ca598",
-  "recorded_at": "2026-08-04T05:12:06.219569+00:00"
+  "source_digest": "sha256:64f95e7437451b5706e529c81a6ebceed0b521bd6be8cbfd3386c61a9851aa37",
+  "author": "agent:codex:/root",
+  "recorded_at": "2026-08-04T07:14:28.414285+00:00"
 }

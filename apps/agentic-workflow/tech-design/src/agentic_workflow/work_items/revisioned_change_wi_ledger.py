@@ -18,7 +18,7 @@ changes:
     description: >
       Define typed ArtifactRevision, CausalParent, ActiveDigestTuple, LifecycleEventKind,
       LifecycleEvent, InvalidationRecord, ChangeLifecycle, and persistent record serde layout
-      at .aw/causal-lifecycle/<slug>.json with atomic local file storage helpers in Rust.
+      at workspace runtime causal-lifecycle/<slug>.json with atomic local file storage helpers in Rust.
   - path: apps/agentic-workflow/src/cli/issues.rs
     action: modify
     description: >
@@ -37,7 +37,7 @@ changes:
       Register change_lifecycle module and expose persistence/hydration helper bindings for issues CLI.
 """
 
-__aw_artifact_id__ = "artifact:td-cb-lifecycle-automation/revisioned-change-wi-ledger-wi-3347"
+__aw_artifact_id__ = "artifact:td-cb-lifecycle-automation-workflow-root-runner-project-local-td/aw-lifecycle-define-the-wi-ec-td-cb-causal-ledger-and-determinis-wi-3347"
 __aw_work_item__ = "3347"
 
 
@@ -57,7 +57,7 @@ RUST_ISSUES_TEST_SEAMS: dict[str, str] = {
     ),
     "revisioned_change_wi_show_json_handler_is_carrier_byte_readonly": (
         "invoke the root-aware JSON show handler used by aw wi show --json twice and fingerprint "
-        ".aw/causal-lifecycle/<slug>.json before and after each invocation"
+        "workspace runtime causal-lifecycle/<slug>.json before and after each invocation"
     ),
     "revisioned_change_wi_fresh_binary_show_hydrates_existing_carrier": (
         "invoke a second aw wi show <slug> --json process against the same local project and require "
@@ -330,7 +330,7 @@ class ChangeLifecycle:
         )
 
     def to_persistent_dict(self) -> dict[str, Any]:
-        """Serde serializable persistent-record schema at .aw/causal-lifecycle/<slug>.json."""
+        """Serde serializable persistent-record schema at workspace runtime causal-lifecycle/<slug>.json."""
         active_dict = {}
         for kind in ArtifactKind:
             rev = self.active_revisions.get(kind)
@@ -352,7 +352,7 @@ class ChangeLifecycle:
 
     @classmethod
     def from_persistent_dict(cls, payload: dict[str, Any]) -> ChangeLifecycle:
-        """Hydrate ChangeLifecycle from deserialized .aw/causal-lifecycle/<slug>.json dictionary."""
+        """Hydrate ChangeLifecycle from deserialized workspace runtime causal-lifecycle/<slug>.json dictionary."""
         slug = str(payload.get("slug", "3347"))
         epoch = int(payload.get("epoch", 1))
         head_event_id = payload.get("head_event_id")
@@ -399,13 +399,13 @@ class ChangeLifecycle:
 
 
 def get_ledger_path(project_root: Any, slug: str) -> Any:
-    """Return root-relative persistent record path .aw/causal-lifecycle/<slug>.json."""
+    """Return root-relative persistent record path workspace runtime causal-lifecycle/<slug>.json."""
     from pathlib import Path
     return Path(project_root) / ".aw" / "causal-lifecycle" / f"{slug}.json"
 
 
 def save_ledger_record(project_root: Any, lifecycle: ChangeLifecycle) -> Any:
-    """Atomic local persistence adapter for .aw/causal-lifecycle/<slug>.json.
+    """Atomic local persistence adapter for workspace runtime causal-lifecycle/<slug>.json.
 
     Creates directory if missing, writes to temporary replacement file, and renames atomically.
     Raises IOError if write fails.

@@ -200,8 +200,7 @@ pub struct ReducerResult {
 }
 
 fn carrier_path(project_root: &Path, slug: &str) -> PathBuf {
-    project_root
-        .join(".aw")
+    crate::shared::workspace::workspace_runtime_path(project_root)
         .join("causal-lifecycle")
         .join(format!("{slug}.json"))
 }

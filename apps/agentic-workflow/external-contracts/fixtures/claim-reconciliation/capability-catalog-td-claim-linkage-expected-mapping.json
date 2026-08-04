@@ -439,6 +439,12 @@
       "use_case_id": "global-python-td-artifact-identity"
     },
     {
+      "capability_id": "aw-core-client-model-workitem-first-artifact-lifecycle",
+      "case_id": "revisioned-change-wi-ledger",
+      "dimension": "behavior",
+      "use_case_id": "workitem-loop-state-model"
+    },
+    {
       "capability_id": "td-cb-lifecycle-automation",
       "case_id": "self-ec-fixture-loop-gate-python-contract",
       "dimension": "behavior",

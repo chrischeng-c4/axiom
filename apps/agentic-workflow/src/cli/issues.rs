@@ -11096,9 +11096,8 @@ tech_design_path = "tech-design"
                 .into_iter()
                 .find(|issue| issue.title == "Causal local")
                 .expect("created local Change WI");
-            let carrier = root
-                .path()
-                .join(".aw/causal-lifecycle")
+            let carrier = crate::shared::workspace::workspace_runtime_path(root.path())
+                .join("causal-lifecycle")
                 .join(format!("{}.json", created.slug));
             let before_noop = std::fs::read(&carrier)?;
             let noop_body = root.path().join("noop.md");
@@ -11161,9 +11160,8 @@ tech_design_path = "tech-design"
         let mut issue = test_issue_with_phase(Some("created"));
         issue.slug = "causal-show".to_string();
         crate::cli::change_lifecycle::record_create(root.path(), &issue).unwrap();
-        let carrier = root
-            .path()
-            .join(".aw/causal-lifecycle")
+        let carrier = crate::shared::workspace::workspace_runtime_path(root.path())
+            .join("causal-lifecycle")
             .join("causal-show.json");
         let before = std::fs::read(&carrier).unwrap();
         let first = issue_show_json(root.path(), &issue).unwrap();

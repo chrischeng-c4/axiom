@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-04T05:04:32.713836+00:00"
-digest = "sha256:64a0e2341e25a222a1c861ae389f86ef1174e6eedda68590ad5b5977f4f62361"
-source_digest = "sha256:64a0e2341e25a222a1c861ae389f86ef1174e6eedda68590ad5b5977f4f62361"
-ir_digest = "sha256:a742c3d2629169e6e70092c1e363a151796893a23d4b454c4d75523cb8b4fe7e"
+generated_at = "2026-08-04T07:13:31.258770+00:00"
+digest = "sha256:4c62f751fa7d6d447514990ed4bffe57e03717825f43a2cbf7a6c912c18bb7e7"
+source_digest = "sha256:4c62f751fa7d6d447514990ed4bffe57e03717825f43a2cbf7a6c912c18bb7e7"
+ir_digest = "sha256:fc6cf924e9d186964b69ca89abc43be7eb1f6161141bfaa06a1ead81daa01a82"
 
 [[files]]
 path = "pyproject.toml"
@@ -4057,7 +4057,7 @@ digest = "sha256:f85448e04222557f2acae6d6b0cda3c6ab340f8fe34afede936e0a7250d478a
 
 [[files]]
 path = "src/agentic_workflow/work_items/revisioned_change_wi_ledger.py"
-digest = "sha256:55b57a115007f48fc450616fb0895e545a3503947416cb93c5f1348a60f0cfc6"
+digest = "sha256:144871ec73bcd05cacd6a74a034ededac2c90e1be796cfb4b6f28f005123e4b3"
 
 [[files]]
 path = "src/agentic_workflow/work_items/scope_python_cb_code_checks_to_declared_wi_targets.py"
