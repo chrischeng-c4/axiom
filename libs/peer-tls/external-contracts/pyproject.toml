@@ -1,0 +1,100 @@
+[project]
+name = "peer-tls-external-contracts"
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml", "uv.lock"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "chrischeng"
+efficiency_policy = "optional"
+
+[[tool.aw.python-ec.cases]]
+id = "material-validation-behavior"
+artifact_id = "artifact:peer-tls/material-validation-behavior"
+capability_id = "material-validation"
+use_case_id = "material-validation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/material-validation-behavior.py"
+promise = "Validation decides identity binding, rejection reason, and validity window from the certificate itself: a leaf carrying the expected DNS names or SPIFFE URI is accepted, every rejection carries a typed stable reason with a detail string, and validity is answered against a caller-supplied instant."
+oracle = "The contract builds its own X.509 material with an independent Python issuer and computes the expected accept/reject verdict, reason, and validity window from the DER it encoded, then compares that against what the peer-tls design under test decides. It never imports peer-tls source and never reuses the Rust test fixtures."
+target = "rust"
+command = "cargo test -p peer-tls --test material_rejection"
+evidence_paths = ["evidence/material-validation-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "material-validation-security"
+artifact_id = "artifact:peer-tls/material-validation-security"
+capability_id = "material-validation"
+use_case_id = "material-validation"
+dimension = "security"
+applicability = "td"
+test_path = "src/material-validation-security.py"
+promise = "Material that does not carry the expected identity is refused outright rather than downgraded to a warning, an accepted-with-caveat result, or a caller-overridable flag."
+oracle = "The contract enumerates near-miss material it constructs itself (wrong DNS name, wrong SPIFFE trust domain, right identity in the wrong extension, expired leaf, key that does not match the leaf) and requires a refusal verdict for every one. Any accept, warn, or caller-overridable outcome fails the case."
+target = "rust"
+command = "cargo test -p peer-tls --test material_rejection"
+evidence_paths = ["evidence/material-validation-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "mtls-config-construction-behavior"
+artifact_id = "artifact:peer-tls/mtls-config-construction-behavior"
+capability_id = "mtls-config-construction"
+use_case_id = "mtls-config-construction"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/mtls-config-construction-behavior.py"
+promise = "One prefix-driven environment contract resolves the same material triple for every caller, reports an unset prefix as absence rather than failure, and installs the default crypto provider once regardless of caller initialization order."
+oracle = "The contract drives the environment resolver with independently generated prefix/environment matrices and asserts the resolved triple, the absence-versus-failure distinction, and order-independence by resolving the same matrix under permuted initialization orders. Expected values come from the matrix the contract authored, not from the design's own defaults."
+target = "rust"
+command = "cargo test -p peer-tls --test behavior_shared_peer_mtls_material_loading_contract"
+evidence_paths = ["evidence/mtls-config-construction-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "mtls-config-construction-security"
+artifact_id = "artifact:peer-tls/mtls-config-construction-security"
+capability_id = "mtls-config-construction"
+use_case_id = "mtls-config-construction"
+dimension = "security"
+applicability = "td"
+test_path = "src/mtls-config-construction-security.py"
+promise = "A server config this capability returns requires and verifies a client certificate against the configured trust bundle, and the client config presents one; there is no permissive mode an anonymous or untrusted peer can reach."
+oracle = "The contract asserts that no reachable construction path yields a server config whose client-certificate verifier is optional or absent, and that a peer presenting no certificate or a certificate from an unrelated authority the contract itself issued is refused. A configuration surface that can express a permissive mode fails the case even when the default is strict."
+target = "rust"
+command = "cargo test -p peer-tls --test behavior_shared_peer_mtls_material_loading_contract"
+evidence_paths = ["evidence/mtls-config-construction-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "rotation-and-reload-behavior"
+artifact_id = "artifact:peer-tls/rotation-and-reload-behavior"
+capability_id = "rotation-and-reload"
+use_case_id = "rotation-and-reload"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/rotation-and-reload-behavior.py"
+promise = "Reload swaps material in place and returns a monotonic generation; established connections survive the swap and the next handshake uses the new leaf."
+oracle = "The contract issues two independent generations of material, drives a reload sequence, and asserts the generation counter is strictly increasing across every swap, that a connection opened before the swap is still readable after it, and that a connection opened after the swap presents the second-generation leaf the contract issued."
+target = "rust"
+command = "cargo test -p peer-tls --test tls_reload"
+evidence_paths = ["evidence/rotation-and-reload-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "rotation-and-reload-security"
+artifact_id = "artifact:peer-tls/rotation-and-reload-security"
+capability_id = "rotation-and-reload"
+use_case_id = "rotation-and-reload"
+dimension = "security"
+applicability = "td"
+test_path = "src/rotation-and-reload-security.py"
+promise = "During rotation both the outgoing and incoming trust anchors are accepted and the outgoing anchor is retired only once activation of the new generation is observed, while no point in the reload path serves or dials without mutual TLS and no unrelated authority is admitted by the overlap."
+oracle = "The contract issues an outgoing anchor, an incoming anchor, and a third unrelated authority, then walks every state of the rotation sequence asserting that the first two are admitted, the third never is, the outgoing anchor is still admitted after the bundle stops naming it and until activation is observed, and that no state exposes a non-mutual or plaintext path."
+target = "rust"
+command = "cargo test -p peer-tls --test trust_overlap"
+evidence_paths = ["evidence/rotation-and-reload-security.json"]
