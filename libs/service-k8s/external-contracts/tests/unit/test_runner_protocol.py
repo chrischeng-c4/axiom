@@ -20,6 +20,8 @@ CASES = (
     ("clock-free-condition-projection-security", 12),
     ("owner-scoped-material-projection-behavior", 16),
     ("owner-scoped-material-projection-security", 16),
+    ("cluster-compatibility-surfaces-behavior", 19),
+    ("cluster-compatibility-surfaces-security", 16),
 )
 
 

@@ -154,3 +154,31 @@ oracle = "Row 1 counts the keys of a trust-only write and separately searches it
 target = "rust"
 command = "owner-scoped-material-projection-security"
 evidence_paths = ["evidence/owner-scoped-material-projection-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "cluster-compatibility-surfaces-behavior"
+artifact_id = "artifact:service-k8s/cluster-compatibility-surfaces-behavior"
+capability_id = "cluster-compatibility-surfaces"
+use_case_id = "cluster-compatibility-surfaces"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cluster-compatibility-surfaces-behavior.py"
+promise = "A CRD derived from Rust types is normalized until a live API server will accept it: unsigned integer formats are removed at every depth, including inside JSON arrays, and the unsigned contract is retained as `minimum: 0`. Cross-field invariants attach as CEL rules to every version the CRD declares, accumulating rather than replacing, and the attach function returns how many versions it reached. YAML 1.1 boolean spellings are quoted in both mapping and sequence slots so a string default does not arrive as a boolean. Storage quantities parse with Kubernetes `resource.Quantity` semantics — binary suffixes are powers of 1024 and decimal ones powers of 1000, a bare integer is already a byte count, and a fractional quantity is scaled and rounded to whole bytes. The comparison falls into exactly four kinds, equality is measured in bytes rather than in spelling, and the plan patches only `spec.resources.requests.storage`, only on PVCs the filter admits whose StorageClass allows expansion, and only outside a dry run."
+oracle = "Rows 1 and 2 pin all twelve multipliers as literals, so a binary suffix scaled decimally or a decimal one scaled binarily is visible per suffix. Row 4 includes `0.6Mi`, whose correct value 629146 is one byte above what truncation yields, so rounding is separated from `int()`. Row 5 reads `' 1 Gi '` so a parser that stops trimming fails while one that trims only the outside still passes. Rows 12 through 14 run the same eight-PVC fixture three ways and pin the full seven-element patched vector, so a plan that patches everything, patches nothing, or patches during a dry run each fails a different row. Row 16 places an unsigned format under a mapping, under an array's `items`, and inside an `anyOf` list, so a normalizer that skips list children fails only on the third element. Row 18 attaches two rules to a two-version CRD and pins both counts, the first rule's text, and the second rule's message, separating accumulate from replace."
+target = "rust"
+command = "cluster-compatibility-surfaces-behavior"
+evidence_paths = ["evidence/cluster-compatibility-surfaces-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "cluster-compatibility-surfaces-security"
+artifact_id = "artifact:service-k8s/cluster-compatibility-surfaces-security"
+capability_id = "cluster-compatibility-surfaces"
+use_case_id = "cluster-compatibility-surfaces"
+dimension = "security"
+applicability = "td"
+test_path = "src/cluster-compatibility-surfaces-security.py"
+promise = "A quantity that is not a Kubernetes storage quantity is an error naming the offending string, never a byte count: an empty quantity, a negative one, a non-numeric mantissa, a bare count spelled with Python's underscore, sign, unicode-digit, or hex forms, and a bare fractional count are all refused. A CEL rule comparing against null is refused under any whitespace spelling, because such a rule fails to compile and produces a CRD that passes every local gate and cannot be installed. A CRD without a spec schema attaches nothing rather than raising, and a tighter existing minimum survives normalization rather than being loosened to zero. A real boolean is left unquoted because JSON never spells it as `on` or `yes`, and the quoter preserves prose and the document's trailing-newline shape. No PVC is patched unless its current size parses, its comparison is a grow, its StorageClass is present in the expansion map and allows expansion, and the run is not a dry run."
+oracle = "Row 4 pins four distinct refusal messages for `5_0`, `+5`, an Arabic-Indic five, and `0x10`, so a parser widened to Python's `int()` fails on all four while the ASCII-digit floor passes. Row 12 spells the same null comparison five ways — no space, spaces around the operator, an interior space inside the field path, a tab, and an embedded newline — so a guard that strips only literal spaces fails the tab and newline rows. Row 9 pins both a StorageClass present in the map with `False` and one absent from it entirely, so `get(name, True)` fails only the second half. Row 11 asserts a filtered-out PVC is in the input and not in the outcomes and that a reject-all filter yields zero outcomes, so an inverted filter and a bypassed filter fail different halves. Row 14 pins that a `minimum: 1` field keeps its own value and that its format is gone, separating the removal from the bound."
+target = "rust"
+command = "cluster-compatibility-surfaces-security"
+evidence_paths = ["evidence/cluster-compatibility-surfaces-security.json"]

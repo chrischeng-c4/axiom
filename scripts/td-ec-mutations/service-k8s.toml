@@ -1018,3 +1018,559 @@ intent = "the failing message changes, so a total is mistaken for a run"
 file = "service_k8s/application/status.py"
 old = '+ " consecutive attempts"'
 new = '+ " attempts"'
+
+# ---------------------------------------------------------------------------
+# Cluster Compatibility Surfaces (round L): crd.py + resize.py
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# crd.py — unsigned format normalization
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "normalize-handles-only-uint32"
+intent = "only the 32-bit unsigned format is recognized, so a uint64 field keeps a format the API server rejects"
+file = "service_k8s/infrastructure/crd.py"
+old = '        if value.get("format") in ("uint32", "uint64"):'
+new = '        if value.get("format") in ("uint32",):'
+
+[[mutation]]
+id = "normalize-rewrites-format-instead-of-removing-it"
+intent = "the unrecognized format is replaced rather than deleted, so structural OpenAPI still sees a format key"
+file = "service_k8s/infrastructure/crd.py"
+old = '            del value["format"]'
+new = '            value["format"] = "integer"'
+
+[[mutation]]
+id = "normalize-loses-the-unsigned-contract"
+intent = "the removed format is not replaced by a non-negative bound, so an unsigned field silently accepts negatives"
+file = "service_k8s/infrastructure/crd.py"
+old = '                value["minimum"] = 0'
+new = '                value["minimum"] = -1'
+
+[[mutation]]
+id = "normalize-overwrites-a-tighter-minimum"
+intent = "the guard against clobbering an existing bound is dropped, so `minimum: 1` is loosened to 0"
+file = "service_k8s/infrastructure/crd.py"
+old = '            if "minimum" not in value:'
+new = "            if True:"
+
+[[mutation]]
+id = "normalize-does-not-recurse-into-mappings"
+intent = "recursion stops at the top level, so a nested property keeps its unsigned format"
+file = "service_k8s/infrastructure/crd.py"
+old = "        for child in value.values():"
+new = "        for child in ():"
+
+[[mutation]]
+id = "normalize-does-not-recurse-into-arrays"
+intent = "list children are skipped, so a format inside `items` survives"
+file = "service_k8s/infrastructure/crd.py"
+old = "    elif isinstance(value, list):"
+new = "    elif False:"
+
+# ---------------------------------------------------------------------------
+# crd.py — the CEL null guard
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "cel-guard-strips-only-spaces"
+intent = "whitespace normalization degrades to a space-only strip, so a tab-separated null comparison evades the guard and produces an uninstallable CRD"
+file = "service_k8s/infrastructure/crd.py"
+old = '    clean_rule = "".join(rule.split())'
+new = '    clean_rule = rule.replace(" ", "")'
+
+[[mutation]]
+id = "cel-guard-misses-equality-against-null"
+intent = "only the inequality spelling is rejected, so `self.x == null` reaches the API server"
+file = "service_k8s/infrastructure/crd.py"
+old = '    if "!=null" in clean_rule or "==null" in clean_rule:'
+new = '    if "!=null" in clean_rule:'
+
+[[mutation]]
+id = "cel-guard-misses-inequality-against-null"
+intent = "only the equality spelling is rejected, so the documented failure mode itself gets through"
+file = "service_k8s/infrastructure/crd.py"
+old = '    if "!=null" in clean_rule or "==null" in clean_rule:'
+new = '    if "==null" in clean_rule:'
+
+# ---------------------------------------------------------------------------
+# crd.py — attaching rules
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "attach-raises-on-a-crd-without-a-spec"
+intent = "a CRD with no spec mapping raises instead of attaching nothing"
+file = "service_k8s/infrastructure/crd.py"
+old = '''
+    if not isinstance(spec, dict):
+        return 0'''
+new = '''
+    if not isinstance(spec, dict):
+        raise CelRuleError("no spec")'''
+
+[[mutation]]
+id = "attach-raises-on-a-non-list-versions"
+intent = "a malformed versions field raises instead of attaching nothing"
+file = "service_k8s/infrastructure/crd.py"
+old = '''
+    if not isinstance(versions, list):
+        return 0'''
+new = '''
+    if not isinstance(versions, list):
+        raise CelRuleError("bad versions")'''
+
+[[mutation]]
+id = "attach-replaces-the-previous-rule"
+intent = "a second rule overwrites the first instead of accumulating"
+file = "service_k8s/infrastructure/crd.py"
+old = '        rules.append({"rule": rule, "message": message})'
+new = '        rules[:] = [{"rule": rule, "message": message}]'
+
+[[mutation]]
+id = "attach-counts-versions-only-once"
+intent = "the returned count saturates at one, so a caller cannot notice a CRD that lost a version"
+file = "service_k8s/infrastructure/crd.py"
+old = "        attached += 1"
+new = "        attached = 1"
+
+[[mutation]]
+id = "attach-always-reports-nothing-attached"
+intent = "the count is discarded, so a caller asserting non-zero sees a silent no-op as success"
+file = "service_k8s/infrastructure/crd.py"
+old = "    return attached"
+new = "    return 0"
+
+# ---------------------------------------------------------------------------
+# crd.py — the YAML 1.1 quoter
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "quoter-drops-y-from-the-boolean-spellings"
+intent = "the single-letter YAML 1.1 spellings are forgotten, so a `y` default arrives as a boolean"
+file = "service_k8s/infrastructure/crd.py"
+old = 'BOOLEAN_LIKE: Final[tuple[str, ...]] = ("y", "yes", "n", "no", "on", "off")'
+new = 'BOOLEAN_LIKE: Final[tuple[str, ...]] = ("yes", "no", "on", "off")'
+
+[[mutation]]
+id = "quoter-drops-off-from-the-boolean-spellings"
+intent = "the off spelling is forgotten, which is the exact value a disabled feature flag carries"
+file = "service_k8s/infrastructure/crd.py"
+old = 'BOOLEAN_LIKE: Final[tuple[str, ...]] = ("y", "yes", "n", "no", "on", "off")'
+new = 'BOOLEAN_LIKE: Final[tuple[str, ...]] = ("y", "yes", "n", "no", "on")'
+
+[[mutation]]
+id = "quoter-ignores-sequence-entries"
+intent = "only mapping values are quoted, so a boolean-like string inside a list is left bare"
+file = "service_k8s/infrastructure/crd.py"
+old = '        elif trimmed.startswith("- "):'
+new = "        elif False:"
+
+[[mutation]]
+id = "quoter-ignores-mapping-values"
+intent = "only sequence entries are quoted, so `enabled: on` is left bare"
+file = "service_k8s/infrastructure/crd.py"
+old = '        if ": " in trimmed:'
+new = "        if False:"
+
+[[mutation]]
+id = "quoter-becomes-case-sensitive"
+intent = "the case fold is dropped, so YAML 1.1's `Yes` and `On` spellings are missed"
+file = "service_k8s/infrastructure/crd.py"
+old = "        if scalar is not None and scalar.lower() in BOOLEAN_LIKE:"
+new = "        if scalar is not None and scalar in BOOLEAN_LIKE:"
+
+[[mutation]]
+id = "quoter-splits-on-the-last-colon"
+intent = "the scalar is taken after the last `: ` rather than the first, so prose ending in a boolean word is mangled"
+file = "service_k8s/infrastructure/crd.py"
+old = '            scalar = trimmed.split(": ", 1)[1]'
+new = '            scalar = trimmed.split(": ")[-1]'
+
+[[mutation]]
+id = "quoter-miscomputes-the-prefix"
+intent = "the retained prefix is one character short, so quoting eats the character before the scalar"
+file = "service_k8s/infrastructure/crd.py"
+old = "            prefix_len = len(line) - len(scalar)"
+new = "            prefix_len = len(line) - len(scalar) - 1"
+
+[[mutation]]
+id = "quoter-drops-a-trailing-newline"
+intent = "the document's trailing newline is not restored, so the rewritten manifest loses its final line ending"
+file = "service_k8s/infrastructure/crd.py"
+old = "    if trailing_newline:"
+new = "    if False:"
+
+[[mutation]]
+id = "quoter-invents-a-trailing-newline"
+intent = "every document gains a trailing newline, so a fragment is silently reshaped"
+file = "service_k8s/infrastructure/crd.py"
+old = '    trailing_newline = yaml_text.endswith("\n")'
+new = "    trailing_newline = True"
+
+# ---------------------------------------------------------------------------
+# resize.py — the suffix table
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "ki-is-a-decimal-thousand"
+intent = "the binary kibi suffix is scaled by 1000, the classic Kubernetes quantity bug"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("Ki", 1024),'
+new = '    ("Ki", 1000),'
+
+[[mutation]]
+id = "mi-is-off-by-one"
+intent = "the mebi multiplier is wrong by a byte"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("Mi", 1048576),'
+new = '    ("Mi", 1048577),'
+
+[[mutation]]
+id = "gi-is-off-by-one"
+intent = "the gibi multiplier is wrong by a byte, which a grow/noop comparison would mis-classify"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("Gi", 1073741824),'
+new = '    ("Gi", 1073741823),'
+
+[[mutation]]
+id = "ti-is-off-by-one"
+intent = "the tebi multiplier is wrong by a byte"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("Ti", 1099511627776),'
+new = '    ("Ti", 1099511627775),'
+
+[[mutation]]
+id = "pi-is-off-by-one"
+intent = "the pebi multiplier is wrong by a byte"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("Pi", 1125899906842624),'
+new = '    ("Pi", 1125899906842623),'
+
+[[mutation]]
+id = "ei-is-scaled-decimally"
+intent = "the exbi suffix is given the decimal exa multiplier, collapsing the Ei/E distinction at the largest scale"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("Ei", 1152921504606846976),'
+new = '    ("Ei", 1000000000000000000),'
+
+[[mutation]]
+id = "k-is-a-binary-kibi"
+intent = "the decimal kilo suffix is scaled by 1024, inverting the binary/decimal distinction"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("k", 1000),'
+new = '    ("k", 1024),'
+
+[[mutation]]
+id = "m-is-a-binary-mebi"
+intent = "the decimal mega suffix is scaled by 1024^2"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("M", 1000000),'
+new = '    ("M", 1048576),'
+
+[[mutation]]
+id = "g-is-a-binary-gibi"
+intent = "the decimal giga suffix is scaled by 1024^3, so `1G` and `1Gi` become indistinguishable"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("G", 1000000000),'
+new = '    ("G", 1073741824),'
+
+[[mutation]]
+id = "t-is-a-binary-tebi"
+intent = "the decimal tera suffix is scaled by 1024^4"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("T", 1000000000000),'
+new = '    ("T", 1099511627776),'
+
+[[mutation]]
+id = "p-multiplier-collapses"
+intent = "the peta suffix loses its multiplier entirely"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("P", 1000000000000000),'
+new = '    ("P", 1),'
+
+[[mutation]]
+id = "e-multiplier-collapses"
+intent = "the exa suffix loses its multiplier entirely"
+file = "service_k8s/infrastructure/resize.py"
+old = '    ("E", 1000000000000000000),'
+new = '    ("E", 1),'
+
+# ---------------------------------------------------------------------------
+# resize.py — quantity parsing
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "bare-count-accepts-python-integer-spellings"
+intent = "the ASCII-digit floor is widened, so Python's underscore and sign spellings parse as byte counts a cluster would reject"
+file = "service_k8s/infrastructure/resize.py"
+old = '    if not s or not all(c in "0123456789" for c in s):'
+new = '    if not s or not all(c in "0123456789_+" for c in s):'
+
+[[mutation]]
+id = "empty-quantity-is-not-detected-early"
+intent = "the empty check no longer matches, so an empty quantity falls through to a different, less specific refusal"
+file = "service_k8s/infrastructure/resize.py"
+old = '    if s == "":'
+new = '    if s == " ":'
+
+[[mutation]]
+id = "quantity-is-not-trimmed"
+intent = "surrounding whitespace is no longer stripped, so a manifest value with a stray space stops parsing"
+file = "service_k8s/infrastructure/resize.py"
+old = "    s = qty.strip()"
+new = "    s = qty"
+
+[[mutation]]
+id = "mantissa-slice-is-off-by-one"
+intent = "the numeric head loses its last character, so `1.5Gi` is read as `1.`"
+file = "service_k8s/infrastructure/resize.py"
+old = "            head = s[: len(s) - len(suffix)].strip()"
+new = "            head = s[: len(s) - len(suffix) - 1].strip()"
+
+[[mutation]]
+id = "negative-quantities-are-accepted"
+intent = "the negativity floor drops below zero, so a negative declaration becomes a negative byte count"
+file = "service_k8s/infrastructure/resize.py"
+old = "            if value < 0.0:"
+new = "            if value < -1.0:"
+
+[[mutation]]
+id = "scaled-quantity-is-truncated-not-rounded"
+intent = "the scaled value is truncated toward zero instead of rounded, losing a byte on any fraction above a half"
+file = "service_k8s/infrastructure/resize.py"
+old = "            return round(value * multiplier)"
+new = "            return int(value * multiplier)"
+
+[[mutation]]
+id = "empty-quantity-message-changes"
+intent = "the empty-quantity refusal no longer says what was wrong"
+file = "service_k8s/infrastructure/resize.py"
+old = '        raise QuantityError("empty storage quantity")'
+new = '        raise QuantityError("bad storage quantity")'
+
+[[mutation]]
+id = "invalid-mantissa-message-changes"
+intent = "the refusal stops naming the numeric part as the problem"
+file = "service_k8s/infrastructure/resize.py"
+old = '                    "invalid numeric part in storage quantity " + repr(qty)'
+new = '                    "bad storage quantity " + repr(qty)'
+
+[[mutation]]
+id = "negative-message-changes"
+intent = "the refusal stops naming negativity as the problem"
+file = "service_k8s/infrastructure/resize.py"
+old = '                raise QuantityError("negative storage quantity " + repr(qty))'
+new = '                raise QuantityError("bad storage quantity " + repr(qty))'
+
+[[mutation]]
+id = "unrecognized-message-changes"
+intent = "the bare-count refusal stops naming the offending string"
+file = "service_k8s/infrastructure/resize.py"
+old = '        raise QuantityError("unrecognized storage quantity " + repr(s))'
+new = '        raise QuantityError("bad storage quantity")'
+
+# ---------------------------------------------------------------------------
+# resize.py — classification
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "grow-swallows-the-equal-case"
+intent = "a size that already matches is classified as a grow, so every reconcile issues a pointless patch"
+file = "service_k8s/infrastructure/resize.py"
+old = "    if desired_bytes > current_bytes:"
+new = "    if desired_bytes >= current_bytes:"
+
+[[mutation]]
+id = "equal-sizes-are-classified-as-a-shrink"
+intent = "the equality test is inverted, so an already-correct volume is reported as an unsupported shrink"
+file = "service_k8s/infrastructure/resize.py"
+old = "    if desired_bytes == current_bytes:"
+new = "    if desired_bytes < current_bytes:"
+
+[[mutation]]
+id = "shrink-kind-token-changes"
+intent = "the shrink kind's wire token changes, so a caller matching on it silently stops matching"
+file = "service_k8s/infrastructure/resize.py"
+old = '    SHRINK_UNSUPPORTED = "shrink-unsupported"'
+new = '    SHRINK_UNSUPPORTED = "shrink_unsupported"'
+
+[[mutation]]
+id = "noop-kind-token-changes"
+intent = "the no-op kind's wire token changes"
+file = "service_k8s/infrastructure/resize.py"
+old = '    NOOP = "noop"'
+new = '    NOOP = "no-op"'
+
+[[mutation]]
+id = "shrink-detail-says-shrinking-is-possible"
+intent = "the shrink explanation is inverted into an assertion that Kubernetes can shrink a bound PVC"
+file = "service_k8s/infrastructure/resize.py"
+old = '    "desired size is smaller than current; Kubernetes cannot shrink a bound "'
+new = '    "desired size is smaller than current; Kubernetes can shrink a bound "'
+
+[[mutation]]
+id = "grow-loses-its-current-size"
+intent = "a grow action no longer carries the size it is growing from"
+file = "service_k8s/infrastructure/resize.py"
+old = '''
+            ResizeKind.GROW,
+            current_bytes=current_bytes,'''
+new = '''
+            ResizeKind.GROW,
+            current_bytes=None,'''
+
+[[mutation]]
+id = "decide-noop-loses-its-reason"
+intent = "the no-op classification stops explaining itself"
+file = "service_k8s/infrastructure/resize.py"
+old = '''
+            desired_bytes=desired_bytes,
+            detail="already at desired size",'''
+new = '''
+            desired_bytes=desired_bytes,
+            detail="",'''
+
+[[mutation]]
+id = "unparseable-current-is-labelled-desired"
+intent = "the failing side is mislabelled, so an operator debugs the wrong value"
+file = "service_k8s/infrastructure/resize.py"
+old = '            detail="current quantity " + repr(current) + ": " + str(exc),'
+new = '            detail="desired quantity " + repr(current) + ": " + str(exc),'
+
+[[mutation]]
+id = "unparseable-desired-is-labelled-current"
+intent = "the failing side is mislabelled in the other direction"
+file = "service_k8s/infrastructure/resize.py"
+old = '            detail="desired quantity " + repr(desired) + ": " + str(exc),'
+new = '            detail="current quantity " + repr(desired) + ": " + str(exc),'
+
+# ---------------------------------------------------------------------------
+# resize.py — the plan
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "patch-targets-limits-not-requests"
+intent = "the patch writes the wrong resource stanza, so nothing resizes and nothing errors"
+file = "service_k8s/infrastructure/resize.py"
+old = '    return {"spec": {"resources": {"requests": {"storage": desired}}}}'
+new = '    return {"spec": {"resources": {"limits": {"storage": desired}}}}'
+
+[[mutation]]
+id = "patch-uses-the-wrong-field-name"
+intent = "the patched field is renamed, so the one mutable field is never touched"
+file = "service_k8s/infrastructure/resize.py"
+old = '{"storage": desired}'
+new = '{"size": desired}'
+
+[[mutation]]
+id = "plan-ignores-the-name-filter"
+intent = "the name filter is bypassed, so PVCs the caller excluded are planned anyway"
+file = "service_k8s/infrastructure/resize.py"
+old = "        if not name_filter(pvc.name):"
+new = "        if False:"
+
+[[mutation]]
+id = "plan-inverts-the-name-filter"
+intent = "the filter selects exactly the PVCs the caller meant to exclude"
+file = "service_k8s/infrastructure/resize.py"
+old = "        if not name_filter(pvc.name):"
+new = "        if name_filter(pvc.name):"
+
+[[mutation]]
+id = "plan-treats-unparseable-as-a-grow"
+intent = "an unparseable current size falls through to the patch path, so a PVC of unknown size is patched"
+file = "service_k8s/infrastructure/resize.py"
+old = "        if action.kind == ResizeKind.UNPARSEABLE:"
+new = "        if False:"
+
+[[mutation]]
+id = "plan-treats-a-shrink-as-a-grow"
+intent = "a shrink falls through to the patch path, so Kubernetes is asked to do the one thing it cannot"
+file = "service_k8s/infrastructure/resize.py"
+old = "        elif action.kind == ResizeKind.SHRINK_UNSUPPORTED:"
+new = "        elif False:"
+
+[[mutation]]
+id = "plan-treats-a-noop-as-a-grow"
+intent = "an already-correct PVC falls through to the patch path and is patched on every reconcile"
+file = "service_k8s/infrastructure/resize.py"
+old = "        elif action.kind == ResizeKind.NOOP:"
+new = "        elif False:"
+
+[[mutation]]
+id = "plan-patches-a-non-expandable-class"
+intent = "the expansion gate is removed, so a PVC whose StorageClass forbids expansion is patched anyway"
+file = "service_k8s/infrastructure/resize.py"
+old = "            if not expandable:"
+new = "            if False:"
+
+[[mutation]]
+id = "plan-assumes-a-classless-pvc-is-expandable"
+intent = "a PVC with no bound StorageClass is assumed expandable"
+file = "service_k8s/infrastructure/resize.py"
+old = '''
+            if pvc.storage_class is None:
+                expandable = False'''
+new = '''
+            if pvc.storage_class is None:
+                expandable = True'''
+
+[[mutation]]
+id = "plan-defaults-an-unknown-class-to-expandable"
+intent = "a StorageClass absent from the expansion map defaults to allowed instead of refused"
+file = "service_k8s/infrastructure/resize.py"
+old = "                expandable = allow_expansion.get(class_name, False)"
+new = "                expandable = allow_expansion.get(class_name, True)"
+
+[[mutation]]
+id = "plan-mislabels-a-classless-pvc"
+intent = "the placeholder for a missing StorageClass names a real class instead"
+file = "service_k8s/infrastructure/resize.py"
+old = '                class_name = "<none>"'
+new = '                class_name = "default"'
+
+[[mutation]]
+id = "plan-inverts-the-expansion-explanation"
+intent = "the refusal claims the class does allow expansion"
+file = "service_k8s/infrastructure/resize.py"
+old = '                    + " does not allow volume expansion; recreate the PVC/StatefulSet manually"'
+new = '                    + " allows volume expansion"'
+
+[[mutation]]
+id = "plan-patches-during-a-dry-run"
+intent = "the dry-run gate is removed, so a rehearsal mutates the cluster"
+file = "service_k8s/infrastructure/resize.py"
+old = "            elif dry_run:"
+new = "            elif False:"
+
+[[mutation]]
+id = "plan-reports-a-real-patch-as-not-patched"
+intent = "a patch that happened is reported as skipped, so a caller re-patches forever"
+file = "service_k8s/infrastructure/resize.py"
+old = "                        patched=True,"
+new = "                        patched=False,"
+
+[[mutation]]
+id = "plan-dry-run-claims-it-patched"
+intent = "the dry-run detail claims the patch was applied"
+file = "service_k8s/infrastructure/resize.py"
+old = '                        detail="dry run: would patch spec.resources.requests.storage",'
+new = '                        detail="patched spec.resources.requests.storage",'
+
+[[mutation]]
+id = "plan-noop-outcome-loses-its-reason"
+intent = "the per-PVC no-op outcome stops explaining itself"
+file = "service_k8s/infrastructure/resize.py"
+old = '''
+                    patched=False,
+                    detail="already at desired size",'''
+new = '''
+                    patched=False,
+                    detail="",'''
+
+[[mutation]]
+id = "plan-reverses-the-outcome-order"
+intent = "outcomes no longer follow input order, so a caller zipping them against its own list mispairs every row"
+file = "service_k8s/infrastructure/resize.py"
+old = "    return tuple(outcomes)"
+new = "    return tuple(reversed(outcomes))"
