@@ -33,7 +33,7 @@ def normalize_unsigned_integer_formats(value: object) -> None:
 def add_spec_validation_rule(
     crd: dict[str, object], rule: str, message: str
 ) -> int:
-    clean_rule = rule.replace(" ", "")
+    clean_rule = "".join(rule.split())
     if "!=null" in clean_rule or "==null" in clean_rule:
         raise CelRuleError(
             "CEL rules must not compare against null directly; use has(self.field)"
