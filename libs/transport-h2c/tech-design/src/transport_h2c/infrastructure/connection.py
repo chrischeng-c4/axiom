@@ -20,7 +20,7 @@ def reserve(state: ConnectionState) -> None:
 
 
 def release(state: ConnectionState) -> None:
-    state.in_flight -= 1
+    state.in_flight = max(state.in_flight - 1, 0)
 
 
 def mark_dead(state: ConnectionState) -> None:
