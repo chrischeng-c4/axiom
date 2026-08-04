@@ -181,7 +181,24 @@ def gate_inventory(report: Report, project: Project) -> None:
 # --------------------------------------------------------------------------
 
 
+def purge_bytecode(root: Path) -> None:
+    """Delete every cached .pyc under `root`.
+
+    A .pyc records its source mtime in whole seconds. The mutation suite
+    rewrites a TD module and restores it, usually within the same second and
+    often without changing the byte count -- which leaves the mutant's cached
+    bytecode valid for the restored source and silently inverts the answer.
+
+    PYTHONDONTWRITEBYTECODE cannot prevent this: the protocol runs the case as
+    `python -I`, and -I implies -E, so the interpreter ignores every PYTHON*
+    variable we set. Purging before each invocation is the only lever we have.
+    """
+    for cache in root.rglob("__pycache__"):
+        shutil.rmtree(cache, ignore_errors=True)
+
+
 def run_case(project: Project, command: str) -> tuple[int, str, str]:
+    purge_bytecode(project.td_dir / "src")
     env = dict(
         os.environ,
         AW_PYTHON_ARTIFACT_PROTOCOL=PROTOCOL,
@@ -437,11 +454,19 @@ def gate_mutations(report: Report, project: Project, mutations_path: Path | None
     blind: list[str] = []
     caught = 0
 
+    # run_case purges before every invocation; this only clears bytecode left
+    # behind by whatever ran before this harness did.
+    purge_bytecode(src_root)
+
     for mutation in mutations:
         target = src_root / mutation["file"]
         original = target.read_text()
-        if mutation["old"] not in original:
-            blind.append(f"{mutation['id']}: anchor no longer present in {mutation['file']}")
+        hits = original.count(mutation["old"])
+        if hits != 1:
+            blind.append(
+                f"{mutation['id']}: anchor occurs {hits} times in {mutation['file']} "
+                "— a defect that is not uniquely placed proves nothing"
+            )
             continue
         target.write_text(original.replace(mutation["old"], mutation["new"], 1))
         try:
