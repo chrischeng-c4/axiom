@@ -253,3 +253,365 @@ intent = "the first retry is immediate, so a failing issuer is hammered instead 
 file = "service_k8s/application/rotation.py"
 old = "        return timedelta(seconds=RETRY_BASE_SECS)"
 new = "        return timedelta(seconds=0)"
+# ---------------------------------------------------------------------------
+# whole-layer capacity planning — the per-shard arithmetic and its two ladders
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "the-ratio-truncates-instead-of-rounding-up"
+intent = "the HPA ratio floors instead of ceiling, so a layer that is 4.29 replicas short of its target is planned at 4 and never catches up"
+file = "service_k8s/application/capacity.py"
+old = "    return (numerator + denominator - 1) // denominator"
+new = "    return numerator // denominator"
+
+[[mutation]]
+id = "the-two-axes-take-the-smaller"
+intent = "cpu and memory are combined with min instead of max, so an idle memory reading cancels out real cpu pressure"
+file = "service_k8s/application/capacity.py"
+old = "        desired = max(candidates)"
+new = "        desired = min(candidates)"
+
+[[mutation]]
+id = "a-metrics-gap-reads-as-idleness"
+intent = "an absent signal collapses the layer to its floor instead of holding, so a broken metrics pipeline scales the workload down"
+file = "service_k8s/application/capacity.py"
+old = """    if observed.cpu_percent is None and observed.memory_percent is None:
+        desired = current_replicas_per_shard"""
+new = """    if observed.cpu_percent is None and observed.memory_percent is None:
+        desired = policy.min_replicas_per_shard"""
+
+[[mutation]]
+id = "the-upper-replica-bound-is-not-applied"
+intent = "the per-shard ceiling stops clamping, so a runaway utilization reading requests an unbounded layer"
+file = "service_k8s/application/capacity.py"
+old = """    desired = min(
+        max(desired, policy.min_replicas_per_shard),
+        policy.max_replicas_per_shard,
+    )"""
+new = "    desired = max(desired, policy.min_replicas_per_shard)"
+
+[[mutation]]
+id = "the-lower-replica-bound-is-not-applied"
+intent = "the per-shard floor stops clamping, so a quiet period can plan fewer replicas than the quorum policy allows"
+file = "service_k8s/application/capacity.py"
+old = """    desired = min(
+        max(desired, policy.min_replicas_per_shard),
+        policy.max_replicas_per_shard,
+    )
+"""
+new = """    desired = min(desired, policy.max_replicas_per_shard)
+"""
+
+[[mutation]]
+id = "the-desired-total-is-not-a-whole-layer"
+intent = "the desired total drops the shard multiplier, so the plan describes a StatefulSet size that does not exist for a sharded topology"
+file = "service_k8s/application/capacity.py"
+old = "    desired_total_pods = shard_count * desired"
+new = "    desired_total_pods = desired"
+
+[[mutation]]
+id = "the-current-total-is-computed-from-the-desired-layer"
+intent = "the current total is reported from the desired replica count, so a caller diffing current against desired never sees a change"
+file = "service_k8s/application/capacity.py"
+old = "    current_total_pods = shard_count * current_replicas_per_shard"
+new = "    current_total_pods = shard_count * desired"
+
+[[mutation]]
+id = "every-plan-claims-a-membership-change"
+intent = "the Raft precondition always reports true, so a caller performs a membership transition for a plan that changes nothing"
+file = "service_k8s/application/capacity.py"
+old = "        return self.current_replicas_per_shard != self.desired_replicas_per_shard"
+new = "        return True"
+
+[[mutation]]
+id = "the-split-threshold-becomes-inclusive"
+intent = "the strict comparison relaxes to >=, so a shard sitting at exactly one GiB is split"
+file = "service_k8s/application/capacity.py"
+old = "        and busiest.durable_bytes > policy.split_threshold_bytes"
+new = "        and busiest.durable_bytes >= policy.split_threshold_bytes"
+
+[[mutation]]
+id = "a-split-adds-more-than-one-shard"
+intent = "a split doubles the topology instead of adding one shard, so a single observation triggers a data movement the caller never planned"
+file = "service_k8s/application/capacity.py"
+old = "        desired = current_shard_count + 1"
+new = "        desired = current_shard_count * 2"
+
+[[mutation]]
+id = "ties-choose-the-highest-shard-index"
+intent = "the tie-break flips, so two equally loaded shards produce a different plan depending on observation order"
+file = "service_k8s/application/capacity.py"
+old = "        busiest = max(observed, key=lambda u: (u.durable_bytes, -u.shard_index))"
+new = "        busiest = max(observed, key=lambda u: (u.durable_bytes, u.shard_index))"
+
+[[mutation]]
+id = "the-shard-ceiling-is-ignored"
+intent = "max_shards stops gating the split, so the topology grows past the bound the operator configured"
+file = "service_k8s/application/capacity.py"
+old = "    if threshold_crossed and not max_shards_reached:"
+new = "    if threshold_crossed:"
+
+[[mutation]]
+id = "an-empty-observation-invents-a-busiest-shard"
+intent = "no observations produce a synthetic zero-byte shard, so the plan reports evidence that was never measured"
+file = "service_k8s/application/capacity.py"
+old = """    if not observed:
+        busiest = None"""
+new = """    if not observed:
+        busiest = ObservedShardUsage(0, 0)"""
+
+[[mutation]]
+id = "a-blank-resource-request-is-taken-literally"
+intent = "an empty request string stops falling back, so a service that left the field blank gets no request at all"
+file = "service_k8s/application/capacity.py"
+old = "    if not value.strip():"
+new = "    if value is None:"
+
+[[mutation]]
+id = "a-resource-request-is-silently-stripped"
+intent = "the caller's own value is rewritten on the way out, so what the service declared is not what the pod spec carries"
+file = "service_k8s/application/capacity.py"
+old = """        return default
+    return value"""
+new = """        return default
+    return value.strip()"""
+
+[[mutation]]
+id = "the-replica-ladder-checks-the-shard-count-second"
+intent = "the validation order flips, so a caller with two invalid inputs is told about the wrong one"
+file = "service_k8s/application/capacity.py"
+old = """    if shard_count == 0:
+        raise ZeroShards()
+    if current_replicas_per_shard == 0:
+        raise ZeroCurrentReplicas()"""
+new = """    if current_replicas_per_shard == 0:
+        raise ZeroCurrentReplicas()
+    if shard_count == 0:
+        raise ZeroShards()"""
+
+[[mutation]]
+id = "the-utilization-target-loses-its-upper-bound"
+intent = "only a zero target is refused, so a target above 100 percent silently plans a layer that can never reach it"
+file = "service_k8s/application/capacity.py"
+old = """    if not (1 <= policy.target_cpu_utilization <= 100) or not (
+        1 <= policy.target_memory_utilization <= 100
+    ):"""
+new = """    if policy.target_cpu_utilization == 0 or (
+        policy.target_memory_utilization == 0
+    ):"""
+
+[[mutation]]
+id = "the-replica-overflow-check-is-dropped"
+intent = "a pod total past u32 is planned instead of refused, so the value the API server receives has wrapped"
+file = "service_k8s/application/capacity.py"
+old = "    if current_total_pods > U32_MAX or desired_total_pods > U32_MAX:"
+new = "    if False:"
+
+[[mutation]]
+id = "a-zero-minimum-is-tolerated"
+intent = "a floor of zero is accepted, so a policy that can plan an empty shard passes validation"
+file = "service_k8s/application/capacity.py"
+old = "    if policy.min_replicas_per_shard == 0:"
+new = "    if False:"
+
+[[mutation]]
+id = "inverted-replica-bounds-are-tolerated"
+intent = "a maximum below the minimum is accepted, so the clamp silently resolves to the maximum and the floor is lost"
+file = "service_k8s/application/capacity.py"
+old = "    if policy.max_replicas_per_shard < policy.min_replicas_per_shard:"
+new = "    if False:"
+
+[[mutation]]
+id = "a-replica-refusal-loses-its-reason"
+intent = "the zero-shard refusal degrades to a generic message, so an operator reading the error cannot tell which input was wrong"
+file = "service_k8s/application/capacity.py"
+old = """        super().__init__("shard_count must be greater than zero")"""
+new = """        super().__init__("invalid replica-layer input")"""
+
+[[mutation]]
+id = "the-split-planner-tolerates-a-zero-shard-count"
+intent = "an empty topology is planned against instead of refused, so a split is computed for a workload that does not exist"
+file = "service_k8s/application/capacity.py"
+old = """    if current_shard_count == 0:
+        raise ZeroShardCount()"""
+new = """    if False:
+        raise ZeroShardCount()"""
+
+[[mutation]]
+id = "a-zero-split-threshold-is-tolerated"
+intent = "a zero threshold is accepted, so every observation crosses it and the topology grows on every reconcile"
+file = "service_k8s/application/capacity.py"
+old = "    if policy.split_threshold_bytes == 0:"
+new = "    if False:"
+
+[[mutation]]
+id = "a-maximum-below-the-current-shard-count-is-tolerated"
+intent = "a ceiling under the live topology is accepted, so the policy silently describes a shrink this library cannot perform"
+file = "service_k8s/application/capacity.py"
+old = """    if (
+        policy.max_shards is not None
+        and policy.max_shards < current_shard_count
+    ):
+        raise InvalidMaximum()"""
+new = """    if False:
+        raise InvalidMaximum()"""
+
+[[mutation]]
+id = "an-observation-outside-the-topology-is-tolerated"
+intent = "a shard index the topology does not contain is planned against, so a stale or forged metric drives a real split"
+file = "service_k8s/application/capacity.py"
+old = "    if any(u.shard_index >= current_shard_count for u in observed):"
+new = "    if False:"
+
+[[mutation]]
+id = "the-shard-overflow-check-is-dropped"
+intent = "a shard count past u32 is planned instead of refused"
+file = "service_k8s/application/capacity.py"
+old = """        if desired > U32_MAX:
+            raise ShardOverflow()"""
+new = """        if False:
+            raise ShardOverflow()"""
+
+[[mutation]]
+id = "a-split-refusal-loses-its-reason"
+intent = "the unknown-shard refusal degrades to a generic message, so the operator cannot tell that the observation, not the policy, was wrong"
+file = "service_k8s/application/capacity.py"
+old = """        super().__init__("observed shard index is outside the current topology")"""
+new = """        super().__init__("invalid shard-split input")"""
+
+# ---------------------------------------------------------------------------
+# clock-free condition projection — the sticky instant and the metav1 shape
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "the-transition-instant-always-refreshes"
+intent = "every reconcile stamps the injected instant, so the 30-second requeue looks like a state change to everything watching"
+file = "service_k8s/domain/condition.py"
+old = """        last_transition_time = (
+            carried.last_transition_time if carried is not None else now
+        )"""
+new = "        last_transition_time = now"
+
+[[mutation]]
+id = "the-transition-instant-survives-a-status-flip"
+intent = "the carry-forward matches on type alone, so a condition that flips keeps the instant from the state it just left"
+file = "service_k8s/domain/condition.py"
+old = """        carried = next(
+            (c for c in prior if c.type_ == fact.type_ and c.status == status_token),
+            None,
+        )"""
+new = """        carried = next(
+            (c for c in prior if c.type_ == fact.type_),
+            None,
+        )"""
+
+[[mutation]]
+id = "the-reason-and-message-are-carried-forward-too"
+intent = "the whole prior condition is carried instead of only its instant, so a stale reason and message outlive the state that produced them"
+file = "service_k8s/domain/condition.py"
+old = """                reason=fact.reason,
+                message=fact.message,"""
+new = """                reason=carried.reason if carried is not None else fact.reason,
+                message=carried.message if carried is not None else fact.message,"""
+
+[[mutation]]
+id = "the-observed-generation-is-carried-from-the-prior"
+intent = "observedGeneration comes from the prior object instead of the caller, so status permanently claims to reflect an older spec"
+file = "service_k8s/domain/condition.py"
+old = "                observed_generation=observed_generation,"
+new = "                observed_generation=(carried.observed_generation if carried is not None else observed_generation),"
+
+[[mutation]]
+id = "a-dropped-condition-survives-the-projection"
+intent = "conditions the service stopped reporting are appended back, so a resolved condition never leaves status"
+file = "service_k8s/domain/condition.py"
+old = "    return tuple(result)"
+new = "    return tuple(result) + tuple(c for c in prior if c.type_ not in {f.type_ for f in facts})"
+
+[[mutation]]
+id = "the-projection-reorders-the-facts"
+intent = "the emitted order is sorted rather than preserved, so a service cannot control which condition a tool reads first"
+file = "service_k8s/domain/condition.py"
+old = "    for fact in facts:"
+new = "    for fact in sorted(facts, key=lambda f: f.type_):"
+
+[[mutation]]
+id = "the-projection-returns-a-mutable-list"
+intent = "the projection hands back the working list, so a caller can edit published status in place"
+file = "service_k8s/domain/condition.py"
+old = "    return tuple(result)"
+new = "    return result"
+
+[[mutation]]
+id = "the-status-token-is-lowercased"
+intent = "the wire token stops being the Kubernetes spelling, so kubectl wait --for=condition never matches"
+file = "service_k8s/domain/condition.py"
+old = "        return self.value"
+new = "        return self.value.lower()"
+
+[[mutation]]
+id = "a-boolean-readiness-can-become-unknown"
+intent = "a false observation is published as Unknown, so a definite not-ready reads as no information"
+file = "service_k8s/domain/condition.py"
+old = """        if value:
+            return ConditionStatus.TRUE
+        return ConditionStatus.FALSE"""
+new = """        if value:
+            return ConditionStatus.TRUE
+        return ConditionStatus.UNKNOWN"""
+
+[[mutation]]
+id = "the-status-enumeration-is-not-closed"
+intent = "a fourth status spelling appears, so a value no controller-aware tool understands can be published"
+file = "service_k8s/domain/condition.py"
+old = """    UNKNOWN = "Unknown\""""
+new = """    UNKNOWN = "Unknown"
+    DEGRADED = "Degraded\""""
+
+[[mutation]]
+id = "the-serialized-key-is-the-python-attribute-name"
+intent = "the JSON key leaks the trailing underscore, so the object is not a metav1 condition at all"
+file = "service_k8s/domain/condition.py"
+old = """            "type": self.type_,"""
+new = """            "type_": self.type_,"""
+
+[[mutation]]
+id = "an-absent-observed-generation-is-serialized-as-null"
+intent = "observedGeneration is always emitted, so a condition with no generation publishes a null the API server stores"
+file = "service_k8s/domain/condition.py"
+old = "        if self.observed_generation is not None:"
+new = "        if True:"
+
+[[mutation]]
+id = "an-empty-message-is-dropped-from-the-serialized-shape"
+intent = "an empty message is pruned rather than published, so the serialized object stops being the fixed metav1 shape"
+file = "service_k8s/domain/condition.py"
+old = "        return res"
+new = """        if not self.message:
+            del res["message"]
+        return res"""
+
+[[mutation]]
+id = "the-injected-instant-is-truncated-to-second-precision"
+intent = "the projection rewrites the caller's instant instead of carrying it through, so the one place a clock is read is no longer the only place time is decided"
+file = "service_k8s/domain/condition.py"
+old = "                last_transition_time=last_transition_time,"
+new = """                last_transition_time=last_transition_time[:19] + "Z","""
+
+[[mutation]]
+id = "a-projected-condition-is-mutable"
+intent = "published status becomes editable in place, so a later reconcile step can rewrite a condition after it was projected"
+file = "service_k8s/domain/condition.py"
+old = """@dataclass(frozen=True)
+class Condition:"""
+new = """@dataclass
+class Condition:"""
+
+[[mutation]]
+id = "a-condition-fact-is-mutable"
+intent = "the service's own emitted fact becomes editable, so the input to a deterministic projection is no longer fixed"
+file = "service_k8s/domain/condition.py"
+old = """@dataclass(frozen=True)
+class ConditionFact:"""
+new = """@dataclass
+class ConditionFact:"""

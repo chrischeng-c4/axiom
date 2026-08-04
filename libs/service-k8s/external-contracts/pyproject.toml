@@ -70,3 +70,59 @@ oracle = "Row 3 reads the closed action set off the Action union itself and comp
 target = "rust"
 command = "memoryless-rotation-decision-security"
 evidence_paths = ["evidence/memoryless-rotation-decision-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "whole-layer-capacity-planning-behavior"
+artifact_id = "artifact:service-k8s/whole-layer-capacity-planning-behavior"
+capability_id = "whole-layer-capacity-planning"
+use_case_id = "whole-layer-capacity-planning"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/whole-layer-capacity-planning-behavior.py"
+promise = "A sharded service scales as a layer, not as a pod count. The replica planner takes CPU and memory utilization as two independent axes, computes a desired replica count per shard from each, and keeps the larger, so relieving one axis cannot starve the other. The ratio rounds up, so a shard that is over target is never left under-provisioned by truncation, and the resulting pod total is always a whole number of shard layers. A missing metric is a gap, not a zero: the layer holds. The shard planner splits on durable bytes, adds exactly one shard per decision, and breaks ties toward the lowest shard index so the same observation always names the same busiest shard."
+oracle = "Reads desired replicas per shard and the derived pod total as one tuple per row, so a planner that scales correctly but multiplies by the wrong shard count fails on the second element. Row 3 gives CPU and memory opposing signals and pins the larger; row 4 pins a ratio whose exact quotient is fractional; row 5 sweeps five shard counts against one desired layer. Row 7 holds both metrics absent and pins the hold together with its membership-change flag. Row 12 pins the threshold at exactly one gibibyte from both sides, and row 14 presents the same tie in two observation orders."
+target = "rust"
+command = "whole-layer-capacity-planning-behavior"
+evidence_paths = ["evidence/whole-layer-capacity-planning-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "whole-layer-capacity-planning-security"
+artifact_id = "artifact:service-k8s/whole-layer-capacity-planning-security"
+capability_id = "whole-layer-capacity-planning"
+use_case_id = "whole-layer-capacity-planning"
+dimension = "security"
+applicability = "td"
+test_path = "src/whole-layer-capacity-planning-security.py"
+promise = "A scaling plan is a membership change to a consensus group, so every input is validated before any arithmetic runs and every refusal names its reason in the operator's words. A zero shard count, a zero current replica count, a zero minimum, inverted bounds, and an out-of-range utilization target are all refused locally. A pod total that would overflow the wire's u32 replica field is refused rather than truncated, and a split that would push the shard count past u32 is refused the same way. The ladder is ordered, so the cheapest structural check reports first and an operator is not told about a bad target when the topology itself is empty."
+oracle = "Every row observes the refusal's variant name, so a dropped check is visible as an acceptance rather than as a differently-worded error. Rows 5 and 6 push each utilization target past both ends of 1..=100 and require the same refusal from both directions. Rows 8 and 15 stack two independent violations and pin which one reports, so a reordered ladder fails without changing any single-fault row. Rows 9 and 16 read every refusal message as one sorted-by-construction tuple, so a refusal that keeps its variant but loses its sentence still fails."
+target = "rust"
+command = "whole-layer-capacity-planning-security"
+evidence_paths = ["evidence/whole-layer-capacity-planning-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "clock-free-condition-projection-behavior"
+artifact_id = "artifact:service-k8s/clock-free-condition-projection-behavior"
+capability_id = "clock-free-condition-projection"
+use_case_id = "clock-free-condition-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/clock-free-condition-projection-behavior.py"
+promise = "Conditions are projected from what the service currently reports plus what was already published, with the instant injected by the caller rather than read from a clock. A condition whose status is unchanged keeps its original transition instant while its reason, message, and observed generation all refresh, so an operator reading lastTransitionTime learns when the state actually changed and not when the controller last ran. A status flip, a first sighting, and a resurrection after an absence all take the injected instant. The emitted order is the order the service reported. The serialized shape is exactly metav1.Condition's, with an absent observed generation omitted rather than written as null."
+oracle = "Row 1 and row 3 hold everything but the status fixed and differ only in whether it changed, so a projector that always refreshes and one that never refreshes each fail exactly one. Row 6 walks a condition out of the report and back in across three projections and pins that the instant did not survive the gap. Row 7 projects the same three facts in two orders and pins both sequences. Rows 9 through 11 read the serialized mapping by key with .get, so a renamed key is observed as an absence rather than raising."
+target = "rust"
+command = "clock-free-condition-projection-behavior"
+evidence_paths = ["evidence/clock-free-condition-projection-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "clock-free-condition-projection-security"
+artifact_id = "artifact:service-k8s/clock-free-condition-projection-security"
+capability_id = "clock-free-condition-projection"
+use_case_id = "clock-free-condition-projection"
+dimension = "security"
+applicability = "td"
+test_path = "src/clock-free-condition-projection-security.py"
+promise = "The projection reads no clock of its own: every instant in its output came either from the prior status it was handed or from the instant the caller injected, so the same inputs project to the same result on every process and every replay. A prior donates its transition instant only to a fact of the same type carrying the same status, and it donates nothing else — never its reason, its message, its observed generation, or its own continued existence. Projected conditions and the facts they are built from are frozen, and the projection returns an immutable sequence, so a published status cannot be edited in place after the decision was made."
+oracle = "Row 1 projects the identical inputs twice and compares the two results for equality, which a clock-reading implementation cannot satisfy. Row 2 reads all three instants a single projection can produce and pins each to its source. Row 11 forges a prior instant from 1999 and pins that it is honored under a matching status and discarded under a differing one, so an implementation that carries the instant unconditionally and one that discards it unconditionally fail different halves of the same row. Rows 4 through 6 observe the exception class raised by an in-place write, so a dataclass that loses frozen=True is visible as a successful assignment."
+target = "rust"
+command = "clock-free-condition-projection-security"
+evidence_paths = ["evidence/clock-free-condition-projection-security.json"]

@@ -173,14 +173,14 @@
         160
       ],
       "observed": [
-        0,
+        5,
         10,
         20,
         40,
         80,
         160
       ],
-      "passed": false
+      "passed": true
     },
     {
       "name": "backoff_saturates_at_the_ceiling",
@@ -197,5 +197,5 @@
       "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }

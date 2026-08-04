@@ -14,6 +14,10 @@ CASES = (
     ("scope-validated-certificate-identity-security", 12),
     ("memoryless-rotation-decision-behavior", 15),
     ("memoryless-rotation-decision-security", 13),
+    ("whole-layer-capacity-planning-behavior", 17),
+    ("whole-layer-capacity-planning-security", 16),
+    ("clock-free-condition-projection-behavior", 14),
+    ("clock-free-condition-projection-security", 12),
 )
 
 

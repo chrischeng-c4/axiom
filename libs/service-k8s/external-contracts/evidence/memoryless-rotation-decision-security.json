@@ -147,8 +147,8 @@
     {
       "name": "backoff_never_drops_below_the_base",
       "expected": 5,
-      "observed": 0,
-      "passed": false
+      "observed": 5,
+      "passed": true
     },
     {
       "name": "an_untrusted_issuer_is_published_before_even_an_expired_leaf_is_replaced",
@@ -157,5 +157,5 @@
       "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }
