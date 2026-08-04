@@ -1,0 +1,255 @@
+# Seeded defects for `scripts/td-ec-verify.py --mutations`.
+#
+# Controller-owned. This file is deliberately kept OUTSIDE `libs/service-k8s/`
+# so it is never part of the material handed to an implementation worker: a
+# worker that can read the seeded defects can special-case them instead of
+# writing a contract that catches them on principle.
+#
+# Each mutation rewrites one anchor in
+# `libs/service-k8s/tech-design/src/service_k8s/` into a plausible wrong
+# implementation. At least one EC case must exit nonzero for every one of them.
+# A mutation that no case notices is a hole in the EC, never a licence to
+# delete the mutation.
+#
+# `old` must be a unique substring of the named file; the harness restores the
+# original bytes after each run.
+#
+# This suite grows one round at a time, in step with the case inventory. Every
+# mutation listed here is covered by a case that has already landed.
+
+# ---------------------------------------------------------------------------
+# certificate identity — the tenancy boundary in the name channels
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "namespace-check-is-a-prefix-match"
+intent = "the namespace test degrades from the `.<ns>.svc` segment Kubernetes uses to a bare prefix, so `lumen.lumen-prod.svc.cluster.local` is waved through for namespace `lumen`"
+file = "service_k8s/domain/profile.py"
+old = "            if namespaced not in name:"
+new = "            if not name.startswith(self.scope.namespace):"
+
+[[mutation]]
+id = "public-suffix-check-dropped"
+intent = "a name outside the cluster-internal suffixes stops being refused as public, so the refusal an operator reads names the wrong channel"
+file = "service_k8s/domain/profile.py"
+old = """            if not any(name.endswith(suffix) for suffix in CLUSTER_SUFFIXES):
+                raise PublicDnsName(name)"""
+new = """            if False:
+                raise PublicDnsName(name)"""
+
+[[mutation]]
+id = "empty-name-set-accepted"
+intent = "a profile requesting no names at all becomes constructible, so a certificate is issued for nothing in particular"
+file = "service_k8s/domain/profile.py"
+old = """        if not self.identity.dns_names:
+            raise NoNames()"""
+new = """        if False:
+            raise NoNames()"""
+
+[[mutation]]
+id = "peer-may-omit-its-spiffe-uri"
+intent = "a peer profile becomes constructible without a SPIFFE URI, leaving two members of one headless Service indistinguishable from each other's point of view"
+file = "service_k8s/domain/profile.py"
+old = "        if self.purpose is Purpose.PEER and self.identity.spiffe_uri is None:"
+new = "        if False:"
+
+[[mutation]]
+id = "foreign-spiffe-uri-accepted"
+intent = "the SPIFFE prefix check is dropped, so a profile can name another tenant's identity"
+file = "service_k8s/domain/profile.py"
+old = "            if not self.identity.spiffe_uri.startswith(prefix):"
+new = "            if False:"
+
+[[mutation]]
+id = "lifetime-bounds-dropped"
+intent = "lifetime bounds stop being stated locally, so an out-of-range lifetime is learned from a rejected CSR instead"
+file = "service_k8s/domain/profile.py"
+old = "        if not (MIN_LIFETIME_SECS <= self.lifetime_secs <= MAX_LIFETIME_SECS):"
+new = "        if False:"
+
+[[mutation]]
+id = "renew-floor-dropped"
+intent = "the renewal window loses its floor, so a window with no room to retry is accepted"
+file = "service_k8s/domain/profile.py"
+old = "        if self.renew_before_secs < MIN_RENEW_BEFORE_SECS:"
+new = "        if False:"
+
+[[mutation]]
+id = "renew-window-may-equal-the-lifetime"
+intent = "the window bound relaxes from strict to non-strict, so a certificate is due for renewal the instant it is issued"
+file = "service_k8s/domain/profile.py"
+old = "        if self.renew_before_secs >= self.lifetime_secs:"
+new = "        if self.renew_before_secs > self.lifetime_secs:"
+
+[[mutation]]
+id = "jitter-bound-dropped"
+intent = "jitter stops being bounded by the window it spreads, so a jittered deadline can land after expiry"
+file = "service_k8s/domain/profile.py"
+old = "        if self.renew_jitter_secs > self.renew_before_secs:"
+new = "        if False:"
+
+# ---------------------------------------------------------------------------
+# certificate identity — the digest and the derived names
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "digest-drops-the-dns-names"
+intent = "the digest stops covering the names, so renaming a service does not reissue its certificate"
+file = "service_k8s/domain/profile.py"
+old = '            "dns=" + ",".join(sorted(self.identity.dns_names)),'
+new = '            "dns=",'
+
+[[mutation]]
+id = "digest-is-order-sensitive"
+intent = "the digest stops sorting the names, so re-ordering an unchanged name list throws away a valid identity"
+file = "service_k8s/domain/profile.py"
+old = "sorted(self.identity.dns_names)"
+new = "self.identity.dns_names"
+
+[[mutation]]
+id = "digest-includes-the-lifetime"
+intent = "the digest covers the renewal cadence as well as the certified content, so changing the cadence reissues a perfectly valid identity"
+file = "service_k8s/domain/profile.py"
+old = '            "eku=" + ",".join(u.token for u in self.extended_key_usages()),'
+new = '            "eku=" + ",".join(u.token for u in self.extended_key_usages()) + "|lifetime=" + str(self.lifetime_secs),'
+
+[[mutation]]
+id = "digest-covers-only-the-common-name"
+intent = "the digest collapses to the common name, so every name, usage, and URI change becomes invisible to rotation"
+file = "service_k8s/domain/profile.py"
+old = '        return hex_sha256("|".join(parts).encode("utf-8"))'
+new = "        return hex_sha256(self.common_name.encode('utf-8'))"
+
+[[mutation]]
+id = "serving-also-carries-client-auth"
+intent = "a serving leaf gains clientAuth, becoming a credential its holder can replay to authenticate as the service to its own peers"
+file = "service_k8s/domain/purpose.py"
+old = "            return (ExtendedUsage.SERVER_AUTH,)"
+new = "            return (ExtendedUsage.SERVER_AUTH, ExtendedUsage.CLIENT_AUTH)"
+
+[[mutation]]
+id = "peer-drops-client-auth"
+intent = "a peer leaf loses the outward direction, so mutual authentication silently degrades to one-way"
+file = "service_k8s/domain/purpose.py"
+old = "        return (ExtendedUsage.SERVER_AUTH, ExtendedUsage.CLIENT_AUTH)"
+new = "        return (ExtendedUsage.SERVER_AUTH,)"
+
+[[mutation]]
+id = "secret-name-ignores-the-purpose"
+intent = "serving and peer material collide in one Secret, so issuing one purpose overwrites the other"
+file = "service_k8s/domain/scope.py"
+old = '        return f"{self.instance}-{purpose.token}-tls"'
+new = '        return f"{self.instance}-tls"'
+
+[[mutation]]
+id = "spiffe-prefix-omits-the-namespace"
+intent = "the SPIFFE prefix stops carrying the namespace, so every namespace in the trust domain shares one identity space"
+file = "service_k8s/domain/scope.py"
+old = '        return f"spiffe://{self.trust_domain}/ns/{self.namespace}/"'
+new = '        return f"spiffe://{self.trust_domain}/ns/"'
+
+[[mutation]]
+id = "scope-covers-any-instance-in-its-namespace"
+intent = "scope containment widens from identity to namespace, so one instance's scope covers its neighbour's"
+file = "service_k8s/domain/scope.py"
+old = "        return self == other"
+new = "        return self.namespace == other.namespace"
+
+# ---------------------------------------------------------------------------
+# rotation — the ladder
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "untrusted-issuer-may-still-be-issued-from"
+intent = "trust stops being the first rung, so a leaf is minted from an issuer nobody trusts and fails at handshake time on the far side"
+file = "service_k8s/application/rotation.py"
+old = "    if desired.issuer not in observed.trust_bundle:"
+new = "    if False:"
+
+[[mutation]]
+id = "trust-publish-narrows-instead-of-widening"
+intent = "the publish step stops being a superset of what is already published, so widening trust retires the outgoing anchor in the same move"
+file = "service_k8s/application/rotation.py"
+old = "        issuers = sorted(set(observed.trust_bundle) | {desired.issuer})"
+new = "        issuers = sorted({desired.issuer})"
+
+[[mutation]]
+id = "bootstrap-reported-as-a-renewal"
+intent = "the first issuance is indistinguishable from a routine one, so an operator cannot tell a cold start from a cadence"
+file = "service_k8s/application/rotation.py"
+old = "        return Issue(desired.issuer, IssueReason.BOOTSTRAP)"
+new = "        return Issue(desired.issuer, IssueReason.RENEWAL)"
+
+[[mutation]]
+id = "expiry-reported-as-a-routine-renewal"
+intent = "`Expired` collapses into `Renewal`, so the reason that means something was already wrong reads as the reason that means nothing was"
+file = "service_k8s/application/rotation.py"
+old = "        return Issue(desired.issuer, IssueReason.EXPIRED)"
+new = "        return Issue(desired.issuer, IssueReason.RENEWAL)"
+
+[[mutation]]
+id = "issuer-rotation-not-detected"
+intent = "a leaf from the previous issuer is never reissued, so an issuer rotation stalls at the overlap forever"
+file = "service_k8s/application/rotation.py"
+old = "    if observed.leaf.issuer != desired.issuer:"
+new = "    if False:"
+
+[[mutation]]
+id = "identity-change-not-detected"
+intent = "a leaf whose certified identity no longer matches the profile is kept, so a renamed service keeps serving its old name"
+file = "service_k8s/application/rotation.py"
+old = "    if observed.leaf.identity_digest != desired.profile.identity_digest():"
+new = "    if False:"
+
+[[mutation]]
+id = "expiry-not-detected"
+intent = "an already-expired leaf takes the ordinary renewal rung, hiding the fact that the window was missed"
+file = "service_k8s/application/rotation.py"
+old = "    if now >= observed.leaf.not_after:"
+new = "    if False:"
+
+[[mutation]]
+id = "retirement-not-gated-on-observed-activation"
+intent = "anchors are retired without the runtime reporting it is presenting the new leaf, so an issuer still authenticating live connections is dropped"
+file = "service_k8s/application/rotation.py"
+old = "        if observed.activated_fingerprint == observed.leaf.fingerprint:"
+new = "        if True:"
+
+# ---------------------------------------------------------------------------
+# rotation — the deterministic instants
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "renewal-jitter-is-constant"
+intent = "jitter collapses to zero, so every certificate in a fleet comes due at exactly the same instant"
+file = "service_k8s/application/rotation.py"
+old = "    offset = _fingerprint_offset(leaf.fingerprint, profile.renew_jitter_secs)"
+new = "    offset = 0"
+
+[[mutation]]
+id = "renewal-window-not-subtracted"
+intent = "renewal is due at expiry rather than a window before it, so there is no room left to retry"
+file = "service_k8s/application/rotation.py"
+old = "    base = leaf.not_after - timedelta(seconds=profile.renew_before_secs)"
+new = "    base = leaf.not_after"
+
+[[mutation]]
+id = "activation-recheck-is-immediate"
+intent = "the recheck interval collapses to zero, turning a bounded wait into a hot loop against the API server"
+file = "service_k8s/application/rotation.py"
+old = "ACTIVATION_RECHECK: Final[timedelta] = timedelta(seconds=15)"
+new = "ACTIVATION_RECHECK: Final[timedelta] = timedelta(seconds=0)"
+
+[[mutation]]
+id = "backoff-has-no-ceiling"
+intent = "retry backoff climbs past five minutes, so a controller racing an expiry backs off past the window it is racing"
+file = "service_k8s/application/rotation.py"
+old = "    secs = min(RETRY_BASE_SECS * (2**shift), RETRY_CEILING_SECS)"
+new = "    secs = RETRY_BASE_SECS * (2**shift)"
+
+[[mutation]]
+id = "backoff-starts-at-zero"
+intent = "the first retry is immediate, so a failing issuer is hammered instead of backed off from"
+file = "service_k8s/application/rotation.py"
+old = "        return timedelta(seconds=RETRY_BASE_SECS)"
+new = "        return timedelta(seconds=0)"

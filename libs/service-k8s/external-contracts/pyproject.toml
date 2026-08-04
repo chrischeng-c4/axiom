@@ -1,0 +1,72 @@
+[project]
+name = "service-k8s-external-contracts"
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml", "uv.lock"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "chrischeng"
+efficiency_policy = "optional"
+
+[[tool.aw.python-ec.cases]]
+id = "scope-validated-certificate-identity-behavior"
+artifact_id = "artifact:service-k8s/scope-validated-certificate-identity-behavior"
+capability_id = "scope-validated-certificate-identity"
+use_case_id = "scope-validated-certificate-identity"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/scope-validated-certificate-identity-behavior.py"
+promise = "A certificate profile states what a service is asking a certificate for, and every derived value follows from the instance scope rather than from a caller-supplied literal. Purpose selects extended key usages exactly and not at least: a serving leaf carries serverAuth alone and a peer leaf carries both directions. The Secret name and the SPIFFE prefix are derived from the scope. The identity digest covers the certified content — purpose, common name, sorted DNS names, SPIFFE URI, and usages — and deliberately excludes the lifetime and the renewal cadence, so changing how often a certificate is renewed does not throw away a valid identity."
+oracle = "Reads both purposes' usage sets as exact token tuples and as counts, so an over-broad list fails one of the two. Compares identity digests four ways — the same names in two orders, one changed name, an unchanged identity under three different lifetimes, and the two purposes over otherwise identical content — so a digest that ignores names entirely and a digest that is order-sensitive fail different rows. Row 13 pins the maximum accepted lifetime and row 14 pins jitter exactly equal to the whole renewal window, which the bound admits."
+target = "rust"
+command = "scope-validated-certificate-identity-behavior"
+evidence_paths = ["evidence/scope-validated-certificate-identity-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "scope-validated-certificate-identity-security"
+artifact_id = "artifact:service-k8s/scope-validated-certificate-identity-security"
+capability_id = "scope-validated-certificate-identity"
+use_case_id = "scope-validated-certificate-identity"
+dimension = "security"
+applicability = "td"
+test_path = "src/scope-validated-certificate-identity-security.py"
+promise = "Validation is a tenancy boundary, not a lint, and it runs at construction: a profile naming another namespace's DNS name, a namespace prefix rather than a namespace, a public name, or another tenant's SPIFFE URI is not rejected later — it cannot be built. A peer profile without a SPIFFE URI cannot be built either. Lifetime, renewal-window, and jitter bounds are refused locally rather than learned from a rejected CSR, and each refusal names the offending value so an operator reading it in a condition does not have to diff two lists."
+oracle = "Every row builds a profile and observes the refusal's exception class name, or the literal string built when construction succeeded, so a dropped check is visible as an acceptance rather than as a differently-worded error. Row 2 uses lumen.lumen-prod.svc.cluster.local against namespace lumen, which both a prefix and a suffix check would accept. Row 8 reads the offending value straight off the refusal for three separate channels. Row 9 hides one bad name between two good ones."
+target = "rust"
+command = "scope-validated-certificate-identity-security"
+evidence_paths = ["evidence/scope-validated-certificate-identity-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "memoryless-rotation-decision-behavior"
+artifact_id = "artifact:service-k8s/memoryless-rotation-decision-behavior"
+capability_id = "memoryless-rotation-decision"
+use_case_id = "memoryless-rotation-decision"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/memoryless-rotation-decision-behavior.py"
+promise = "next_action decides the single next step from what the service wants, what the cluster currently shows, and what time it is, keeping no memory of its own past decisions. The ladder is ordered by what fails worst: trust, then bootstrap, then issuer change, then identity change, then expiry, then the rotation tail, then renewal. Each issuance carries a reason, so an operator can tell a routine renewal from a scramble. Renewal jitter is derived from the leaf's own fingerprint, so every process computes the same instant for the same certificate while different certificates still spread out, and retry backoff climbs to a five-minute ceiling and stays there."
+oracle = "Walks every rung of the ladder with an observation that reaches exactly that rung, observing the action's type name together with its payload — the issue reason, the published issuer list, the retired issuer list, or the wait instant as an ISO string. Row 12 pins the two distinct jittered instants two different fingerprints produce over the same window, which a constant-jitter implementation cannot reproduce. Rows 14 and 15 pin the doubling curve and its saturation separately."
+target = "rust"
+command = "memoryless-rotation-decision-behavior"
+evidence_paths = ["evidence/memoryless-rotation-decision-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "memoryless-rotation-decision-security"
+artifact_id = "artifact:service-k8s/memoryless-rotation-decision-security"
+capability_id = "memoryless-rotation-decision"
+use_case_id = "memoryless-rotation-decision"
+dimension = "security"
+applicability = "td"
+test_path = "src/memoryless-rotation-decision-security.py"
+promise = "Trust is published before anything is issued, including when the observation is wholly empty and when the leaf is already expired and its identity has already moved — an identity-first ladder would issue from an issuer nobody trusts. Anchors are narrowed only after the runtime reports it is presenting the new leaf, never because a write succeeded. No reachable action removes the current leaf, and the closed action set contains no removal variant at all: it is not a rule the module follows but a sentence it cannot say. Backoff stays inside its base and its ceiling, and jitter never pushes a renewal past expiry."
+oracle = "Row 3 reads the closed action set off the Action union itself and compares it to a sorted literal, so a new removal variant fails without anyone remembering to write a case for it. Rows 4 and 5 hold the observation fixed and vary only the activated fingerprint — absent, matching, and mismatched — so retirement gated on a write rather than on activation fails two rows. Rows 11 and 12 sweep twenty-one failure counts and bound the whole range rather than sampling one point."
+target = "rust"
+command = "memoryless-rotation-decision-security"
+evidence_paths = ["evidence/memoryless-rotation-decision-security.json"]
