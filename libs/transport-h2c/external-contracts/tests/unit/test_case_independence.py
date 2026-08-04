@@ -9,6 +9,10 @@ EXPECTED_CASES = {
     "least-loaded-stream-dispatch-security": 12,
     "connection-health-recovery-behavior": 16,
     "connection-health-recovery-security": 14,
+    "bounded-admission-behavior": 15,
+    "bounded-admission-security": 12,
+    "adaptive-connection-sizing-behavior": 14,
+    "adaptive-connection-sizing-security": 12,
 }
 
 BANNED_IMPORTS = {

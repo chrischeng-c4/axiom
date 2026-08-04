@@ -70,3 +70,59 @@ oracle = "Tests sweep planning edge cases (busy connections, floor enforcement, 
 target = "rust"
 command = "connection-health-recovery-security"
 evidence_paths = ["evidence/connection-health-recovery-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "bounded-admission-behavior"
+artifact_id = "artifact:transport-h2c/bounded-admission-behavior"
+capability_id = "bounded-admission"
+use_case_id = "bounded-admission"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/bounded-admission-behavior.py"
+promise = "Requests admitted into one manager at once are capped by a per-origin semaphore, and a caller that queues for a slot has a deadline. When the pool timeout elapses the caller receives a timeout error rather than an unbounded block, and shutdown closes admission so later callers fail fast with a distinct shutdown error. The origin the semaphore is keyed by is the authority alone, so two spellings of one peer share one cap."
+oracle = "Pins the admission decision for every branch of the ordering: ordinary admission, shutdown, an expired wait, a wait exactly at the deadline, and closed admission. The deadline is read twice from two different configurations to prove it is configuration and not a constant, the permit count is read at a zero and a negative cap, and the authority reduction is read across five endpoint spellings."
+target = "rust"
+command = "bounded-admission-behavior"
+evidence_paths = ["evidence/bounded-admission-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "bounded-admission-security"
+artifact_id = "artifact:transport-h2c/bounded-admission-security"
+capability_id = "bounded-admission"
+use_case_id = "bounded-admission"
+dimension = "security"
+applicability = "td"
+test_path = "src/bounded-admission-security.py"
+promise = "A drained manager and a merely busy one remain distinguishable to the caller, no wait however long is ever admitted past the deadline, and the permit count is never zero at any configured cap. A manager sized for a target concurrency carries that target into both the admission cap and the connection ceiling rather than leaving either at the default."
+oracle = "Walks the refusal outcomes across four over-deadline waits and three shutdown wait lengths, reads the permit count at a negative, zero, one and two cap, and reads the target-sized configuration on both bounds. Row 12 proves the scheme prefix is removed once and not repeatedly, so a doubled scheme cannot be unwrapped into a different origin."
+target = "rust"
+command = "bounded-admission-security"
+evidence_paths = ["evidence/bounded-admission-security.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "adaptive-connection-sizing-behavior"
+artifact_id = "artifact:transport-h2c/adaptive-connection-sizing-behavior"
+capability_id = "adaptive-connection-sizing"
+use_case_id = "adaptive-connection-sizing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/adaptive-connection-sizing-behavior.py"
+promise = "Connection count tracks demand instead of being guessed. The recommended size for a target peak concurrency is the natural logarithm rounded up and clamped between one and the available parallelism, with one connection for a concurrency of two or less. The default manager and a manager sized for a target both carry that heuristic into their configured bounds."
+oracle = "Pins the exact clamped logarithm at nine points plus a five-point monotone sweep across the decades. A concurrency of 256 separates the natural logarithm from log two, a concurrency of ten separates rounding up from truncation, a core count of four proves the ceiling binds, and a concurrency of zero proves the one-connection shortcut exists at all since zero has no logarithm."
+target = "rust"
+command = "adaptive-connection-sizing-behavior"
+evidence_paths = ["evidence/adaptive-connection-sizing-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "adaptive-connection-sizing-security"
+artifact_id = "artifact:transport-h2c/adaptive-connection-sizing-security"
+capability_id = "adaptive-connection-sizing"
+use_case_id = "adaptive-connection-sizing"
+dimension = "security"
+applicability = "td"
+test_path = "src/adaptive-connection-sizing-security.py"
+promise = "The recommended connection count is bounded on both sides at every input: never above the reported parallelism and never below one, including at a reported parallelism of zero or a negative core count. A configuration sized for a target concurrency is usable on every bound, and sizing does not disturb the growth threshold, the keepalive target, or the admission deadline."
+oracle = "Sweeps six concurrencies against a three-core cap and four core counts against a fixed concurrency, then reads the count at a negative core count, a billion-request concurrency, and a negative target. Rows 6 to 9 read the sized configuration on its floor, its ceiling and its permit count so a knob that reaches one bound but not the other is visible."
+target = "rust"
+command = "adaptive-connection-sizing-security"
+evidence_paths = ["evidence/adaptive-connection-sizing-security.json"]
