@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-04T03:37:31.193900+00:00"
-digest = "sha256:9d2831d88f9dd561b2c4f4c3282a22d11605270de8a66abe8b443a30aca9e5c8"
-source_digest = "sha256:9d2831d88f9dd561b2c4f4c3282a22d11605270de8a66abe8b443a30aca9e5c8"
-ir_digest = "sha256:feb20da35832e4a20bcae788daa2146a2232aa927ab1921fdd833316076b470c"
+generated_at = "2026-08-04T05:04:32.713836+00:00"
+digest = "sha256:64a0e2341e25a222a1c861ae389f86ef1174e6eedda68590ad5b5977f4f62361"
+source_digest = "sha256:64a0e2341e25a222a1c861ae389f86ef1174e6eedda68590ad5b5977f4f62361"
+ir_digest = "sha256:a742c3d2629169e6e70092c1e363a151796893a23d4b454c4d75523cb8b4fe7e"
 
 [[files]]
 path = "pyproject.toml"
@@ -3977,11 +3977,11 @@ digest = "sha256:7c51c7ff072bac5e7a561a23542535b4339d67426e04e3017f7a033e4447eb7
 
 [[files]]
 path = "src/agentic_workflow/work_items/change_wi_lifecycle_hydration.py"
-digest = "sha256:1c913dcfacaf9908d142700d8932a1b08e1eed2ee767af38e8aa99a58e732965"
+digest = "sha256:e795e6fe5d9d1461e62aac7c22cf9b34b485e10a2f3592ad4d1e449afa30bc94"
 
 [[files]]
 path = "src/agentic_workflow/work_items/change_wi_lifecycle_reducer.py"
-digest = "sha256:c4e34e7bc2ac00d0987433659ec956cd9d8470e0d5af47fe0f76de8780542e1e"
+digest = "sha256:bd18464c6f63e710a26fba409e1e2b384c1f4d9e11f7655d1e4d75de967f36b0"
 
 [[files]]
 path = "src/agentic_workflow/work_items/coordination_authority.py"
@@ -4057,7 +4057,7 @@ digest = "sha256:f85448e04222557f2acae6d6b0cda3c6ab340f8fe34afede936e0a7250d478a
 
 [[files]]
 path = "src/agentic_workflow/work_items/revisioned_change_wi_ledger.py"
-digest = "sha256:329e5c79457d28f0ff5ef85b9ff337f7ced6599d3868eaf5aa1ba202f0ee3b77"
+digest = "sha256:55b57a115007f48fc450616fb0895e545a3503947416cb93c5f1348a60f0cfc6"
 
 [[files]]
 path = "src/agentic_workflow/work_items/scope_python_cb_code_checks_to_declared_wi_targets.py"

@@ -21,6 +21,8 @@ from .revisioned_change_wi_ledger import (
     LifecycleEventKind,
     NextObligation,
     OwnerVocabulary,
+    RUST_ISSUES_TEST_SEAMS,
+    build_ec_draft_command,
     compute_transitive_invalidation,
 )
 
@@ -31,7 +33,18 @@ changes:
     action: modify
     description: >
       Implement deterministic ChangeLifecycle reducer, active-tuple evidence invalidation,
-      parent-only rebind reduction, evidence eviction, and CB commit terminal check in Rust.
+      parent-only rebind reduction, evidence eviction, CB commit terminal check, and existing-command folds.
+  - path: apps/agentic-workflow/src/cli/issues.rs
+    action: modify
+    description: >
+      Fold wi_create (backend success precedes fold_wi_create build/reduce/save) and wi_update
+      (retain prior body, backend update, compare canonical old/new digest; on equal body return old carrier bytes without writes; on change construct wi_change event, reduce, and save).
+      Add revisioned_change_wi_local_create_update_persists_and_noop_is_byte_stable using public
+      IssuesCommand create/update dispatch and an isolated LocalBackend; no pure-fold-only substitute.
+  - path: apps/agentic-workflow/src/cli/mod.rs
+    action: modify
+    description: >
+      Expose fold_wi_create and fold_wi_update reducer functions for issue creation and update workflows.
 """
 
 __aw_artifact_id__ = "artifact:td-cb-lifecycle-automation/change-wi-lifecycle-reducer-wi-3347"
@@ -90,6 +103,112 @@ def expected_parent_set(
             return None
         parents.append(CausalParent(revision.id, revision.digest))
     return tuple(parents)
+
+
+def fold_wi_create(slug: str, body: str, project: str) -> ChangeLifecycle:
+    """Post-success fold for aw wi create: constructs epoch 1 wi_create event and initial WI revision.
+
+    Uses `cli::run::ec_draft_command(project, slug)`, not a local command
+    template.  `issues.rs::run_create` calls this only after backend creation
+    succeeds, atomically saves the record, then returns the successful result.
+    """
+    from .revisioned_change_wi_ledger import (
+        compute_digest,
+        compute_revision_identity,
+    )
+
+    digest = compute_digest(body)
+    rev_wi = ArtifactRevision(
+        id=compute_revision_identity(ArtifactKind.WI, digest, ()),
+        kind=ArtifactKind.WI,
+        digest=digest,
+        parents=(),
+        iteration=1,
+    )
+
+    next_cmd = build_ec_draft_command(slug, project=project)
+
+    initial_event = LifecycleEvent(
+        event_id="evt-001",
+        predecessor_id=None,
+        kind=LifecycleEventKind.WI_CREATE,
+        candidate_revision=rev_wi,
+        bound_tuple=ActiveDigestTuple(wi_digest=digest),
+        next_command=next_cmd,
+        next_owner=OwnerVocabulary.WI,
+    )
+
+    return ChangeLifecycle(
+        slug=slug,
+        epoch=1,
+        head_event_id="evt-001",
+        active_revisions={
+            ArtifactKind.WI: rev_wi,
+            ArtifactKind.EC: None,
+            ArtifactKind.TD: None,
+            ArtifactKind.CB: None,
+        },
+        events=(initial_event,),
+        evidence_bindings=(),
+        invalidations=(),
+        iteration=1,
+        terminal=False,
+        next_obligation=NextObligation(next_cmd, OwnerVocabulary.WI),
+    )
+
+
+def fold_wi_update(
+    prior_lifecycle: ChangeLifecycle,
+    new_body: str,
+    pre_update_body: str | None = None,
+) -> ReducerResult:
+    """Post-success fold for aw wi update --body-file: compares canonical WI digests.
+
+    If old digest equals new digest: returns event-free no-op (head, epoch, events unchanged),
+    writing NO event or carrier bytes to disk.
+    If changed: uses prior persisted head as predecessor, constructs candidate wi_change, and reduces.
+    Must be called only after backend update success in issues.rs run_update.
+    """
+    from .revisioned_change_wi_ledger import (
+        compute_digest,
+        compute_revision_identity,
+    )
+
+    new_digest = compute_digest(new_body)
+    active_wi = prior_lifecycle.active_revisions.get(ArtifactKind.WI)
+    old_digest = (
+        active_wi.digest
+        if active_wi
+        else (compute_digest(pre_update_body) if pre_update_body else None)
+    )
+
+    if old_digest is not None and old_digest == new_digest:
+        return ReducerResult(
+            lifecycle=prior_lifecycle,
+            accepted=False,
+            rejection_reason="No-op transition: unchanged WI content digest",
+        )
+
+    cand_rev = ArtifactRevision(
+        id=compute_revision_identity(ArtifactKind.WI, new_digest, ()),
+        kind=ArtifactKind.WI,
+        digest=new_digest,
+        parents=(),
+        iteration=prior_lifecycle.iteration + 1,
+    )
+
+    event_id = f"evt-{len(prior_lifecycle.events) + 1:03d}"
+    update_event = LifecycleEvent(
+        event_id=event_id,
+        predecessor_id=prior_lifecycle.head_event_id,
+        kind=LifecycleEventKind.WI_CHANGE,
+        candidate_revision=cand_rev,
+        bound_tuple=ActiveDigestTuple(wi_digest=new_digest),
+        next_command=f"aw wi validate {prior_lifecycle.slug}",
+        next_owner=OwnerVocabulary.WI,
+    )
+
+    return reduce_event(prior_lifecycle, update_event)
 
 
 def reduce_event(lifecycle: ChangeLifecycle, event: LifecycleEvent) -> ReducerResult:
@@ -253,13 +372,14 @@ def design_contract() -> str:
     rev_td = ArtifactRevision("rev-td-1", ArtifactKind.TD, "dig-td-1", (parent_wi, parent_ec), 1)
     rev_cb = ArtifactRevision("rev-cb-1", ArtifactKind.CB, "dig-cb-1", (parent_wi, parent_ec, parent_td), 1)
 
+    draft_cmd = build_ec_draft_command("3347", "agentic-workflow")
     initial_event = LifecycleEvent(
         event_id="evt-001",
         predecessor_id=None,
         kind=LifecycleEventKind.WI_CREATE,
         candidate_revision=rev_wi,
         bound_tuple=ActiveDigestTuple("dig-wi-1", "dig-ec-1", "dig-td-1", "dig-cb-1"),
-        next_command="aw ec scaffold --wi 3347",
+        next_command=draft_cmd,
         next_owner=OwnerVocabulary.WI,
     )
 
@@ -278,8 +398,36 @@ def design_contract() -> str:
         invalidations=(),
         iteration=1,
         terminal=False,
-        next_obligation=NextObligation("aw ec scaffold --wi 3347", OwnerVocabulary.WI),
+        next_obligation=NextObligation(draft_cmd, OwnerVocabulary.WI),
     )
+
+    # Test fold_wi_create via the same canonical EC draft command builder.
+    created_lc = fold_wi_create("3347", "## Problem\nNew WI", "agentic-workflow")
+    assert created_lc.slug == "3347"
+    assert created_lc.epoch == 1
+    assert created_lc.head_event_id == "evt-001"
+    assert created_lc.events[0].kind == LifecycleEventKind.WI_CREATE
+    assert (
+        created_lc.next_obligation.command
+        == "aw ec draft 3347 --project agentic-workflow --wi 3347"
+    )
+    assert (
+        "IssuesCommand::Create" in RUST_ISSUES_TEST_SEAMS[
+            "revisioned_change_wi_local_create_update_persists_and_noop_is_byte_stable"
+        ]
+    )
+
+    # Test fold_wi_update with equal body digest (no-op)
+    noop_fold = fold_wi_update(created_lc, "## Problem\nNew WI")
+    assert not noop_fold.accepted
+    assert noop_fold.lifecycle == created_lc
+
+    # Test fold_wi_update with changed body digest
+    update_fold = fold_wi_update(created_lc, "## Problem\nUpdated WI content")
+    assert update_fold.accepted
+    assert update_fold.lifecycle.epoch == 2
+    assert update_fold.lifecycle.head_event_id == "evt-002"
+    assert update_fold.lifecycle.events[-1].predecessor_id == "evt-001"
 
     # Vector 1: Event predecessor validation failure
     conflict_evt = LifecycleEvent(
@@ -323,18 +471,15 @@ def design_contract() -> str:
         next_command="aw wi validate 3347",
         next_owner=OwnerVocabulary.WI,
     )
-    # Attach stale evidence bound to dig-wi-1
     stale_ev = EvidenceBinding("wi_validate", ActiveDigestTuple("dig-wi-1"), True, "Old WI pass")
     lifecycle_stale = replace(lifecycle, evidence_bindings=(stale_ev,))
 
     res_wi_update = reduce_event(lifecycle_stale, wi_update_evt)
     assert res_wi_update.accepted
     assert res_wi_update.lifecycle.active_revisions[ArtifactKind.WI].id == "rev-wi-2"
-    # EC, TD, CB active revisions invalidated and set to None
     assert res_wi_update.lifecycle.active_revisions[ArtifactKind.EC] is None
     assert res_wi_update.lifecycle.active_revisions[ArtifactKind.TD] is None
     assert res_wi_update.lifecycle.active_revisions[ArtifactKind.CB] is None
-    # Stale evidence evicted
     assert len(res_wi_update.lifecycle.evidence_bindings) == 0
 
     # Vector 4: Parent-only rebind transition
@@ -374,7 +519,6 @@ def design_contract() -> str:
     res_commit = reduce_event(lifecycle_4d, commit_evt)
     assert res_commit.accepted
     assert res_commit.lifecycle.terminal is True
-    # Defect 3 Check: Next command MUST be aw wi show 3347!
     assert res_commit.lifecycle.next_obligation.command == "aw wi show 3347"
     assert res_commit.lifecycle.next_obligation.owner == OwnerVocabulary.CB
 
