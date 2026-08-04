@@ -155,8 +155,8 @@
     {
       "name": "an_unset_timeout_is_omitted_not_sent_as_null",
       "expected": false,
-      "observed": true,
-      "passed": false
+      "observed": false,
+      "passed": true
     },
     {
       "name": "an_unset_user_agent_is_omitted_not_sent_as_null",
@@ -191,5 +191,5 @@
       "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }

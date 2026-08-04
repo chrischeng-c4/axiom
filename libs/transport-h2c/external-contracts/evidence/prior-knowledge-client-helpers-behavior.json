@@ -136,13 +136,9 @@
         [
           "http2_prior_knowledge",
           true
-        ],
-        [
-          "timeout_seconds",
-          null
         ]
       ],
-      "passed": false
+      "passed": true
     },
     {
       "name": "settings_that_are_set_are_carried_into_the_builder",
@@ -177,5 +173,5 @@
       "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }

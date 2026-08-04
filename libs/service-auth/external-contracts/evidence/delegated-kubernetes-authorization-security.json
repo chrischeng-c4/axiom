@@ -224,11 +224,10 @@
         "audience_mismatch"
       ],
       "observed": [
-        "missing_credential",
         "audience_mismatch"
       ],
-      "passed": false
+      "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }

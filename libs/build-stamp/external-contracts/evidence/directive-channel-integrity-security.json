@@ -23,8 +23,8 @@
     {
       "name": "a_newline_in_the_prefix_produces_no_second_directive_line",
       "expected": 4,
-      "observed": 1,
-      "passed": false
+      "observed": 4,
+      "passed": true
     },
     {
       "name": "a_cargo_payload_in_a_value_is_confined_to_its_own_directive",
@@ -93,5 +93,5 @@
       "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }

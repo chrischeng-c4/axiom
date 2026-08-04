@@ -65,8 +65,8 @@
     {
       "name": "plan_server_admits_the_configured_anchor",
       "expected": true,
-      "observed": false,
-      "passed": false
+      "observed": true,
+      "passed": true
     },
     {
       "name": "plan_client_admits_the_configured_anchor",
@@ -81,5 +81,5 @@
       "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }

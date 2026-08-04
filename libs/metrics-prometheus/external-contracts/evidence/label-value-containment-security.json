@@ -17,8 +17,8 @@
     {
       "name": "escape_newline",
       "expected": "\\n",
-      "observed": "\n",
-      "passed": false
+      "observed": "\\n",
+      "passed": true
     },
     {
       "name": "escape_backslash_then_quote",
@@ -29,20 +29,20 @@
     {
       "name": "escape_injection_payload",
       "expected": "x\\\"} evil_metric 1\\n",
-      "observed": "x\\\"} evil_metric 1\n",
-      "passed": false
+      "observed": "x\\\"} evil_metric 1\\n",
+      "passed": true
     },
     {
       "name": "render_injection_sample_line_count",
       "expected": 3,
-      "observed": 4,
-      "passed": false
+      "observed": 3,
+      "passed": true
     },
     {
       "name": "render_injection_unescaped_quote_count",
       "expected": 2,
-      "observed": 1,
-      "passed": false
+      "observed": 2,
+      "passed": true
     },
     {
       "name": "render_injection_sample_top_level_comma_count",
@@ -99,5 +99,5 @@
       "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }

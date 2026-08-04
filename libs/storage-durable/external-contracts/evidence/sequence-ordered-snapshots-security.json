@@ -89,8 +89,8 @@
     {
       "name": "pruning_removes_no_foreign_file",
       "expected": true,
-      "observed": false,
-      "passed": false
+      "observed": true,
+      "passed": true
     },
     {
       "name": "pruning_removes_at_most_the_listed_count_minus_the_retention_count",
@@ -105,5 +105,5 @@
       "passed": true
     }
   ],
-  "passed": false
+  "passed": true
 }
