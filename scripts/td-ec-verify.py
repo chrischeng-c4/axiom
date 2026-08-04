@@ -199,6 +199,7 @@ def purge_bytecode(root: Path) -> None:
 
 def run_case(project: Project, command: str) -> tuple[int, str, str]:
     purge_bytecode(project.td_dir / "src")
+    purge_bytecode(project.ec_dir / "src")
     env = dict(
         os.environ,
         AW_PYTHON_ARTIFACT_PROTOCOL=PROTOCOL,
