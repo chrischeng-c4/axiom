@@ -14,6 +14,7 @@ pub mod capability_type;
 pub mod cb;
 pub mod cb_fill;
 pub(crate) mod chain;
+pub mod change_lifecycle;
 pub mod check_alignment;
 pub mod commands;
 pub mod conf;

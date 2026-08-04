@@ -1811,7 +1811,7 @@ fn check_project_labels(project_root: &Path, labels: &[String], issue_type: Issu
 // Show
 // ---------------------------------------------------------------------------
 
-fn issue_show_json(issue: &Issue) -> Result<serde_json::Value> {
+fn issue_show_json(project_root: &Path, issue: &Issue) -> Result<serde_json::Value> {
     let mut value = serde_json::to_value(issue)?;
     if let Some(object) = value.as_object_mut() {
         object.insert("slug".to_string(), serde_json::json!(issue.slug));
@@ -1822,6 +1822,10 @@ fn issue_show_json(issue: &Issue) -> Result<serde_json::Value> {
             .and_then(|s| serde_json::to_value(s).ok())
             .unwrap_or(serde_json::Value::Null);
         object.insert("loop_state".to_string(), loop_state);
+        object.insert(
+            "causal_lifecycle".to_string(),
+            crate::cli::change_lifecycle::projection_for_issue(project_root, issue),
+        );
     }
     Ok(value)
 }
@@ -1840,10 +1844,13 @@ async fn run_show(args: ShowArgs) -> Result<()> {
             } else if args.pretty {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&issue_show_json(&issue)?)?
+                    serde_json::to_string_pretty(&issue_show_json(&project_root, &issue)?)?
                 );
             } else {
-                println!("{}", serde_json::to_string(&issue_show_json(&issue)?)?);
+                println!(
+                    "{}",
+                    serde_json::to_string(&issue_show_json(&project_root, &issue)?)?
+                );
             }
         }
         None => {
@@ -2651,6 +2658,13 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         // tracker id, while the read-through cache remains backend-scoped.
         let lifecycle = LocalBackend::from_project_root(&project_root);
         lifecycle.write(&created).await?;
+        let persisted = lifecycle.get(&created.slug).await?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "created issue `{}` was not readable from its lifecycle mirror",
+                created.slug
+            )
+        })?;
+        crate::cli::change_lifecycle::record_create(&project_root, &persisted)?;
         emit_wi_fill_dispatch(&project_root, &created, emit_output)?;
     } else {
         // In-place local draft.
@@ -2694,6 +2708,13 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
             }
         }
 
+        let persisted = backend.get(&created.slug).await?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "created issue `{}` was not readable from the local backend",
+                created.slug
+            )
+        })?;
+        crate::cli::change_lifecycle::record_create(&active_path, &persisted)?;
         emit_wi_fill_dispatch(&active_path, &created, emit_output)?;
     }
 
@@ -3405,8 +3426,9 @@ async fn run_fill_section_apply(
         body: Some(merged_body.clone()),
         ..Default::default()
     };
-    backend.update(slug, &patch).await?;
+    let updated = backend.update(slug, &patch).await?;
     sync_filled_remote_issue(project_root, &existing, merged_body).await?;
+    crate::cli::change_lifecycle::record_update(project_root, &existing, &updated)?;
 
     let _ = std::fs::remove_file(&payload);
     if let Some(parent) = payload.parent() {
@@ -3728,6 +3750,10 @@ async fn run_update(args: UpdateArgs) -> Result<()> {
                 return Err(e);
             }
         }
+    }
+
+    if let Some(before) = local_current.as_ref() {
+        crate::cli::change_lifecycle::record_update(&project_root, before, &updated)?;
     }
 
     if args.json {
@@ -10982,8 +11008,9 @@ labels:\n\
 
     #[test]
     fn issue_show_json_includes_slug_and_body_inline() {
+        let root = tempfile::tempdir().unwrap();
         let issue = test_issue_with_phase(Some("created"));
-        let value = issue_show_json(&issue).unwrap();
+        let value = issue_show_json(root.path(), &issue).unwrap();
 
         assert_eq!(value["slug"], "1234");
         assert!(value["body"]
@@ -10996,9 +11023,10 @@ labels:\n\
     #[test]
     fn issue_show_json_surfaces_loop_state() {
         use crate::cli::loop_state::{upsert_loop_state, LoopState, LoopStatus};
+        let root = tempfile::tempdir().unwrap();
         // Absent block -> loop_state is null, not an error.
         let mut issue = test_issue_with_phase(Some("created"));
-        let value = issue_show_json(&issue).unwrap();
+        let value = issue_show_json(root.path(), &issue).unwrap();
         assert!(value["loop_state"].is_null());
 
         // Present block -> surfaced under `loop_state`.
@@ -11010,9 +11038,140 @@ labels:\n\
             ..Default::default()
         };
         issue.body = upsert_loop_state(&issue.body, &state).unwrap();
-        let value = issue_show_json(&issue).unwrap();
+        let value = issue_show_json(root.path(), &issue).unwrap();
         assert_eq!(value["loop_state"]["goal"], "some-gap");
         assert_eq!(value["loop_state"]["status"], "iterating");
+    }
+
+    #[test]
+    fn revisioned_change_wi_local_create_update_persists_and_noop_is_byte_stable() {
+        let root = tempfile::tempdir().unwrap();
+        write_config(
+            root.path(),
+            r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[agentic_workflow.issue_platform]
+type = "local"
+
+[[projects]]
+name = "demo"
+label = "app:demo"
+path = "."
+tech_design_path = "tech-design"
+"#,
+        );
+        let body = test_issue_with_phase(Some("created")).body;
+        let lock = crate::cli::shell_env::CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = std::env::current_dir().unwrap();
+        let previous_fixture_backend =
+            std::env::var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV).ok();
+        std::env::set_var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1");
+        std::env::set_current_dir(root.path()).unwrap();
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            run(IssuesArgs {
+                command: IssuesCommand::Create(CreateArgs {
+                    draft_path: None,
+                    title: Some("Causal local".to_string()),
+                    issue_type: Some(TypeFilter::Change),
+                    body: Some(body),
+                    body_file: None,
+                    projects: vec!["demo".to_string()],
+                    priority: None,
+                    agent: None,
+                    epic: None,
+                    remote: false,
+                    json: false,
+                    repo: None,
+                }),
+            })
+            .await?;
+            let backend = LocalBackend::from_project_root(root.path());
+            let created = backend
+                .list(&IssueFilter::default())
+                .await?
+                .into_iter()
+                .find(|issue| issue.title == "Causal local")
+                .expect("created local Change WI");
+            let carrier = root
+                .path()
+                .join(".aw/causal-lifecycle")
+                .join(format!("{}.json", created.slug));
+            let before_noop = std::fs::read(&carrier)?;
+            let noop_body = root.path().join("noop.md");
+            std::fs::write(&noop_body, &created.body)?;
+            run(IssuesArgs {
+                command: IssuesCommand::Update(UpdateArgs {
+                    id: created.slug.clone(),
+                    title: None,
+                    state: None,
+                    add_labels: Vec::new(),
+                    remove_labels: Vec::new(),
+                    body_file: Some(noop_body.display().to_string()),
+                    epic: None,
+                    push: false,
+                    json: false,
+                    repo: None,
+                }),
+            })
+            .await?;
+            let after_noop = std::fs::read(&carrier)?;
+            let changed_body = root.path().join("changed.md");
+            std::fs::write(&changed_body, format!("{}\nchanged", created.body))?;
+            run(IssuesArgs {
+                command: IssuesCommand::Update(UpdateArgs {
+                    id: created.slug.clone(),
+                    title: None,
+                    state: None,
+                    add_labels: Vec::new(),
+                    remove_labels: Vec::new(),
+                    body_file: Some(changed_body.display().to_string()),
+                    epic: None,
+                    push: false,
+                    json: false,
+                    repo: None,
+                }),
+            })
+            .await?;
+            let reopened = backend.get(&created.slug).await?.unwrap();
+            let snapshot = issue_show_json(root.path(), &reopened)?;
+            Ok::<_, anyhow::Error>((before_noop, after_noop, snapshot))
+        });
+        std::env::set_current_dir(previous).unwrap();
+        match previous_fixture_backend {
+            Some(value) => std::env::set_var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV, value),
+            None => std::env::remove_var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV),
+        }
+        drop(lock);
+        let (before_noop, after_noop, snapshot) = result.unwrap();
+        assert_eq!(before_noop, after_noop);
+        assert_eq!(snapshot["causal_lifecycle"]["ledger"]["epoch"], 2);
+        assert_eq!(
+            snapshot["causal_lifecycle"]["ledger"]["head_event_id"],
+            "evt-002"
+        );
+    }
+
+    #[test]
+    fn revisioned_change_wi_show_json_handler_is_carrier_byte_readonly() {
+        let root = tempfile::tempdir().unwrap();
+        let mut issue = test_issue_with_phase(Some("created"));
+        issue.slug = "causal-show".to_string();
+        crate::cli::change_lifecycle::record_create(root.path(), &issue).unwrap();
+        let carrier = root
+            .path()
+            .join(".aw/causal-lifecycle")
+            .join("causal-show.json");
+        let before = std::fs::read(&carrier).unwrap();
+        let first = issue_show_json(root.path(), &issue).unwrap();
+        let middle = std::fs::read(&carrier).unwrap();
+        let second = issue_show_json(root.path(), &issue).unwrap();
+        assert_eq!(before, middle);
+        assert_eq!(middle, std::fs::read(&carrier).unwrap());
+        assert_eq!(first["causal_lifecycle"], second["causal_lifecycle"]);
     }
 
     #[test]
