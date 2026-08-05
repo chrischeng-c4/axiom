@@ -158,6 +158,94 @@ def _ensure_aw_binary() -> Path:
     return resolve_aw_binary()
 
 
+def write_rust_workspace(root: Path, package_name: str = "demo") -> Path:
+    """Write minimal real Rust package with a deterministic unit test.
+
+    Requirement R2: Generates a minimal real Rust workspace and deterministic
+    native test reachable by its declared `cargo test`.
+    """
+    cargo_toml = root / "Cargo.toml"
+    cargo_toml.write_text(
+        f"""[package]
+name = "{package_name}"
+version = "0.1.0"
+edition = "2021"
+""",
+        encoding="utf-8",
+    )
+    src_dir = root / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    lib_rs = src_dir / "lib.rs"
+    lib_rs.write_text(
+        """pub fn add(left: usize, right: usize) -> usize {
+    left + right
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        assert_eq!(add(2, 2), 4);
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    return cargo_toml
+
+
+def write_capabilities_md(root: Path) -> Path:
+    """Write minimal valid CAPABILITIES.md declaring td-cb-lifecycle-automation.
+
+    Requirement R5: Temporary fixture supplies a valid CAPABILITIES.md declaration.
+    """
+    cap_md = root / "CAPABILITIES.md"
+    cap_md.write_text(
+        """# Agentic Workflow Capabilities
+
+## Brief
+
+Machine-readable capability contract.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; TD/CB lifecycle automation |
+
+### Core Features
+
+#### TD/CB Lifecycle Automation
+
+ID: td-cb-lifecycle-automation
+Root WI: -
+Status: verified
+Type: DeveloperTool
+Feature Class: core
+Required Verification: smoke
+Promise:
+TD/CB lifecycle automation.
+Gate Inventory:
+- tech-design
+Surfaces:
+- CLI: `aw td`
+EC Dimensions:
+- behavior: `uv run --frozen --offline --project external-contracts python external-contracts/src/runner.py --case linked-wt-fixture-case-behavior`
+- efficiency: `uv run --frozen --offline --project external-contracts python external-contracts/src/runner.py --case linked-wt-fixture-case-efficiency`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| TD/CB Lifecycle Automation | change | - | implemented | verified | smoke | tech-design |
+""",
+        encoding="utf-8",
+    )
+    return cap_md
+
+
 @contextmanager
 def project_fixture() -> Iterator[Path]:
     with tempfile.TemporaryDirectory(prefix="aw-python-ec-") as raw_root:
@@ -181,9 +269,12 @@ external_contracts_path = "external-contracts"
 name = "demo"
 paths = ["**"]
 target = "rust"
+test_cmd = "cargo test"
 """.lstrip(),
             encoding="utf-8",
         )
+        write_rust_workspace(root, package_name="demo")
+        write_capabilities_md(root)
         write_python_external_contract_artifact(root / "external-contracts", project_name="demo")
         yield root
 
@@ -284,7 +375,7 @@ def write_python_external_contract_artifact(
     """Write the minimal valid Python external-contract artifact fixture.
 
     Creates metadata (pyproject.toml), lock (uv.lock), runner (src/runner.py),
-    case source (src/cases/<case_id>.py), unit-test source (tests/unit/test_*.py),
+    case source (src/cases/<case_id>_*.py), unit-test source (tests/unit/test_*.py),
     and evidence directory (evidence/).
     """
     ec_root.mkdir(parents=True, exist_ok=True)
@@ -308,18 +399,33 @@ author = "agent:codex:/root"
 efficiency_policy = "required"
 
 [[tool.aw.python-ec.cases]]
-id = "{case_id}"
+id = "{case_id}-behavior"
 artifact_id = "artifact:{project_name}/public-contract"
 capability_id = "td-cb-lifecycle-automation"
 use_case_id = "linked-wt-fixture-use-case"
 dimension = "behavior"
 applicability = "td"
-test_path = "src/cases/{case_id}.py"
-promise = "{case_id} promise"
-oracle = "{case_id} oracle"
+test_path = "src/cases/{case_id}_behavior.py"
+promise = "{case_id} behavior promise"
+oracle = "{case_id} behavior oracle"
 target = "rust"
-command = "uv run --frozen --offline --project external-contracts python external-contracts/src/runner.py --case {case_id}"
-evidence_paths = ["evidence/{case_id}.json"]
+command = "uv run --frozen --offline --project external-contracts python external-contracts/src/runner.py --case {case_id}-behavior"
+evidence_paths = ["evidence/{case_id}-behavior.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "{case_id}-efficiency"
+artifact_id = "artifact:{project_name}/public-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "linked-wt-fixture-use-case"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/{case_id}_efficiency.py"
+promise = "{case_id} efficiency promise"
+oracle = "{case_id} efficiency oracle"
+threshold = "120s"
+target = "rust"
+command = "uv run --frozen --offline --project external-contracts python external-contracts/src/runner.py --case {case_id}-efficiency"
+evidence_paths = ["evidence/{case_id}-efficiency.json"]
 """,
         encoding="utf-8",
     )
@@ -330,12 +436,36 @@ evidence_paths = ["evidence/{case_id}.json"]
     runner_path.write_text(
         '"""Runner for external contracts in fixture."""\n'
         "import argparse\n"
+        "import json\n"
+        "import subprocess\n"
         "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
         "\n"
         "def main() -> int:\n"
         "    parser = argparse.ArgumentParser()\n"
         '    parser.add_argument("--case", required=True)\n'
         "    args = parser.parse_args()\n"
+        "    start_time = time.monotonic()\n"
+        '    res = subprocess.run(["cargo", "test"], check=False)\n'
+        "    elapsed = time.monotonic() - start_time\n"
+        "    if res.returncode != 0:\n"
+        "        return res.returncode\n"
+        "    if 'efficiency' in args.case and elapsed > 120.0:\n"
+        "        sys.stderr.write(f'efficiency threshold exceeded: {elapsed}s > 120s\\n')\n"
+        "        return 1\n"
+        "    evidence_dir = Path(__file__).resolve().parents[1] / 'evidence'\n"
+        "    evidence_dir.mkdir(parents=True, exist_ok=True)\n"
+        '    evidence_file = evidence_dir / f"{args.case}.json"\n'
+        "    evidence_file.write_text(\n"
+        "        json.dumps({\n"
+        '            "protocol": "aw.python-ec.evidence.v1",\n'
+        '            "case_id": args.case,\n'
+        '            "status": "passed",\n'
+        '            "assertions": [f"{args.case} assertion"],\n'
+        '        }, indent=2) + "\\n",\n'
+        '        encoding="utf-8",\n'
+        "    )\n"
         "    return 0\n"
         "\n"
         'if __name__ == "__main__":\n'
@@ -343,18 +473,19 @@ evidence_paths = ["evidence/{case_id}.json"]
         encoding="utf-8",
     )
 
-    case_path = ec_root / "src" / "cases" / f"{case_id}.py"
-    case_path.parent.mkdir(parents=True, exist_ok=True)
-    case_path.write_text(
-        '"""Fixture case implementation."""\n'
-        'DIMENSION = "behavior"\n'
-        "\n"
-        "def verify() -> list[str]:\n"
-        '    return ["linked-wt-fixture-case assertion"]\n',
-        encoding="utf-8",
-    )
-
-    write_python_artifact_unit_test(ec_root, case_id.replace("-", "_"))
+    clean_name = case_id.replace("-", "_")
+    for dim in ("behavior", "efficiency"):
+        case_path = ec_root / "src" / "cases" / f"{case_id}_{dim}.py"
+        case_path.parent.mkdir(parents=True, exist_ok=True)
+        case_path.write_text(
+            '"""Fixture case implementation."""\n'
+            f'DIMENSION = "{dim}"\n'
+            "\n"
+            "def verify() -> list[str]:\n"
+            f'    return ["{case_id}-{dim} assertion"]\n',
+            encoding="utf-8",
+        )
+        write_python_artifact_unit_test(ec_root, f"{clean_name}_{dim}")
 
     evidence_dir = ec_root / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -470,10 +601,40 @@ def _git_run(cwd: Path, *args: str) -> str:
     return completed.stdout
 
 
+def extract_td_artifact_id(module_path: Path) -> str:
+    """Extract __aw_artifact_id__ value from a scaffolded Python TD module."""
+    content = module_path.read_text(encoding="utf-8")
+    for line in content.splitlines():
+        if line.strip().startswith("__aw_artifact_id__ ="):
+            parts = line.split("=", 1)
+            return parts[1].strip().strip('"').strip("'")
+    raise AssertionError(f"__aw_artifact_id__ binding not found in {module_path}")
+
+
+def update_ec_inventory_artifact_id(ec_root: Path, td_artifact_id: str) -> None:
+    """Update external-contracts/pyproject.toml so its case artifact_id matches the admitted TD identity."""
+    manifest_path = ec_root / "pyproject.toml"
+    content = manifest_path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    new_lines = []
+    replaced = False
+    for line in lines:
+        if line.strip().startswith("artifact_id ="):
+            new_lines.append(f'artifact_id = "{td_artifact_id}"')
+            replaced = True
+        else:
+            new_lines.append(line)
+    assert replaced, f"Failed to find artifact_id in {manifest_path}"
+    manifest_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
 def author_python_td_module(module_path: Path) -> None:
     """Transform an initial `aw td create` scaffold into executable Python TD declarations."""
     original = module_path.read_text(encoding="utf-8")
     assert "AW_TD_FILL" in original, f"Expected AW_TD_FILL marker in scaffold: {original}"
+    assert "__aw_artifact_id__ =" in original, f"Expected __aw_artifact_id__ binding in scaffold: {original}"
+    assert original.count("__aw_artifact_id__ =") == 1, f"Expected exactly one __aw_artifact_id__ binding in scaffold: {original}"
+
     updated = original.replace(
         "    # AW_TD_FILL: replace this marker with executable Python TD declarations.",
         "    # Executable Python TD declarations.",
@@ -483,6 +644,7 @@ def author_python_td_module(module_path: Path) -> None:
     )
     assert "AW_TD_FILL" not in updated, f"AW_TD_FILL remains after authoring: {updated}"
     assert 'return "pending"' not in updated, f"return 'pending' remains after authoring: {updated}"
+    assert updated.count("__aw_artifact_id__ =") == 1, f"Expected exactly one __aw_artifact_id__ binding after authoring: {updated}"
     module_path.write_text(updated, encoding="utf-8")
 
 
@@ -582,6 +744,10 @@ class LinkedWorktreeFixture:
     ) -> tuple[str, dict[str, Any]]:
         default_body = (
             "## Problem\n\nProvide reusable EC linked-worktree lifecycle fixture.\n\n"
+            "## Capability Alignment\n\n"
+            "Capability: td-cb-lifecycle-automation\n"
+            "Capability Gap: The linked-worktree fixture cannot establish a valid, independently executable EC->TD->CB admission state.\n"
+            "Progress Evidence: Linked-worktree fixture setup reaches clean td_created admission with full capability alignment.\n\n"
             "## Requirements\n\n"
             "- R1: Reusable fixture creates bare origin, committed base, and linked worker worktree.\n\n"
             "## Verification Inventory\n\n"
@@ -589,7 +755,22 @@ class LinkedWorktreeFixture:
             "|-------------|------|--------|------------|\n"
             "| R1 | `aw td create` | Valid change WI and admitted TD created in linked worktree | - |\n"
         )
-        wi_body = body or default_body
+        if body is None:
+            wi_body = default_body
+        else:
+            wi_body = body
+            if "## Capability Alignment" not in wi_body:
+                cap_section = (
+                    "\n\n## Capability Alignment\n\n"
+                    "Capability: td-cb-lifecycle-automation\n"
+                    "Capability Gap: The linked-worktree fixture cannot establish a valid, independently executable EC->TD->CB admission state.\n"
+                    "Progress Evidence: Linked-worktree fixture setup reaches clean td_created admission with full capability alignment."
+                )
+                if "## Requirements" in wi_body:
+                    wi_body = wi_body.replace("## Requirements", cap_section.strip() + "\n\n## Requirements")
+                else:
+                    wi_body += cap_section
+
         created = create(
             self.worktree_dir,
             title,
@@ -609,6 +790,18 @@ class LinkedWorktreeFixture:
         )
         source_path = admitted["artifact"]["source_path"]
         self.td_path = self.worktree_dir / source_path
+
+        td_artifact_id = str(
+            admitted["artifact"].get("artifact_id")
+            or extract_td_artifact_id(self.td_path)
+        )
+
+        update_ec_inventory_artifact_id(
+            self.worktree_dir / "external-contracts", td_artifact_id
+        )
+
+        self.run_aw("ec", "check", "--project", self.project_name, "--wi", slug)
+        self.run_aw("ec", "lock", "--project", self.project_name)
 
         write_python_artifact_unit_test(
             self.worktree_dir / "tech-design", "linked_wt_fixture"
@@ -684,15 +877,23 @@ external_contracts_path = "external-contracts"
 name = "{project_name}"
 paths = ["**"]
 target = "rust"
+test_cmd = "cargo test"
 """.lstrip(),
             encoding="utf-8",
         )
+        write_rust_workspace(base_dir, package_name=project_name)
+        write_capabilities_md(base_dir)
         write_python_external_contract_artifact(
             base_dir / "external-contracts", project_name=project_name
         )
         (base_dir / "tracked.txt").write_text("baseline\n", encoding="utf-8")
         _git_run(base_dir, "add", "-A")
         _git_run(base_dir, "commit", "-m", "initial base commit")
+
+        run_aw(base_dir, "ec", "lock", "--project", project_name)
+        _git_run(base_dir, "add", "-A")
+        _git_run(base_dir, "commit", "-m", "generate ec.lock in base")
+
         _git_run(base_dir, "remote", "add", "origin", str(origin_dir))
         _git_run(base_dir, "push", "-u", "origin", "main")
 
