@@ -175,6 +175,7 @@ name = "demo"
 label = "app:demo"
 path = "."
 tech_design_path = "tech-design"
+external_contracts_path = "external-contracts"
 
 [[projects.workspaces]]
 name = "demo"
@@ -183,6 +184,7 @@ target = "rust"
 """.lstrip(),
             encoding="utf-8",
         )
+        write_python_external_contract_artifact(root / "external-contracts", project_name="demo")
         yield root
 
 
@@ -272,6 +274,91 @@ def write_python_artifact_lock(
         encoding="utf-8",
     )
     return lock
+
+
+def write_python_external_contract_artifact(
+    ec_root: Path,
+    project_name: str = "demo",
+    case_id: str = "linked-wt-fixture-case",
+) -> Path:
+    """Write the minimal valid Python external-contract artifact fixture.
+
+    Creates metadata (pyproject.toml), lock (uv.lock), runner (src/runner.py),
+    case source (src/cases/<case_id>.py), unit-test source (tests/unit/test_*.py),
+    and evidence directory (evidence/).
+    """
+    ec_root.mkdir(parents=True, exist_ok=True)
+    manifest = ec_root / "pyproject.toml"
+    manifest.write_text(
+        f"""[project]
+name = "{project_name}-external-contracts"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src", "tests/unit"]
+dependency_files = ["pyproject.toml", "uv.lock"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "agent:codex:/root"
+efficiency_policy = "required"
+
+[[tool.aw.python-ec.cases]]
+id = "{case_id}"
+artifact_id = "artifact:{project_name}/public-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "linked-wt-fixture-use-case"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/{case_id}.py"
+promise = "{case_id} promise"
+oracle = "{case_id} oracle"
+target = "rust"
+command = "uv run --frozen --offline --project external-contracts python external-contracts/src/runner.py --case {case_id}"
+evidence_paths = ["evidence/{case_id}.json"]
+""",
+        encoding="utf-8",
+    )
+    write_python_artifact_lock(ec_root, name=f"{project_name}-external-contracts")
+
+    runner_path = ec_root / "src" / "runner.py"
+    runner_path.parent.mkdir(parents=True, exist_ok=True)
+    runner_path.write_text(
+        '"""Runner for external contracts in fixture."""\n'
+        "import argparse\n"
+        "import sys\n"
+        "\n"
+        "def main() -> int:\n"
+        "    parser = argparse.ArgumentParser()\n"
+        '    parser.add_argument("--case", required=True)\n'
+        "    args = parser.parse_args()\n"
+        "    return 0\n"
+        "\n"
+        'if __name__ == "__main__":\n'
+        "    sys.exit(main())\n",
+        encoding="utf-8",
+    )
+
+    case_path = ec_root / "src" / "cases" / f"{case_id}.py"
+    case_path.parent.mkdir(parents=True, exist_ok=True)
+    case_path.write_text(
+        '"""Fixture case implementation."""\n'
+        'DIMENSION = "behavior"\n'
+        "\n"
+        "def verify() -> list[str]:\n"
+        '    return ["linked-wt-fixture-case assertion"]\n',
+        encoding="utf-8",
+    )
+
+    write_python_artifact_unit_test(ec_root, case_id.replace("-", "_"))
+
+    evidence_dir = ec_root / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    return ec_root
 
 
 def run_aw(
@@ -590,6 +677,7 @@ name = "{project_name}"
 label = "app:{project_name}"
 path = "."
 tech_design_path = "tech-design"
+external_contracts_path = "external-contracts"
 
 [[projects.workspaces]]
 name = "{project_name}"
@@ -597,6 +685,9 @@ paths = ["**"]
 target = "rust"
 """.lstrip(),
             encoding="utf-8",
+        )
+        write_python_external_contract_artifact(
+            base_dir / "external-contracts", project_name=project_name
         )
         (base_dir / "tracked.txt").write_text("baseline\n", encoding="utf-8")
         _git_run(base_dir, "add", "-A")
