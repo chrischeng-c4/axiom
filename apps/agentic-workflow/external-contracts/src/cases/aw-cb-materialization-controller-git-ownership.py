@@ -202,7 +202,7 @@ def verify() -> list[str]:
 
         pub_snapshot = fixture.issue_snapshot(slug)
         assert pub_snapshot["head"] != baseline2["head"], "HEAD must advance on publish"
-        assert pub_snapshot["index_tree"] != baseline2["index_tree"], "Index tree must change on publish"
+        assert pub_snapshot["tree_identity"] != baseline2["tree_identity"], "Tree identity must change on publish"
         assert pub_snapshot["phase"] != baseline2["phase"], "Phase must advance on publish"
         actual_git_delta = _git_diff_name_only(fixture.worktree_dir, baseline2["head"], pub_snapshot["head"])
         assert sorted(candidate_paths2) == actual_git_delta, (

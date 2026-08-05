@@ -425,6 +425,9 @@ class LinkedWorktreeFixture:
     def head_sha(self) -> str:
         return _git_run(self.worktree_dir, "rev-parse", "HEAD").strip()
 
+    def tree_identity(self) -> str:
+        return _git_run(self.worktree_dir, "rev-parse", "HEAD^{tree}").strip()
+
     def current_branch(self) -> str:
         return _git_run(self.worktree_dir, "branch", "--show-current").strip()
 
@@ -467,6 +470,7 @@ class LinkedWorktreeFixture:
             "head": self.head_sha(),
             "branch": self.current_branch(),
             "index_tree": self.index_tree(),
+            "tree_identity": self.tree_identity(),
             "remote_refs": self.remote_refs(),
         }
 
