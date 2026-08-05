@@ -1976,3 +1976,17 @@ oracle = "The Python external contract drives the real aw binary inside a tempor
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case ec-linked-worktree-lifecycle-fixture"
 evidence_paths = ["evidence/ec-linked-worktree-lifecycle-fixture.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-cb-materialization-controller-git-ownership"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "separate-cb-materialization-from-controller-git-ownership"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-cb-materialization-controller-git-ownership.py"
+promise = "Worker CB materialization produces candidate output without Git, tracker, or phase mutation; controller publish validates candidate evidence and owns phase/event/Git publication."
+oracle = "The Python external contract drives real aw cb materialize and aw cb publish over an admitted linked_worktree_fixture, asserting unchanged Git/tracker state on materialize, three typed refusal modes on invalid publish, atomic phase/event/Git publication on valid publish, and committed-terminal tracker closure."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-cb-materialization-controller-git-ownership"
+evidence_paths = ["evidence/aw-cb-materialization-controller-git-ownership.json"]
