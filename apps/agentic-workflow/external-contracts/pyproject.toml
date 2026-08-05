@@ -1962,3 +1962,17 @@ oracle = "The Python external contract drives real aw create, wi validate, wi sh
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case revisioned-change-wi-ledger"
 evidence_paths = ["evidence/revisioned-change-wi-ledger.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "ec-linked-worktree-lifecycle-fixture"
+artifact_id = "artifact:workflow-root-runner/public-contract"
+capability_id = "workflow-root-runner"
+use_case_id = "reusable-ec-linked-worktree-lifecycle-fixture"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/ec-linked-worktree-lifecycle-fixture.py"
+promise = "reusable linked-worktree EC fixture provides committed base main, bare origin, clean linked worker worktree, and coherent WI/TD state without product imports."
+oracle = "The Python external contract drives the real aw binary inside a temporary linked worktree fixture with local tracker state, bare origin, and worker branch, verifying clean baseline snapshots and a post-admission command failure."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case ec-linked-worktree-lifecycle-fixture"
+evidence_paths = ["evidence/ec-linked-worktree-lifecycle-fixture.json"]
