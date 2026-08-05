@@ -358,6 +358,7 @@ evidence_paths = ["evidence/{case_id}.json"]
 
     evidence_dir = ec_root / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / ".gitkeep").write_text("", encoding="utf-8")
     return ec_root
 
 
