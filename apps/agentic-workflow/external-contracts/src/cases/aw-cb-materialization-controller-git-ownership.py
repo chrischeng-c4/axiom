@@ -156,12 +156,10 @@ def verify() -> list[str]:
             + '    return "v2_behavior_declaration"\n'
         )
         fixture.td_path.write_text(updated_td_source, encoding="utf-8")
-        rel_td_path = str(fixture.td_path.relative_to(fixture.worktree_dir))
         fixture.run_aw(
-            "td", "create", slug, "--project", fixture.project_name,
-            "--apply", "--spec-path", rel_td_path,
+            "td", "check", "tech-design", "--project", fixture.project_name,
+            "--wi", slug,
         )
-        fixture.run_aw("td", "lock", "--project", fixture.project_name)
         subprocess.run(["git", "add", "-A"], cwd=fixture.worktree_dir, check=True)
         subprocess.run(["git", "commit", "-m", "setup candidate 2 TD evolution"], cwd=fixture.worktree_dir, check=True)
 
