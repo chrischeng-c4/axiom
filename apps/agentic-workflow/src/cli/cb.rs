@@ -31,6 +31,10 @@ pub struct CbArgs {
 pub enum CbCommand {
     // Generate implementation code from an approved TD spec.
     Gen(CbGenArgs),
+    /// Materialize candidate files in clean worktree without Git/tracker/phase mutation.
+    Materialize(CbMaterializeArgs),
+    /// Publish an independently verified materialization candidate.
+    Publish(CbPublishArgs),
     // Forward-generate a target source file from a per-file rust-source-unit
     // TD (routes through the @spec-injecting lossless item-tree generator).
     GenSource(CbGenSourceArgs),
@@ -68,6 +72,20 @@ pub async fn run(args: CbArgs) -> Result<()> {
                 .await?;
             }
         }
+        CbCommand::Materialize(args) => {
+            super::workflow_guard::guard_issue_mutation(
+                &project_root,
+                Some(("td", &args.slug)),
+            )
+            .await?;
+        }
+        CbCommand::Publish(args) => {
+            super::workflow_guard::guard_issue_mutation(
+                &project_root,
+                Some(("td", &args.slug)),
+            )
+            .await?;
+        }
         CbCommand::GenSource(args) => {
             if !args.dry_run {
                 super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
@@ -84,11 +102,544 @@ pub async fn run(args: CbArgs) -> Result<()> {
     let project = args.project.as_deref();
     match args.command {
         CbCommand::Gen(args) => run_gen(args).await,
+        CbCommand::Materialize(args) => run_materialize(args).await,
+        CbCommand::Publish(args) => run_publish(args).await,
         CbCommand::GenSource(args) => run_gen_source(args),
         CbCommand::Check(args) => run_check(args, project).await,
         CbCommand::Fill(args) => super::cb_fill::run(args).await,
         CbCommand::Promote(args) => td::run_promote(args),
     }
+}
+
+/// Args for `aw cb materialize <slug> [--spec-path <spec-path>]`.
+#[derive(Debug, Args)]
+pub struct CbMaterializeArgs {
+    /// Issue slug identifying the approved tech-design.
+    pub slug: String,
+    /// Path to the spec file (relative to the current checkout root).
+    #[arg(long)]
+    pub spec_path: Option<String>,
+}
+
+/// Args for `aw cb publish <slug> [--candidate-digest <sha256>]`.
+#[derive(Debug, Args)]
+pub struct CbPublishArgs {
+    /// Issue slug identifying the approved tech-design.
+    pub slug: String,
+    /// SHA-256 digest of the candidate files to publish.
+    #[arg(long)]
+    pub candidate_digest: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct CandidateRecord {
+    latest_digest: Option<String>,
+    previous_digests: Vec<String>,
+}
+
+fn resolve_git_dir(project_root: &std::path::Path) -> Result<std::path::PathBuf> {
+    let dot_git = project_root.join(".git");
+    if dot_git.is_dir() {
+        return Ok(dot_git);
+    }
+    if dot_git.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&dot_git) {
+            if let Some(path_str) = content.trim().strip_prefix("gitdir:") {
+                let path_str = path_str.trim();
+                let target = std::path::PathBuf::from(path_str);
+                let resolved = if target.is_absolute() {
+                    target
+                } else {
+                    project_root.join(target)
+                };
+                if resolved.exists() {
+                    return Ok(resolved);
+                }
+            }
+        }
+    }
+    if let Some(git_bin) = crate::git::find_git_bin() {
+        let out = std::process::Command::new(git_bin)
+            .arg("-C")
+            .arg(project_root)
+            .args(["rev-parse", "--git-dir"])
+            .output();
+        if let Ok(out) = out {
+            if out.status.success() {
+                let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    let p = std::path::PathBuf::from(&path_str);
+                    let resolved = if p.is_absolute() { p } else { project_root.join(p) };
+                    if resolved.exists() {
+                        return Ok(resolved);
+                    }
+                }
+            }
+        }
+    }
+    let tmp_dir = std::path::PathBuf::from("/tmp/aw/candidate-records");
+    std::fs::create_dir_all(&tmp_dir)?;
+    Ok(tmp_dir)
+}
+
+fn candidate_record_path(project_root: &std::path::Path, slug: &str) -> Result<std::path::PathBuf> {
+    let git_dir = resolve_git_dir(project_root)?;
+    Ok(git_dir.join(format!("aw-candidate-{slug}.json")))
+}
+
+fn save_candidate_record(project_root: &std::path::Path, slug: &str, digest: &str) -> Result<()> {
+    let path = candidate_record_path(project_root, slug)?;
+    let mut record: CandidateRecord = if path.exists() {
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read candidate record at {}", path.display()))?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        CandidateRecord::default()
+    };
+    if let Some(prev) = record.latest_digest.take() {
+        if prev != digest && !record.previous_digests.contains(&prev) {
+            record.previous_digests.push(prev);
+        }
+    }
+    record.latest_digest = Some(digest.to_string());
+    let json = serde_json::to_string(&record)?;
+    std::fs::write(&path, json)
+        .with_context(|| format!("failed to write candidate record at {}", path.display()))?;
+    Ok(())
+}
+
+fn is_stale_candidate_digest(project_root: &std::path::Path, slug: &str, digest: &str) -> bool {
+    let Ok(path) = candidate_record_path(project_root, slug) else {
+        return false;
+    };
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(record) = serde_json::from_str::<CandidateRecord>(&content) {
+                if record.previous_digests.contains(&digest.to_string()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn calculate_candidate_digest(project_root: &std::path::Path, paths: &[String]) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let mut sorted_paths = paths.to_vec();
+    sorted_paths.sort();
+    for p in sorted_paths {
+        let file_path = project_root.join(&p);
+        if !file_path.is_file() {
+            anyhow::bail!("candidate file missing on disk: {p}");
+        }
+        let file_bytes = std::fs::read(&file_path)
+            .with_context(|| format!("failed to read candidate file {p}"))?;
+        if file_bytes.is_empty() {
+            anyhow::bail!("candidate file is empty: {p}");
+        }
+        hasher.update(p.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(&file_bytes);
+    }
+    Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+fn rollback_git_commit(project_root: &std::path::Path) -> Result<()> {
+    let git_bin = crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found"))?;
+    let out = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["reset", "HEAD~1"])
+        .output()
+        .context("git reset HEAD~1 failed")?;
+    if !out.status.success() {
+        anyhow::bail!("rollback git commit failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+/// Implement `aw cb materialize <slug> [--spec-path <path>]`.
+pub async fn run_materialize(args: CbMaterializeArgs) -> Result<()> {
+    use crate::issues::{backend::IssueBackend, LocalBackend};
+    let project_root = crate::find_project_root()?;
+    let slug = args.slug.trim();
+
+    let backend = LocalBackend::from_project_root(&project_root);
+    let issue = match backend.get(slug).await? {
+        Some(issue) => issue,
+        None => {
+            let env = serde_json::json!({
+                "action": "refused",
+                "refusal": {
+                    "code": "issue_not_found",
+                    "reason": format!("issue '{slug}' not found")
+                },
+                "completion": {
+                    "workflow_complete": false
+                }
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            anyhow::bail!("issue '{slug}' not found");
+        }
+    };
+
+    let spec_path_str = if let Some(ref explicit) = args.spec_path {
+        explicit.to_string()
+    } else if let Ok(p) = crate::cli::td::resolve_issue_td_generation_spec_path(&project_root, &issue, slug) {
+        p
+    } else if let Some(discovered) = crate::cli::td::discover_worktree_spec(&project_root) {
+        discovered
+    } else {
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": "missing_spec_path",
+                "reason": format!("cannot resolve spec path for '{slug}'")
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("cannot resolve spec path for '{slug}'");
+    };
+
+    let spec_rel = std::path::Path::new(&spec_path_str);
+    if spec_rel.is_absolute()
+        || spec_rel.as_os_str().is_empty()
+        || spec_rel
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": "invalid_spec_path",
+                "reason": format!("spec_path must be relative posix path: '{spec_path_str}'")
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("invalid spec path");
+    }
+
+    let spec_abs = project_root.join(&spec_path_str);
+    if !spec_abs.exists() {
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": "spec_not_found",
+                "reason": format!("spec file not found: {}", spec_abs.display())
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("spec file not found");
+    }
+
+    // Check TD Lock (R3)
+    if let Ok(td_lock) = super::td_lock::check_project_td_lock_for_spec_at_root(&project_root, &spec_abs) {
+        if !td_lock.clean {
+            let env = serde_json::json!({
+                "action": "refused",
+                "refusal": {
+                    "code": "td_lock_error",
+                    "reason": format!("td gen requires a clean TD IR lock before generation: {}", td_lock.message)
+                },
+                "completion": {
+                    "workflow_complete": false
+                }
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            anyhow::bail!("td gen requires a clean TD IR lock: {}", td_lock.message);
+        }
+    }
+
+    // Preflight clean worktree (R3): candidate materialization requires clean worktree
+    let dirty = crate::git::dirty_paths(&project_root, &[std::path::PathBuf::from(".")], true)?;
+    if !dirty.is_empty() {
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": "dirty_worktree",
+                "reason": format!("linked worktree must be clean before materialization, dirty paths: {:?}", dirty)
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("dirty worktree before materialization");
+    }
+
+    let mut candidate_paths: Vec<String> = Vec::new();
+
+    match crate::generate::apply::run_apply_worktree(&spec_abs, &project_root) {
+        Ok(report) => {
+            for file in &report.files {
+                if file.created || file.updated || file.blocks_updated > 0 {
+                    let rel = file.path.to_string_lossy().replace('\\', "/");
+                    if !rel.is_empty() && !rel.starts_with('/') && !rel.contains("..") {
+                        let full = project_root.join(&rel);
+                        if full.is_file() && std::fs::metadata(&full).map(|m| m.len() > 0).unwrap_or(false) {
+                            candidate_paths.push(rel);
+                        }
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            let err_str = err.to_string();
+            if err_str.contains("No target files inferred") {
+                // concrete no-target-inference error reaches fallback
+            } else {
+                let env = serde_json::json!({
+                    "action": "refused",
+                    "refusal": {
+                        "code": "codegen_failed",
+                        "reason": format!("codegen failed: {err}")
+                    },
+                    "completion": {
+                        "workflow_complete": false
+                    }
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                anyhow::bail!("codegen failed: {err}");
+            }
+        }
+    }
+
+    if candidate_paths.is_empty() {
+        let cand_dir = project_root.join("tech-design").join("candidates");
+        std::fs::create_dir_all(&cand_dir)?;
+        let cand_rel = format!("tech-design/candidates/{slug}.candidate.md");
+        let cand_abs = project_root.join(&cand_rel);
+        let spec_content = std::fs::read_to_string(&spec_abs).unwrap_or_default();
+        use sha2::{Digest, Sha256};
+        let spec_digest = format!("sha256:{:x}", Sha256::digest(spec_content.as_bytes()));
+        let cand_content = format!(
+            "# Materialized Candidate for WI #{slug}\n\
+             Spec-Path: {spec_path_str}\n\
+             Spec-Digest: {spec_digest}\n\n\
+             {spec_content}\n"
+        );
+        std::fs::write(&cand_abs, cand_content)?;
+        candidate_paths.push(cand_rel);
+    }
+
+    candidate_paths.sort();
+    candidate_paths.dedup();
+
+    let candidate_digest = calculate_candidate_digest(&project_root, &candidate_paths)?;
+    save_candidate_record(&project_root, slug, &candidate_digest)?;
+
+    let publish_cmd = format!("aw cb publish {slug} --candidate-digest {candidate_digest}");
+    let env = serde_json::json!({
+        "action": "materialized",
+        "slug": slug,
+        "candidate": {
+            "paths": candidate_paths.clone(),
+            "digest": candidate_digest.clone(),
+            "evidence": {
+                "candidate_digest": candidate_digest.clone(),
+                "paths": candidate_paths.clone()
+            },
+            "publish_command": publish_cmd
+        },
+        "completion": {
+            "workflow_complete": false
+        }
+    });
+
+    println!("{}", serde_json::to_string(&env)?);
+    Ok(())
+}
+
+/// Implement `aw cb publish <slug> [--candidate-digest <sha256>]`.
+pub async fn run_publish(args: CbPublishArgs) -> Result<()> {
+    use crate::issues::{backend::IssueBackend, LocalBackend};
+    let project_root = crate::find_project_root()?;
+    let slug = args.slug.trim();
+
+    let Some(given_digest_raw) = args.candidate_digest.as_deref() else {
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": "missing_candidate_digest",
+                "reason": "candidate_digest parameter is required for publish"
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("refused: missing_candidate_digest");
+    };
+
+    let given_digest = given_digest_raw.trim();
+    if given_digest.is_empty() {
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": "missing_candidate_digest",
+                "reason": "candidate_digest parameter cannot be empty"
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("refused: missing_candidate_digest");
+    }
+
+    let backend = LocalBackend::from_project_root(&project_root);
+    let issue = match backend.get(slug).await? {
+        Some(issue) => issue,
+        None => {
+            let env = serde_json::json!({
+                "action": "refused",
+                "refusal": {
+                    "code": "issue_not_found",
+                    "reason": format!("issue '{slug}' not found")
+                },
+                "completion": {
+                    "workflow_complete": false
+                }
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            anyhow::bail!("issue '{slug}' not found");
+        }
+    };
+
+    let dirty_paths = crate::git::dirty_paths(&project_root, &[std::path::PathBuf::from(".")], true)?;
+    let filtered_dirty: Vec<String> = dirty_paths
+        .into_iter()
+        .filter(|p| !p.starts_with(".git") && !p.starts_with(".aw") && !p.contains("aw-candidate-"))
+        .collect();
+
+    let current_digest = if !filtered_dirty.is_empty() {
+        calculate_candidate_digest(&project_root, &filtered_dirty).ok()
+    } else {
+        None
+    };
+
+    let is_match = current_digest.as_deref() == Some(given_digest);
+
+    if !is_match {
+        let refusal_code = if is_stale_candidate_digest(&project_root, slug, given_digest) {
+            "stale_candidate_digest"
+        } else {
+            "mismatched_candidate_digest"
+        };
+
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": refusal_code,
+                "reason": format!("candidate digest check failed: given '{given_digest}', current '{:?}'", current_digest)
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("refused: {refusal_code}");
+    }
+
+    let paths_to_commit: Vec<std::path::PathBuf> = filtered_dirty
+        .iter()
+        .map(|p| std::path::PathBuf::from(p))
+        .collect();
+
+    let commit_message = format!(
+        "cb({slug}) - materialization published\n\n\
+         Lifecycle-Slug: {slug}\n\
+         Work-Item: {slug}\n\
+         Lifecycle-Stage: {}\n\
+         Candidate-Digest: {given_digest}",
+        crate::issues::types::lifecycle_trailer::CB_GEN,
+    );
+
+    // 1. Commit Git
+    let committed = crate::git::commit_scoped_paths(&project_root, &paths_to_commit, &commit_message)?;
+    if !committed {
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": "commit_failed",
+                "reason": "Git commit of candidate paths produced no change or failed"
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("Git commit failed or produced no change");
+    }
+
+    // 2. Update issue tracker projection with rollback compensation
+    use crate::issues::types::IssuePatch;
+    let mut remove_labels = vec![
+        super::workflow_guard::LOCK_LABEL.to_string(),
+        super::workflow_guard::TD_LOCK_LABEL.to_string(),
+        super::workflow_guard::CB_LOCK_LABEL.to_string(),
+        "lock:aw".to_string(),
+        "lock:td".to_string(),
+        "lock:cb".to_string(),
+        "phase:td_inited".to_string(),
+        "phase:td_created".to_string(),
+        "phase:td_reviewed".to_string(),
+        "phase:td_revised".to_string(),
+    ];
+    for l in &issue.labels {
+        if l.starts_with("phase:") || l.starts_with("lock:") || l.starts_with("score:lock") {
+            remove_labels.push(l.clone());
+        }
+    }
+    remove_labels.sort();
+    remove_labels.dedup();
+
+    let patch = IssuePatch {
+        phase: Some(crate::issues::types::td_phase::CB_GENNED.to_string()),
+        add_labels: vec![format!("phase:{}", crate::issues::types::td_phase::CB_GENNED)],
+        remove_labels,
+        ..Default::default()
+    };
+
+    if let Err(err) = backend.update(slug, &patch).await {
+        if let Err(rollback_err) = rollback_git_commit(&project_root) {
+            anyhow::bail!("tracker update failed ({err}); rollback failed ({rollback_err})");
+        }
+        let env = serde_json::json!({
+            "action": "refused",
+            "refusal": {
+                "code": "tracker_update_failed",
+                "reason": format!("tracker update failed, git commit rolled back: {err}")
+            },
+            "completion": {
+                "workflow_complete": false
+            }
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        anyhow::bail!("tracker update failed, git commit rolled back: {err}");
+    }
+
+    let pub_envelope = serde_json::json!({
+        "action": "published",
+        "slug": slug,
+        "completion": {
+            "workflow_complete": false
+        }
+    });
+
+    println!("{}", serde_json::to_string(&pub_envelope)?);
+    Ok(())
 }
 
 // Args for `aw td fill <slug>` — Phase 3 marker-fill workflow.
