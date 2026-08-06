@@ -1113,6 +1113,61 @@ pub fn decide_projection(
         }
     }
 
+    if let Some(obs_epoch) = observation.epoch {
+        let expected_epoch = match observation.head_event_id.as_deref() {
+            Some(obs_head) => lifecycle
+                .events
+                .iter()
+                .position(|event| event.event_id == obs_head)
+                .map(|idx| (idx + 1) as u64),
+            None => Some(0),
+        };
+        if let Some(expected) = expected_epoch {
+            if obs_epoch != expected {
+                return ProjectionDecision {
+                    accepted: false,
+                    refusal_reason: Some(format!(
+                        "Observed tracker epoch {} disagrees with ledger epoch {} for head {:?}",
+                        obs_epoch, expected, observation.head_event_id
+                    )),
+                    target_epoch,
+                    target_head_event_id,
+                    work: Vec::new(),
+                    complete: false,
+                    close_authorized: false,
+                    authorize_close_event_id: None,
+                    drift: false,
+                    remediation: Vec::new(),
+                };
+            }
+        }
+    }
+
+    let committed_event_ids: BTreeSet<&str> = lifecycle
+        .events
+        .iter()
+        .map(|e| e.event_id.as_str())
+        .collect();
+    for present_id in &observation.present_event_ids {
+        if !committed_event_ids.contains(present_id.as_str()) {
+            return ProjectionDecision {
+                accepted: false,
+                refusal_reason: Some(format!(
+                    "Observed milestone {:?} was never committed in ledger",
+                    present_id
+                )),
+                target_epoch,
+                target_head_event_id,
+                work: Vec::new(),
+                complete: false,
+                close_authorized: false,
+                authorize_close_event_id: None,
+                drift: false,
+                remediation: Vec::new(),
+            };
+        }
+    }
+
     let mut work = Vec::new();
     for event in &lifecycle.events {
         if !observation.present_event_ids.contains(&event.event_id) {
@@ -2437,5 +2492,243 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         assert!(!dec8_second.close_authorized);
         assert_eq!(dec8_second.authorize_close_event_id, None);
         assert!(!dec8_second.drift);
+    }
+
+    #[test]
+    fn revisioned_change_wi_conflicting_observation() {
+        let root = tempfile::tempdir().unwrap();
+
+        let created = fold_wi_create("causal", "wi-v1", "agentic-workflow");
+        let ec = reduce_stage(
+            &created,
+            ArtifactKind::Ec,
+            LifecycleEventKind::EcChange,
+            "ec-v1",
+            "aw td check",
+            OwnerVocabulary::Td,
+        );
+        let td = reduce_stage(
+            &ec,
+            ArtifactKind::Td,
+            LifecycleEventKind::TdChange,
+            "td-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+        let lc4 = reduce_stage(
+            &td,
+            ArtifactKind::Cb,
+            LifecycleEventKind::CbChange,
+            "cb-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+        let wi_body = "wi-v1";
+
+        // Row 1: Observation naming uncommitted event `evt-900`
+        let obs1 = TrackerObservation::new(
+            wi_body,
+            lc4.head_event_id.clone(),
+            Some(lc4.epoch),
+            vec!["evt-001", "evt-002", "evt-003", "evt-004", "evt-900"],
+        );
+        let dec1 = decide_projection(&lc4, &obs1);
+        assert!(!dec1.accepted);
+        assert!(dec1.work.is_empty());
+        let reason1 = dec1
+            .refusal_reason
+            .as_deref()
+            .expect("refusal reason present");
+        assert!(
+            reason1.contains("evt-900"),
+            "refusal reason should name foreign milestone id: {}",
+            reason1
+        );
+
+        // Row 9: Observation with foreign milestone `evt-0025` sorting among committed ids
+        let obs9 = TrackerObservation::new(
+            wi_body,
+            lc4.head_event_id.clone(),
+            Some(lc4.epoch),
+            vec!["evt-001", "evt-002", "evt-0025", "evt-003", "evt-004"],
+        );
+        let dec9 = decide_projection(&lc4, &obs9);
+        assert!(!dec9.accepted);
+        assert!(dec9.work.is_empty());
+        let reason9 = dec9
+            .refusal_reason
+            .as_deref()
+            .expect("refusal reason present");
+        assert!(
+            reason9.contains("evt-0025"),
+            "refusal reason should name foreign milestone id: {}",
+            reason9
+        );
+
+        // Row 2: Four-event lifecycle after rejected cb_commit vs observation with evt-001..evt-005;
+        // and paired control with accepted cb_commit.
+        let no_evidence_cb = lc4.clone();
+        let active_cb = no_evidence_cb.active_revisions[&ArtifactKind::Cb]
+            .clone()
+            .unwrap();
+        let cb_commit_event = LifecycleEvent {
+            event_id: event_id(&no_evidence_cb),
+            predecessor_id: no_evidence_cb.head_event_id.clone(),
+            kind: LifecycleEventKind::CbCommit,
+            candidate_revision: active_cb.clone(),
+            bound_tuple: no_evidence_cb.active_digest_tuple(),
+            next_command: "aw wi show causal".to_string(),
+            next_owner: OwnerVocabulary::Cb,
+        };
+        let rejected_res = reduce_event(&no_evidence_cb, cb_commit_event.clone());
+        assert!(!rejected_res.accepted);
+        let lc_rejected = rejected_res.lifecycle;
+
+        let obs2 = TrackerObservation::new(
+            wi_body,
+            lc4.head_event_id.clone(),
+            Some(lc4.epoch),
+            vec!["evt-001", "evt-002", "evt-003", "evt-004", "evt-005"],
+        );
+        let dec2_rejected = decide_projection(&lc_rejected, &obs2);
+        assert!(!dec2_rejected.accepted);
+        assert!(dec2_rejected.work.is_empty());
+        assert!(dec2_rejected
+            .refusal_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("evt-005"));
+
+        let mut cb_with_evidence = lc4.clone();
+        let tuple = cb_with_evidence.active_digest_tuple();
+        cb_with_evidence.evidence = ["cb_test", "cb_review", "td_reconcile", "ec_verify_cb"]
+            .into_iter()
+            .map(|verifier| EvidenceBinding {
+                verifier: verifier.to_string(),
+                bound_tuple: tuple.clone(),
+                passed: true,
+                summary: "pass".to_string(),
+            })
+            .collect();
+        let accepted_res = reduce_event(&cb_with_evidence, cb_commit_event);
+        assert!(accepted_res.accepted);
+        let lc_accepted = accepted_res.lifecycle;
+
+        let dec2_accepted = decide_projection(&lc_accepted, &obs2);
+        assert!(dec2_accepted.accepted);
+        assert!(dec2_accepted.work.is_empty());
+
+        // Row 3: Observed head is committed `evt-002` but observed epoch is 4 (epoch disagreement)
+        let obs3 = TrackerObservation::new(
+            wi_body,
+            Some("evt-002"),
+            Some(4),
+            vec!["evt-001", "evt-002"],
+        );
+        let dec3 = decide_projection(&lc4, &obs3);
+        assert!(!dec3.accepted);
+        assert!(dec3.work.is_empty());
+        let reason3 = dec3
+            .refusal_reason
+            .as_deref()
+            .expect("refusal reason present");
+        assert!(
+            reason3.contains("epoch") || reason3.contains("4"),
+            "refusal reason should name epoch disagreement: {}",
+            reason3
+        );
+
+        // Row 4: Negative control for Row 3: Observed head `evt-002` with epoch 2
+        let obs4 = TrackerObservation::new(
+            wi_body,
+            Some("evt-002"),
+            Some(2),
+            vec!["evt-001", "evt-002"],
+        );
+        let dec4 = decide_projection(&lc4, &obs4);
+        assert!(dec4.accepted);
+        let covered_events_4: Vec<&str> = dec4.work.iter().map(|w| w.event_id.as_str()).collect();
+        assert_eq!(covered_events_4, vec!["evt-003", "evt-004"]);
+
+        // Row 5: Terminal lifecycle against three refusing observations:
+        // (a) foreign milestone id (`evt-900`)
+        // (b) epoch disagreement (head `evt-002`, epoch 99)
+        // (c) head never committed (`evt-999-uncommitted`)
+        let obs5_a = TrackerObservation::new(
+            wi_body,
+            lc_accepted.head_event_id.clone(),
+            Some(lc_accepted.epoch),
+            vec![
+                "evt-001", "evt-002", "evt-003", "evt-004", "evt-005", "evt-900",
+            ],
+        );
+        let obs5_b = TrackerObservation::new(
+            wi_body,
+            Some("evt-002"),
+            Some(99),
+            vec!["evt-001", "evt-002"],
+        );
+        let obs5_c = TrackerObservation::new(
+            wi_body,
+            Some("evt-999-uncommitted"),
+            Some(99),
+            Vec::<String>::new(),
+        );
+
+        for obs in [&obs5_a, &obs5_b, &obs5_c] {
+            let dec = decide_projection(&lc_accepted, obs);
+            assert!(!dec.accepted);
+            assert!(dec.work.is_empty());
+            assert!(!dec.close_authorized);
+            assert_eq!(dec.authorize_close_event_id, None);
+        }
+
+        // Row 6: Negative control: 4-event lifecycle against:
+        // (a) head names uncommitted event -> refuses with zero work
+        // (b) body digest does not match -> refuses with zero work
+        // (c) self-consistent observation carrying every committed milestone at ledger's identity -> does not refuse, yields no work
+        let obs6_a = TrackerObservation::new(
+            wi_body,
+            Some("evt-999-uncommitted"),
+            Some(99),
+            Vec::<String>::new(),
+        );
+        let obs6_b = TrackerObservation::empty("unseen human prose edit on tracker");
+        let obs6_c = TrackerObservation::new(
+            wi_body,
+            lc4.head_event_id.clone(),
+            Some(lc4.epoch),
+            vec!["evt-001", "evt-002", "evt-003", "evt-004"],
+        );
+
+        let dec6_a = decide_projection(&lc4, &obs6_a);
+        assert!(!dec6_a.accepted);
+        assert!(dec6_a.work.is_empty());
+
+        let dec6_b = decide_projection(&lc4, &obs6_b);
+        assert!(!dec6_b.accepted);
+        assert!(dec6_b.work.is_empty());
+
+        let dec6_c = decide_projection(&lc4, &obs6_c);
+        assert!(dec6_c.accepted);
+        assert!(dec6_c.work.is_empty());
+
+        // Row 7: Negative control: 4-event lifecycle and observation with no epoch (None) at older committed head (evt-002) with present milestones
+        let obs7 =
+            TrackerObservation::new(wi_body, Some("evt-002"), None, vec!["evt-001", "evt-002"]);
+        let dec7 = decide_projection(&lc4, &obs7);
+        assert!(dec7.accepted);
+        let covered_events_7: Vec<&str> = dec7.work.iter().map(|w| w.event_id.as_str()).collect();
+        assert_eq!(covered_events_7, vec!["evt-003", "evt-004"]);
+
+        // Row 8: Lifecycle re-read from persisted carrier after save against Row 1's and Row 4's observations
+        save(root.path(), &lc4).unwrap();
+        let reloaded_lc4 = load(root.path(), "causal").unwrap().unwrap();
+
+        let dec8_row1 = decide_projection(&reloaded_lc4, &obs1);
+        assert_eq!(dec8_row1, dec1);
+
+        let dec8_row4 = decide_projection(&reloaded_lc4, &obs4);
+        assert_eq!(dec8_row4, dec4);
     }
 }
