@@ -200,6 +200,67 @@ pub struct ReducerResult {
     pub rejection_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MilestoneWork {
+    pub event_id: String,
+    pub milestone: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TrackerObservation {
+    pub body: String,
+    pub head_event_id: Option<String>,
+    pub epoch: Option<u64>,
+    pub present_event_ids: BTreeSet<String>,
+}
+
+impl TrackerObservation {
+    pub fn new(
+        body: impl Into<String>,
+        head_event_id: Option<impl Into<String>>,
+        epoch: Option<u64>,
+        present_event_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            body: body.into(),
+            head_event_id: head_event_id.map(Into::into),
+            epoch,
+            present_event_ids: present_event_ids.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn empty(body: impl Into<String>) -> Self {
+        Self {
+            body: body.into(),
+            head_event_id: None,
+            epoch: None,
+            present_event_ids: BTreeSet::new(),
+        }
+    }
+
+    pub fn apply_work(
+        &mut self,
+        target_epoch: u64,
+        target_head: Option<String>,
+        work: &[MilestoneWork],
+    ) {
+        self.epoch = Some(target_epoch);
+        self.head_event_id = target_head;
+        for w in work {
+            self.present_event_ids.insert(w.event_id.clone());
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectionDecision {
+    pub accepted: bool,
+    pub refusal_reason: Option<String>,
+    pub target_epoch: u64,
+    pub target_head_event_id: Option<String>,
+    pub work: Vec<MilestoneWork>,
+}
+
 fn carrier_path(project_root: &Path, slug: &str) -> PathBuf {
     crate::shared::workspace::workspace_runtime_path(project_root)
         .join("causal-lifecycle")
@@ -935,6 +996,109 @@ fn zero_head_projection(slug: &str, owner: OwnerVocabulary) -> serde_json::Value
     })
 }
 
+pub fn render_milestone(lifecycle: &ChangeLifecycle, event: &LifecycleEvent) -> serde_json::Value {
+    let mut milestone_evidence = Vec::new();
+    for binding in &lifecycle.evidence {
+        if binding.bound_tuple.matches(&event.bound_tuple) {
+            milestone_evidence.push(binding.clone());
+        }
+    }
+    for invalidation in &lifecycle.invalidations {
+        for binding in &invalidation.evicted_evidence {
+            if binding.bound_tuple.matches(&event.bound_tuple) {
+                milestone_evidence.push(binding.clone());
+            }
+        }
+    }
+    let next = if event.kind == LifecycleEventKind::CbCommit {
+        serde_json::json!({
+            "command": format!("aw wi show {}", lifecycle.slug),
+            "owner": OwnerVocabulary::Cb.as_str(),
+        })
+    } else {
+        serde_json::json!({
+            "command": event.next_command.clone(),
+            "owner": event.next_owner.as_str(),
+        })
+    };
+    serde_json::json!({
+        "event_id": event.event_id,
+        "artifact": event.candidate_revision.public_json(),
+        "evidence": milestone_evidence,
+        "outcome": "accepted",
+        "iteration": event.candidate_revision.iteration,
+        "next": next,
+    })
+}
+
+/// Decide, as a pure function of the committed lifecycle and an observed tracker
+/// state, which milestones may be written to the tracker.
+pub fn decide_projection(
+    lifecycle: &ChangeLifecycle,
+    observation: &TrackerObservation,
+) -> ProjectionDecision {
+    let target_epoch = lifecycle.epoch;
+    let target_head_event_id = lifecycle.head_event_id.clone();
+
+    if let Some(active_wi_digest) = lifecycle
+        .active_revisions
+        .get(&ArtifactKind::Wi)
+        .and_then(|r| r.as_ref())
+        .map(|r| &r.digest)
+    {
+        let obs_wi_digest = canonical_wi_digest(&observation.body);
+        if obs_wi_digest != *active_wi_digest {
+            return ProjectionDecision {
+                accepted: false,
+                refusal_reason: Some(format!(
+                    "Conflicting tracker WI body digest {:?} does not match active WI revision digest {:?}",
+                    obs_wi_digest, active_wi_digest
+                )),
+                target_epoch,
+                target_head_event_id,
+                work: Vec::new(),
+            };
+        }
+    }
+
+    if let Some(ref obs_head) = observation.head_event_id {
+        let is_committed = lifecycle
+            .events
+            .iter()
+            .any(|event| &event.event_id == obs_head);
+        if !is_committed {
+            return ProjectionDecision {
+                accepted: false,
+                refusal_reason: Some(format!(
+                    "Observed tracker head {:?} was never committed in ledger",
+                    obs_head
+                )),
+                target_epoch,
+                target_head_event_id,
+                work: Vec::new(),
+            };
+        }
+    }
+
+    let mut work = Vec::new();
+    for event in &lifecycle.events {
+        if !observation.present_event_ids.contains(&event.event_id) {
+            work.push(MilestoneWork {
+                event_id: event.event_id.clone(),
+                milestone: render_milestone(lifecycle, event),
+            });
+        }
+    }
+
+    ProjectionDecision {
+        accepted: true,
+        refusal_reason: None,
+        target_epoch,
+        target_head_event_id,
+        work,
+    }
+}
+
 fn render(lifecycle: &ChangeLifecycle) -> serde_json::Value {
     let revision = |kind| match lifecycle
         .active_revisions
@@ -947,40 +1111,7 @@ fn render(lifecycle: &ChangeLifecycle) -> serde_json::Value {
     let milestones = lifecycle
         .events
         .iter()
-        .map(|event| {
-            let mut milestone_evidence = Vec::new();
-            for binding in &lifecycle.evidence {
-                if binding.bound_tuple.matches(&event.bound_tuple) {
-                    milestone_evidence.push(binding.clone());
-                }
-            }
-            for invalidation in &lifecycle.invalidations {
-                for binding in &invalidation.evicted_evidence {
-                    if binding.bound_tuple.matches(&event.bound_tuple) {
-                        milestone_evidence.push(binding.clone());
-                    }
-                }
-            }
-            let next = if event.kind == LifecycleEventKind::CbCommit {
-                serde_json::json!({
-                    "command": format!("aw wi show {}", lifecycle.slug),
-                    "owner": OwnerVocabulary::Cb.as_str(),
-                })
-            } else {
-                serde_json::json!({
-                    "command": event.next_command.clone(),
-                    "owner": event.next_owner.as_str(),
-                })
-            };
-            serde_json::json!({
-                "event_id": event.event_id,
-                "artifact": event.candidate_revision.public_json(),
-                "evidence": milestone_evidence,
-                "outcome": "accepted",
-                "iteration": event.candidate_revision.iteration,
-                "next": next,
-            })
-        })
+        .map(|event| render_milestone(lifecycle, event))
         .collect::<Vec<_>>();
     serde_json::json!({
         "schema": SCHEMA,
@@ -1875,5 +2006,126 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         assert_eq!(emptied_cb_ms["next"]["command"], "aw wi show causal");
         assert_eq!(emptied_cb_ms["next"]["owner"], "cb");
         assert_eq!(emptied_cb_ms["evidence"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn revisioned_change_wi_projection_recovery() {
+        let root = tempfile::tempdir().unwrap();
+
+        let lc = complete_lifecycle();
+        let wi_body = "wi-v1";
+        assert_eq!(lc.events.len(), 4);
+        assert_eq!(lc.epoch, 4);
+        assert_eq!(lc.head_event_id.as_deref(), Some("evt-004"));
+
+        // Row 1: no AW projection
+        let obs1 = TrackerObservation::empty(wi_body);
+        let dec1 = decide_projection(&lc, &obs1);
+        assert!(dec1.accepted);
+        assert_eq!(dec1.refusal_reason, None);
+        assert_eq!(dec1.target_epoch, 4);
+        assert_eq!(dec1.target_head_event_id.as_deref(), Some("evt-004"));
+        let covered_events_1: Vec<&str> = dec1.work.iter().map(|w| w.event_id.as_str()).collect();
+        assert_eq!(
+            covered_events_1,
+            vec!["evt-001", "evt-002", "evt-003", "evt-004"]
+        );
+
+        // Row 2: already carrying projection with all milestones present
+        let obs2 = TrackerObservation::new(
+            wi_body,
+            Some("evt-004"),
+            Some(4),
+            vec!["evt-001", "evt-002", "evt-003", "evt-004"],
+        );
+        let dec2 = decide_projection(&lc, &obs2);
+        assert!(dec2.accepted);
+        assert_eq!(dec2.refusal_reason, None);
+        assert!(
+            dec2.work.is_empty(),
+            "expected zero writes when all milestones are present"
+        );
+
+        // Row 3: older committed head (first 2 events)
+        let obs3 = TrackerObservation::new(
+            wi_body,
+            Some("evt-002"),
+            Some(2),
+            vec!["evt-001", "evt-002"],
+        );
+        let dec3 = decide_projection(&lc, &obs3);
+        assert!(dec3.accepted);
+        let covered_events_3: Vec<&str> = dec3.work.iter().map(|w| w.event_id.as_str()).collect();
+        assert_eq!(covered_events_3, vec!["evt-003", "evt-004"]);
+
+        // Row 4: milestone for event 2 absent while 1, 3, and 4 present
+        let obs4 = TrackerObservation::new(
+            wi_body,
+            Some("evt-004"),
+            Some(4),
+            vec!["evt-001", "evt-003", "evt-004"],
+        );
+        let dec4 = decide_projection(&lc, &obs4);
+        assert!(dec4.accepted);
+        let covered_events_4: Vec<&str> = dec4.work.iter().map(|w| w.event_id.as_str()).collect();
+        assert_eq!(covered_events_4, vec!["evt-002"]);
+
+        // Row 5: head names an event id the ledger has never committed
+        let obs5 = TrackerObservation::new(
+            wi_body,
+            Some("evt-999-uncommitted"),
+            Some(99),
+            Vec::<String>::new(),
+        );
+        let dec5 = decide_projection(&lc, &obs5);
+        assert!(!dec5.accepted);
+        assert!(dec5.work.is_empty(), "refusal must yield zero writes");
+        let reason5 = dec5.refusal_reason.expect("refusal reason present");
+        assert!(
+            reason5.contains("evt-999-uncommitted"),
+            "refusal reason should name conflicting head: {}",
+            reason5
+        );
+
+        // Row 6: canonical WI body digest differs from ledger active WI revision digest
+        let obs6 = TrackerObservation::empty("unseen human prose edit on tracker");
+        let dec6 = decide_projection(&lc, &obs6);
+        assert!(!dec6.accepted);
+        assert!(dec6.work.is_empty(), "refusal must yield zero writes");
+        assert!(dec6.refusal_reason.is_some());
+
+        // Row 7: rejected event applied to lifecycle (negative control)
+        let stale_event = LifecycleEvent {
+            event_id: "evt-005".to_string(),
+            predecessor_id: Some("evt-stale".to_string()),
+            kind: LifecycleEventKind::WiChange,
+            candidate_revision: lc.events[0].candidate_revision.clone(),
+            bound_tuple: ActiveDigestTuple::default(),
+            next_command: "aw wi validate causal".to_string(),
+            next_owner: OwnerVocabulary::Wi,
+        };
+        let rejected_res = reduce_event(&lc, stale_event);
+        assert!(!rejected_res.accepted);
+        let dec7 = decide_projection(&rejected_res.lifecycle, &obs1);
+        assert_eq!(dec7, dec1);
+
+        // Row 8: lifecycle re-read from persisted carrier after save
+        save(root.path(), &lc).unwrap();
+        let reloaded_lc = load(root.path(), "causal").unwrap().unwrap();
+        let mut obs8 = TrackerObservation::empty(wi_body);
+        let dec8_first = decide_projection(&reloaded_lc, &obs8);
+        assert_eq!(dec8_first, dec1);
+
+        obs8.apply_work(
+            dec8_first.target_epoch,
+            dec8_first.target_head_event_id.clone(),
+            &dec8_first.work,
+        );
+        let dec8_second = decide_projection(&reloaded_lc, &obs8);
+        assert!(dec8_second.accepted);
+        assert!(
+            dec8_second.work.is_empty(),
+            "recomputed decision after applying yielded work must yield no work"
+        );
     }
 }
