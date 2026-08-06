@@ -8,14 +8,23 @@
 //! accept loops live above it in `server-tcp` and `server-http`.
 
 pub mod config;
+pub mod deadline;
 pub mod drain;
+pub mod hooks;
+pub mod lifecycle;
 pub mod limits;
 pub mod metrics;
 pub mod readiness;
 pub mod signal;
 
 pub use config::BindConfig;
+pub use deadline::{DeadlineError, ShutdownDeadline};
 pub use drain::{DrainController, DrainSignal, DrainState};
+pub use hooks::{HookOutcome, HookStage, HookStatus, PhaseTiming, ShutdownContext, ShutdownReport};
+pub use lifecycle::{
+    LifecycleController, LifecycleError, LifecycleObservation, LifecyclePhase,
+    LifecycleSubscription,
+};
 pub use limits::{ConnectionBudget, ConnectionLimitExceeded, ConnectionPermit};
 pub use metrics::{ConnectionMetrics, NoopConnectionMetrics};
 pub use readiness::Readiness;
