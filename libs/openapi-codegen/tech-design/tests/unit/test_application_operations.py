@@ -5,7 +5,14 @@ import unittest
 
 sys.path.insert(0, __file__.rsplit("/", 3)[0] + "/src")
 
-from openapi_codegen.application.document import Item, Response, Schema, parse_operation, parse_spec
+from openapi_codegen.application.document import (
+    Item,
+    Operation,
+    Response,
+    Schema,
+    parse_operation,
+    parse_spec,
+)
 from openapi_codegen.application.operations import (
     METHODS,
     BodyIR,
@@ -281,6 +288,18 @@ class TestApplicationOperations(unittest.TestCase):
         res = pick_response(op)
         self.assertEqual(res, op.responses[0][1])
         self.assertEqual(op.responses[0][0], "204")
+
+    def test_pick_response_direct_operation_is_order_independent(self) -> None:
+        response_205 = Item(Response())
+        response_204 = Item(Response())
+        op = Operation(responses=(("205", response_205), ("204", response_204)))
+        self.assertIs(pick_response(op), response_204)
+
+    def test_pick_response_concrete_beats_generic_2xx(self) -> None:
+        response_2xx = Item(Response())
+        response_204 = Item(Response())
+        op = Operation(responses=(("2XX", response_2xx), ("204", response_204)))
+        self.assertIs(pick_response(op), response_204)
 
     def test_pick_response_unreachable_2xx_scan(self) -> None:
         # "2XX" starts with "2", so step 2 (range scan) returns it before step 3

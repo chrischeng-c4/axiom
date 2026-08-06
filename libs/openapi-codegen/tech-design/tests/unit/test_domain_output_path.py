@@ -35,6 +35,24 @@ class TestDomainOutputPath(unittest.TestCase):
         assert isinstance(res, OutputPathEscape)
         self.assertEqual(res.reason, "absolute")
 
+    def test_check_output_path_platform_absolute_forms(self) -> None:
+        for path in ("\\escape.ts", "C:/escape.ts", "C:\\escape.ts", "D:escape.ts", "\\\\server\\share\\escape.ts"):
+            res = check_output_path(path)
+            self.assertIsInstance(res, OutputPathEscape)
+            assert isinstance(res, OutputPathEscape)
+            self.assertEqual(res.reason, "absolute")
+
+    def test_check_output_path_windows_parent_forms(self) -> None:
+        for path in ("safe\\..\\..\\escape.ts", "safe/..\\../escape.ts"):
+            res = check_output_path(path)
+            self.assertIsInstance(res, OutputPathEscape)
+            assert isinstance(res, OutputPathEscape)
+            self.assertEqual(res.reason, "parent-component")
+
+    def test_check_output_path_safe_backslash_forms(self) -> None:
+        self.assertEqual(check_output_path("safe\\client.ts"), ("safe", "client.ts"))
+        self.assertEqual(check_output_path("safe/mixed\\client.ts"), ("safe", "mixed", "client.ts"))
+
     def test_check_output_path_parent_component(self) -> None:
         res = check_output_path("../out.ts")
         self.assertIsInstance(res, OutputPathEscape)

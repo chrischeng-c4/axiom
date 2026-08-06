@@ -8,7 +8,10 @@ sys.path.insert(0, __file__.rsplit("/", 3)[0] + "/src")
 from openapi_codegen.domain.errors import TargetLanguageMismatch
 from openapi_codegen.domain.lang import Lang
 from openapi_codegen.domain.target import PythonTarget, TargetProfile, default_profile_for
-from openapi_codegen.infrastructure.options import GenOptions, HttpClient
+from openapi_codegen.application import pymap
+from openapi_codegen.application.document import Item, Schema
+from openapi_codegen.application.typemap import TypeMap
+from openapi_codegen.infrastructure.options import GenOptions, GeneratedFile, GeneratedOutput, HttpClient
 from openapi_codegen.infrastructure.plan import (
     PY_HEADER,
     RUST_HEADER,
@@ -17,6 +20,7 @@ from openapi_codegen.infrastructure.plan import (
     barrel_contents,
     barrel_path,
     dispatch_error,
+    generate_for_target,
     planned_paths,
 )
 
@@ -251,6 +255,49 @@ class TestInfrastructurePlan(unittest.TestCase):
         self.assertFalse(PY_HEADER.endswith("\n\n"))
         self.assertTrue(RUST_HEADER.endswith("\n"))
         self.assertFalse(RUST_HEADER.endswith("\n\n"))
+
+    def test_generate_for_target_success(self) -> None:
+        opts = self.make_opts(Lang.PY)
+        res = generate_for_target(opts, "python-3.11", lambda t: [GeneratedFile("m.py", "# m")])
+        self.assertIsInstance(res, GeneratedOutput)
+        assert isinstance(res, GeneratedOutput)
+        self.assertIsNotNone(res.target)
+
+    def test_generate_for_target_profileless_callback_preserves_legacy_python(self) -> None:
+        opts = self.make_opts(Lang.PY)
+        seen: list[TargetProfile | None] = []
+
+        def callback(target: TargetProfile | None) -> list[GeneratedFile]:
+            seen.append(target)
+            python_target = target.python if target is not None else None
+            rendered = pymap.type_expr(Item(Schema(ty=("string",), nullable=True)), TypeMap(()), python_target)
+            return [GeneratedFile("models.py", rendered)]
+
+        res = generate_for_target(opts, None, callback)
+        self.assertIsInstance(res, GeneratedOutput)
+        assert isinstance(res, GeneratedOutput)
+        self.assertEqual(seen, [None])
+        self.assertIsNone(res.target)
+        self.assertIsNone(res.requirements)
+        self.assertEqual(res.files[0].contents, "Optional[str]")
+
+    def test_generate_for_target_mismatch_precedes_configured_conflict(self) -> None:
+        opts = GenOptions(
+            Lang.PY,
+            TargetProfile(python=PythonTarget.PY312),
+            "/spec.json", "/out", "Client", HttpClient.FETCH,
+            True, True, True,
+        )
+        called = False
+
+        def callback(_: object) -> list[GeneratedFile]:
+            nonlocal called
+            called = True
+            return []
+
+        res = generate_for_target(opts, "rust-2021", callback)
+        self.assertIsInstance(res, TargetLanguageMismatch)
+        self.assertFalse(called)
 
 
 if __name__ == "__main__":

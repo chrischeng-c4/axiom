@@ -13,6 +13,7 @@ from openapi_codegen.infrastructure.manifest import (
     GenerationManifest,
     manifest_fields,
     manifest_of,
+    serialize_manifest,
 )
 from openapi_codegen.infrastructure.options import (
     GeneratedOutput,
@@ -124,7 +125,6 @@ class TestInfrastructureManifest(unittest.TestCase):
 
     def test_manifest_of_reads_requirements_not_target(self) -> None:
         prof = default_profile_for(Lang.TS)
-        # Create output with target set but requirements=None
         out = GeneratedOutput(files=(), target=prof, requirements=None)
         self.assertIsNone(manifest_of(out))
 
@@ -144,6 +144,15 @@ class TestInfrastructureManifest(unittest.TestCase):
         self.assertEqual(fields["schema_version"], 1)
         self.assertEqual(fields["generator"], "openapi-codegen")
         self.assertEqual(fields["language"], "typescript")
+
+    def test_serialize_manifest(self) -> None:
+        prof = default_profile_for(Lang.TS)
+        out = for_target((), prof)
+        m = manifest_of(out)
+        assert m is not None
+        s = serialize_manifest(m)
+        self.assertTrue(s.endswith("\n"))
+        self.assertIn('"generator": "openapi-codegen"', s)
 
 
 if __name__ == "__main__":

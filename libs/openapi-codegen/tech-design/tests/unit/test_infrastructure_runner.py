@@ -8,7 +8,11 @@ sys.path.insert(0, __file__.rsplit("/", 3)[0] + "/src")
 from openapi_codegen.domain.lang import Lang
 from openapi_codegen.domain.output_path import OutputPathEscape
 from openapi_codegen.domain.target import default_profile_for
-from openapi_codegen.infrastructure.manifest import MANIFEST_FILE
+from openapi_codegen.infrastructure.manifest import (
+    MANIFEST_FILE,
+    manifest_of,
+    serialize_manifest,
+)
 from openapi_codegen.infrastructure.options import (
     GenOptions,
     GeneratedFile,
@@ -17,12 +21,7 @@ from openapi_codegen.infrastructure.options import (
     for_target,
     legacy,
 )
-from openapi_codegen.infrastructure.runner import (
-    MANIFEST_SENTINEL,
-    RunResult,
-    run,
-    write_plan,
-)
+from openapi_codegen.infrastructure.runner import RunResult, run, write_plan
 
 
 class FakeFileSystem:
@@ -51,9 +50,6 @@ class TestInfrastructureRunner(unittest.TestCase):
             emit_hooks=True,
         )
 
-    def test_manifest_sentinel_constant(self) -> None:
-        self.assertEqual(MANIFEST_SENTINEL, "<manifest>")
-
     def test_write_plan_legacy_output(self) -> None:
         f1 = GeneratedFile("types.ts", "// t")
         f2 = GeneratedFile("index.ts", "// i")
@@ -70,6 +66,8 @@ class TestInfrastructureRunner(unittest.TestCase):
         prof = default_profile_for(Lang.TS)
         f1 = GeneratedFile("types.ts", "// t")
         out = for_target([f1], prof)
+        m = manifest_of(out)
+        assert m is not None
         plan = write_plan(out, "/out")
         self.assertIsInstance(plan, tuple)
         assert isinstance(plan, tuple)
@@ -77,7 +75,7 @@ class TestInfrastructureRunner(unittest.TestCase):
             plan,
             (
                 ("/out/types.ts", "// t"),
-                (f"/out/{MANIFEST_FILE}", MANIFEST_SENTINEL),
+                (f"/out/{MANIFEST_FILE}", serialize_manifest(m)),
             ),
         )
 
@@ -90,7 +88,7 @@ class TestInfrastructureRunner(unittest.TestCase):
 
     def test_run_exit_code_2_spec_unreadable(self) -> None:
         opts = self.make_opts()
-        fs = FakeFileSystem()  # spec_path not in store -> read_text returns None
+        fs = FakeFileSystem()
         res = run(opts, fs, lambda s, o: legacy(()))
         self.assertEqual(res.exit_code, 2)
         self.assertEqual(res.stdout, ())
@@ -159,6 +157,10 @@ class TestInfrastructureRunner(unittest.TestCase):
         def fake_gen(s: str, o: GenOptions) -> GeneratedOutput:
             return for_target([f1], prof)
 
+        out = for_target([f1], prof)
+        m = manifest_of(out)
+        assert m is not None
+
         res = run(opts, fs, fake_gen)
         self.assertEqual(res.exit_code, 0)
         self.assertEqual(res.stderr, ())
@@ -170,7 +172,7 @@ class TestInfrastructureRunner(unittest.TestCase):
             fs.write_log,
             [
                 ("/out/types.ts", "// t"),
-                (f"/out/{MANIFEST_FILE}", MANIFEST_SENTINEL),
+                (f"/out/{MANIFEST_FILE}", serialize_manifest(m)),
             ],
         )
 
@@ -205,7 +207,7 @@ class TestInfrastructureRunner(unittest.TestCase):
 
         res = run(opts, fs, fake_gen)
         self.assertEqual(res.exit_code, 1)
-        self.assertEqual(fs.write_log, [])  # nothing written even though f1 was legal
+        self.assertEqual(fs.write_log, [])
 
     def test_run_stdout_tuple(self) -> None:
         opts = self.make_opts()

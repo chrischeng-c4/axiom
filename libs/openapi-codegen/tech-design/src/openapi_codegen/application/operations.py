@@ -69,9 +69,9 @@ def pick_response(op: Operation) -> RefOr[Response] | None:
     for code in ("200", "201", "202", "203"):
         if code in res_dict:
             return res_dict[code]
-    for k, v in op.responses:
-        if k.startswith("2"):
-            return v
+    remaining = sorted(k for k in res_dict if k.startswith("2") and k != "2XX")
+    if remaining:
+        return res_dict[remaining[0]]
     if "2XX" in res_dict:
         return res_dict["2XX"]
     if "default" in res_dict:

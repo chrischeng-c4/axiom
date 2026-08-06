@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from openapi_codegen.domain.output_path import OutputPathEscape, joined_output_path
-from openapi_codegen.infrastructure.manifest import MANIFEST_FILE, manifest_of
+from openapi_codegen.infrastructure.manifest import (
+    MANIFEST_FILE,
+    manifest_of,
+    serialize_manifest,
+)
 from openapi_codegen.infrastructure.options import GenOptions, GeneratedOutput
-
-# Sentinel constant representing manifest contents in pure infrastructure layer
-MANIFEST_SENTINEL = "<manifest>"
-
 
 class FileSystem(Protocol):
     def read_text(self, path: str) -> str | None: ...
@@ -27,8 +27,6 @@ class RunResult:
 def write_plan(
     output: GeneratedOutput, out_dir: str
 ) -> tuple[tuple[str, str], ...] | OutputPathEscape:
-    # Deliberate strengthening over Rust: evaluate all paths before returning
-    # any write pairs, ensuring complete fail-closed atomic validation.
     pairs: list[tuple[str, str]] = []
     for file in output.files:
         joined = joined_output_path(out_dir, file.rel_path)
@@ -37,7 +35,10 @@ def write_plan(
         pairs.append((joined, file.contents))
     m = manifest_of(output)
     if m is not None:
-        pairs.append((out_dir + "/" + MANIFEST_FILE, MANIFEST_SENTINEL))
+        sidecar_path = joined_output_path(out_dir, MANIFEST_FILE)
+        if isinstance(sidecar_path, OutputPathEscape):
+            return sidecar_path
+        pairs.append((sidecar_path, serialize_manifest(m)))
     return tuple(pairs)
 
 
