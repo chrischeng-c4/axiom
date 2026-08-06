@@ -277,6 +277,16 @@ The profile separates two contracts:
   `verify` audits AGY's post-snapshot command requests from the conversation
   database and voids any command not copied exactly from this allowlist.
 
+These two are separate statements of one surface, and a round's profile is
+normally copied from the previous round's, where the gate command is the field
+that always changes. `grant` therefore refuses to install a
+`project_permissions` set that would still leave any `task_commands` allow
+entry resolving to `ask`, and names the commands. Without that check its
+"live grants already match the profile; nothing to change" was reachable with
+the *previous* round's gate granted and this round's not — a ready-looking
+green while the worker could not run the one command it was judged on. Only
+`doctor` caught it, and only if you ran `doctor` after `grant`.
+
 Project, Shared, and Global rules are additive, and deny/ask rules can override
 an allow, so an unnoticed Global rule destroys project isolation. `doctor`
 blocks on live Project drift, an inherited Global rule that widens the worker
