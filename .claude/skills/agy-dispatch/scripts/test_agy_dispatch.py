@@ -711,6 +711,71 @@ class DispatchControllerTest(unittest.TestCase):
             {"issue": "12"},
         )
 
+    def round_documents(self, issue: str) -> tuple[dict, Path, Path]:
+        """A profile whose oracle and injection both exist on disk."""
+        profile = self.profile(self.repo_a, "project-a", issue)
+        state = Path(profile["state_dir"])
+        oracle = state / "oracles" / f"{issue}.md"
+        injection = state / "injections" / f"{issue}.md"
+        oracle.parent.mkdir(parents=True, exist_ok=True)
+        injection.parent.mkdir(parents=True, exist_ok=True)
+        oracle.write_text("## Claim\n\nthe judge\n")
+        injection.write_text("## Task\n\nthe delta contract\n")
+        profile["inject_prompt_file"] = str(injection)
+        return profile, oracle, injection
+
+    def test_edited_oracle_after_snapshot_is_void(self) -> None:
+        """The oracle exists to be the judge the controller cannot retro-fit.
+
+        `verify` used to print its sha256 without ever comparing it, which
+        reads like a freeze and is not one.
+        """
+        profile, oracle, _ = self.round_documents("40")
+        frozen = {"round_documents": agy_dispatch.round_document_digests(profile, "40")}
+
+        self.assertTrue(
+            agy_dispatch.assert_round_documents_unchanged(profile, "40", frozen)
+        )
+
+        oracle.write_text("## Claim\n\nthe judge, softened\n")
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.assert_round_documents_unchanged(profile, "40", frozen)
+        self.assertIn("oracle changed after snapshot", str(caught.exception))
+
+    def test_edited_injection_after_snapshot_is_void(self) -> None:
+        profile, _, injection = self.round_documents("41")
+        frozen = {"round_documents": agy_dispatch.round_document_digests(profile, "41")}
+
+        injection.write_text("## Task\n\na different delta contract\n")
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.assert_round_documents_unchanged(profile, "41", frozen)
+        self.assertIn("injection changed after snapshot", str(caught.exception))
+
+    def test_injection_appearing_after_snapshot_is_void(self) -> None:
+        """A round that grew a second document mid-flight is not the round
+        that was snapshotted, so an absent document has to stay absent."""
+        profile = self.profile(self.repo_a, "project-a", "42")
+        state = Path(profile["state_dir"])
+        (state / "oracles").mkdir(parents=True, exist_ok=True)
+        (state / "oracles" / "42.md").write_text("## Claim\n\nthe judge\n")
+        frozen = {"round_documents": agy_dispatch.round_document_digests(profile, "42")}
+        self.assertIsNone(frozen["round_documents"]["injection"])
+
+        injection = state / "injections" / "42.md"
+        injection.parent.mkdir(parents=True, exist_ok=True)
+        injection.write_text("## Task\n\nsmuggled in after the freeze\n")
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.assert_round_documents_unchanged(profile, "42", frozen)
+        self.assertIn("injection changed after snapshot", str(caught.exception))
+
+    def test_pre_freeze_snapshot_reports_that_it_was_not_compared(self) -> None:
+        """A snapshot taken before this check must not silently read as a
+        match -- 'unchanged' and 'never compared' are different facts."""
+        profile, _, _ = self.round_documents("44")
+        self.assertFalse(
+            agy_dispatch.assert_round_documents_unchanged(profile, "44", {})
+        )
+
     def test_profile_rejects_controller_state_inside_repository(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "5")
         profile["state_dir"] = str(self.repo_a / ".agy-state")
@@ -840,6 +905,118 @@ class DerivedWorktreeTest(unittest.TestCase):
         path = self.root / "profile.json"
         path.write_text(json.dumps(profile, indent=2))
         return path
+
+    def isolate_permission_files(self) -> None:
+        """Point the readiness check at empty surfaces.
+
+        Otherwise it reads the real user's inherited grants and the test's
+        result depends on whoever ran it.
+        """
+        settings = self.root / "settings.json"
+        global_config = self.root / "config.json"
+        settings.write_text(
+            json.dumps({"permissions": {"allow": [], "deny": [], "ask": []}})
+        )
+        global_config.write_text(
+            json.dumps(
+                {
+                    "userSettings": {
+                        "globalPermissionGrants": {
+                            "allow": [],
+                            "deny": [],
+                            "ask": [],
+                        }
+                    }
+                }
+            )
+        )
+        previous = (agy_dispatch.SETTINGS, agy_dispatch.GLOBAL)
+        agy_dispatch.SETTINGS = settings
+        agy_dispatch.GLOBAL = global_config
+        self.addCleanup(
+            lambda: setattr(agy_dispatch, "SETTINGS", previous[0])
+            or setattr(agy_dispatch, "GLOBAL", previous[1])
+        )
+
+    def snapshotted_round(self) -> tuple[dict, Path, Path]:
+        """A round whose two documents exist and have been snapshotted."""
+        self.isolate_permission_files()
+        state = self.root / "state"
+        oracle = state / "oracles" / "round-1.md"
+        injection = state / "injections" / "round-1.md"
+        oracle.parent.mkdir(parents=True, exist_ok=True)
+        injection.parent.mkdir(parents=True, exist_ok=True)
+        oracle.write_text("## Claim\n\nthe judge\n")
+        injection.write_text("## Task\n\nthe delta contract\n")
+        profile = agy_dispatch.load_profile(
+            str(
+                self.profile_path(
+                    task_contract=self.contract_with_design_input(),
+                    inject_prompt_file=str(injection),
+                )
+            )
+        )
+        agy_dispatch.snapshot(profile, "round-1")
+        return profile, oracle, injection
+
+    def test_snapshot_freezes_both_round_documents(self) -> None:
+        """The digests have to reach the snapshot file, not just exist as a
+        function. A freeze wired to nothing passes every test written against
+        the helper alone, which is the shape of the unverified `oracle sha256=`
+        line this replaces.
+        """
+        profile, oracle, injection = self.snapshotted_round()
+        recorded = json.loads(
+            (Path(profile["state_dir"]) / "snapshots" / "round-1.json").read_text()
+        )["round_documents"]
+        self.assertEqual(recorded["oracle"], agy_dispatch.sha256(oracle))
+        self.assertEqual(recorded["injection"], agy_dispatch.sha256(injection))
+
+    def test_verify_voids_on_an_oracle_edited_after_snapshot(self) -> None:
+        """The freeze has to be reachable from the verb the controller runs.
+
+        Proving `assert_round_documents_unchanged` in isolation says nothing
+        about whether `verify` calls it, and an unwired check is exactly the
+        defect being fixed.
+        """
+        profile, oracle, _ = self.snapshotted_round()
+        agy_dispatch.verify(profile, "round-1")
+
+        oracle.write_text("## Claim\n\nthe judge, softened to fit the answer\n")
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.verify(profile, "round-1")
+        self.assertIn("VOID: oracle changed after snapshot", str(caught.exception))
+
+    def test_dispatch_refuses_to_start_with_a_drifted_oracle(self) -> None:
+        """Catching the drift at `verify` is already too late.
+
+        The window between `snapshot` and `dispatch` is the one where an edit
+        actually changes what the worker is asked, so the check has to fire
+        before AGY is ever spawned. The stub turns "reached the subprocess"
+        into a distinguishable failure instead of a real 45-minute run.
+        """
+        profile, oracle, _ = self.snapshotted_round()
+        oracle.write_text("## Claim\n\nedited between snapshot and dispatch\n")
+
+        def refuse(*args: object, **kwargs: object) -> None:
+            raise AssertionError("spawned a worker with a drifted oracle")
+
+        previous = agy_dispatch.subprocess.run
+        agy_dispatch.subprocess.run = refuse
+        self.addCleanup(
+            lambda: setattr(agy_dispatch.subprocess, "run", previous)
+        )
+
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.run_agent(profile, "round-1", resume=False)
+        self.assertIn("VOID: oracle changed after snapshot", str(caught.exception))
+
+    def test_verify_voids_on_an_injection_edited_after_snapshot(self) -> None:
+        profile, _, injection = self.snapshotted_round()
+        injection.write_text("## Task\n\na contract the worker never saw\n")
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.verify(profile, "round-1")
+        self.assertIn("VOID: injection changed after snapshot", str(caught.exception))
 
     def contract_with_design_input(self) -> dict:
         return {
