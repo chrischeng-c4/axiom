@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -71,6 +72,48 @@ SKIP_DIRS = {
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def head_digests(root: Path, scope: str) -> dict[str, str]:
+    """sha256 of every tracked file under `scope` as of HEAD.
+
+    The controller's working tree is not the tree the round runs on: the worker
+    gets a derived worktree checked out at HEAD, so a file the controller is
+    editing would be frozen at a hash the worker's checkout never had, and every
+    `doctor` would report a mismatch the worker did not cause. Freezing HEAD
+    freezes what the worker will actually see. Untracked files are absent from
+    that checkout and so are not frozen at all; a worker that creates one is
+    caught by `verify` as a stray write, which is the check that owns that case.
+    """
+    listing = subprocess.run(
+        ["git", "-C", str(root), "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", scope],
+        capture_output=True,
+        check=True,
+    )
+    names = [name for name in listing.stdout.decode().split("\0") if name]
+    wanted = [
+        name
+        for name in names
+        if not any(part in SKIP_DIRS for part in Path(name).parts)
+    ]
+    if not wanted:
+        return {}
+    batch = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "--batch"],
+        input="".join(f"HEAD:{name}\n" for name in wanted).encode(),
+        capture_output=True,
+        check=True,
+    )
+    out = batch.stdout
+    digests: dict[str, str] = {}
+    pos = 0
+    for name in wanted:
+        header_end = out.index(b"\n", pos)
+        size = int(out[pos:header_end].split(b" ")[-1])
+        body_start = header_end + 1
+        digests[name] = hashlib.sha256(out[body_start : body_start + size]).hexdigest()
+        pos = body_start + size + 1
+    return digests
 
 
 def parse_write(spec: str) -> tuple[str, int | None]:
@@ -171,19 +214,14 @@ def main() -> int:
         if not base.is_dir():
             print(f"error: scope {scope} is not a directory", file=sys.stderr)
             return 2
-        for path in sorted(base.rglob("*")):
-            if not path.is_file() or path.is_symlink():
-                continue
-            if any(part in SKIP_DIRS for part in path.parts):
-                continue
-            rel = str(path.relative_to(root))
+        for rel, sha in sorted(head_digests(root, scope).items()):
             if rel in writable:
                 continue
             # Repo-relative, not absolute: the round runs in a derived worktree
             # whose root differs from the controller root this was generated
             # against, and the dispatcher resolves relative paths against the
             # round's own root.
-            protected.append({"path": rel, "sha256": digest(path)})
+            protected.append({"path": rel, "sha256": sha})
 
     design_inputs = []
     for rel in args.design_input:
@@ -205,11 +243,18 @@ def main() -> int:
         contract["run_id"] = args.run_id
         contract["intent"] = args.intent.strip()
 
+    # `require_empty_global` is deliberately absent. `doctor` already measures
+    # the invariant that matters -- whether an inherited rule widens the worker
+    # past the declared surface -- as `global_broadening_rules`, and treats the
+    # flag as opt-in extra strictness on top. Emitting it as `true` made every
+    # generated profile block on a harmless inherited deny, and a flag the
+    # controller flips off each round teaches it to flip past the real finding
+    # standing next to it. Add it by hand for a round that genuinely wants an
+    # empty global scope.
     project_permissions: dict[str, object] = {
         "allow": [],
         "deny": [],
         "ask": [],
-        "require_empty_global": True,
     }
     task_commands: dict[str, list[str]] = {"allow": [], "deny": []}
 
