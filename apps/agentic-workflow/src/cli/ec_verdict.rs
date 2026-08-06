@@ -1,7 +1,8 @@
 //! Target verification profiles and pure target verdict evaluation (#3349).
 
 use crate::cli::change_lifecycle::{
-    route_failure, ArtifactKind, ChangeLifecycle, FailureOwnership, NextObligation,
+    expected_parent_set, route_failure, ArtifactKind, ArtifactRevision, ChangeLifecycle,
+    FailureOwnership, LifecycleEventKind, NextObligation, OwnerVocabulary,
 };
 
 /// Known EC verification dimensions.
@@ -293,11 +294,157 @@ pub fn route_target_verdict(
     })
 }
 
+/// Resolved TD impact route after an EC repair (#3349 R4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TdImpactRoute {
+    /// Parent-only rebind: TD source is unchanged, routing to TD review.
+    Rebind,
+    /// Source change: TD source differs, routing to TD authoring.
+    Change,
+}
+
+/// Pure evaluation result for pending TD repair impact on a lifecycle (#3349 R4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TdImpactStatus {
+    pub has_pending_impact: bool,
+    pub pre_repair_td_digest: Option<String>,
+    pub verifiers_owing_rerun: Vec<String>,
+}
+
+/// Pure decision result for a proposed TD candidate after an EC repair (#3349 R4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TdImpactDecision {
+    pub route: Option<TdImpactRoute>,
+    pub claim_accepted: bool,
+    pub refusal_reason: Option<String>,
+    pub obligation: NextObligation,
+}
+
+/// Inspect a lifecycle for pending TD impact resulting from a contract-owned (EC) repair (#3349 R4).
+pub fn inspect_td_impact(lifecycle: &ChangeLifecycle) -> TdImpactStatus {
+    let ec_invalidation = lifecycle
+        .invalidations
+        .iter()
+        .rev()
+        .find(|rec| rec.trigger_kind == ArtifactKind::Ec);
+
+    let active_td_missing = lifecycle
+        .active_revisions
+        .get(&ArtifactKind::Td)
+        .and_then(|r| r.as_ref())
+        .is_none();
+
+    if let Some(rec) = ec_invalidation {
+        if active_td_missing {
+            let pre_repair_td_digest = rec
+                .evicted_evidence
+                .iter()
+                .find_map(|b| b.bound_tuple.td_digest.clone());
+
+            let verifiers_owing_rerun = rec.evicted_evidence_verifiers.clone();
+
+            return TdImpactStatus {
+                has_pending_impact: true,
+                pre_repair_td_digest,
+                verifiers_owing_rerun,
+            };
+        }
+    }
+
+    TdImpactStatus {
+        has_pending_impact: false,
+        pre_repair_td_digest: None,
+        verifiers_owing_rerun: Vec::new(),
+    }
+}
+
+/// Decide the impact route for a proposed TD candidate after a contract-owned (EC) repair (#3349 R4).
+pub fn decide_td_impact(
+    lifecycle: &ChangeLifecycle,
+    candidate: &ArtifactRevision,
+    claimed_event_kind: LifecycleEventKind,
+) -> TdImpactDecision {
+    let status = inspect_td_impact(lifecycle);
+
+    let expected_parents = expected_parent_set(lifecycle, ArtifactKind::Td);
+    let parents_valid = expected_parents
+        .as_ref()
+        .is_some_and(|expected| candidate.parents == *expected);
+
+    if !parents_valid {
+        return TdImpactDecision {
+            route: None,
+            claim_accepted: false,
+            refusal_reason: Some(
+                "candidate parent set names a stale causal parent and does not match active causal predecessor set"
+                    .to_string(),
+            ),
+            obligation: NextObligation {
+                command: format!("aw wi validate {}", lifecycle.slug),
+                owner: OwnerVocabulary::Wi,
+            },
+        };
+    }
+
+    let pre_digest = status.pre_repair_td_digest.as_deref();
+    let digest_same = pre_digest.is_some_and(|d| d == candidate.digest.as_str());
+
+    let route = if digest_same {
+        TdImpactRoute::Rebind
+    } else {
+        TdImpactRoute::Change
+    };
+
+    let claim_accepted = match (claimed_event_kind, route) {
+        (LifecycleEventKind::TdReconcile, TdImpactRoute::Rebind) => true,
+        (LifecycleEventKind::TdChange, TdImpactRoute::Change) => true,
+        _ => false,
+    };
+
+    let refusal_reason = if !claim_accepted {
+        match claimed_event_kind {
+            LifecycleEventKind::TdReconcile => Some(
+                "TdReconcile claim refused: candidate TD source digest differs from pre-repair TD digest"
+                    .to_string(),
+            ),
+            LifecycleEventKind::TdChange => Some(
+                "TdChange claim refused: candidate TD source digest is identical to pre-repair TD digest"
+                    .to_string(),
+            ),
+            _ => Some(format!(
+                "claimed event kind {:?} is not a valid TD repair transition",
+                claimed_event_kind
+            )),
+        }
+    } else {
+        None
+    };
+
+    let obligation = match route {
+        TdImpactRoute::Rebind => NextObligation {
+            command: "aw td review".to_string(),
+            owner: OwnerVocabulary::Td,
+        },
+        TdImpactRoute::Change => NextObligation {
+            command: "aw td check".to_string(),
+            owner: OwnerVocabulary::Td,
+        },
+    };
+
+    TdImpactDecision {
+        route: Some(route),
+        claim_accepted,
+        refusal_reason,
+        obligation,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::change_lifecycle::{
-        ActiveDigestTuple, ArtifactKind, ArtifactRevision, EvidenceBinding, OwnerVocabulary,
+        ActiveDigestTuple, ArtifactKind, ArtifactRevision, CausalParent, EvidenceBinding,
+        InvalidationRecord, LifecycleEventKind, OwnerVocabulary,
     };
     use std::collections::BTreeMap;
 
@@ -1109,5 +1256,301 @@ mod tests {
             r_route3.failure_ownership.is_none(),
             "Row 3 verdict routing must yield no failure ownership"
         );
+    }
+
+    #[test]
+    fn ec_repair_td_impact_routing() {
+        let pre_repair_tuple = ActiveDigestTuple {
+            wi_digest: Some("d-wi-1".to_string()),
+            ec_digest: Some("d-ec-1".to_string()),
+            td_digest: Some("d-td-1".to_string()),
+            cb_digest: Some("d-cb-1".to_string()),
+        };
+
+        let evicted_bindings = vec![
+            EvidenceBinding {
+                verifier: "td_behavior".to_string(),
+                bound_tuple: pre_repair_tuple.clone(),
+                passed: true,
+                summary: "td behavior green".to_string(),
+            },
+            EvidenceBinding {
+                verifier: "td_security".to_string(),
+                bound_tuple: pre_repair_tuple.clone(),
+                passed: true,
+                summary: "td security green".to_string(),
+            },
+            EvidenceBinding {
+                verifier: "cb_test".to_string(),
+                bound_tuple: pre_repair_tuple.clone(),
+                passed: true,
+                summary: "cb test green".to_string(),
+            },
+        ];
+
+        let inv_record = InvalidationRecord {
+            trigger_revision_id: "rev-ec-2".to_string(),
+            trigger_kind: ArtifactKind::Ec,
+            invalidated_kinds: vec![ArtifactKind::Td, ArtifactKind::Cb],
+            invalidated_revision_ids: vec!["rev-td-1".to_string(), "rev-cb-1".to_string()],
+            evicted_evidence: evicted_bindings,
+            evicted_evidence_verifiers: vec![
+                "cb_test".to_string(),
+                "td_behavior".to_string(),
+                "td_security".to_string(),
+            ],
+            reason: "Transitive invalidation triggered by ec revision rev-ec-2".to_string(),
+        };
+
+        let rev_wi = make_revision(ArtifactKind::Wi, "rev-wi-1", "d-wi-1");
+        let rev_ec_post = make_revision(ArtifactKind::Ec, "rev-ec-2", "d-ec-2");
+
+        let mut active_revisions = BTreeMap::new();
+        active_revisions.insert(ArtifactKind::Wi, Some(rev_wi));
+        active_revisions.insert(ArtifactKind::Ec, Some(rev_ec_post));
+        active_revisions.insert(ArtifactKind::Td, None);
+        active_revisions.insert(ArtifactKind::Cb, None);
+
+        let repaired_lc = ChangeLifecycle {
+            schema: "aw.change-lifecycle.v1".to_string(),
+            slug: "test-repair-slug".to_string(),
+            epoch: 2,
+            head_event_id: Some("evt-002".to_string()),
+            active_revisions,
+            events: Vec::new(),
+            evidence: Vec::new(),
+            invalidations: vec![inv_record],
+            iteration: 2,
+            terminal: false,
+            next: NextObligation {
+                command: "aw td check".to_string(),
+                owner: OwnerVocabulary::Td,
+            },
+        };
+
+        let expected_td_parents = expected_parent_set(&repaired_lc, ArtifactKind::Td)
+            .expect("repaired lifecycle must yield expected parent set for TD");
+
+        // Row 1: candidate claiming TdReconcile whose digest equals pre-repair TD digest ("d-td-1") and valid parents
+        let cand_row1 = ArtifactRevision {
+            id: "rev-td-new1".to_string(),
+            kind: ArtifactKind::Td,
+            digest: "d-td-1".to_string(),
+            parents: expected_td_parents.clone(),
+            iteration: 3,
+            superseded_by: None,
+            invalidation_reason: None,
+        };
+
+        let dec_row1 = decide_td_impact(&repaired_lc, &cand_row1, LifecycleEventKind::TdReconcile);
+        assert_eq!(dec_row1.route, Some(TdImpactRoute::Rebind));
+        assert!(dec_row1.claim_accepted);
+        assert!(dec_row1.refusal_reason.is_none());
+        assert_eq!(dec_row1.obligation.owner, OwnerVocabulary::Td);
+        assert_eq!(dec_row1.obligation.command, "aw td review");
+
+        // Row 2: candidate claiming TdReconcile whose digest differs ("d-td-v9") from pre-repair TD digest
+        let cand_row2 = ArtifactRevision {
+            id: "rev-td-new2".to_string(),
+            kind: ArtifactKind::Td,
+            digest: "d-td-v9".to_string(),
+            parents: expected_td_parents.clone(),
+            iteration: 3,
+            superseded_by: None,
+            invalidation_reason: None,
+        };
+
+        let dec_row2 = decide_td_impact(&repaired_lc, &cand_row2, LifecycleEventKind::TdReconcile);
+        assert_eq!(dec_row2.route, Some(TdImpactRoute::Change));
+        assert_ne!(
+            dec_row1.route, dec_row2.route,
+            "Row 1 (rebind) and Row 2 (change) routes must differ"
+        );
+        assert!(!dec_row2.claim_accepted);
+        assert!(dec_row2.refusal_reason.is_some());
+        assert_eq!(dec_row2.obligation.owner, OwnerVocabulary::Td);
+        assert_eq!(dec_row2.obligation.command, "aw td check");
+
+        // Row 3: candidate claiming TdChange whose digest equals pre-repair TD digest ("d-td-1")
+        let cand_row3 = ArtifactRevision {
+            id: "rev-td-new3".to_string(),
+            kind: ArtifactKind::Td,
+            digest: "d-td-1".to_string(),
+            parents: expected_td_parents.clone(),
+            iteration: 3,
+            superseded_by: None,
+            invalidation_reason: None,
+        };
+
+        let dec_row3 = decide_td_impact(&repaired_lc, &cand_row3, LifecycleEventKind::TdChange);
+        assert_eq!(
+            dec_row3.route,
+            Some(TdImpactRoute::Rebind),
+            "Row 3 must resolve to rebind route because digest is unchanged"
+        );
+        assert_eq!(
+            dec_row3.route, dec_row1.route,
+            "Row 3 must return the Row 1 route"
+        );
+        assert_eq!(
+            dec_row3.obligation, dec_row1.obligation,
+            "Row 3 obligation must match Row 1 obligation (TD review)"
+        );
+
+        // Row 4: repaired lifecycle before any candidate
+        let status_row4 = inspect_td_impact(&repaired_lc);
+        assert!(status_row4.has_pending_impact);
+        assert_eq!(status_row4.pre_repair_td_digest.as_deref(), Some("d-td-1"));
+        assert_eq!(
+            status_row4.verifiers_owing_rerun,
+            vec!["cb_test", "td_behavior", "td_security"]
+        );
+        assert!(repaired_lc.evidence.is_empty());
+        let verdict_td = decide_target_verdict(&repaired_lc, VerificationTarget::Td);
+        assert!(
+            !verdict_td.is_green(),
+            "Evicted evidence must not be admitted as active observation"
+        );
+
+        // Row 5: (negative control) lifecycle with all four revisions active, current evidence, invalidations empty
+        let clean_lc = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let status_row5 = inspect_td_impact(&clean_lc);
+        assert!(
+            !status_row5.has_pending_impact,
+            "Clean lifecycle must have no pending TD impact"
+        );
+        assert!(status_row5.pre_repair_td_digest.is_none());
+        assert!(status_row5.verifiers_owing_rerun.is_empty());
+
+        // Row 6: candidate whose parents name the superseded EC revision instead
+        let stale_parents = vec![
+            CausalParent {
+                revision_id: "rev-wi-1".to_string(),
+                digest: "d-wi-1".to_string(),
+            },
+            CausalParent {
+                revision_id: "rev-ec-1".to_string(),
+                digest: "d-ec-1".to_string(),
+            },
+        ];
+        let cand_row6 = ArtifactRevision {
+            id: "rev-td-stale".to_string(),
+            kind: ArtifactKind::Td,
+            digest: "d-td-1".to_string(),
+            parents: stale_parents,
+            iteration: 3,
+            superseded_by: None,
+            invalidation_reason: None,
+        };
+
+        let dec_row6 = decide_td_impact(&repaired_lc, &cand_row6, LifecycleEventKind::TdReconcile);
+        assert!(!dec_row6.claim_accepted);
+        assert!(
+            dec_row6.route.is_none(),
+            "Stale parent candidate must route as neither rebind nor change"
+        );
+        let r6_reason = dec_row6
+            .refusal_reason
+            .expect("Stale candidate must have refusal reason");
+        assert!(
+            r6_reason.contains("stale") || r6_reason.contains("parent"),
+            "Refusal reason must name stale causal parent: {r6_reason}"
+        );
+
+        // Row 7: purity check - repaired lifecycle compared before and after calls, and twice on each input
+        let lc_snapshot = repaired_lc.clone();
+
+        let d1_first = decide_td_impact(&repaired_lc, &cand_row1, LifecycleEventKind::TdReconcile);
+        assert_eq!(
+            repaired_lc, lc_snapshot,
+            "Lifecycle must remain unchanged after Row 1 decision"
+        );
+        let d1_second = decide_td_impact(&repaired_lc, &cand_row1, LifecycleEventKind::TdReconcile);
+        assert_eq!(
+            repaired_lc, lc_snapshot,
+            "Lifecycle must remain unchanged after second Row 1 call"
+        );
+        assert_eq!(
+            d1_first, d1_second,
+            "Two calls on Row 1 input must return equal answers"
+        );
+
+        let d2_first = decide_td_impact(&repaired_lc, &cand_row2, LifecycleEventKind::TdReconcile);
+        assert_eq!(
+            repaired_lc, lc_snapshot,
+            "Lifecycle must remain unchanged after Row 2 decision"
+        );
+        let d2_second = decide_td_impact(&repaired_lc, &cand_row2, LifecycleEventKind::TdReconcile);
+        assert_eq!(
+            repaired_lc, lc_snapshot,
+            "Lifecycle must remain unchanged after second Row 2 call"
+        );
+        assert_eq!(
+            d2_first, d2_second,
+            "Two calls on Row 2 input must return equal answers"
+        );
+
+        // Row 8: candidate claiming TdChange whose digest differs from pre-repair TD digest and valid parents
+        let cand_row8 = ArtifactRevision {
+            id: "rev-td-new8".to_string(),
+            kind: ArtifactKind::Td,
+            digest: "d-td-v9".to_string(),
+            parents: expected_td_parents.clone(),
+            iteration: 3,
+            superseded_by: None,
+            invalidation_reason: None,
+        };
+
+        let dec_row8 = decide_td_impact(&repaired_lc, &cand_row8, LifecycleEventKind::TdChange);
+        assert_eq!(dec_row8.route, Some(TdImpactRoute::Change));
+        assert!(dec_row8.claim_accepted);
+        assert!(dec_row8.refusal_reason.is_none());
+        assert_eq!(dec_row8.obligation.owner, OwnerVocabulary::Td);
+        assert_eq!(dec_row8.obligation.command, "aw td check");
+
+        // Row 9: lifecycle built from repaired_lc by making Td active again, with invalidations left unchanged
+        let mut lc_row9 = repaired_lc.clone();
+        let rev_td_active = make_revision(ArtifactKind::Td, "rev-td-2", "d-td-2");
+        lc_row9
+            .active_revisions
+            .insert(ArtifactKind::Td, Some(rev_td_active));
+
+        let status_row9 = inspect_td_impact(&lc_row9);
+        assert!(!status_row9.has_pending_impact);
+        assert!(status_row9.pre_repair_td_digest.is_none());
+        assert!(status_row9.verifiers_owing_rerun.is_empty());
+
+        // Row 10: lifecycle whose only invalidation record has trigger_kind Wi and invalidated_kinds [Ec, Td, Cb], with active Td missing
+        let inv_record_wi = InvalidationRecord {
+            trigger_revision_id: "rev-wi-2".to_string(),
+            trigger_kind: ArtifactKind::Wi,
+            invalidated_kinds: vec![ArtifactKind::Ec, ArtifactKind::Td, ArtifactKind::Cb],
+            invalidated_revision_ids: vec![
+                "rev-ec-1".to_string(),
+                "rev-td-1".to_string(),
+                "rev-cb-1".to_string(),
+            ],
+            evicted_evidence: Vec::new(),
+            evicted_evidence_verifiers: Vec::new(),
+            reason: "Invalidation triggered by wi revision rev-wi-2".to_string(),
+        };
+
+        let mut lc_row10 = make_lifecycle(
+            Some(("wi-2", "d-wi-2")),
+            Some(("ec-1", "d-ec-1")),
+            None,
+            None,
+        );
+        lc_row10.invalidations = vec![inv_record_wi];
+
+        let status_row10 = inspect_td_impact(&lc_row10);
+        assert!(!status_row10.has_pending_impact);
+        assert!(status_row10.pre_repair_td_digest.is_none());
+        assert!(status_row10.verifiers_owing_rerun.is_empty());
     }
 }
