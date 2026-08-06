@@ -1,4 +1,5 @@
 resource "google_storage_bucket" "backups" {
+  count                       = local.backup_enabled ? 1 : 0
   project                     = var.project_id
   name                        = "${var.project_id}-${local.prefix}-backup"
   location                    = var.region
@@ -18,15 +19,17 @@ resource "google_storage_bucket" "backups" {
 }
 
 resource "google_service_account" "backup" {
+  count        = local.backup_enabled ? 1 : 0
   project      = var.project_id
   account_id   = "${local.prefix}-backup"
   display_name = "Disposable acceptance backup writer"
 }
 
 resource "google_storage_bucket_iam_member" "backup_writer" {
-  bucket = google_storage_bucket.backups.name
+  count  = local.backup_enabled ? 1 : 0
+  bucket = google_storage_bucket.backups[0].name
   role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.backup.email}"
+  member = "serviceAccount:${google_service_account.backup[0].email}"
 }
 
 data "google_project" "current" {
@@ -35,11 +38,11 @@ data "google_project" "current" {
 
 resource "google_service_account_iam_member" "backup_workload_identity" {
   for_each = toset(concat(
-    var.acceptance_apps == "tape" ? ["tape/tape-backup", "tape/tape"] : ["lumen/lumen-backup"],
-    var.acceptance_apps == "tape" ? [] : ["sift/sift-backup"],
+    local.backup_enabled && var.acceptance_apps == "tape" ? ["tape/tape-backup", "tape/tape"] : local.backup_enabled ? ["lumen/lumen-backup"] : [],
+    var.acceptance_apps == "lumen-sift" ? ["sift/sift-backup"] : [],
   ))
 
-  service_account_id = google_service_account.backup.name
+  service_account_id = google_service_account.backup[0].name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[${each.value}]"
 
@@ -56,8 +59,8 @@ resource "google_service_account_iam_member" "backup_workload_identity" {
 # cold-restore integrator carries: the serving ServiceAccount that seeds from
 # GCS needs objectViewer on the seed bucket.
 resource "google_storage_bucket_iam_member" "lumen_restore_reader" {
-  count  = var.acceptance_apps == "tape" ? 0 : 1
-  bucket = google_storage_bucket.backups.name
+  count  = var.acceptance_apps == "lumen-sift" ? 1 : 0
+  bucket = google_storage_bucket.backups[0].name
   role   = "roles/storage.objectViewer"
   member = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/lumen/sa/lumen-restore"
 }
@@ -70,7 +73,7 @@ resource "google_storage_bucket_iam_member" "lumen_restore_reader" {
 # the serving pod only fetches the exact bootstrapSeedUri object.
 resource "google_storage_bucket_iam_member" "tape_serving_reader" {
   count  = var.acceptance_apps == "tape" ? 1 : 0
-  bucket = google_storage_bucket.backups.name
+  bucket = google_storage_bucket.backups[0].name
   role   = "roles/storage.objectViewer"
   member = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/tape/sa/tape"
 }

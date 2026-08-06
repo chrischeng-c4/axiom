@@ -25,12 +25,9 @@ set -euo pipefail
 : "${RUN_ID:?RUN_ID is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 : "${LUMEN_CLI:?LUMEN_CLI is required}"
+: "${LUMEN_AUTH_ISSUER_GSA:?LUMEN_AUTH_ISSUER_GSA is required; use a pre-provisioned least-privilege issuer GSA}"
 
-# The least-privilege issuer. A project fixture, like the persistent cluster:
-# it predates the run, holds no role, and is impersonable by whoever runs
-# acceptance. See the failure message in `resolve_gsa_issuer` for the exact
-# two commands that create one.
-ISSUER_GSA="${LUMEN_AUTH_ISSUER_GSA:-lumen-dev@axiom-502607.iam.gserviceaccount.com}"
+ISSUER_GSA="$LUMEN_AUTH_ISSUER_GSA"
 
 AUTH_NS=lumen
 CLIENT_NS=lumen-auth-client
@@ -43,6 +40,14 @@ AUDIENCE=lumen.axiom.dev
 # 60s. `apps/lumen/src/auth.rs` takes the default, so this is the documented
 # bound a revoked SubjectAccessReview must become effective within (R7).
 REVOCATION_BOUND_SECONDS=360
+identity_observations=0
+non_ksa_rejections=0
+authorization=0
+sibling_refusals=0
+revocations=0
+redaction=0
+teardown=0
+probe_category=authorization
 
 AUTH_EVIDENCE="$EVIDENCE_DIR/kubernetes/auth"
 mkdir -p "$AUTH_EVIDENCE"
@@ -111,6 +116,7 @@ echo ">> observing issuer principals"
 kubectl auth whoami -o json > "$AUTH_EVIDENCE/issuer-human-whoami.json"
 HUMAN_USER="$(jq -r '.status.userInfo.username' "$AUTH_EVIDENCE/issuer-human-whoami.json")"
 [[ -n "$HUMAN_USER" && "$HUMAN_USER" != "null" ]] || fail "could not observe the ambient kubeconfig's Kubernetes username"
+identity_observations=$((identity_observations + 1))
 
 resolve_gsa_issuer() {
   if ! gcloud auth print-access-token \
@@ -118,19 +124,9 @@ resolve_gsa_issuer() {
     cat >&2 <<EOF
 cannot impersonate the least-privilege issuer $ISSUER_GSA.
 
-This leg needs a second Kubernetes principal that is NOT cluster-admin;
-without one, every RBAC denial row below would pass because the caller is
-privileged rather than because RBAC denied it. Create the fixture once:
-
-  gcloud iam service-accounts create lumen-dev --project=$PROJECT_ID \\
-    --display-name='Lumen acceptance least-privilege issuer'
-  gcloud iam service-accounts add-iam-policy-binding \\
-    lumen-dev@$PROJECT_ID.iam.gserviceaccount.com --project=$PROJECT_ID \\
-    --member="user:\$(gcloud config get-value account)" \\
-    --role=roles/iam.serviceAccountTokenCreator
-
-Grant it no project IAM role. Override the address with
-LUMEN_AUTH_ISSUER_GSA if it lives elsewhere.
+This leg needs a pre-provisioned second Kubernetes principal that is NOT
+cluster-admin and is impersonable by the runner. The harness never provisions
+GCP identities or IAM bindings.
 EOF
     exit 1
   fi
@@ -155,6 +151,7 @@ KUBECONFIG="$SECRET_DIR/gsa.kubeconfig" kubectl auth whoami -o json \
   || fail "$ISSUER_GSA authenticated to GCP but not to kube-apiserver"
 GSA_USER="$(jq -r '.status.userInfo.username' "$AUTH_EVIDENCE/issuer-gsa-whoami.json")"
 [[ -n "$GSA_USER" && "$GSA_USER" != "null" ]] || fail "could not observe $ISSUER_GSA's Kubernetes username"
+identity_observations=$((identity_observations + 1))
 
 # Which issuers are meaningful subjects for a denial row. `can-i '*' '*'` is
 # the whole question: a cluster-admin is denied nothing, so a denial it reports
@@ -384,6 +381,11 @@ probe() {
     cat "$AUTH_EVIDENCE/probe-${label}.body.json" >&2 || true
     exit 1
   fi
+  case "$probe_category" in
+    authorization) authorization=$((authorization + 1)) ;;
+    non_ksa_rejections) non_ksa_rejections=$((non_ksa_rejections + 1)) ;;
+    revocations) revocations=$((revocations + 1)) ;;
+  esac
   echo "   $label: $status"
 }
 
@@ -465,6 +467,7 @@ probe human-unbound-denied        403 "$(hdr human-auth-unbound)" POST "/collect
 # Phase 6 — everything that is not a Lumen-audience KSA token (AC2)
 # ---------------------------------------------------------------------------
 echo ">> credentials Lumen must refuse"
+probe_category=non_ksa_rejections
 
 # A real Google access token for the GSA. kube-apiserver authenticates it —
 # that is how this script reached the cluster as $GSA_USER — and Lumen still
@@ -514,6 +517,7 @@ probe anonymous-refused 401 - POST "/collections/$GRANTED/search" "$SEARCH_BODY"
 # TokenRequest itself, through the caller's kubeconfig, and sends only what it
 # minted.
 echo ">> lumen query --client-sa, once per issuer"
+probe_category=authorization
 "$LUMEN_CLI" query search --url "http://127.0.0.1:$PORT" \
   --namespace "$AUTH_NS" --client-sa auth-reader \
   --collection "$GRANTED" --term "message=authz-$RUN_ID" \
@@ -550,6 +554,7 @@ grep -q -- "--subresource=token" "$AUTH_EVIDENCE/cli-query-sibling.txt" \
 # token stays valid until it expires — that is what "short-lived" buys, and
 # claiming otherwise would be claiming a revocation Kubernetes does not do.
 echo ">> revoking the issuer binding for auth-reader"
+probe_category=revocations
 kubectl -n "$AUTH_NS" delete rolebinding auth-reader-token-issuer \
   > "$AUTH_EVIDENCE/issuer-revoke.txt"
 
@@ -561,6 +566,7 @@ until ! mint gsa auth-reader > /dev/null 2>&1; do
   sleep 2
 done
 issuer_revoke_seconds=$((SECONDS - issuer_revoke_started))
+revocations=$((revocations + 1))
 echo "TokenRequest refused ${issuer_revoke_seconds}s after the issuer RoleBinding was deleted" \
   > "$AUTH_EVIDENCE/issuer-revocation-interval.txt"
 echo "   issuer revocation effective after ${issuer_revoke_seconds}s"
@@ -597,6 +603,7 @@ this measures token expiry, not SubjectAccessReview revocation"
   sleep 5
 done
 lumen_revoke_seconds=$((SECONDS - lumen_revoke_started))
+revocations=$((revocations + 1))
 (( lumen_revoke_seconds <= REVOCATION_BOUND_SECONDS )) \
   || fail "revocation took ${lumen_revoke_seconds}s, past the documented ${REVOCATION_BOUND_SECONDS}s allow-cache bound"
 echo "SubjectAccessReview denial effective ${lumen_revoke_seconds}s after the RoleBinding was deleted (bound ${REVOCATION_BOUND_SECONDS}s)" \
@@ -646,6 +653,7 @@ done
 kubectl delete namespace "$CLIENT_NS" --ignore-not-found --wait=false \
   >> "$AUTH_EVIDENCE/cr-delete.txt"
 stop_forward
+teardown=1
 
 # R8/AC8 — nothing that could be replayed survives in the retained evidence.
 # The canary is each credential's own high-entropy tail, so this checks the
@@ -667,6 +675,7 @@ if grep -rqE '"token"[[:space:]]*:' "$AUTH_EVIDENCE" 2>/dev/null; then
   leaked=1
 fi
 (( leaked == 0 )) || exit 1
+redaction=1
 
 jq -n \
   --arg schema "axiom.gcp.lumen.auth.acceptance.v1" \
@@ -696,6 +705,15 @@ jq -n \
        {kind: "google-service-account", kubernetes_username: $gsa_user, cluster_admin: ($gsa_cluster_admin == "yes")}
      ],
      sibling_mint_refusals: $sibling_refusals,
+     rows: {
+       identity_observations: $identity_observations,
+       non_ksa_rejections: $non_ksa_rejections,
+       authorization: $authorization,
+       sibling_refusals: $sibling_refusals,
+       revocations: $revocations,
+       redaction: $redaction,
+       teardown: $teardown
+     },
      revocation: {
        issuer_token_request_seconds: $issuer_revocation_seconds,
        lumen_authorization_seconds: $lumen_revocation_seconds,

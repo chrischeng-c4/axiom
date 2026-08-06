@@ -62,11 +62,15 @@ jq empty "$SCHEMA" || fail "evidence schema is not valid JSON"
 # The two scripts branch independently. When they disagreed about which modes
 # exist, the harness rendered one app's manifests and verified another's.
 present "run.sh lost the lumen-sift mode"      '"lumen sift") acceptance_mode="lumen-sift" ;;' "$RUN_SCRIPT"
+present "run.sh lost the lumen-auth mode"       '"lumen auth") acceptance_mode="lumen-auth" ;;' "$RUN_SCRIPT"
 present "run.sh lost the tape mode"            '"tape") acceptance_mode="tape" ;;'             "$RUN_SCRIPT"
-present "run.sh accepts an unknown mode"       "ACCEPTANCE_APPS must be exactly 'lumen sift' (default) or 'tape'" "$RUN_SCRIPT"
-present "render-manifests lost lumen-sift"     '"lumen sift")' "$RENDER_SCRIPT"
+present "run.sh accepts an unknown mode"       "lumen auth" "$RUN_SCRIPT"
+present "render-manifests lost lumen modes"   '"lumen sift"|"lumen auth")' "$RENDER_SCRIPT"
 present "render-manifests lost tape"           '"tape")'       "$RENDER_SCRIPT"
-present "render-manifests accepts an unknown mode" "ACCEPTANCE_APPS must be 'lumen sift' or 'tape'" "$RENDER_SCRIPT"
+present "render-manifests accepts an unknown mode" "ACCEPTANCE_APPS must be 'lumen sift', 'lumen auth', or 'tape'" "$RENDER_SCRIPT"
+present "cleanup lost lumen-auth"              '"lumen auth") acceptance_mode="lumen-auth" ;;' "$CLEANUP_SCRIPT"
+present "verify-clean lost lumen-auth"         '"lumen auth") acceptance_mode="lumen-auth" ;;' "$VERIFY_CLEAN_SCRIPT"
+present "auth-only invokes finalizer"          'finalize-lumen-acceptance.sh" lumen-auth' "$RUN_SCRIPT"
 absent  "the deleted LUMEN_ONLY mode came back in run.sh"    'LUMEN_ONLY' "$RUN_SCRIPT"
 absent  "the deleted LUMEN_ONLY mode came back in cleanup"   'LUMEN_ONLY' "$CLEANUP_SCRIPT"
 

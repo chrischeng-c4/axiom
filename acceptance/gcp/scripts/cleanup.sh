@@ -19,9 +19,10 @@ TERRAFORM_ENVIRONMENT_DIR="${TERRAFORM_ENVIRONMENT_DIR:-$STATE_DIR/environment}"
 export KUBECONFIG
 case "$ACCEPTANCE_APPS" in
   "lumen sift") acceptance_mode="lumen-sift" ;;
+  "lumen auth") acceptance_mode="lumen-auth" ;;
   "tape") acceptance_mode="tape" ;;
   *)
-    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default) or 'tape'" >&2
+    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', or 'tape'" >&2
     exit 1
     ;;
 esac
@@ -36,6 +37,9 @@ capture_failure_evidence() {
   if [[ "$acceptance_mode" == "tape" ]]; then
     kubectl logs -n tape-system deployment/tape-operator --tail=500 --request-timeout=15s \
       > "$EVIDENCE_DIR/kubernetes/tape-operator.log" 2>&1 || true
+  elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+    kubectl logs -n lumen-system deployment/lumen-operator --tail=500 --request-timeout=15s \
+      > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
   else
     kubectl logs -n lumen-system deployment/lumen-operator --tail=500 --request-timeout=15s \
       > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
@@ -82,6 +86,8 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   capture_failure_evidence
   if [[ "$acceptance_mode" == "tape" ]]; then
     namespaces=(tape tape-system)
+  elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+    namespaces=(lumen lumen-system lumen-auth-client)
   else
     # lumen-fleet-a/-b are the data-plane namespaces the LumenFleet leg
     # materializes into. They are swept HERE, not only at the end of that leg,
@@ -129,8 +135,13 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
     kubectl delete customresourcedefinition tapes.tape.dev \
       --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
   else
-    kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
+    if [[ "$acceptance_mode" == "lumen-auth" ]]; then
+      kubectl delete customresourcedefinition lumens.lumen.dev \
+        --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+    else
+      kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
       --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+    fi
     # The per-instance `system:auth-delegator` binding (#2876) is cluster-scoped,
     # so nothing above reaches it: a cluster-scoped object cannot carry an owner
     # reference to a namespaced CR, and the operator's own sweep dies with the
@@ -169,6 +180,8 @@ if [[ -f "$state" ]]; then
   )
   if [[ "$acceptance_mode" == "tape" ]]; then
     destroy_args+=(-var="acceptance_apps=tape")
+  elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+    destroy_args+=(-var="acceptance_apps=lumen-auth")
   fi
   for attempt in 1 2 3; do
     if TF_DATA_DIR="$tf_data" terraform -chdir="$TERRAFORM_ENVIRONMENT_DIR" \
@@ -185,6 +198,8 @@ fi
 
 if [[ "$acceptance_mode" == "tape" ]]; then
   delete_run_image tape
+elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  delete_run_image lumen
 else
   delete_run_image lumen
   delete_run_image sift

@@ -2,8 +2,6 @@
 set -euo pipefail
 
 : "${ACCEPTANCE_APPS:=lumen sift}"
-: "${BACKUP_BUCKET:?BACKUP_BUCKET is required}"
-: "${BACKUP_GSA_EMAIL:?BACKUP_GSA_EMAIL is required}"
 : "${RUN_ID:?RUN_ID is required}"
 : "${MANIFEST_DIR:?MANIFEST_DIR is required}"
 : "${GKE_CLUSTER_NAME:?GKE_CLUSTER_NAME is required}"
@@ -12,25 +10,25 @@ set -euo pipefail
 
 # Determine acceptance mode and require only the appropriate CLIs/images
 case "$ACCEPTANCE_APPS" in
-  "lumen sift")
+  "lumen sift"|"lumen auth")
     : "${LUMEN_CLI:?LUMEN_CLI is required for lumen-sift mode}"
     : "${LUMEN_IMAGE:?LUMEN_IMAGE digest reference is required for lumen-sift mode}"
-    : "${SIFT_CLI:?SIFT_CLI is required for lumen-sift mode}"
-    : "${SIFT_IMAGE:?SIFT_IMAGE digest reference is required for lumen-sift mode}"
     [[ -x "$LUMEN_CLI" ]] || {
       echo "deployment CLI is not executable: $LUMEN_CLI" >&2
       exit 1
     }
+    if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+    : "${SIFT_CLI:?SIFT_CLI is required for lumen-sift mode}"
+    : "${SIFT_IMAGE:?SIFT_IMAGE digest reference is required for lumen-sift mode}"
     [[ -x "$SIFT_CLI" ]] || {
       echo "deployment CLI is not executable: $SIFT_CLI" >&2
       exit 1
     }
-    mkdir -p \
-      "$MANIFEST_DIR/lumen/operator" \
-      "$MANIFEST_DIR/lumen/instance" \
-      "$MANIFEST_DIR/sift/operator" \
-      "$MANIFEST_DIR/sift/instance" \
-      "$MANIFEST_DIR/sift/collector"
+    fi
+    mkdir -p "$MANIFEST_DIR/lumen/operator" "$MANIFEST_DIR/lumen/instance"
+    if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+      mkdir -p "$MANIFEST_DIR/sift/operator" "$MANIFEST_DIR/sift/instance" "$MANIFEST_DIR/sift/collector"
+    fi
     ;;
   "tape")
     : "${TAPE_CLI:?TAPE_CLI is required for tape mode}"
@@ -44,19 +42,22 @@ case "$ACCEPTANCE_APPS" in
       "$MANIFEST_DIR/tape/instance"
     ;;
   *)
-    echo "ACCEPTANCE_APPS must be 'lumen sift' or 'tape'" >&2
+    echo "ACCEPTANCE_APPS must be 'lumen sift', 'lumen auth', or 'tape'" >&2
     exit 1
     ;;
 esac
 
-# Render Lumen/Sift manifests for lumen-sift mode
-if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+# Render Lumen manifests for both Lumen modes.
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" || "$ACCEPTANCE_APPS" == "lumen auth" ]]; then
   "$LUMEN_CLI" k8s crd render --out "$MANIFEST_DIR/lumen/crd.yaml"
   "$LUMEN_CLI" k8s operator render --namespace lumen-system \
     --out "$MANIFEST_DIR/lumen/operator/operator.yaml"
   "$LUMEN_CLI" k8s instance render --profile dev --name lumen --namespace lumen \
     --image "$LUMEN_IMAGE" --out "$MANIFEST_DIR/lumen/instance/lumen.yaml"
 
+fi
+
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
   "$SIFT_CLI" k8s crd render --out "$MANIFEST_DIR/sift/crd.yaml"
   "$SIFT_CLI" k8s operator render --namespace sift-system \
     --out "$MANIFEST_DIR/sift/operator/operator.yaml"
@@ -75,7 +76,7 @@ if [[ "$ACCEPTANCE_APPS" == "tape" ]]; then
     --image "$TAPE_IMAGE" --out "$MANIFEST_DIR/tape/instance/tape.yaml"
 fi
 
-if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" || "$ACCEPTANCE_APPS" == "lumen auth" ]]; then
 cat > "$MANIFEST_DIR/lumen/operator/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -94,7 +95,10 @@ patches:
 EOF
 fi
 
-if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" || "$ACCEPTANCE_APPS" == "lumen auth" ]]; then
+  if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+    : "${BACKUP_BUCKET:?BACKUP_BUCKET is required}"
+    : "${BACKUP_GSA_EMAIL:?BACKUP_GSA_EMAIL is required}"
 cat > "$MANIFEST_DIR/lumen/instance/identity.yaml" <<EOF
 apiVersion: v1
 kind: Namespace
@@ -109,12 +113,16 @@ metadata:
   annotations:
     iam.gke.io/gcp-service-account: ${BACKUP_GSA_EMAIL}
 EOF
+    instance_resources="identity.yaml"
+  else
+    instance_resources=""
+  fi
 
 cat > "$MANIFEST_DIR/lumen/instance/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - identity.yaml
+  ${instance_resources:+- $instance_resources}
   - lumen.yaml
 patches:
   - target:
@@ -138,17 +146,23 @@ patches:
       - op: add
         path: /spec/serving/raftStorage
         value: 1Gi
+$(if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then cat <<PATCH
       - op: add
         path: /spec/serving/backup
         value:
           schedule: "*/5 * * * *"
           destination: gs://${BACKUP_BUCKET}/lumen/${RUN_ID}
           retentionSecs: 3600
+PATCH
+fi)
 EOF
 
 kubectl kustomize "$MANIFEST_DIR/lumen/operator" > "$MANIFEST_DIR/lumen/operator.bundle.yaml"
 kubectl kustomize "$MANIFEST_DIR/lumen/instance" > "$MANIFEST_DIR/lumen/instance.bundle.yaml"
 
+fi
+
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
 cat > "$MANIFEST_DIR/sift/operator/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -211,7 +225,7 @@ patches:
           retentionSecs: 3600
 EOF
 
-kubectl kustomize "$MANIFEST_DIR/sift/operator" > "$MANIFEST_DIR/sift/operator.bundle.yaml"
+  kubectl kustomize "$MANIFEST_DIR/sift/operator" > "$MANIFEST_DIR/sift/operator.bundle.yaml"
 kubectl kustomize "$MANIFEST_DIR/sift/instance" > "$MANIFEST_DIR/sift/instance.bundle.yaml"
 
 cat > "$MANIFEST_DIR/sift/collector/config.yaml" <<EOF

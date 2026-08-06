@@ -8,7 +8,6 @@
     "project_id",
     "region",
     "run_id",
-    "backup_bucket",
     "acceptance"
   ],
   "properties": {
@@ -35,6 +34,14 @@
       "type": "string",
       "minLength": 1
     },
+    "lumen_evidence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lumen_provenance": {
+      "type": "string",
+      "minLength": 1
+    },
     "acceptance": {
       "type": "object",
       "properties": {
@@ -49,6 +56,28 @@
             "dedicated_node_pool_placement",
             "control_plane_fleet"
           ]
+        },
+        "auth": {
+          "type": "object",
+          "required": ["schema", "run_id", "project_id", "issuers", "rows", "sibling_mint_refusals", "revocation", "status"],
+          "properties": {
+            "schema": {"const": "axiom.gcp.lumen.auth.acceptance.v1"},
+            "status": {"const": "passed"},
+            "rows": {
+              "type": "object",
+              "required": ["identity_observations", "non_ksa_rejections", "authorization", "sibling_refusals", "revocations", "redaction", "teardown"],
+              "additionalProperties": false,
+              "properties": {
+                "identity_observations": {"type": "integer", "minimum": 1},
+                "non_ksa_rejections": {"type": "integer", "minimum": 1},
+                "authorization": {"type": "integer", "minimum": 1},
+                "sibling_refusals": {"type": "integer", "minimum": 1},
+                "revocations": {"type": "integer", "minimum": 1},
+                "redaction": {"type": "integer", "minimum": 1},
+                "teardown": {"type": "integer", "minimum": 1}
+              }
+            }
+          }
         },
         "sift": {
           "type": "object",
@@ -79,14 +108,35 @@
           ]
         }
       },
-      "anyOf": [
+      "oneOf": [
         {
-          "required": ["lumen", "sift"]
+          "required": ["lumen", "auth", "sift"]
+        },
+        {
+          "required": ["auth"],
+          "not": {"anyOf": [{"required": ["lumen"]}, {"required": ["sift"]}, {"required": ["tape"]}]}
         },
         {
           "required": ["tape"]
         }
-      ]
+      ],
+      "additionalProperties": false
     }
-  }
+  },
+  "oneOf": [
+    {
+      "required": ["acceptance"],
+      "properties": {"acceptance": {"required": ["auth"], "not": {"required": ["tape"]}}},
+      "not": {"anyOf": [{"required": ["backup_bucket"]}, {"required": ["lumen_evidence"]}, {"required": ["lumen_provenance"]}]}
+    },
+    {
+      "required": ["backup_bucket", "lumen_evidence", "lumen_provenance", "acceptance"],
+      "properties": {"acceptance": {"required": ["lumen", "auth", "sift"]}}
+    },
+    {
+      "required": ["backup_bucket", "acceptance"],
+      "properties": {"acceptance": {"required": ["tape"]}}
+    }
+  ],
+  "additionalProperties": false
 }

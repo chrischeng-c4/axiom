@@ -14,9 +14,10 @@ ACCEPTANCE_APPS="${ACCEPTANCE_APPS:-lumen sift}"
 
 case "$ACCEPTANCE_APPS" in
   "lumen sift") acceptance_mode="lumen-sift" ;;
+  "lumen auth") acceptance_mode="lumen-auth" ;;
   "tape") acceptance_mode="tape" ;;
   *)
-    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default) or 'tape'" >&2
+    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', or 'tape'" >&2
     exit 1
     ;;
 esac
@@ -67,6 +68,15 @@ if [[ "$acceptance_mode" == "tape" ]]; then
   check_empty "Tape CRD" kubectl get customresourcedefinition tapes.tape.dev --no-headers
   check_empty "Tape image tag" gcloud artifacts docker images describe \
     "$REGISTRY/tape:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
+elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
+  check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
+  check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
+  check_empty "Lumen auth client namespace" kubectl get namespace lumen-auth-client --no-headers
+  check_empty "Lumen auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
+    -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=lumen --no-headers
+  check_empty "Lumen image tag" gcloud artifacts docker images describe \
+    "$REGISTRY/lumen:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
 else
   check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
   check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
@@ -96,12 +106,16 @@ else
     "$REGISTRY/sift:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
 fi
 
-check_empty "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
-  --filter="name=${bucket}" --format='value(name)'
+if [[ "$acceptance_mode" != "lumen-auth" ]]; then
+  check_empty "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
+    --filter="name=${bucket}" --format='value(name)'
+fi
 check_empty "node service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
   --filter="email:${prefix}-node@${PROJECT_ID}.iam.gserviceaccount.com" --format='value(email)'
-wait_for_empty "backup service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
-  --filter="email:${prefix}-backup@${PROJECT_ID}.iam.gserviceaccount.com" --format='value(email)'
+if [[ "$acceptance_mode" != "lumen-auth" ]]; then
+  wait_for_empty "backup service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
+    --filter="email:${prefix}-backup@${PROJECT_ID}.iam.gserviceaccount.com" --format='value(email)'
+fi
 check_empty "persistent disk" gcloud compute disks list --project="$PROJECT_ID" \
   --filter="name~'${prefix}|gke-${prefix}'" --format='value(name)'
 check_empty "Cloud Build source" gcloud storage ls --recursive "${GCS_SOURCE_PREFIX}/**"
