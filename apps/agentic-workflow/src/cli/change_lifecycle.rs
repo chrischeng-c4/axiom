@@ -476,13 +476,28 @@ pub fn fold_wi_update(
     new_body: &str,
     pre_update_body: Option<&str>,
 ) -> ReducerResult {
-    let new_digest = canonical_wi_digest(new_body);
-    let old_digest = prior_lifecycle
+    let stored_digest = prior_lifecycle
         .active_revisions
         .get(&ArtifactKind::Wi)
         .and_then(|revision| revision.as_ref())
-        .map(|revision| revision.digest.clone())
-        .or_else(|| pre_update_body.map(canonical_wi_digest));
+        .map(|revision| revision.digest.clone());
+
+    if let (Some(observed), Some(stored)) = (pre_update_body, &stored_digest) {
+        let observed_digest = canonical_wi_digest(observed);
+        if observed_digest != *stored {
+            return ReducerResult {
+                lifecycle: prior_lifecycle.clone(),
+                accepted: false,
+                rejection_reason: Some(format!(
+                    "Conflicting tracker observation digest {:?} does not match stored WI digest {:?}",
+                    observed_digest, stored
+                )),
+            };
+        }
+    }
+
+    let new_digest = canonical_wi_digest(new_body);
+    let old_digest = stored_digest.or_else(|| pre_update_body.map(canonical_wi_digest));
     if old_digest.as_deref() == Some(new_digest.as_str()) {
         return ReducerResult {
             lifecycle: prior_lifecycle.clone(),
@@ -1621,5 +1636,56 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         // 7. fold_wi_update returns accepted: true when ## Problem prose changed
         let update_prose_edited = fold_wi_update(&baseline_lc, &body_prose_edited, None);
         assert!(update_prose_edited.accepted);
+    }
+
+    #[test]
+    fn wi_contract_conflicting_tracker_observation_fails_closed() {
+        let body_v1 = "## Description\nInitial WI body.";
+        let body_v2 = "## Description\nUpdated WI body v2.";
+        let body_v3 = "## Description\nUpdated WI body v3.";
+        let body_v1_marker_churn = format!(
+            "{body_v1}\n<!-- aw:loop-state\nversion: 1\nupdated_at: 2026-08-06T10:00:00.000000+00:00\n-->\n"
+        );
+
+        let initial_lc = fold_wi_create("causal", body_v1, "agentic-workflow");
+
+        // Measurement 1: pre_update_body digest equals stored WI digest, new_body differs
+        let res_ordinary = fold_wi_update(&initial_lc, body_v2, Some(body_v1));
+        assert!(res_ordinary.accepted, "{:?}", res_ordinary.rejection_reason);
+        assert_eq!(res_ordinary.lifecycle.epoch, initial_lc.epoch + 1);
+        assert_eq!(
+            res_ordinary
+                .lifecycle
+                .active_revisions
+                .get(&ArtifactKind::Wi)
+                .and_then(|rev| rev.as_ref())
+                .unwrap()
+                .digest,
+            canonical_wi_digest(body_v2)
+        );
+
+        // Measurement 2: pre_update_body digest differs from stored WI digest (out-of-band edit)
+        let res_conflict = fold_wi_update(&initial_lc, body_v3, Some(body_v2));
+        assert!(!res_conflict.accepted);
+        assert!(
+            res_conflict
+                .rejection_reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("Conflicting tracker observation"),
+            "rejection reason should name conflicting tracker observation: {:?}",
+            res_conflict.rejection_reason
+        );
+        assert_eq!(res_conflict.lifecycle, initial_lc);
+
+        // Measurement 3: pre_update_body differs from stored revision ONLY inside AW-owned marker block (negative control)
+        let res_marker = fold_wi_update(&initial_lc, body_v2, Some(&body_v1_marker_churn));
+        assert!(res_marker.accepted, "{:?}", res_marker.rejection_reason);
+        assert_eq!(res_marker.lifecycle.epoch, initial_lc.epoch + 1);
+
+        // Measurement 4: pre_update_body is None (fallback to stored revision)
+        let res_none = fold_wi_update(&initial_lc, body_v2, None);
+        assert!(res_none.accepted, "{:?}", res_none.rejection_reason);
+        assert_eq!(res_none.lifecycle.epoch, initial_lc.epoch + 1);
     }
 }
