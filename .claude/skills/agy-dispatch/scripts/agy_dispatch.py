@@ -1439,6 +1439,26 @@ def document_findings(
     return findings
 
 
+def marks_a_negative_control(row: str) -> bool:
+    """Whether this table row is itself the control, not prose about one.
+
+    A row is a negative control because of what it *feeds* and what that must
+    not produce, so the marker belongs in its input or its expected
+    observation. It does not belong in a trailing rationale cell, which is
+    where a controller naturally writes about a *different* row: "row 7 is the
+    negative control for the new row" is a true sentence that leaves the table
+    without a control of its own. Matching the row as one string accepted that
+    sentence and reported the table conformant.
+
+    A rationale cell is one past `# | input | expected observation`, so it is
+    dropped only when the row actually has one. In the three-column table the
+    last cell is the observation and stays in scope.
+    """
+    cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+    identity = cells[:-1] if len(cells) > 3 else cells
+    return any(NEGATIVE_CONTROL.search(cell) for cell in identity)
+
+
 def oracle_findings(profile: dict, text: str) -> list[str]:
     """Structural check on the injected oracle. Never reads for meaning.
 
@@ -1475,11 +1495,13 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
                 f"`## Measurements` needs at least 2 measured rows, found "
                 f"{len(data_rows)}"
             )
-        elif not any(NEGATIVE_CONTROL.search(row) for row in data_rows):
+        elif not any(marks_a_negative_control(row) for row in data_rows):
             findings.append(
                 "`## Measurements` has no row marked `negative control`: "
                 "without one, an implementation that changes nothing can "
-                "satisfy the table"
+                "satisfy the table. Mark the control in its input or its "
+                "expected observation -- naming one in a rationale cell "
+                "describes a control, it does not add one"
             )
 
     if "Gate" in sections:

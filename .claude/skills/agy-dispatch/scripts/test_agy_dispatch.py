@@ -1661,6 +1661,33 @@ class OracleContractTest(unittest.TestCase):
         )
         self.assert_single_finding(text, "no row marked `negative control`")
 
+    def test_a_control_named_only_in_a_rationale_cell_is_reported(self) -> None:
+        """"Unlike the negative control, this row..." is a true sentence a
+        controller writes about a *different* row. It must not be what makes
+        the table conformant."""
+        text = CONFORMANT_ORACLE.replace(
+            "| # | input | expected observation |\n"
+            "|---|---|---|\n"
+            "| 1 | baseline body | digest D |\n"
+            "| 2 | marker updated_at bumped | digest still D |\n"
+            "| 3 | prose edited (negative control) | digest != D |",
+            "| # | input | expected observation | why |\n"
+            "|---|---|---|---|\n"
+            "| 1 | baseline body | digest D | the rule fires |\n"
+            "| 2 | marker updated_at bumped | digest still D | idempotent |\n"
+            "| 3 | prose edited | digest != D | unlike the negative control |",
+        )
+        self.assert_single_finding(text, "no row marked `negative control`")
+
+    def test_a_control_marked_in_its_observation_is_accepted(self) -> None:
+        """A control is defined by what it feeds and what that must not
+        produce; only a trailing rationale cell is prose about other rows."""
+        text = CONFORMANT_ORACLE.replace(
+            "| 3 | prose edited (negative control) | digest != D |",
+            "| 3 | prose edited | digest != D (negative control) |",
+        )
+        self.assertEqual(self.findings(text), [])
+
     def test_gate_outside_the_command_allowlist_is_reported(self) -> None:
         text = CONFORMANT_ORACLE.replace("some_gate\n```", "other_gate\n```")
         self.assert_single_finding(text, "not authorized")
