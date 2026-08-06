@@ -460,7 +460,14 @@ behavioural kill.
 Where discrimination actually comes from is a sweep whose mutants keep the
 product compiling: one single-defect mutant per rule the oracle claims, each
 expected to be killed by a named row. A mutant that fails to build is a badly
-written mutant, not a kill. Apply and restore by writing the whole file — a
+written mutant, not a kill; repair it by making that same defect representable,
+never by reaching for a different defect that happens to compile. A value
+emptied in a branch whose sibling already produces an empty value can leave the
+type with nothing to infer from — naming the type restores the build and leaves
+the defect exactly as sharp. Substituting a different defect quietly changes
+which row is under test, so the sweep reports a kill for a rule nobody claimed
+and the rule that failed to compile stays unmeasured. Apply and restore by
+writing the whole file — a
 copy that preserves an older mtime lets cargo skip the rebuild, which turns the
 mutant into a false kill and the next candidate run into a false green. A
 survivor is a finding against the round's *evidence*, not against the product:
