@@ -1311,6 +1311,27 @@ def gate_commands_in(section: str) -> list[str]:
     ]
 
 
+def unjudged_gate_commands(profile: dict, gate_commands: list[str]) -> list[str]:
+    """Which of an oracle's `## Gate` commands `prove` will never run.
+
+    `prove` runs `task_contract.gate_command` and nothing else -- one command,
+    whose red decides the round. An oracle's `## Gate` block is free to list
+    several, and `lint` already checks each one is authorized, so a second
+    command reads as judged when it is only authorized. The round then carries
+    a row whose observation no proof ever makes, which is the false green this
+    whole scaffold exists to refuse: the documents say two things decide the
+    round and the machinery lets one decide it.
+
+    The way out is to name the compound command in the profile, or to state the
+    extra observation as prose the controller checks by hand and keep the fence
+    to the one command that is actually judged.
+    """
+    judged = profile.get("task_contract", {}).get("gate_command")
+    if not judged:
+        return []
+    return [command for command in gate_commands if command != judged]
+
+
 def referenced_paths(text: str) -> list[str]:
     """Backticked tokens that name a repository path.
 
@@ -1420,12 +1441,25 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
                 "`## Gate` has no fenced command block: put each gate command "
                 "on its own line inside one ``` fence"
             )
-        elif allowed:
-            undeclared = [c for c in gate_commands if c not in allowed]
-            if undeclared:
+        else:
+            if allowed:
+                undeclared = [c for c in gate_commands if c not in allowed]
+                if undeclared:
+                    findings.append(
+                        "`## Gate` names command(s) the worker is not "
+                        "authorized to run: " + ", ".join(undeclared)
+                    )
+            unjudged = unjudged_gate_commands(profile, gate_commands)
+            if unjudged:
                 findings.append(
-                    "`## Gate` names command(s) the worker is not authorized "
-                    "to run: " + ", ".join(undeclared)
+                    "`## Gate` names command(s) `prove` will never run, so no "
+                    "proof covers what they observe: "
+                    + ", ".join(unjudged)
+                    + ". `prove` runs `task_contract.gate_command` alone "
+                    f"(`{profile.get('task_contract', {}).get('gate_command')}`). "
+                    "Name the compound command in the profile, or keep the "
+                    "fence to the judged command and state the rest as prose "
+                    "the controller checks by hand."
                 )
 
     if "Fabrication tells" in sections and not LIST_ITEM.search(

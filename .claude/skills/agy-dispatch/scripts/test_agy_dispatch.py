@@ -1700,6 +1700,42 @@ class OracleContractTest(unittest.TestCase):
         text = CONFORMANT_ORACLE.replace("some_gate\n```", "controller_gate\n```")
         self.assertEqual(agy_dispatch.oracle_findings(profile, text), [])
 
+    def test_a_second_gate_command_prove_never_runs_is_reported(self) -> None:
+        """`prove` runs `task_contract.gate_command` and nothing else, so an
+        oracle listing a second command carries a row no proof ever covers."""
+        profile = {
+            "task_commands": {
+                "allow": [
+                    "cargo test -p target --lib some_gate",
+                    "cargo build -p target --lib",
+                ]
+            },
+            "task_contract": {
+                "gate_command": "cargo test -p target --lib some_gate"
+            },
+        }
+        text = CONFORMANT_ORACLE.replace(
+            "cargo test -p target --lib some_gate\n```",
+            "cargo build -p target --lib\ncargo test -p target --lib some_gate\n```",
+        )
+        found = agy_dispatch.oracle_findings(profile, text)
+        self.assertEqual(len(found), 1, f"expected one finding, got {found}")
+        self.assertIn("`prove` will never run", found[0])
+        self.assertIn("cargo build -p target --lib", found[0])
+
+    def test_the_judged_gate_alone_is_not_reported(self) -> None:
+        """The check must fire on the extra command, not on every profile that
+        happens to declare a `gate_command`."""
+        profile = {
+            "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
+            "task_contract": {
+                "gate_command": "cargo test -p target --lib some_gate"
+            },
+        }
+        self.assertEqual(
+            agy_dispatch.oracle_findings(profile, CONFORMANT_ORACLE), []
+        )
+
 
 CONFORMANT_INJECTION = """\
 ## Task

@@ -171,6 +171,7 @@ finding. The checks are structural and carry no project knowledge:
 |---|---|
 | `## Measurements` has ≥2 rows, ≥1 marked `negative control` | a table an unchanged implementation also satisfies |
 | `## Gate` commands ⊆ the task allowlist | a gate the worker is not authorized to run, so nobody runs it |
+| `## Gate` names only `task_contract.gate_command` | a second command that reads as judged when it is only authorized |
 | `## Definition of done` ≡ the oracle's `## Gate` | instruction and judgement drifting apart, each satisfiable alone |
 | `## Current behavior` has a non-empty fenced quote | a round authored from memory rather than from the checkout |
 | no fenced block outside `Current behavior` / `Definition of done` | pasting the implementation, which leaves the worker nothing to derive |
@@ -182,6 +183,15 @@ finding. The checks are structural and carry no project knowledge:
 
 The gate cross-check is skipped when the round grants no shell: a measure-only
 oracle names what the *controller* will run.
+
+The two gate checks answer different questions and both are needed. The
+allowlist check asks whether the worker *may* run the command; the
+`gate_command` check asks whether `prove` *will*. An oracle can list several
+commands in one fence and every one can be authorized, but `prove` runs
+`task_contract.gate_command` and nothing else — so any extra command produces a
+row whose observation no proof ever makes. Name the compound command in the
+profile if both must be judged, or keep the fence to the judged command and
+state the rest as prose the controller checks by hand.
 
 An injection is optional — a measure-only round can carry its instruction in
 the oracle — but a declared `inject_prompt_file` must exist and conform, since
