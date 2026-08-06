@@ -308,33 +308,6 @@ impl<B> MakeSpan<B> for CorrelatingMakeSpan {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#2420" reason="logic section in transport.rs is hand-written pending codegen support">
-/// Emits the collector-neutral terminal record for every HTTP response.
-///
-/// `tower_http::trace` calls this while the request span is entered, so the
-/// JSON formatter inherits method, URI, and W3C fields from
-/// [`CorrelatingMakeSpan`]. The event itself adds only the response facts that
-/// are not known when the span is created.
-#[derive(Debug, Clone, Copy)]
-pub struct RequestCompletionEvent;
-
-impl<B> tower_http::trace::OnResponse<B> for RequestCompletionEvent {
-    fn on_response(
-        self,
-        response: &axum::http::Response<B>,
-        latency: std::time::Duration,
-        span: &tracing::Span,
-    ) {
-        tracing::info!(
-            parent: span,
-            event = "http_request_complete",
-            status = response.status().as_u16(),
-            latency_ms = latency.as_secs_f64() * 1_000.0,
-            "HTTP request completed"
-        );
-    }
-}
-
 // Thread-local to track whether the current request is a probe request.
 // Set by AccessLogOnRequest, read by AccessLogOnResponse.
 thread_local! {
@@ -365,15 +338,8 @@ impl<B> tower_http::trace::OnResponse<B> for AccessLogOnResponse {
         self,
         response: &axum::http::Response<B>,
         latency: std::time::Duration,
-        span: &tracing::Span,
+        _span: &tracing::Span,
     ) {
-        <RequestCompletionEvent as tower_http::trace::OnResponse<B>>::on_response(
-            RequestCompletionEvent,
-            response,
-            latency,
-            span,
-        );
-
         let status = response.status().as_u16();
         let latency_ms = latency.as_millis() as u64;
 
@@ -410,14 +376,16 @@ impl<B> tower_http::trace::OnResponse<B> for AccessLogOnResponse {
 /// layer (when wired) would export are produced. Attach it to the **outer**
 /// router so it spans probe and data-plane requests alike:
 ///
-/// Attach it to the outer router so probe and data-plane routes have the same
-/// W3C correlation and completion record. The layer takes no collector
-/// configuration: services write standard JSONL and the collector owns routing.
+/// ```ignore
+/// let app = service_http::standard_probe_routes(readiness, metrics, openapi)
+///     .merge(data_plane)
+///     .layer(service_http::trace_layer())
+///     .with_state(state);
+/// ```
 ///
 /// Returns the concrete `TraceLayer` so callers `.layer()` it directly. For a
 /// different classifier/make-span, build `TraceLayer::new_for_http()` inline
 /// instead.
-/// @spec libs/service-http/tech-design/logic/emit-w3c-correlated-request-completion-events.md#logic
 /// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub fn trace_layer() -> TraceLayer<
     SharedClassifier<ServerErrorsAsFailures>,
@@ -430,6 +398,5 @@ pub fn trace_layer() -> TraceLayer<
         .on_request(AccessLogOnRequest)
         .on_response(AccessLogOnResponse)
 }
-// </HANDWRITE>
 // </HANDWRITE>
 // CODEGEN-END
