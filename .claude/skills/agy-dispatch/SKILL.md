@@ -442,6 +442,14 @@ being right. Close it by authoring the missing row in a round, never by editing
 the test yourself — the controller writing the evidence it then judges is the
 same failure the oracle freeze exists to prevent.
 
+A round that only adds evidence has nothing to revert, so the pair degenerates
+into two runs over one tree, which `accept` refuses as identical digests. Take
+the mutant from the *unchanged* product instead: break the rule the new rows
+are supposed to pin. That is also the proof that catches the round which
+performs its deletions and skips its additions — the gate is green whether or
+not the missing rows exist, so the report reads as done, and only a surviving
+mutant says otherwise.
+
 Three outcomes:
 
 - **Take it.** `accept` stages exactly the touched paths and commits them on the
