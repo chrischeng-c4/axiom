@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
 use crate::deadline::ShutdownDeadline;
@@ -35,6 +35,9 @@ pub struct LifecycleObservation {
     pub transitioned_at: Instant,
     pub reason_code: String,
     pub detail: String,
+    /// Whether new work may be admitted in the current phase.  This is only
+    /// meaningful for `Serving` and `Degraded`; all other phases are closed.
+    pub admission_open: bool,
 }
 
 impl LifecycleObservation {
@@ -62,10 +65,7 @@ impl LifecycleObservation {
     }
 
     pub fn is_ready(&self) -> bool {
-        matches!(
-            self.phase,
-            LifecyclePhase::Serving | LifecyclePhase::Degraded
-        )
+        self.admission_open
     }
 }
 
@@ -87,6 +87,7 @@ struct Inner {
     completion: watch::Sender<Option<Arc<ShutdownReport>>>,
     shutdown_deadline: watch::Sender<Option<ShutdownDeadline>>,
     shutdown_started: Mutex<bool>,
+    events: broadcast::Sender<LifecycleObservation>,
 }
 
 struct HookRegistry {
@@ -115,6 +116,31 @@ pub struct LifecycleSubscription {
     pub(crate) deadline_rx: watch::Receiver<Option<ShutdownDeadline>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LifecycleEventError {
+    #[error("lifecycle event stream lagged by {0} transitions")]
+    Lagged(u64),
+    #[error("lifecycle event stream closed")]
+    Closed,
+}
+
+pub struct LifecycleEventSubscription {
+    initial: Option<LifecycleObservation>,
+    rx: broadcast::Receiver<LifecycleObservation>,
+}
+
+impl LifecycleEventSubscription {
+    pub async fn next(&mut self) -> Result<LifecycleObservation, LifecycleEventError> {
+        if let Some(initial) = self.initial.take() {
+            return Ok(initial);
+        }
+        self.rx.recv().await.map_err(|error| match error {
+            broadcast::error::RecvError::Lagged(n) => LifecycleEventError::Lagged(n),
+            broadcast::error::RecvError::Closed => LifecycleEventError::Closed,
+        })
+    }
+}
+
 impl LifecycleSubscription {
     pub fn observation(&self) -> LifecycleObservation {
         self.rx.borrow().clone()
@@ -123,6 +149,16 @@ impl LifecycleSubscription {
     pub async fn changed(&mut self) -> LifecycleObservation {
         let _ = self.rx.changed().await;
         self.observation()
+    }
+
+    pub async fn changed_result(
+        &mut self,
+    ) -> Result<LifecycleObservation, LifecycleSubscriptionError> {
+        self.rx
+            .changed()
+            .await
+            .map_err(|_| LifecycleSubscriptionError::Closed)?;
+        Ok(self.observation())
     }
 
     /// The authoritative absolute deadline published by the first shutdown attempt.
@@ -154,6 +190,12 @@ impl LifecycleSubscription {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LifecycleSubscriptionError {
+    #[error("lifecycle subscription closed")]
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LifecycleDeadlineError {
     #[error("lifecycle shutdown deadline publication channel closed")]
     ChannelClosed,
@@ -175,13 +217,15 @@ impl LifecycleController {
             transitioned_at: Instant::now(),
             reason_code: reason.into(),
             detail: detail.into(),
+            admission_open: matches!(phase, LifecyclePhase::Serving | LifecyclePhase::Degraded),
         };
         let (watch, _) = watch::channel(observation.clone());
         let (completion, _) = watch::channel(None);
         let (shutdown_deadline, _) = watch::channel(None);
+        let (events, _) = broadcast::channel(64);
         Self {
             inner: Arc::new(Inner {
-                observation: Mutex::new(observation),
+                observation: Mutex::new(observation.clone()),
                 watch,
                 hooks: Mutex::new(HookRegistry {
                     closed: false,
@@ -191,6 +235,7 @@ impl LifecycleController {
                 completion,
                 shutdown_deadline,
                 shutdown_started: Mutex::new(false),
+                events,
             }),
         }
     }
@@ -204,6 +249,20 @@ impl LifecycleController {
             rx: self.inner.watch.subscribe(),
             deadline_rx: self.inner.shutdown_deadline.subscribe(),
         }
+    }
+
+    pub fn subscribe_events(&self) -> LifecycleEventSubscription {
+        let guard = self.inner.observation.lock().unwrap();
+        let rx = self.inner.events.subscribe();
+        let current = guard.clone();
+        drop(guard);
+        LifecycleEventSubscription {
+            initial: Some(current),
+            rx,
+        }
+    }
+    pub fn subscribe_transitions(&self) -> LifecycleEventSubscription {
+        self.subscribe_events()
     }
 
     pub fn transition(
@@ -228,8 +287,43 @@ impl LifecycleController {
             transitioned_at: Instant::now(),
             reason_code: reason_code.into(),
             detail: detail.into(),
+            admission_open: matches!(phase, LifecyclePhase::Serving | LifecyclePhase::Degraded),
         };
         self.inner.watch.send_replace(current.clone());
+        let _ = self.inner.events.send(current.clone());
+        Ok(current.clone())
+    }
+
+    /// Transition to (or update) degraded mode with an explicit admission
+    /// decision. The legacy `transition(Degraded, ..)` remains safe/open.
+    pub fn transition_degraded(
+        &self,
+        admission_open: bool,
+        reason_code: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Result<LifecycleObservation, LifecycleError> {
+        let mut current = self.inner.observation.lock().unwrap();
+        if current.phase != LifecyclePhase::Degraded
+            && !valid_edge(current.phase, LifecyclePhase::Degraded)
+        {
+            return Err(LifecycleError::InvalidTransition {
+                from: current.phase,
+                to: LifecyclePhase::Degraded,
+            });
+        }
+        if current.phase == LifecyclePhase::Degraded && current.admission_open == admission_open {
+            return Ok(current.clone());
+        }
+        *current = LifecycleObservation {
+            phase: LifecyclePhase::Degraded,
+            generation: current.generation + 1,
+            transitioned_at: Instant::now(),
+            reason_code: reason_code.into(),
+            detail: detail.into(),
+            admission_open,
+        };
+        self.inner.watch.send_replace(current.clone());
+        let _ = self.inner.events.send(current.clone());
         Ok(current.clone())
     }
 

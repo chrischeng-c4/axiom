@@ -11,6 +11,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread_local;
 
+use server_lifecycle::LifecycleController;
 use tokio::net::TcpListener;
 use tower_http::classify::{ServerErrorsAsFailures, SharedClassifier};
 use tower_http::trace::{DefaultMakeSpan, MakeSpan, OnRequest, TraceLayer};
@@ -52,7 +53,19 @@ pub async fn serve(
     app: axum::Router,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) {
+    // Legacy adapter: production callers should use `serve_with_lifecycle` so
+    // listener admission and shutdown deadline come from one controller.
     server_http::serve_h2c(listener, app, shutdown).await;
+}
+
+/// Production transport composition over the caller-owned lifecycle.
+pub async fn serve_with_lifecycle(
+    listener: TcpListener,
+    app: axum::Router,
+    options: server_http::HttpServerOptions,
+    lifecycle: LifecycleController,
+) -> server_http::HttpServerReport {
+    server_http::serve_h2c_with_lifecycle(listener, app, options, lifecycle).await
 }
 
 /// Serve `app` over TLS on `listener`, terminating with whatever `config`

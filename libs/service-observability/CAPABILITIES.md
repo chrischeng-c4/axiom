@@ -17,6 +17,11 @@ not in each service.
 It does not own the transport, the collector, the metric names a service
 chooses, or the log level policy. It owns the shape.
 
+Lifecycle metrics additionally expose bounded phase, generation, transition
+count, and transition-age series without reason/detail labels. The async
+lifecycle observer records the initial observation and each generation once,
+emits structured transition events, and terminates at terminal phases.
+
 ## Capabilities
 
 Every capability belongs to exactly one of two feature roots:

@@ -18,6 +18,65 @@ fn phases_expose_probe_predicates() {
         assert_eq!(observation.is_healthy(), healthy, "{phase:?}");
         assert_eq!(observation.is_ready(), ready, "{phase:?}");
         assert_eq!(observation.startup_succeeded(), started, "{phase:?}");
+        assert_eq!(
+            observation.admission_open,
+            matches!(phase, LifecyclePhase::Serving | LifecyclePhase::Degraded),
+            "{phase:?}"
+        );
+    }
+}
+
+#[test]
+fn degraded_admission_can_close_and_reopen_with_generations() {
+    let controller = LifecycleController::serving();
+    let open = controller
+        .transition_degraded(true, "dependency", "safe")
+        .unwrap();
+    assert!(open.admission_open);
+    let closed = controller
+        .transition_degraded(false, "dependency", "closed")
+        .unwrap();
+    assert!(!closed.admission_open);
+    assert!(closed.generation > open.generation);
+    let reopened = controller
+        .transition_degraded(true, "dependency", "recovered")
+        .unwrap();
+    assert!(reopened.admission_open);
+    assert!(reopened.generation > closed.generation);
+}
+
+#[tokio::test]
+async fn transition_events_do_not_coalesce() {
+    let controller = LifecycleController::new();
+    let mut events = controller.subscribe_transitions();
+    controller
+        .transition(LifecyclePhase::Recovering, "recover", "retry")
+        .unwrap();
+    controller
+        .transition(LifecyclePhase::Serving, "serve", "ready")
+        .unwrap();
+    let e0 = events.next().await.unwrap();
+    let e1 = events.next().await.unwrap();
+    let e2 = events.next().await.unwrap();
+    assert_eq!((e0.phase, e0.generation), (LifecyclePhase::Starting, 0));
+    assert_eq!((e1.phase, e1.generation), (LifecyclePhase::Recovering, 1));
+    assert_eq!((e2.phase, e2.generation), (LifecyclePhase::Serving, 2));
+}
+
+#[tokio::test]
+async fn transition_events_report_bounded_lag() {
+    let controller = LifecycleController::serving();
+    let mut events = controller.subscribe_transitions();
+    assert_eq!(events.next().await.unwrap().generation, 0);
+    controller.transition_degraded(true, "dep", "open").unwrap();
+    for index in 0..80 {
+        controller
+            .transition_degraded(index % 2 == 0, "dep", "toggle")
+            .unwrap();
+    }
+    match events.next().await {
+        Err(server_lifecycle::LifecycleEventError::Lagged(skipped)) => assert!(skipped > 0),
+        other => panic!("expected bounded lag, got {other:?}"),
     }
 }
 

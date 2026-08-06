@@ -13595,6 +13595,7 @@ dependencies = [
  "serde",
  "serde_json",
  "server-lifecycle",
+ "tokio",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
