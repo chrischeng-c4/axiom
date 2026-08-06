@@ -85,6 +85,7 @@ struct Inner {
     watch: watch::Sender<LifecycleObservation>,
     hooks: Mutex<HookRegistry>,
     completion: watch::Sender<Option<Arc<ShutdownReport>>>,
+    shutdown_deadline: watch::Sender<Option<ShutdownDeadline>>,
     shutdown_started: Mutex<bool>,
 }
 
@@ -111,6 +112,7 @@ impl fmt::Debug for LifecycleController {
 #[derive(Debug, Clone)]
 pub struct LifecycleSubscription {
     pub(crate) rx: watch::Receiver<LifecycleObservation>,
+    pub(crate) deadline_rx: watch::Receiver<Option<ShutdownDeadline>>,
 }
 
 impl LifecycleSubscription {
@@ -122,6 +124,39 @@ impl LifecycleSubscription {
         let _ = self.rx.changed().await;
         self.observation()
     }
+
+    /// The authoritative absolute deadline published by the first shutdown attempt.
+    pub fn shutdown_deadline(&self) -> Option<ShutdownDeadline> {
+        *self.deadline_rx.borrow()
+    }
+
+    /// Wait for the first shutdown deadline, or report that its publication
+    /// channel was closed before a deadline became available.
+    pub async fn wait_shutdown_deadline(
+        &mut self,
+    ) -> Result<ShutdownDeadline, LifecycleDeadlineError> {
+        loop {
+            if let Some(deadline) = self.shutdown_deadline() {
+                return Ok(deadline);
+            }
+            if self.deadline_rx.changed().await.is_err() {
+                return Err(LifecycleDeadlineError::ChannelClosed);
+            }
+        }
+    }
+
+    /// Compatibility spelling for callers that prefer the explicit `for` form.
+    pub async fn wait_for_shutdown_deadline(
+        &mut self,
+    ) -> Result<ShutdownDeadline, LifecycleDeadlineError> {
+        self.wait_shutdown_deadline().await
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LifecycleDeadlineError {
+    #[error("lifecycle shutdown deadline publication channel closed")]
+    ChannelClosed,
 }
 
 impl LifecycleController {
@@ -143,6 +178,7 @@ impl LifecycleController {
         };
         let (watch, _) = watch::channel(observation.clone());
         let (completion, _) = watch::channel(None);
+        let (shutdown_deadline, _) = watch::channel(None);
         Self {
             inner: Arc::new(Inner {
                 observation: Mutex::new(observation),
@@ -153,6 +189,7 @@ impl LifecycleController {
                     hooks: Vec::new(),
                 }),
                 completion,
+                shutdown_deadline,
                 shutdown_started: Mutex::new(false),
             }),
         }
@@ -165,6 +202,7 @@ impl LifecycleController {
     pub fn subscribe(&self) -> LifecycleSubscription {
         LifecycleSubscription {
             rx: self.inner.watch.subscribe(),
+            deadline_rx: self.inner.shutdown_deadline.subscribe(),
         }
     }
 
@@ -238,6 +276,9 @@ impl LifecycleController {
             }
         };
         if first {
+            // Publish before the phase transition so every subscriber that
+            // observes Draining can obtain this same absolute deadline.
+            self.inner.shutdown_deadline.send_replace(Some(deadline));
             let hooks = {
                 let mut registry = self.inner.hooks.lock().unwrap();
                 registry.closed = true;

@@ -286,12 +286,48 @@ pub async fn serve_connection_with_drain(
     serve_io_with_drain(stream, app, options, lifecycle, deadline).await
 }
 
+/// Serve immediately while the lifecycle is Serving, then drain against the
+/// absolute deadline published by that same lifecycle subscription.
+pub async fn serve_connection_with_lifecycle(
+    stream: TcpStream,
+    app: axum::Router,
+    options: ConnectionOptions,
+    lifecycle: LifecycleSubscription,
+) -> ConnectionReport {
+    serve_io_with_lifecycle(stream, app, options, lifecycle).await
+}
+
+pub async fn serve_io_with_lifecycle<I>(
+    stream: I,
+    app: axum::Router,
+    options: ConnectionOptions,
+    lifecycle: LifecycleSubscription,
+) -> ConnectionReport
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    serve_io_with_deadline_source(stream, app, options, lifecycle, None).await
+}
+
 pub async fn serve_io_with_drain<I>(
     stream: I,
     app: axum::Router,
     options: ConnectionOptions,
-    mut lifecycle: LifecycleSubscription,
+    lifecycle: LifecycleSubscription,
     deadline: ShutdownDeadline,
+) -> ConnectionReport
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    serve_io_with_deadline_source(stream, app, options, lifecycle, Some(deadline)).await
+}
+
+async fn serve_io_with_deadline_source<I>(
+    stream: I,
+    app: axum::Router,
+    options: ConnectionOptions,
+    mut lifecycle: LifecycleSubscription,
+    fixed_deadline: Option<ShutdownDeadline>,
 ) -> ConnectionReport
 where
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -342,6 +378,13 @@ where
             if lifecycle.observation().phase.is_draining_or_later() {
                 accounting.begin_drain();
                 connection.as_mut().graceful_shutdown();
+                let Some(deadline) = fixed_deadline.or_else(|| lifecycle.shutdown_deadline())
+                else {
+                    break (
+                        ConnectionTerminal::Failed,
+                        Some("lifecycle entered draining without shutdown deadline".into()),
+                    );
+                };
                 let usable = deadline.usable_remaining();
                 if usable.is_zero() {
                     accounting.mark_deadline();

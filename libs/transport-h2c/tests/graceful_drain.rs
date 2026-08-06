@@ -1,6 +1,6 @@
 use axum::{routing::get, Router};
 use bytes::Bytes;
-use http_body_util::{Empty, Full};
+use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
@@ -18,8 +18,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use transport_h2c::{
-    serve_connection_with_drain, ConnectionOptions, ConnectionProtocol, ConnectionTerminal,
-    H2cManager, ManagerConfig,
+    serve_connection_with_drain, serve_connection_with_lifecycle, ConnectionOptions,
+    ConnectionProtocol, ConnectionTerminal, H2cManager, ManagerConfig,
 };
 
 #[derive(Clone)]
@@ -322,4 +322,120 @@ async fn mutation_ambiguity() {
         "expected REFUSED_STREAM, got {refused:?}"
     );
     refused_server.await.unwrap();
+}
+
+#[tokio::test]
+async fn http1_lifecycle_deadline() {
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let lifecycle = LifecycleController::serving();
+    let app = Router::new().route("/ready", get(|| async { "ready" }));
+    let subscription = lifecycle.subscribe();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        serve_connection_with_lifecycle(stream, app, ConnectionOptions::default(), subscription)
+            .await
+    });
+    let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+    client
+        .write_all(b"GET /ready HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = [0u8; 256];
+    let bytes = client.read(&mut response).await.unwrap();
+    assert!(String::from_utf8_lossy(&response[..bytes]).contains("200 OK"));
+    let deadline = ShutdownDeadline::from_now(Duration::from_secs(2), Duration::ZERO).unwrap();
+    let report = lifecycle
+        .shutdown(deadline, "test", "lifecycle deadline")
+        .await;
+    assert_eq!(report.initiating_reason_code, "test");
+    let report = tokio::time::timeout(Duration::from_secs(1), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.protocol, ConnectionProtocol::Http1);
+    assert_eq!(report.terminal, ConnectionTerminal::Drained);
+    assert_eq!(report.admitted, 1);
+}
+
+#[tokio::test]
+async fn h2c_lifecycle_deadline() {
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let lifecycle = LifecycleController::serving();
+    let app = Router::new().route("/ready", get(|| async { "ready" }));
+    let subscription = lifecycle.subscribe();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        serve_connection_with_lifecycle(stream, app, ConnectionOptions::default(), subscription)
+            .await
+    });
+    let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    let (mut sender, connection) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let request = Request::builder()
+        .version(http::Version::HTTP_2)
+        .uri("http://localhost/ready")
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let response = sender.send_request(request).await.unwrap();
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert_eq!(
+        response.into_body().collect().await.unwrap().to_bytes(),
+        Bytes::from_static(b"ready")
+    );
+    let deadline = ShutdownDeadline::from_now(Duration::from_secs(2), Duration::ZERO).unwrap();
+    let report = lifecycle
+        .shutdown(deadline, "test", "lifecycle deadline")
+        .await;
+    assert_eq!(report.initiating_reason_code, "test");
+    let report = tokio::time::timeout(Duration::from_secs(1), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.protocol, ConnectionProtocol::Http2);
+    assert_eq!(report.terminal, ConnectionTerminal::Drained);
+    assert_eq!(report.admitted, 1);
+}
+
+#[tokio::test]
+async fn lifecycle_deadline_missing_fails_boundedly() {
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let lifecycle = LifecycleController::serving();
+    let subscription = lifecycle.subscribe();
+    lifecycle
+        .transition(LifecyclePhase::Draining, "manual", "missing deadline")
+        .unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        serve_connection_with_lifecycle(
+            stream,
+            Router::new(),
+            ConnectionOptions::default(),
+            subscription,
+        )
+        .await
+    });
+    let _client = tokio::net::TcpStream::connect(address).await.unwrap();
+    let report = tokio::time::timeout(Duration::from_secs(1), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.terminal, ConnectionTerminal::Failed);
+    assert_eq!(
+        report.error.as_deref(),
+        Some("lifecycle entered draining without shutdown deadline")
+    );
 }

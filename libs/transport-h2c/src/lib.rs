@@ -48,9 +48,9 @@ pub use manager::{H2cManager, ManagerConfig, ManagerStats};
 pub mod server;
 #[cfg(feature = "server")]
 pub use server::{
-    serve_connection, serve_connection_with_drain, serve_connection_with_options,
-    serve_io_with_drain, ConnectionError, ConnectionOptions, ConnectionProtocol, ConnectionReport,
-    ConnectionTerminal,
+    serve_connection, serve_connection_with_drain, serve_connection_with_lifecycle,
+    serve_connection_with_options, serve_io_with_drain, serve_io_with_lifecycle, ConnectionError,
+    ConnectionOptions, ConnectionProtocol, ConnectionReport, ConnectionTerminal,
 };
 
 /// Recommended number of h2c connections for a target peak `concurrency`, using

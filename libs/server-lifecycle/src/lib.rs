@@ -22,8 +22,8 @@ pub use deadline::{DeadlineError, ShutdownDeadline};
 pub use drain::{DrainController, DrainSignal, DrainState};
 pub use hooks::{HookOutcome, HookStage, HookStatus, PhaseTiming, ShutdownContext, ShutdownReport};
 pub use lifecycle::{
-    LifecycleController, LifecycleError, LifecycleObservation, LifecyclePhase,
-    LifecycleSubscription,
+    LifecycleController, LifecycleDeadlineError, LifecycleError, LifecycleObservation,
+    LifecyclePhase, LifecycleSubscription,
 };
 pub use limits::{ConnectionBudget, ConnectionLimitExceeded, ConnectionPermit};
 pub use metrics::{ConnectionMetrics, NoopConnectionMetrics};
