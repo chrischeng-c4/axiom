@@ -211,6 +211,52 @@ fn canonical_digest(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn strip_aw_marker_blocks(body: &str) -> String {
+    let mut result = String::with_capacity(body.len());
+    let mut remaining = body;
+
+    while let Some(start_idx) = remaining.find("<!--") {
+        let after_start = &remaining[start_idx + 4..];
+        let trimmed_after = after_start.trim_start();
+        if trimmed_after.starts_with("aw:") || trimmed_after.starts_with("score:") {
+            if let Some(end_rel) = after_start.find("-->") {
+                let end_idx = start_idx + 4 + end_rel + 3;
+                result.push_str(&remaining[..start_idx]);
+                remaining = &remaining[end_idx..];
+                continue;
+            }
+        }
+        result.push_str(&remaining[..start_idx + 4]);
+        remaining = after_start;
+    }
+    result.push_str(remaining);
+    result
+}
+
+fn canonicalize_wi_body(body: &str) -> String {
+    let stripped = strip_aw_marker_blocks(body);
+    let normalized = stripped.replace("\r\n", "\n");
+    let mut lines = Vec::new();
+    let mut previous_blank = true;
+    for line in normalized.lines() {
+        let trimmed = line.trim_end();
+        let blank = trimmed.is_empty();
+        if blank && previous_blank {
+            continue;
+        }
+        lines.push(trimmed);
+        previous_blank = blank;
+    }
+    while lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+fn canonical_wi_digest(body: &str) -> String {
+    canonical_digest(&canonicalize_wi_body(body))
+}
+
 fn revision_id(kind: ArtifactKind, digest: &str, parents: &[CausalParent]) -> String {
     let mut parent_pairs = parents
         .iter()
@@ -385,7 +431,7 @@ fn transitive_invalidation(
 
 /// Construct the post-backend-success WI creation event and durable record.
 pub fn fold_wi_create(slug: &str, body: &str, project: &str) -> ChangeLifecycle {
-    let digest = canonical_digest(body);
+    let digest = canonical_wi_digest(body);
     let revision = artifact_revision(ArtifactKind::Wi, digest.clone(), Vec::new(), 1);
     let command = crate::cli::run::ec_draft_command(project, slug);
     let mut active_revisions = empty_revisions();
@@ -430,13 +476,13 @@ pub fn fold_wi_update(
     new_body: &str,
     pre_update_body: Option<&str>,
 ) -> ReducerResult {
-    let new_digest = canonical_digest(new_body);
+    let new_digest = canonical_wi_digest(new_body);
     let old_digest = prior_lifecycle
         .active_revisions
         .get(&ArtifactKind::Wi)
         .and_then(|revision| revision.as_ref())
         .map(|revision| revision.digest.clone())
-        .or_else(|| pre_update_body.map(canonical_digest));
+        .or_else(|| pre_update_body.map(canonical_wi_digest));
     if old_digest.as_deref() == Some(new_digest.as_str()) {
         return ReducerResult {
             lifecycle: prior_lifecycle.clone(),
@@ -1445,5 +1491,135 @@ mod tests {
             lifecycle.next.command,
             "aw ec draft causal --project service-auth --wi causal"
         );
+    }
+
+    #[test]
+    fn wi_contract_projection_digest_boundary() {
+        let baseline_body = r#"## Problem
+
+This is the problem description for WI 3348.
+
+<!-- aw:planning-transaction:sha256:3d830d401234567890abcdef1234567890abcdef1234567890abcdef12345678 -->
+
+<!-- aw:loop-state
+version: 1
+issue_id: '3348'
+goal: ec-first:3348
+verifier: ec
+iterations: []
+last_result: none
+next_action: aw ec verify --project agentic-workflow --required-only --stage td --wi 3348
+status: iterating
+tried: []
+updated_at: 2026-08-04T08:27:44.814163+00:00
+-->
+
+<!-- score:workflow-state
+version: 1
+issue_id: '3348'
+locked: false
+active_phase: td_inited
+active_branch: codex/aw-3347-ec-review-verify
+remaining_sections: []
+dirty_paths: []
+updated_at: 2026-08-05T08:28:25.127361+00:00
+-->
+"#;
+
+        let baseline_lc = fold_wi_create("3348", baseline_body, "agentic-workflow");
+        let baseline_digest = baseline_lc
+            .active_revisions
+            .get(&ArtifactKind::Wi)
+            .and_then(|rev| rev.as_ref())
+            .map(|rev| rev.digest.clone())
+            .expect("WI revision digest present");
+
+        // 1. updated_at bump inside aw:loop-state
+        let body_loop_updated_at = baseline_body.replace(
+            "updated_at: 2026-08-04T08:27:44.814163+00:00",
+            "updated_at: 2026-08-06T10:00:00.000000+00:00",
+        );
+        let lc_loop_updated = fold_wi_create("3348", &body_loop_updated_at, "agentic-workflow");
+        assert_eq!(
+            lc_loop_updated
+                .active_revisions
+                .get(&ArtifactKind::Wi)
+                .and_then(|rev| rev.as_ref())
+                .unwrap()
+                .digest,
+            baseline_digest
+        );
+
+        // 2. added iterations: entry inside aw:loop-state
+        let body_iterations_added = baseline_body.replace(
+            "iterations: []",
+            "iterations:\n- n: 1\n  action: ec\n  outcome: green\n  summary: verified",
+        );
+        let lc_iterations_added =
+            fold_wi_create("3348", &body_iterations_added, "agentic-workflow");
+        assert_eq!(
+            lc_iterations_added
+                .active_revisions
+                .get(&ArtifactKind::Wi)
+                .and_then(|rev| rev.as_ref())
+                .unwrap()
+                .digest,
+            baseline_digest
+        );
+
+        // 3. updated_at bump inside score:workflow-state
+        let body_score_updated_at = baseline_body.replace(
+            "updated_at: 2026-08-05T08:28:25.127361+00:00",
+            "updated_at: 2026-08-06T12:00:00.000000+00:00",
+        );
+        let lc_score_updated = fold_wi_create("3348", &body_score_updated_at, "agentic-workflow");
+        assert_eq!(
+            lc_score_updated
+                .active_revisions
+                .get(&ArtifactKind::Wi)
+                .and_then(|rev| rev.as_ref())
+                .unwrap()
+                .digest,
+            baseline_digest
+        );
+
+        // 4. appending a whole new AW-owned block
+        let body_appended_block = format!(
+            "{baseline_body}\n<!-- aw:custom-projection\nversion: 1\nstatus: active\n-->\n"
+        );
+        let lc_appended_block = fold_wi_create("3348", &body_appended_block, "agentic-workflow");
+        assert_eq!(
+            lc_appended_block
+                .active_revisions
+                .get(&ArtifactKind::Wi)
+                .and_then(|rev| rev.as_ref())
+                .unwrap()
+                .digest,
+            baseline_digest
+        );
+
+        // 5. different across a prose edit inside the ## Problem section
+        let body_prose_edited = baseline_body.replace(
+            "This is the problem description for WI 3348.",
+            "This is an edited problem description for WI 3348.",
+        );
+        let lc_prose_edited = fold_wi_create("3348", &body_prose_edited, "agentic-workflow");
+        assert_ne!(
+            lc_prose_edited
+                .active_revisions
+                .get(&ArtifactKind::Wi)
+                .and_then(|rev| rev.as_ref())
+                .unwrap()
+                .digest,
+            baseline_digest
+        );
+
+        // 6. fold_wi_update returns accepted: false when only marker blocks changed
+        let update_marker_only = fold_wi_update(&baseline_lc, &body_loop_updated_at, None);
+        assert!(!update_marker_only.accepted);
+
+        // 7. fold_wi_update returns accepted: true when ## Problem prose changed
+        let update_prose_edited = fold_wi_update(&baseline_lc, &body_prose_edited, None);
+        assert!(update_prose_edited.accepted);
     }
 }
