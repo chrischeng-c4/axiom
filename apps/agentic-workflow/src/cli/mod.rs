@@ -22,6 +22,7 @@ pub mod coordination;
 pub mod doc_mirror;
 pub mod drift;
 pub mod ec;
+pub mod ec_verdict;
 pub mod fillback;
 pub mod generator;
 pub mod goal;
