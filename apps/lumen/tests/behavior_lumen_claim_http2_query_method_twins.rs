@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-http2-query-method-twins
-// @capability http2-api-list
-// @claim query-method-post-twins-accept-query
+// @capability api-cli-agent-integration
+// @claim http2-openapi-and-client-interface
 // @contract http2-query-method-twins
 // @category behavior
 // @required_for_production true

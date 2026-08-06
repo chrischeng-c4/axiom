@@ -13,11 +13,14 @@ use lumen::operator::crd::{
     AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase, ReshardPolicy,
     ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
-use lumen::operator::render::{prunes, render};
+use lumen::operator::render::{
+    auth_delegator_binding, auth_delegator_binding_name, auth_delegator_labels, prunes, render,
+};
 use lumen::operator::{Lumen, LumenSpec};
 use serde::Deserialize;
 use serde_json::Value;
 use service_k8s::service::PruneTarget;
+use service_k8s::{ConditionFact, ConditionStatus, ManagedService, ReadyFacts};
 
 /// A `Lumen` with metadata set the way a real CR (and owner references) need.
 fn lumen(name: &str, spec: LumenSpec) -> Lumen {
@@ -44,9 +47,6 @@ fn dev_spec() -> LumenSpec {
         log_format: LogFormat::Pretty,
         log_level: None,
         auth: AuthMode::Off,
-        tokens_secret: None,
-        tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 1,
@@ -60,6 +60,9 @@ fn dev_spec() -> LumenSpec {
         network_policy: false,
         admission: None,
         service_account_name: None,
+        service_account_annotations: BTreeMap::new(),
+        peer_tls_secret: None,
+        serving_tls_secret: None,
     }
 }
 
@@ -75,9 +78,6 @@ fn prod_spec() -> LumenSpec {
         log_format: LogFormat::Json,
         log_level: Some("warn".into()),
         auth: AuthMode::Required,
-        tokens_secret: Some("lumen-tokens".into()),
-        tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 6,
@@ -94,6 +94,9 @@ fn prod_spec() -> LumenSpec {
         network_policy: true,
         admission: None,
         service_account_name: None,
+        service_account_annotations: BTreeMap::new(),
+        peer_tls_secret: None,
+        serving_tls_secret: None,
     }
 }
 
@@ -253,6 +256,141 @@ fn set_service_account_name_never_emits_any_serviceaccount_named_the_instance() 
             "no ServiceAccount named the instance may ever be rendered when \
              serviceAccountName is externally managed; got {:?}",
             kinds(&objs)
+        );
+    }
+}
+
+// ---- #2876: the serving KSA's delegated-review grant -----------------------
+
+#[test]
+fn auth_delegator_binding_grants_exactly_the_serving_service_account() {
+    // AC1: one ClusterRoleBinding, bound to the built-in delegator role, with
+    // the instance's own serving ServiceAccount as its only subject.
+    let l = lumen("search", dev_spec());
+    let binding = auth_delegator_binding(&l);
+
+    assert_eq!(binding["kind"], "ClusterRoleBinding");
+    assert_eq!(binding["roleRef"]["kind"], "ClusterRole");
+    assert_eq!(binding["roleRef"]["name"], "system:auth-delegator");
+    assert_eq!(
+        binding["subjects"],
+        serde_json::json!([{
+            "kind": "ServiceAccount",
+            "name": "search",
+            "namespace": "acme",
+        }]),
+        "got {binding}"
+    );
+}
+
+#[test]
+fn auth_delegator_binding_follows_an_externally_managed_service_account() {
+    // The pod runs as `spec.serviceAccountName` when it is set, so the grant
+    // has to follow it. Binding the instance-named SA instead would authorize
+    // an identity nothing runs as, and every request would fail authentication
+    // against a manifest that looks correct.
+    let mut spec = dev_spec();
+    spec.service_account_name = Some("external-sa".into());
+    let l = lumen("search", spec);
+    let objs = render(&l);
+    let binding = auth_delegator_binding(&l);
+
+    assert_eq!(binding["subjects"][0]["name"], "external-sa");
+    assert_eq!(
+        binding["subjects"][0]["name"],
+        find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"]["serviceAccountName"],
+        "the bound subject and the identity the pods run as are one answer"
+    );
+}
+
+#[test]
+fn auth_delegator_binding_names_no_wildcard_and_no_group_subject() {
+    // AC5. `system:authenticated` or a ServiceAccount *group* would turn a
+    // grant for one process into a grant for a population; `*` in the roleRef
+    // would hand out every verb on every resource.
+    for spec_fn in [dev_spec, prod_spec] {
+        let l = lumen("search", spec_fn());
+        let binding = auth_delegator_binding(&l);
+
+        assert_ne!(binding["roleRef"]["name"], "*");
+        assert_ne!(binding["roleRef"]["name"], "cluster-admin");
+        assert!(
+            binding.get("rules").is_none(),
+            "the binding must reference the built-in role, never define one: {binding}"
+        );
+        let subjects = binding["subjects"].as_array().expect("subjects");
+        assert_eq!(subjects.len(), 1, "got {binding}");
+        for s in subjects {
+            assert_eq!(s["kind"], "ServiceAccount", "no Group/User subject");
+            assert_ne!(s["name"], "*");
+            assert_ne!(s["name"], "system:authenticated");
+            assert_ne!(s["namespace"], "*");
+        }
+    }
+}
+
+#[test]
+fn auth_delegator_binding_is_cluster_scoped_and_unowned() {
+    // A cluster-scoped object may not name a namespaced owner: the garbage
+    // collector does not ignore such a reference, it reads the owner as already
+    // gone and deletes the dependent. The `lumen.dev/owner-namespace` label is
+    // what replaces the reference for cleanup purposes.
+    let l = lumen("search", dev_spec());
+    let binding = auth_delegator_binding(&l);
+    let meta = binding["metadata"].as_object().expect("metadata");
+
+    assert!(meta.get("ownerReferences").is_none(), "got {binding}");
+    assert!(meta.get("namespace").is_none(), "got {binding}");
+    assert_eq!(meta["labels"]["lumen.dev/owner-namespace"], "acme");
+    assert_eq!(
+        meta["labels"]["app.kubernetes.io/managed-by"],
+        "lumen-operator"
+    );
+    assert_eq!(
+        meta["labels"]["app.kubernetes.io/component"],
+        "auth-delegation"
+    );
+    assert_eq!(
+        serde_json::to_value(auth_delegator_labels(&l)).unwrap(),
+        binding["metadata"]["labels"],
+        "the sweep proves authorship by full label-set equality, so the labels \
+         it recomputes must be the ones the render actually stamps"
+    );
+}
+
+#[test]
+fn auth_delegator_binding_names_cannot_collide_across_namespaces() {
+    // The hazard a dash separator would create: `lumen-a-b-c-auth-delegator`
+    // is both (ns `a-b`, name `c`) and (ns `a`, name `b-c`). Two unrelated
+    // Lumens would share one binding, each granting the other's ServiceAccount
+    // delegated review.
+    let mut names = std::collections::BTreeSet::new();
+    for (ns, name) in [
+        ("a-b", "c"),
+        ("a", "b-c"),
+        ("team", "search"),
+        ("team-search", ""),
+    ] {
+        let mut l = lumen(if name.is_empty() { "x" } else { name }, dev_spec());
+        l.metadata.namespace = Some(ns.to_string());
+        assert!(
+            names.insert(auth_delegator_binding_name(&l)),
+            "two distinct instances rendered the same binding name"
+        );
+    }
+}
+
+#[test]
+fn the_auth_delegator_binding_is_never_one_of_the_namespaced_children() {
+    // `render`'s objects are all applied with a namespaced API and stamped with
+    // the CR's owner reference (see the assertions above). A cluster-scoped
+    // binding in that list would be applied to an endpoint that rejects it, or
+    // owner-stamped into deletion.
+    for spec_fn in [dev_spec, prod_spec] {
+        let l = lumen("search", spec_fn());
+        assert!(
+            !render(&l).iter().any(|o| o["kind"] == "ClusterRoleBinding"),
+            "the delegated-review grant is applied on its own path, not as a child"
         );
     }
 }
@@ -516,40 +654,11 @@ fn prod_wires_auth_and_observability() {
     let l = lumen("lumen", prod_spec());
     let objs = render(&l);
 
-    // auth=required + tokensSecret → registry file env + Secret volume mount.
+    // auth=required without registry projection (retired phase 1).
     let dep = find(&objs, "StatefulSet", "lumen");
     let c = &dep["spec"]["template"]["spec"]["containers"][0];
     assert_eq!(c["image"], "registry.example.com/lumen:1.2.3");
     assert_eq!(c["imagePullPolicy"], "Always");
-    let registry_env = c["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["name"] == "LUMEN_TOKEN_REGISTRY_FILE")
-        .expect("LUMEN_TOKEN_REGISTRY_FILE env");
-    assert_eq!(
-        registry_env["value"],
-        "/var/run/secrets/lumen/token-registry.json"
-    );
-    let registry_mount = c["volumeMounts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["name"] == "lumen-token-registry")
-        .expect("token registry mount");
-    assert_eq!(registry_mount["mountPath"], "/var/run/secrets/lumen");
-    assert_eq!(registry_mount["readOnly"], true);
-    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["name"] == "lumen-token-registry")
-        .expect("token registry volume");
-    assert_eq!(registry_volume["secret"]["secretName"], "lumen-tokens");
-    assert_eq!(
-        registry_volume["secret"]["items"][0]["key"],
-        "token-registry.json"
-    );
     // log level set → present.
     assert!(env_names(c).contains(&"LUMEN_LOG_LEVEL".to_string()));
 
@@ -599,6 +708,52 @@ fn prod_wires_auth_and_observability() {
     }
 }
 
+/// #2870 AC1: the token and identity registry projections (retired phase 1) are
+/// no longer rendered, for auth=off and auth=required alike.
+///
+/// The third fixture this ran against — one that populated `spec.identities`,
+/// the only shape under which the retired code rendered anything — is gone,
+/// because #2872 removed the field it set. What replaces it as the gate that
+/// cannot pass on an unmodified tree is the schema itself: there is no longer
+/// a way to express the input the retired projection consumed.
+#[test]
+fn no_retired_credential_registry_projections() {
+    // Substring residue, not a structural walk: the retired projections reached
+    // pod specs, CronJob pod templates, and container env alike, and each of
+    // those sits at a different JSON path. Serializing the whole object is the
+    // only check that cannot miss a path we forgot to enumerate.
+    const RETIRED: [&str; 5] = [
+        "lumen-token-registry",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+        "lumen-identity-registry",
+        "LUMEN_IDENTITY_REGISTRY_FILE",
+        "search-identities",
+    ];
+
+    for spec_fn in [dev_spec, prod_spec] {
+        let auth = spec_fn().auth;
+        let objs = render(&lumen("search", spec_fn()));
+
+        for obj in &objs {
+            let text = serde_json::to_string(obj).expect("rendered object serializes");
+            for needle in RETIRED {
+                assert!(
+                    !text.contains(needle),
+                    "{needle} must not be rendered (auth={auth:?}) in {} {}",
+                    obj["kind"],
+                    obj["metadata"]["name"],
+                );
+            }
+        }
+
+        assert!(
+            !has(&objs, "ConfigMap", "search-identities"),
+            "search-identities ConfigMap must not be rendered (auth={auth:?}); got {:?}",
+            kinds(&objs)
+        );
+    }
+}
+
 /// #2475: the rendered PrometheusRule covers more than just the
 /// zero-ready-pods case — backup CronJob failure and pod crash-looping,
 /// scoped to this Lumen's namespace/name, are alerted on too.
@@ -619,7 +774,6 @@ fn prometheus_rule_covers_backup_failure_and_crash_looping() {
             "LumenReshardWorkflowStalled",
             "LumenPvcNearFull",
             "LumenStorageDegraded",
-            "LumenAuthRegistryReloadFailing",
             "LumenSlowQueries",
         ]
     );
@@ -712,13 +866,16 @@ fn prometheus_rule_covers_raft_reshard_pvc_and_auth_failure_modes() {
     assert!(pvc_expr.contains("namespace=\"acme\""));
     assert!(pvc_expr.contains("persistentvolumeclaim=~\"^raft-lumen-[0-9]+$\""));
 
-    let auth_reload_failing = rules
-        .iter()
-        .find(|r| r["alert"] == "LumenAuthRegistryReloadFailing")
-        .unwrap();
-    let auth_expr = auth_reload_failing["expr"].as_str().unwrap();
-    assert!(auth_expr.contains("lumen_auth_registry_reload_failures_total"));
-    assert!(auth_expr.contains("namespace=\"acme\""));
+    // #2871 retired the bearer/identity registry, so the counter
+    // `LumenAuthRegistryReloadFailing` read no longer exists. No alert may
+    // name it — an alert whose `expr` reads a series nothing publishes is a
+    // permanently-silent rule that reads like coverage.
+    assert!(
+        !serde_json::to_string(&rules)
+            .unwrap()
+            .contains("auth_registry_reload"),
+        "no rule may read a retired auth-registry series (#2871)"
+    );
 }
 
 /// #2519: the slow-query alert binds to `lumen_slow_queries_total`
@@ -776,101 +933,6 @@ fn prometheus_rule_covers_storage_degraded() {
     assert!(runbook.contains("LumenPvcNearFull"));
     assert!(runbook.contains("LumenReshardWorkflowStalled"));
     assert!(runbook.contains("LUMEN_STORAGE_FULL_REPROBE_SECS"));
-}
-
-#[test]
-fn prod_wires_auth_via_csi_secret_provider_class() {
-    let mut spec = prod_spec();
-    spec.tokens_secret = None;
-    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
-    let l = lumen("lumen", spec);
-    let objs = render(&l);
-
-    // auth=required + tokensSecretProviderClass (no tokensSecret) → registry
-    // file env + CSI volume mount, same mount path/readOnly as the Secret path.
-    let dep = find(&objs, "StatefulSet", "lumen");
-    let c = &dep["spec"]["template"]["spec"]["containers"][0];
-    let registry_env = c["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["name"] == "LUMEN_TOKEN_REGISTRY_FILE")
-        .expect("LUMEN_TOKEN_REGISTRY_FILE env");
-    assert_eq!(
-        registry_env["value"],
-        "/var/run/secrets/lumen/token-registry.json"
-    );
-    let registry_mount = c["volumeMounts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["name"] == "lumen-token-registry")
-        .expect("token registry mount");
-    assert_eq!(registry_mount["mountPath"], "/var/run/secrets/lumen");
-    assert_eq!(registry_mount["readOnly"], true);
-    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["name"] == "lumen-token-registry")
-        .expect("token registry volume");
-    assert!(
-        registry_volume["secret"].is_null(),
-        "CSI-sourced volume must not carry a secret key: {registry_volume}"
-    );
-    assert_eq!(registry_volume["csi"]["driver"], "secrets-store.csi.k8s.io");
-    assert_eq!(registry_volume["csi"]["readOnly"], true);
-    assert_eq!(
-        registry_volume["csi"]["volumeAttributes"]["secretProviderClass"],
-        "lumen-tokens-spc"
-    );
-}
-
-#[test]
-fn tokens_secret_csi_driver_overrides_the_default_csi_driver_name() {
-    let mut spec = prod_spec();
-    spec.tokens_secret = None;
-    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
-    spec.tokens_secret_csi_driver = Some("secrets-store-gke.csi.k8s.io".into());
-    let l = lumen("lumen", spec);
-    let objs = render(&l);
-
-    // GKE's managed Secrets Store add-on registers a different CSI driver
-    // name than the community default (#2456/#2457); an explicit
-    // `tokensSecretCsiDriver` must render that name on the pod volume.
-    let dep = find(&objs, "StatefulSet", "lumen");
-    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["name"] == "lumen-token-registry")
-        .expect("token registry volume");
-    assert_eq!(
-        registry_volume["csi"]["driver"],
-        "secrets-store-gke.csi.k8s.io"
-    );
-}
-
-#[test]
-fn tokens_secret_wins_over_provider_class_when_both_set() {
-    let mut spec = prod_spec();
-    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
-    let l = lumen("lumen", spec);
-    let objs = render(&l);
-
-    // Both set → tokensSecret wins (backward compatible); no csi key at all.
-    let dep = find(&objs, "StatefulSet", "lumen");
-    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["name"] == "lumen-token-registry")
-        .expect("token registry volume");
-    assert_eq!(registry_volume["secret"]["secretName"], "lumen-tokens");
-    assert!(
-        registry_volume["csi"].is_null(),
-        "tokensSecret must win when both fields are set: {registry_volume}"
-    );
 }
 
 #[test]
@@ -1177,21 +1239,25 @@ fn crd_yaml_emits_lumen_definition() {
         !yaml.contains("format: uint32") && !yaml.contains("format: uint64"),
         "Kubernetes OpenAPI does not recognize unsigned integer formats: {yaml}"
     );
+    for needle in ["shardMap", "reshardPolicy", "PrepareSplit"] {
+        assert!(
+            yaml.contains(needle),
+            "CRD should publish the reshard surface; missing `{needle}`: {yaml}"
+        );
+    }
+    // #2870: the CRD no longer teaches the retired registry. `tokensSecret` and
+    // `identities` survive as no-op fields until #2872 drops them from the
+    // schema, but their docs must not describe a mount the operator stopped
+    // rendering — that is the ambiguity phase 1 exists to remove.
     for needle in [
         "token-registry.json",
         "/var/run/secrets/lumen/token-registry.json",
         "LUMEN_TOKEN_REGISTRY_FILE",
-        "read|write|admin",
-        "shardMap",
-        "reshardPolicy",
-        "PrepareSplit",
-        "tokensSecretProviderClass",
-        "SecretProviderClass",
-        "secrets-store.csi.k8s.io",
+        "LUMEN_IDENTITY_REGISTRY_FILE",
     ] {
         assert!(
-            yaml.contains(needle),
-            "CRD should publish token registry shape in tokensSecret docs; missing `{needle}`: {yaml}"
+            !yaml.contains(needle),
+            "CRD must not publish the retired registry shape; found `{needle}`: {yaml}"
         );
     }
 }
@@ -1296,7 +1362,10 @@ fn the_crd_accepts_placement() {
     );
     let props = &placement["properties"];
     assert_eq!(props["nodeSelector"]["type"], "object");
-    assert_eq!(props["nodeSelector"]["additionalProperties"]["type"], "string");
+    assert_eq!(
+        props["nodeSelector"]["additionalProperties"]["type"],
+        "string"
+    );
     assert_eq!(props["tolerations"]["type"], "array");
     for field in ["key", "operator", "value", "effect", "tolerationSeconds"] {
         assert!(
@@ -1431,11 +1500,12 @@ fn backup_cronjob_wires_schedule_and_destination() {
     assert_eq!(owner["uid"], "uid-1234");
 }
 
+/// #2872 renamed this from `..._and_audiences_env`: the audience env var it
+/// checked for came from `spec.identityAudiences`, and both are gone. The
+/// CronJob now carries no credential env at all — asserted, because "no token
+/// is injected" is the whole security claim on this path.
 #[test]
-fn backup_cronjob_wires_retention_and_admin_token() {
-    // #808 R4: `retentionSecs` becomes `--retention-secs`, and
-    // `adminTokenSecret` becomes a `LUMEN_BACKUP_TOKEN` env var sourced from
-    // that Secret's `token` key.
+fn backup_cronjob_wires_retention_and_carries_no_credential_env() {
     let mut spec = dev_spec();
     spec.serving.backup = Some(lumen::operator::crd::ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {
@@ -1443,7 +1513,7 @@ fn backup_cronjob_wires_retention_and_admin_token() {
             destination: "file:///backups/lumen".into(),
             retention_secs: Some(604800),
         },
-        admin_token_secret: Some("lumen-backup-token".into()),
+        admin_token_secret: None,
     });
     let l = lumen("search", spec);
     let objs = render(&l);
@@ -1463,21 +1533,39 @@ fn backup_cronjob_wires_retention_and_admin_token() {
     );
 
     let env = env_names(c);
-    assert!(
-        env.contains(&"LUMEN_BACKUP_TOKEN".to_string()),
-        "missing LUMEN_BACKUP_TOKEN in {env:?}"
+    for retired in [
+        "BACKUP_TOKEN",
+        "LUMEN_AUTH_GOOGLE_AUDIENCES",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+    ] {
+        assert!(
+            !env.iter().any(|e| e.contains(retired)),
+            "CronJob should carry no `{retired}` env var: {env:?}"
+        );
+    }
+}
+
+#[test]
+fn service_account_annotations_pass_through_to_both_service_accounts() {
+    let mut spec = dev_spec();
+    spec.service_account_annotations.insert(
+        "iam.gke.io/gcp-service-account".to_string(),
+        "lumen-sa@project.iam.gserviceaccount.com".to_string(),
     );
-    let token_env = c["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["name"] == "LUMEN_BACKUP_TOKEN")
-        .unwrap();
+    let l = lumen("search", spec);
+    let objs = render(&l);
+
+    let sa = find(&objs, "ServiceAccount", "search");
     assert_eq!(
-        token_env["valueFrom"]["secretKeyRef"]["name"],
-        "lumen-backup-token"
+        sa["metadata"]["annotations"]["iam.gke.io/gcp-service-account"],
+        "lumen-sa@project.iam.gserviceaccount.com"
     );
-    assert_eq!(token_env["valueFrom"]["secretKeyRef"]["key"], "token");
+
+    let bsa = find(&objs, "ServiceAccount", "search-backup");
+    assert_eq!(
+        bsa["metadata"]["annotations"]["iam.gke.io/gcp-service-account"],
+        "lumen-sa@project.iam.gserviceaccount.com"
+    );
 }
 
 #[test]
@@ -1642,5 +1730,1100 @@ fn pruned_network_policy_name_matches_the_rendered_one() {
         );
         assert_eq!(Value::from(targets[0].kind), policy["kind"]);
     }
+}
+
+// ---- #2890: instance-scoped Raft peer identity -------------------------
+//
+// Raft on `:7374` carries committed index mutations between pods, and nothing
+// else on that port says who is dialing. These assert the two halves of what
+// the operator owes that port: the material reaches every member, and a
+// replicated instance that has none says so out loud instead of coming up
+// plaintext.
+
+/// A replicated instance — the only shape that owes a peer identity.
+fn replicated_spec(secret: Option<&str>) -> LumenSpec {
+    LumenSpec {
+        replicas_per_shard: 3,
+        voter_count: 3,
+        peer_tls_secret: secret.map(str::to_string),
+        ..prod_spec()
+    }
+}
+
+/// The pod template of the rendered serving StatefulSet.
+fn pod_spec(objs: &[Value]) -> Value {
+    find(objs, "StatefulSet", "search")["spec"]["template"]["spec"].clone()
+}
+
+fn env_value(container: &Value, name: &str) -> Option<String> {
+    container["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == name)
+        .map(|e| e["value"].as_str().unwrap().to_string())
+}
+
+/// AC1, the volume half: the Secret is projected read-only, with exactly the
+/// three keys the peer transport loads. `items` rather than a whole-Secret
+/// mount is the point — a fourth key added to the Secret later must not
+/// silently become part of what the container can read.
+#[test]
+fn peer_tls_secret_projects_exactly_its_three_keys_read_only() {
+    let objs = render(&lumen("search", replicated_spec(Some("search-peer-tls"))));
+    let pod = pod_spec(&objs);
+
+    let volume = pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| !v["secret"].is_null())
+        .unwrap_or_else(|| panic!("no Secret-backed volume in {pod:#}"));
+    assert_eq!(volume["secret"]["secretName"], "search-peer-tls");
+    let projected: Vec<&str> = volume["secret"]["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("peer TLS volume must project named items, got {volume:#}"))
+        .iter()
+        .map(|item| item["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        projected,
+        lumen::operator::render::PEER_TLS_KEYS.to_vec(),
+        "the projected keys must be exactly the peer transport's contract"
+    );
+
+    let mount = pod["containers"][0]["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == volume["name"])
+        .unwrap_or_else(|| panic!("the peer TLS volume is never mounted: {pod:#}"));
+    assert_eq!(
+        mount["readOnly"], true,
+        "peer identity is credential material, not state"
+    );
+    let mount_path = mount["mountPath"].as_str().unwrap();
+    assert!(
+        !mount_path.starts_with("/var/lib/lumen"),
+        "peer material must not land on the PVC that outlives the pod, got {mount_path}"
+    );
+}
+
+/// AC1, the env half: the four variables `PeerTlsConfig::from_env` reads, each
+/// pointing into the mount the same render produced. `LUMEN_PEER_MTLS=on` is
+/// what makes the listener *require* a client certificate rather than merely
+/// offer TLS, so it travels with the paths and never alone.
+#[test]
+fn peer_tls_secret_sets_the_four_peer_mtls_env_vars() {
+    let objs = render(&lumen("search", replicated_spec(Some("search-peer-tls"))));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+    let mount_path = container["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "lumen-peer-tls")
+        .unwrap()["mountPath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(
+        env_value(container, "LUMEN_PEER_MTLS").as_deref(),
+        Some("on")
+    );
+    for (var, key) in [
+        ("LUMEN_PEER_TLS_CERT", "tls.crt"),
+        ("LUMEN_PEER_TLS_KEY", "tls.key"),
+        ("LUMEN_PEER_TLS_CA", "ca.crt"),
+    ] {
+        assert_eq!(
+            env_value(container, var).as_deref(),
+            Some(format!("{mount_path}/{key}").as_str()),
+            "{var} must point at the projected {key}, got env {:?}",
+            env_names(container)
+        );
+    }
+}
+
+/// The converse: a single-replica instance runs no consensus link, so it gets
+/// neither the volume nor the env. Without this, "the field is optional" and
+/// "the field is ignored" would look the same.
+#[test]
+fn an_instance_without_peer_tls_secret_renders_no_peer_volume_or_env() {
+    let objs = render(&lumen("search", dev_spec()));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+
+    assert!(
+        pod["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["name"] != "lumen-peer-tls"),
+        "unexpected peer TLS volume: {pod:#}"
+    );
+    for var in [
+        "LUMEN_PEER_MTLS",
+        "LUMEN_PEER_TLS_CERT",
+        "LUMEN_PEER_TLS_KEY",
+        "LUMEN_PEER_TLS_CA",
+    ] {
+        assert!(
+            env_value(container, var).is_none(),
+            "unexpected {var} on a single-replica instance"
+        );
+    }
+}
+
+/// `ReadyFacts` reporting `count` ready pods for `name`'s StatefulSet.
+fn ready_facts(name: &str, count: i64) -> ReadyFacts {
+    let mut ready = std::collections::HashMap::new();
+    ready.insert(name.to_string(), count);
+    ReadyFacts { ready }
+}
+
+fn condition<'a>(facts: &'a [ConditionFact], type_: &str) -> &'a ConditionFact {
+    facts
+        .iter()
+        .find(|c| c.type_ == type_)
+        .unwrap_or_else(|| panic!("expected a `{type_}` condition, got: {facts:?}"))
+}
+
+/// AC2: every replica is up, so without the peer-identity verdict this CR would
+/// report `Ready=True` — a replicated group advertising itself as healthy while
+/// having no authenticated way to replicate. An unset `spec.peerTlsSecret` on a
+/// replicated CR reports `Ready=False/PeerIdentityNotConfigured` and
+/// `PeerIdentityReady=False/PeerTlsSecretNotNamed`, naming the field and the
+/// required keys.
+#[test]
+fn a_replicated_cr_with_no_peer_secret_named_is_not_ready_and_says_which_keys_it_needs() {
+    let l = lumen("search", replicated_spec(None));
+    let expected_msg = format!(
+        "replicasPerShard={} requires spec.peerTlsSecret naming a Secret with {}; \
+         replicated Raft traffic has no plaintext fallback",
+        l.spec.replicas_per_shard,
+        lumen::operator::render::PEER_TLS_KEYS.join(", ")
+    );
+    let context = serde_json::json!({
+        lumen::operator::reconcile::PEER_IDENTITY_CONTEXT_KEY: expected_msg,
+    });
+
+    // 6 shards x 3 replicas: every serving pod is up.
+    let facts = l.conditions(&ready_facts("search", 18), &context);
+
+    let ready = condition(&facts, "Ready");
+    assert_eq!(ready.status, ConditionStatus::False, "got: {facts:?}");
+    assert_eq!(ready.reason, "PeerIdentityNotConfigured");
+    assert!(
+        ready.message.contains("spec.peerTlsSecret"),
+        "the Ready message must name the spec field, got: {facts:?}"
+    );
+    for key in lumen::operator::render::PEER_TLS_KEYS {
+        assert!(
+            ready.message.contains(key),
+            "the Ready message must name required key {key}, got: {facts:?}"
+        );
+    }
+
+    let peer = condition(&facts, "PeerIdentityReady");
+    assert_eq!(peer.status, ConditionStatus::False);
+    assert_eq!(peer.reason, "PeerTlsSecretNotNamed");
+    assert!(
+        peer.message.contains("spec.peerTlsSecret"),
+        "the PeerIdentityReady message must name the spec field, got: {facts:?}"
+    );
+    for key in lumen::operator::render::PEER_TLS_KEYS {
+        assert!(
+            peer.message.contains(key),
+            "the PeerIdentityReady message must name required key {key}, got: {facts:?}"
+        );
+    }
+}
+
+/// The satisfied case, so the condition above is a verdict rather than a
+/// constant.
+#[test]
+fn a_replicated_cr_with_peer_material_leaves_readiness_to_the_workload() {
+    let l = lumen("search", replicated_spec(Some("search-peer-tls")));
+
+    let facts = l.conditions(&ready_facts("search", 18), &serde_json::json!({}));
+
+    let peer = condition(&facts, "PeerIdentityReady");
+    assert_eq!(peer.status, ConditionStatus::True);
+    assert_eq!(peer.reason, "PeerTlsSecretProjected");
+    assert_eq!(
+        condition(&facts, "Ready").status,
+        ConditionStatus::True,
+        "got: {facts:?}"
+    );
+}
+
+/// A single-replica instance reports `True` with a reason that says why —
+/// there is no peer to authenticate — rather than one implying material was
+/// found.
+#[test]
+fn a_single_replica_cr_owes_no_peer_identity() {
+    let l = lumen("search", dev_spec());
+
+    let facts = l.conditions(&ready_facts("search", 1), &serde_json::json!({}));
+
+    let peer = condition(&facts, "PeerIdentityReady");
+    assert_eq!(peer.status, ConditionStatus::True);
+    assert_eq!(peer.reason, "NoReplicatedPeers");
+}
+
+/// AC6 / R7: the shipped profiles. A replicated profile that stayed silent
+/// about `peerTlsSecret` would render a CR whose pods refuse to start, which is
+/// a rendering bug, not an operator mistake. `dev` is single-replica and
+/// deliberately excluded.
+#[test]
+fn replicated_instance_profiles_state_their_peer_tls_secret() {
+    for profile in ["staging", "prod", "template"] {
+        let rendered = run_lumen(&["k8s", "instance", "render", "--profile", profile]);
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.trim_start().starts_with("peerTlsSecret:")),
+            "profile `{profile}` renders no `peerTlsSecret:` line:\n{rendered}"
+        );
+    }
+    let dev = run_lumen(&["k8s", "instance", "render", "--profile", "dev"]);
+    assert!(
+        !dev.contains("peerTlsSecret"),
+        "the single-replica dev profile runs no consensus link:\n{dev}"
+    );
+}
+
+/// #3113 AC6: the same discipline one port over, for the opposite failure. An
+/// unstated `peerTlsSecret` fails closed — the pods refuse to start and name
+/// what is missing. An unstated `servingTlsSecret` fails *open*: the client
+/// port stays h2c and the profile serves KSA-bearing requests in cleartext
+/// while every readiness probe passes. `dev` is local-only and stays h2c on
+/// purpose.
+#[test]
+fn production_profiles_state_their_serving_tls_secret() {
+    for profile in ["staging", "prod", "template"] {
+        let rendered = run_lumen(&["k8s", "instance", "render", "--profile", profile]);
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.trim_start().starts_with("servingTlsSecret:")),
+            "profile `{profile}` renders no `servingTlsSecret:` line, so it serves \
+             cleartext without saying so:\n{rendered}"
+        );
+    }
+    let dev = run_lumen(&["k8s", "instance", "render", "--profile", "dev"]);
+    assert!(
+        !dev.contains("servingTlsSecret"),
+        "the dev profile is local-only and runs h2c:\n{dev}"
+    );
+
+    // A fleet's `defaults` is a whole LumenSpec, and it is what every tenant
+    // namespace inherits — silence there is cleartext multiplied by the number
+    // of app teams.
+    for profile in ["prod", "template"] {
+        let fleet = run_lumen(&["k8s", "fleet", "render", "--profile", profile]);
+        assert!(
+            fleet
+                .lines()
+                .any(|line| line.trim_start().starts_with("servingTlsSecret:")),
+            "fleet profile `{profile}` hands every tenant a cleartext default:\n{fleet}"
+        );
+    }
+}
+
+// ---- #3113: serving TLS on the private client Service ---------------------
+//
+// The client port carries the same request bodies the peer port carries index
+// mutations for, and until now it carried them in the clear. These assert the
+// four things the operator owes that port: the leaf reaches the pods, the
+// process is told to use it, the kubelet speaks the protocol the port now
+// speaks, and none of it touches the peer identity next door.
+
+/// An instance serving TLS. Built from `prod_spec` because AC1 is a statement
+/// about the production shape, not about a fixture.
+fn serving_tls_spec(secret: Option<&str>) -> LumenSpec {
+    LumenSpec {
+        serving_tls_secret: secret.map(str::to_string),
+        ..prod_spec()
+    }
+}
+
+/// R2/AC2, the volume half. Same `items` discipline as the peer Secret, and a
+/// separate mount path: two listeners reading one directory is how a
+/// misconfiguration ends up serving the peer identity to clients.
+#[test]
+fn serving_tls_secret_projects_exactly_its_three_keys_read_only() {
+    let objs = render(&lumen(
+        "search",
+        serving_tls_spec(Some("search-serving-tls")),
+    ));
+    let pod = pod_spec(&objs);
+
+    let volume = pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["secret"]["secretName"] == "search-serving-tls")
+        .unwrap_or_else(|| panic!("no serving TLS volume in {pod:#}"));
+    let projected: Vec<&str> = volume["secret"]["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("serving TLS volume must project named items, got {volume:#}"))
+        .iter()
+        .map(|item| item["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        projected,
+        lumen::operator::render::SERVING_TLS_KEYS.to_vec(),
+        "the projected keys must be exactly what the serving listener loads"
+    );
+
+    let mount = pod["containers"][0]["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == volume["name"])
+        .unwrap_or_else(|| panic!("the serving TLS volume is never mounted: {pod:#}"));
+    assert_eq!(mount["readOnly"], true);
+    let mount_path = mount["mountPath"].as_str().unwrap();
+    assert!(
+        !mount_path.starts_with("/var/lib/lumen"),
+        "serving material must not land on the PVC that outlives the pod, got {mount_path}"
+    );
+    assert_ne!(
+        mount_path, "/var/run/secrets/lumen-peer",
+        "the serving leaf and the peer leaf must not share a directory"
+    );
+}
+
+/// R1/AC2, the env half. `LUMEN_TLS=on` is what turns the port from h2c into a
+/// listener that refuses without material; the paths alone would leave it
+/// cleartext, so all four travel together.
+#[test]
+fn serving_tls_secret_sets_the_four_serving_tls_env_vars() {
+    let objs = render(&lumen(
+        "search",
+        serving_tls_spec(Some("search-serving-tls")),
+    ));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+    let mount_path = container["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "lumen-serving-tls")
+        .unwrap()["mountPath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(env_value(container, "LUMEN_TLS").as_deref(), Some("on"));
+    for (var, key) in [
+        ("LUMEN_TLS_CERT", "tls.crt"),
+        ("LUMEN_TLS_KEY", "tls.key"),
+        ("LUMEN_TLS_CA", "ca.crt"),
+    ] {
+        assert_eq!(
+            env_value(container, var).as_deref(),
+            Some(format!("{mount_path}/{key}").as_str()),
+            "{var} must point at the projected {key}, got env {:?}",
+            env_names(container)
+        );
+    }
+}
+
+/// R2/AC2: probes follow the port. A kubelet still speaking cleartext to a TLS
+/// listener reads every failed handshake as an unhealthy pod and restarts a
+/// container that was serving correctly — a readiness gate that fires *because*
+/// the certificate arrived.
+#[test]
+fn every_probe_speaks_the_scheme_the_client_port_speaks() {
+    for (spec, scheme) in [
+        (serving_tls_spec(Some("search-serving-tls")), "HTTPS"),
+        (serving_tls_spec(None), "HTTP"),
+    ] {
+        let objs = render(&lumen("search", spec));
+        let container = &pod_spec(&objs)["containers"][0];
+        for probe in ["readinessProbe", "livenessProbe", "startupProbe"] {
+            assert_eq!(
+                container[probe]["httpGet"]["scheme"], scheme,
+                "{probe} must speak {scheme}: {:#}",
+                container[probe]
+            );
+            assert_eq!(
+                container[probe]["httpGet"]["port"], "http",
+                "{probe} must stay on the client port"
+            );
+        }
+    }
+}
+
+/// The converse, and R3's separation read from the render: an instance with a
+/// peer identity and no serving certificate gets the peer volume and nothing
+/// else. Without this, "the field is optional" and "the field is ignored" look
+/// identical.
+#[test]
+fn a_peer_identity_alone_renders_no_serving_tls_volume_or_env() {
+    let objs = render(&lumen("search", replicated_spec(Some("search-peer-tls"))));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+
+    assert!(
+        pod["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["name"] == "lumen-peer-tls"),
+        "the peer volume must still be there: {pod:#}"
+    );
+    assert!(
+        pod["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["name"] != "lumen-serving-tls"),
+        "unexpected serving TLS volume: {pod:#}"
+    );
+    for var in [
+        "LUMEN_TLS",
+        "LUMEN_TLS_CERT",
+        "LUMEN_TLS_KEY",
+        "LUMEN_TLS_CA",
+    ] {
+        assert!(
+            env_value(container, var).is_none(),
+            "unexpected {var} without a serving certificate"
+        );
+    }
+}
+
+/// R3: both listeners armed, and armed from different Secrets. The two
+/// identities answer different questions — "I am the Service you dialed" and
+/// "I am a member of this Raft group" — and one Secret answering both would let
+/// either listener's material authenticate on the other's port.
+#[test]
+fn serving_and_peer_identities_never_share_material() {
+    let spec = LumenSpec {
+        serving_tls_secret: Some("search-serving-tls".into()),
+        ..replicated_spec(Some("search-peer-tls"))
+    };
+    let objs = render(&lumen("search", spec));
+    let pod = pod_spec(&objs);
+    let container = &pod["containers"][0];
+
+    let serving = env_value(container, "LUMEN_TLS_CERT").expect("serving cert path");
+    let peer = env_value(container, "LUMEN_PEER_TLS_CERT").expect("peer cert path");
+    assert_ne!(
+        serving, peer,
+        "the two listeners must not load the same certificate"
+    );
+    assert_eq!(
+        env_value(container, "LUMEN_PEER_MTLS").as_deref(),
+        Some("on")
+    );
+    let secrets: Vec<&str> = pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v["secret"]["secretName"].as_str())
+        .collect();
+    assert!(
+        secrets.contains(&"search-serving-tls") && secrets.contains(&"search-peer-tls"),
+        "both Secrets must be projected, got {secrets:?}"
+    );
+}
+
+/// AC1: the client Service stays a private ClusterIP. Serving TLS is what makes
+/// a public address *look* defensible, so this is the moment the render most
+/// needs to say it does not want one.
+#[test]
+fn serving_tls_never_renders_a_public_address() {
+    let objs = render(&lumen(
+        "search",
+        serving_tls_spec(Some("search-serving-tls")),
+    ));
+
+    let service = find(&objs, "Service", "search");
+    let service_type = service["spec"]["type"].as_str().unwrap_or("ClusterIP");
+    assert_eq!(
+        service_type, "ClusterIP",
+        "the client Service must stay private: {service:#}"
+    );
+    for kind in ["Ingress", "Gateway", "HTTPRoute"] {
+        assert!(
+            !objs.iter().any(|o| o["kind"] == kind),
+            "serving TLS terminates in the pod, not in a {kind}"
+        );
+    }
+}
+
+/// R4: the published anchor is a ConfigMap name, derived from the instance and
+/// not from the Secret. A caller sent to the serving Secret for `ca.crt` would
+/// hold the server's private key in order to verify the server.
+#[test]
+fn the_client_trust_bundle_is_named_apart_from_the_serving_secret() {
+    let l = lumen("search", serving_tls_spec(Some("search-serving-tls")));
+
+    let name = lumen::operator::render::client_trust_bundle_name(&l);
+
+    assert_eq!(name, "search-client-ca");
+    assert_ne!(name, "search-serving-tls");
+    assert_eq!(lumen::operator::render::CLIENT_TRUST_BUNDLE_KEY, "ca.crt");
+}
+
+/// R4: the published object is an owner-scoped ConfigMap holding the anchor and
+/// nothing else. Owner-scoped so it is collected with the instance rather than
+/// outliving it as a trust anchor for a fleet that no longer exists.
+#[test]
+fn the_published_client_trust_bundle_is_an_owned_configmap_of_the_anchor_alone() {
+    let l = lumen("search", serving_tls_spec(Some("search-serving-tls")));
+    let anchor = "-----BEGIN CERTIFICATE-----\nanchor\n-----END CERTIFICATE-----\n";
+
+    let cm = lumen::operator::render::client_trust_bundle(&l, anchor);
+
+    assert_eq!(cm["kind"], "ConfigMap");
+    assert_eq!(cm["metadata"]["name"], "search-client-ca");
+    assert_eq!(cm["data"]["ca.crt"], anchor);
+    assert_eq!(
+        cm["data"].as_object().map(|d| d.len()),
+        Some(1),
+        "the anchor is the only thing a verifying caller needs: {}",
+        cm["data"]
+    );
+    assert_eq!(
+        cm["metadata"]["ownerReferences"][0]["kind"], "Lumen",
+        "an anchor that outlives its instance certifies a fleet that is gone: {}",
+        cm["metadata"]
+    );
+}
+
+/// The instance renderer lives in the binary, not the library — the same reason
+/// `cli_convention.rs` shells out for it.
+fn run_lumen(args: &[&str]) -> String {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lumen"))
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("spawn lumen {args:?}: {e}"));
+    assert!(
+        output.status.success(),
+        "lumen {args:?} failed ({:?}):\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("lumen renders UTF-8")
+}
+
+#[test]
+fn checked_in_operator_deployment_manifest_carries_explicit_dev_issuer_block() {
+    let manifest = include_str!("../k8s/operator/deployment.yaml");
+    let val: serde_yaml::Value =
+        serde_yaml::from_str(manifest).expect("parse checked-in deployment.yaml");
+    let spec = &val["spec"]["template"]["spec"];
+    assert_eq!(spec["serviceAccountName"].as_str(), Some("lumen-operator"));
+    assert!(
+        spec.get("nodeSelector").is_none()
+            || spec["nodeSelector"]
+                .get("iam.gke.io/gke-metadata-server-enabled")
+                .is_none(),
+        "checked-in deployment manifest must omit GKE metadata server node selector"
+    );
+
+    let envs = spec["containers"][0]["env"]
+        .as_sequence()
+        .expect("containers[0].env sequence");
+    let env_counts: std::collections::HashMap<&str, usize> = envs
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .fold(std::collections::HashMap::new(), |mut acc, name| {
+            *acc.entry(name).or_insert(0) += 1;
+            acc
+        });
+
+    assert_eq!(env_counts.get("LUMEN_ISSUER"), Some(&1));
+    assert_eq!(env_counts.get("LUMEN_TRUST_DOMAIN"), Some(&1));
+    assert!(!env_counts.contains_key("LUMEN_CA_POOL"));
+    assert!(!env_counts.contains_key("LUMEN_WORKLOAD_IDENTITY_AUDIENCE"));
+    assert!(!env_counts.contains_key("LUMEN_PROJECTED_TOKEN_PATH"));
+
+    let env_map: std::collections::HashMap<&str, &str> = envs
+        .iter()
+        .filter_map(|e| {
+            let name = e["name"].as_str()?;
+            let value = e["value"].as_str()?;
+            Some((name, value))
+        })
+        .collect();
+    assert_eq!(env_map.get("LUMEN_ISSUER"), Some(&"ephemeral"));
+    assert_eq!(
+        env_map.get("LUMEN_TRUST_DOMAIN"),
+        Some(&"lumen-dev.svc.id.goog")
+    );
+}
+
+#[test]
+fn cas_issuer_configuration_resolves_to_cas_issuer_with_pool() {
+    use lumen::operator::certificate::{IssuerMode, RawIssuerConfig};
+
+    let pool_str = "projects/my-project/locations/us-central1/caPools/my-pool";
+    let raw = RawIssuerConfig {
+        mode: Some("cas".into()),
+        trust_domain: Some("lumen-prod.svc.id.goog".into()),
+        ca_pool: Some(pool_str.into()),
+    };
+    let config = raw.validate().expect("CAS configuration validates");
+    assert_eq!(config.mode, IssuerMode::Cas);
+    assert_eq!(config.ca_pool().as_ref().unwrap().resource(), pool_str);
+
+    let issuer = config.resolve_issuer().expect("resolve CAS issuer");
+    assert_eq!(issuer.id().as_str(), pool_str);
+
+    let yaml = run_lumen(&[
+        "k8s",
+        "operator",
+        "render",
+        "--issuer",
+        "cas",
+        "--trust-domain",
+        "lumen-prod.svc.id.goog",
+        "--ca-pool",
+        pool_str,
+    ]);
+
+    // Structural YAML assertions for CAS mode Deployment
+    let mut found_deployment = false;
+    for doc in yaml.split("\n---") {
+        if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(doc) {
+            if val.get("kind").and_then(|k| k.as_str()) == Some("Deployment") {
+                let spec = &val["spec"]["template"]["spec"];
+                assert_eq!(spec["serviceAccountName"].as_str(), Some("lumen-operator"));
+                assert_eq!(
+                    spec["nodeSelector"]["iam.gke.io/gke-metadata-server-enabled"].as_str(),
+                    Some("true")
+                );
+                let envs = spec["containers"][0]["env"]
+                    .as_sequence()
+                    .expect("env sequence");
+
+                let env_counts: std::collections::HashMap<&str, usize> = envs
+                    .iter()
+                    .filter_map(|e| e["name"].as_str())
+                    .fold(std::collections::HashMap::new(), |mut acc, name| {
+                        *acc.entry(name).or_insert(0) += 1;
+                        acc
+                    });
+                assert_eq!(
+                    env_counts.get("LUMEN_ISSUER"),
+                    Some(&1),
+                    "LUMEN_ISSUER count"
+                );
+                assert_eq!(
+                    env_counts.get("LUMEN_TRUST_DOMAIN"),
+                    Some(&1),
+                    "LUMEN_TRUST_DOMAIN count"
+                );
+                assert_eq!(
+                    env_counts.get("LUMEN_CA_POOL"),
+                    Some(&1),
+                    "LUMEN_CA_POOL count"
+                );
+                assert!(!env_counts.contains_key("LUMEN_WORKLOAD_IDENTITY_AUDIENCE"));
+                assert!(!env_counts.contains_key("LUMEN_PROJECTED_TOKEN_PATH"));
+
+                let env_map: std::collections::HashMap<&str, &str> = envs
+                    .iter()
+                    .filter_map(|e| {
+                        let name = e["name"].as_str()?;
+                        let value = e["value"].as_str()?;
+                        Some((name, value))
+                    })
+                    .collect();
+                assert_eq!(env_map.get("LUMEN_ISSUER"), Some(&"cas"));
+                assert_eq!(
+                    env_map.get("LUMEN_TRUST_DOMAIN"),
+                    Some(&"lumen-prod.svc.id.goog")
+                );
+                assert_eq!(env_map.get("LUMEN_CA_POOL"), Some(&pool_str));
+                found_deployment = true;
+            }
+        }
+    }
+    assert!(
+        found_deployment,
+        "found Deployment manifest doc in CAS render output"
+    );
+
+    // Raw negative controls
+    assert!(!yaml.contains("LUMEN_WORKLOAD_IDENTITY_AUDIENCE"));
+    assert!(!yaml.contains("LUMEN_PROJECTED_TOKEN_PATH"));
+    assert!(!yaml.contains("gcp-ksa-token"));
+    assert!(!yaml.contains("iam.gke.io/gcp-service-account"));
+    assert!(!yaml.contains("secretName:"));
+}
+
+#[test]
+fn ephemeral_issuer_configuration_resolves_to_ephemeral_issuer_and_requires_no_gcp_surface() {
+    use lumen::operator::certificate::{IssuerMode, RawIssuerConfig};
+
+    let raw = RawIssuerConfig {
+        mode: Some("ephemeral".into()),
+        trust_domain: Some("lumen-dev.svc.id.goog".into()),
+        ca_pool: None,
+    };
+    let config = raw.validate().expect("ephemeral configuration validates");
+    assert_eq!(config.mode, IssuerMode::Ephemeral);
+
+    let issuer = config.resolve_issuer().expect("resolve ephemeral issuer");
+    assert_eq!(issuer.id().as_str(), "ephemeral-operator-issuer");
+
+    let yaml = run_lumen(&[
+        "k8s",
+        "operator",
+        "render",
+        "--issuer",
+        "ephemeral",
+        "--trust-domain",
+        "lumen-dev.svc.id.goog",
+    ]);
+
+    // Structural YAML assertions for Ephemeral mode Deployment
+    let mut found_deployment = false;
+    for doc in yaml.split("\n---") {
+        if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(doc) {
+            if val.get("kind").and_then(|k| k.as_str()) == Some("Deployment") {
+                let spec = &val["spec"]["template"]["spec"];
+                assert_eq!(spec["serviceAccountName"].as_str(), Some("lumen-operator"));
+                assert!(
+                    spec.get("nodeSelector").is_none()
+                        || spec["nodeSelector"]
+                            .get("iam.gke.io/gke-metadata-server-enabled")
+                            .is_none()
+                );
+                let envs = spec["containers"][0]["env"]
+                    .as_sequence()
+                    .expect("env sequence");
+
+                let env_counts: std::collections::HashMap<&str, usize> = envs
+                    .iter()
+                    .filter_map(|e| e["name"].as_str())
+                    .fold(std::collections::HashMap::new(), |mut acc, name| {
+                        *acc.entry(name).or_insert(0) += 1;
+                        acc
+                    });
+                assert_eq!(
+                    env_counts.get("LUMEN_ISSUER"),
+                    Some(&1),
+                    "LUMEN_ISSUER count"
+                );
+                assert_eq!(
+                    env_counts.get("LUMEN_TRUST_DOMAIN"),
+                    Some(&1),
+                    "LUMEN_TRUST_DOMAIN count"
+                );
+                assert!(!env_counts.contains_key("LUMEN_CA_POOL"));
+                assert!(!env_counts.contains_key("LUMEN_WORKLOAD_IDENTITY_AUDIENCE"));
+                assert!(!env_counts.contains_key("LUMEN_PROJECTED_TOKEN_PATH"));
+
+                let env_map: std::collections::HashMap<&str, &str> = envs
+                    .iter()
+                    .filter_map(|e| {
+                        let name = e["name"].as_str()?;
+                        let value = e["value"].as_str()?;
+                        Some((name, value))
+                    })
+                    .collect();
+                assert_eq!(env_map.get("LUMEN_ISSUER"), Some(&"ephemeral"));
+                assert_eq!(
+                    env_map.get("LUMEN_TRUST_DOMAIN"),
+                    Some(&"lumen-dev.svc.id.goog")
+                );
+                found_deployment = true;
+            }
+        }
+    }
+    assert!(
+        found_deployment,
+        "found Deployment manifest doc in Ephemeral render output"
+    );
+
+    // Raw negative controls
+    assert!(!yaml.contains("iam.gke.io/gke-metadata-server-enabled"));
+    assert!(!yaml.contains("gcp-ksa-token"));
+    assert!(!yaml.contains("LUMEN_CA_POOL"));
+    assert!(!yaml.contains("iam.gke.io/gcp-service-account"));
+}
+
+#[test]
+fn invalid_issuer_configurations_fail_closed_with_actionable_messages() {
+    let check_fail = |args: &[&str], expected_err: &str| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_lumen"))
+            .args(args)
+            .output()
+            .expect("spawn lumen command");
+        assert!(
+            !output.status.success(),
+            "command unexpectedly succeeded for args {:?}",
+            args
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_err),
+            "expected stderr to contain {:?}, got:\n{}",
+            expected_err,
+            stderr
+        );
+    };
+
+    // Unset mode on run
+    check_fail(&["k8s", "operator", "run"], "missing issuer mode");
+
+    // Unset mode on render
+    check_fail(&["k8s", "operator", "render"], "missing issuer mode");
+
+    // Unset mode with trust domain on render
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog",
+        ],
+        "missing issuer mode",
+    );
+
+    // Unset mode with ca pool on render
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--ca-pool",
+            "projects/p/locations/l/caPools/n",
+        ],
+        "missing issuer mode",
+    );
+
+    // Unrecognized mode
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "selfsigned",
+            "--trust-domain",
+            "td",
+        ],
+        "unrecognized issuer mode 'selfsigned'",
+    );
+
+    // Missing trust domain
+    check_fail(
+        &["k8s", "operator", "render", "--issuer", "ephemeral"],
+        "trust_domain is required",
+    );
+
+    // Ephemeral mode with CAS pool
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "td",
+            "--ca-pool",
+            "projects/p/locations/l/caPools/n",
+        ],
+        "CAS-only field 'ca_pool' is forbidden in ephemeral mode",
+    );
+
+    // CAS mode with malformed pool
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "cas",
+            "--trust-domain",
+            "td",
+            "--ca-pool",
+            "invalid-pool-name",
+        ],
+        "invalid ca_pool resource",
+    );
+}
+
+#[test]
+fn rendered_operator_identity_carries_exact_ksa_binding_and_no_crd_issuer_field() {
+    let yaml = run_lumen(&[
+        "k8s",
+        "operator",
+        "render",
+        "--namespace",
+        "custom-system",
+        "--issuer",
+        "ephemeral",
+        "--trust-domain",
+        "lumen-dev.svc.id.goog",
+    ]);
+
+    assert!(yaml.contains("serviceAccountName: lumen-operator"));
+    assert!(yaml.contains("namespace: custom-system"));
+    assert!(!yaml.contains("iam.gke.io/gke-metadata-server-enabled"));
+    assert!(!yaml.contains("iam.gke.io/gcp-service-account"));
+    assert!(!yaml.contains("kind: Secret"));
+
+    // Terraform module grants certificate_controller = { namespace, service_account }
+    // defined in iam.tf
+    let tf_iam_doc = include_str!("../terraform/modules/lumen-pki/iam.tf");
+    assert!(
+        tf_iam_doc.contains("/subject/ns/${var.certificate_controller.namespace}"),
+        "Terraform iam.tf must specify controller namespace subject fragment"
+    );
+    assert!(
+        tf_iam_doc.contains("/sa/${var.certificate_controller.service_account}"),
+        "Terraform iam.tf must specify controller service_account subject fragment"
+    );
+    assert!(
+        tf_iam_doc.contains("roles/privateca.certificateRequester"),
+        "Terraform iam.tf must grant privateca.certificateRequester role"
+    );
+    assert!(
+        tf_iam_doc.contains("roles/privateca.auditor"),
+        "Terraform iam.tf must grant privateca.auditor role"
+    );
+
+    let crd_yaml = lumen::operator::crd_yaml();
+    assert!(!crd_yaml.contains("issuer:"));
+    assert!(!crd_yaml.contains("caPool:"));
+}
+
+#[test]
+fn injection_payloads_and_unsafe_ca_pools_are_rejected_before_yaml_emission() {
+    let check_fail = |args: &[&str], expected_err: &str| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_lumen"))
+            .args(args)
+            .output()
+            .expect("spawn lumen command");
+        assert!(
+            !output.status.success(),
+            "command unexpectedly succeeded for args {:?}",
+            args
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_err),
+            "expected stderr to contain {:?}, got:\n{}",
+            expected_err,
+            stderr
+        );
+    };
+
+    // Uppercase trust domain
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "LUMEN-PROD",
+        ],
+        "invalid trust_domain",
+    );
+
+    // Trust domain with newline injection
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog\nvalue: inject",
+        ],
+        "invalid trust_domain",
+    );
+
+    // CA pool with newline injection
+    check_fail(
+        &[
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "cas",
+            "--trust-domain",
+            "td",
+            "--ca-pool",
+            "projects/p/locations/l/caPools/n\nvalue: inject",
+        ],
+        "invalid ca_pool resource",
+    );
+}
+
+#[test]
+fn instance_rendered_profiles_include_mode_specific_operator_prerequisite_comments_and_no_cr_issuer_fields(
+) {
+    let dev_yaml = run_lumen(&["k8s", "instance", "render", "--profile", "dev"]);
+    assert!(
+        dev_yaml.contains("# Operator prerequisite: run `lumen k8s operator render --issuer ephemeral --trust-domain lumen-dev.svc.id.goog`"),
+        "dev profile must point to explicit ephemeral operator setup"
+    );
+    assert!(
+        dev_yaml.contains("# Issuer selection is operator-scoped; this custom resource carries no issuer or CA pool fields."),
+        "dev profile must state operator scope"
+    );
+    assert!(!dev_yaml.contains("issuer:"));
+    assert!(!dev_yaml.contains("caPool:"));
+
+    let staging_yaml = run_lumen(&["k8s", "instance", "render", "--profile", "staging"]);
+    assert!(
+        staging_yaml
+            .contains("# Operator prerequisite: run `lumen k8s operator render --issuer cas"),
+        "staging profile must point to explicit cas operator setup"
+    );
+    assert!(
+        staging_yaml.contains("module.lumen_pki.issuing_ca_pool_id"),
+        "staging profile must reference Terraform issuing_ca_pool_id output"
+    );
+    assert!(
+        staging_yaml.contains("module.lumen_pki.trust_domain"),
+        "staging profile must reference Terraform trust_domain output"
+    );
+    assert!(!staging_yaml.contains("issuer:"));
+    assert!(!staging_yaml.contains("caPool:"));
+
+    let prod_yaml = run_lumen(&["k8s", "instance", "render", "--profile", "prod"]);
+    assert!(
+        prod_yaml.contains("# Operator prerequisite: run `lumen k8s operator render --issuer cas"),
+        "prod profile must point to explicit cas operator setup"
+    );
+    assert!(
+        prod_yaml.contains("module.lumen_pki.issuing_ca_pool_id"),
+        "prod profile must reference Terraform issuing_ca_pool_id output"
+    );
+    assert!(
+        prod_yaml.contains("module.lumen_pki.trust_domain"),
+        "prod profile must reference Terraform trust_domain output"
+    );
+    assert!(!prod_yaml.contains("issuer:"));
+    assert!(!prod_yaml.contains("caPool:"));
+
+    let template_yaml = run_lumen(&["k8s", "instance", "render", "--profile", "template"]);
+    assert!(
+        template_yaml.contains(
+            "# Operator prerequisite: REPLACE_ME__OPERATOR_PREREQUISITE: `lumen k8s operator render --issuer cas|ephemeral ...`"
+        ),
+        "template profile must expose clear replace-me operator prerequisite comment"
+    );
+    assert!(!template_yaml.contains("issuer:"));
+    assert!(!template_yaml.contains("caPool:"));
 }
 // CODEGEN-END

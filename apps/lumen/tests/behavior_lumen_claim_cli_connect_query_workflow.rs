@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-cli-connect-query-workflow
-// @capability cli-interface
-// @claim lumen-connect-query-k8s-agent-workflow
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract cli-connect-query-workflow
 // @category behavior
 // @required_for_production true

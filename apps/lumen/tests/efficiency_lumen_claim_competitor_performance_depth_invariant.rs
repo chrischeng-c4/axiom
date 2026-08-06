@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-competitor-performance-depth-invariant
-// @capability competitor-performance
-// @claim depth-invariant-filter-sort-pagination
+// @capability querying
+// @claim query-quality
 // @contract competitor-performance-depth-invariant
 // @category efficiency
 // @required_for_production true

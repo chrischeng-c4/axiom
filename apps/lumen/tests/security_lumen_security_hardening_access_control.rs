@@ -3,14 +3,14 @@
 // AW-EC-BEGIN
 // @ec lumen-security-hardening-access-control
 // @capability security-hardening
-// @claim role-based-authz-matrix-per-route
+// @claim kubernetes-native-request-identity-and-authorization
 // @contract search-security-rbac-and-limit
 // @category security
 // @required_for_production true
 // @command cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: FILTERING: search over a collection the token cannot read returns 403; results never leak rows outside the caller's RBAC scope.
+// Contract: FILTERING: under LUMEN_AUTH=required a search over any collection is refused with 401 and returns no rows, so no result reaches an unidentified caller. (#2871 removed the 403 read-scope column; it returns with SubjectAccessReview.)
 // Contract: PAGINATION: bulk/index requests over MAX_INDEX_ITEMS return 413; result pages are bounded (cursor), not unbounded.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]

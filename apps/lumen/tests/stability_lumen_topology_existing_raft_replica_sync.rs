@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-topology-existing-raft-replica-sync
-// @capability replica-sync-bootstrap
-// @claim raft-log-replica-sync-existing-pvc
+// @capability durability-recovery
+// @claim wal-checkpoint-and-raft-recovery
 // @contract topology-existing-raft-replica-sync
 // @category stability
 // @required_for_production true

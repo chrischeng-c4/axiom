@@ -28,7 +28,7 @@ spec:
 
 ---
 # Production: 6 shards x 3 replicas per shard, Lumen-owned raft WAL,
-# bearer-token auth (token registry from Secret key `token-registry.json`),
+# Kubernetes-native request identity (no credential field to set),
 # json logs, and Prometheus ServiceMonitor + alerts.
 apiVersion: lumen.dev/v1alpha1
 kind: Lumen
@@ -43,11 +43,12 @@ spec:
   voterCount: 3
   logFormat: json
   logLevel: warn
+  # `required` names no credential source, because the CR configures none
+  # (#2872): callers present a short-lived audience-bound ServiceAccount token
+  # and lumen resolves them through the cluster's TokenReview and
+  # SubjectAccessReview. A CR that still set `tokensSecret`, `identities` or
+  # `identityAudiences` is rejected by the API server, not silently ignored.
   auth: required
-  tokensSecret: lumen-tokens
-  # tokensSecretProviderClass: lumen-tokens-spc  # CSI alternative to tokensSecret.
-  # Exactly one of the two: the CRD's CEL rule rejects a CR that sets both, so a
-  # half-finished migration fails at `kubectl apply` instead of at runtime.
   serving:
     autoscaling:
       minReplicas: 6

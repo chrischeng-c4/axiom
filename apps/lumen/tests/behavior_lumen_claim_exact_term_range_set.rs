@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-exact-term-range-set
-// @capability exact-filter-search
-// @claim term-range-set-early-termination
+// @capability querying
+// @claim lexical-and-structured-query
 // @contract exact-term-range-set
 // @category behavior
 // @required_for_production true

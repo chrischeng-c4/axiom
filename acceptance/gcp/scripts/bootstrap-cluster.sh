@@ -12,17 +12,6 @@ NODE_SERVICE_ACCOUNT_ID="${NODE_SERVICE_ACCOUNT_ID:-axiom-operator-acceptance-no
 
 if cluster_json="$(gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json 2>/dev/null)"; then
-  # Reuse never re-applies terraform, so a long-lived cluster silently drifts
-  # from cluster/main.tf. The add-on below is the drift that already cost us:
-  # it was enabled by hand, the cluster was recreated without it, and the #2457
-  # auth+CSI leg degraded to `skipped_no_addon` FORTY MINUTES into a paid run
-  # instead of failing in the first ten seconds. Report it here, on stderr —
-  # stdout is the cluster name and nothing else — where it is still cheap.
-  if [[ "$(jq -r '.secretManagerConfig.enabled // false' <<<"$cluster_json")" != "true" ]]; then
-    echo "WARNING: $PERSISTENT_CLUSTER_NAME has no GKE Secret Manager add-on; the #2457 auth+CSI leg will skip." >&2
-    echo "  enable it in place (no recreation, ~2 min):" >&2
-    echo "  gcloud container clusters update $PERSISTENT_CLUSTER_NAME --project=$PROJECT_ID --zone=$GKE_ZONE --enable-secret-manager" >&2
-  fi
   # Same drift class, same cheap place. The dedicated data-plane pool is what
   # gives `spec.placement` a real pool boundary to be proven against; without it
   # the placement leg hard-fails, but only after the legs before it have already

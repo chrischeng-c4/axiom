@@ -48,14 +48,18 @@ rules:
     resources: ["deployments", "statefulsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Serving Service/ConfigMap/ServiceAccount plus the dedicated backup
-  # ServiceAccount. Secret reads are required by the reshard driver to resolve
-  # the admin token registry; the operator never creates or mutates Secrets.
+  # ServiceAccount.
+  #
+  # No Secret grant, deliberately (#2877). The reshard driver used to read one
+  # to resolve the admin token registry; it now presents its own projected
+  # ServiceAccount token, which the kubelet mounts and rotates without the
+  # operator ever holding a Secret-shaped credential. A cluster-wide
+  # `secrets: get` on a controller that watches every namespace is the single
+  # most valuable grant in this file to an attacker who reaches the operator,
+  # and nothing here needs it any more.
   - apiGroups: [""]
     resources: ["services", "configmaps", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get"]
   # Optional scheduled object-storage backups are rendered as CronJobs.
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
@@ -88,6 +92,23 @@ rules:
   - apiGroups: ["events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
+  # The per-instance `system:auth-delegator` binding that lets a serving pod
+  # ask the apiserver to review its callers (#2876). `delete` is not optional
+  # here: the binding is cluster-scoped, so it cannot carry an owner reference
+  # back to a namespaced Lumen, and the sweep loop is the only thing that
+  # removes it when the CR goes away.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # RBAC refuses to let a subject hand out permissions it does not itself hold
+  # (escalation prevention). `bind` on exactly this one ClusterRole is the
+  # narrow alternative to giving the operator the delegated-review powers it is
+  # granting away; `resourceNames` keeps it from binding anything else —
+  # notably not `cluster-admin`.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["system:auth-delegator"]
+    verbs: ["bind"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-vector-filtered-knn
-// @capability vector-hash-search
-// @claim filtered-knn-no-recall-collapse
+// @capability querying
+// @claim semantic-and-similarity-query
 // @contract vector-filtered-knn
 // @category behavior
 // @required_for_production true

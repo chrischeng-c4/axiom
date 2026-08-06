@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-search-core-planner
-// @capability search-core
-// @claim query-planner-boolean-eval-roaring-postings
+// @capability querying
+// @claim lexical-and-structured-query
 // @contract search-core-planner
 // @category behavior
 // @required_for_production true

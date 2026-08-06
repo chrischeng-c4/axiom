@@ -25,7 +25,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release -p lumen --bin lumen --features "otel operator raft-wal jieba" \
+    cargo build --release -p lumen --bin lumen --features "otel operator raft-wal jieba delegated-auth" \
  && cp target/release/lumen /usr/local/bin/
 
 # distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching

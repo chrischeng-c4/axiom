@@ -3,15 +3,15 @@
 // AW-EC-BEGIN
 // @ec lumen-security-hardening-auth-bearer-rbac
 // @capability security-hardening
-// @claim bearer-token-auth-lumen-auth
+// @claim kubernetes-native-request-identity-and-authorization
 // @contract bearer-token-auth-lumen-auth
 // @category security
 // @required_for_production true
 // @command cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens.
-// Contract: Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin).
+// Contract: Under LUMEN_AUTH=required both a missing credential and an unresolvable one are rejected with 401, and the process refuses to start instead of serving an open API. (#2871 retired the bearer registry, so there is no valid token to accept until TokenReview lands.)
+// Contract: The authz matrix covers every API route from both sides - open server answers, required-auth server returns 401 - so route coverage cannot be faked by a route that no longer exists. (#2871 removed the read/write/admin dimension; it returns with SubjectAccessReview.)
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_security_hardening_auth_bearer_rbac() {

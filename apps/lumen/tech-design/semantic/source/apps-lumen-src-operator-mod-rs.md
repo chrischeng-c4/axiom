@@ -20,23 +20,28 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `crd` | apps/lumen/src/operator/mod.rs | module | pub | 15 |  |
-| `crd_yaml` | apps/lumen/src/operator/mod.rs | function | pub | 40 | crd_yaml() -> String |
-| `lease` | apps/lumen/src/operator/mod.rs | module | pub | 16 |  |
-| `reconcile` | apps/lumen/src/operator/mod.rs | module | pub | 17 |  |
-| `render` | apps/lumen/src/operator/mod.rs | module | pub | 18 |  |
-| `reshard_driver` | apps/lumen/src/operator/mod.rs | module | pub | 19 |  |
-| `resize` | apps/lumen/src/operator/mod.rs | module | pub | 20 |  |
+| `certificate` | apps/lumen/src/operator/mod.rs | module | pub | 15 |  |
+| `crd` | apps/lumen/src/operator/mod.rs | module | pub | 16 |  |
+| `crd_yaml` | apps/lumen/src/operator/mod.rs | function | pub | 55 | crd_yaml() -> String |
+| `fleet` | apps/lumen/src/operator/mod.rs | module | pub | 17 |  |
+| `lease` | apps/lumen/src/operator/mod.rs | module | pub | 18 |  |
+| `reconcile` | apps/lumen/src/operator/mod.rs | module | pub | 19 |  |
+| `render` | apps/lumen/src/operator/mod.rs | module | pub | 20 |  |
+| `reshard_driver` | apps/lumen/src/operator/mod.rs | module | pub | 21 |  |
+| `resize` | apps/lumen/src/operator/mod.rs | module | pub | 22 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-```rust
+````rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
-//! loop ([`reconcile`]) that renders ([`render`]) and applies the serving
-//! data-plane. Behind the `operator` feature so the serving image never links
-//! kube-rs.
+//! K8s Operator for lumen: pure issuer configuration grammar ([`issuer_config`]),
+//! a `Lumen` custom resource ([`crd`]), plus a reconcile loop ([`reconcile`])
+//! that renders ([`render`]) and applies the serving data-plane.
+//!
+//! [`issuer_config`] compiles unconditionally so offline render commands can
+//! validate issuer choices; kube-rs CRD, reconcile, render, and runtime modules
+//! remain behind the `operator` feature so the serving binary never links kube-rs.
 //!
 //! ```text
 //! Lumen (lumen.dev/v1alpha1)  --reconcile-->  ServiceAccount, ConfigMap,
@@ -45,39 +50,52 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 
+pub mod issuer_config;
+pub use issuer_config::{IssuerConfigError, IssuerMode, OperatorIssuerConfig, RawIssuerConfig};
+
+#[cfg(feature = "operator")]
+pub mod certificate;
+#[cfg(feature = "operator")]
 pub mod crd;
+#[cfg(feature = "operator")]
 pub mod fleet;
+#[cfg(feature = "operator")]
 pub mod lease;
+#[cfg(feature = "operator")]
 pub mod reconcile;
+#[cfg(feature = "operator")]
 pub mod render;
+#[cfg(feature = "operator")]
 pub mod reshard_driver;
+#[cfg(feature = "operator")]
 pub mod resize;
 
+#[cfg(feature = "operator")]
 pub use crd::{Lumen, LumenSpec, LumenStatus};
+#[cfg(feature = "operator")]
 pub use fleet::{LumenFleet, LumenFleetSpec, LumenFleetStatus};
+#[cfg(feature = "operator")]
 pub use reconcile::run;
 
-/// The CEL rule enforcing that a `Lumen` names at most one token source
-/// (#2678, R7).
+/// The CEL operator no CRD rule here may use, kept as a written rule because
+/// its absence is not self-evident from the schema (#2764, #2872).
 ///
-/// Presence tests only. Both fields render as `nullable: true`, which reads
-/// like it needs an explicit `!= null` guard — it does not, and adding one
-/// breaks the CRD outright. Kubernetes types a nullable string as plain
-/// `string`, so `self.tokensSecret != null` fails CEL compilation at the API
-/// server ("found no matching overload for '_!=_' applied to '(string,
-/// null)'"), and every local test still passes because they assert on YAML
-/// text, never on the compiled expression. The guard is also unnecessary:
-/// Kubernetes prunes an explicitly-null field before CEL runs, so `has()`
-/// already reports it absent. Verified against a live API server — with this
-/// rule shape, `{tokensSecret: "x", tokensSecretProviderClass: null}` is
-/// accepted and naming both is rejected.
-const ONE_TOKEN_SOURCE_RULE: &str =
-    "!(has(self.tokensSecret) && has(self.tokensSecretProviderClass))";
-
-const ONE_TOKEN_SOURCE_MESSAGE: &str =
-    "set at most one of spec.tokensSecret (a Kubernetes Secret) or \
-     spec.tokensSecretProviderClass (a Secret Manager CSI projection); with both set there is no \
-     way to tell which registry is actually being served";
+/// A field rendered `nullable: true` reads like it needs an explicit
+/// `!= null` guard. It does not, and adding one breaks the CRD outright:
+/// Kubernetes types a nullable string as plain `string`, so `!= null` fails CEL
+/// compilation at the API server ("found no matching overload for '_!=_'
+/// applied to '(string, null)'") — while every local test still passes, because
+/// they assert on YAML text and never on the compiled expression. The guard is
+/// also unnecessary: Kubernetes prunes an explicitly-null field before CEL runs,
+/// so `has()` already reports it absent. Presence tests plus `size()`, nothing
+/// else.
+///
+/// Test-only because there is no rule left to apply it to. It stays at module
+/// scope, next to [`lumen_crd_yaml`], so the next author to add one reads the
+/// rule before writing the expression rather than after the cluster rejects it.
+#[cfg(test)]
+#[cfg(feature = "operator")]
+const FORBIDDEN_CEL_OPERATOR: &str = "!= null";
 
 /// Every CustomResourceDefinition this operator owns, as one multi-document
 /// YAML: the namespaced `Lumen` data plane, then the cluster-scoped
@@ -87,49 +105,52 @@ const ONE_TOKEN_SOURCE_MESSAGE: &str =
 /// installable: a fleet whose `Lumen` CRD is absent applies cleanly and then
 /// fails every instance, which is a worse failure than not installing.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#source
+#[cfg(feature = "operator")]
 pub fn crd_yaml() -> String {
     format!("{}---\n{}", lumen_crd_yaml(), fleet::fleet_crd_yaml())
 }
 
 /// The `Lumen` CustomResourceDefinition as YAML, for `kubectl apply`.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#source
+#[cfg(feature = "operator")]
 pub fn lumen_crd_yaml() -> String {
     use kube::CustomResourceExt;
     let mut crd = serde_json::to_value(crd::Lumen::crd()).expect("CRD serializes to JSON");
     service_k8s::crd::normalize_unsigned_integer_formats(&mut crd);
-    let attached = service_k8s::crd::add_spec_validation_rule(
-        &mut crd,
-        ONE_TOKEN_SOURCE_RULE,
-        ONE_TOKEN_SOURCE_MESSAGE,
-    );
-    assert!(
-        attached > 0,
-        "the one-token-source rule must reach the spec schema; the generated CRD changed shape"
-    );
     serde_yaml::to_string(&crd).expect("CRD serializes")
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "operator"))]
 mod tests {
     use super::*;
 
-    /// R7/AC8's schema half: the mutual exclusion is in the CRD an operator
-    /// applies, so the rejection happens at `kubectl apply` rather than in a
-    /// controller log nobody is reading.
+    /// #2872 AC3. The identity-audience rule was the only CEL rule this CRD
+    /// carried, and it guarded a field that no longer exists — so the check
+    /// that survives is the one on the *shape* of any rule added later.
+    ///
+    /// `!= null` cannot be caught by asserting on rendered YAML text (see
+    /// [`FORBIDDEN_CEL_OPERATOR`]); it only fails at the API server. This test
+    /// is the local half. `kubectl apply --dry-run=server` is the other.
     #[test]
-    fn the_crd_rejects_naming_both_token_sources() {
+    fn no_surviving_cel_rule_names_a_retired_field_or_uses_a_forbidden_operator() {
         let yaml = crd_yaml();
-        assert!(yaml.contains("x-kubernetes-validations"), "{yaml}");
-        assert!(yaml.contains("tokensSecretProviderClass"), "{yaml}");
-        // Presence tests only. A `!= null` guard added here would read as
-        // defensive and would in fact make the CRD uninstallable — Kubernetes
-        // types a nullable string as plain `string` and rejects the comparison
-        // at admission, which no assertion on YAML text can catch.
-        assert!(
-            yaml.contains("!(has(self.tokensSecret) && has(self.tokensSecretProviderClass))"),
-            "{yaml}"
-        );
-        assert!(!yaml.contains("!= null"), "{yaml}");
+        for retired in ["identityAudiences", "identities", "tokensSecret"] {
+            assert!(
+                !yaml.contains(retired),
+                "retired field `{retired}` must not survive in the CRD: {yaml}"
+            );
+        }
+        assert!(!yaml.contains(FORBIDDEN_CEL_OPERATOR), "{yaml}");
+    }
+
+    /// The CSI transport is gone (#2764), and the retirement has to be visible
+    /// in the artifact operators actually apply — a field left in the CRD is a
+    /// field somebody sets.
+    #[test]
+    fn the_crd_no_longer_offers_a_csi_token_source() {
+        let yaml = crd_yaml();
+        assert!(!yaml.contains("tokensSecretProviderClass"), "{yaml}");
+        assert!(!yaml.contains("SecretProviderClass"), "{yaml}");
     }
 
     /// A fleet whose `Lumen` CRD is missing applies cleanly and then fails
@@ -154,7 +175,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-```
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -164,15 +185,9 @@ changes:
   - path: apps/lumen/src/operator/mod.rs
     action: modify
     section: rust-source-unit
-    impl_mode: hand-written
+    impl_mode: codegen
     description: |
-      #809: add `pub mod resize;` alongside the existing operator submodules,
-      exposing the new raftStorage PVC resize helper.
-  - path: apps/lumen/src/operator/mod.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1381: add `pub mod reshard_driver;` — the autonomous reshard
-      phase-driver background loop (#1319 R2 executor).
+      Canonical lossless source unit for the Lumen operator module registry.
+      Historical #809 and #1381 additions, plus later operator modules, are
+      regenerated together from the unique rust-source-unit above.
 ```

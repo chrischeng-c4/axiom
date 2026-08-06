@@ -4,7 +4,11 @@ CASE_ID = "td-cb-lifecycle-automation-operational-efficiency"
 CAPABILITY_ID = "td-cb-lifecycle-automation"
 USE_CASE_ID = "td-cb-lifecycle-automation-operational-efficiency"
 DIMENSION = "efficiency"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case td-cb-lifecycle-automation-operational-efficiency"
+)
 ASSERTIONS = ("the native Python red-to-green terminal EC scenario completes within 120 seconds without cargo delegation",)
 
 

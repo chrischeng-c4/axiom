@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-long-running-stability-operator-render
-// @capability long-running-stability
-// @claim lumen-crd-reconcile-loop-kube-rs-operator
+// @capability kubernetes-native-deployment
+// @claim live-operator-reconciliation
 // @contract devops-operator-render-golden
 // @category behavior
 // @required_for_production true

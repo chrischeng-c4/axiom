@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-lexical-bm25
-// @capability lexical-search
-// @claim bm25-ranking-and-analyzers
+// @capability querying
+// @claim lexical-and-structured-query
 // @contract lexical-bm25-ranking-analyzers
 // @category behavior
 // @required_for_production true

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-reshard-admin-verbs
-// @capability dynamic-shard-topology
-// @claim reshard-data-plane-admin-verbs
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-reshard-admin-verbs
 // @category behavior
 // @required_for_production true

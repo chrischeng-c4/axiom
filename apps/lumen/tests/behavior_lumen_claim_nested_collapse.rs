@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-nested-collapse
-// @capability duplicate-nested-search
-// @claim nested-group-has-child-collapse
+// @capability querying
+// @claim semantic-and-similarity-query
 // @contract nested-group-has-child-collapse
 // @category behavior
 // @required_for_production true

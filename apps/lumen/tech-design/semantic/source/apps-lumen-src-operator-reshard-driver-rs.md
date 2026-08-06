@@ -45,27 +45,27 @@ Public API manifest for `apps/lumen/src/operator/reshard_driver.rs` generated fr
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `CONVERGENCE_STALL_SECS` | apps/lumen/src/operator/reshard_driver.rs | constant | pub | 439 |  |
-| `DriveOutcome` | apps/lumen/src/operator/reshard_driver.rs | enum | pub | 833 |  |
-| `KubeClusterControl` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 651 |  |
-| `OversizedDocumentBlock` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 264 |  |
-| `clear_convergence_stall` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 513 | clear_convergence_stall(namespace: &str, name: &str) |
-| `clear_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 345 | clear_oversize_block(namespace: &str, name: &str) |
-| `compute_target_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 948 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
-| `convergence_stall_budget_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 448 | convergence_stall_budget_secs() -> u64 |
-| `convergence_stall_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 541 | convergence_stall_condition(wait_started_at: Option<u64>) -> bool |
-| `current_shard_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 933 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
-| `default_write_fence_ttl_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 234 | default_write_fence_ttl_secs() -> u64 |
-| `drive_tick` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2375 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
-| `new` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 657 | new(client: Client) -> Self |
-| `oversize_block_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 399 | oversize_block_condition(     namespace: &str,     name: &str,     uid: &str, ) -> Option<OversizedDocumentBlock> |
-| `prune_convergence_stall_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 523 | prune_convergence_stall_cache(live_uids: &BTreeSet<String>) |
-| `prune_oversize_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 358 | prune_oversize_cache(live_uids: &BTreeSet<String>) |
-| `record_convergence_await` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 489 | record_convergence_await(     namespace: &str,     name: &str,     uid: &str,     map_version: u64, ) -> bool |
-| `record_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 325 | record_oversize_block(     namespace: &str,     name: &str,     uid: &str,     block: OversizedDocumentBlock, ) |
-| `run_migration_pass` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 1424 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
-| `should_start_split` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 870 | should_start_split(lumen: &Lumen) -> bool |
-| `spawn_reshard_driver_loop` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2422 | spawn_reshard_driver_loop(client: Client) |
+| `CONVERGENCE_STALL_SECS` | apps/lumen/src/operator/reshard_driver.rs | constant | pub | 438 |  |
+| `DriveOutcome` | apps/lumen/src/operator/reshard_driver.rs | enum | pub | 816 |  |
+| `KubeClusterControl` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 650 |  |
+| `OversizedDocumentBlock` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 263 |  |
+| `clear_convergence_stall` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 512 | clear_convergence_stall(namespace: &str, name: &str) |
+| `clear_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 344 | clear_oversize_block(namespace: &str, name: &str) |
+| `compute_target_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 931 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
+| `convergence_stall_budget_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 447 | convergence_stall_budget_secs() -> u64 |
+| `convergence_stall_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 540 | convergence_stall_condition(wait_started_at: Option<u64>) -> bool |
+| `current_shard_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 916 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
+| `default_write_fence_ttl_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 233 | default_write_fence_ttl_secs() -> u64 |
+| `drive_tick` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2358 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
+| `new` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 656 | new(client: Client) -> Self |
+| `oversize_block_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 398 | oversize_block_condition(     namespace: &str,     name: &str,     uid: &str, ) -> Option<OversizedDocumentBlock> |
+| `prune_convergence_stall_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 522 | prune_convergence_stall_cache(live_uids: &BTreeSet<String>) |
+| `prune_oversize_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 357 | prune_oversize_cache(live_uids: &BTreeSet<String>) |
+| `record_convergence_await` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 488 | record_convergence_await(     namespace: &str,     name: &str,     uid: &str,     map_version: u64, ) -> bool |
+| `record_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 324 | record_oversize_block(     namespace: &str,     name: &str,     uid: &str,     block: OversizedDocumentBlock, ) |
+| `run_migration_pass` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 1407 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
+| `should_start_split` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 853 | should_start_split(lumen: &Lumen) -> bool |
+| `spawn_reshard_driver_loop` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2405 | spawn_reshard_driver_loop(client: Client) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -251,13 +251,14 @@ Public API manifest for `apps/lumen/src/operator/reshard_driver.rs` generated fr
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use kube::api::{Api, ApiResource, DynamicObject, Patch, PatchParams};
 use kube::{Client, ResourceExt};
 use serde_json::json;
 
-use crate::auth::{Role, TokenClaims};
+use service_auth::k8s::{ProjectedToken, ProjectedTokenFile};
+
 use crate::operator::crd::{AuthMode, Lumen, ReshardPhase};
 use crate::operator::lease::{self, Election};
 use crate::reshard::{
@@ -651,9 +652,23 @@ pub trait ClusterControl: Send + Sync {
         self.trigger_rolling_restart(namespace, name).await
     }
 
-    /// A bearer token carrying wildcard `Role::Admin`, if `lumen.spec.auth`
-    /// requires one. `Ok(None)` when auth is off.
-    async fn admin_token(&self, namespace: &str, lumen: &Lumen) -> Result<Option<String>>;
+    /// The credential this driver presents on its admin calls, if
+    /// `lumen.spec.auth` requires one. `Ok(None)` when auth is off — an
+    /// instance that requires no identity rejects a *presented* bearer
+    /// (#2871), so "no auth" has to mean sending nothing, not sending
+    /// something harmless.
+    ///
+    /// Returning [`ProjectedToken`] rather than `String` is the point of the
+    /// signature: the material cannot reach a log through a derived `Debug`
+    /// on any struct that happens to hold one, because the only rendering it
+    /// has is `<redacted>` and the only way to the bytes is an explicit
+    /// [`ProjectedToken::expose`] at the call that builds the header.
+    ///
+    /// Implementations read per call. The kubelet rewrites the projected file
+    /// in place partway through its lifetime with no notification, so a value
+    /// cached across ticks would authenticate for a few minutes and then fail
+    /// forever (#2877 R3).
+    async fn admin_token(&self, namespace: &str, lumen: &Lumen) -> Result<Option<ProjectedToken>>;
 
     /// The client-facing admin API base URL for one shard's serving pod.
     /// [`KubeClusterControl`] resolves the real per-shard headless-Service
@@ -722,12 +737,31 @@ pub trait ClusterControl: Send + Sync {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub struct KubeClusterControl {
     client: Client,
+    /// Where this process finds its own audience-bound ServiceAccount token
+    /// (#2877). A field rather than a constant so a test can point it at a
+    /// temp file and drive the missing/expired/wrong-audience branches; the
+    /// default is the path the operator Deployment actually projects, so
+    /// production never depends on the seam being set.
+    token_file: ProjectedTokenFile,
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 impl KubeClusterControl {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            token_file: crate::auth::control_plane_token_file(),
+        }
+    }
+
+    /// Read the operator's credential from somewhere else. Test seam only —
+    /// deliberately not an environment variable, because an env var is a
+    /// production-reachable way to redirect a control-plane credential at a
+    /// file an attacker chose.
+    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
+    pub fn with_token_file(mut self, token_file: ProjectedTokenFile) -> Self {
+        self.token_file = token_file;
+        self
     }
 }
 
@@ -793,39 +827,24 @@ impl ClusterControl for KubeClusterControl {
         Ok(())
     }
 
-    async fn admin_token(&self, namespace: &str, lumen: &Lumen) -> Result<Option<String>> {
+    async fn admin_token(&self, _namespace: &str, lumen: &Lumen) -> Result<Option<ProjectedToken>> {
         if !matches!(lumen.spec.auth, AuthMode::Required) {
             return Ok(None);
         }
-        let Some(secret_name) = lumen.spec.tokens_secret.as_deref() else {
-            // CSI-only (`tokensSecretProviderClass`) deployments have no
-            // Secret object for the driver to read here — a documented,
-            // not-yet-closed gap (#1381): every admin call this tick fails
-            // closed (401), which `run_migration_pass`/`evict_old_shards`
-            // surface as `DriveOutcome::Blocked`, leaving the workflow
-            // resumable rather than silently stuck.
-            bail!(
-                "tokensSecretProviderClass-only auth is not supported by the reshard driver yet; \
-                 set spec.tokensSecret so the driver can resolve an admin-role bearer token"
-            );
-        };
-        let api: kube::Api<k8s_openapi::api::core::v1::Secret> =
-            kube::Api::namespaced(self.client.clone(), namespace);
-        let secret = api.get(secret_name).await.context("read tokens secret")?;
-        let bytes = secret
-            .data
-            .as_ref()
-            .and_then(|d| d.get("token-registry.json"))
-            .ok_or_else(|| {
-                anyhow!("tokens secret `{secret_name}` missing token-registry.json key")
-            })?;
-        let registry: BTreeMap<String, TokenClaims> =
-            serde_json::from_slice(&bytes.0).context("parse token-registry.json")?;
-        let token = registry
-            .into_iter()
-            .find(|(_, claims)| claims.roles.get("*") == Some(&Role::Admin))
-            .map(|(token, _)| token);
-        Ok(token)
+        // Read on every call, never held (#2877 R3). The kubelet replaces this
+        // file partway through the token's lifetime; a value cached across
+        // reshard ticks would work for minutes and then fail permanently, at
+        // an hour nobody is watching.
+        //
+        // A failure here stops the reshard rather than degrading it: sending
+        // the admin calls out unauthenticated against an instance that
+        // requires an identity would turn a credential problem into a wall of
+        // 401s from four different verbs. The error names the path and the
+        // audience and never the material (#2877 R5).
+        self.token_file
+            .read()
+            .map(Some)
+            .with_context(|| "the operator cannot authenticate to this Lumen instance".to_string())
     }
 
     fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String {
@@ -1246,7 +1265,7 @@ async fn set_write_fence(
         if let Err(err) = reshard_fence_call(
             http,
             &url,
-            token.as_deref(),
+            token.as_ref().map(ProjectedToken::expose),
             current.virtual_bucket_count(),
             buckets,
             ttl_secs,
@@ -1258,7 +1277,7 @@ async fn set_write_fence(
                     if let Err(clear_err) = reshard_fence_call(
                         http,
                         armed_url,
-                        token.as_deref(),
+                        token.as_ref().map(ProjectedToken::expose),
                         current.virtual_bucket_count(),
                         &BTreeSet::new(),
                         0,
@@ -1411,7 +1430,7 @@ async fn checkpoint_shards(
         )
         .await?;
         let url = control.shard_base_url(namespace, name, shard);
-        checkpoint_shard(http, &url, token.as_deref()).await?;
+        checkpoint_shard(http, &url, token.as_ref().map(ProjectedToken::expose)).await?;
     }
     Ok(())
 }
@@ -1565,7 +1584,7 @@ async fn run_migration_pass_impl(
         let snapshot = fetch_scoped_backup(
             http,
             &source_url,
-            token.as_deref(),
+            token.as_ref().map(ProjectedToken::expose),
             current.virtual_bucket_count(),
             &buckets,
         )
@@ -1579,7 +1598,7 @@ async fn run_migration_pass_impl(
         )?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
-            if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_deref(), batch).await {
+            if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_ref().map(ProjectedToken::expose), batch).await {
                 // #1444 R2: record the wedge distinctly before propagating, so
                 // callers that turn this `Err` into `DriveOutcome::Blocked`
                 // still leave a structured trace behind for `status.reshard`
@@ -1618,7 +1637,7 @@ async fn run_migration_pass_impl(
         // collection a batch of deletes emptied out of these buckets still
         // gets an (empty) keep scope instead of being silently skipped.
         if final_pass {
-            let collection_ids = fetch_all_collection_ids(http, &source_url, token.as_deref())
+            let collection_ids = fetch_all_collection_ids(http, &source_url, token.as_ref().map(ProjectedToken::expose))
                 .await
                 .context("fetch source shard's full collection list for the final reshard pass")?;
             maybe_rearm_fence(
@@ -1647,7 +1666,7 @@ async fn run_migration_pass_impl(
                     );
                 };
                 let dest_url = control.shard_base_url(namespace, name, to_shard);
-                apply_reshard_prune_chunk(http, &dest_url, token.as_deref(), chunk).await?;
+                apply_reshard_prune_chunk(http, &dest_url, token.as_ref().map(ProjectedToken::expose), chunk).await?;
                 maybe_rearm_fence(
                     control,
                     http,
@@ -1711,7 +1730,7 @@ async fn evict_old_shards(
         evict_shard(
             http,
             &url,
-            token.as_deref(),
+            token.as_ref().map(ProjectedToken::expose),
             shard,
             target.version(),
             &assignments,
@@ -2579,9 +2598,6 @@ mod tests {
             log_format: Default::default(),
             log_level: None,
             auth: Default::default(),
-            tokens_secret: None,
-            tokens_secret_provider_class: None,
-            tokens_secret_csi_driver: None,
             serving: ServingSpec::default(),
             reshard_policy: ReshardPolicy {
                 max_shard_bytes,
@@ -2591,6 +2607,9 @@ mod tests {
             network_policy: false,
             admission: None,
             service_account_name: None,
+            service_account_annotations: BTreeMap::new(),
+            peer_tls_secret: None,
+            serving_tls_secret: None,
         }
     }
 
@@ -2828,7 +2847,7 @@ mod tests {
             Ok(())
         }
 
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
+        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<ProjectedToken>> {
             Ok(None)
         }
 
@@ -2866,7 +2885,7 @@ mod tests {
         async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
             unreachable!("not used by set_write_fence")
         }
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
+        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<ProjectedToken>> {
             Ok(None)
         }
         fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {
@@ -2962,7 +2981,7 @@ mod tests {
         async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
             unreachable!("not used by evict_old_shards")
         }
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
+        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<ProjectedToken>> {
             Ok(None)
         }
         fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {

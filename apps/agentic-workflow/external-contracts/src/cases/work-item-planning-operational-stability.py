@@ -4,7 +4,11 @@ CASE_ID = "work-item-planning-operational-stability"
 CAPABILITY_ID = "work-item-planning"
 USE_CASE_ID = "work-item-planning-operational-stability"
 DIMENSION = "stability"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case work-item-planning-operational-stability"
+)
 ASSERTIONS = ("two fresh native Python planning scenarios produce identical non-empty results and pass every representative assertion",)
 
 

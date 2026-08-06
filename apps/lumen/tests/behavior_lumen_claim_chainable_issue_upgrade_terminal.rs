@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-chainable-issue-upgrade-terminal
-// @capability chainable-output-conformance
-// @claim shared-issue-upgrade-terminal-markers
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract chainable-issue-upgrade-terminal
 // @category behavior
 // @required_for_production true

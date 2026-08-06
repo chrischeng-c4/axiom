@@ -5,15 +5,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from wi_contract_fixture import final_json, project_fixture, run_aw
+from wi_contract_fixture import (
+    final_json,
+    project_fixture,
+    run_aw,
+    write_python_artifact_lock,
+    write_python_artifact_unit_test,
+)
 
 
 CASE_ID = "python-ec-cache-safe-discovery"
 CAPABILITY_ID = "project-local-td-and-ec-gates"
-USE_CASE_ID = "python-ec-cache-safe-discovery"
+USE_CASE_ID = "cache-safe-python-ec-source-discovery"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case python-ec-cache-safe-discovery"
 )
 ASSERTIONS = (
@@ -27,6 +34,7 @@ PYPROJECT = """\
 [project]
 name = "demo-external-contracts"
 version = "0.0.0"
+requires-python = ">=3.11"
 
 [tool.aw.python-artifact]
 protocol = "aw.python-artifact.v1"
@@ -51,7 +59,7 @@ test_path = "src/cache_safe_contract.py"
 promise = "Runtime cache artifacts cannot poison EC source discovery."
 oracle = "The public EC checker reports its structural inventory."
 target = "rust"
-command = "python3 -c 'print(\\\"cache-safe\\\")'"
+command = "uv run --frozen --offline --project external-contracts python -c 'print(\\\"cache-safe\\\")'"
 evidence_paths = ["evidence/cache-safe-contract.json"]
 """
 
@@ -98,6 +106,8 @@ def _write_fixture(root: Path) -> Path:
 
     (root / "CAPABILITIES.md").write_text(CAPABILITIES, encoding="utf-8")
     (ec_root / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
+    write_python_artifact_lock(ec_root, name="demo-external-contracts", version="0.0.0")
+    write_python_artifact_unit_test(ec_root, "cache_safe_discovery")
     (source_root / "runner.py").write_text(
         'print("fixture runner")\n', encoding="utf-8"
     )

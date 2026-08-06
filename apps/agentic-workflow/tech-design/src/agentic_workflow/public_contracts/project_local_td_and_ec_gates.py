@@ -4,11 +4,11 @@ __aw_artifact_id__ = "artifact:project-local-td-and-ec-gates/public-contract"
 __aw_public_contract__ = True
 
 
-def python_ec_cache_safe_discovery() -> str:
+def cache_safe_python_ec_source_discovery() -> str:
     return "EC discovery ignores undeclared cache binaries"
 
 
-def python_ec_only_authoring() -> str:
+def python_only_ec_authoring_lifecycle() -> str:
     return "EC source is native Python without app-level Rust EC tests"
 
 

@@ -5,7 +5,11 @@ CAPABILITY_ID = "existing-project-standardization"
 USE_CASE_ID = "aw-health-default-full-verification-smoke"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_aw_health_default_full_verification_smoke.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case aw-health-default-full-verification-smoke"
+)
 ASSERTIONS = ('stdout includes progress JSONL events before the final result when long gates run', 'the final result includes payload_path', 'the payload file contains complete blocker and command evidence')
 
 

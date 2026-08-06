@@ -4,7 +4,11 @@ CASE_ID = "standardize-audit-first-contract-test"
 CAPABILITY_ID = "existing-project-standardization"
 USE_CASE_ID = "standardize-audit-first-contract-test"
 DIMENSION = "behavior"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case standardize-audit-first-contract-test"
+)
 ASSERTIONS = (
     "a missing preservation baseline is a successful not-applicable health observation",
     "recording a baseline produces a successful recorded health observation",

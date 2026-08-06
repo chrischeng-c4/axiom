@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-vector-hnsw
-// @capability vector-hash-search
-// @claim hnsw-vector-knn-cpu
+// @capability querying
+// @claim semantic-and-similarity-query
 // @contract vector-hnsw-cpu
 // @category behavior
 // @required_for_production true

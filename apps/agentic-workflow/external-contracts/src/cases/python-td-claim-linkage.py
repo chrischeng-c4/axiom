@@ -8,13 +8,19 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from wi_contract_fixture import (
+    write_python_artifact_lock,
+    write_python_artifact_unit_test,
+)
+
 
 CASE_ID = "python-td-claim-linkage"
 CAPABILITY_ID = "capability-control-plane"
 USE_CASE_ID = "python-td-claim-linkage"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case python-td-claim-linkage"
 )
 ASSERTIONS = (
@@ -182,6 +188,8 @@ evidence_paths = ["evidence/claim.json"]
 """,
         encoding="utf-8",
     )
+    write_python_artifact_lock(ec_root, name="demo-external-contracts")
+    write_python_artifact_unit_test(ec_root, "claim_linkage")
 
 
 def _report(root: Path) -> dict[str, object]:

@@ -19,8 +19,14 @@ use tokio::net::TcpListener;
 use tower_http::classify::{ServerErrorsAsFailures, SharedClassifier};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 
+pub mod tls;
+
 pub use server_lifecycle as core;
 pub use server_tcp as tcp;
+pub use tls::{
+    config_source, serve_tls, ServerConfigSource, TlsListenerMetrics, TlsListenerSnapshot,
+    TlsServerOptions,
+};
 
 /// HTTP listener/runtime options owned by `server-http`.
 #[derive(Clone)]

@@ -9,6 +9,7 @@
 pub(crate) mod agent_prompt;
 pub(crate) mod artifact_producer;
 pub mod capability;
+pub mod capability_feature_class;
 pub mod capability_type;
 pub mod cb;
 pub mod cb_fill;

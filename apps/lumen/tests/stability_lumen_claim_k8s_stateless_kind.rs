@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-k8s-stateless-kind
 // @capability kubernetes-native-deployment
-// @claim kind-api-recovery-no-relay
+// @claim live-operator-reconciliation
 // @contract k8s-stateless-kind-dogfood
 // @category stability
 // @required_for_production true

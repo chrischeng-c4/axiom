@@ -8,6 +8,13 @@ description = "Shared Kubernetes integration for Axiom services: managed-service
 name = "service_k8s"
 path = "src/lib.rs"
 
+[features]
+# The certificate lifecycle builds and tests with no cloud dependency at all
+# (#3110 R8): `--no-default-features` drops the CA Service requester and leaves
+# the state machine, the projection, and the in-process signer intact.
+default = ["gcp-cas"]
+gcp-cas = ["dep:reqwest", "dep:serde_urlencoded"]
+
 [dependencies]
 # Pinned to Lumen's operator surface so the workspace lock stays single-versioned.
 kube = { version = "0.98", features = ["runtime", "derive", "client"] }
@@ -26,7 +33,23 @@ futures = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+# Certificate lifecycle (#3110). `rcgen` needs `x509-parser` to parse a CSR back
+# out of PEM, which the in-process signer does on every issuance.
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+x509-parser = "0.17"
+sha2 = "0.10"
+base64 = { workspace = true }
+time = { version = "0.3", default-features = false }
+# Optional: only the CA Service requester talks to a network.
+reqwest = { workspace = true, optional = true }
+serde_urlencoded = { version = "0.7", optional = true }
 
 [dev-dependencies]
 http = { workspace = true }
 tower = { workspace = true }
+# The certificate lifecycle tests drive an async loop with no runtime of their
+# own: every future in it is already resolved, so `block_on` is honest here in a
+# way a tokio runtime would only obscure.
+futures = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }

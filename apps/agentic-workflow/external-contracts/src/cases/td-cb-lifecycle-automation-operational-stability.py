@@ -4,7 +4,11 @@ CASE_ID = "td-cb-lifecycle-automation-operational-stability"
 CAPABILITY_ID = "td-cb-lifecycle-automation"
 USE_CASE_ID = "td-cb-lifecycle-automation-operational-stability"
 DIMENSION = "stability"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case td-cb-lifecycle-automation-operational-stability"
+)
 ASSERTIONS = ("two fresh native Python terminal EC scenarios preserve red and green verdicts and close continuations",)
 
 

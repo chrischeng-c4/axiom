@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-long-running-log-fanout
-// @capability long-running-stability
-// @claim log-fan-out-rebuild-from-log
+// @capability indexing
+// @claim derived-index-storage
 // @contract long-running-log-fanout
 // @category stability
 // @required_for_production true

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-vector-hash-hamming
-// @capability vector-hash-search
-// @claim hash-hamming-search
+// @capability querying
+// @claim semantic-and-similarity-query
 // @contract hash-hamming-search
 // @category behavior
 // @required_for_production true

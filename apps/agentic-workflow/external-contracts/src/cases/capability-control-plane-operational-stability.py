@@ -4,7 +4,11 @@ CASE_ID = "capability-control-plane-operational-stability"
 CAPABILITY_ID = "capability-control-plane"
 USE_CASE_ID = "capability-control-plane-operational-stability"
 DIMENSION = "stability"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case capability-control-plane-operational-stability"
+)
 ASSERTIONS = ("two fresh native Python capability scenarios preserve the same project identity and canonical Markdown contract",)
 
 

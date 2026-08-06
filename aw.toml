@@ -363,7 +363,7 @@ codegen.profile = "rust/score-crate"
 name = "lumen"
 path = "apps/lumen"
 td_path = "apps/lumen/tech-design"
-cap_path = "apps/lumen/README.md"
+cap_path = "apps/lumen/CAPABILITIES.md"
 label = "app:lumen"
 # EC tool bindings (contract before implementation). `aw health --verify-ec`
 # dispatches each bound dimension to its external tool; unbound categories

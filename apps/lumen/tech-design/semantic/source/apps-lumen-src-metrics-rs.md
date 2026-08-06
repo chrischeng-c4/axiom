@@ -205,17 +205,6 @@ pub struct Metrics {
     /// driver's fenced final `CatchingUp` pass never came back to clear it)
     /// from one still mid-pass.
     pub reshard_fence_armed_unixtime: Gauge,
-    /// #2475: total failed hot-reloads of the bearer-token registry file
-    /// (`LUMEN_TOKEN_REGISTRY_FILE`, watched by
-    /// `service_auth::spawn_registry_file_watcher`) — read/parse/validation
-    /// failures recorded via `crate::auth::LumenAuthEventSink`. The
-    /// verifier always keeps serving the last known-good registry on
-    /// failure, so this counts silent staleness risk, not live outage.
-    pub auth_registry_reload_failures_total: Counter,
-    /// #2475: unix-epoch seconds of the last successful bearer-token
-    /// registry hot-reload, pairing with the failure counter above as a
-    /// cheap staleness signal.
-    pub auth_registry_reload_success_unixtime: Gauge,
     /// #2516: `1` while this node is in ENOSPC degraded read-only mode
     /// (a durable write path — local AOF/WAL append, segment/RDB
     /// checkpoint save, or raft log append — hit
@@ -329,18 +318,6 @@ impl Metrics {
         if active {
             self.reshard_fence_armed_unixtime.set(unix_now_secs());
         }
-    }
-
-    /// #2475: record one failed bearer-token registry hot-reload.
-    pub fn incr_auth_registry_reload_failure(&self) {
-        self.auth_registry_reload_failures_total.incr();
-    }
-
-    /// #2475: record one successful bearer-token registry hot-reload's
-    /// wall-clock time.
-    pub fn touch_auth_registry_reload_success(&self) {
-        self.auth_registry_reload_success_unixtime
-            .set(unix_now_secs());
     }
 
     /// #2516: flip into ENOSPC degraded read-only mode and count the hit.
@@ -482,18 +459,6 @@ impl Metrics {
                 self.reshard_fence_armed_unixtime.get(),
             ),
             Sample::new(
-                "lumen_auth_registry_reload_failures_total",
-                "counter",
-                "Total failed bearer-token registry hot-reloads.",
-                self.auth_registry_reload_failures_total.get(),
-            ),
-            Sample::new(
-                "lumen_auth_registry_reload_success_unixtime",
-                "gauge",
-                "Unix time of the last successful bearer-token registry hot-reload.",
-                self.auth_registry_reload_success_unixtime.get(),
-            ),
-            Sample::new(
                 "lumen_storage_degraded",
                 "gauge",
                 "1 while this node is in ENOSPC degraded read-only mode (a durable write \
@@ -600,8 +565,6 @@ mod tests {
         m.observe_search(Duration::from_millis(7));
         m.set_raft_leader_known(2, true);
         m.set_reshard_fence_active(true);
-        m.incr_auth_registry_reload_failure();
-        m.touch_auth_registry_reload_success();
         let out = m.render();
         for name in [
             "lumen_index_writes_total",
@@ -620,8 +583,6 @@ mod tests {
             "lumen_scatter_map_version_mismatches_total",
             "lumen_reshard_fence_active",
             "lumen_reshard_fence_armed_unixtime",
-            "lumen_auth_registry_reload_failures_total",
-            "lumen_auth_registry_reload_success_unixtime",
             "lumen_raft_leader_known",
             "lumen_storage_degraded",
             "lumen_storage_full_errors_total",
@@ -791,9 +752,6 @@ mod tests {
         // gauges directly so this golden capture stays deterministic.
         m.reshard_fence_active.set(1);
         m.reshard_fence_armed_unixtime.set(1_700_000_000);
-        m.incr_auth_registry_reload_failure();
-        m.incr_auth_registry_reload_failure();
-        m.auth_registry_reload_success_unixtime.set(1_700_000_001);
         m.set_raft_leader_known(2, true);
         m.mark_storage_degraded();
         let out = m.render();
@@ -848,12 +806,6 @@ lumen_reshard_fence_active 1\n\
 # HELP lumen_reshard_fence_armed_unixtime Unix time the currently (or most recently) armed reshard write fence was armed at.\n\
 # TYPE lumen_reshard_fence_armed_unixtime gauge\n\
 lumen_reshard_fence_armed_unixtime 1700000000\n\
-# HELP lumen_auth_registry_reload_failures_total Total failed bearer-token registry hot-reloads.\n\
-# TYPE lumen_auth_registry_reload_failures_total counter\n\
-lumen_auth_registry_reload_failures_total 2\n\
-# HELP lumen_auth_registry_reload_success_unixtime Unix time of the last successful bearer-token registry hot-reload.\n\
-# TYPE lumen_auth_registry_reload_success_unixtime gauge\n\
-lumen_auth_registry_reload_success_unixtime 1700000001\n\
 # HELP lumen_storage_degraded 1 while this node is in ENOSPC degraded read-only mode (a durable write path hit disk-full).\n\
 # TYPE lumen_storage_degraded gauge\n\
 lumen_storage_degraded 1\n\
@@ -884,8 +836,7 @@ lumen_raft_leader_known{shard=\"2\"} 1\n";
             out, golden,
             "render() diverged from the pre-refactor capture (#2475 added \
              lumen_reshard_fence_active + lumen_reshard_fence_armed_unixtime + \
-             lumen_auth_registry_reload_failures_total + \
-             lumen_auth_registry_reload_success_unixtime + lumen_raft_leader_known; \
+             lumen_raft_leader_known; \
              #2519 added lumen_slow_queries_total + the \
              lumen_search_latency_seconds histogram, and marked \
              lumen_search_latency_ms_sum/_count deprecated in HELP text; \

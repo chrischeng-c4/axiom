@@ -41,13 +41,15 @@ deployment:
     - path: "apps/lumen/k8s/operator/kustomization.yaml"
       kind: "kustomization"
       content: |
+        # SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
+        # CODEGEN-BEGIN
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
         
         # Installs the lumen Operator: the Lumen CRD, its RBAC, and the controller
-        # Deployment + PodDisruptionBudget (in the lumen-system namespace). After this
-        # is applied, create `Lumen` objects (see ../../examples/lumen-cr.yaml) instead
-        # of hand-applying k8s/base + overlays.
+        # Deployment + PodDisruptionBudget (in the lumen-system namespace). This direct
+        # `apply -k` path is the explicit ephemeral dev/kind installation (#3222). Staging
+        # and production environments must render via `lumen k8s operator render --issuer cas --trust-domain <td> --ca-pool <pool>`.
         #
         #   kubectl apply -k k8s/operator
         #   kubectl apply -f examples/lumen-cr.yaml
@@ -64,9 +66,12 @@ deployment:
           # ../components/operator-monitoring component (#2621).
           - service.yaml
           - pdb.yaml
+        # CODEGEN-END
     - path: "apps/lumen/k8s/operator/deployment.yaml"
       kind: "kubernetes-deployment"
       content: |
+        # SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
+        # CODEGEN-BEGIN
         # The operator: a controller that watches Lumen objects cluster-wide. Ships in
         # the same `lumen` image (run as `lumen k8s operator run`, built with
         # --features operator). HA: a coordination.k8s.io Lease elects one active
@@ -96,6 +101,33 @@ deployment:
             spec:
               serviceAccountName: lumen-operator
               terminationGracePeriodSeconds: 15
+              volumes:
+                # The operator's own credential for calling a serving instance's admin
+                # API (#2877) — the reshard driver's only way to authenticate. It is
+                # deliberately NOT the default
+                # `/var/run/secrets/kubernetes.io/serviceaccount` token: that one is
+                # minted for the API server's audience, and Lumen rejects it. Asking
+                # the kubelet for an audience-bound projection instead means the
+                # operator holds exactly one credential, scoped to one callee, that the
+                # API server will not accept and that expires in ten minutes.
+                #
+                # The kubelet rewrites this file in place at ~80% of its lifetime with
+                # no restart and no notification, which is why the reader in
+                # `libs/service-auth` opens it per call rather than caching it.
+                - name: lumen-admin-token
+                  projected:
+                    # 0444. Written as decimal on purpose: YAML 1.1 reads `0444` as
+                    # octal 292 and YAML 1.2 reads it as decimal 444, so the leading
+                    # zero means different things to the API server and to a strict
+                    # parser reading this same file in a test.
+                    defaultMode: 292
+                    sources:
+                      - serviceAccountToken:
+                          audience: lumen.axiom.dev
+                          # The API server's own floor. A smaller number is not a
+                          # tighter token, it is a Deployment whose pods never start.
+                          expirationSeconds: 600
+                          path: token
               affinity:
                 podAntiAffinity:
                   # Preferred, not required: co-located replicas still survive a drain
@@ -120,8 +152,9 @@ deployment:
                   # Published GHCR release for this workspace's Lumen version. Bumped by
                   # the release procedure alongside Cargo.toml/openapi.json; grep target
                   # for the bump commit: `ghcr.io/chrischeng-c4/lumen:`. To pin an
-                  # immutable digest or point at a mirrored registry, render this
-                  # manifest with `lumen k8s operator render --image <ref>`.
+                  # immutable digest, point at a mirrored registry, or set the issuer
+                  # (--issuer cas --trust-domain <td> --ca-pool <pool> | --issuer ephemeral),
+                  # render this manifest with `lumen k8s operator render`.
                   image: ghcr.io/chrischeng-c4/lumen:0.4.25
                   imagePullPolicy: IfNotPresent
                   command: ["/usr/local/bin/lumen", "k8s", "operator", "run"]
@@ -145,6 +178,15 @@ deployment:
                       valueFrom:
                         fieldRef:
                           fieldPath: metadata.namespace
+                    # Explicit operator certificate issuer for dev/kind (#3222).
+                    - name: LUMEN_ISSUER
+                      value: "ephemeral"
+                    - name: LUMEN_TRUST_DOMAIN
+                      value: "lumen-dev.svc.id.goog"
+                  volumeMounts:
+                    - name: lumen-admin-token
+                      mountPath: /var/run/secrets/lumen.axiom.dev
+                      readOnly: true
                   resources:
                     requests:
                       cpu: 100m
@@ -160,6 +202,7 @@ deployment:
                     readOnlyRootFilesystem: true
                     capabilities:
                       drop: ["ALL"]
+        # CODEGEN-END
     - path: "apps/lumen/k8s/operator/service.yaml"
       kind: "kubernetes-service"
       content: |

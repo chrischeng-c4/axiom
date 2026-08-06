@@ -3,14 +3,14 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-security-bearer-auth
 // @capability security-hardening
-// @claim bearer-token-auth-lumen-auth
+// @claim kubernetes-native-request-identity-and-authorization
 // @contract security-bearer-auth
 // @category security
 // @required_for_production true
 // @command cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: Bearer-token auth rejects invalid callers and accepts valid tokens under LUMEN_AUTH=required.
+// Contract: Under LUMEN_AUTH=required every serving route is refused with 401 whether or not a credential is presented, and the binary exits at startup rather than degrade to an open API; under auth disabled the whole data plane still serves unauthenticated. (#2871 retired the bearer registry, so no credential is acceptable until TokenReview lands.)
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_security_bearer_auth() {

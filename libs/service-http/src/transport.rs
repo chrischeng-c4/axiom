@@ -8,9 +8,12 @@
 //! the accept loop. [`trace_layer`] is the one INFO-level span-per-request layer
 //! lumen/keep both attach; a service `.layer(...)`s it onto its router.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread_local;
+
 use tokio::net::TcpListener;
 use tower_http::classify::{ServerErrorsAsFailures, SharedClassifier};
-use tower_http::trace::{DefaultMakeSpan, MakeSpan, TraceLayer};
+use tower_http::trace::{DefaultMakeSpan, MakeSpan, OnRequest, TraceLayer};
 
 /// Request span maker that preserves standard request fields and, in an
 /// OTLP-enabled build, attaches a valid propagated W3C parent context.
@@ -50,6 +53,34 @@ pub async fn serve(
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) {
     server_http::serve_h2c(listener, app, shutdown).await;
+}
+
+/// Serve `app` over TLS on `listener`, terminating with whatever `config`
+/// returns at the moment each connection is accepted (#3113 R1).
+///
+/// The same thin delegation as [`serve`], to the same drain semantics, over
+/// [`server_http::serve_tls`]. It is a separate entry point rather than an
+/// option on `serve` because the two differ in exactly one way that matters:
+/// this one has no cleartext branch. A service that fails to supply material
+/// refuses connections; it does not answer them unencrypted.
+///
+/// ALPN comes from the `ServerConfig` the source yields, so the caller decides
+/// whether the port offers `h2` alone or `h2` and `http/1.1`.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
+pub async fn serve_tls(
+    listener: TcpListener,
+    app: axum::Router,
+    config: server_http::ServerConfigSource,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    server_http::serve_tls(
+        listener,
+        app,
+        config,
+        server_http::TlsServerOptions::default(),
+        shutdown,
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -245,6 +276,7 @@ impl<B> MakeSpan<B> for CorrelatingMakeSpan {
             span_id = %context.span_id(),
             parent_span_id = tracing::field::Empty,
             trace_flags = %context.trace_flags(),
+            subject = "anonymous",  // Default subject; overridden by auth middleware if authenticated
         );
         if let Some(parent_span_id) = context.parent_span_id() {
             span.record("parent_span_id", tracing::field::display(parent_span_id));
@@ -276,51 +308,95 @@ impl<B> MakeSpan<B> for CorrelatingMakeSpan {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#2420" reason="logic section in transport.rs is hand-written pending codegen support">
-/// Emits the collector-neutral terminal record for every HTTP response.
-///
-/// `tower_http::trace` calls this while the request span is entered, so the
-/// JSON formatter inherits method, URI, and W3C fields from
-/// [`CorrelatingMakeSpan`]. The event itself adds only the response facts that
-/// are not known when the span is created.
-#[derive(Debug, Clone, Copy)]
-pub struct RequestCompletionEvent;
+// Thread-local to track whether the current request is a probe request.
+// Set by AccessLogOnRequest, read by AccessLogOnResponse.
+thread_local! {
+    static CURRENT_REQUEST_IS_PROBE: AtomicBool = const { AtomicBool::new(false) };
+}
 
-impl<B> tower_http::trace::OnResponse<B> for RequestCompletionEvent {
+/// OnRequest handler that marks whether this is a probe path.
+#[derive(Debug, Clone, Copy)]
+pub struct AccessLogOnRequest;
+
+impl<B> OnRequest<B> for AccessLogOnRequest {
+    fn on_request(&mut self, request: &axum::http::Request<B>, _span: &tracing::Span) {
+        let is_probe = matches!(
+            request.uri().path(),
+            "/healthz" | "/readyz" | "/metrics" | "/openapi.json" | "/docs"
+        );
+        CURRENT_REQUEST_IS_PROBE.with(|flag| flag.store(is_probe, Ordering::Relaxed));
+    }
+}
+
+/// Custom HTTP response recorder that emits access log events.
+/// Emits INFO-level events for regular requests, DEBUG-level for probe paths.
+#[derive(Debug, Clone, Copy)]
+pub struct AccessLogOnResponse;
+
+impl<B> tower_http::trace::OnResponse<B> for AccessLogOnResponse {
     fn on_response(
         self,
         response: &axum::http::Response<B>,
         latency: std::time::Duration,
-        span: &tracing::Span,
+        _span: &tracing::Span,
     ) {
-        tracing::info!(
-            parent: span,
-            event = "http_request_complete",
-            status = response.status().as_u16(),
-            latency_ms = latency.as_secs_f64() * 1_000.0,
-            "HTTP request completed"
-        );
+        let status = response.status().as_u16();
+        let latency_ms = latency.as_millis() as u64;
+
+        // Check if this is a probe path (set by AccessLogOnRequest)
+        let is_probe = CURRENT_REQUEST_IS_PROBE.with(|flag| flag.load(Ordering::Relaxed));
+
+        if is_probe {
+            // Probe paths get DEBUG-level events
+            tracing::debug!(
+                target: "http.access",
+                status = status,
+                latency_ms = latency_ms,
+                "access"
+            );
+        } else {
+            // Regular requests get INFO-level events
+            tracing::info!(
+                target: "http.access",
+                status = status,
+                latency_ms = latency_ms,
+                "access"
+            );
+        }
     }
 }
 
-/// The standard request-tracing layer: one INFO-level span and one completion
-/// event per HTTP request.
+/// The standard request-tracing layer: one INFO-level span per HTTP request.
 ///
-/// Attach it to the outer router so probe and data-plane routes have the same
-/// W3C correlation and completion record. The layer takes no collector
-/// configuration: services write standard JSONL and the collector owns routing.
+/// Also emits per-request access log events at target "http.access":
+/// - INFO level for non-probe requests, with `status` and `latency_ms` fields.
+/// - DEBUG level for probe requests (/healthz, /readyz, /metrics, /openapi.json, /docs).
 ///
-/// @spec libs/service-http/tech-design/logic/emit-w3c-correlated-request-completion-events.md#logic
+/// INFO so the default `info` `EnvFilter` keeps it, and so the spans the OTLP
+/// layer (when wired) would export are produced. Attach it to the **outer**
+/// router so it spans probe and data-plane requests alike:
+///
+/// ```ignore
+/// let app = service_http::standard_probe_routes(readiness, metrics, openapi)
+///     .merge(data_plane)
+///     .layer(service_http::trace_layer())
+///     .with_state(state);
+/// ```
+///
+/// Returns the concrete `TraceLayer` so callers `.layer()` it directly. For a
+/// different classifier/make-span, build `TraceLayer::new_for_http()` inline
+/// instead.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub fn trace_layer() -> TraceLayer<
     SharedClassifier<ServerErrorsAsFailures>,
     CorrelatingMakeSpan,
-    tower_http::trace::DefaultOnRequest,
-    RequestCompletionEvent,
+    AccessLogOnRequest,
+    AccessLogOnResponse,
 > {
     TraceLayer::new_for_http()
         .make_span_with(CorrelatingMakeSpan)
-        .on_response(RequestCompletionEvent)
+        .on_request(AccessLogOnRequest)
+        .on_response(AccessLogOnResponse)
 }
-// </HANDWRITE>
 // </HANDWRITE>
 // CODEGEN-END

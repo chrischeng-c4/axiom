@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-cli-service-process-interface
-// @capability cli-interface
-// @claim service-process-interface
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract cli-service-process-interface
 // @category behavior
 // @required_for_production true

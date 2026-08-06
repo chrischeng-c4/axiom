@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-backup-periodic-snapshotter
-// @capability backup-restore
-// @claim periodic-snapshotter-serve
+// @capability durability-recovery
+// @claim backup-restore-and-cold-seed
 // @contract backup-periodic-snapshotter
 // @category behavior
 // @required_for_production true

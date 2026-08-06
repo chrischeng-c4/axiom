@@ -54,6 +54,8 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("pub enum ClientError {\n");
     out.push_str("    Http(reqwest::Error),\n");
     out.push_str("    PoolTimeout(Duration),\n");
+    out.push_str("    /// The private trust anchor could not be used as configured.\n");
+    out.push_str("    Trust(String),\n");
     out.push_str("}\n\n");
     out.push_str("impl From<reqwest::Error> for ClientError {\n");
     out.push_str("    fn from(value: reqwest::Error) -> Self { Self::Http(value) }\n");
@@ -63,6 +65,7 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("        match self {\n");
     out.push_str("            Self::Http(err) => write!(f, \"{err}\"),\n");
     out.push_str("            Self::PoolTimeout(timeout) => write!(f, \"pool timeout after {timeout:?}\"),\n");
+    out.push_str("            Self::Trust(why) => write!(f, \"{why}\"),\n");
     out.push_str("        }\n");
     out.push_str("    }\n");
     out.push_str("}\n\n");
@@ -71,10 +74,42 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("        match self {\n");
     out.push_str("            Self::Http(err) => Some(err),\n");
     out.push_str("            Self::PoolTimeout(_) => None,\n");
+    out.push_str("            Self::Trust(_) => None,\n");
     out.push_str("        }\n");
     out.push_str("    }\n");
     out.push_str("}\n\n");
     out.push_str("pub type ClientResult<T> = std::result::Result<T, ClientError>;\n\n");
+    out.push_str("/// Verify the server against a private CA instead of the public roots.\n");
+    out.push_str("///\n");
+    out.push_str("/// For a service published only inside a cluster, the public roots cannot\n");
+    out.push_str("/// vouch for it and should not be consulted: a private trust domain that is\n");
+    out.push_str("/// merely *added* to the public set still lets any public CA certify this\n");
+    out.push_str("/// name. `with_private_ca` therefore replaces the root store rather than\n");
+    out.push_str("/// extending it.\n");
+    out.push_str("///\n");
+    out.push_str("/// There is no option to skip verification. If the server cannot be\n");
+    out.push_str("/// verified, the fix is the anchor or the name -- not the check.\n");
+    out.push_str("#[derive(Debug, Clone)]\n");
+    out.push_str("pub struct PrivateTrust {\n");
+    out.push_str("    /// PEM bundle holding the CA that signed the server's leaf.\n");
+    out.push_str("    pub ca_bundle: std::path::PathBuf,\n");
+    out.push_str("    /// The DNS name the leaf must assert. The base URL has to address this\n");
+    out.push_str("    /// same name: a client that verified one name while addressing another\n");
+    out.push_str("    /// would be checking a certificate it never actually relies on.\n");
+    out.push_str("    pub server_name: String,\n");
+    out.push_str("}\n\n");
+    out.push_str("/// The host a base URL actually connects to, with scheme, port, and path\n");
+    out.push_str("/// removed -- the string TLS will check the certificate against.\n");
+    out.push_str("fn addressed_host(base_url: &str) -> &str {\n");
+    out.push_str("    let after_scheme = base_url.split_once(\"://\").map_or(base_url, |(_, rest)| rest);\n");
+    out.push_str("    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or(\"\");\n");
+    out.push_str("    let authority = authority.rsplit_once('@').map_or(authority, |(_, host)| host);\n");
+    out.push_str("    if let Some(rest) = authority.strip_prefix('[') {\n");
+    out.push_str("        // A bracketed IPv6 literal: the colons inside are part of the address.\n");
+    out.push_str("        return rest.split_once(']').map_or(rest, |(host, _)| host);\n");
+    out.push_str("    }\n");
+    out.push_str("    authority.rsplit_once(':').map_or(authority, |(host, _)| host)\n");
+    out.push_str("}\n\n");
     out.push_str("#[derive(Default)]\n");
     out.push_str("struct AdmissionState { in_flight: usize }\n\n");
     out.push_str("struct SlotGuard { admission: Arc<(Mutex<AdmissionState>, Condvar)> }\n\n");
@@ -123,6 +158,42 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("    pub fn with_post_fallback(mut self, use_post_fallback: bool) -> Self {\n");
     out.push_str("        self.use_post_fallback = use_post_fallback;\n");
     out.push_str("        self\n");
+    out.push_str("    }\n");
+    out.push_str("\n    /// The same client, verifying the server against a private CA.\n");
+    out.push_str("    ///\n");
+    out.push_str("    /// Fails rather than falls back: an unreadable bundle, a bundle holding\n");
+    out.push_str("    /// no certificate, or a base URL addressing a different host than the\n");
+    out.push_str("    /// one being verified are all configuration errors, and a client that\n");
+    out.push_str("    /// quietly kept the public roots in any of those cases would verify\n");
+    out.push_str("    /// something other than what the caller asked for.\n");
+    out.push_str("    pub fn with_private_ca(base_url: impl Into<String>, policy: TransportPolicy, trust: PrivateTrust) -> ClientResult<Self> {\n");
+    out.push_str("        let base_url = base_url.into().trim_end_matches('/').to_string();\n");
+    out.push_str("        let addressed = addressed_host(&base_url);\n");
+    out.push_str("        if addressed != trust.server_name {\n");
+    out.push_str("            return Err(ClientError::Trust(format!(\n");
+    out.push_str("                \"this client would verify {} while addressing {addressed}; point the base URL at the name the certificate asserts\",\n");
+    out.push_str("                trust.server_name,\n");
+    out.push_str("            )));\n");
+    out.push_str("        }\n");
+    out.push_str("        let pem = std::fs::read(&trust.ca_bundle).map_err(|err| {\n");
+    out.push_str("            ClientError::Trust(format!(\"read the trust bundle {}: {err}\", trust.ca_bundle.display()))\n");
+    out.push_str("        })?;\n");
+    out.push_str("        let anchor = reqwest::Certificate::from_pem(&pem).map_err(|err| {\n");
+    out.push_str("            ClientError::Trust(format!(\"{} is not a PEM certificate: {err}\", trust.ca_bundle.display()))\n");
+    out.push_str("        })?;\n");
+    out.push_str("        let http = reqwest::blocking::Client::builder()\n");
+    out.push_str("            .pool_max_idle_per_host(policy.max_keepalive_connections)\n");
+    out.push_str("            .pool_idle_timeout(policy.keepalive_expiry)\n");
+    out.push_str("            .tls_built_in_root_certs(false)\n");
+    out.push_str("            .add_root_certificate(anchor)\n");
+    out.push_str("            .build()?;\n");
+    out.push_str("        Ok(Self {\n");
+    out.push_str("            base_url,\n");
+    out.push_str("            http,\n");
+    out.push_str("            policy,\n");
+    out.push_str("            admission: Arc::new((Mutex::new(AdmissionState::default()), Condvar::new())),\n");
+    out.push_str("            use_post_fallback: false,\n");
+    out.push_str("        })\n");
     out.push_str("    }\n");
     out.push_str("\n    fn acquire_slot(&self) -> ClientResult<SlotGuard> {\n");
     out.push_str("        let max = self.policy.max_in_flight_per_origin.max(1);\n");
@@ -306,5 +377,54 @@ fn response(ir: &OperationIR, tm: &TypeMap) -> (String, String) {
 
 fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::build_type_map;
+    use crate::ir::openapi::Spec;
+    use crate::ir::operations;
+
+    fn render() -> String {
+        let s: Spec = serde_json::from_str(r##"{"paths":{}}"##).unwrap();
+        let tm = build_type_map(&s);
+        emit(&operations::build(&s), &tm)
+    }
+
+    #[test]
+    fn a_private_ca_replaces_the_public_roots_rather_than_joining_them() {
+        let out = render();
+        assert!(
+            out.contains(".tls_built_in_root_certs(false)"),
+            "keeping the public roots means any public CA can still vouch for this \
+             name, which is the thing a private trust domain exists to prevent"
+        );
+        assert!(out.contains(".add_root_certificate(anchor)"));
+    }
+
+    #[test]
+    fn the_verified_name_must_be_the_addressed_name() {
+        let out = render();
+        assert!(out.contains("if addressed != trust.server_name {"));
+        assert!(out.contains("fn addressed_host(base_url: &str) -> &str {"));
+    }
+
+    #[test]
+    fn no_generated_client_offers_to_skip_verification() {
+        let out = render();
+        for weakening in [
+            "danger_accept_invalid_certs",
+            "danger_accept_invalid_hostnames",
+            "insecure",
+            "skip_verify",
+        ] {
+            assert!(
+                !out.contains(weakening),
+                "generated clients must not ship {weakening}: the fix for an unverifiable \
+                 server is the anchor or the name, not the check"
+            );
+        }
+    }
 }
 // CODEGEN-END

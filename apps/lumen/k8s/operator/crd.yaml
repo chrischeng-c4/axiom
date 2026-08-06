@@ -70,7 +70,7 @@ spec:
               auth:
                 default: required
                 description: |-
-                  Auth mode: `required` (the default — supply a token registry via `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+                  Auth mode: `required` (the default — callers are resolved through the cluster's own TokenReview/SubjectAccessReview) or `disabled`.
 
                   `required` is the default because the other way round, forgetting this field ships an open cluster and nothing says so; forgetting it now fails startup with a message naming the field to set. `disabled` remains a one-word opt-out for local development (#2678, R4).
 
@@ -108,6 +108,15 @@ spec:
                 default: false
                 description: Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
                 type: boolean
+              peerTlsSecret:
+                description: |-
+                  Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the instance-scoped X.509 identity every Raft member presents and verifies on the dedicated peer listener (#2890). Same field and Secret contract Relay and Defer already project, so one shared mechanism (`libs/peer-tls`) covers all three.
+
+                  Required whenever `replicasPerShard > 1`: replicated Raft traffic carries committed index mutations between pods, and Kubernetes ServiceAccount tokens authenticate *callers*, not peers — nothing else on that port says who is dialing. A replicated instance without it does not fall back to plaintext; the operator reports `PeerIdentityReady=False` naming this Secret, and `lumen serve` refuses to start.
+
+                  Omit only for a single-replica instance, which runs no consensus link at all.
+                nullable: true
+                type: string
               placement:
                 default: {}
                 description: Which nodes the serving pods may run on.
@@ -236,6 +245,11 @@ spec:
                         nullable: true
                     type: object
                 type: object
+              serviceAccountAnnotations:
+                additionalProperties:
+                  type: string
+                description: Annotations applied verbatim to both rendered ServiceAccounts (the workload SA when created, and the backup SA). Default empty.
+                type: object
               serviceAccountName:
                 description: Name of a pre-existing, externally-managed ServiceAccount for the workload pods. When set, the operator uses this SA and never creates, owns, updates, or deletes a ServiceAccount for the instance (the deployer owns its lifecycle and any Workload Identity annotations). When unset, the operator creates and owns `<instance>` as before.
                 nullable: true
@@ -282,7 +296,7 @@ spec:
                     nullable: true
                     properties:
                       adminTokenSecret:
-                        description: 'Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`. Needed when `spec.auth: required`; ignored (the admin API needs no token) when `spec.auth: disabled`.'
+                        description: Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`. Deprecated; the backup runner authenticates with its own projected ServiceAccount token.
                         nullable: true
                         type: string
                       destination:
@@ -337,6 +351,17 @@ spec:
                     nullable: true
                     type: string
                 type: object
+              servingTlsSecret:
+                description: |-
+                  Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the leaf every serving pod presents on the client port, issued for the Kubernetes Service DNS names callers actually dial (#3113 R1/R2).
+
+                  A different identity from [`Self::peer_tls_secret`], and deliberately a different field: a serving certificate says "I am the Service you asked for" to a client that authenticates separately with a KSA token, while a peer certificate says "I am a member of this instance's Raft group". Sharing one Secret between them would let either listener's material authenticate on the other's port.
+
+                  When set, the client port terminates TLS with ALPN `h2` and `http/1.1`, and refuses connections outright while no valid leaf is active — there is no plaintext fallback to notice too late. Omit it only for local/kind development, where the port stays h2c.
+
+                  Callers verify this leaf against `ca.crt`, which the operator republishes as a private-key-free ConfigMap (see [`LumenStatus::client_trust_bundle`]).
+                nullable: true
+                type: string
               shardCount:
                 default: 1
                 description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. HPA never changes this value.
@@ -363,18 +388,6 @@ spec:
                     type: integer
                     minimum: 0.0
                 type: object
-              tokensSecret:
-                description: 'Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object with two disjoint namespaces — `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`, each claims object being `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }` — and a flat `{ "<secret>": {…} }` document still reads as `tokens`. Ignored when `auth: disabled`. See also `tokensSecretProviderClass` for a Secret-free alternative; setting **both** is rejected by the CRD schema (#2678, R7), because silently preferring one leaves an operator reading credentials that are not the ones being served.'
-                nullable: true
-                type: string
-              tokensSecretCsiDriver:
-                description: CSI driver name for the `tokensSecretProviderClass` projection. Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE instances must set that value (#2456).
-                nullable: true
-                type: string
-              tokensSecretProviderClass:
-                description: 'Name of an existing `SecretProviderClass` (same namespace as this object) mounted via the Secrets Store CSI driver (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret` (`/var/run/secrets/lumen/token-registry.json`, env `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry''s content never materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The referenced `SecretProviderClass` must project a file named `token-registry.json` (same schema as `tokensSecret`''s Secret key). Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is enforced by the CRD schema (`x-kubernetes-validations`), so setting both is rejected at `kubectl apply` rather than resolved by a precedence rule nothing surfaces (#2678, R7). Rotation caveat: lumen polls the mounted registry file every 15s and hot-swaps the live verifier on change — no rolling restart needed on lumen''s side. The remaining caveat is entirely at the CSI layer: a CSI-mounted file only refreshes on the underlying value''s rotation if the cluster''s CSI driver has secret rotation enabled (e.g. GKE''s managed add-on defaults it off); with rotation disabled, the mounted file itself never changes, so there is nothing for lumen''s watcher to pick up.'
-                nullable: true
-                type: string
               voterCount:
                 default: 1
                 description: Voting members per shard (the rest are learners). Only meaningful when `replicasPerShard > 1`.
@@ -383,13 +396,29 @@ spec:
             required:
             - image
             type: object
-            x-kubernetes-validations:
-            - rule: '!(has(self.tokensSecret) && has(self.tokensSecretProviderClass))'
-              message: set at most one of spec.tokensSecret (a Kubernetes Secret) or spec.tokensSecretProviderClass (a Secret Manager CSI projection); with both set there is no way to tell which registry is actually being served
           status:
             description: Status subresource, written back by the reconcile loop. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
             nullable: true
             properties:
+              clientTrustBundle:
+                description: |-
+                  Where an in-cluster caller mounts the private CA that signs this instance's serving leaf (#3113 R4).
+
+                  A ConfigMap, not the serving Secret: the Secret carries `tls.key`, and a client that had to read it to obtain `ca.crt` would hold the server's private key in order to verify the server. The operator republishes the anchor into an owner-scoped, private-key-free object so a caller's RBAC needs `get` on one ConfigMap and nothing else.
+
+                  Absent until a serving certificate is active — a reference that appears before the material does would send callers to mount an empty volume.
+                nullable: true
+                properties:
+                  configMap:
+                    description: Name of the ConfigMap, in the instance's own namespace.
+                    type: string
+                  key:
+                    description: Key within it holding the PEM bundle.
+                    type: string
+                required:
+                - configMap
+                - key
+                type: object
               conditions:
                 description: |-
                   Kubernetes-convention convergence conditions (#2601): `Ready`, `Progressing`, `ReshardInProgress`. This is the surface `kubectl wait --for=condition=Ready`, Argo CD health assessment, and Flux readiness gates read; `phase` and `reshard.blockingConditions` are unchanged and still populated, so nothing already consuming them breaks.
@@ -593,7 +622,7 @@ spec:
                   auth:
                     default: required
                     description: |-
-                      Auth mode: `required` (the default — supply a token registry via `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+                      Auth mode: `required` (the default — callers are resolved through the cluster's own TokenReview/SubjectAccessReview) or `disabled`.
 
                       `required` is the default because the other way round, forgetting this field ships an open cluster and nothing says so; forgetting it now fails startup with a message naming the field to set. `disabled` remains a one-word opt-out for local development (#2678, R4).
 
@@ -631,6 +660,15 @@ spec:
                     default: false
                     description: Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
                     type: boolean
+                  peerTlsSecret:
+                    description: |-
+                      Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the instance-scoped X.509 identity every Raft member presents and verifies on the dedicated peer listener (#2890). Same field and Secret contract Relay and Defer already project, so one shared mechanism (`libs/peer-tls`) covers all three.
+
+                      Required whenever `replicasPerShard > 1`: replicated Raft traffic carries committed index mutations between pods, and Kubernetes ServiceAccount tokens authenticate *callers*, not peers — nothing else on that port says who is dialing. A replicated instance without it does not fall back to plaintext; the operator reports `PeerIdentityReady=False` naming this Secret, and `lumen serve` refuses to start.
+
+                      Omit only for a single-replica instance, which runs no consensus link at all.
+                    nullable: true
+                    type: string
                   placement:
                     default: {}
                     description: Which nodes the serving pods may run on.
@@ -759,6 +797,11 @@ spec:
                             nullable: true
                         type: object
                     type: object
+                  serviceAccountAnnotations:
+                    additionalProperties:
+                      type: string
+                    description: Annotations applied verbatim to both rendered ServiceAccounts (the workload SA when created, and the backup SA). Default empty.
+                    type: object
                   serviceAccountName:
                     description: Name of a pre-existing, externally-managed ServiceAccount for the workload pods. When set, the operator uses this SA and never creates, owns, updates, or deletes a ServiceAccount for the instance (the deployer owns its lifecycle and any Workload Identity annotations). When unset, the operator creates and owns `<instance>` as before.
                     nullable: true
@@ -805,7 +848,7 @@ spec:
                         nullable: true
                         properties:
                           adminTokenSecret:
-                            description: 'Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`. Needed when `spec.auth: required`; ignored (the admin API needs no token) when `spec.auth: disabled`.'
+                            description: Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`. Deprecated; the backup runner authenticates with its own projected ServiceAccount token.
                             nullable: true
                             type: string
                           destination:
@@ -860,6 +903,17 @@ spec:
                         nullable: true
                         type: string
                     type: object
+                  servingTlsSecret:
+                    description: |-
+                      Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the leaf every serving pod presents on the client port, issued for the Kubernetes Service DNS names callers actually dial (#3113 R1/R2).
+
+                      A different identity from [`Self::peer_tls_secret`], and deliberately a different field: a serving certificate says "I am the Service you asked for" to a client that authenticates separately with a KSA token, while a peer certificate says "I am a member of this instance's Raft group". Sharing one Secret between them would let either listener's material authenticate on the other's port.
+
+                      When set, the client port terminates TLS with ALPN `h2` and `http/1.1`, and refuses connections outright while no valid leaf is active — there is no plaintext fallback to notice too late. Omit it only for local/kind development, where the port stays h2c.
+
+                      Callers verify this leaf against `ca.crt`, which the operator republishes as a private-key-free ConfigMap (see [`LumenStatus::client_trust_bundle`]).
+                    nullable: true
+                    type: string
                   shardCount:
                     default: 1
                     description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. HPA never changes this value.
@@ -886,18 +940,6 @@ spec:
                         type: integer
                         minimum: 0.0
                     type: object
-                  tokensSecret:
-                    description: 'Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object with two disjoint namespaces — `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`, each claims object being `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }` — and a flat `{ "<secret>": {…} }` document still reads as `tokens`. Ignored when `auth: disabled`. See also `tokensSecretProviderClass` for a Secret-free alternative; setting **both** is rejected by the CRD schema (#2678, R7), because silently preferring one leaves an operator reading credentials that are not the ones being served.'
-                    nullable: true
-                    type: string
-                  tokensSecretCsiDriver:
-                    description: CSI driver name for the `tokensSecretProviderClass` projection. Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE instances must set that value (#2456).
-                    nullable: true
-                    type: string
-                  tokensSecretProviderClass:
-                    description: 'Name of an existing `SecretProviderClass` (same namespace as this object) mounted via the Secrets Store CSI driver (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret` (`/var/run/secrets/lumen/token-registry.json`, env `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry''s content never materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The referenced `SecretProviderClass` must project a file named `token-registry.json` (same schema as `tokensSecret`''s Secret key). Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is enforced by the CRD schema (`x-kubernetes-validations`), so setting both is rejected at `kubectl apply` rather than resolved by a precedence rule nothing surfaces (#2678, R7). Rotation caveat: lumen polls the mounted registry file every 15s and hot-swaps the live verifier on change — no rolling restart needed on lumen''s side. The remaining caveat is entirely at the CSI layer: a CSI-mounted file only refreshes on the underlying value''s rotation if the cluster''s CSI driver has secret rotation enabled (e.g. GKE''s managed add-on defaults it off); with rotation disabled, the mounted file itself never changes, so there is nothing for lumen''s watcher to pick up.'
-                    nullable: true
-                    type: string
                   voterCount:
                     default: 1
                     description: Voting members per shard (the rest are learners). Only meaningful when `replicasPerShard > 1`.

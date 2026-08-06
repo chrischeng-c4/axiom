@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-topology-existing-backup-seed
-// @capability replica-sync-bootstrap
-// @claim external-backup-disaster-recovery-seed
+// @capability durability-recovery
+// @claim backup-restore-and-cold-seed
 // @contract topology-existing-backup-seed
 // @category behavior
 // @required_for_production true

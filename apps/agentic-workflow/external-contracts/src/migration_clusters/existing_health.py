@@ -13,7 +13,12 @@ from oracles.project_health_contract import (
     assert_ec_accepts_td,
     assert_two_cell_health,
 )
-from wi_contract_fixture import final_json, run_aw
+from wi_contract_fixture import (
+    final_json,
+    run_aw,
+    write_python_artifact_lock,
+    write_python_artifact_unit_test,
+)
 
 
 CASE_IDS = {
@@ -179,6 +184,9 @@ requires-python = ">=3.11"
 """,
         encoding="utf-8",
     )
+    write_python_artifact_lock(
+        project / "tech-design", name="fixture-tech-design"
+    )
     (project / "tech-design/src/fixture_health.py").write_text(
         """\
 __aw_artifact_id__ = "artifact:fixture/fixture-health"
@@ -237,10 +245,16 @@ test_path = "src/cases/fixture-health.py"
 promise = "The fixture health contract remains observable."
 oracle = "The fixture returns one explicit assertion."
 target = "rust"
-command = "python3 projects/fixture/external-contracts/src/runner.py --case fixture-health"
+command = "uv run --frozen --offline --project projects/fixture/external-contracts python projects/fixture/external-contracts/src/runner.py --case fixture-health"
 evidence_paths = ["evidence/fixture-health.json"]
 """,
         encoding="utf-8",
+    )
+    write_python_artifact_lock(
+        project / "external-contracts", name="fixture-external-contracts"
+    )
+    write_python_artifact_unit_test(
+        project / "external-contracts", "fixture_health"
     )
     (project / "aw.toml").write_text(
         f"""\

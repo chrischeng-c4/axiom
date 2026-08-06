@@ -14,6 +14,7 @@
 //! the shared service kit (`raft-core` + `raft-runtime` + `transport-h2c` + `service-http` +
 //! `service-backup` + `cli-std` + this).
 
+pub mod certificate;
 pub mod controller;
 pub mod crd;
 pub mod lease;
@@ -24,6 +25,9 @@ pub mod resize;
 pub mod service;
 pub mod stateful;
 
+pub use certificate::{
+    CertificateFacts, CertificateProfile, InstanceScope, Issuer, IssuerId, Purpose, Reconciler,
+};
 pub use controller::{run, Error};
 pub use lease::Election;
 pub use metrics::ControllerMetrics;

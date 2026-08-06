@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-versioned-virtual-bucket-map
-// @capability dynamic-shard-topology
-// @claim versioned-virtual-bucket-shard-map
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-versioned-virtual-bucket-map
 // @category behavior
 // @required_for_production true

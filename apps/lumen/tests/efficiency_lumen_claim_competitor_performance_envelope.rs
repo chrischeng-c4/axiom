@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-competitor-performance-envelope
-// @capability competitor-performance
-// @claim perf-gate-envelope-absolute-latency-throughput-floors
+// @capability querying
+// @claim query-quality
 // @contract competitor-performance-envelope
 // @category efficiency
 // @required_for_production true

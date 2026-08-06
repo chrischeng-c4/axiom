@@ -110,34 +110,36 @@ llm_protocol:
       command_template: "lumen spec gen --lang {lang} --out {out}"
       verification: ["Confirm generated client source is produced from the canonical OpenAPI document."]
     - id: authenticate
-      use_when: "configure bearer-token access or inspect the token registry shape"
+      use_when: "check which request identity a Lumen server accepts before wiring a client"
       requires: []
-      reads: ["lumen spec --format json-schema"]
-      produces: ["auth configuration"]
+      reads: ["lumen spec --format openapi"]
+      produces: ["request-identity decision"]
       risk: inspect
-      purpose: "Read the operational token-registry schema before creating secrets or client headers."
-      preconditions: ["Know the intended collection and minimum role."]
+      purpose: "Read the canonical security scheme: Lumen accepts a short-lived, audience-bound Kubernetes ServiceAccount identity and nothing else."
+      preconditions: ["Know which serving instance's auth mode you are targeting."]
       inputs: []
-      constraints: ["Never put a bearer token in a generated runbook or committed client source."]
-      instruction: "Read the token-registry schema."
-      command: "lumen spec --format json-schema"
-      verification: ["Confirm the selected role covers only the intended collection scope."]
+      constraints: ["The CLI stores no credential and finds none: there is no credential flag, no environment variable, and no Secret lookup. Pass --client-sa to mint a short-lived audience-bound ServiceAccount token through the caller's own kubeconfig; the caller's Google user, service-account, or metadata credential authenticates to kube-apiserver only and is never sent to Lumen.", "Request identity and transport are two independent checks. In production the serving port is private ClusterIP TLS that the Lumen process terminates itself at https://<instance>.<namespace>.svc:7373 — no Ingress, Gateway, LoadBalancer, NodePort, or service mesh terminates it on Lumen's behalf, so the token never crosses an unauthenticated hop. Verify the server against the CA the operator publishes at status.clientTrustBundle, in place of the public roots."]
+      instruction: "Read the canonical security scheme from the OpenAPI document."
+      command: "lumen spec --format openapi"
+      verification: ["Confirm the security scheme names a Kubernetes ServiceAccount identity and no other credential type."]
     - id: connect-kubernetes
       use_when: "run a command through a temporary Kubernetes port-forward"
       requires: ["kubectl access to the target namespace and service."]
       reads: ["lumen connect --help"]
-      produces: ["authenticated local connection"]
+      produces: ["local connection"]
       risk: remote_write
-      purpose: "Use lumen connect so port-forward lifecycle and bearer-token lookup are bounded to one command."
-      preconditions: ["Resolve the target namespace and service name."]
+      purpose: "Use lumen connect so the port-forward lifecycle is bounded to one command; the wrapped command is handed a URL and nothing else, and with --client-sa a loopback proxy attaches the minted ServiceAccount token on its behalf."
+      preconditions: ["Resolve the target namespace and service name.", "Decide which client ServiceAccount to act as; it is never inferred."]
       inputs:
         - { name: namespace, type: string, description: "Kubernetes namespace", required: true }
         - { name: service, type: string, description: "Lumen service name", required: true }
+        - { name: client_sa, type: string, description: "client ServiceAccount to mint a token for", required: true }
+        - { name: ca_file, type: path, description: "PEM trust anchor published at status.clientTrustBundle; required against any TLS fleet", required: true }
         - { name: command, type: command, description: "wrapped local command", required: true }
-      constraints: ["The wrapped command is explicit; LLM navigation does not execute it automatically."]
-      instruction: "Run an explicit client command through the temporary port-forward."
-      command_template: "lumen connect --namespace {namespace} --service {service} -- {command}"
-      verification: ["Confirm the wrapped command observes LUMEN_URL and terminates with the port-forward."]
+      constraints: ["The wrapped command is explicit; LLM navigation does not execute it automatically.", "The wrapped command receives LUMEN_URL and no credential: the minted token stays in the lumen process and is attached by a loopback-only proxy, never placed in the child's environment, argv, or a file.", "Omitting --client-sa forwards with no identity at all, which only reaches a fleet whose auth is disabled.", "The port-forward is transport only. The upstream URL keeps the Service's real DNS name, so SNI, hostname verification, and :authority all target the name the certificate asserts while only address resolution points at the forwarded loopback socket. --ca-file replaces the public roots with the fleet's anchor rather than adding to them; there is no flag that skips verification, and --plaintext is for h2c development fleets only."]
+      instruction: "Run an explicit client command through the temporary authenticated port-forward."
+      command_template: "lumen connect --namespace {namespace} --service {service} --client-sa {client_sa} --ca-file {ca_file} -- {command}"
+      verification: ["Confirm the wrapped command observes LUMEN_URL and terminates with the port-forward.", "Confirm the wrapped command's environment contains no token — only the loopback URL.", "Confirm a wrong anchor or a wrong server name fails the connection instead of downgrading it."]
     - id: deploy-kubernetes
       use_when: "render image, CRD, operator, or Lumen instance manifests"
       requires: ["A deployment profile and output path."]
@@ -149,17 +151,35 @@ llm_protocol:
       inputs:
         - { name: profile, type: enum, description: "dev, staging, prod, or template", required: true }
         - { name: out, type: path, description: "rendered manifest path", required: true }
-      constraints: ["Do not collapse CRD, operator, and instance artifacts into one command."]
+      constraints: ["Do not collapse CRD, operator, and instance artifacts into one command.", "A production instance is a private ClusterIP that terminates its own TLS on :7373. Set spec.servingTlsSecret; the staging, prod, and template profiles already carry it, and the operator projects the leaf and switches the port off h2c. Omitting it is not an error and not a warning — it is cleartext, so only the local-only dev profile leaves it out. Do not add an Ingress, Gateway, LoadBalancer, NodePort, or mesh TLS terminator: a hop that re-originates plaintext carries the caller's ServiceAccount token in the clear. spec.peerTlsSecret is a separate field for the separate Raft identity on :7374 and must not share a Secret with it."]
       instruction: "Render an instance manifest for the chosen profile."
       command_template: "lumen k8s instance render --profile {profile} --out {out}"
-      verification: ["Confirm the rendered artifact corresponds to exactly one deployment layer."]
+      verification: ["Confirm the rendered artifact corresponds to exactly one deployment layer.", "Confirm any non-dev instance manifest names both servingTlsSecret and, when replicated, peerTlsSecret, and that neither is a published-exposure object."]
+    - id: grant-access
+      use_when: "give a Google account, Google service account, or any other Kubernetes user access to a Lumen instance"
+      requires: ["kubectl access to the Lumen namespace and the username kubectl auth whoami prints for the principal."]
+      reads: ["kubectl auth whoami", "lumen k8s access render --help"]
+      produces: ["client access bundle"]
+      risk: local_write
+      purpose: "Render the two-hop identity handoff: RBAC that lets named Kubernetes users mint one client ServiceAccount's token, and RBAC that tells Lumen what that ServiceAccount may do."
+      preconditions: ["Resolve the external principal's Kubernetes username with kubectl auth whoami.", "Decide which collections the client reads or writes before rendering."]
+      inputs:
+        - { name: namespace, type: string, description: "namespace holding the Lumen instance", required: true }
+        - { name: client_sa, type: string, description: "client ServiceAccount name every request is made as", required: true }
+        - { name: issuer, type: string, description: "Kubernetes username allowed to mint that ServiceAccount's token", required: true }
+        - { name: grant, type: string, description: "collection grant, <collection-id>=read|write|admin", required: true }
+        - { name: out, type: path, description: "rendered bundle path", required: true }
+      constraints: ["The external principal is bound only to the token-issuer role; the Lumen role is bound only to the client ServiceAccount, never to the principal.", "The rendered bundle contains no token, no Secret, and no wildcard grant; a Google credential is never sent to Lumen."]
+      instruction: "Render the client access bundle, then apply it with kubectl."
+      command_template: "lumen k8s access render --namespace {namespace} --client-sa {client_sa} --issuer {issuer} --grant {grant} --out {out}"
+      verification: ["Confirm the issuer Role names the client ServiceAccount in resourceNames and grants only create on serviceaccounts/token.", "Confirm kubectl auth can-i --as the client ServiceAccount matches the intended collection grants."]
     - id: backup-restore
       use_when: "create or restore an administrative Lumen snapshot"
-      requires: ["Admin authorization and a supported backup destination."]
+      requires: ["An admin-reachable Lumen URL and a supported backup destination."]
       reads: ["lumen backup --help"]
       produces: ["backup or restore evidence"]
       risk: remote_write
-      purpose: "Use the admin backup surface with an admin bearer token; a local snapshot is not a replacement for scheduled object storage backups."
+      purpose: "Use the admin backup surface; a local snapshot is not a replacement for scheduled object storage backups."
       preconditions: ["Confirm the destination URI and retention policy."]
       inputs:
         - { name: url, type: url, description: "Lumen base URL", required: true }
@@ -179,7 +199,7 @@ llm_protocol:
       inputs:
         - { name: lang, type: enum, description: "ts, py, or rust", required: true }
         - { name: out, type: path, description: "client output directory", required: true }
-      constraints: ["The generated output is disposable and must be regenerated after an API release."]
+      constraints: ["The generated output is disposable and must be regenerated after an API release.", "Every generated client takes a private trust anchor and the name it expects the server to assert (PrivateTrust in all three languages), verifies against that anchor instead of the public roots, and refuses to construct when the verified name is not the host the base URL addresses. None of them exposes a way to skip verification."]
       instruction: "Generate the selected typed client."
       command_template: "lumen spec gen --lang {lang} --out {out}"
       verification: ["Confirm the generated entrypoint is the CLI-reported next artifact."]
@@ -190,7 +210,7 @@ llm_protocol:
       produces: ["diagnostic evidence"]
       risk: inspect
       purpose: "Start with the standard operational surface; do not infer liveness from a data-plane request."
-      preconditions: ["Identify whether a bearer token is required for the collection listing."]
+      preconditions: ["Identify the serving instance's auth mode; the CLI has no credential to add if it refuses anonymous reads."]
       inputs:
         - { name: url, type: url, description: "Lumen base URL", required: true }
       constraints: ["Readiness and liveness are separate signals; do not treat a 200 healthz as write readiness."]

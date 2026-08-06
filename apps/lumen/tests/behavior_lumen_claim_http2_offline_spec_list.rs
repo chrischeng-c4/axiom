@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-http2-offline-spec-list
-// @capability http2-api-list
-// @claim offline-spec-openapi-list
+// @capability api-cli-agent-integration
+// @claim http2-openapi-and-client-interface
 // @contract http2-offline-spec-list
 // @category behavior
 // @required_for_production true

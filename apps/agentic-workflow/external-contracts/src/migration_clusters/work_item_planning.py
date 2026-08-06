@@ -251,9 +251,16 @@ def _verify_remote_close() -> list[str]:
 
 
 def _planning_snapshot() -> dict[str, Any]:
+    """Observe one real planning run and return only run-derived values.
+
+    Every field is read back out of a public `aw` result, so a caller that
+    asserts on this snapshot is constrained by observed CLI behavior instead
+    of by constants decided inside this helper. Nothing here raises on the
+    observations themselves; the per-case callers own the assertions.
+    """
     with project_fixture() as root:
         help_result = run_aw(root, "wi", "create", "--help")
-        assert "--remote" not in help_result.stdout
+        help_lists_remote = "--remote" in help_result.stdout
         epic = create(
             root,
             "Planning fixture epic",
@@ -285,10 +292,7 @@ def _planning_snapshot() -> dict[str, Any]:
             f"epic:{epic['slug']}",
         )
         issue = show(root, slug)
-        assert issue["type"] == "change"
-        assert "app:demo" in issue["labels"]
-        assert "Agent Estimate" not in issue["body"]
-        run_aw(root, "wi", "validate", slug)
+        bounded_validate = run_aw(root, "wi", "validate", slug, expect_success=None)
 
         legacy = BOUNDED_BODY + """\
 
@@ -318,7 +322,11 @@ human_attention: confirm
             "--add-label",
             f"epic:{epic['slug']}",
         )
-        run_aw(root, "wi", "validate", legacy_created["slug"])
+        legacy_slug = legacy_created["slug"]
+        legacy_issue = show(root, legacy_slug)
+        legacy_validate = run_aw(
+            root, "wi", "validate", legacy_slug, expect_success=None
+        )
 
         planned = final_json(
             run_aw(root, "wi", "prioritize", "--project", "demo", "--json")
@@ -330,28 +338,66 @@ human_attention: confirm
             {"envelope": planned, "graph": graph, "plan": plan_document},
             sort_keys=True,
         )
-        assert "Agent Estimate" not in serialized
-        assert "agent_minutes" not in serialized
-        assert "human_attention" not in serialized
-        ready_lane = (
-            graph["valid"] is True
-            and any(
-                change.get("title") == "Bounded planning fixture"
-                and change.get("lane") == "ready_now"
-                for change in plan_document["changes"]
+        estimate_tokens = tuple(
+            token
+            for token in (
+                "Agent Estimate",
+                "agent_minutes",
+                "human_attention",
+                "confidence",
+                "risk",
             )
+            if token in serialized
         )
-        if not ready_lane:
-            raise AssertionError(f"bounded change missing from planning result: {serialized}")
         return {
-            "help_hidden": True,
-            "compatibility_flag_parsed": True,
-            "local_backend_created": issue["slug"] == slug,
-            "bounded_validated": True,
-            "legacy_estimate_inert": True,
-            "planning_omits_estimate": True,
-            "ready_lane": ready_lane,
+            "help_lists_remote": help_lists_remote,
+            "epic_slug": str(epic["slug"]),
+            "bounded_requested_slug": str(slug),
+            "bounded_shown_slug": str(issue["slug"]),
+            "bounded_type": str(issue["type"]),
+            "bounded_labels": tuple(sorted(str(item) for item in issue["labels"])),
+            "bounded_body_estimate_section": "## Agent Estimate" in str(issue["body"]),
+            "bounded_validate_returncode": bounded_validate.returncode,
+            "legacy_slug": str(legacy_slug),
+            "legacy_body_estimate_section": "## Agent Estimate"
+            in str(legacy_issue["body"]),
+            "legacy_validate_returncode": legacy_validate.returncode,
+            "graph_valid": graph["valid"],
+            "planning_estimate_tokens": estimate_tokens,
+            "planning_lanes": tuple(
+                sorted(
+                    (str(change.get("title")), str(change.get("lane")))
+                    for change in plan_document["changes"]
+                )
+            ),
         }
+
+
+def _planning_expectations(snapshot: dict[str, Any]) -> None:
+    """Assert the whole observed planning contract, field by observed field."""
+    assert snapshot["help_lists_remote"] is False, snapshot
+    assert snapshot["bounded_shown_slug"] == snapshot["bounded_requested_slug"], snapshot
+    assert snapshot["bounded_type"] == "change", snapshot
+    assert "app:demo" in snapshot["bounded_labels"], snapshot
+    assert f"epic:{snapshot['epic_slug']}" in snapshot["bounded_labels"], snapshot
+    assert snapshot["bounded_body_estimate_section"] is False, snapshot
+    assert snapshot["bounded_validate_returncode"] == 0, snapshot
+    assert snapshot["legacy_slug"] == "change-legacy-estimate-fixture", snapshot
+    assert snapshot["legacy_body_estimate_section"] is True, snapshot
+    assert snapshot["legacy_validate_returncode"] == 0, snapshot
+    assert snapshot["graph_valid"] is True, snapshot
+    assert snapshot["planning_estimate_tokens"] == (), snapshot
+    # Both lanes, not just the bounded one: the legacy work item carries the
+    # inert Agent Estimate section, so its own ready-lane placement is the
+    # observable that would reveal that section creating a readiness
+    # requirement. Asserting only the bounded lane left that regression
+    # undetectable by every case in this cluster.
+    assert ("Bounded planning fixture", "ready_now") in snapshot[
+        "planning_lanes"
+    ], snapshot
+    assert ("Legacy estimate fixture", "ready_now") in snapshot[
+        "planning_lanes"
+    ], snapshot
 
 
 def _verify_planning(case_id: str) -> list[str]:
@@ -562,7 +608,7 @@ def _verify_planning(case_id: str) -> list[str]:
     if case_id == "work-item-planning-operational-efficiency":
         started = time.monotonic()
         snapshot = _planning_snapshot()
-        assert all(snapshot.values()), snapshot
+        _planning_expectations(snapshot)
         elapsed = time.monotonic() - started
         assert elapsed <= 120
         return [
@@ -572,43 +618,85 @@ def _verify_planning(case_id: str) -> list[str]:
     if case_id == "work-item-planning-operational-stability":
         first = _planning_snapshot()
         second = _planning_snapshot()
-        assert first == second
-        assert all(first.values()), first
+        _planning_expectations(first)
+        _planning_expectations(second)
+        assert first == second, {"first": first, "second": second}
         return [
             "two fresh native Python planning executions produced identical results",
             "both executions passed every representative behavior assertion",
         ]
 
     snapshot = _planning_snapshot()
-    assert all(snapshot.values()), snapshot
-    assertions = {
-        "wi-create-help-command": ["help output does not list --remote"],
-        "wi-create-help-smoke": ["stdout does not contain --remote"],
-        "wi-create-remote-flag-tests": [
+
+    if case_id == "wi-create-help-command":
+        assert snapshot["help_lists_remote"] is False, snapshot
+        return ["help output does not list --remote"]
+    if case_id == "wi-create-help-smoke":
+        assert snapshot["help_lists_remote"] is False, snapshot
+        return ["stdout does not contain --remote"]
+    if case_id == "wi-create-remote-flag-tests":
+        # The bounded change in the snapshot is created with `--remote`, so a
+        # readable slug is itself the proof that the hidden flag still parses.
+        assert snapshot["help_lists_remote"] is False, snapshot
+        assert snapshot["bounded_requested_slug"], snapshot
+        assert snapshot["bounded_shown_slug"] == snapshot[
+            "bounded_requested_slug"
+        ], snapshot
+        return [
             "create help hides --remote",
             "hidden compatibility flag parses",
             "local configuration selects the local backend",
-        ],
-        "wi-create-remote-unit-command": [
+        ]
+    if case_id == "wi-create-remote-unit-command":
+        assert snapshot["help_lists_remote"] is False, snapshot
+        assert snapshot["bounded_shown_slug"] == snapshot[
+            "bounded_requested_slug"
+        ], snapshot
+        assert snapshot["bounded_type"] == "change", snapshot
+        return [
             "help hides deprecated flag and compatibility input remains accepted",
             "configured backend owns create behavior",
-        ],
-        "wi-remove-agent-estimate-build": [
-            "prioritization output omits estimate fields",
-        ],
-        "wi-remove-agent-estimate-spec-check": [
+        ]
+    if case_id == "wi-remove-agent-estimate-build":
+        assert snapshot["planning_estimate_tokens"] == (), snapshot
+        return ["prioritization output omits estimate fields"]
+    if case_id == "wi-remove-agent-estimate-spec-check":
+        # Inert means all three at once: the legacy section is accepted, it is
+        # still stored verbatim, and it reaches none of the planning output.
+        assert snapshot["legacy_validate_returncode"] == 0, snapshot
+        assert snapshot["legacy_body_estimate_section"] is True, snapshot
+        assert snapshot["planning_estimate_tokens"] == (), snapshot
+        # "creates no readiness requirement" is the second half of this case's
+        # declared promise, so it needs its own observable: the work item that
+        # carries the legacy section still reaches the ready lane. Without this
+        # the case could not fail when the section started gating readiness.
+        assert ("Legacy estimate fixture", "ready_now") in snapshot[
+            "planning_lanes"
+        ], snapshot
+        return [
             "legacy Agent Estimate input validates but is inert",
-        ],
-        "wi-remove-agent-estimate-unit-command": [
+            "the work item carrying the legacy section still reaches the ready "
+            "lane, so the section creates no readiness requirement",
+        ]
+    if case_id == "wi-remove-agent-estimate-unit-command":
+        assert snapshot["bounded_validate_returncode"] == 0, snapshot
+        assert snapshot["bounded_body_estimate_section"] is False, snapshot
+        assert snapshot["legacy_validate_returncode"] == 0, snapshot
+        assert snapshot["planning_estimate_tokens"] == (), snapshot
+        return [
             "bounded change validates without an estimate section",
             "legacy estimate input remains parseable",
             "generated and planning outputs omit estimate fields",
-        ],
-        "work-item-planning-epic-to-change-atomization": [
-            "bounded change appears in the ready planning lane",
-        ],
-    }
-    return assertions[case_id]
+        ]
+    if case_id == "work-item-planning-epic-to-change-atomization":
+        assert snapshot["graph_valid"] is True, snapshot
+        assert f"epic:{snapshot['epic_slug']}" in snapshot["bounded_labels"], snapshot
+        assert ("Bounded planning fixture", "ready_now") in snapshot[
+            "planning_lanes"
+        ], snapshot
+        return ["bounded change appears in the ready planning lane"]
+
+    raise AssertionError(f"unhandled work-item-planning case: {case_id}")
 
 
 def verify(case_id: str) -> list[str]:

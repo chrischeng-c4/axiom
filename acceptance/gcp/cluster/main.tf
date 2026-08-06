@@ -63,16 +63,6 @@ resource "google_container_cluster" "acceptance" {
   workload_identity_config {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
-  # The #2457 auth+CSI leg needs the GKE Secret Manager add-on, which registers
-  # the secrets-store-gke.csi.k8s.io CSIDriver. It used to be enabled by hand on
-  # the long-lived cluster and was never written down here, so when the cluster
-  # was recreated (run 0726090015) the add-on vanished with it and the next run
-  # reported auth_csi_gke_leg="skipped_no_addon" -- coverage shrank without a
-  # single failure. A cluster fact that only exists in the cluster is a fact
-  # that dies the next time the cluster does.
-  secret_manager_config {
-    enabled = true
-  }
   ip_allocation_policy {}
   resource_labels = { "axiom-owner" = "gcp-operator-acceptance" }
 

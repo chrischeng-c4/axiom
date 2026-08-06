@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-competitor-feature-schema-metadata
-// @capability competitor-feature-parity
-// @claim schema-and-metadata-breadth
+// @capability indexing
+// @claim indexing-quality
 // @contract competitor-feature-schema-metadata
 // @category behavior
 // @required_for_production true

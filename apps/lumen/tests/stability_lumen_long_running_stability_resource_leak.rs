@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-long-running-stability-resource-leak
-// @capability long-running-stability
-// @claim no-fd-socket-thread-leak
+// @capability operations-observability
+// @claim long-running-stability
 // @contract search-stability-resource-leak
 // @category stability
 // @required_for_production true

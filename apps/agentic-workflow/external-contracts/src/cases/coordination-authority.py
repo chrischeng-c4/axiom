@@ -11,10 +11,11 @@ from wi_contract_fixture import final_json, project_fixture, run_aw
 
 CASE_ID = "coordination-authority"
 CAPABILITY_ID = "workflow-root-runner"
-USE_CASE_ID = "aw-only-completion-and-decision-authority"
+USE_CASE_ID = "aw-only-coordination-authority"
 DIMENSION = "behavior"
 TARGET_COMMAND = (
-    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
     "--case coordination-authority"
 )
 ASSERTIONS = (

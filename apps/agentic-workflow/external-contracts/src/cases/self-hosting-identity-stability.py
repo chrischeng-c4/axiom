@@ -5,7 +5,11 @@ CAPABILITY_ID = "workflow-root-runner"
 USE_CASE_ID = "self-hosting-root-runner-policy"
 DIMENSION = "stability"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/stability_self_hosting_identity_stability.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case self-hosting-identity-stability"
+)
 ASSERTIONS = ('a malformed self-hosting WI identity returns a normal blocked envelope', 'the failed resolution leaves repository and runtime state byte-identical')
 
 

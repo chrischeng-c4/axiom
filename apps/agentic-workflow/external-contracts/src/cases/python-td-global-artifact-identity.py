@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -12,23 +11,34 @@ from wi_contract_fixture import run_aw
 
 CASE_ID = "python-td-global-artifact-identity"
 CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
-USE_CASE_ID = "python-td-global-artifact-identity"
+USE_CASE_ID = "global-python-td-artifact-identity"
 DIMENSION = "behavior"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-td-global-artifact-identity"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case python-td-global-artifact-identity"
+)
 ASSERTIONS = (
-    "the complete 1002-module Agentic Workflow Python TD project has unique identities",
+    "the whole Agentic Workflow Python TD project has globally unique module and artifact identities",
+    "every design module outside the shrinking legacy allowlist declares an explicit identity",
     "the two normalized logic-emitter paths retain exact role-distinct identities",
     "duplicate project artifact IDs emit a complete stable sorted diagnostic",
-    "the exact typed mutation inventory has unique IDs and covers both logic emitters",
+    "the typed mutation inventory is unique, reproducible, and covers both logic emitters",
 )
 
-EXPECTED_MODULE_COUNT = 1002
-EXPECTED_ARTIFACT_COUNT = 995
-EXPECTED_MUTATION_COUNT = 8756
-EXPECTED_MUTATION_ID_DIGEST = (
-    "sha256:d730df1eeda12e477df35c67b643efcb1b9d207a6ff0f1c6465033d5f5c225d0"
-)
-EXPECTED_MISSING_ARTIFACT_PATHS = {
+# Lower bounds, not snapshots: they prove the case read the real whole-project IR
+# instead of an empty or truncated one, and they do not need editing every time a
+# design module or mutation descriptor is added.
+MINIMUM_MODULE_COUNT = 1000
+MINIMUM_MUTATION_COUNT = 9000
+
+# A package marker and a unit test carry no design identity by construction.
+IDENTITY_EXEMPT_BASENAMES = {"__init__.py"}
+IDENTITY_EXEMPT_PREFIXES = ("tests/",)
+
+# Legacy design modules that still lack an explicit identity. This allowlist may
+# only shrink: a newly added design module without `__aw_artifact_id__` fails.
+LEGACY_UNIDENTIFIED_DESIGN_MODULES = {
     "src/agentic_workflow/work_items/intake_health.py",
     "src/agentic_workflow/work_items/report_triage.py",
     "src/agentic_workflow/work_items/shared_cli_report.py",
@@ -50,18 +60,23 @@ def verify() -> list[str]:
     ast = run_aw(Path.cwd(), "td", "ast", td_root)
     ir = json.loads(ast.stdout)
     modules = ir["modules"]
-    assert len(modules) == EXPECTED_MODULE_COUNT
+    assert len(modules) >= MINIMUM_MODULE_COUNT, len(modules)
     module_ids = [module["id"] for module in ir["modules"]]
     artifact_ids = [
         module["artifact_id"]
         for module in modules
         if module.get("artifact_id") is not None
     ]
-    missing_artifact_paths = {
-        module["path"] for module in modules if module.get("artifact_id") is None
+    unidentified_design_modules = {
+        module["path"]
+        for module in modules
+        if module.get("artifact_id") is None
+        and module["path"].rsplit("/", 1)[-1] not in IDENTITY_EXEMPT_BASENAMES
+        and not module["path"].startswith(IDENTITY_EXEMPT_PREFIXES)
     }
-    assert len(artifact_ids) == EXPECTED_ARTIFACT_COUNT
-    assert missing_artifact_paths == EXPECTED_MISSING_ARTIFACT_PATHS
+    assert unidentified_design_modules <= LEGACY_UNIDENTIFIED_DESIGN_MODULES, sorted(
+        unidentified_design_modules - LEGACY_UNIDENTIFIED_DESIGN_MODULES
+    )
     assert len(module_ids) == len(set(module_ids))
     assert len(artifact_ids) == len(set(artifact_ids))
     actual_logic_emitters = {
@@ -136,13 +151,16 @@ def verify() -> list[str]:
     mutation_projection = json.loads(mutation_inventory.stdout)
     assert mutation_projection["mutation_schema"] == "aw.python-td-mutation.v1"
     mutations = mutation_projection["mutations"]
-    assert len(mutations) == EXPECTED_MUTATION_COUNT
+    assert len(mutations) >= MINIMUM_MUTATION_COUNT, len(mutations)
     mutation_ids = [mutation["id"] for mutation in mutations]
     assert len(mutation_ids) == len(set(mutation_ids))
-    mutation_id_digest = "sha256:" + hashlib.sha256(
-        "\n".join(sorted(mutation_ids)).encode()
-    ).hexdigest()
-    assert mutation_id_digest == EXPECTED_MUTATION_ID_DIGEST
+    # Reproducibility is proven by re-deriving the inventory rather than by
+    # comparing against a digest that has to be re-baselined on every TD edit.
+    repeated_projection = json.loads(
+        run_aw(Path.cwd(), "td", "ast", td_root, "--mutations").stdout
+    )
+    repeated_ids = [mutation["id"] for mutation in repeated_projection["mutations"]]
+    assert repeated_ids == mutation_ids
     logic_emitter_mutations = {
         module_id: [
             mutation["id"]
@@ -159,9 +177,4 @@ def verify() -> list[str]:
     assert all(
         len(ids) == len(set(ids)) for ids in logic_emitter_mutations.values()
     )
-    return [
-        "the canonical 1002-module Python TD IR has 995 unique explicit artifact identities",
-        "the semantic and generated logic-emitter modules have exact role-distinct identities",
-        "a duplicate fixture emits the exact complete sorted diagnostic twice",
-        "the exact 8756-descriptor mutation inventory has unique IDs and covers both logic emitters",
-    ]
+    return list(ASSERTIONS)

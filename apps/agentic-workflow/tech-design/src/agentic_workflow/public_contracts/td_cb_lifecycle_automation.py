@@ -8,11 +8,11 @@ def remove_td_merge_command() -> str:
     return "the linear lifecycle has no TD merge phase"
 
 
-def td_create_dirty_persistent_branch() -> str:
+def dirty_persistent_branch_td_activation() -> str:
     return "TD create preserves dirty persistent work areas"
 
 
-def td_existing_workspace_dirty_persistent_branch() -> str:
+def dirty_persistent_branch_existing_td_activation() -> str:
     return "TD and CB workspace verbs preserve dirty work areas"
 
 

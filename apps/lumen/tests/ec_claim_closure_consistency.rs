@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-ec-claim-closure-consistency" tracker="1871" reason="The EC producer cannot independently prove that its authored claim document, generated inventory, wrapper dispatch, and README claim roots agree without a repository-level oracle."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-ec-claim-closure-consistency" tracker="1871" reason="The EC producer cannot independently prove that its authored claim document, generated inventory, wrapper dispatch, and capability-contract claims agree without a repository-level oracle."
 // @spec apps/lumen/tech-design/semantic/lumen-ec-gates.md#schema
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 const CLAIM_DOCUMENT: &str = "apps/lumen/external-contracts/claim-closure/production-claims.md";
+/// EC cases that verify the inventory itself rather than a product promise.
+const META_CAPABILITY: &str = "ec-gates-configured";
 const META_CASE_COMMANDS: [(&str, &str); 3] = [
     (
         "lumen-claim-ec-generated-inventory-dispatch",
@@ -18,7 +20,7 @@ const META_CASE_COMMANDS: [(&str, &str); 3] = [
     ),
     (
         "lumen-claim-ec-claim-closure-evidence",
-        "cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_readme_capability_claims -- --exact --nocapture",
+        "cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_capability_contract_claims -- --exact --nocapture",
     ),
 ];
 
@@ -112,26 +114,37 @@ fn generated_inventory_matches_claim_commands_and_test_dispatch() {
     );
 }
 
+/// The capability contract moved out of README into CAPABILITIES.md (#2887),
+/// and its work-root tables -- which carried the claim ids this gate used to
+/// match -- became `Claims:` bullets under each capability. A case that closes
+/// a claim nobody declares is evidence for nothing, so both ends still have to
+/// resolve; only the document and the marker shape changed.
 #[test]
-fn claim_closure_document_maps_to_readme_capability_claims() {
+fn claim_closure_document_maps_to_capability_contract_claims() {
     let root = workspace_root();
     let authored = authored_cases(&root);
-    let readme_path = root.join("apps/lumen/README.md");
-    let readme = fs::read_to_string(&readme_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", readme_path.display()));
+    let contract_path = root.join("apps/lumen/CAPABILITIES.md");
+    let contract = fs::read_to_string(&contract_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", contract_path.display()));
 
     for (id, case) in &authored {
-        let capability_marker = format!("ID: {}", case.capability_id);
+        // The EC meta gates assert on the inventory itself. They close no
+        // product promise, so they name no capability in the contract.
+        if case.capability_id == META_CAPABILITY {
+            continue;
+        }
+
+        let capability_marker = format!("ID: `{}`", case.capability_id);
         assert!(
-            readme.lines().any(|line| line.trim() == capability_marker),
-            "claim-closure case {id} references missing README capability {}",
+            contract.lines().any(|line| line.trim() == capability_marker),
+            "claim-closure case {id} references missing capability {}",
             case.capability_id
         );
 
-        let claim_marker = format!("| {} |", case.claim_id);
+        let claim_marker = format!("- `{}` —", case.claim_id);
         assert!(
-            readme.contains(&claim_marker),
-            "claim-closure case {id} references missing README work root {}",
+            contract.contains(&claim_marker),
+            "claim-closure case {id} references missing capability claim {}",
             case.claim_id
         );
     }
@@ -198,7 +211,7 @@ fn assert_meta_ec_cases_are_focused(root: &Path) {
         .collect::<BTreeSet<_>>();
     let meta_ids = authored
         .values()
-        .filter(|case| case.capability_id == "ec-gates-configured")
+        .filter(|case| case.capability_id == META_CAPABILITY)
         .map(|case| case.id.clone())
         .collect::<BTreeSet<_>>();
     let expected_ids = META_CASE_COMMANDS

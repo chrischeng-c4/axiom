@@ -78,6 +78,13 @@ else
   check_empty "LumenFleet CRD" kubectl get customresourcedefinition lumenfleets.lumen.dev --no-headers
   check_empty "Lumen fleet namespace a" kubectl get namespace lumen-fleet-a --no-headers
   check_empty "Lumen fleet namespace b" kubectl get namespace lumen-fleet-b --no-headers
+  check_empty "Lumen auth client namespace" kubectl get namespace lumen-auth-client --no-headers
+  # The delegated-review binding (#2876) is cluster-scoped, so no namespace
+  # deletion reaches it: a Lumen whose namespace was force-removed would leave
+  # a live `system:auth-delegator` grant behind with nothing left to audit it
+  # against. The label is the only link back to the instance.
+  check_empty "Lumen auth-delegator ClusterRoleBinding" kubectl get clusterrolebinding \
+    -l app.kubernetes.io/component=auth-delegation,app.kubernetes.io/name=lumen --no-headers
   check_empty "Sift namespace" kubectl get namespace sift --no-headers
   check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
   check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers

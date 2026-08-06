@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-k8s-operator-reconcile
 // @capability kubernetes-native-deployment
-// @claim lumen-crd-reconcile-loop-kube-rs-operator
+// @claim live-operator-reconciliation
 // @contract k8s-operator-reconcile
 // @category behavior
 // @required_for_production true

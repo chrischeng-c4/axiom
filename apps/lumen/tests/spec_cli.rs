@@ -172,59 +172,20 @@ fn json_schema_emits_component_schemas() {
 }
 
 #[test]
-fn json_schema_emits_token_registry_operational_schema() {
+// #2871 retired the bearer/identity registry, so `lumen spec --format
+// json-schema` must not publish a `TokenRegistry` operational schema. A schema
+// for a file no code reads is a supported-looking deployment shape an
+// integrator would build against and never get authenticated by.
+fn json_schema_no_longer_publishes_a_token_registry_schema() {
     let v: Value = serde_json::from_str(&json_schema_json()).expect("json-schema is valid JSON");
-    let schema = &v["operationalSchemas"]["TokenRegistry"];
-    assert_eq!(
-        schema["type"], "object",
-        "TokenRegistry is an object schema"
+    assert!(
+        v.get("operationalSchemas").is_none(),
+        "no operationalSchemas block survives the registry retirement: {v}"
     );
-
-    // #2678: the published schema describes two disjoint namespaces, plus the
-    // pre-#2678 flat form it still accepts. Before, `additionalProperties` sat
-    // at the top level and described a claims object — a schema that now
-    // rejects the very shape the product recommends.
-    let branches = schema["anyOf"]
-        .as_array()
-        .expect("TokenRegistry publishes its accepted shapes as `anyOf`");
-    assert_eq!(branches.len(), 2, "sectioned + flat: {schema}");
-    let sectioned = &branches[0];
-    for half in ["tokens", "identities"] {
-        assert_eq!(
-            sectioned["properties"][half]["additionalProperties"]["properties"]["roles"]
-                ["additionalProperties"]["enum"],
-            json!(["read", "write", "admin"]),
-            "`{half}` publishes the exact role enum"
-        );
-    }
-    assert_eq!(
-        branches[1]["additionalProperties"]["properties"]["roles"]["additionalProperties"]["enum"],
-        json!(["read", "write", "admin"]),
-        "the flat compatibility shape publishes the exact role enum"
+    assert!(
+        !json_schema_json().contains("token-registry.json"),
+        "the retired registry file is not named anywhere in the published schema"
     );
-
-    assert_eq!(
-        schema["examples"][0]["tokens"]["admin-token"]["roles"]["*"],
-        "admin",
-        "TokenRegistry example includes wildcard admin role: {schema}"
-    );
-
-    // The oracle that matters: every published example has to be something the
-    // real loader accepts. A schema example the product rejects is worse than
-    // no example — an integrator copies it and gets a pod that never starts.
-    for (i, example) in schema["examples"]
-        .as_array()
-        .expect("TokenRegistry publishes examples")
-        .iter()
-        .enumerate()
-    {
-        let parsed = service_auth::Registry::parse(&example.to_string())
-            .unwrap_or_else(|e| panic!("example {i} is rejected by the real loader: {e}\n{example}"));
-        assert!(
-            !parsed.is_empty(),
-            "example {i} parses to an empty registry: {example}"
-        );
-    }
 }
 
 #[test]
@@ -412,29 +373,86 @@ fn llm_outline_maps_agent_topics() {
     }
 }
 
+/// The auth topic is what an agent reads before wiring a client, so it is the
+/// one place a stale credential story does the most damage (#3113 AC6). It must
+/// state both halves of the production contract — private ClusterIP TLS the
+/// listener terminates itself, and KSA identity the cluster answers — and stop
+/// handing out a registry file shape to fill in.
 #[test]
-fn llm_auth_publishes_token_registry_shape() {
+fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
     let auth = llm_auth_md();
     assert!(!auth.trim().is_empty(), "auth topic is non-empty");
     for needle in [
+        // Request identity: the cluster answers it, and only for a KSA.
         "LUMEN_AUTH=required",
-        "LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json",
-        "LUMEN_TOKEN=<token>",
-        "Authorization: Bearer <LUMEN_TOKEN>",
-        "\"admin-token\"",
-        "\"roles\"",
-        "\"*\": \"admin\"",
-        "\"products\": \"read\"",
+        "LUMEN_AUTH=disabled",
+        "TokenReview",
+        "SubjectAccessReview",
+        "system:auth-delegator",
+        "system:serviceaccount:<namespace>:<name>",
+        "lumencollections",
+        "lumenadmin",
         "tokensSecret",
-        "Secret Manager",
-        "Client",
+        // Transport: private ClusterIP TLS, terminated by lumen itself.
+        "LUMEN_URL=https://<instance>.<namespace>.svc:7373",
+        "spec.servingTlsSecret",
+        "LUMEN_TLS_SERVER_NAMES",
+        "clientTrustBundle",
+        // Clients, generated and CLI.
+        "--ca-file",
+        "with_private_ca",
+        "PrivateTrust",
         "auth_token",
         "default_headers",
         "Shared auth primitive",
-        "<SVC>_TOKEN_REGISTRY_FILE",
         "service-auth",
     ] {
         assert!(auth.contains(needle), "auth topic missing `{needle}`");
+    }
+
+    let lumen_half = auth
+        .split("\n## Shared auth primitive\n")
+        .next()
+        .expect("auth topic has a lumen-authored half");
+
+    // AC6: production is a private ClusterIP the listener terminates. An agent
+    // that reads "Ingress" here builds the one topology where the last hop is
+    // unauthenticated while every client-side check still passes.
+    assert!(
+        lumen_half.contains(
+            "There is no Ingress, no Gateway, no\nLoadBalancer, no NodePort, and no service mesh terminating TLS"
+        ),
+        "each published-edge shape has to be named and ruled out in one breath; \
+         staying silent about them, or listing them separately, reads as a menu"
+    );
+    assert!(
+        lumen_half.contains("Production traffic is **not** published"),
+        "the topic must say what production is before it says what it is not"
+    );
+
+    // The registry file shape is gone, not merely deprecated in place: an
+    // example an agent can copy is the thing that outlives the prose around it.
+    // Only lumen's own half is asserted on — the appended `service-auth` topic
+    // is the shared library's contract, still live for the services that have
+    // not migrated.
+    for retired in [
+        "token-registry.json",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+        "\"admin-token\"",
+        "\"*\": \"admin\"",
+    ] {
+        assert!(
+            !lumen_half.contains(retired),
+            "auth topic still publishes retired registry detail `{retired}`"
+        );
+    }
+
+    // No generated or documented client may be taught to stop checking.
+    for weakening in WEAKENINGS {
+        assert!(
+            !lumen_half.contains(weakening),
+            "auth topic teaches `{weakening}`; verification is never the thing to turn off"
+        );
     }
 }
 
@@ -476,6 +494,58 @@ fn llm_deployment_documents_shard_cluster_topology() {
         assert!(
             deployment.contains(needle),
             "deployment topic missing `{needle}`"
+        );
+    }
+}
+
+/// #3113 AC6: whoever renders the deployment artifacts decides where TLS is
+/// terminated, so the deployment topic — not only the auth topic — has to say
+/// that lumen terminates it itself on a private ClusterIP. An operator who
+/// reads this and reaches for an Ingress builds the one topology where the
+/// last hop carries a bearer token in the clear while every client-side check
+/// still passes.
+#[test]
+fn llm_deployment_states_the_private_clusterip_tls_contract() {
+    let deployment = llm_deployment_md();
+    for needle in [
+        "LUMEN_URL=https://<instance>.<namespace>.svc:7373",
+        "spec.servingTlsSecret",
+        "spec.peerTlsSecret",
+        "LUMEN_TLS_CERT",
+        "LUMEN_TLS_KEY",
+        "LUMEN_TLS_CA",
+        "LUMEN_TLS_SERVER_NAMES",
+        "clientTrustBundle",
+        "--ca-file",
+        "PrivateTrust",
+        // The anchor is published without the key, and replaces the public
+        // roots rather than joining them. Both are the whole point of a
+        // private trust domain, and both are easy to get subtly wrong.
+        "which carries `tls.key`",
+        "alongside* the public roots",
+    ] {
+        assert!(
+            deployment.contains(needle),
+            "deployment topic missing `{needle}`"
+        );
+    }
+
+    assert!(
+        deployment.contains(
+            "There is no Ingress, no Gateway, no LoadBalancer, no NodePort, and no service\nmesh terminating TLS on lumen's behalf."
+        ),
+        "each published-edge shape has to be named and ruled out in one breath; \
+         staying silent about them, or listing them separately, reads as a menu"
+    );
+    assert!(
+        deployment.contains("Production traffic is **not** published"),
+        "the topic must say what production is before it says what it is not"
+    );
+
+    for weakening in WEAKENINGS {
+        assert!(
+            !deployment.contains(weakening),
+            "deployment topic teaches `{weakening}`; verification is never the thing to turn off"
         );
     }
 }
@@ -605,11 +675,16 @@ fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
         "retentionSecs",
         "adminTokenSecret",
         "lumen backup",
-        "LUMEN_BACKUP_TOKEN",
         "--retention-secs",
     ] {
         assert!(storage.contains(needle), "storage topic missing `{needle}`");
     }
+    // #2871: the CronJob's metadata-server ID-token fallback is gone, so the
+    // topic must not still name the audience list that selected it.
+    assert!(
+        !storage.contains("LUMEN_AUTH_GOOGLE_AUDIENCES"),
+        "storage topic still points `lumen backup` at a retired Google-token path"
+    );
 }
 
 /// #809: a `spec.serving.raftStorage` CR edit does not, by itself, resize
@@ -688,11 +763,17 @@ fn llm_workflow_covers_the_integration_model() {
         "compatibility/smoke path",
         "high-QPS",
         "pooled HTTP/2 streams",
-        "Authorization: Bearer",
-        "LUMEN_TOKEN_REGISTRY_FILE",
         "Do NOT", // non-goals
     ] {
         assert!(g.contains(needle), "workflow missing `{needle}`");
+    }
+    // #2871: the connection section no longer tells a caller to send a bearer
+    // or points at a registry file the server stopped reading.
+    for retired in ["Authorization: Bearer", "LUMEN_TOKEN_REGISTRY_FILE"] {
+        assert!(
+            !g.contains(retired),
+            "workflow topic still teaches the retired bearer path `{retired}`"
+        );
     }
 }
 
@@ -754,6 +835,37 @@ fn llm_workflow_documents_query_method_first_with_post_fallback() {
     ] {
         assert!(g.contains(needle), "workflow missing QUERY `{needle}`");
     }
+}
+
+/// #3113 AC6: the workflow topic's Connection section is where an agent learns
+/// what URL to build. It used to say lumen speaks cleartext and carries no
+/// credential, full stop — true of a localhost node, and a recipe for sending a
+/// KSA token in the clear at a production fleet. Production and development are
+/// now two named cases, and the production one names the anchor and the check.
+#[test]
+fn llm_workflow_separates_production_tls_from_local_h2c() {
+    let workflow = llm_workflow_md();
+    for needle in [
+        "https://<instance>.<namespace>.svc:7373",
+        "http://localhost:7373",
+        "clientTrustBundle",
+        "TokenReview",
+        "SubjectAccessReview",
+        "in place of the\n  public roots",
+    ] {
+        assert!(
+            workflow.contains(needle),
+            "workflow Connection missing `{needle}`"
+        );
+    }
+    assert!(
+        !workflow.contains("has not landed"),
+        "workflow still claims the KSA verifier is missing"
+    );
+    assert!(
+        !workflow.contains("Requests carry no credential in this"),
+        "workflow still states the retired build-wide no-credential claim as fact"
+    );
 }
 
 /// #1297: the outline must point an agent at QUERY-first search guidance
@@ -864,10 +976,42 @@ fn llm_quickstart_is_a_copy_paste_end_to_end() {
     let q = llm_quickstart_md();
     assert!(!q.trim().is_empty(), "quickstart is non-empty");
     assert!(q.contains("curl"), "quickstart has runnable curl");
+    // #2871: the quickstart used to hand out the production auth env. There is
+    // none to hand out, so it must say the local node is open rather than imply
+    // a credential the reader could go find.
     assert!(
-        q.contains("LUMEN_TOKEN_REGISTRY_FILE"),
-        "quickstart documents production auth env"
+        !q.contains("LUMEN_TOKEN_REGISTRY_FILE"),
+        "quickstart still names the retired registry env"
     );
+    assert!(
+        q.contains("LUMEN_AUTH=disabled"),
+        "quickstart names the mode the local node it targets runs in"
+    );
+    // #3113 AC6: `disabled` is a property of the localhost node this topic
+    // targets, not of the build. Between #2871 and #2869/#2878 it was both, and
+    // the text said so; leaving that in would tell a reader that the open node
+    // in front of them is the only thing lumen can be, and that reaching a
+    // production fleet the same way is fine.
+    for stale in [
+        "has not landed",
+        "the only mode a server starts in",
+        "has not landed (#2871)",
+    ] {
+        assert!(
+            !q.contains(stale),
+            "quickstart still claims the KSA verifier is missing (`{stale}`)"
+        );
+    }
+    for needle in [
+        "https://<instance>.<namespace>.svc:7373",
+        "clientTrustBundle",
+        "TokenReview",
+    ] {
+        assert!(
+            q.contains(needle),
+            "quickstart does not say how production differs (`{needle}`)"
+        );
+    }
     for path in ["/collections/products", "/index", "/search"] {
         assert!(q.contains(path), "quickstart exercises `{path}`");
     }
@@ -1100,10 +1244,72 @@ fn openapi_exposes_native_offset_prefix_and_search_all_contracts() {
     );
 }
 
+/// #3113 AC6: `lumen llm --topic <t>` renders from the DX contract, not from
+/// the `llm_*_md()` bodies asserted elsewhere in this file — so this is the
+/// text an agent driving the CLI actually receives. Three topics decide
+/// whether it builds a plaintext production path: `authenticate` (what the
+/// token crosses), `deploy-kubernetes` (whether the manifest turns TLS on),
+/// and `connect-kubernetes` (whether the developer path verifies anything).
+/// Each needs the contract in its own topic; an agent reads one, not all.
+#[test]
+fn dx_topics_teach_the_private_clusterip_tls_contract() {
+    let md = |topic: &str| dx::render_llm(topic, cli_std::llm::Format::Md).unwrap();
+
+    let authenticate = md("authenticate");
+    for needle in [
+        "https://<instance>.<namespace>.svc:7373",
+        "status.clientTrustBundle",
+        "in place of the public roots",
+    ] {
+        assert!(
+            authenticate.contains(needle),
+            "`authenticate` topic missing `{needle}`:\n{authenticate}"
+        );
+    }
+
+    let deploy = md("deploy-kubernetes");
+    for needle in [
+        "spec.servingTlsSecret",
+        "spec.peerTlsSecret",
+        "it is cleartext",
+        "Ingress, Gateway, LoadBalancer, NodePort, or mesh TLS terminator",
+    ] {
+        assert!(
+            deploy.contains(needle),
+            "`deploy-kubernetes` topic missing `{needle}`:\n{deploy}"
+        );
+    }
+
+    let connect = md("connect-kubernetes");
+    for needle in [
+        "--ca-file",
+        "SNI",
+        "there is no flag that skips verification",
+    ] {
+        assert!(
+            connect.contains(needle),
+            "`connect-kubernetes` topic missing `{needle}`:\n{connect}"
+        );
+    }
+
+    // The one instruction that must never appear: every topic above exists to
+    // make verification possible, so none of them may also teach a way around
+    // it. A single such string turns the whole contract into a suggestion.
+    for topic in ["authenticate", "deploy-kubernetes", "connect-kubernetes"] {
+        let text = md(topic);
+        for weakening in WEAKENINGS {
+            assert!(
+                !text.contains(weakening),
+                "`{topic}` topic teaches `{weakening}`"
+            );
+        }
+    }
+}
+
 #[test]
 fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
     let protocol = dx::llm_protocol();
-    assert_eq!(protocol.topics().len(), 10);
+    assert_eq!(protocol.topics().len(), 11);
     for topic in protocol.topics() {
         let json = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Json).unwrap();
         let value: Value = serde_json::from_str(&json).expect("runbook JSON parses");
@@ -1231,6 +1437,164 @@ fn llm_deployment_documents_reshard_convergence_observability() {
             deployment.contains(needle),
             "deployment topic missing `{needle}`"
         );
+    }
+}
+
+/// #3113 R5: every language `lumen spec gen` emits configures a private trust
+/// anchor and the name it expects the server to assert.
+///
+/// Asserted against the client this repository actually ships — generated from
+/// lumen's own committed OpenAPI, through the same target policy `lumen spec
+/// gen` uses — rather than against the emitters' own fixtures, so a generator
+/// change that lands the seam for a toy spec but not for lumen's is caught here.
+#[test]
+fn every_generated_client_takes_a_private_ca_and_the_name_it_verifies() {
+    use openapi_codegen::{generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy};
+
+    const TARGET_POLICY: &str = include_str!("../clients/codegen.toml");
+    let policy = TargetPolicy::from_toml(TARGET_POLICY).expect("client target policy");
+
+    // (language, entrypoint carrying the seam, what the seam has to say)
+    let expected: [(Lang, &str, &[&str]); 3] = [
+        (
+            Lang::Rust,
+            "client.rs",
+            &[
+                "pub struct PrivateTrust {",
+                "pub ca_bundle: std::path::PathBuf,",
+                "pub server_name: String,",
+                ".tls_built_in_root_certs(false)",
+                "if addressed != trust.server_name {",
+            ],
+        ),
+        (
+            Lang::Py,
+            "client.py",
+            &[
+                "class PrivateTrust:",
+                "ca_bundle: str",
+                "server_name: str",
+                "ssl.create_default_context(cafile=trust.ca_bundle)",
+                "if addressed != trust.server_name:",
+            ],
+        ),
+        (
+            Lang::Ts,
+            "runtime.ts",
+            &[
+                "export interface PrivateTrust {",
+                "caBundle: string;",
+                "serverName: string;",
+                "trust?: PrivateTrust;",
+                "if (addressed !== trust.serverName) {",
+            ],
+        ),
+    ];
+
+    for (lang, entry, needles) in expected {
+        let target = policy.resolve(lang, None).expect("pinned target");
+        let opts = GenOptions {
+            lang,
+            target: Some(target),
+            spec_path: std::path::PathBuf::new(),
+            out_dir: std::path::PathBuf::new(),
+            client_name: "createClient".to_string(),
+            http_client: HttpClient::Fetch,
+            emit_types: true,
+            emit_client: true,
+            emit_hooks: matches!(lang, Lang::Ts),
+        };
+        let out = generate_for_target(&openapi_json(), &opts, target).expect("generate client");
+        let file = out
+            .files
+            .iter()
+            .find(|f| f.rel_path == entry)
+            .unwrap_or_else(|| panic!("{lang:?} client emits {entry}"));
+        for needle in needles {
+            assert!(
+                file.contents.contains(needle),
+                "{entry} has no private-CA seam ({needle}): an in-cluster caller would have \
+                 to trust the public roots for a name no public CA can vouch for"
+            );
+        }
+        // The anchor is the fix for an unverifiable server; skipping the check
+        // is not, so no generated client may offer it.
+        for weakening in WEAKENINGS {
+            for generated in &out.files {
+                assert!(
+                    !generated.contents.contains(weakening),
+                    "{} offers {weakening}; verification is never the thing to turn off",
+                    generated.rel_path
+                );
+            }
+        }
+    }
+}
+
+/// Ways a client could be talked into not checking who it is talking to. None of
+/// them may appear in generated output.
+const WEAKENINGS: [&str; 6] = [
+    "danger_accept_invalid_certs",
+    "danger_accept_invalid_hostnames",
+    "check_hostname = False",
+    "CERT_NONE",
+    "rejectUnauthorized: false",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+];
+
+#[test]
+fn issuer_contract_is_consistently_documented_across_surfaces() {
+    let deployment_md = llm_deployment_md();
+    let readme = std::fs::read_to_string("README.md").expect("read README.md");
+    let capabilities = std::fs::read_to_string("CAPABILITIES.md").expect("read CAPABILITIES.md");
+
+    // README.md and llm_deployment_md() provide operator deployment runbooks with exact CLI flags
+    for doc in [&deployment_md, &readme] {
+        assert!(
+            doc.contains("--issuer cas"),
+            "operator deployment doc missing exact '--issuer cas' flag guidance: {doc}"
+        );
+        assert!(
+            doc.contains("--issuer ephemeral"),
+            "operator deployment doc missing exact '--issuer ephemeral' flag guidance: {doc}"
+        );
+    }
+
+    // All three canonical surfaces (README.md, llm_deployment_md(), CAPABILITIES.md) describe the same contract
+    for doc in [&deployment_md, &readme, &capabilities] {
+        assert!(
+            doc.contains("cas") && doc.contains("ephemeral"),
+            "doc missing explicit cas/ephemeral mode semantics: {doc}"
+        );
+        assert!(
+            doc.contains("operator-scoped") || doc.contains("operator"),
+            "doc should mention operator scope: {doc}"
+        );
+        assert!(
+            doc.contains("lumen-operator"),
+            "doc should mention lumen-operator KSA identity: {doc}"
+        );
+        assert!(
+            doc.contains("certificate_controller"),
+            "doc should mention Terraform certificate_controller binding: {doc}"
+        );
+        assert!(
+            doc.contains("metadata server") || doc.contains("GKE_METADATA"),
+            "doc should mention GKE metadata server / GKE_METADATA requirement: {doc}"
+        );
+
+        // Reject retired direct-STS CLI and env literal names across documentation
+        for retired in [
+            "--workload-identity-audience",
+            "--projected-token-path",
+            "LUMEN_WORKLOAD_IDENTITY_AUDIENCE",
+            "LUMEN_PROJECTED_TOKEN_PATH",
+        ] {
+            assert!(
+                !doc.contains(retired),
+                "doc contains retired direct-STS name '{retired}': {doc}"
+            );
+        }
     }
 }
 // CODEGEN-END

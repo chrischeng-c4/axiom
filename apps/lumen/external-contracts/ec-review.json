@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "lumen",
-  "source_digest": "sha256:f297767e0ed16d63869024d4bcf5d5fdcbd57d1ce636b1c4e82f974c4dfdd860",
+  "source_digest": "sha256:75f1e2d8e728a43776a2a02157894c0ee9142ff3cfef86d9e8538736f0fa12a1",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:/root/lumen_ec_second_review",
-  "reviewed_at": "2026-07-21T10:11:22.248141+00:00",
-  "summary": "Digest-bound independent semantic review of Lumen EC source sha256:f297767e0ed16d63869024d4bcf5d5fdcbd57d1ce636b1c4e82f974c4dfdd860. The revised stability contracts close the prior false-green defects: Rig now drives real toxiproxy packet-loss and partition phases with baseline/fault/recovery measurements; endurance scenarios resolve the unique live Lumen listener and independently sample RSS, FD, socket, and thread counts around bounded-keyspace work; the overload case declares a real 600-QPS, 16-worker, 30-second open-loop workload with measured error-rate/p99 pins and a 95% achieved-QPS honesty gate; and latency drift is measured across three non-empty 500-search windows. The authored assertions pin concrete sample counts, failure constraints, recovery budgets, and numerical thresholds. Their oracles are outside Lumen (Rig scheduling/assertion evaluation, toxiproxy, ps/proc/lsof helpers, and retained benchmark baselines), and explicit positive-baseline, nonzero-fault, zero-failure, resource-bound, pin-presence, and load-honesty checks prevent empty or zero-sample success. The currently RED 600-QPS execution is not treated as passing runtime evidence: it remains a shared Rig HTTP transport/harness blocker to resolve before EC verification can pass, while the EC contract itself is specific, non-vacuous, and independently verifiable. All six semantic axes pass; findings are empty.",
+  "reviewed_by": "agent:aw-ec-reviewer/lumen_2879_ec_semantic_review",
+  "reviewed_at": "2026-08-01T05:19:09.311457+00:00",
+  "summary": "The corrective #2879 EC revision preserves the accepted two-hop KSA/RBAC, source-built GKE provenance, cleanup, evidence-integrity, and independent redaction contracts while restoring ordinary direct harness compatibility. The source preflight requires both the exact executable audit-and-destroy function and an exact strict pair guard: neither auditor variable bypasses the optional EC callback, exactly one fails, and both invoke the reviewed auditor before immediately deleting and clearing SECRET_DIR. Comment-only, half-configured, unguarded standalone invocation, and unsafe work between audit and destruction are rejected. The inspected harness keeps credential material in SECRET_DIR, so this boundary remains materially sufficient rather than a regex-only false green. `applicability = cb` is semantically required because the callback and production source-built service must exist before this case can verify them. The missing production callback remains a specific post-code obligation and causes the EC runner to fail before starting GKE.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,5 +15,6 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": []
+  "findings": [],
+  "target_path": "apps/lumen/external-contracts/src/runner.py"
 }

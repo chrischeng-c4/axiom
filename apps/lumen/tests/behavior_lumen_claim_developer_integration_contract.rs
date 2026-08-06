@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-developer-integration-contract
-// @capability developer-agent-experience
-// @claim integration-contract
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract developer-integration-contract
 // @category behavior
 // @required_for_production true

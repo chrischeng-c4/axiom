@@ -5,7 +5,11 @@ CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
 USE_CASE_ID = "core-concept-model-and-invariants"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_phase_less_admission.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-phase-less-admission"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case aw-core-client-core-concept-model-phase-less-admission"
+)
 ASSERTIONS = ('a phase-less project WorkItem enters EC authoring before any TD authoring command',)
 
 

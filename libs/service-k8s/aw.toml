@@ -9,25 +9,3 @@ paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p service-k8s"
 verify_cold = true
-
-# AW-EC-BEGIN
-[aw.ec.generated]
-version = 1
-project = "service-k8s"
-generated_from_td_digest = "sha256:1c44ed90d1329fb579aece3f327be372016ffd6f7c604c3a4eb64babced08b9f"
-
-[[aw.ec.generated.cases]]
-id = "shared-kubernetes-operator-scaffold-contract"
-capability_id = "shared-kubernetes-operator-scaffold"
-claim_id = "shared-kubernetes-operator-scaffold-contract"
-contract_id = "shared-kubernetes-operator-scaffold-contract"
-category = "behavior"
-td_ref = "libs/service-k8s/external-contracts/behavior/shared-kubernetes-operator-scaffold-contract.md#shared-kubernetes-operator-scaffold-contract"
-test_path = "libs/service-k8s/tests/behavior_shared_kubernetes_operator_scaffold_contract.rs"
-command = "cargo test -p service-k8s"
-required_for_production = true
-assertions = [
-    "Shared Kubernetes Operator Scaffold public Rust API behavior remains covered by the configured library test suite.",
-    "The library contract stays usable through its documented README capability surface.",
-]
-# AW-EC-END

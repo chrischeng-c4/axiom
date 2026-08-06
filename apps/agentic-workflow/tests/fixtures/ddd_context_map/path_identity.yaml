@@ -1,0 +1,5 @@
+schema_version: aw.ddd-context-map.v1
+nodes:
+  - { id: context:workflow, kind: context }
+  - id: artifact:workflow/tech-design.md#logic
+    kind: artifact

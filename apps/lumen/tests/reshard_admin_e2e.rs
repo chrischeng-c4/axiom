@@ -13,7 +13,7 @@ use axum_test::TestServer;
 use serde_json::json;
 
 use lumen::api::{router, AppState};
-use lumen::auth::{AuthConfig, Role, TokenClaims};
+use lumen::auth::AuthConfig;
 use lumen::routing::VirtualBucketShardMap;
 use lumen::storage::Engine;
 
@@ -25,24 +25,14 @@ fn server() -> TestServer {
     TestServer::new(app).expect("test server")
 }
 
-fn auth_server(tokens: Vec<(&str, TokenClaims)>) -> TestServer {
+/// A `required` config with no review backend wired behind it. Every request
+/// it sees is an unknown identity, credential or not — the fail-closed state
+/// (#2869).
+fn auth_server() -> TestServer {
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig::with_tokens(
-        true,
-        tokens
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
-    );
+    let cfg = AuthConfig::required_in("serving");
     let app = router(AppState::new(engine, Arc::new(cfg)));
     TestServer::new(app).expect("test server")
-}
-
-fn claim(subject: &str, roles: &[(&str, Role)]) -> TokenClaims {
-    TokenClaims {
-        subject: subject.into(),
-        roles: roles.iter().map(|(c, r)| (c.to_string(), *r)).collect(),
-    }
 }
 
 /// Bucket for `external_id` under the 2-shard balanced map used across this
@@ -482,10 +472,15 @@ async fn storage_bytes_gauge(s: &TestServer) -> u64 {
         .expect("lumen_storage_bytes gauge line present")
 }
 
-/// AC4: all four admin verbs require bearer auth (401) and admin role (403).
+/// AC4: every reshard admin verb is behind the auth middleware. The
+/// admin-role (403) column of this assertion retired with the registry
+/// (#2871) — until SubjectAccessReview lands (#2869) there is no way to be
+/// authenticated-but-not-admin — so what remains is the column that still
+/// protects the cluster: no verb answers without an identity, and presenting
+/// an unresolvable credential does not help.
 #[tokio::test]
 async fn reshard_admin_verbs_require_admin_auth() {
-    let s = auth_server(vec![("tok-r", claim("viewer", &[("u", Role::Read)]))]);
+    let s = auth_server();
 
     let scoped_body = json!({ "virtual_bucket_count": 4, "buckets": [0] });
     let apply_body = json!({
@@ -541,36 +536,36 @@ async fn reshard_admin_verbs_require_admin_auth() {
         .await
         .assert_status_unauthorized();
 
-    // Authenticated but non-admin role -> 403.
+    // A presented bearer resolves to nothing -> still 401, never 200.
     s.post("/admin/backup:scoped")
         .add_header("authorization", "Bearer tok-r")
         .json(&scoped_body)
         .await
-        .assert_status_forbidden();
+        .assert_status_unauthorized();
     s.post("/admin/reshard:apply")
         .add_header("authorization", "Bearer tok-r")
         .json(&apply_body)
         .await
-        .assert_status_forbidden();
+        .assert_status_unauthorized();
     s.post("/admin/reshard:evict")
         .add_header("authorization", "Bearer tok-r")
         .json(&evict_body)
         .await
-        .assert_status_forbidden();
+        .assert_status_unauthorized();
     s.post("/admin/checkpoint")
         .add_header("authorization", "Bearer tok-r")
         .await
-        .assert_status_forbidden();
+        .assert_status_unauthorized();
     s.post("/admin/reshard:fence")
         .add_header("authorization", "Bearer tok-r")
         .json(&fence_body)
         .await
-        .assert_status_forbidden();
+        .assert_status_unauthorized();
     s.post("/admin/reshard:prune")
         .add_header("authorization", "Bearer tok-r")
         .json(&prune_body)
         .await
-        .assert_status_forbidden();
+        .assert_status_unauthorized();
 }
 
 /// AC4 (openapi half): all four verbs show up in the generated OpenAPI

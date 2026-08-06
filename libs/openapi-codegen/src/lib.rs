@@ -178,9 +178,13 @@ impl GeneratedOutput {
     /// embedding CLI records the same contract rather than duplicating file
     /// loops and silently dropping target metadata.
     pub fn write_to_dir(&self, out_dir: &Path) -> Result<()> {
+        let paths: Vec<PathBuf> = self
+            .files
+            .iter()
+            .map(|file| safe_output_path(out_dir, &file.rel_path))
+            .collect::<Result<_>>()?;
         std::fs::create_dir_all(out_dir)?;
-        for file in &self.files {
-            let path = safe_output_path(out_dir, &file.rel_path)?;
+        for (file, path) in self.files.iter().zip(paths) {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -449,6 +453,35 @@ mod tests {
         assert_eq!(manifest.minimum_version, "3.14");
         assert!(dir.join("models.py").is_file());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rejects_escaping_output_before_writing_anything() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "openapi-codegen-prevalidate-{}-{nonce}",
+            std::process::id()
+        ));
+        let output = GeneratedOutput::legacy(vec![
+            GeneratedFile {
+                rel_path: "safe.ts".to_string(),
+                contents: "export const safe = true;\n".to_string(),
+            },
+            GeneratedFile {
+                rel_path: "../escape.ts".to_string(),
+                contents: "should never be written\n".to_string(),
+            },
+        ]);
+
+        let error = output.write_to_dir(&dir).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "generated file path must stay under output directory: \"../escape.ts\""
+        );
+        assert!(!dir.exists());
     }
 
     #[test]

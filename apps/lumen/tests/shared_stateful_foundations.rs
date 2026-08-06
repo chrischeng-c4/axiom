@@ -33,14 +33,34 @@ fn configured_peer_identity_uses_shared_https_transport_and_dedicated_listener()
             "lumen serve is missing shared peer-transport wiring: {required}"
         );
     }
-    assert!(LUMEN_BIN.contains("(args.raft_port, \"https\")"));
-    assert!(LUMEN_BIN.contains("(args.port, \"http\")"));
+    // #2890 R3: the peer scheme stopped being a choice. This used to assert
+    // both arms of `if peer_transport.is_some() { (args.raft_port, "https") }
+    // else { (args.port, "http") }` — the second arm moved replicated Raft
+    // traffic onto the *client* port over h2c whenever TLS material was
+    // absent. It is gone, so what is locked here now is its absence plus the
+    // fail-closed message that replaced it.
+    assert!(LUMEN_BIN.contains("\"https\","));
+    assert!(
+        !LUMEN_BIN.contains("(args.port, \"http\")"),
+        "the plaintext peer fallback must not come back"
+    );
+    assert!(
+        LUMEN_BIN.contains("Raft peer traffic has no plaintext path"),
+        "a replicated group with no peer material must refuse to start, \
+         not pick a scheme"
+    );
 }
 
 #[test]
 fn completed_shared_roots_have_lumen_owned_adapters_or_runtime_projection() {
-    assert!(LUMEN_AUTH.contains("ReloadableRoleMapVerifier"));
-    assert!(LUMEN_AUTH.contains("reload_json"));
+    // #2871 retired the reloadable registry and #2869 delegated the decision
+    // to kube-apiserver, but the ownership boundary this test exists to lock
+    // is unchanged: the verifier mechanics still come from `service-auth`, and
+    // lumen keeps only the resource mapping around them.
+    assert!(LUMEN_AUTH.contains("service_auth::"));
+    assert!(LUMEN_AUTH.contains("service_auth::k8s::"));
+    assert!(!LUMEN_AUTH.contains("ReloadableRoleMapVerifier"));
+    assert!(!LUMEN_AUTH.contains("StaticRoleMapVerifier"));
     assert!(LUMEN_API.contains("service_http::AdmissionController"));
     assert!(LUMEN_OPERATOR.contains("service_statefulset"));
     assert!(LUMEN_OPERATOR.contains("headless_service_with_ports"));

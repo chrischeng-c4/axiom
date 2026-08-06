@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+use super::capability_feature_class::CapabilityFeatureClass;
 use super::capability_type::CapabilityType;
 use super::production::{
     evaluate_capability_scope, inputs_from_report_items, ProductionReadinessReport,
@@ -712,6 +713,10 @@ struct CapabilityYaml {
     pub status: CapabilityStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_type: Option<CapabilityType>,
+    /// Which logical feature root owns this capability. Orthogonal to
+    /// `capability_type`, maturity, and production requirement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_class: Option<CapabilityFeatureClass>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<CapabilitySurface>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -746,6 +751,14 @@ pub struct CapabilitySection {
     pub index_summary: Option<CapabilityIndexSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_type: Option<CapabilityType>,
+    /// Which logical feature root owns this capability: `core` or `non_core`.
+    ///
+    /// Orthogonal to [`Self::capability_type`], to the maturity in
+    /// [`Self::verification_contract`], and to production requirement — none of
+    /// those may be derived from it, and it may never be derived from them.
+    /// `None` means the document has not classified this capability yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_class: Option<CapabilityFeatureClass>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<CapabilitySurface>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -778,6 +791,7 @@ impl CapabilitySection {
             postlude: String::new(),
             index_summary: None,
             capability_type: yaml.capability_type,
+            feature_class: yaml.feature_class,
             surfaces: yaml.surfaces,
             ec_dimensions: yaml.ec_dimensions,
             promise: yaml.promise,
@@ -869,6 +883,18 @@ impl CapabilityDocument {
             self.format,
             CapabilityDocumentFormat::YamlSections | CapabilityDocumentFormat::LegacyTable
         ) || self.needs_canonicalization
+    }
+
+    /// A document that already uses the canonical Markdown format but still
+    /// declares capabilities outside the two feature roots. `migrate` converts
+    /// it; `check` deliberately does not fail on it, because every adopter
+    /// document is flat until its own migration lands.
+    pub fn requires_feature_class_migration(&self) -> bool {
+        !self.capabilities.is_empty()
+            && self
+                .capabilities
+                .iter()
+                .any(|capability| capability.feature_class.is_none())
     }
 
     pub fn format_version(&self) -> u8 {
@@ -1178,6 +1204,12 @@ pub struct CapabilityReportItem {
     pub status: CapabilityStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_type: Option<CapabilityType>,
+    /// The document's declared feature class, verbatim. `None` means the
+    /// document has not classified this capability; readiness attribution uses
+    /// [`CapabilityReportItem::effective_feature_class`] instead of defaulting
+    /// this field, so an undeclared class is never rendered as a declared one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_class: Option<CapabilityFeatureClass>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<CapabilitySurface>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1204,6 +1236,80 @@ pub struct CapabilityReportItem {
     pub production_blockers: Vec<String>,
 }
 
+impl CapabilityReportItem {
+    /// The class this capability is attributed to for readiness reporting.
+    ///
+    /// Attribution must be a total function, or the per-class totals would not
+    /// sum to the retained totals. An undeclared class resolves to
+    /// [`CapabilityFeatureClass::NonCore`]: core-ness is a claim the document
+    /// makes, and an unmade claim is not a claim. Nothing is ever counted as
+    /// core without declaring `core`.
+    pub fn effective_feature_class(&self) -> CapabilityFeatureClass {
+        self.feature_class
+            .unwrap_or(CapabilityFeatureClass::NonCore)
+    }
+}
+
+/// Per-class capability and claim completion over the non-retired items.
+///
+/// Returned as one value so the caller cannot pair a core count with a non-core
+/// total by accident.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FeatureClassTotals {
+    capability_count: usize,
+    verified_count: usize,
+    claim_count: usize,
+    verified_claim_count: usize,
+}
+
+impl CapabilityReport {
+    /// Derive the feature-class split from `capabilities`.
+    ///
+    /// The invariant this upholds is that each pair sums to its retained total,
+    /// so a reader can never see a split that fails to account for every
+    /// capability or claim.
+    ///
+    /// A legacy-only document parses to zero capabilities while still reporting
+    /// a non-zero `capability_count` from its table rows. Those rows have
+    /// declared no class, so they are attributed to non-core in full rather than
+    /// silently dropped out of both classes.
+    fn apply_feature_class_totals(&mut self) {
+        let core = feature_class_totals(&self.capabilities, CapabilityFeatureClass::Core);
+        let non_core = feature_class_totals(&self.capabilities, CapabilityFeatureClass::NonCore);
+        self.core_capability_count = core.capability_count;
+        self.core_verified_count = core.verified_count;
+        self.core_claim_count = core.claim_count;
+        self.core_verified_claim_count = core.verified_claim_count;
+        self.non_core_capability_count = non_core.capability_count;
+        self.non_core_verified_count = non_core.verified_count;
+        self.non_core_claim_count = non_core.claim_count;
+        self.non_core_verified_claim_count = non_core.verified_claim_count;
+        if self.capabilities.is_empty() {
+            self.non_core_capability_count = self.capability_count;
+            self.non_core_verified_count = self.verified_count;
+            self.non_core_claim_count = self.claim_count;
+            self.non_core_verified_claim_count = self.verified_claim_count;
+        }
+    }
+}
+
+fn feature_class_totals(
+    items: &[CapabilityReportItem],
+    class: CapabilityFeatureClass,
+) -> FeatureClassTotals {
+    let members = items.iter().filter(|item| {
+        item.status != CapabilityStatus::Retired && item.effective_feature_class() == class
+    });
+    let mut totals = FeatureClassTotals::default();
+    for item in members {
+        totals.capability_count += 1;
+        totals.verified_count += usize::from(item.verified);
+        totals.claim_count += item.claim_count;
+        totals.verified_claim_count += item.verified_claim_count;
+    }
+    totals
+}
+
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct CapabilityReport {
@@ -1226,6 +1332,19 @@ pub struct CapabilityReport {
     pub claim_count: usize,
     pub verified_claim_count: usize,
     pub claim_percent: f64,
+    /// Feature-class split of the totals above. Each pair sums to its retained
+    /// total (`capability_count` / `claim_count`), because attribution is a
+    /// total function over non-retired capabilities. The split is reporting
+    /// only: `production_ready` and `production_status` stay single-valued and
+    /// are not computed per class.
+    pub core_capability_count: usize,
+    pub core_verified_count: usize,
+    pub non_core_capability_count: usize,
+    pub non_core_verified_count: usize,
+    pub core_claim_count: usize,
+    pub core_verified_claim_count: usize,
+    pub non_core_claim_count: usize,
+    pub non_core_verified_claim_count: usize,
     pub capabilities: Vec<CapabilityReportItem>,
     pub blockers: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1962,7 +2081,10 @@ fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()>
 /// `### Capability Index` -- the project-CAPABILITIES required headings --
 /// since the file itself is the contract, not a pointer to one.
 fn render_empty_capability_readme(title: &str, brief: &str, readme_resident: bool) -> String {
-    let capabilities_section = "## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n";
+    let capabilities_section = format!(
+        "## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n\n{}",
+        render_empty_capability_feature_roots()
+    );
     if readme_resident {
         format!(
             "# {title}\n\n## Brief\n\n{brief}\n\n## Contributing\n\nProject-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md). Add that file's `## Brief` here after confirming the project-local rules.\n\n## Capability Contract\n\nThe full project capability contract lives in [CAPABILITIES.md](CAPABILITIES.md). Add that file's `## Brief` here after confirming the capability contract.\n\n{capabilities_section}"
@@ -1970,6 +2092,19 @@ fn render_empty_capability_readme(title: &str, brief: &str, readme_resident: boo
     } else {
         format!("# {title}\n\n## Brief\n\n{brief}\n\n{capabilities_section}")
     }
+}
+
+/// The two canonical feature roots, empty, with a one-line statement of what
+/// belongs under each. Emitted by `capability init` so a fresh document already
+/// carries the canonical shape instead of a flat capability list.
+fn render_empty_capability_feature_roots() -> String {
+    format!(
+        "### {}\n\n{}\n\n### {}\n\n{}\n",
+        CapabilityFeatureClass::Core.root_heading(),
+        "Capabilities that are part of what this product fundamentally is.",
+        CapabilityFeatureClass::NonCore.root_heading(),
+        "Supporting and trait-derived capabilities. Archetype baselines always belong here.",
+    )
 }
 
 fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Result<()> {
@@ -6090,6 +6225,7 @@ async fn build_capability_report_inner(
             capability_type: capability
                 .capability_type
                 .or_else(|| capability_types.get(&capability.id).copied()),
+            feature_class: capability.feature_class,
             surfaces: capability.surfaces.clone(),
             ec_dimensions: derive_report_ec_dimensions(capability, &capability_types),
             promise: capability.promise.clone(),
@@ -6179,6 +6315,14 @@ async fn build_capability_report_inner(
         claim_count,
         verified_claim_count,
         claim_percent,
+        core_capability_count: 0,
+        core_verified_count: 0,
+        non_core_capability_count: 0,
+        non_core_verified_count: 0,
+        core_claim_count: 0,
+        core_verified_claim_count: 0,
+        non_core_claim_count: 0,
+        non_core_verified_claim_count: 0,
         capabilities: report_items,
         blockers,
         warnings,
@@ -6195,6 +6339,7 @@ async fn build_capability_report_inner(
         },
         run_results: Vec::new(),
     };
+    report.apply_feature_class_totals();
     apply_production_readiness_to_items(&mut report.capabilities, &production_readiness);
     report.next_action = choose_next_action(
         &report,
@@ -6293,6 +6438,14 @@ fn capability_map_read_blocked_report(
         percent: 0.0,
         claim_count: 0,
         verified_claim_count: 0,
+        core_capability_count: 0,
+        core_verified_count: 0,
+        non_core_capability_count: 0,
+        non_core_verified_count: 0,
+        core_claim_count: 0,
+        core_verified_claim_count: 0,
+        non_core_claim_count: 0,
+        non_core_verified_claim_count: 0,
         claim_percent: 0.0,
         capabilities: Vec::new(),
         blockers: vec![reason],
@@ -6339,6 +6492,14 @@ fn capability_map_stale_project_config_report(
         percent: 0.0,
         claim_count: 0,
         verified_claim_count: 0,
+        core_capability_count: 0,
+        core_verified_count: 0,
+        non_core_capability_count: 0,
+        non_core_verified_count: 0,
+        core_claim_count: 0,
+        core_verified_claim_count: 0,
+        non_core_claim_count: 0,
+        non_core_verified_claim_count: 0,
         claim_percent: 0.0,
         capabilities: Vec::new(),
         blockers: vec![reason],
@@ -8267,6 +8428,8 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
         }
     }
 
+    findings.extend(validate_capability_feature_roots(body, &capabilities));
+
     Ok(CapabilityDocument {
         cap_path: cap_path.to_path_buf(),
         format,
@@ -8294,12 +8457,86 @@ fn parse_capability_document_repairing_previous_migration(
     }
 }
 
+/// The class migration assigns to a capability the document never classified.
+///
+/// Deterministic and one-way. A trait-derived baseline is always non-core, so
+/// migration can never manufacture a core promise out of an archetype
+/// obligation. Everything else is a promise the project authored itself, which
+/// is what `Core Features` means.
+///
+/// Nothing here reads [`CapabilityType`], maturity, or production requirement:
+/// those axes are orthogonal to the class, and deriving one from another is
+/// exactly the conflation the two roots exist to prevent.
+fn migration_feature_class(id: &str) -> CapabilityFeatureClass {
+    if trait_derived_baseline_ids().contains(id) {
+        CapabilityFeatureClass::NonCore
+    } else {
+        CapabilityFeatureClass::Core
+    }
+}
+
+/// Normalize a parsed document into the canonical two-root shape.
+///
+/// Two operations, both total and both order-independent, which together make
+/// the migration deterministic and idempotent:
+///
+/// 1. Classify every *unclassified* capability via [`migration_feature_class`].
+///    An explicit class is never overwritten — rewriting a class the author
+///    stated would be the lossy automatic rewriting migration exists to avoid.
+///    A trait-derived baseline wrongly declared `core` stays declared `core`
+///    here and is rejected by the checker, where the author can see and fix it.
+/// 2. Erase document-stored tracker state. Delivery provenance is one-way: a
+///    work item references capability and claim IDs, never the reverse.
+///
+/// Everything that constitutes the promise itself — capability IDs, claim IDs,
+/// product dependencies, gates, evidence, maturity, status, type, surfaces, EC
+/// dimensions, and production requirement — is carried through untouched.
+fn migrated_capability_document(document: &CapabilityDocument) -> CapabilityDocument {
+    let mut migrated = document.clone();
+    for capability in &mut migrated.capabilities {
+        if capability.feature_class.is_none() {
+            capability.feature_class = Some(migration_feature_class(&capability.id));
+        }
+        clear_document_stored_tracker_state(capability);
+    }
+    for row in &mut migrated.legacy_rows {
+        row.active_wi = EMPTY_TABLE_VALUE.to_string();
+    }
+    migrated
+}
+
+/// Drop every work-item reference a canonical capability contract must not
+/// store, leaving the neutral placeholder the parser already accepts.
+fn clear_document_stored_tracker_state(capability: &mut CapabilitySection) {
+    capability.current_state = current_state_without_root_wi(&capability.current_state);
+    for gap in &mut capability.gaps {
+        gap.active_wi = None;
+    }
+    for work_root in &mut capability.work_roots {
+        work_root.wi = EMPTY_TABLE_VALUE.to_string();
+    }
+}
+
+/// Blank the `Root WI` segment of a synthesized `current_state` while keeping
+/// the gate-inventory segment beside it, which is contract and not provenance.
+fn current_state_without_root_wi(current_state: &str) -> String {
+    let trimmed = current_state.trim();
+    let Some(rest) = trimmed.strip_prefix("Root WI:") else {
+        return current_state.to_string();
+    };
+    match rest.split_once(';') {
+        Some((_, tail)) => format!("Root WI: {EMPTY_TABLE_VALUE}; {}", tail.trim()),
+        None => format!("Root WI: {EMPTY_TABLE_VALUE}"),
+    }
+}
+
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn render_capability_markdown_migration(
     original_body: &str,
     document: &CapabilityDocument,
     project: &str,
 ) -> String {
+    let document = &migrated_capability_document(document);
     let mut prefix = collapse_markdown_blank_runs_outside_fences(
         &strip_migrated_capability_sources(original_body),
     );
@@ -8348,12 +8585,60 @@ pub(crate) fn render_capability_markdown_migration(
 fn render_capability_registry(document: &CapabilityDocument, project: &str) -> String {
     let mut out = render_capability_index(document, project);
     if document.capabilities.is_empty() {
-        for row in &document.legacy_rows {
-            out.push_str(&render_legacy_capability_section(row));
+        // A legacy table row has no contract to read a class from, so its class
+        // is derived from the same one-way rule migration applies everywhere
+        // else. Rows are grouped rather than left flat: the whole point of
+        // migrating a legacy table is to land in the canonical shape.
+        for class in [
+            CapabilityFeatureClass::Core,
+            CapabilityFeatureClass::NonCore,
+        ] {
+            if document.legacy_rows.is_empty() {
+                break;
+            }
+            out.push_str(&format!("### {}\n\n", class.root_heading()));
+            for row in document
+                .legacy_rows
+                .iter()
+                .filter(|row| migration_feature_class(&slugify(&row.capability)) == class)
+            {
+                out.push_str(&render_legacy_capability_section(row, class));
+            }
         }
     } else {
+        // Classified capabilities render under their canonical feature root, one
+        // heading level deeper. Unclassified ones keep their current top-level
+        // position: choosing a root for them would be a silent classification,
+        // and rejecting them is #3061's gate, not this one's.
+        //
+        // Once *any* capability is classified the document is committed to the
+        // two-root shape, so both roots are emitted even when one has no
+        // members. An absent root is a structural defect the checker reports;
+        // emitting only the populated root would make a correct document look
+        // half-migrated.
+        let declares_any_class = document
+            .capabilities
+            .iter()
+            .any(|capability| capability.feature_class.is_some());
+        if declares_any_class {
+            for class in [
+                CapabilityFeatureClass::Core,
+                CapabilityFeatureClass::NonCore,
+            ] {
+                out.push_str(&format!("### {}\n\n", class.root_heading()));
+                for capability in document
+                    .capabilities
+                    .iter()
+                    .filter(|capability| capability.feature_class == Some(class))
+                {
+                    out.push_str(&render_markdown_capability_section_at_level(capability, 4));
+                }
+            }
+        }
         for capability in &document.capabilities {
-            out.push_str(&render_markdown_capability_section(capability));
+            if capability.feature_class.is_none() {
+                out.push_str(&render_markdown_capability_section(capability));
+            }
         }
     }
     out
@@ -8620,6 +8905,32 @@ fn next_heading_at_or_above(lines: &[&str], start: usize, level: usize) -> Optio
     })
 }
 
+/// The order the whole registry renders in: `Core Features` members, then
+/// `Non-Core Features` members, then anything still unclassified, each group
+/// keeping its relative document order.
+///
+/// The index and the capability sections must share this order. If the index
+/// followed raw document order while sections were grouped by root, migrating a
+/// document whose first capability is non-core would reorder the sections,
+/// re-parse into a different document order, and render a *different* index the
+/// next time — a migration that never reaches a fixed point.
+fn capabilities_in_render_order(document: &CapabilityDocument) -> Vec<&CapabilitySection> {
+    let mut ordered = Vec::with_capacity(document.capabilities.len());
+    for class in [
+        Some(CapabilityFeatureClass::Core),
+        Some(CapabilityFeatureClass::NonCore),
+        None,
+    ] {
+        ordered.extend(
+            document
+                .capabilities
+                .iter()
+                .filter(|capability| capability.feature_class == class),
+        );
+    }
+    ordered
+}
+
 fn render_capability_index(document: &CapabilityDocument, project: &str) -> String {
     let mut out = String::new();
     out.push_str("### Capability Index\n\n");
@@ -8636,7 +8947,7 @@ fn render_capability_index(document: &CapabilityDocument, project: &str) -> Stri
             ));
         }
     } else {
-        for capability in &document.capabilities {
+        for capability in capabilities_in_render_order(document) {
             let fallback_maturity = capability_maturity_summary(capability);
             let implementation = capability
                 .index_summary
@@ -8687,8 +8998,22 @@ fn render_capability_index(document: &CapabilityDocument, project: &str) -> Stri
 }
 
 fn render_markdown_capability_section(capability: &CapabilitySection) -> String {
+    render_markdown_capability_section_at_level(capability, 3)
+}
+
+/// Render one capability contract with its heading at `level`. Top-level
+/// capabilities use 3; capabilities nested under a feature root use 4. The
+/// parser is heading-level agnostic, so only the document's shape changes.
+fn render_markdown_capability_section_at_level(
+    capability: &CapabilitySection,
+    level: usize,
+) -> String {
     let mut out = String::new();
-    out.push_str(&format!("### {}\n\n", capability.title.trim()));
+    out.push_str(&format!(
+        "{} {}\n\n",
+        "#".repeat(level),
+        capability.title.trim()
+    ));
     if !capability.prelude.trim().is_empty() {
         out.push_str(capability.prelude.trim());
         out.push_str("\n\n");
@@ -8701,6 +9026,9 @@ fn render_markdown_capability_section(capability: &CapabilitySection) -> String 
     ));
     if let Some(capability_type) = capability.capability_type {
         out.push_str(&format!("Type: {}\n", capability_type.as_str()));
+    }
+    if let Some(feature_class) = capability.feature_class {
+        out.push_str(&format!("Feature Class: {}\n", feature_class.as_str()));
     }
     out.push_str(&format!(
         "Required Verification: {}\n",
@@ -8878,11 +9206,15 @@ fn capability_efficiency_slot(
         .and_then(|dimension| dimension.efficiency_backfill.as_ref())
 }
 
-fn render_legacy_capability_section(row: &LegacyCapabilityRow) -> String {
+fn render_legacy_capability_section(
+    row: &LegacyCapabilityRow,
+    class: CapabilityFeatureClass,
+) -> String {
     let id = slugify(&row.capability);
     format!(
-        "### {title}\n\nID: {id}\nRoot WI: {wi}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- {evidence}\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {gap} | epic | {wi} | planned | planned | smoke | {evidence} |\n\n",
+        "#### {title}\n\nID: {id}\nRoot WI: {wi}\nStatus: candidate\nFeature Class: {class}\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- {evidence}\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {gap} | epic | {wi} | planned | planned | smoke | {evidence} |\n\n",
         title = markdown_cell(&row.capability),
+        class = class.as_str(),
         wi = markdown_cell(&row.active_wi),
         promise = markdown_cell(&row.current_state),
         evidence = markdown_cell(&row.evidence),
@@ -9612,6 +9944,192 @@ fn humanize_id(id: &str) -> String {
         .join(" ")
 }
 
+/// Which feature roots a document declares, and which capability titles are
+/// nested under each. Built by walking headings in document order, so it
+/// reflects containment rather than a per-capability field.
+#[derive(Debug, Default)]
+struct FeatureRootScan {
+    /// Occurrence count per canonical root, so a duplicated root is visible.
+    root_counts: BTreeMap<CapabilityFeatureClass, usize>,
+    /// Headings that read as a feature root but are outside the closed pair.
+    unknown_roots: Vec<String>,
+    /// Capability title slug -> the roots that contain it.
+    members: BTreeMap<String, BTreeSet<CapabilityFeatureClass>>,
+}
+
+/// Does this heading title read as a feature root?
+///
+/// Only the trailing `Features` word is treated as the root marker, so
+/// `## Capabilities` and `### Capability Index` are never mistaken for one.
+fn feature_root_title(title: &str) -> Option<Option<CapabilityFeatureClass>> {
+    let trimmed = title.trim();
+    if !trimmed.to_ascii_lowercase().ends_with("features") {
+        return None;
+    }
+    Some(CapabilityFeatureClass::from_cli_str(trimmed).ok())
+}
+
+/// Walk headings in document order and record feature-root structure.
+fn scan_feature_roots(body: &str) -> FeatureRootScan {
+    let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let mut scan = FeatureRootScan::default();
+    let mut current: Option<(CapabilityFeatureClass, usize)> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        if fenced[idx] {
+            continue;
+        }
+        let Some((level, title)) = parse_heading(line) else {
+            continue;
+        };
+        match feature_root_title(&title) {
+            Some(Some(class)) => {
+                *scan.root_counts.entry(class).or_insert(0) += 1;
+                current = Some((class, level));
+                continue;
+            }
+            Some(None) => {
+                scan.unknown_roots.push(title.trim().to_string());
+                current = None;
+                continue;
+            }
+            None => {}
+        }
+        match current {
+            // A heading at or above the root's own level closes the root.
+            Some((_, root_level)) if level <= root_level => current = None,
+            Some((class, _)) => {
+                scan.members
+                    .entry(slugify(&title))
+                    .or_default()
+                    .insert(class);
+            }
+            None => {}
+        }
+    }
+    scan
+}
+
+/// Every capability id that exists because an archetype trait or capability
+/// family demands it. The source of truth is `doc_mirror`, not this module.
+fn trait_derived_baseline_ids() -> BTreeSet<&'static str> {
+    doc_mirror::CAPABILITY_FAMILIES
+        .iter()
+        .flat_map(|family| family.baseline_caps.iter().copied())
+        .chain(
+            doc_mirror::TRAITS
+                .iter()
+                .flat_map(|def| def.baseline_caps.iter().copied()),
+        )
+        .collect()
+}
+
+/// Diagnose the feature-root structure of a capability document.
+///
+/// Each diagnostic names the concrete authoring fix, because the reader is an
+/// author or an agent about to edit the document.
+///
+/// A wholly unclassified document is *not* diagnosed here: it has not begun
+/// migration, and turning it into an error before a migration command exists
+/// would only tell every project to do something it cannot yet do. What this
+/// rejects is a document that has begun classifying and got it wrong.
+fn validate_capability_feature_roots(
+    body: &str,
+    capabilities: &[CapabilitySection],
+) -> Vec<String> {
+    let scan = scan_feature_roots(body);
+    let mut findings = Vec::new();
+
+    let declares_any_class = capabilities
+        .iter()
+        .any(|capability| capability.feature_class.is_some())
+        || !scan.root_counts.is_empty()
+        || !scan.unknown_roots.is_empty();
+    if !declares_any_class {
+        return findings;
+    }
+
+    // (1) A root is absent.
+    for class in [
+        CapabilityFeatureClass::Core,
+        CapabilityFeatureClass::NonCore,
+    ] {
+        if !scan.root_counts.contains_key(&class) {
+            findings.push(format!(
+                "capability document declares feature classes but is missing the `### {}` root; add it under `## Capabilities` so both canonical roots exist",
+                class.root_heading()
+            ));
+        }
+    }
+
+    // (2) A root is duplicated.
+    for (class, count) in &scan.root_counts {
+        if *count > 1 {
+            findings.push(format!(
+                "duplicate `### {}` root ({} occurrences); merge them into one root under `## Capabilities`",
+                class.root_heading(),
+                count
+            ));
+        }
+    }
+
+    // (3) A root is outside the closed pair.
+    for unknown in &scan.unknown_roots {
+        findings.push(format!(
+            "unknown feature root `{}`; the closed pair is `{}` and `{}` — move its capabilities under one of those two",
+            unknown,
+            CapabilityFeatureClass::Core.root_heading(),
+            CapabilityFeatureClass::NonCore.root_heading()
+        ));
+    }
+
+    for capability in capabilities {
+        let slug = slugify(&capability.title);
+        let roots = scan.members.get(&slug);
+
+        // (4) The same capability sits under both roots, or its declared class
+        // contradicts the root that contains it.
+        if let Some(roots) = roots {
+            if roots.len() > 1 {
+                findings.push(format!(
+                    "capability `{}` is classified under both `{}` and `{}`; keep exactly one root",
+                    capability.id,
+                    CapabilityFeatureClass::Core.root_heading(),
+                    CapabilityFeatureClass::NonCore.root_heading()
+                ));
+            } else if let (Some(declared), Some(root)) =
+                (capability.feature_class, roots.iter().next().copied())
+            {
+                if declared != root {
+                    findings.push(format!(
+                        "capability `{}` declares `Feature Class: {}` but is nested under `{}`; make the field and the root agree",
+                        capability.id,
+                        declared.as_str(),
+                        root.root_heading()
+                    ));
+                }
+            }
+        }
+
+        // (5) A trait-derived baseline claims to be core.
+        let effective = capability
+            .feature_class
+            .or_else(|| roots.and_then(|roots| roots.iter().next().copied()));
+        if effective == Some(CapabilityFeatureClass::Core)
+            && trait_derived_baseline_ids().contains(capability.id.as_str())
+        {
+            findings.push(format!(
+                "trait-derived baseline capability `{}` is classified `core`; archetype baselines are always `{}` and belong under `{}`",
+                capability.id,
+                CapabilityFeatureClass::NonCore.as_str(),
+                CapabilityFeatureClass::NonCore.root_heading()
+            ));
+        }
+    }
+
+    findings
+}
+
 fn validate_capability_contract(capability: &CapabilitySection) -> Result<Vec<String>> {
     let mut findings = Vec::new();
     let requires_contract = matches!(
@@ -10091,6 +10609,7 @@ fn parse_markdown_capability_block(
     let gate_inventory = contract.gate_inventory;
     let dependencies = parse_dependency_list(&contract.dependencies);
     let capability_type = parse_capability_type_cell(&contract.capability_type)?;
+    let feature_class = parse_feature_class_cell(&contract.feature_class)?;
     surfaces.extend(parse_capability_surfaces(&contract.surfaces));
     ec_dimensions.extend(parse_capability_ec_dimensions(&contract.ec_dimensions));
     if let Some(slot) = parse_efficiency_slot_from_contract(
@@ -10231,6 +10750,7 @@ fn parse_markdown_capability_block(
             postlude,
             index_summary: None,
             capability_type,
+            feature_class,
             surfaces,
             ec_dimensions,
             promise,
@@ -10263,6 +10783,7 @@ struct MarkdownCapabilityContract {
     root_wi: String,
     status: String,
     capability_type: String,
+    feature_class: String,
     surfaces: String,
     ec_dimensions: String,
     promise: String,
@@ -10315,6 +10836,9 @@ fn parse_markdown_field_capability_contract(
             .remove("status")
             .unwrap_or_else(|| "candidate".to_string()),
         capability_type: values.remove("type").unwrap_or_else(|| "-".to_string()),
+        feature_class: values
+            .remove("featureclass")
+            .unwrap_or_else(|| "-".to_string()),
         surfaces: values.remove("surfaces").unwrap_or_else(|| "-".to_string()),
         ec_dimensions: values
             .remove("ecdimensions")
@@ -10391,6 +10915,7 @@ fn parse_markdown_contract_field_line(line: &str) -> Option<(String, String)> {
         "rootwi" | "wi" => "rootwi",
         "status" => "status",
         "type" | "capabilitytype" => "type",
+        "featureclass" | "capabilityfeatureclass" | "featureroot" => "featureclass",
         "surface" | "surfaces" | "capabilitysurface" | "capabilitysurfaces" => "surfaces",
         "clisurface" | "commands" | "command" => "surfaces",
         "ecdimensions" | "dimension" | "dimensions" | "requireddimensions" => "ecdimensions",
@@ -10488,6 +11013,10 @@ fn parse_markdown_capability_contract(
                 .capability_type
                 .map(|idx| table_cell(row, idx))
                 .unwrap_or_else(|| "-".to_string()),
+            feature_class: indices
+                .feature_class
+                .map(|idx| table_cell(row, idx))
+                .unwrap_or_else(|| "-".to_string()),
             surfaces: indices
                 .surfaces
                 .map(|idx| table_cell(row, idx))
@@ -10538,6 +11067,8 @@ fn parse_markdown_capability_contract(
         root_wi: value_for(&["rootwi", "wi"]).unwrap_or_else(|| "-".to_string()),
         status: value_for(&["status"]).unwrap_or_else(|| "candidate".to_string()),
         capability_type: value_for(&["type", "capabilitytype"]).unwrap_or_else(|| "-".to_string()),
+        feature_class: value_for(&["featureclass", "capabilityfeatureclass", "featureroot"])
+            .unwrap_or_else(|| "-".to_string()),
         surfaces: value_for(&[
             "surface",
             "surfaces",
@@ -10672,6 +11203,7 @@ struct MarkdownContractIndices {
     root_wi: usize,
     status: usize,
     capability_type: Option<usize>,
+    feature_class: Option<usize>,
     surfaces: Option<usize>,
     ec_dimensions: Option<usize>,
     promise: usize,
@@ -10688,6 +11220,10 @@ fn markdown_contract_indices(cells: &[String]) -> Option<MarkdownContractIndices
         root_wi: find_table_column(cells, &["rootwi", "wi"])?,
         status: find_table_column(cells, &["status"])?,
         capability_type: find_table_column(cells, &["type", "capabilitytype"]),
+        feature_class: find_table_column(
+            cells,
+            &["featureclass", "capabilityfeatureclass", "featureroot"],
+        ),
         surfaces: find_table_column(
             cells,
             &[
@@ -10725,6 +11261,18 @@ fn parse_capability_type_cell(value: &str) -> Result<Option<CapabilityType>> {
         return Ok(None);
     }
     CapabilityType::from_cli_str(value).map(Some)
+}
+
+/// Parse a `Feature Class` cell/field into the closed `core` / `non_core` pair.
+///
+/// An absent or empty value is `None` (unclassified), which existing documents
+/// rely on. A present but unrecognized value is an error rather than `None`, so
+/// a typo cannot silently drop a capability out of both feature roots.
+fn parse_feature_class_cell(value: &str) -> Result<Option<CapabilityFeatureClass>> {
+    if is_empty_table_value(value) {
+        return Ok(None);
+    }
+    CapabilityFeatureClass::from_cli_str(value).map(Some)
 }
 
 fn parse_capability_surfaces(value: &str) -> Vec<CapabilitySurface> {
@@ -11404,6 +11952,11 @@ fn normalize_table_token(cell: &str) -> String {
         .collect::<String>()
 }
 
+/// The canonical rendering of a cell or field that holds no value. Writing this
+/// is how migration says "there is deliberately nothing here" rather than
+/// leaving a value the parser would read back.
+const EMPTY_TABLE_VALUE: &str = "-";
+
 fn is_empty_table_value(cell: &str) -> bool {
     let trimmed = cell.trim();
     trimmed.is_empty() || matches!(trimmed, "-" | "n/a" | "N/A")
@@ -11559,13 +12112,41 @@ fn parse_markdown_table_row(line: &str) -> Option<Vec<String>> {
     if !trimmed.starts_with('|') || !trimmed[1..].contains('|') {
         return None;
     }
-    Some(
-        trimmed
-            .trim_matches('|')
-            .split('|')
-            .map(|cell| cell.trim().replace("\\|", "|"))
-            .collect(),
-    )
+    Some(split_markdown_table_row_cells(trimmed.trim_matches('|')))
+}
+
+/// Split a markdown table row's inner text into cells on `|`, treating any
+/// `|` that falls inside an open backtick span (`` `...` ``) as literal
+/// cell content rather than a delimiter.
+///
+/// Gate/Evidence cells legitimately hold backtick-quoted shell commands
+/// with real embedded pipes (e.g. `` `aw health | tail -n 1` ``), and
+/// `markdown_cell` already escapes every `|` it writes — inside backticks
+/// or not — on the way out. This mirrors that contract on the way in: a
+/// `|` inside backticks is never a cell delimiter, whether it is bare or
+/// `\`-escaped, and any `\|` that survives splitting still unescapes to a
+/// literal `|`. Without this, the first `|` inside a backtick-quoted
+/// command silently truncates the cell instead of surviving the round
+/// trip (#3331).
+fn split_markdown_table_row_cells(inner: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut in_backtick = false;
+    for ch in inner.chars() {
+        match ch {
+            '`' => {
+                in_backtick = !in_backtick;
+                current.push(ch);
+            }
+            '|' if !in_backtick => {
+                cells.push(current.trim().replace("\\|", "|"));
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    cells.push(current.trim().replace("\\|", "|"));
+    cells
 }
 
 fn is_markdown_separator_row(cells: &[String]) -> bool {
@@ -11706,6 +12287,14 @@ fn capability_map_readme_resident_report(
         percent: 0.0,
         claim_count: 0,
         verified_claim_count: 0,
+        core_capability_count: 0,
+        core_verified_count: 0,
+        non_core_capability_count: 0,
+        non_core_verified_count: 0,
+        core_claim_count: 0,
+        core_verified_claim_count: 0,
+        non_core_claim_count: 0,
+        non_core_verified_claim_count: 0,
         claim_percent: 0.0,
         capabilities: Vec::new(),
         blockers: vec![reason],
@@ -12445,7 +13034,7 @@ fn apply_capability_format_migration_tick(
             }
             Err(err) => return Err(err),
         };
-        if !document.requires_format_migration() {
+        if !document.requires_format_migration() && !document.requires_feature_class_migration() {
             return Ok(format!(
                 "{} already uses canonical Markdown capability format",
                 resolved.display()
@@ -12692,6 +13281,7 @@ fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<
         println!("warning: {warning}");
     }
     println!("{}", capability_human_readiness_line(report));
+    println!("{}", capability_human_feature_class_line(report));
     println!(
         "test gates: {:?} [{}/{} passed]",
         report.test_gates.status, report.test_gates.passed_count, report.test_gates.command_count
@@ -12714,6 +13304,26 @@ fn capability_human_readiness_line(report: &CapabilityReport) -> String {
         },
         report.production_scope.len(),
         report.production_blockers.len(),
+    )
+}
+
+/// Core and non-core completion, rendered *beside* the readiness decision
+/// rather than inside it.
+///
+/// The `loop=`/`production=` decision stays a single value on its own line:
+/// splitting it per class would create two production verdicts, and there is
+/// exactly one. This line reports where the work stands in each class.
+fn capability_human_feature_class_line(report: &CapabilityReport) -> String {
+    format!(
+        "readiness by feature class: core={}/{} capabilities, {}/{} claims; non_core={}/{} capabilities, {}/{} claims",
+        report.core_verified_count,
+        report.core_capability_count,
+        report.core_verified_claim_count,
+        report.core_claim_count,
+        report.non_core_verified_count,
+        report.non_core_capability_count,
+        report.non_core_verified_claim_count,
+        report.non_core_claim_count,
     )
 }
 
@@ -12904,6 +13514,14 @@ fn capability_coverage_summary(report: &CapabilityReport) -> serde_json::Value {
         "claim_count": report.claim_count,
         "verified_claim_count": report.verified_claim_count,
         "claim_percent": report.claim_percent,
+        "core_capability_count": report.core_capability_count,
+        "core_verified_count": report.core_verified_count,
+        "non_core_capability_count": report.non_core_capability_count,
+        "non_core_verified_count": report.non_core_verified_count,
+        "core_claim_count": report.core_claim_count,
+        "core_verified_claim_count": report.core_verified_claim_count,
+        "non_core_claim_count": report.non_core_claim_count,
+        "non_core_verified_claim_count": report.non_core_verified_claim_count,
         "blocker_count": report.blockers.len(),
         "warning_count": report.warnings.len(),
         "production_ready": report.production_ready,
@@ -13414,6 +14032,14 @@ mod tests {
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: Vec::new(),
             blockers: Vec::new(),
             warnings: Vec::new(),
@@ -13442,12 +14068,354 @@ mod tests {
         }
     }
 
+    /// A report item with an explicit feature class, claim totals, and verified
+    /// state, for exercising the readiness split.
+    fn classified_report_item(
+        id: &str,
+        feature_class: Option<CapabilityFeatureClass>,
+        status: CapabilityStatus,
+        verified: bool,
+        claim_count: usize,
+        verified_claim_count: usize,
+    ) -> CapabilityReportItem {
+        let mut item = sample_report_item_with_gap(None);
+        item.id = id.to_string();
+        item.title = id.to_string();
+        item.feature_class = feature_class;
+        item.status = status;
+        item.verified = verified;
+        item.claim_count = claim_count;
+        item.verified_claim_count = verified_claim_count;
+        item
+    }
+
+    /// A mixed report: one verified core, one unverified core, one non-core,
+    /// one *unclassified*, and one retired that must be excluded entirely.
+    fn mixed_feature_class_report() -> CapabilityReport {
+        use CapabilityFeatureClass::{Core, NonCore};
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capabilities = vec![
+            classified_report_item(
+                "indexing",
+                Some(Core),
+                CapabilityStatus::Auditing,
+                true,
+                4,
+                4,
+            ),
+            classified_report_item(
+                "querying",
+                Some(Core),
+                CapabilityStatus::Auditing,
+                false,
+                3,
+                1,
+            ),
+            classified_report_item(
+                "security-hardening",
+                Some(NonCore),
+                CapabilityStatus::Auditing,
+                true,
+                2,
+                2,
+            ),
+            classified_report_item("tracing", None, CapabilityStatus::Auditing, false, 6, 0),
+            classified_report_item(
+                "observability",
+                Some(NonCore),
+                CapabilityStatus::Auditing,
+                false,
+                0,
+                0,
+            ),
+            classified_report_item(
+                "retired-thing",
+                Some(Core),
+                CapabilityStatus::Retired,
+                false,
+                9,
+                9,
+            ),
+        ];
+        // Mirror what `build_capability_report` computes for the retained totals.
+        let retained = report
+            .capabilities
+            .iter()
+            .filter(|item| item.status != CapabilityStatus::Retired);
+        report.capability_count = retained.clone().count();
+        report.verified_count = retained.clone().filter(|item| item.verified).count();
+        report.claim_count = retained.clone().map(|item| item.claim_count).sum();
+        report.verified_claim_count = retained.map(|item| item.verified_claim_count).sum();
+        report.apply_feature_class_totals();
+        report
+    }
+
+    #[test]
+    fn report_exposes_core_and_non_core_capability_and_claim_totals() {
+        let report = mixed_feature_class_report();
+        assert_eq!(report.core_capability_count, 2);
+        assert_eq!(report.core_verified_count, 1);
+        assert_eq!(report.core_claim_count, 7);
+        assert_eq!(report.core_verified_claim_count, 5);
+        // `tracing` declares no class, so it is attributed to non-core: core-ness
+        // is a claim, and an unmade claim is not a claim.
+        assert_eq!(report.non_core_capability_count, 3);
+        assert_eq!(report.non_core_verified_count, 1);
+        assert_eq!(report.non_core_claim_count, 8);
+        assert_eq!(report.non_core_verified_claim_count, 2);
+    }
+
+    #[test]
+    fn report_feature_class_pairs_sum_to_the_retained_totals() {
+        let report = mixed_feature_class_report();
+        assert_eq!(
+            report.core_capability_count + report.non_core_capability_count,
+            report.capability_count
+        );
+        assert_eq!(
+            report.core_verified_count + report.non_core_verified_count,
+            report.verified_count
+        );
+        assert_eq!(
+            report.core_claim_count + report.non_core_claim_count,
+            report.claim_count
+        );
+        assert_eq!(
+            report.core_verified_claim_count + report.non_core_verified_claim_count,
+            report.verified_claim_count
+        );
+        // The retired capability contributed 9 claims to neither side.
+        assert_eq!(report.claim_count, 15);
+        assert_eq!(report.capability_count, 5);
+    }
+
+    #[test]
+    fn report_feature_class_pairs_sum_for_every_document_shape() {
+        use CapabilityFeatureClass::{Core, NonCore};
+        let shapes: Vec<(&str, Vec<CapabilityReportItem>)> = vec![
+            ("no capabilities", Vec::new()),
+            (
+                "all core",
+                vec![
+                    classified_report_item("a", Some(Core), CapabilityStatus::Auditing, true, 2, 1),
+                    classified_report_item(
+                        "b",
+                        Some(Core),
+                        CapabilityStatus::Auditing,
+                        false,
+                        3,
+                        0,
+                    ),
+                ],
+            ),
+            (
+                "all non-core",
+                vec![classified_report_item(
+                    "c",
+                    Some(NonCore),
+                    CapabilityStatus::Auditing,
+                    true,
+                    4,
+                    4,
+                )],
+            ),
+            (
+                "all unclassified",
+                vec![classified_report_item(
+                    "d",
+                    None,
+                    CapabilityStatus::Auditing,
+                    false,
+                    1,
+                    0,
+                )],
+            ),
+            (
+                "all retired",
+                vec![classified_report_item(
+                    "e",
+                    Some(Core),
+                    CapabilityStatus::Retired,
+                    true,
+                    7,
+                    7,
+                )],
+            ),
+        ];
+
+        for (label, items) in shapes {
+            let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+            report.capabilities = items;
+            let retained = report
+                .capabilities
+                .iter()
+                .filter(|item| item.status != CapabilityStatus::Retired);
+            report.capability_count = retained.clone().count();
+            report.verified_count = retained.clone().filter(|item| item.verified).count();
+            report.claim_count = retained.clone().map(|item| item.claim_count).sum();
+            report.verified_claim_count = retained.map(|item| item.verified_claim_count).sum();
+            report.apply_feature_class_totals();
+
+            assert_eq!(
+                report.core_capability_count + report.non_core_capability_count,
+                report.capability_count,
+                "{label}: capability split"
+            );
+            assert_eq!(
+                report.core_verified_count + report.non_core_verified_count,
+                report.verified_count,
+                "{label}: verified split"
+            );
+            assert_eq!(
+                report.core_claim_count + report.non_core_claim_count,
+                report.claim_count,
+                "{label}: claim split"
+            );
+            assert_eq!(
+                report.core_verified_claim_count + report.non_core_verified_claim_count,
+                report.verified_claim_count,
+                "{label}: verified claim split"
+            );
+        }
+    }
+
+    #[test]
+    fn report_attributes_legacy_rows_to_non_core_rather_than_dropping_them() {
+        // A legacy-only document parses to zero capabilities but still reports
+        // rows. Attributing none of them would break the summing invariant.
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capabilities = Vec::new();
+        report.capability_count = 3;
+        report.verified_count = 1;
+        report.claim_count = 6;
+        report.verified_claim_count = 2;
+        report.apply_feature_class_totals();
+
+        assert_eq!(report.core_capability_count, 0);
+        assert_eq!(report.core_claim_count, 0);
+        assert_eq!(report.non_core_capability_count, 3);
+        assert_eq!(report.non_core_verified_count, 1);
+        assert_eq!(report.non_core_claim_count, 6);
+        assert_eq!(report.non_core_verified_claim_count, 2);
+    }
+
+    #[test]
+    fn report_keeps_production_ready_and_status_single_valued() {
+        // The split is reporting only. There is exactly one production verdict,
+        // and the class totals must not introduce a second one.
+        let mut report = mixed_feature_class_report();
+        report.production_status = ProductionStatus::Blocked;
+        report.production_ready = false;
+        let before = (report.production_ready, report.production_status);
+        report.apply_feature_class_totals();
+        assert_eq!((report.production_ready, report.production_status), before);
+
+        let serialized = serde_json::to_value(&report).unwrap();
+        let object = serialized.as_object().unwrap();
+        // No per-class production verdict exists anywhere in the projection.
+        let mut verdict_keys = object
+            .keys()
+            .filter(|key| key.contains("production"))
+            .cloned()
+            .collect::<Vec<_>>();
+        verdict_keys.sort();
+        assert_eq!(
+            verdict_keys,
+            vec![
+                "production_blockers".to_string(),
+                "production_ready".to_string(),
+                "production_scope".to_string(),
+                "production_status".to_string()
+            ],
+            "unexpected production keys: {verdict_keys:?}"
+        );
+        assert!(object["production_ready"].is_boolean());
+        assert!(object["production_status"].is_string());
+    }
+
+    #[test]
+    fn report_coverage_summary_exposes_the_feature_class_split() {
+        let report = mixed_feature_class_report();
+        let coverage = capability_coverage_summary(&report);
+        for (key, expected) in [
+            ("core_capability_count", 2),
+            ("core_verified_count", 1),
+            ("core_claim_count", 7),
+            ("core_verified_claim_count", 5),
+            ("non_core_capability_count", 3),
+            ("non_core_verified_count", 1),
+            ("non_core_claim_count", 8),
+            ("non_core_verified_claim_count", 2),
+        ] {
+            assert_eq!(
+                coverage[key].as_u64(),
+                Some(expected),
+                "{key} in {coverage}"
+            );
+        }
+        // The single decision is still there, still single-valued.
+        assert!(coverage["production_ready"].is_boolean());
+        assert!(coverage["production_status"].is_string());
+    }
+
+    #[test]
+    fn readiness_names_core_and_non_core_completion_beside_the_single_decision() {
+        let mut report = mixed_feature_class_report();
+        report.status = "healthy".to_string();
+        report.production_status = ProductionStatus::Blocked;
+        report.production_scope = vec!["indexing".to_string()];
+        report.production_blockers = vec!["indexing: claim verification is incomplete".to_string()];
+
+        // The decision line is unchanged: one loop value, one production value.
+        assert_eq!(
+            capability_human_readiness_line(&report),
+            "readiness: loop=continue; production=blocked/not_ready [scope=1, blockers=1]"
+        );
+        // The class completion is reported beside it, not inside it.
+        assert_eq!(
+            capability_human_feature_class_line(&report),
+            "readiness by feature class: core=1/2 capabilities, 5/7 claims; non_core=1/3 capabilities, 2/8 claims"
+        );
+    }
+
+    #[test]
+    fn readiness_attributes_every_capability_to_exactly_one_feature_class() {
+        use CapabilityFeatureClass::{Core, NonCore};
+        for declared in [Some(Core), Some(NonCore), None] {
+            let item =
+                classified_report_item("subject", declared, CapabilityStatus::Auditing, true, 1, 1);
+            let core = feature_class_totals(std::slice::from_ref(&item), Core);
+            let non_core = feature_class_totals(std::slice::from_ref(&item), NonCore);
+            assert_eq!(
+                core.capability_count + non_core.capability_count,
+                1,
+                "declared={declared:?} landed in {} classes",
+                core.capability_count + non_core.capability_count
+            );
+            // Nothing is counted as core without declaring core.
+            assert_eq!(
+                core.capability_count,
+                usize::from(declared == Some(Core)),
+                "declared={declared:?}"
+            );
+        }
+        // Retired capabilities are in neither class, matching the retained totals.
+        let retired =
+            classified_report_item("gone", Some(Core), CapabilityStatus::Retired, true, 1, 1);
+        assert_eq!(
+            feature_class_totals(std::slice::from_ref(&retired), Core).capability_count
+                + feature_class_totals(std::slice::from_ref(&retired), NonCore).capability_count,
+            0
+        );
+    }
+
     fn sample_report_item_with_gap(active_wi: Option<&str>) -> CapabilityReportItem {
         CapabilityReportItem {
             id: "package-manager".to_string(),
             title: "Package Manager".to_string(),
             status: CapabilityStatus::Auditing,
             capability_type: None,
+            feature_class: None,
             surfaces: Vec::new(),
             ec_dimensions: Vec::new(),
             promise: "Replace package manager flows.".to_string(),
@@ -15991,6 +16959,176 @@ generated_at: 2026-06-18T00:00:00Z
         assert!(doc.capabilities.is_empty());
     }
 
+    /// Count of `#`-level headings with exactly `level` hashes.
+    fn heading_count(body: &str, level: usize) -> usize {
+        body.lines()
+            .filter_map(parse_heading)
+            .filter(|(found, _)| *found == level)
+            .count()
+    }
+
+    #[test]
+    fn capability_init_renders_the_three_canonical_document_roots() {
+        for readme_resident in [false, true] {
+            let body = render_empty_capability_readme(
+                "Cclab Core",
+                "Capability map placeholder for `cclab-core`.",
+                readme_resident,
+            );
+            assert_eq!(
+                heading_count(&body, 1),
+                1,
+                "expected exactly one project H1: {body}"
+            );
+            assert!(body.starts_with("# Cclab Core\n"), "{body}");
+            for root in [
+                "### Capability Index\n",
+                "### Core Features\n",
+                "### Non-Core Features\n",
+            ] {
+                assert!(body.contains(root), "missing `{root}` root in: {body}");
+            }
+            // Canonical order: the index, then core, then non-core.
+            let index = body.find("### Capability Index").unwrap();
+            let core = body.find("### Core Features").unwrap();
+            let non_core = body.find("### Non-Core Features").unwrap();
+            assert!(index < core && core < non_core, "{body}");
+        }
+    }
+
+    #[test]
+    fn capability_init_feature_roots_are_not_parsed_as_capabilities() {
+        // The roots carry no `ID`, so they must not become empty capability
+        // contracts — the skeleton stays an empty document.
+        let body = render_empty_capability_readme("Cclab Core", "placeholder.", false);
+        let doc = cap_doc(&body);
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.capabilities.is_empty());
+    }
+
+    /// One core and one non-core capability, both explicitly classified.
+    fn two_class_capability_body() -> &'static str {
+        r#"# demo
+
+## Capabilities
+
+### Indexing
+
+ID: indexing
+Root WI: #1
+Status: auditing
+Type: Service
+Feature Class: core
+Required Verification: smoke
+Promise:
+Index documents.
+Gate Inventory:
+- `cargo test -p lumen index`
+
+### Static Security Scan
+
+ID: static-security-scan
+Root WI: #2
+Status: auditing
+Type: SecurityTool
+Feature Class: non_core
+Required Verification: smoke
+Promise:
+Scan for vulnerabilities.
+Gate Inventory:
+- `cargo test -p lumen scan`
+"#
+    }
+
+    #[test]
+    fn capability_init_registry_groups_classified_capabilities_under_feature_roots() {
+        let body = two_class_capability_body();
+        let document = canonical_doc(body);
+        let rendered = render_capability_registry(&document, "demo");
+
+        let core_root = rendered.find("### Core Features").unwrap();
+        let non_core_root = rendered.find("### Non-Core Features").unwrap();
+        let indexing = rendered.find("#### Indexing").unwrap();
+        let scan = rendered.find("#### Static Security Scan").unwrap();
+        assert!(
+            core_root < indexing && indexing < non_core_root && non_core_root < scan,
+            "capabilities did not land under their roots: {rendered}"
+        );
+
+        // Re-parsing the grouped document preserves ids and classes, so the
+        // grouping is a shape change and not a data change.
+        let reparsed = cap_doc(&format!("# demo\n\n{rendered}"));
+        let by_id = |id: &str| {
+            reparsed
+                .capabilities
+                .iter()
+                .find(|capability| capability.id == id)
+                .unwrap_or_else(|| panic!("`{id}` missing from: {rendered}"))
+        };
+        assert_eq!(
+            by_id("indexing").feature_class,
+            Some(CapabilityFeatureClass::Core)
+        );
+        assert_eq!(
+            by_id("static-security-scan").feature_class,
+            Some(CapabilityFeatureClass::NonCore)
+        );
+        assert_eq!(
+            by_id("indexing").capability_type,
+            Some(CapabilityType::Service)
+        );
+        assert_eq!(
+            by_id("static-security-scan").capability_type,
+            Some(CapabilityType::SecurityTool)
+        );
+    }
+
+    #[test]
+    fn capability_init_registry_leaves_unclassified_capabilities_outside_the_roots() {
+        // Placing an unclassified capability under a root would be a silent
+        // classification; rejecting it is #3061's gate, not this one's.
+        let document = canonical_doc(one_markdown_capability());
+        let rendered = render_capability_registry(&document, "demo");
+        assert!(!rendered.contains("### Core Features"), "{rendered}");
+        assert!(!rendered.contains("### Non-Core Features"), "{rendered}");
+        assert!(rendered.contains("### Package Manager"), "{rendered}");
+        assert_eq!(
+            cap_doc(&format!("# demo\n\n{rendered}")).capabilities[0].feature_class,
+            None
+        );
+    }
+
+    #[test]
+    fn capability_init_registry_keeps_partially_classified_capabilities_in_the_index() {
+        // The index and the sections are rendered from one order. A capability
+        // that order forgets is silently missing from the index while its
+        // section is still present, which reads as a shrinking product contract
+        // rather than an authoring error.
+        let body = format!(
+            "{}\n### Unclassified Thing\n\nID: unclassified-thing\nRoot WI: -\nStatus: auditing\nRequired Verification: smoke\nPromise:\nDo something.\nGate Inventory:\n- `cargo test -p demo thing`\n",
+            two_class_capability_body()
+        );
+        let document = canonical_doc(&body);
+        let rendered = render_capability_registry(&document, "demo");
+
+        for title in ["Indexing", "Static Security Scan", "Unclassified Thing"] {
+            assert!(
+                rendered.contains(&format!("| {title} |")),
+                "`{title}` missing from the index:\n{rendered}"
+            );
+        }
+        assert_eq!(
+            rendered.matches("| Unclassified Thing |").count(),
+            1,
+            "{rendered}"
+        );
+        // Its section still stays outside the roots, at the top level.
+        assert!(
+            rendered.contains("\n### Unclassified Thing\n"),
+            "{rendered}"
+        );
+    }
+
     #[test]
     fn capability_init_renders_readme_resident_shell_for_explicit_readme_override() {
         let body = render_empty_capability_readme(
@@ -16167,6 +17305,199 @@ out_of_scope:
   - "registry service"
 ```
 "##
+    }
+
+    /// One canonical field-style capability contract at heading `level`.
+    /// `extra_fields` is spliced verbatim so a fixture can add or omit
+    /// `Feature Class`.
+    fn capability_block(level: usize, title: &str, id: &str, extra_fields: &str) -> String {
+        format!(
+            "{} {title}\n\nID: {id}\nRoot WI: #1\nStatus: auditing\nType: Service\n{extra_fields}Required Verification: smoke\nPromise:\n{title} promise.\nGate Inventory:\n- `cargo test -p demo {id}`\n\n",
+            "#".repeat(level)
+        )
+    }
+
+    /// A document whose `## Capabilities` body is exactly `sections`.
+    fn feature_root_document(sections: &str) -> String {
+        format!("# demo\n\n## Brief\n\nfixture.\n\n## Capabilities\n\n{sections}")
+    }
+
+    /// The feature-root diagnostics for a document, as parsed.
+    fn feature_root_findings(body: &str) -> Vec<String> {
+        let document = cap_doc(body);
+        validate_capability_feature_roots(body, &document.capabilities)
+    }
+
+    /// Assert exactly one diagnostic matches `needle`, and return it.
+    fn one_finding_matching(findings: &[String], needle: &str) -> String {
+        let matched = findings
+            .iter()
+            .filter(|finding| finding.contains(needle))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matched.len(),
+            1,
+            "expected exactly one diagnostic containing `{needle}`, got {findings:#?}"
+        );
+        matched[0].clone()
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_document_missing_a_feature_root() {
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n")
+        ));
+        let findings = feature_root_findings(&body);
+        let finding = one_finding_matching(&findings, "missing the `### Non-Core Features` root");
+        assert!(finding.contains("## Capabilities"), "{finding}");
+        // The present root is not also reported missing.
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.contains("missing the `### Core Features` root")),
+            "{findings:#?}"
+        );
+        // Wired through the parser, not only reachable by direct call.
+        assert!(
+            cap_doc(&body).findings.iter().any(|f| f == &finding),
+            "diagnostic did not reach document findings: {:#?}",
+            cap_doc(&body).findings
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_duplicated_feature_root() {
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{}### Core Features\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n"),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+            capability_block(4, "Querying", "querying", "Feature Class: core\n"),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "duplicate `### Core Features` root",
+        );
+        assert!(finding.contains("2 occurrences"), "{finding}");
+        assert!(finding.contains("merge them into one root"), "{finding}");
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_an_unknown_feature_root() {
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{}### Optional Features\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n"),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+            capability_block(4, "Tracing", "tracing", ""),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "unknown feature root `Optional Features`",
+        );
+        // The diagnostic names the closed pair, so the fix needs no lookup.
+        assert!(finding.contains("`Core Features`"), "{finding}");
+        assert!(finding.contains("`Non-Core Features`"), "{finding}");
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_multiply_classified_capability() {
+        // `Indexing` is contracted under Core and listed again under Non-Core.
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n#### Indexing\n\nSee above.\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n"),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "is classified under both `Core Features` and `Non-Core Features`",
+        );
+        assert!(finding.contains("`indexing`"), "{finding}");
+        assert!(finding.contains("keep exactly one root"), "{finding}");
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_feature_class_contradicting_its_root() {
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: non_core\n"),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "declares `Feature Class: non_core` but is nested under `Core Features`",
+        );
+        assert!(
+            finding.contains("make the field and the root agree"),
+            "{finding}"
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_trait_derived_baseline_classified_core() {
+        // `http2-api-list` is a `doc_mirror` trait baseline, not a product core.
+        assert!(trait_derived_baseline_ids().contains("http2-api-list"));
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{}",
+            capability_block(
+                4,
+                "HTTP/2 API List",
+                "http2-api-list",
+                "Feature Class: core\n"
+            ),
+            capability_block(4, "Metrics", "metrics", "Feature Class: non_core\n"),
+        ));
+        let finding = one_finding_matching(
+            &feature_root_findings(&body),
+            "trait-derived baseline capability `http2-api-list` is classified `core`",
+        );
+        assert!(finding.contains("always `non_core`"), "{finding}");
+        assert!(finding.contains("`Non-Core Features`"), "{finding}");
+    }
+
+    #[test]
+    fn markdown_capability_tables_allow_adopting_a_libs_owned_non_core_mechanism() {
+        // AC12: the adopter declares adoption of a mechanism owned by a `libs/*`
+        // project. That must not be read as the adopter owning the mechanism,
+        // and must not force the capability into Core.
+        let adopter = "#### HTTP/2 API List\n\nID: http2-api-list\nRoot WI: #1\nStatus: auditing\nType: Service\nFeature Class: non_core\nRequired Verification: smoke\nPromise:\nAdopt the h2c manager owned by `libs/h2c`; this project consumes it and does not own it.\nGate Inventory:\n- `cargo test -p h2c ping_pong`\n\n";
+        let body = feature_root_document(&format!(
+            "### Core Features\n\n{}### Non-Core Features\n\n{adopter}",
+            capability_block(4, "Indexing", "indexing", "Feature Class: core\n"),
+        ));
+
+        assert_eq!(
+            feature_root_findings(&body),
+            Vec::<String>::new(),
+            "adoption of a libs-owned mechanism must produce no diagnostic"
+        );
+
+        let document = cap_doc(&body);
+        let adopted = document
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == "http2-api-list")
+            .expect("adopter capability parsed");
+        assert_eq!(adopted.feature_class, Some(CapabilityFeatureClass::NonCore));
+        // The declared adoption survives parsing: the owner stays named, and the
+        // gate stays pointed at the owning project's own test.
+        assert!(
+            adopted.promise.contains("libs/h2c"),
+            "{:?}",
+            adopted.promise
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_stay_silent_for_a_wholly_unclassified_document() {
+        // A document that has not begun migrating has nothing to contradict, and
+        // telling it to fix roots before a migration command exists would be
+        // noise. Requiring a class is a later gate.
+        for body in [
+            one_markdown_capability().to_string(),
+            feature_root_document(&capability_block(3, "Indexing", "indexing", "")),
+        ] {
+            assert_eq!(feature_root_findings(&body), Vec::<String>::new(), "{body}");
+        }
     }
 
     fn one_markdown_capability() -> &'static str {
@@ -16863,6 +18194,343 @@ Required Verification: smoke, conformance
         );
     }
 
+    /// A capability contract carrying an explicit `Feature Class:` field, with
+    /// `{class}` substituted, plus a type and a maturity so the orthogonality
+    /// assertions below have something to hold fixed.
+    fn feature_class_field_capability(class: &str) -> String {
+        format!(
+            "# demo\n\n\
+             ## Search\n\n\
+             ID: search\n\
+             Root WI: #4100\n\
+             Status: auditing\n\
+             Type: Service\n\
+             Feature Class: {class}\n\
+             Required Verification: smoke, conformance\n\
+             Promise:\n\
+             Serve search queries as ranked external ids only.\n\
+             Gate Inventory:\n\
+             - `cargo test -p lumen planner`\n"
+        )
+    }
+
+    #[test]
+    fn markdown_capability_tables_carry_a_core_or_non_core_feature_class() {
+        for (spelling, expected) in [
+            ("core", CapabilityFeatureClass::Core),
+            ("non_core", CapabilityFeatureClass::NonCore),
+            ("non-core", CapabilityFeatureClass::NonCore),
+        ] {
+            let doc = cap_doc(&feature_class_field_capability(spelling));
+            let capability = &doc.capabilities[0];
+            assert_eq!(
+                capability.feature_class,
+                Some(expected),
+                "field spelling `{spelling}` did not classify the capability"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_capability_tables_read_a_feature_class_contract_column() {
+        let body = r#"# demo
+
+## Package Manager
+
+| ID | Root WI | Status | Type | Feature Class | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|---|---|
+| package-manager | #3779 | auditing | DeveloperTool | non_core | Replace package manager flows. | smoke | apps/jet/validation/pkg-manager.toml |
+"#;
+        let capability = &cap_doc(body).capabilities[0];
+        assert_eq!(capability.id, "package-manager");
+        assert_eq!(
+            capability.feature_class,
+            Some(CapabilityFeatureClass::NonCore)
+        );
+        assert_eq!(
+            capability.capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_read_a_feature_class_field_value_row() {
+        let body = r#"# demo
+
+## Package Manager
+
+| Field | Value |
+|---|---|
+| ID | package-manager |
+| Root WI | #3779 |
+| Status | auditing |
+| Feature Class | core |
+| Promise | Replace package manager flows. |
+| Required Verification | smoke |
+| Gate Inventory | apps/jet/validation/pkg-manager.toml |
+"#;
+        let capability = &cap_doc(body).capabilities[0];
+        assert_eq!(capability.feature_class, Some(CapabilityFeatureClass::Core));
+    }
+
+    #[test]
+    fn markdown_capability_tables_without_a_feature_class_stay_unclassified() {
+        // Requiring a class is a later gate; R1 only has to represent it. This
+        // is the fixture that fails if the field is ever silently defaulted.
+        let capability = &cap_doc(one_markdown_capability()).capabilities[0];
+        assert_eq!(capability.feature_class, None);
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_an_unknown_feature_class() {
+        let err = parse_capability_document(
+            &feature_class_field_capability("semi-core"),
+            Path::new("README.md"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("expected core or non_core"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn markdown_capability_tables_reject_a_capability_type_as_a_feature_class() {
+        // The feature class must never be expressible as a capability type: the
+        // two axes answer different questions and share no vocabulary.
+        for value in ["Service", "AgentFirst", "DeveloperTool"] {
+            let err = parse_capability_document(
+                &feature_class_field_capability(value),
+                Path::new("README.md"),
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("expected core or non_core"),
+                "`{value}` was accepted as a feature class: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_capability_tables_keep_feature_class_orthogonal_to_type_and_maturity() {
+        let core = cap_doc(&feature_class_field_capability("core"))
+            .capabilities
+            .remove(0);
+        let non_core = cap_doc(&feature_class_field_capability("non_core"))
+            .capabilities
+            .remove(0);
+
+        // Same type and same required maturity on both sides of the partition:
+        // neither is derivable from the feature class.
+        assert_eq!(core.capability_type, Some(CapabilityType::Service));
+        assert_eq!(non_core.capability_type, core.capability_type);
+        let core_contract = core.verification_contract.as_ref().unwrap();
+        let non_core_contract = non_core.verification_contract.as_ref().unwrap();
+        assert_eq!(
+            core_contract.required_maturity,
+            non_core_contract.required_maturity
+        );
+        assert_eq!(
+            crate::cli::capability_type::required_ec_dimensions(&CapabilityType::Service),
+            crate::cli::capability_type::required_ec_dimensions(
+                non_core.capability_type.as_ref().unwrap()
+            ),
+            "production-required dimensions must not depend on the feature class"
+        );
+        assert_ne!(core.feature_class, non_core.feature_class);
+    }
+
+    #[test]
+    fn markdown_capability_tables_round_trip_feature_class_through_the_serializer() {
+        for class in [
+            CapabilityFeatureClass::Core,
+            CapabilityFeatureClass::NonCore,
+        ] {
+            let before = cap_doc(&feature_class_field_capability(class.as_str()))
+                .capabilities
+                .remove(0);
+            let rendered = render_markdown_capability_section(&before);
+            assert!(
+                rendered.contains(&format!("Feature Class: {}\n", class.as_str())),
+                "serializer dropped the feature class: {rendered}"
+            );
+            let after = cap_doc(&format!("# demo\n\n{rendered}"))
+                .capabilities
+                .remove(0);
+            assert_eq!(after.feature_class, Some(class));
+            assert_eq!(after.capability_type, before.capability_type);
+            // Production requirement is derived from the type, so assert it
+            // directly rather than leaving it implied by type equality.
+            assert_eq!(
+                crate::cli::capability_type::required_ec_dimensions(
+                    after.capability_type.as_ref().unwrap()
+                ),
+                crate::cli::capability_type::required_ec_dimensions(
+                    before.capability_type.as_ref().unwrap()
+                ),
+            );
+            assert_eq!(
+                after
+                    .verification_contract
+                    .as_ref()
+                    .unwrap()
+                    .required_maturity,
+                before
+                    .verification_contract
+                    .as_ref()
+                    .unwrap()
+                    .required_maturity
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_capability_tables_omit_feature_class_when_unclassified() {
+        let unclassified = cap_doc(one_markdown_capability()).capabilities.remove(0);
+        let rendered = render_markdown_capability_section(&unclassified);
+        assert!(!rendered.contains("Feature Class"), "{rendered}");
+        assert_eq!(
+            cap_doc(&format!("# demo\n\n{rendered}"))
+                .capabilities
+                .remove(0)
+                .feature_class,
+            None
+        );
+    }
+
+    #[test]
+    fn parse_markdown_table_row_treats_backtick_quoted_pipes_as_literal() {
+        let cells =
+            parse_markdown_table_row("| Row | `aw health | tail -n 1 | grep -q axes` | done |")
+                .unwrap();
+        assert_eq!(
+            cells,
+            vec![
+                "Row".to_string(),
+                "`aw health | tail -n 1 | grep -q axes`".to_string(),
+                "done".to_string(),
+            ],
+            "a `|` inside a backtick-quoted span must never be treated as a \
+             cell delimiter, bare or escaped (#3331)"
+        );
+    }
+
+    #[test]
+    fn work_root_gate_evidence_survives_a_bare_pipe_inside_backticks() {
+        let fixture = r#"# demo
+
+## Package Manager
+
+| Field | Value |
+|---|---|
+| ID | package-manager |
+| Root WI | #3779 |
+| Status | auditing |
+| Promise | Replace package manager flows. |
+| Required Verification | smoke, conformance |
+| Gate Inventory | apps/jet/validation/pkg-manager.toml |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | `./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes` |
+	"#;
+
+        let before = cap_doc(fixture).capabilities.remove(0);
+        assert_eq!(
+            before.work_roots[0].gate_evidence,
+            "`./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes`",
+            "a bare `|` inside a backtick-quoted shell command in the Gate / \
+             Evidence cell must survive parsing intact instead of silently \
+             truncating at the first inner pipe (#3331)"
+        );
+
+        // The writer already escapes every `|` it writes, inside backticks or
+        // not (`markdown_cell`). The parser must read that escaped form back
+        // to the same literal cell content, so a parse -> render -> parse
+        // cycle is stable and `aw capability migrate` converges instead of
+        // truncating a little more on every run.
+        let rendered = render_markdown_capability_section(&before);
+        let after = cap_doc(&format!("# demo\n\n{rendered}"))
+            .capabilities
+            .remove(0);
+        assert_eq!(
+            after.work_roots[0].gate_evidence,
+            before.work_roots[0].gate_evidence
+        );
+    }
+
+    #[test]
+    fn yaml_and_markdown_capability_tables_agree_on_feature_class() {
+        let body = r##"# demo
+
+## Capability: Search
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: search
+status: auditing
+capability_type: Service
+feature_class: non_core
+promise: "Serve search queries."
+current_state: "Planner exists."
+```
+"##;
+        let capability = &cap_doc(body).capabilities[0];
+        assert_eq!(
+            capability.feature_class,
+            Some(CapabilityFeatureClass::NonCore)
+        );
+        assert_eq!(capability.capability_type, Some(CapabilityType::Service));
+    }
+
+    #[test]
+    fn markdown_capability_tables_prove_a_quality_gate_without_a_third_feature_class() {
+        // A quality gate is evidence *inside* one capability: it becomes a
+        // claim gate, not a second capability row and not a third class.
+        let body = r#"# demo
+
+## Search
+
+ID: search
+Root WI: #4100
+Status: auditing
+Type: Service
+Feature Class: core
+Required Verification: smoke, conformance
+Promise:
+Serve search queries as ranked external ids only.
+Gate Inventory:
+- `cargo test -p lumen planner`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Query planner | epic | #4141 | implemented | passing | conformance | `cargo test -p lumen planner` |
+"#;
+        let doc = cap_doc(body);
+        // One capability, one feature class, gate carried as claim evidence.
+        assert_eq!(doc.capabilities.len(), 1);
+        let capability = &doc.capabilities[0];
+        assert_eq!(capability.feature_class, Some(CapabilityFeatureClass::Core));
+        let claims = &capability.verification_contract.as_ref().unwrap().claims;
+        assert_eq!(claims.len(), 1);
+        assert_eq!(
+            claims[0].gates[0].command, "cargo test -p lumen planner",
+            "the quality gate must land as claim evidence"
+        );
+        // The class enumeration stays closed at two members.
+        assert_eq!(
+            [
+                CapabilityFeatureClass::Core.as_str(),
+                CapabilityFeatureClass::NonCore.as_str()
+            ]
+            .iter()
+            .filter(|value| CapabilityFeatureClass::from_cli_str(value).is_ok())
+            .count(),
+            2
+        );
+        assert!(CapabilityFeatureClass::from_cli_str("quality_gate").is_err());
+    }
+
     #[test]
     fn parse_markdown_field_capability_contract() {
         let doc = cap_doc(one_field_markdown_capability());
@@ -17358,7 +19026,7 @@ Gate Inventory:
     }
 
     #[test]
-    fn one_row_contract_table_migration_renders_canonical_field_style_h3() {
+    fn one_row_contract_table_migration_renders_canonical_field_style_contract() {
         let body = r#"# Jet
 
 Legacy intro.
@@ -17383,7 +19051,7 @@ Legacy intro.
         assert!(migrated.contains("## Brief"));
         assert!(migrated.contains("## Capabilities"));
         assert!(migrated.contains("\n### Capability Index\n"));
-        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\n#### Package Manager\n"));
         assert!(migrated.contains("\nID: package-manager\n"));
         assert!(migrated.contains("\nPromise:\nReplace package manager flows."));
         assert!(!migrated.contains(
@@ -17475,7 +19143,7 @@ Gate Inventory:
         assert!(migrated.contains("## Brief"));
         assert!(migrated.contains("## Capabilities"));
         assert!(migrated.contains("\n### Capability Index\n"));
-        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\n#### Package Manager\n"));
         assert!(migrated.contains("\nID: package-manager\n"));
         assert!(migrated.contains("\nPromise:\nReplace package manager flows."));
         assert!(!migrated.contains("| Field | Value |"));
@@ -17516,7 +19184,7 @@ Jet is a Rust-native frontend toolchain.
         assert!(migrated.contains("| Build | `jet build` | Production artifacts. |"));
         assert!(!migrated.contains("TODO: Add the human-confirmed project brief"));
         assert!(migrated.contains("\n### Capability Index\n"));
-        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\n#### Package Manager\n"));
     }
 
     #[test]
@@ -17573,9 +19241,9 @@ Benchmark reference stays after the registry.
         assert!(migrated.contains("Ingestion is the caller's own pub/sub."));
         assert!(migrated.contains("Benchmark reference stays after the registry."));
         assert!(migrated.contains("\n### Capability Index\n"));
-        assert!(migrated.contains("\n### Search\n"));
+        assert!(migrated.contains("\n#### Search\n"));
         assert!(
-            migrated.find("\n### Search\n").unwrap() < migrated.find("\n## Benchmarks\n").unwrap()
+            migrated.find("\n#### Search\n").unwrap() < migrated.find("\n## Benchmarks\n").unwrap()
         );
         assert!(!migrated.contains(CAPABILITY_MIGRATION_INSERT_MARKER));
     }
@@ -17682,7 +19350,9 @@ Gate Inventory:
         let migrated = render_capability_markdown_migration(body, &doc, "lumen");
 
         assert!(migrated.contains("| Lexical | - | partial | auditing | conformance | not_ready | WAND/block-max remains open |"));
-        assert!(migrated.contains("| Agentic Integration | 4143 | implemented | passing | conformance | ready | offline CLI contract |"));
+        assert!(migrated.contains("| Agentic Integration | - | implemented | passing | conformance | ready | offline CLI contract |"));
+        // The index table carries no work-item id after migration either.
+        assert!(!migrated.contains("4143"));
         assert!(!migrated.contains("**Pillar — agent-first**"));
         assert!(!migrated.contains("**Pillar — serve / search**"));
     }
@@ -17753,14 +19423,14 @@ Gate Inventory:
         let doc = cap_doc(body);
         let migrated = render_capability_markdown_migration(body, &doc, "lumen");
         let k8s = migrated
-            .find("\n### Kubernetes-Native Deployment\n")
+            .find("\n#### Kubernetes-Native Deployment\n")
             .unwrap();
         let code = migrated.find("# 1. build").unwrap();
-        let http = migrated.find("\n### HTTP / REST Integration\n").unwrap();
+        let http = migrated.find("\n#### HTTP / REST Integration\n").unwrap();
 
         assert!(k8s < code && code < http);
         assert!(migrated.contains(
-            "```bash\n# 1. build\nkubectl apply -k k8s/overlays/myenv\n```\n\n### HTTP / REST Integration"
+            "```bash\n# 1. build\nkubectl apply -k k8s/overlays/myenv\n```\n\n#### HTTP / REST Integration"
         ));
     }
 
@@ -17808,6 +19478,455 @@ Cube: apps/lumen/.aw/ec/efficiency/search.cube.json
         assert!(migrated.contains(
             "\n#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n\nOperating point: 1M docs, qps=100, metric=p99_ms\nCube: apps/lumen/.aw/ec/efficiency/search.cube.json\n"
         ));
+    }
+
+    /// A representative flat document: canonical field-style contracts, no
+    /// feature roots, and a work-item id in every place a document can store
+    /// one — the index row, the `Root WI` field, and the work-root table.
+    ///
+    /// One capability (`search-lexical`) is a promise the project authored, and
+    /// one (`kubernetes-native-deployment`) is a trait-derived baseline, so the
+    /// two arms of the classification rule are both exercised by one fixture.
+    fn flat_migration_fixture() -> &'static str {
+        r#"# Lumen
+
+## Brief
+
+A K8s-native search specialist.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Lexical Search | #4101 | implemented | passing | conformance | ready | BM25 evidence |
+| Kubernetes-Native Deployment | #4102 | partial | auditing | smoke | not_ready | operator pending |
+
+### Lexical Search
+
+ID: search-lexical
+Root WI: #4101
+Status: verified
+Type: Service
+Surfaces: CLI: `lumen search` - lexical query.
+EC Dimensions: behavior: `cargo test -p lumen search` - ranking behavior.
+Required Verification: smoke, conformance
+Promise:
+BM25 ranking over text.
+Gate Inventory:
+- `cargo test -p lumen search`
+Dependencies:
+- kubernetes-native-deployment
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| BM25 ranking | epic | #4103 | implemented | passing | conformance | `cargo test -p lumen search::bm25` |
+
+### Kubernetes-Native Deployment
+
+ID: kubernetes-native-deployment
+Root WI: #4102
+Status: auditing
+Type: Devops
+Required Verification: smoke
+Promise:
+Ship a Kubernetes operator.
+Gate Inventory:
+- apps/lumen/k8s/kustomization.yaml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Operator rollout | epic | #4104 | partial | auditing | smoke | apps/lumen/k8s/kustomization.yaml |
+"#
+    }
+
+    fn migrate_fixture(body: &str) -> String {
+        render_capability_markdown_migration(body, &cap_doc(body), "lumen")
+    }
+
+    fn migrated_class_of(body: &str, id: &str) -> Option<CapabilityFeatureClass> {
+        cap_doc(body)
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == id)
+            .unwrap_or_else(|| panic!("`{id}` missing from migrated document:\n{body}"))
+            .feature_class
+    }
+
+    fn claim_ids_and_maturities(capability: &CapabilitySection) -> Vec<(String, String)> {
+        capability
+            .verification_contract
+            .as_ref()
+            .map(|contract| {
+                contract
+                    .claims
+                    .iter()
+                    .map(|claim| (claim.id.clone(), claim.maturity.as_str().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn markdown_migration_classifies_trait_derived_baselines_non_core_and_authored_promises_core() {
+        let body = flat_migration_fixture();
+        let document = cap_doc(body);
+
+        // The premise: the input classifies nothing, and the two ids really do
+        // sit on opposite sides of the trait-derived boundary.
+        assert!(document
+            .capabilities
+            .iter()
+            .all(|capability| capability.feature_class.is_none()));
+        assert!(trait_derived_baseline_ids().contains("kubernetes-native-deployment"));
+        assert!(!trait_derived_baseline_ids().contains("search-lexical"));
+
+        let migrated = migrate_fixture(body);
+
+        assert_eq!(
+            migrated_class_of(&migrated, "search-lexical"),
+            Some(CapabilityFeatureClass::Core)
+        );
+        assert_eq!(
+            migrated_class_of(&migrated, "kubernetes-native-deployment"),
+            Some(CapabilityFeatureClass::NonCore)
+        );
+
+        // Containment, not only the field: each capability is nested under the
+        // root that matches its class.
+        let core_root = migrated.find("### Core Features").unwrap();
+        let non_core_root = migrated.find("### Non-Core Features").unwrap();
+        let lexical = migrated.find("#### Lexical Search").unwrap();
+        let k8s = migrated.find("#### Kubernetes-Native Deployment").unwrap();
+        assert!(
+            core_root < lexical && lexical < non_core_root && non_core_root < k8s,
+            "capabilities did not land under their roots:\n{migrated}"
+        );
+
+        // The migrated document is structurally clean by the checker's own
+        // judgement, so migration output cannot be a half-migrated document.
+        assert_eq!(feature_root_findings(&migrated), Vec::<String>::new());
+    }
+
+    #[test]
+    fn markdown_migration_preserves_capability_identity_gates_evidence_and_maturity() {
+        let body = flat_migration_fixture();
+        let before = cap_doc(body);
+        let migrated = migrate_fixture(body);
+        let after = cap_doc(&migrated);
+
+        assert_eq!(after.capability_ids(), before.capability_ids());
+        assert_eq!(after.capability_ids().len(), 2);
+
+        for id in before.capability_ids() {
+            let find = |document: &CapabilityDocument| {
+                document
+                    .capabilities
+                    .iter()
+                    .find(|capability| capability.id == id)
+                    .unwrap()
+                    .clone()
+            };
+            let (old, new) = (find(&before), find(&after));
+            assert_eq!(new.status, old.status, "{id}: status");
+            assert_eq!(new.capability_type, old.capability_type, "{id}: type");
+            assert_eq!(new.dependencies, old.dependencies, "{id}: dependencies");
+            assert_eq!(
+                new.release_scope, old.release_scope,
+                "{id}: production state"
+            );
+            assert_eq!(new.surfaces, old.surfaces, "{id}: surfaces");
+            assert_eq!(new.ec_dimensions, old.ec_dimensions, "{id}: EC dimensions");
+            assert_eq!(new.evidence, old.evidence, "{id}: evidence");
+            assert_eq!(new.promise.trim(), old.promise.trim(), "{id}: promise");
+            assert_eq!(
+                capability_gate_inventory(&new),
+                capability_gate_inventory(&old),
+                "{id}: gate inventory"
+            );
+            assert_eq!(
+                capability_maturity_summary(&new),
+                capability_maturity_summary(&old),
+                "{id}: maturity"
+            );
+            assert_eq!(
+                claim_ids_and_maturities(&new),
+                claim_ids_and_maturities(&old),
+                "{id}: claim ids and maturities"
+            );
+        }
+
+        // The preserved values are non-trivial, so equality above is not two
+        // empty sets agreeing with each other.
+        let lexical = after
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == "search-lexical")
+            .unwrap();
+        assert!(lexical.release_scope);
+        assert_eq!(lexical.dependencies, vec!["kubernetes-native-deployment"]);
+        assert_eq!(
+            claim_ids_and_maturities(lexical),
+            vec![("bm25-ranking".to_string(), "conformance".to_string())]
+        );
+        assert!(capability_gate_inventory(lexical).contains("cargo test -p lumen search"));
+    }
+
+    #[test]
+    fn markdown_migration_emits_no_document_stored_work_item_reference() {
+        let body = flat_migration_fixture();
+        for wi in ["4101", "4102", "4103", "4104"] {
+            assert!(body.contains(wi), "fixture lost its work-item id {wi}");
+        }
+
+        let migrated = migrate_fixture(body);
+
+        for wi in ["4101", "4102", "4103", "4104"] {
+            assert!(
+                !migrated.contains(wi),
+                "work-item id {wi} survived migration:\n{migrated}"
+            );
+        }
+        for capability in &cap_doc(&migrated).capabilities {
+            assert!(
+                capability
+                    .work_roots
+                    .iter()
+                    .all(|work_root| is_empty_table_value(&work_root.wi)),
+                "{}: work-root WI survived",
+                capability.id
+            );
+            assert!(
+                capability.gaps.iter().all(|gap| gap.active_wi.is_none()),
+                "{}: gap WI survived",
+                capability.id
+            );
+            assert_eq!(
+                root_wi_for_capability(capability),
+                "-",
+                "{}: root WI survived",
+                capability.id
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_migration_is_deterministic_and_idempotent() {
+        let body = flat_migration_fixture();
+        let once = migrate_fixture(body);
+
+        // Deterministic: the same input renders the same bytes.
+        assert_eq!(once, migrate_fixture(body));
+
+        // Idempotent: migrating the output changes nothing, so a repeated
+        // migration cannot drift the document.
+        assert_eq!(once, migrate_fixture(&once));
+    }
+
+    #[test]
+    fn markdown_migration_reaches_a_fixed_point_when_a_non_core_capability_comes_first() {
+        // Grouping reorders sections, so a document whose first capability is
+        // non-core is where index order and section order can disagree. If they
+        // do, re-parsing the output yields a different document order and the
+        // next migration renders a different index — a migration with no fixed
+        // point. The fixture in `flat_migration_fixture` is core-first and
+        // cannot expose this.
+        let body = flat_migration_fixture();
+        let (head, tail) = body.split_once("### Lexical Search").unwrap();
+        let (lexical, k8s) = tail.split_once("### Kubernetes-Native Deployment").unwrap();
+        let swapped = format!(
+            "{}{}{}{}{}",
+            head.replace(
+                "| Lexical Search | #4101 | implemented | passing | conformance | ready | BM25 evidence |\n| Kubernetes-Native Deployment | #4102 | partial | auditing | smoke | not_ready | operator pending |",
+                "| Kubernetes-Native Deployment | #4102 | partial | auditing | smoke | not_ready | operator pending |\n| Lexical Search | #4101 | implemented | passing | conformance | ready | BM25 evidence |",
+            ),
+            "### Kubernetes-Native Deployment",
+            k8s,
+            "### Lexical Search",
+            lexical,
+        );
+        assert!(
+            swapped.find("ID: kubernetes-native-deployment").unwrap()
+                < swapped.find("ID: search-lexical").unwrap(),
+            "fixture is not non-core-first:\n{swapped}"
+        );
+
+        let once = migrate_fixture(&swapped);
+        assert_eq!(once, migrate_fixture(&once));
+
+        // The fixed point is the canonical order, not merely a stable one.
+        assert!(
+            once.find("| Lexical Search |").unwrap()
+                < once.find("| Kubernetes-Native Deployment |").unwrap(),
+            "index did not follow the render order:\n{once}"
+        );
+        assert!(
+            once.find("#### Lexical Search").unwrap()
+                < once.find("#### Kubernetes-Native Deployment").unwrap(),
+            "sections did not follow the render order:\n{once}"
+        );
+    }
+
+    #[test]
+    fn markdown_migration_rewrites_a_canonical_document_that_is_still_flat() {
+        // #3063: every adopter README already uses the canonical Markdown
+        // format, so a migration keyed only off `requires_format_migration`
+        // would report "already canonical" and never emit the feature roots.
+        // `aw capability migrate` is the verb the requirement names, so it has
+        // to convert a flat canonical document too.
+        let tmp = tempfile::tempdir().unwrap();
+        let cap_path = tmp.path().join("CAPABILITIES.md");
+        std::fs::write(&cap_path, flat_migration_fixture()).unwrap();
+
+        let document =
+            parse_capability_document(&flat_migration_fixture(), Path::new("CAPABILITIES.md"))
+                .unwrap();
+        assert!(
+            !document.requires_format_migration(),
+            "fixture must already be canonical or this proves nothing"
+        );
+        assert!(document.requires_feature_class_migration());
+
+        let action = CapabilityAction {
+            kind: CapabilityActionKind::FormatMigrationRequired,
+            capability_id: None,
+            gap_id: None,
+            claim_id: None,
+            target: cap_path.display().to_string(),
+            command: "aw capability migrate --project demo".to_string(),
+            reason: "test".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        };
+        let first =
+            apply_capability_format_migration_tick(1, tmp.path(), "demo", Some(&cap_path), &action);
+        assert_eq!(first.status, "pass", "{first:?}");
+        let migrated = std::fs::read_to_string(&cap_path).unwrap();
+        assert!(migrated.contains("### Core Features"), "{migrated}");
+        assert!(migrated.contains("### Non-Core Features"), "{migrated}");
+        assert!(migrated.contains("#### Lexical Search"), "{migrated}");
+
+        // A converted document is a fixed point: the second run has nothing
+        // left to do and says so instead of rewriting the file again.
+        let second =
+            apply_capability_format_migration_tick(2, tmp.path(), "demo", Some(&cap_path), &action);
+        assert_eq!(second.status, "pass", "{second:?}");
+        assert!(
+            second
+                .stdout
+                .as_deref()
+                .unwrap_or_default()
+                .contains("already uses canonical Markdown capability format"),
+            "{second:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&cap_path).unwrap(), migrated);
+    }
+
+    #[test]
+    fn markdown_migration_emits_both_feature_roots_when_one_has_no_members() {
+        // Every capability here is trait-derived, so `Core Features` has no
+        // members. It is still emitted: an absent root is a structural defect,
+        // and a correctly migrated document must not look half-migrated.
+        let body = r#"# Lumen
+
+## Brief
+
+A K8s-native search specialist.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Kubernetes-Native Deployment | - | partial | auditing | smoke | not_ready | operator pending |
+
+### Kubernetes-Native Deployment
+
+ID: kubernetes-native-deployment
+Root WI: -
+Status: auditing
+Type: Devops
+Required Verification: smoke
+Promise:
+Ship a Kubernetes operator.
+Gate Inventory:
+- apps/lumen/k8s/kustomization.yaml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Operator rollout | epic | - | partial | auditing | smoke | apps/lumen/k8s/kustomization.yaml |
+"#;
+        let migrated = migrate_fixture(body);
+
+        assert!(migrated.contains("### Core Features"), "{migrated}");
+        assert!(migrated.contains("### Non-Core Features"), "{migrated}");
+        assert_eq!(feature_root_findings(&migrated), Vec::<String>::new());
+        assert_eq!(
+            migrated_class_of(&migrated, "kubernetes-native-deployment"),
+            Some(CapabilityFeatureClass::NonCore)
+        );
+    }
+
+    #[test]
+    fn markdown_migration_never_rewrites_an_explicit_feature_class() {
+        // A trait-derived baseline wrongly declared `core` keeps its declared
+        // class. Migration classifies what the author left unclassified; it does
+        // not overrule a claim the author made, because that would be the lossy
+        // automatic rewriting a migration command exists to avoid. The checker
+        // reports it instead, where the author can see and fix it.
+        let body = flat_migration_fixture().replace(
+            "ID: kubernetes-native-deployment\nRoot WI: #4102\nStatus: auditing",
+            "ID: kubernetes-native-deployment\nRoot WI: #4102\nStatus: auditing\nFeature Class: core",
+        );
+        assert!(body.contains("Feature Class: core"));
+
+        let migrated = migrate_fixture(&body);
+
+        assert_eq!(
+            migrated_class_of(&migrated, "kubernetes-native-deployment"),
+            Some(CapabilityFeatureClass::Core)
+        );
+        let findings = feature_root_findings(&migrated);
+        one_finding_matching(
+            &findings,
+            "trait-derived baseline capability `kubernetes-native-deployment` is classified `core`",
+        );
+    }
+
+    #[test]
+    fn markdown_migration_classifies_legacy_table_rows_without_carrying_their_work_items() {
+        let body = r#"# Lumen
+
+## Capability Map
+
+| Capability | Current State | Gaps | Active WI | Evidence |
+|------------|---------------|------|-----------|----------|
+| Lexical search | exists | audit pending | #4200 | apps/lumen/tests/search.rs |
+| Security hardening | partial | scan pending | #4201 | apps/lumen/deny.toml |
+"#;
+        let document = cap_doc(body);
+        assert!(document.is_legacy_only());
+        assert_eq!(document.legacy_rows.len(), 2);
+
+        let migrated = migrate_fixture(body);
+
+        for wi in ["4200", "4201"] {
+            assert!(
+                !migrated.contains(wi),
+                "legacy work-item id {wi} survived migration:\n{migrated}"
+            );
+        }
+        assert_eq!(
+            migrated_class_of(&migrated, "lexical-search"),
+            Some(CapabilityFeatureClass::Core)
+        );
+        assert_eq!(
+            migrated_class_of(&migrated, "security-hardening"),
+            Some(CapabilityFeatureClass::NonCore)
+        );
+        assert_eq!(feature_root_findings(&migrated), Vec::<String>::new());
     }
 
     #[test]
@@ -18820,11 +20939,20 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Auditing,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -18905,11 +21033,20 @@ capability_refs:
             claim_count: 1,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -19036,11 +21173,20 @@ capability_refs:
             claim_count: 1,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -19145,11 +21291,20 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -19240,11 +21395,20 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
@@ -19361,11 +21525,20 @@ capability_refs:
             claim_count: 1,
             verified_claim_count: 1,
             claim_percent: 100.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![CapabilityReportItem {
                 id: "legacy-carried-internals".to_string(),
                 title: "Legacy Carried Internals".to_string(),
                 status: CapabilityStatus::Retired,
                 capability_type: None,
+                feature_class: None,
                 surfaces: Vec::new(),
                 ec_dimensions: Vec::new(),
                 promise: "Compatibility-only internals retained outside public scope.".to_string(),
@@ -19459,12 +21632,21 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![
                 CapabilityReportItem {
                     id: "rust-native-frontend-toolchain".to_string(),
                     title: "Rust-Native Frontend Toolchain Replacement".to_string(),
                     status: CapabilityStatus::Auditing,
                     capability_type: None,
+                    feature_class: None,
                     surfaces: Vec::new(),
                     ec_dimensions: Vec::new(),
                     promise: "replace frontend toolchain".to_string(),
@@ -19504,6 +21686,7 @@ capability_refs:
                     title: "Package Manager".to_string(),
                     status: CapabilityStatus::Auditing,
                     capability_type: None,
+                    feature_class: None,
                     surfaces: Vec::new(),
                     ec_dimensions: Vec::new(),
                     promise: "replace package manager flows".to_string(),
@@ -19592,12 +21775,21 @@ capability_refs:
             claim_count: 0,
             verified_claim_count: 0,
             claim_percent: 0.0,
+            core_capability_count: 0,
+            core_verified_count: 0,
+            non_core_capability_count: 0,
+            non_core_verified_count: 0,
+            core_claim_count: 0,
+            core_verified_claim_count: 0,
+            non_core_claim_count: 0,
+            non_core_verified_claim_count: 0,
             capabilities: vec![
                 CapabilityReportItem {
                     id: "rust-native-frontend-toolchain".to_string(),
                     title: "Rust-Native Frontend Toolchain Replacement".to_string(),
                     status: CapabilityStatus::Auditing,
                     capability_type: None,
+                    feature_class: None,
                     surfaces: Vec::new(),
                     ec_dimensions: Vec::new(),
                     promise: "replace frontend toolchain".to_string(),
@@ -19637,6 +21829,7 @@ capability_refs:
                     title: "Package Manager".to_string(),
                     status: CapabilityStatus::Auditing,
                     capability_type: None,
+                    feature_class: None,
                     surfaces: Vec::new(),
                     ec_dimensions: Vec::new(),
                     promise: "replace package manager flows".to_string(),

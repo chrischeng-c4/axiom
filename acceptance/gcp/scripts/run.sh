@@ -187,7 +187,6 @@ required_apis=(
   container.googleapis.com
   iam.googleapis.com
   iamcredentials.googleapis.com
-  secretmanager.googleapis.com
   storage.googleapis.com
 )
 : > "$EVIDENCE_DIR/preexisting-apis.txt"
@@ -308,8 +307,12 @@ if [[ "$acceptance_mode" == "tape" ]]; then
     -p tape --bin tape --features "operator backup"
   TAPE_CLI="${TAPE_CLI:-$REPO_ROOT/target/debug/tape}"
 else
+  # `delegated-auth` alongside `operator` (#2879): the auth leg drives `lumen
+  # query --client-sa`, whose TokenRequest minter is behind that feature. A CLI
+  # built without it refuses the flag rather than minting, so the auth leg would
+  # fail on a build flag instead of on the contract it exists to check.
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
-    -p lumen --bin lumen --features operator
+    -p lumen --bin lumen --features "operator delegated-auth"
   LUMEN_CLI="${LUMEN_CLI:-$REPO_ROOT/target/debug/lumen}"
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
     -p sift --bin sift
@@ -440,10 +443,6 @@ BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
 # a cluster that is not there. Line 491 already asserts the Terraform output
 # equals PERSISTENT_CLUSTER_NAME, so this is the same value, named once.
 GKE_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME"
-# #2457 auth+CSI regression leg (verify-lumen.sh): the token itself is never
-# plumbed through Terraform outputs — verify-lumen.sh recomputes the exact
-# same deterministic string from RUN_ID (see environment/secretmanager.tf).
-LUMEN_AUTHCSI_SECRET_ID="axo-${RUN_ID}-lumen-tokens"
 export BACKUP_BUCKET BACKUP_GSA_EMAIL
 export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
@@ -452,7 +451,6 @@ if [[ "$acceptance_mode" == "tape" ]]; then
   export TAPE_CLI TAPE_IMAGE
 else
   export LUMEN_CLI LUMEN_IMAGE SIFT_CLI SIFT_IMAGE
-  export LUMEN_AUTHCSI_SECRET_ID
 fi
 "$SCRIPT_DIR/render-manifests.sh" || {
   echo "manifest rendering failed" >&2
@@ -497,9 +495,6 @@ test "$(jq -r '.gke_zone.value' "$EVIDENCE_DIR/terraform-output.json")" = "$GKE_
 test "$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")" = "$PERSISTENT_CLUSTER_NAME"
 test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_BUCKET"
 test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
-if [[ "$ACCEPTANCE_APPS" != "tape" ]]; then
-  test "$(jq -r '.lumen_authcsi_secret_id.value' "$EVIDENCE_DIR/terraform-output.json")" = "$LUMEN_AUTHCSI_SECRET_ID"
-fi
 gcloud container clusters get-credentials "$cluster" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE"
 
@@ -548,6 +543,12 @@ else
     export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance.json"
     export LUMEN_ACCEPTANCE_PROVENANCE="current-run"
   fi
+
+  # Request authorization is its own proof and runs on every pass, including
+  # one reusing a prior persistence/backup/split proof: those legs all opt out
+  # of auth, so nothing they established says anything about who may call.
+  "$SCRIPT_DIR/verify-lumen-auth.sh"
+  export LUMEN_AUTH_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-auth-acceptance.json"
 
   # Only a successful Lumen phase starts the Sift data plane. The collector then
   # reads Lumen's structured stdout from Standard GKE node logs and the proof

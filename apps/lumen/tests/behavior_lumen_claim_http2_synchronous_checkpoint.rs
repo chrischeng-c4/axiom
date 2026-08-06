@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-http2-synchronous-checkpoint
-// @capability http2-api-list
-// @claim synchronous-checkpoint-admin-verb
+// @capability api-cli-agent-integration
+// @claim http2-openapi-and-client-interface
 // @contract http2-synchronous-checkpoint
 // @category behavior
 // @required_for_production true

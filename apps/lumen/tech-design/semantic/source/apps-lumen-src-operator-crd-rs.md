@@ -20,28 +20,29 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 198 |  |
-| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 412 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 558 |  |
-| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 389 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 620 |  |
+| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 181 |  |
+| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 463 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 609 |  |
+| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 440 |  |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 671 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 43 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 582 |  |
-| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 356 |  |
-| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 255 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 290 |  |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 533 |  |
-| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 510 |  |
-| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 442 |  |
-| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 227 |  |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 400 | as_env(self) -> &'static str |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 430 | as_env(self) -> &'static str |
-| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 366 | as_str(self) -> &'static str |
-| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 375 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 718 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 803 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 699 | storage_pod_count(&self) -> i32 |
-| `validate` | apps/lumen/src/operator/crd.rs | function | pub | 686 | validate(&self) -> Result<(), String> |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 633 |  |
+| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 407 |  |
+| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 306 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 341 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 585 |  |
+| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 562 |  |
+| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 494 |  |
+| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 278 |  |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 451 | as_env(self) -> &'static str |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 482 | as_env(self) -> &'static str |
+| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 417 | as_str(self) -> &'static str |
+| `peer_identity_required` | apps/lumen/src/operator/crd.rs | function | pub | 752 | peer_identity_required(&self) -> bool |
+| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 426 | progress_percent(self) -> u8 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 775 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 860 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 756 | storage_pod_count(&self) -> i32 |
+| `validate` | apps/lumen/src/operator/crd.rs | function | pub | 740 | validate(&self) -> Result<(), String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -121,6 +122,47 @@ pub struct LumenSpec {
     #[serde(default = "default_replicas_per_shard")]
     pub voter_count: u32,
 
+    /// Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the instance-scoped
+    /// X.509 identity every Raft member presents and verifies on the dedicated
+    /// peer listener (#2890). Same field and Secret contract Relay and Defer
+    /// already project, so one shared mechanism (`libs/peer-tls`) covers all
+    /// three.
+    ///
+    /// Required whenever `replicasPerShard > 1`: replicated Raft traffic
+    /// carries committed index mutations between pods, and Kubernetes
+    /// ServiceAccount tokens authenticate *callers*, not peers — nothing else
+    /// on that port says who is dialing. A replicated instance without it does
+    /// not fall back to plaintext; the operator reports
+    /// `PeerIdentityReady=False` naming this Secret, and `lumen serve` refuses
+    /// to start.
+    ///
+    /// Omit only for a single-replica instance, which runs no consensus link
+    /// at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_tls_secret: Option<String>,
+
+    /// Secret holding `tls.crt`, `tls.key`, and `ca.crt` — the leaf every
+    /// serving pod presents on the client port, issued for the Kubernetes
+    /// Service DNS names callers actually dial (#3113 R1/R2).
+    ///
+    /// A different identity from [`Self::peer_tls_secret`], and deliberately a
+    /// different field: a serving certificate says "I am the Service you asked
+    /// for" to a client that authenticates separately with a KSA token, while
+    /// a peer certificate says "I am a member of this instance's Raft group".
+    /// Sharing one Secret between them would let either listener's material
+    /// authenticate on the other's port.
+    ///
+    /// When set, the client port terminates TLS with ALPN `h2` and
+    /// `http/1.1`, and refuses connections outright while no valid leaf is
+    /// active — there is no plaintext fallback to notice too late. Omit it
+    /// only for local/kind development, where the port stays h2c.
+    ///
+    /// Callers verify this leaf against `ca.crt`, which the operator republishes
+    /// as a private-key-free ConfigMap (see
+    /// [`LumenStatus::client_trust_bundle`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving_tls_secret: Option<String>,
+
     /// Log output format: `json` (prod/staging) or `pretty` (dev).
     #[serde(default)]
     pub log_format: LogFormat,
@@ -129,8 +171,8 @@ pub struct LumenSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Auth mode: `required` (the default — supply a token registry via
-    /// `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+    /// Auth mode: `required` (the default — callers are resolved through the
+    /// cluster's own TokenReview/SubjectAccessReview) or `disabled`.
     ///
     /// `required` is the default because the other way round, forgetting this
     /// field ships an open cluster and nothing says so; forgetting it now
@@ -143,51 +185,6 @@ pub struct LumenSpec {
     #[serde(default)]
     pub auth: AuthMode,
 
-    /// Name of a Secret whose `token-registry.json` key is mounted at
-    /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
-    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
-    /// `token-registry.json` is a JSON object with two disjoint namespaces —
-    /// `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`,
-    /// each claims object being
-    /// `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }`
-    /// — and a flat `{ "<secret>": {…} }` document still reads as `tokens`.
-    /// Ignored when `auth: disabled`. See also `tokensSecretProviderClass`
-    /// for a Secret-free alternative; setting **both** is rejected by the CRD
-    /// schema (#2678, R7), because silently preferring one leaves an operator
-    /// reading credentials that are not the ones being served.
-    #[serde(default)]
-    pub tokens_secret: Option<String>,
-
-    /// Name of an existing `SecretProviderClass` (same namespace as this
-    /// object) mounted via the Secrets Store CSI driver
-    /// (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret`
-    /// (`/var/run/secrets/lumen/token-registry.json`, env
-    /// `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry's content never
-    /// materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The
-    /// referenced `SecretProviderClass` must project a file named
-    /// `token-registry.json` (same schema as `tokensSecret`'s Secret key).
-    /// Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is
-    /// enforced by the CRD schema (`x-kubernetes-validations`), so setting
-    /// both is rejected at `kubectl apply` rather than resolved by a
-    /// precedence rule nothing surfaces (#2678, R7). Rotation
-    /// caveat: lumen polls the mounted registry file every 15s and hot-swaps
-    /// the live verifier on change — no rolling restart needed on lumen's
-    /// side. The remaining caveat is entirely at the CSI layer: a
-    /// CSI-mounted file only refreshes on the underlying value's rotation if
-    /// the cluster's CSI driver has secret rotation enabled (e.g. GKE's
-    /// managed add-on defaults it off); with rotation disabled, the mounted
-    /// file itself never changes, so there is nothing for lumen's watcher to
-    /// pick up.
-    #[serde(default)]
-    pub tokens_secret_provider_class: Option<String>,
-
-    /// CSI driver name for the `tokensSecretProviderClass` projection.
-    /// Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed
-    /// Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE
-    /// instances must set that value (#2456).
-    #[serde(default)]
-    pub tokens_secret_csi_driver: Option<String>,
-
     /// Name of a pre-existing, externally-managed ServiceAccount for the
     /// workload pods. When set, the operator uses this SA and never creates,
     /// owns, updates, or deletes a ServiceAccount for the instance (the
@@ -195,6 +192,11 @@ pub struct LumenSpec {
     /// When unset, the operator creates and owns `<instance>` as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_account_name: Option<String>,
+
+    /// Annotations applied verbatim to both rendered ServiceAccounts (the
+    /// workload SA when created, and the backup SA). Default empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub service_account_annotations: BTreeMap<String, String>,
 
     /// Stateless serving-fleet shape.
     #[serde(default)]
@@ -536,10 +538,11 @@ pub enum AuthMode {
     /// the CRD enum/default.
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token or verified-identity required; the registry file comes
-    /// from `tokensSecret` or `tokensSecretProviderClass`. The default, so a
-    /// `Lumen` that omits `spec.auth` fails startup asking for credentials
-    /// instead of serving an open API silently.
+    /// Authenticated callers only, resolved by the cluster: every request
+    /// carries a short-lived audience-bound ServiceAccount token, which the
+    /// serving pod checks with TokenReview and authorizes with
+    /// SubjectAccessReview. The default, so a `Lumen` that omits `spec.auth`
+    /// requires an identity instead of serving an open API silently.
     #[default]
     Required,
 }
@@ -655,9 +658,8 @@ pub struct ServingBackupSpec {
     #[serde(flatten)]
     pub policy: service_backup::ScheduledBackupPolicy,
     /// Name of a Secret whose `token` key holds a bearer token with
-    /// `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`.
-    /// Needed when `spec.auth: required`; ignored (the admin API needs no
-    /// token) when `spec.auth: disabled`.
+    /// `Role::Admin` on `*`. Deprecated; the backup runner authenticates with
+    /// its own projected ServiceAccount token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_token_secret: Option<String>,
 }
@@ -732,6 +734,31 @@ pub struct LumenStatus {
     /// [`super::reconcile`]'s no-I/O `status_patch` contract.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conditions: Vec<service_k8s::Condition>,
+    /// Where an in-cluster caller mounts the private CA that signs this
+    /// instance's serving leaf (#3113 R4).
+    ///
+    /// A ConfigMap, not the serving Secret: the Secret carries `tls.key`, and
+    /// a client that had to read it to obtain `ca.crt` would hold the server's
+    /// private key in order to verify the server. The operator republishes the
+    /// anchor into an owner-scoped, private-key-free object so a caller's
+    /// RBAC needs `get` on one ConfigMap and nothing else.
+    ///
+    /// Absent until a serving certificate is active — a reference that appears
+    /// before the material does would send callers to mount an empty volume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_trust_bundle: Option<ClientTrustBundleRef>,
+}
+
+/// The published location of the client-facing trust anchor
+/// ([`LumenStatus::client_trust_bundle`], #3113 R4).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct ClientTrustBundleRef {
+    /// Name of the ConfigMap, in the instance's own namespace.
+    pub config_map: String,
+    /// Key within it holding the PEM bundle.
+    pub key: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -795,25 +822,31 @@ pub struct LumenReshardStatus {
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl LumenSpec {
-    /// Cross-field invariants the structural schema cannot express (#2678, R7).
+    /// Cross-field invariants the structural schema cannot express (#2678 R7,
+    /// #2764).
     ///
-    /// The CRD carries the same rule as CEL, so a fresh cluster rejects this at
-    /// `kubectl apply`. This is the second line: a cluster still running an
-    /// older CRD, or an object written before the rule existed, must not
-    /// silently serve one of two credential sets. Naming **both** fields
-    /// matters — an operator who set `tokensSecretProviderClass` and got a
-    /// message about `tokensSecret` has no idea what to remove.
+    /// It carries no rule today. The one it used to carry — identity grants
+    /// with no audience — described a verifier this operator no longer
+    /// configures: authentication is the cluster's TokenReview, and an audience
+    /// is no longer a field an author can leave empty (#2872). The hook stays
+    /// because it is the only place on the reconcile path that can refuse a
+    /// spec, and because [`crate::operator::fleet`] runs it over the specs it
+    /// composes — a rule added here holds for both, and a rule added anywhere
+    /// else would not.
     pub fn validate(&self) -> Result<(), String> {
-        if self.tokens_secret.is_some() && self.tokens_secret_provider_class.is_some() {
-            return Err(format!(
-                "spec.tokensSecret (`{}`) and spec.tokensSecretProviderClass (`{}`) are both set; \
-                 remove one — with both present there is no way to tell which registry is \
-                 actually being served",
-                self.tokens_secret.as_deref().unwrap_or_default(),
-                self.tokens_secret_provider_class.as_deref().unwrap_or_default(),
-            ));
-        }
         Ok(())
+    }
+
+    /// Does this instance run a replicated Raft group, and therefore owe an
+    /// instance-scoped peer identity (#2890)?
+    ///
+    /// Not a `validate()` rule on purpose: refusing the spec would fail the
+    /// reconcile outright, and a failed reconcile writes no status. An operator
+    /// whose replicated instance is missing its Secret needs to be *told* which
+    /// Secret, which is a `PeerIdentityReady=False` condition — so the check
+    /// lives on the status path instead (see [`super::reconcile`]).
+    pub fn peer_identity_required(&self) -> bool {
+        self.replicas_per_shard > 1
     }
 
     pub fn storage_pod_count(&self) -> i32 {

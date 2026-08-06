@@ -4,7 +4,11 @@ CASE_ID = "manual-evidence-artifacts-operational-stability"
 CAPABILITY_ID = "manual-evidence-artifacts"
 USE_CASE_ID = "manual-evidence-artifacts-operational-stability"
 DIMENSION = "stability"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case manual-evidence-artifacts-operational-stability"
+)
 ASSERTIONS = ("two fresh native Python EC scaffolds preserve case, evidence, and structural-check identities",)
 
 

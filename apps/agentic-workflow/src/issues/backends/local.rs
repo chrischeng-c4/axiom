@@ -84,6 +84,31 @@ impl LocalBackend {
         None
     }
 
+    /// Return `slug` unchanged if no issue file already occupies it in
+    /// `open/` or `closed/`, otherwise the first `slug-2`, `slug-3`, ...
+    /// variant that is free.
+    ///
+    /// `create()` always mints a brand-new issue, so an already-occupied
+    /// target path can never mean "update this issue" — silently
+    /// overwriting it would destroy the existing file. Local-draft slugs
+    /// are truncated (see `Issue::default_slug`) and can still collide even
+    /// after that truncation's own disambiguating suffix — e.g. two
+    /// candidates that share both their truncated prefix and short digest,
+    /// or a caller-supplied slug set directly on the issue (#3328).
+    fn first_available_slug(&self, slug: String) -> String {
+        if self.find_issue_path(&slug).is_none() {
+            return slug;
+        }
+        let mut counter = 2usize;
+        loop {
+            let candidate = format!("{slug}-{counter}");
+            if self.find_issue_path(&candidate).is_none() {
+                return candidate;
+            }
+            counter += 1;
+        }
+    }
+
     /// Search `open/` then `closed/` for a canonical id-prefixed issue file.
     ///
     /// This keeps older `<id>-<title-kebab>.md` files readable while the
@@ -223,6 +248,9 @@ impl IssueBackend for LocalBackend {
         if created.slug.is_empty() {
             created.slug = created.default_slug();
         }
+        // Never let a second create() silently overwrite a colliding
+        // existing file (#3328) — walk to the next free slug instead.
+        created.slug = self.first_available_slug(created.slug);
         // Assign UUID if not already set
         if created.id.is_none() {
             created.id = Some(uuid::Uuid::new_v4().to_string());
@@ -873,6 +901,54 @@ mod tests {
         let after = backend.get("enhancement-rev-clear").await.unwrap().unwrap();
         assert_eq!(after.review_count, None);
         assert_eq!(after.flagged_sections, None);
+    }
+
+    #[tokio::test]
+    async fn create_keeps_slug_unchanged_when_no_collision() {
+        let tmp = TempDir::new().unwrap();
+        let backend = LocalBackend::at(tmp.path().to_path_buf());
+        let issue = make_issue("solo-claim", None);
+        let created = backend.create(&issue).await.unwrap();
+        assert_eq!(created.slug, "solo-claim");
+        assert!(tmp.path().join("open/solo-claim.md").exists());
+    }
+
+    // #3328: capability-plan candidates whose titles truncate to the same
+    // slug used to have their second `create()` call silently overwrite the
+    // first candidate's file on disk. `create()` always mints a brand-new
+    // issue, so a colliding target path must disambiguate instead.
+    #[tokio::test]
+    async fn create_disambiguates_colliding_slug_instead_of_overwriting() {
+        let tmp = TempDir::new().unwrap();
+        let backend = LocalBackend::at(tmp.path().to_path_buf());
+
+        let mut first = make_issue("dup-claim", None);
+        first.title = "Close capability claim: Alpha Service / claim-one".into();
+        let created_first = backend.create(&first).await.unwrap();
+        assert_eq!(created_first.slug, "dup-claim");
+
+        let mut second = make_issue("dup-claim", None);
+        second.title = "Close capability claim: Alpha Service / claim-two".into();
+        let created_second = backend.create(&second).await.unwrap();
+        assert_eq!(created_second.slug, "dup-claim-2");
+
+        let mut third = make_issue("dup-claim", None);
+        third.title = "Close capability claim: Alpha Service / claim-three".into();
+        let created_third = backend.create(&third).await.unwrap();
+        assert_eq!(created_third.slug, "dup-claim-3");
+
+        let all = backend.list(&IssueFilter::default()).await.unwrap();
+        assert_eq!(
+            all.len(),
+            3,
+            "all three colliding candidates must persist as distinct issues"
+        );
+
+        // The first file must be untouched — not clobbered by later writes.
+        let reloaded_first = backend.get("dup-claim").await.unwrap().unwrap();
+        assert_eq!(reloaded_first.title, first.title);
+        let reloaded_second = backend.get("dup-claim-2").await.unwrap().unwrap();
+        assert_eq!(reloaded_second.title, second.title);
     }
 }
 // CODEGEN-END

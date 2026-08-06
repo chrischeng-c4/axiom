@@ -78,6 +78,94 @@ target = "rust"
         yield root
 
 
+def write_python_artifact_unit_test(artifact_root: Path, name: str = "fixture") -> Path:
+    """Write the `tests/unit/test_*.py` a canonical Python artifact requires.
+
+    `aw ec check` refuses to read an artifact with no authored unit tests, so
+    the fixture needs one before any contract assertion becomes reachable.
+    """
+    unit_dir = artifact_root / "tests/unit"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    test_path = unit_dir / f"test_{name}.py"
+    class_name = "".join(part.capitalize() for part in name.split("_"))
+    test_path.write_text(
+        "import unittest\n"
+        "\n"
+        "\n"
+        f"class {class_name}ManifestTest(unittest.TestCase):\n"
+        f"    def test_{name}_declares_a_python_project_manifest(self) -> None:\n"
+        "        from pathlib import Path\n"
+        "\n"
+        "        root = Path(__file__).resolve().parents[2]\n"
+        '        manifest = (root / "pyproject.toml").read_text(encoding="utf-8")\n'
+        '        self.assertIn("[project]", manifest)\n'
+        '        self.assertIn("requires-python", manifest)\n'
+        "\n"
+        "\n"
+        'if __name__ == "__main__":\n'
+        "    unittest.main()\n",
+        encoding="utf-8",
+    )
+    return test_path
+
+
+def git_commit_fixture(root: Path, message: str = "fixture") -> None:
+    """Make `root` a committed git repository.
+
+    `aw` resolves native target ownership through `git log`, so a fixture that
+    reaches ownership resolution without a repository fails on the environment
+    rather than on the contract under test.
+    """
+    for args in (
+        ("init",),
+        ("config", "user.email", "fixture@example.com"),
+        ("config", "user.name", "Fixture"),
+        ("add", "-A"),
+        ("commit", "-m", message),
+    ):
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(
+                f"git {' '.join(args)} failed in fixture: {completed.stderr}"
+            )
+
+
+def write_python_artifact_lock(
+    artifact_root: Path,
+    *,
+    name: str,
+    version: str = "0.1.0",
+    requires_python: str = ">=3.11",
+) -> Path:
+    """Write the `uv.lock` a fixture manifest declares in `dependency_files`.
+
+    A Python artifact whose `dependency_files` names `uv.lock` cannot be read at
+    all when the lock is absent, so every assertion behind it is unreachable.
+    This mirrors the dependency-free lock `refresh_uv_lock` synthesizes in
+    `apps/agentic-workflow/src/services/python_artifact.rs` so the fixture is
+    frozen-executable rather than merely present.
+    """
+    lock = artifact_root / "uv.lock"
+    lock.write_text(
+        "version = 1\n"
+        "revision = 3\n"
+        f'requires-python = "{requires_python}"\n'
+        "\n"
+        "[[package]]\n"
+        f'name = "{name}"\n'
+        f'version = "{version}"\n'
+        'source = { virtual = "." }\n',
+        encoding="utf-8",
+    )
+    return lock
+
+
 def run_aw(
     root: Path,
     *args: str,

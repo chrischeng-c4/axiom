@@ -30,6 +30,37 @@ workflow and verification live in its `CONTRIBUTING.md`.
 - AGY consumes the canonical `.agents/rules` workspace tree.
 - `.codex/rules/*.rules` is command-approval policy, never instruction content.
 
+## External Contract Boundaries
+
+- Externally observable product behavior belongs in a project-local Python
+  external-contract project; Agentic Workflow's own lives under
+  `apps/agentic-workflow/external-contracts/`, where `pyproject.toml` is the
+  inventory and `src/cases/*.py` holds one black-box verifier per case.
+- Rules observable only inside the Rust implementation are
+  colocated Rust invariants under their semantic `src/**` owner, and run
+  separately with `cargo test -p agentic-workflow --lib`.
+- Never wrap a Python external contract in an app-level Rust tree and never
+  delegate one to `cargo test`.
+
+## External Implementation Workers
+
+*(policy-only — repository operating policy; it does not override a host's
+external-data approval gate.)*
+
+AGY and GitHub Copilot CLI are legitimate, replaceable implementation workers.
+Use `$agy-dispatch` or `$copilot-dispatch` to delegate one frozen, bounded task
+from a clean isolated worktree. Send only task-required repository material,
+never secrets. Repository policy permits these worker adapters, but the
+controller must still obtain any consent the host requires before transmitting
+source or issue content to an external service.
+
+The controller owns the issue contract, design, oracle, independent review and
+tests, Git integration, tracker mutation, and final acceptance. A worker must
+not commit, push, approve itself, comment on, or close an issue. Ticketed work
+reuses one worker conversation for that issue and its bounded corrections;
+unticketed work is one-shot and cannot resume. Do not run workers with
+overlapping write ownership in parallel.
+
 <!-- aw:start -->
 ## Agentic Workflow CLI Surface
 
@@ -62,7 +93,6 @@ explicitly asks for Claude-specific behavior.
 | `aw ec` | Python EC lifecycle: scaffold/check source, independently review, then verify |
 | `aw health` | Aggregate project readiness, production gates, and blocker status |
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
-| `aw coordination` | Persist and reconcile AW-owned task, dispatch, gate, event, and decision state |
 <!-- aw:cli-table:workflow:end -->
 
 The lifecycle is linear: `aw wi` → `aw ec` → `aw td` → `aw cb`. Drive one

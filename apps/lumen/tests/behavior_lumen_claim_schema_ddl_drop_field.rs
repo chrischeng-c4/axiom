@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-schema-ddl-drop-field
-// @capability schema-ops-lifecycle
-// @claim schema-ddl-drop-field-drain
+// @capability indexing
+// @claim schema-and-index-lifecycle
 // @contract schema-ddl-drop-field-drain
 // @category behavior
 // @required_for_production true

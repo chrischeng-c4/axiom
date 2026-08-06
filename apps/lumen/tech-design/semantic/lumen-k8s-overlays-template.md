@@ -66,10 +66,6 @@ deployment:
         
         resources:
           - ../../base
-          # AUTH (optional, off by default). To require bearer auth: copy
-          # secret.example.yaml -> secret.yaml, fill token-registry.json, uncomment this line
-          # AND the OPTIONAL auth patch block at the bottom.
-          # - secret.yaml
         
         # REQUIRED #1 — point the image at YOUR registry. base already ships the
         # published ghcr.io/chrischeng-c4/lumen:<version> default (digest in each
@@ -100,9 +96,13 @@ deployment:
                 path: /data/LUMEN_LOG_FORMAT
                 value: "json"
         
-          # ── OPTIONAL: bearer auth ────────────────────────────────────────────────
-          # Uncomment this whole block AND the `- secret.yaml` resource line above to
-          # require a token on data-plane routes. Leave commented for an open (auth=off) start.
+          # ── OPTIONAL: require auth on data-plane routes ──────────────────────────
+          # Uncomment this whole block to set LUMEN_AUTH=required. Leave commented for
+          # an open (auth=off) start.
+          # The bearer token registry this block used to mount is retired; the
+          # replacement verifier resolves callers through the cluster's own
+          # TokenReview/SubjectAccessReview. Until it lands, `required` makes the
+          # process refuse to start rather than serve unauthenticated.
           # - target: { kind: ConfigMap, name: lumen-config }
           #   patch: |-
           #     - op: add
@@ -115,28 +115,7 @@ deployment:
           #       value:
           #         name: LUMEN_AUTH
           #         valueFrom: { configMapKeyRef: { name: lumen-config, key: LUMEN_AUTH } }
-          #     - op: add
-          #       path: /spec/template/spec/containers/0/env/-
-          #       value:
-          #         name: LUMEN_TOKEN_REGISTRY_FILE
-          #         value: /var/run/secrets/lumen/token-registry.json
-          #     - op: add
-          #       path: /spec/template/spec/containers/0/volumeMounts/-
-          #       value:
-          #         name: lumen-token-registry
-          #         mountPath: /var/run/secrets/lumen
-          #         readOnly: true
-          #     - op: add
-          #       path: /spec/template/spec/volumes/-
-          #       value:
-          #         name: lumen-token-registry
-          #         secret:
-          #           secretName: lumen-tokens
-          #           items:
-          #             - key: token-registry.json
-          #               path: token-registry.json
         # CODEGEN-END
-
 ```
 
 ## Changes

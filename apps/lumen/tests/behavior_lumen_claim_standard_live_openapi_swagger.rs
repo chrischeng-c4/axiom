@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-standard-live-openapi-swagger
-// @capability standard-operational-endpoints
-// @claim live-openapi-and-swagger-ui-surface
+// @capability api-cli-agent-integration
+// @claim http2-openapi-and-client-interface
 // @contract standard-live-openapi-swagger
 // @category behavior
 // @required_for_production true

@@ -54,9 +54,8 @@ id: lumen-cli-snapshot-data-movement-contract
 entry: start
 nodes:
   start: { kind: start, label: "lumen <dump|export|load|import>" }
-  token: { kind: process, label: "token = --token or LUMEN_BACKUP_TOKEN; omitted when auth off" }
   verb: { kind: decision, label: "verb class" }
-  dump: { kind: process, label: "dump/export: GET {url}/admin/backup with optional Bearer token" }
+  dump: { kind: process, label: "dump/export: GET {url}/admin/backup with no Authorization header (#2871 removed the metadata fallback, #2873 the flag)" }
   dump_ok: { kind: decision, label: "2xx?" }
   dump_err: { kind: terminal, label: "bail with status + response body" }
   out: { kind: decision, label: "--out provided?" }
@@ -65,13 +64,12 @@ nodes:
   load: { kind: decision, label: "load/import input" }
   infile: { kind: process, label: "--file path: read exact bytes" }
   stdin: { kind: process, label: "no --file: read all stdin bytes" }
-  post: { kind: process, label: "POST {url}/admin/restore Content-Type: application/json with optional Bearer token" }
+  post: { kind: process, label: "POST {url}/admin/restore Content-Type: application/json with no Authorization header" }
   restore_ok: { kind: decision, label: "2xx/204?" }
   restore_err: { kind: terminal, label: "bail with status + response body" }
   restored: { kind: terminal, label: "print JSON {status:'restored', url}" }
 edges:
-  - { from: start, to: token }
-  - { from: token, to: verb }
+  - { from: start, to: verb }
   - { from: verb, to: dump, label: "dump/export" }
   - { from: dump, to: dump_ok }
   - { from: dump_ok, to: dump_err, label: "no" }
@@ -88,8 +86,7 @@ edges:
   - { from: restore_ok, to: restored, label: "yes" }
 ---
 flowchart TD
-    start([lumen dump/export/load/import]) --> token[token = --token or LUMEN_BACKUP_TOKEN]
-    token --> verb{verb class}
+    start([lumen dump/export/load/import]) --> verb{verb class}
     verb -->|dump/export| dump[GET /admin/backup]
     dump --> dump_ok{2xx?}
     dump_ok -->|no| dump_err([bail with status + body])
@@ -136,16 +133,17 @@ requirements:
     kind: regression
     risk: medium
     verify: test
-  token_fallback:
+  no_credential_on_the_command_line:
     id: R5
-    text: "The new verbs expose `--token` with `LUMEN_BACKUP_TOKEN` fallback like `backup`."
-    kind: functional
-    risk: medium
+    text: "#2873: these verbs take no credential on the command line and read none from the environment. A credential passed as an argument is a credential in `ps`, in shell history, and in the CronJob's own `kubectl describe`; the help text advertises no such flag, passing one is rejected without echoing its value, and the request goes out with no Authorization header. The replacement is a projected, audience-bound ServiceAccount token read from a file (#2877)."
+    kind: security
+    risk: high
     verify: test
 ---
 flowchart TD
     r1[R1 help surface] --> cli_convention[cargo test -p lumen --test cli_convention]
-    r5[R5 token fallback] --> cli_convention
+    r5[R5 no credential on the command line] --> cli_convention
+    r5 --> credential_gate[cargo test -p lumen --test cli_credential_paths_retired]
     r2[R2 export file] --> backup_restore[cargo test -p lumen --test backup_restore_e2e]
     r3[R3 import file] --> backup_restore
     r4[R4 alias dispatch] --> backup_restore
@@ -164,7 +162,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add top-level dump/export/load/import commands with `--url`, token fallback, `--out`, and `--file`/stdin routing."
+    description: "Add top-level dump/export/load/import commands with `--url`, `--out`, and `--file`/stdin routing. #2873 removed the credential flag these verbs used to take."
   - path: apps/lumen/src/spec.rs
     action: modify
     section: logic
@@ -174,7 +172,7 @@ changes:
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Assert top-level help exposes dump/export/load/import and that token flags are present on each direct verb."
+    description: "Assert top-level help exposes dump/export/load/import and that no direct verb advertises a credential flag."
   - path: apps/lumen/tests/backup_restore_e2e.rs
     action: modify
     section: unit-test

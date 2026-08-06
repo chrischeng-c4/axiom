@@ -22,15 +22,15 @@ fn lumen_with_backup() -> Lumen {
         log_format: LogFormat::Json,
         log_level: None,
         auth: AuthMode::Off,
-        tokens_secret: None,
-        tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
         serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy::default(),
         observability: false,
         network_policy: false,
         admission: None,
         service_account_name: None,
+        service_account_annotations: std::collections::BTreeMap::new(),
+        peer_tls_secret: None,
+        serving_tls_secret: None,
     };
     spec.serving.backup = Some(ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {
@@ -124,7 +124,11 @@ fn operator_cluster_role() -> serde_yaml::Value {
         .expect("operator ClusterRole")
 }
 
-fn verbs_for(role: &serde_yaml::Value, api_group: &str, resource: &str) -> Vec<String> {
+fn rule_for<'a>(
+    role: &'a serde_yaml::Value,
+    api_group: &str,
+    resource: &str,
+) -> Option<&'a serde_yaml::Value> {
     role["rules"]
         .as_sequence()
         .expect("ClusterRole rules")
@@ -139,6 +143,10 @@ fn verbs_for(role: &serde_yaml::Value, api_group: &str, resource: &str) -> Vec<S
                         .any(|candidate| candidate.as_str() == Some(resource))
                 })
         })
+}
+
+fn verbs_for(role: &serde_yaml::Value, api_group: &str, resource: &str) -> Vec<String> {
+    rule_for(role, api_group, resource)
         .unwrap_or_else(|| panic!("missing RBAC rule for {api_group:?}/{resource}"))["verbs"]
         .as_sequence()
         .expect("rule verbs")
@@ -148,7 +156,7 @@ fn verbs_for(role: &serde_yaml::Value, api_group: &str, resource: &str) -> Vec<S
 }
 
 #[test]
-fn operator_rbac_can_reconcile_cronjobs_and_read_reshard_secrets() {
+fn operator_rbac_can_reconcile_cronjobs_and_holds_no_secret_grant() {
     let role = operator_cluster_role();
     let cronjob_verbs = verbs_for(&role, "batch", "cronjobs");
     for verb in [
@@ -160,11 +168,15 @@ fn operator_rbac_can_reconcile_cronjobs_and_read_reshard_secrets() {
         );
     }
 
-    let secret_verbs = verbs_for(&role, "", "secrets");
-    assert_eq!(
-        secret_verbs,
-        vec!["get"],
-        "reshard requires read-only Secret access; mutation is unnecessary"
+    // #2877: the reshard driver's credential is now its own projected
+    // ServiceAccount token, mounted and rotated by the kubelet. Nothing in the
+    // operator reads a Secret, and a cluster-wide `secrets` grant on a
+    // controller that watches every namespace is the most valuable thing in
+    // this file to anyone who reaches the operator's ServiceAccount.
+    assert!(
+        rule_for(&role, "", "secrets").is_none(),
+        "the operator must hold no Secret grant at all: {:#?}",
+        role["rules"]
     );
 
     // #2603: without this grant the operator renders a NetworkPolicy it cannot
@@ -255,7 +267,15 @@ fn rendered_network_policy_is_opt_in_and_never_exposes_the_raft_port() {
 fn operator_cli_renders_requested_immutable_image_and_preserves_default() {
     let render = |extra: &[&str]| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_lumen"));
-        command.args(["k8s", "operator", "render"]);
+        command.args([
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog",
+        ]);
         command.args(extra);
         let output = command.output().expect("run lumen operator render");
         assert!(
@@ -379,7 +399,15 @@ fn operator_pdb_serializes_eviction_across_the_replicas() {
 #[test]
 fn operator_render_and_static_manifest_agree_on_the_ha_shape() {
     let rendered = Command::new(env!("CARGO_BIN_EXE_lumen"))
-        .args(["k8s", "operator", "render"])
+        .args([
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog",
+        ])
         .output()
         .expect("run lumen operator render");
     assert!(
@@ -400,7 +428,17 @@ fn operator_render_and_static_manifest_agree_on_the_ha_shape() {
     // `--namespace` moves the whole layer, PDB included; a PDB left in
     // `lumen-system` would not cover pods rendered elsewhere.
     let relocated = Command::new(env!("CARGO_BIN_EXE_lumen"))
-        .args(["k8s", "operator", "render", "--namespace", "lumen-live"])
+        .args([
+            "k8s",
+            "operator",
+            "render",
+            "--issuer",
+            "ephemeral",
+            "--trust-domain",
+            "lumen-dev.svc.id.goog",
+            "--namespace",
+            "lumen-live",
+        ])
         .output()
         .expect("run lumen operator render --namespace");
     let relocated_yaml = String::from_utf8(relocated.stdout).expect("operator YAML is utf8");
@@ -453,7 +491,15 @@ fn operator_manifest_pins_this_workspaces_version() {
 /// Run `lumen k8s operator render` and parse every emitted document.
 fn rendered_operator_documents(extra: &[&str]) -> Vec<serde_yaml::Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_lumen"));
-    command.args(["k8s", "operator", "render"]);
+    command.args([
+        "k8s",
+        "operator",
+        "render",
+        "--issuer",
+        "ephemeral",
+        "--trust-domain",
+        "lumen-dev.svc.id.goog",
+    ]);
     command.args(extra);
     let output = command.output().expect("run lumen operator render");
     assert!(
@@ -512,7 +558,8 @@ fn operator_metrics_service_selects_the_pods_on_the_port_they_publish() {
     assert!(
         container_ports
             .iter()
-            .any(|declared| declared["name"] == port["targetPort"] && declared["containerPort"] == port["port"]),
+            .any(|declared| declared["name"] == port["targetPort"]
+                && declared["containerPort"] == port["port"]),
         "Service targetPort {:?} matches no container port: {container_ports:?}",
         port["targetPort"]
     );
@@ -663,7 +710,9 @@ fn every_runbook_url_resolves_to_a_file_in_this_repository() {
         // convention is an inline recipe, because a link is one more hop
         // during an incident.
         assert!(
-            annotations["runbook"].as_str().is_some_and(|r| r.contains("kubectl")),
+            annotations["runbook"]
+                .as_str()
+                .is_some_and(|r| r.contains("kubectl")),
             "{:?} has no inline kubectl recipe",
             entry["alert"]
         );
@@ -812,6 +861,297 @@ fn relocating_the_operator_relocates_its_monitoring_too() {
             "{:?}'s runbook sends the on-call to the wrong namespace",
             entry["alert"]
         );
+    }
+}
+
+/// The token projection on one workload, whichever manifest language it came
+/// from: `(audience, expirationSeconds, file path, mount is read-only)`.
+///
+/// Both control-plane callers are checked through this one function on
+/// purpose. The operator's projection is hand-written YAML and the backup
+/// runner's is rendered Rust, and the only thing that keeps those two from
+/// drifting is a test that refuses to read them differently.
+fn token_projection(pod_spec: &Value) -> (String, i64, String, bool) {
+    let volumes = pod_spec["volumes"].as_array().expect("pod volumes");
+    let projections: Vec<&Value> = volumes
+        .iter()
+        .filter(|volume| !volume["projected"]["sources"][0]["serviceAccountToken"].is_null())
+        .collect();
+    assert_eq!(
+        projections.len(),
+        1,
+        "exactly one projected token per control-plane workload: {volumes:#?}"
+    );
+    let volume = projections[0];
+    let sources = volume["projected"]["sources"]
+        .as_array()
+        .expect("projected sources");
+    assert_eq!(
+        sources.len(),
+        1,
+        "the projection carries a token and nothing else: {sources:#?}"
+    );
+    let token = &sources[0]["serviceAccountToken"];
+
+    let name = volume["name"].as_str().expect("volume name");
+    let mount = pod_spec["containers"][0]["volumeMounts"]
+        .as_array()
+        .expect("container volumeMounts")
+        .iter()
+        .find(|mount| mount["name"] == name)
+        .unwrap_or_else(|| panic!("nothing mounts the projected volume {name:?}"));
+
+    let path = format!(
+        "{}/{}",
+        mount["mountPath"].as_str().expect("mountPath"),
+        token["path"].as_str().expect("token path")
+    );
+    (
+        token["audience"].as_str().expect("audience").to_string(),
+        token["expirationSeconds"]
+            .as_i64()
+            .expect("expirationSeconds"),
+        path,
+        mount["readOnly"] == Value::Bool(true),
+    )
+}
+
+/// #2877 AC1/AC2: the operator and the backup runner each hold their own
+/// audience-bound credential, and neither borrows the serving fleet's.
+///
+/// The audience is the whole point. The default token every pod gets at
+/// `/var/run/secrets/kubernetes.io/serviceaccount` is minted for the API
+/// server, and a Lumen instance that checks the audience answers it with a
+/// bare 401 — which reads exactly like a missing RBAC binding and sends the
+/// operator digging in the wrong file. Asking the kubelet for `lumen.axiom.dev`
+/// instead means the credential these workloads carry is only usable against
+/// the callee it was minted for, and is worthless to anyone who reads it out
+/// of a compromised pod ten minutes later.
+#[test]
+fn each_control_plane_caller_mounts_its_own_audience_bound_token() {
+    let documents = operator_manifest_documents();
+    let deployment = document_of_kind(&documents, "Deployment");
+    let operator_pod: Value = serde_json::to_value(&deployment["spec"]["template"]["spec"])
+        .expect("operator pod spec converts to JSON");
+
+    let mut lumen = lumen_with_backup();
+    lumen.spec.auth = AuthMode::Required;
+    let objects = render::render(&lumen);
+    let cron_job = find(&objects, "CronJob", "search-backup");
+    let backup_pod = &cron_job["spec"]["jobTemplate"]["spec"]["template"]["spec"];
+
+    for (who, pod) in [("operator", &operator_pod), ("backup", backup_pod)] {
+        let (audience, expiration, path, read_only) = token_projection(pod);
+        assert_eq!(
+            audience, "lumen.axiom.dev",
+            "{who} must not present the API server's own audience to Lumen"
+        );
+        assert_eq!(
+            expiration, 600,
+            "{who}: 600s is the API server's floor — a smaller number is a workload that never starts"
+        );
+        assert_eq!(
+            path, "/var/run/secrets/lumen.axiom.dev/token",
+            "{who} must read the token where its own client looks for it"
+        );
+        assert!(read_only, "{who} has no reason to write its own credential");
+
+        // AC1: no credential env var. The material stays a file the kubelet
+        // rewrites; anything in `env` is frozen at pod creation, survives in
+        // `kubectl describe`, and cannot rotate.
+        let env = pod["containers"][0]["env"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for entry in &env {
+            let name = entry["name"].as_str().unwrap_or_default();
+            assert!(
+                !name.contains("TOKEN") && !name.contains("SECRET") && !name.contains("CREDENTIAL"),
+                "{who} carries a credential-shaped env var: {entry:#?}"
+            );
+        }
+    }
+
+    // AC2: three identities, three names. The serving fleet's ServiceAccount
+    // is authorized for delegated review (#2876); handing it to a caller would
+    // make "who asked for this" unanswerable at the serving side and would let
+    // a compromised backup pod authenticate as the fleet itself.
+    let serving = find(&objects, "StatefulSet", "search");
+    let operator_sa = operator_pod["serviceAccountName"]
+        .as_str()
+        .expect("operator SA");
+    let backup_sa = backup_pod["serviceAccountName"]
+        .as_str()
+        .expect("backup SA");
+    let serving_sa = serving["spec"]["template"]["spec"]["serviceAccountName"]
+        .as_str()
+        .expect("serving SA");
+    assert_eq!(operator_sa, "lumen-operator");
+    assert_eq!(backup_sa, "search-backup");
+    assert_ne!(operator_sa, backup_sa);
+    assert_ne!(operator_sa, serving_sa);
+    assert_ne!(backup_sa, serving_sa);
+}
+
+/// #2877 R4: the CronJob is told where the token is, never what it is.
+///
+/// A pod spec is not a secret. It is readable by anyone with `get pods` in the
+/// namespace, it is checked into whatever repository drives the cluster, and it
+/// is echoed by `kubectl describe`. Passing a path keeps the material inside
+/// the pod's own mount for the ten minutes it is valid.
+///
+/// The flag is conditional and the mount is not: an instance with `auth`
+/// disabled rejects a *presented* bearer (#2871), so the runner must not read
+/// the file there — but the pod shape stays identical either way, because a
+/// manifest that changes structure with an auth toggle is one more thing that
+/// can be wrong in exactly the deployment nobody tested.
+#[test]
+fn the_backup_runner_is_given_a_path_and_only_when_auth_is_required() {
+    let mut lumen = lumen_with_backup();
+
+    lumen.spec.auth = AuthMode::Required;
+    let objects = render::render(&lumen);
+    let required = find(&objects, "CronJob", "search-backup").clone();
+    let pod = &required["spec"]["jobTemplate"]["spec"]["template"]["spec"];
+    let args: Vec<String> = pod["containers"][0]["args"]
+        .as_array()
+        .expect("container args")
+        .iter()
+        .map(|arg| arg.as_str().expect("string arg").to_string())
+        .collect();
+    let flag = args
+        .iter()
+        .position(|arg| arg == "--token-file")
+        .expect("auth: required must tell the runner where its credential is");
+    assert_eq!(args[flag + 1], "/var/run/secrets/lumen.axiom.dev/token");
+
+    // Nothing in the rendered CronJob may be token material. Every JWT starts
+    // `ey` — base64 of `{"` — and carries two dots, which is enough to catch a
+    // future change that resolves the credential at render time and inlines it.
+    for arg in &args {
+        assert!(
+            !(arg.starts_with("ey") && arg.matches('.').count() == 2),
+            "argument is a JWT, not a reference to one: {arg}"
+        );
+    }
+
+    lumen.spec.auth = AuthMode::Off;
+    let objects = render::render(&lumen);
+    let open = find(&objects, "CronJob", "search-backup");
+    let open_pod = &open["spec"]["jobTemplate"]["spec"]["template"]["spec"];
+    let open_args: Vec<&str> = open_pod["containers"][0]["args"]
+        .as_array()
+        .expect("container args")
+        .iter()
+        .map(|arg| arg.as_str().expect("string arg"))
+        .collect();
+    assert!(
+        !open_args.contains(&"--token-file"),
+        "an open fleet rejects a presented bearer; the runner must send none: {open_args:?}"
+    );
+    assert_eq!(
+        open_pod["volumes"], pod["volumes"],
+        "the projection itself is unconditional — one pod shape whatever `auth` says"
+    );
+}
+
+/// AC6. The projected token is only an improvement if the alternatives are
+/// gone. Three of them would each work today and each would be wrong:
+///
+/// * the GCE metadata server, which hands out a *Google* identity to anything
+///   that can reach a link-local address — no audience the fleet asked for and
+///   no ServiceAccount the cluster can revoke;
+/// * a token passed in the environment, which every child process, crash
+///   dump, and `kubectl describe pod` reproduces verbatim;
+/// * a Secret read, which turns a control-plane component into a holder of
+///   long-lived material and needs the cluster-wide `secrets: get` grant that
+///   #2877 removed.
+///
+/// A reviewer cannot tell from the render tests above that none of these is
+/// *also* wired somewhere in the same paths, so this reads the paths.
+#[test]
+fn the_control_plane_paths_reach_for_no_other_credential() {
+    // Assembled from parts so this gate does not match itself if the sweep is
+    // ever widened to include `apps/lumen/tests/`.
+    let forbidden: &[(&str, &str)] = &[
+        (
+            &["metadata", ".google.internal"].concat(),
+            "the GCE metadata server issues a Google identity, not an audience-bound KSA token",
+        ),
+        (
+            &["169.254", ".169.254"].concat(),
+            "the metadata server's link-local address, reachable by any process in the pod",
+        ),
+        (
+            &["compute", "Metadata"].concat(),
+            "the metadata server's required request header",
+        ),
+        (
+            &["LUMEN_BACKUP", "_TOKEN"].concat(),
+            "R4: a credential in the environment is reproduced by every child process and by \
+             `kubectl describe pod`",
+        ),
+        (
+            &["secret", "KeyRef"].concat(),
+            "R4: a Secret-backed env var is the same leak with an extra indirection",
+        ),
+        (
+            &["core::v1::", "Secret"].concat(),
+            "a control-plane component that reads Secrets needs the cluster-wide grant this \
+             item removed",
+        ),
+    ];
+
+    let lumen_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut scanned = 0usize;
+    let mut files = Vec::new();
+    collect_text_files(&lumen_root.join("src/operator"), &mut files);
+    collect_text_files(&lumen_root.join("k8s/operator"), &mut files);
+    files.push(lumen_root.join("src/backup.rs"));
+    files.push(lumen_root.join("src/bin/lumen.rs"));
+    files.sort();
+
+    for file in &files {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        scanned += 1;
+        let rel = file.strip_prefix(lumen_root).unwrap_or(file).display();
+        for (line_no, line) in text.lines().enumerate() {
+            for (needle, why) in forbidden {
+                assert!(
+                    !line.contains(needle),
+                    "apps/lumen/{rel}:{}: control-plane paths must present only their own \
+                     projected KSA token, but this line names `{needle}` — {why}\n  {}",
+                    line_no + 1,
+                    line.trim()
+                );
+            }
+        }
+    }
+
+    // A sweep that silently reads nothing passes every assertion in it.
+    assert!(
+        scanned >= 8,
+        "expected the operator, backup, and CLI control-plane paths to be readable, \
+         but only {scanned} files were scanned"
+    );
+}
+
+fn collect_text_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_text_files(&path, out);
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("rs" | "yaml" | "yml")
+        ) {
+            out.push(path);
+        }
     }
 }
 // HANDWRITE-END

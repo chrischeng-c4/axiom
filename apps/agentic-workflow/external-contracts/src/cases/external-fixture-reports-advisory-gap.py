@@ -5,7 +5,11 @@ CAPABILITY_ID = "existing-project-standardization"
 USE_CASE_ID = "external-fixture-reports-advisory-gap"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_external_fixture_reports_advisory_gap.rs"
-TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap"
+TARGET_COMMAND = (
+    "uv run --frozen --offline --project apps/agentic-workflow/external-contracts "
+    "python apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case external-fixture-reports-advisory-gap"
+)
 ASSERTIONS = ('the external-advisory fixture reports the regenerability gap as an advisory warning', 'the advisory gap does not add a production blocker when all required gates are clean')
 
 

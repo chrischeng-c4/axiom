@@ -827,17 +827,42 @@ impl IssueType {
         self.workflow_role() == "change"
     }
 
+    /// True only for the closed four-type enum. Every other variant is a
+    /// retired compatibility alias that decodes to a change.
+    pub fn is_canonical(&self) -> bool {
+        matches!(
+            self,
+            IssueType::Epic | IssueType::Change | IssueType::Spike | IssueType::Report
+        )
+    }
+
     /// Extract the issue type from a list of labels by finding the
     /// `type:*` label. Defaults to canonical `Change` if none is found.
+    ///
+    /// Tracker label order is not authoring intent, so a canonical
+    /// `epic | change | spike | report` label always wins over a retired alias
+    /// (`bug`, `enhancement`/`feature`, `refactor`, `test`). Resolving by
+    /// first-listed label instead let a work item carrying both — e.g. `#2912`
+    /// with `type:bug` + `type:report` — decode as an executable change purely
+    /// because the backend listed the retired label first: it entered the
+    /// epic/change graph as an unowned change, never reached the intake queue,
+    /// and `aw wi update --remove-label type:bug` refused the only repair
+    /// route because the resolved type is immutable.
     pub fn from_labels(labels: &[String]) -> Self {
+        let mut legacy = None;
         for label in labels {
-            if let Some(kind) = label.strip_prefix("type:") {
-                if let Some(t) = Self::parse(kind) {
-                    return t;
-                }
+            let Some(kind) = label.strip_prefix("type:") else {
+                continue;
+            };
+            let Some(parsed) = Self::parse(kind) else {
+                continue;
+            };
+            if parsed.is_canonical() {
+                return parsed;
             }
+            legacy.get_or_insert(parsed);
         }
-        IssueType::Change
+        legacy.unwrap_or(IssueType::Change)
     }
 }
 
@@ -1043,11 +1068,20 @@ impl Issue {
         if combined.len() <= MAX_SLUG_LEN {
             return combined;
         }
-        let mut cut = MAX_SLUG_LEN;
+        // Truncating alone drops whatever distinguishing tail follows
+        // MAX_SLUG_LEN (e.g. a claim id after a long shared capability-name
+        // prefix) and can silently collapse two different titles onto the
+        // identical slug (#3328). Reserve room for a short content-derived
+        // suffix so two different full `combined` strings essentially never
+        // truncate to the same slug, even when their shared prefix alone
+        // already exceeds the budget.
+        let suffix = format!("-{}", short_digest(&combined));
+        let budget = MAX_SLUG_LEN.saturating_sub(suffix.len());
+        let mut cut = budget;
         while cut > 0 && !combined.is_char_boundary(cut) {
             cut -= 1;
         }
-        combined[..cut].trim_end_matches('-').to_string()
+        format!("{}{}", combined[..cut].trim_end_matches('-'), suffix)
     }
 }
 
@@ -1103,6 +1137,18 @@ fn slugify(s: &str) -> String {
     }
     let short = &trimmed[..cut];
     short.trim_end_matches('-').to_string()
+}
+
+/// Short, deterministic, content-derived slug disambiguator (#3328). Two
+/// different `content` strings that collapse onto the same truncated prefix
+/// in `Issue::default_slug` still diverge here with overwhelming
+/// probability, without needing any knowledge of sibling slugs.
+fn short_digest(content: &str) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(content.as_bytes()))
+        .chars()
+        .take(8)
+        .collect()
 }
 
 #[cfg(test)]
@@ -1187,6 +1233,48 @@ mod tests {
         );
     }
 
+    // #3328: two capability-plan candidate titles under the same capability
+    // share a >45-char prefix ("change-close-capability-claim-<capability>-")
+    // and used to truncate to the identical slug, which let a second
+    // `LocalBackend::create()` silently overwrite the first issue's file.
+    #[test]
+    fn default_slug_disambiguates_titles_sharing_a_long_truncated_prefix() {
+        let mut issue = empty_issue();
+        issue.issue_type = IssueType::Change;
+        issue.github_id = None;
+        issue.gitlab_id = None;
+
+        issue.title =
+            "Close capability claim: Alpha Service / claim-stale-doc-reference".to_string();
+        let slug_one = issue.default_slug();
+
+        issue.title =
+            "Close capability claim: Alpha Service / claim-missing-review-gate".to_string();
+        let slug_two = issue.default_slug();
+
+        assert_ne!(
+            slug_one, slug_two,
+            "distinct titles sharing a long truncated prefix must not collide: {slug_one} vs {slug_two}"
+        );
+        assert!(slug_one.len() <= 45, "{slug_one} exceeds the slug budget");
+        assert!(slug_two.len() <= 45, "{slug_two} exceeds the slug budget");
+        // The shared, still-human-legible prefix survives ahead of the
+        // disambiguating suffix.
+        assert!(slug_one.starts_with("change-close-capability-claim-alpha-"));
+        assert!(slug_two.starts_with("change-close-capability-claim-alpha-"));
+    }
+
+    #[test]
+    fn default_slug_truncation_is_deterministic_for_the_same_title() {
+        let mut issue = empty_issue();
+        issue.issue_type = IssueType::Change;
+        issue.github_id = None;
+        issue.gitlab_id = None;
+        issue.title =
+            "Close capability claim: Alpha Service / claim-stale-doc-reference".to_string();
+        assert_eq!(issue.default_slug(), issue.default_slug());
+    }
+
     #[test]
     fn issue_type_from_labels() {
         let labels = vec![
@@ -1198,6 +1286,29 @@ mod tests {
 
         let labels = vec!["priority:p1".into()];
         assert!(matches!(IssueType::from_labels(&labels), IssueType::Change));
+    }
+
+    // Refs #3044
+    #[test]
+    fn canonical_type_label_wins_over_retired_alias_regardless_of_order() {
+        // `#2912` shape: the retired alias is listed first by the backend.
+        let labels: Vec<String> = vec![
+            "type:bug".into(),
+            "app:agentic-workflow".into(),
+            "type:report".into(),
+        ];
+        assert_eq!(IssueType::from_labels(&labels), IssueType::Report);
+
+        let reversed: Vec<String> = vec!["type:report".into(), "type:bug".into()];
+        assert_eq!(IssueType::from_labels(&reversed), IssueType::Report);
+
+        // A retired alias alone still decodes to its compatibility role.
+        let legacy_only: Vec<String> = vec!["type:bug".into()];
+        assert_eq!(IssueType::from_labels(&legacy_only), IssueType::Bug);
+        assert!(IssueType::from_labels(&legacy_only).is_change());
+
+        assert!(IssueType::Report.is_canonical());
+        assert!(!IssueType::Bug.is_canonical());
     }
 
     #[test]

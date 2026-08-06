@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-single-member-persistence
-// @capability dynamic-shard-topology
-// @claim single-member-durable-persistence-render
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-single-member-persistence
 // @category behavior
 // @required_for_production true
