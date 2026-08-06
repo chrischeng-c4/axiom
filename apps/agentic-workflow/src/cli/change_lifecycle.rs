@@ -67,6 +67,7 @@ impl ArtifactRevision {
     fn public_json(&self) -> serde_json::Value {
         serde_json::json!({
             "id": self.id,
+            "kind": self.kind,
             "digest": self.digest,
             "parents": self.parents.iter().map(|parent| serde_json::json!({
                 "id": parent.revision_id,
@@ -930,6 +931,7 @@ fn zero_head_projection(slug: &str, owner: OwnerVocabulary) -> serde_json::Value
         "iteration": 1,
         "next": {"command": format!("aw wi validate {slug}"), "owner": owner.as_str()},
         "terminal": false,
+        "milestones": [],
     })
 }
 
@@ -942,6 +944,44 @@ fn render(lifecycle: &ChangeLifecycle) -> serde_json::Value {
         Some(value) => value.public_json(),
         None => serde_json::Value::Null,
     };
+    let milestones = lifecycle
+        .events
+        .iter()
+        .map(|event| {
+            let mut milestone_evidence = Vec::new();
+            for binding in &lifecycle.evidence {
+                if binding.bound_tuple.matches(&event.bound_tuple) {
+                    milestone_evidence.push(binding.clone());
+                }
+            }
+            for invalidation in &lifecycle.invalidations {
+                for binding in &invalidation.evicted_evidence {
+                    if binding.bound_tuple.matches(&event.bound_tuple) {
+                        milestone_evidence.push(binding.clone());
+                    }
+                }
+            }
+            let next = if event.kind == LifecycleEventKind::CbCommit {
+                serde_json::json!({
+                    "command": format!("aw wi show {}", lifecycle.slug),
+                    "owner": OwnerVocabulary::Cb.as_str(),
+                })
+            } else {
+                serde_json::json!({
+                    "command": event.next_command.clone(),
+                    "owner": event.next_owner.as_str(),
+                })
+            };
+            serde_json::json!({
+                "event_id": event.event_id,
+                "artifact": event.candidate_revision.public_json(),
+                "evidence": milestone_evidence,
+                "outcome": "accepted",
+                "iteration": event.candidate_revision.iteration,
+                "next": next,
+            })
+        })
+        .collect::<Vec<_>>();
     serde_json::json!({
         "schema": SCHEMA,
         "wi_revision": revision(ArtifactKind::Wi),
@@ -954,6 +994,7 @@ fn render(lifecycle: &ChangeLifecycle) -> serde_json::Value {
         "iteration": lifecycle.iteration,
         "next": {"command": lifecycle.next.command, "owner": lifecycle.next.owner.as_str()},
         "terminal": lifecycle.terminal,
+        "milestones": milestones,
     })
 }
 
@@ -1687,5 +1728,152 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let res_none = fold_wi_update(&initial_lc, body_v2, None);
         assert!(res_none.accepted, "{:?}", res_none.rejection_reason);
         assert_eq!(res_none.lifecycle.epoch, initial_lc.epoch + 1);
+    }
+
+    #[test]
+    fn revisioned_change_wi_milestone_projection() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change("wi-v1");
+
+        // Row 7: issue with no carrier or zero-head carries milestones: []
+        let zero_proj = zero_head_projection("causal", OwnerVocabulary::Wi);
+        assert_eq!(zero_proj["milestones"], serde_json::json!([]));
+        let no_carrier_proj = projection_for_issue(root.path(), &issue);
+        assert_eq!(no_carrier_proj["milestones"], serde_json::json!([]));
+
+        // Create a 4-stage lifecycle: wi_create, ec_change, td_change, cb_change
+        let created = fold_wi_create("causal", "wi-v1", "agentic-workflow");
+        let ec = reduce_stage(
+            &created,
+            ArtifactKind::Ec,
+            LifecycleEventKind::EcChange,
+            "ec-v1",
+            "aw td check",
+            OwnerVocabulary::Td,
+        );
+        let td = reduce_stage(
+            &ec,
+            ArtifactKind::Td,
+            LifecycleEventKind::TdChange,
+            "td-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+        let mut cb = reduce_stage(
+            &td,
+            ArtifactKind::Cb,
+            LifecycleEventKind::CbChange,
+            "cb-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+
+        // Row 1: milestones is an array of exactly 4 entries in commit order, matching event_ids
+        let proj_4 = render(&cb);
+        let milestones_4 = proj_4["milestones"]
+            .as_array()
+            .expect("milestones is array");
+        assert_eq!(milestones_4.len(), 4);
+        for (i, event) in cb.events.iter().enumerate() {
+            assert_eq!(milestones_4[i]["event_id"], event.event_id);
+            assert_eq!(milestones_4[i]["outcome"], "accepted");
+            assert_eq!(
+                milestones_4[i]["iteration"],
+                event.candidate_revision.iteration
+            );
+        }
+
+        // Row 2: every milestone carries non-null artifact matching candidate_revision
+        for (i, event) in cb.events.iter().enumerate() {
+            let artifact = &milestones_4[i]["artifact"];
+            assert_ne!(artifact, &serde_json::Value::Null);
+            assert_eq!(artifact["id"], event.candidate_revision.id);
+            assert_eq!(artifact["digest"], event.candidate_revision.digest);
+            let expected_kind = match event.candidate_revision.kind {
+                ArtifactKind::Wi => "wi",
+                ArtifactKind::Ec => "ec",
+                ArtifactKind::Td => "td",
+                ArtifactKind::Cb => "cb",
+            };
+            assert_eq!(artifact["kind"], expected_kind);
+        }
+
+        // Row 3: td_change milestone artifact.parents is non-empty matching candidate_revision.parents
+        let td_milestone = &milestones_4[2];
+        let td_parents = td_milestone["artifact"]["parents"]
+            .as_array()
+            .expect("parents is array");
+        assert!(!td_parents.is_empty());
+        let expected_td_parents = &cb.events[2].candidate_revision.parents;
+        assert_eq!(td_parents.len(), expected_td_parents.len());
+        for (j, parent) in expected_td_parents.iter().enumerate() {
+            assert_eq!(td_parents[j]["id"], parent.revision_id);
+            assert_eq!(td_parents[j]["digest"], parent.digest);
+        }
+
+        // Add 4D evidence to cb and commit cb_commit with proposed event next obligation
+        let tuple = cb.active_digest_tuple();
+        cb.evidence = ["cb_test", "cb_review", "td_reconcile", "ec_verify_cb"]
+            .into_iter()
+            .map(|verifier| EvidenceBinding {
+                verifier: verifier.to_string(),
+                bound_tuple: tuple.clone(),
+                passed: true,
+                summary: "pass".to_string(),
+            })
+            .collect();
+        let active_cb = cb.active_revisions[&ArtifactKind::Cb].clone().unwrap();
+        let commit_event = LifecycleEvent {
+            event_id: event_id(&cb),
+            predecessor_id: cb.head_event_id.clone(),
+            kind: LifecycleEventKind::CbCommit,
+            candidate_revision: active_cb,
+            bound_tuple: tuple.clone(),
+            next_command: "PROPOSED-BY-EVENT".to_string(),
+            next_owner: OwnerVocabulary::Wi,
+        };
+        let committed = reduce_event(&cb, commit_event);
+        assert!(committed.accepted);
+        let terminal_lc = committed.lifecycle;
+
+        // Row 4: cb_commit milestone next.command is "aw wi show causal", next.owner is "cb"
+        let terminal_proj = render(&terminal_lc);
+        let term_milestones = terminal_proj["milestones"].as_array().unwrap();
+        assert_eq!(term_milestones.len(), 5);
+        let cb_commit_ms = &term_milestones[4];
+        assert_eq!(cb_commit_ms["next"]["command"], "aw wi show causal");
+        assert_eq!(cb_commit_ms["next"]["owner"], "cb");
+
+        // Row 5: cb_commit milestone evidence lists 4 verifiers on committed tuple, earlier milestones list []
+        let cb_commit_ev = cb_commit_ms["evidence"].as_array().unwrap();
+        assert_eq!(cb_commit_ev.len(), 4);
+        for i in 0..3 {
+            assert_eq!(term_milestones[i]["evidence"], serde_json::json!([]));
+        }
+
+        // Row 6: negative control: rejected event (stale predecessor_id) does not alter milestones
+        let stale_event = LifecycleEvent {
+            event_id: "evt-stale".to_string(),
+            predecessor_id: Some("evt-bad".to_string()),
+            kind: LifecycleEventKind::WiChange,
+            candidate_revision: terminal_lc.events[0].candidate_revision.clone(),
+            bound_tuple: ActiveDigestTuple::default(),
+            next_command: "aw wi validate causal".to_string(),
+            next_owner: OwnerVocabulary::Wi,
+        };
+        let rej = reduce_event(&terminal_lc, stale_event);
+        assert!(!rej.accepted);
+        let proj_after_rej = render(&rej.lifecycle);
+        assert_eq!(proj_after_rej["milestones"], terminal_proj["milestones"]);
+
+        // Row 8: empty evidence on terminal lifecycle: cb_commit milestone still reports aw wi show and owner cb, and evidence []
+        let mut emptied_lc = terminal_lc.clone();
+        emptied_lc.evidence.clear();
+        let emptied_proj = render(&emptied_lc);
+        let emptied_ms = emptied_proj["milestones"].as_array().unwrap();
+        let emptied_cb_ms = &emptied_ms[4];
+        assert_eq!(emptied_cb_ms["next"]["command"], "aw wi show causal");
+        assert_eq!(emptied_cb_ms["next"]["owner"], "cb");
+        assert_eq!(emptied_cb_ms["evidence"], serde_json::json!([]));
     }
 }
