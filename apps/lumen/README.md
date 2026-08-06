@@ -625,14 +625,12 @@ three setups, in order of preference:
 > the CRD fields that configured them no longer exist, so a manifest that
 > restores one is rejected by the API server rather than quietly ignored.
 
-#### Operator Issuer Configuration
+#### Externally Provisioned TLS Secrets
 
-Issuer selection is an operator-scoped contract (`--issuer cas` | `--issuer ephemeral`), not a `Lumen` custom resource field. The absence of CRD issuer fields intentionally prevents per-instance trust-domain selection by tenants.
-
-- **Dev / Kind**: Select `ephemeral` explicitly with `lumen k8s operator render --issuer ephemeral --trust-domain lumen-dev.svc.id.goog` (or `LUMEN_ISSUER=ephemeral`). Ephemeral mode requires no GCP project, credential, or network resource.
-- **Staging / Production**: Select `cas` explicitly with `lumen k8s operator render --issuer cas --trust-domain <module.lumen_pki.trust_domain> --ca-pool <module.lumen_pki.issuing_ca_pool_id>`, naming the Terraform outputs (`module.lumen_pki.issuing_ca_pool_id`, `module.lumen_pki.trust_domain`) without embedding credentials in secrets. CAS requires Standard GKE Workload Identity with `GKE_METADATA` enabled and fetches short-lived access tokens directly from the GKE metadata server (`iam.gke.io/gke-metadata-server-enabled: "true"` node selector); users provide no STS audience or projected-token path.
-- **Terraform / Identity Mapping**: The operator runs as Kubernetes ServiceAccount `lumen-operator` in the rendered control-plane namespace (`--namespace`, default `lumen-system`). Terraform's `lumen-pki` module binds the federated principal `principal://iam.googleapis.com/.../subject/ns/${certificate_controller.namespace}/sa/${certificate_controller.service_account}` where `certificate_controller.namespace` must equal `--namespace` and `certificate_controller.service_account` is `lumen-operator`. No GSA annotation or credential Secret is added or required.
-- **Instance Profile Render**: `lumen k8s instance render --profile <dev|staging|prod|template>` includes top-level YAML comments detailing the operator prerequisite (`--issuer ephemeral` for `dev`, `--issuer cas` and Terraform `module.lumen_pki.issuing_ca_pool_id` for `staging`/`prod`, and replace-me prerequisite for `template`).
+Deployment administrators or an external platform provision the serving and peer
+TLS Secrets named by each `Lumen` instance. The operator only consumes those
+Secrets; it does not resolve issuers, perform CAS automation, or own a trust
+domain.
 
 Two independent checks stand between a caller and a collection, and neither
 substitutes for the other: the **transport** proves which server you reached,

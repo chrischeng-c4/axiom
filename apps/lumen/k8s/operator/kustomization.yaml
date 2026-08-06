@@ -5,8 +5,8 @@ kind: Kustomization
 
 # Installs the lumen Operator: the Lumen CRD, its RBAC, and the controller
 # Deployment + PodDisruptionBudget (in the lumen-system namespace). This direct
-# `apply -k` path is the explicit ephemeral dev/kind installation (#3222). Staging
-# and production environments must render via `lumen k8s operator render --issuer cas --trust-domain <td> --ca-pool <pool>`.
+# `apply -k` path installs the controller; the serving and peer TLS Secrets are
+# provisioned by the deployment platform in each instance namespace.
 #
 #   kubectl apply -k k8s/operator
 #   kubectl apply -f examples/lumen-cr.yaml

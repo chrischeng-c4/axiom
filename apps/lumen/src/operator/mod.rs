@@ -1,12 +1,10 @@
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! K8s Operator for lumen: pure issuer configuration grammar ([`issuer_config`]),
-//! a `Lumen` custom resource ([`crd`]), plus a reconcile loop ([`reconcile`])
+//! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]), plus a reconcile loop ([`reconcile`])
 //! that renders ([`render`]) and applies the serving data-plane.
 //!
-//! [`issuer_config`] compiles unconditionally so offline render commands can
-//! validate issuer choices; kube-rs CRD, reconcile, render, and runtime modules
-//! remain behind the `operator` feature so the serving binary never links kube-rs.
+//! The operator consumes externally provisioned TLS Secrets; it does not own
+//! certificate issuer configuration or lifecycle.
 //!
 //! ```text
 //! Lumen (lumen.dev/v1alpha1)  --reconcile-->  ServiceAccount, ConfigMap,
@@ -14,9 +12,6 @@
 //!                                             PDB,
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
-
-pub mod issuer_config;
-pub use issuer_config::{IssuerConfigError, IssuerMode, OperatorIssuerConfig, RawIssuerConfig};
 
 #[cfg(feature = "operator")]
 pub mod certificate;

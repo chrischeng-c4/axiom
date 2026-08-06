@@ -29,6 +29,10 @@ fill_sections:
 
 # Lumen Developer and Agent Experience Contract
 
+Deployment administrators or an external platform provision the serving and
+peer TLS Secrets named by a Lumen instance; the operator consumes them and owns
+no issuer or certificate-lifecycle automation.
+
 ## DX Contract
 <!-- type: dx-contract lang: yaml -->
 

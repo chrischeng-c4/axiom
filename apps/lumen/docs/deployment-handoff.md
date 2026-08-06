@@ -85,8 +85,10 @@ Structure: `k8s/base` (Deployment, Service, HPA, PDB, ConfigMap),
 
 ```bash
 lumen k8s crd render --out /tmp/lumen-k8s/crd.yaml
-# Local / dev example (use --issuer cas --ca-pool ... for staging/prod):
-lumen k8s operator render --namespace lumen-system --issuer ephemeral --trust-domain lumen-dev.svc.id.goog --out /tmp/lumen-k8s
+# The operator consumes externally provisioned `servingTlsSecret` and
+# `peerTlsSecret` Secrets in the instance namespace. It does not resolve an
+# issuer, contact CAS, select a trust domain, or mint certificate tokens.
+lumen k8s operator render --namespace lumen-system --out /tmp/lumen-k8s
 kubectl apply -f /tmp/lumen-k8s/crd.yaml              # cluster-scoped API
 kubectl apply -f /tmp/lumen-k8s/operator.yaml         # control-plane namespace/RBAC/controller
 ```
@@ -130,7 +132,7 @@ against the *old* CRD drops that field without an error.
 ```bash
 lumen k8s crd render --out /tmp/lumen-k8s/crd.yaml
 kubectl apply -f /tmp/lumen-k8s/crd.yaml               # 1. CRD first
-lumen k8s operator render --namespace lumen-system --issuer ephemeral --trust-domain lumen-dev.svc.id.goog --out /tmp/lumen-k8s
+lumen k8s operator render --namespace lumen-system --out /tmp/lumen-k8s
 kubectl apply -f /tmp/lumen-k8s/operator.yaml          # 2. operator next
 kubectl apply -f /tmp/lumen-k8s/lumen.yaml             # 3. CR last
 ```
