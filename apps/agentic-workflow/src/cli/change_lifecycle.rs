@@ -3,7 +3,7 @@
 //! The tracker issue remains the WI source of truth.  This module stores only
 //! the additive, workspace-local lifecycle carrier used by `aw wi show`.
 
-use crate::issues::Issue;
+use crate::issues::{Issue, IssueState};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -212,6 +212,8 @@ pub struct TrackerObservation {
     pub head_event_id: Option<String>,
     pub epoch: Option<u64>,
     pub present_event_ids: BTreeSet<String>,
+    #[serde(default)]
+    pub state: Option<IssueState>,
 }
 
 impl TrackerObservation {
@@ -226,6 +228,7 @@ impl TrackerObservation {
             head_event_id: head_event_id.map(Into::into),
             epoch,
             present_event_ids: present_event_ids.into_iter().map(Into::into).collect(),
+            state: Some(IssueState::Open),
         }
     }
 
@@ -235,7 +238,17 @@ impl TrackerObservation {
             head_event_id: None,
             epoch: None,
             present_event_ids: BTreeSet::new(),
+            state: Some(IssueState::Open),
         }
+    }
+
+    pub fn with_state(mut self, state: IssueState) -> Self {
+        self.state = Some(state);
+        self
+    }
+
+    pub fn is_closed(&self) -> bool {
+        matches!(self.state, Some(IssueState::Closed))
     }
 
     pub fn apply_work(
@@ -250,6 +263,10 @@ impl TrackerObservation {
             self.present_event_ids.insert(w.event_id.clone());
         }
     }
+
+    pub fn apply_close(&mut self) {
+        self.state = Some(IssueState::Closed);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,6 +276,11 @@ pub struct ProjectionDecision {
     pub target_epoch: u64,
     pub target_head_event_id: Option<String>,
     pub work: Vec<MilestoneWork>,
+    pub complete: bool,
+    pub close_authorized: bool,
+    pub authorize_close_event_id: Option<String>,
+    pub drift: bool,
+    pub remediation: Vec<NextObligation>,
 }
 
 fn carrier_path(project_root: &Path, slug: &str) -> PathBuf {
@@ -1032,7 +1054,8 @@ pub fn render_milestone(lifecycle: &ChangeLifecycle, event: &LifecycleEvent) -> 
 }
 
 /// Decide, as a pure function of the committed lifecycle and an observed tracker
-/// state, which milestones may be written to the tracker.
+/// state, which milestones may be written to the tracker and whether the issue
+/// may be closed.
 pub fn decide_projection(
     lifecycle: &ChangeLifecycle,
     observation: &TrackerObservation,
@@ -1057,6 +1080,11 @@ pub fn decide_projection(
                 target_epoch,
                 target_head_event_id,
                 work: Vec::new(),
+                complete: false,
+                close_authorized: false,
+                authorize_close_event_id: None,
+                drift: false,
+                remediation: Vec::new(),
             };
         }
     }
@@ -1076,6 +1104,11 @@ pub fn decide_projection(
                 target_epoch,
                 target_head_event_id,
                 work: Vec::new(),
+                complete: false,
+                close_authorized: false,
+                authorize_close_event_id: None,
+                drift: false,
+                remediation: Vec::new(),
             };
         }
     }
@@ -1090,12 +1123,49 @@ pub fn decide_projection(
         }
     }
 
+    let head_event = lifecycle.events.last();
+    let is_terminal_commit = head_event.map_or(false, |evt| {
+        evt.kind == LifecycleEventKind::CbCommit
+            && lifecycle.head_event_id.as_deref() == Some(evt.event_id.as_str())
+    });
+
+    let complete = is_terminal_commit;
+    let obs_closed = observation.is_closed();
+
+    let (close_authorized, authorize_close_event_id, drift, remediation) = if is_terminal_commit {
+        if obs_closed {
+            (false, None, false, Vec::new())
+        } else {
+            (
+                true,
+                Some(head_event.unwrap().event_id.clone()),
+                false,
+                Vec::new(),
+            )
+        }
+    } else {
+        if obs_closed {
+            let reopen_cmd = NextObligation {
+                command: format!("aw wi update {} --state open", lifecycle.slug),
+                owner: OwnerVocabulary::Wi,
+            };
+            (false, None, true, vec![reopen_cmd, lifecycle.next.clone()])
+        } else {
+            (false, None, false, Vec::new())
+        }
+    };
+
     ProjectionDecision {
         accepted: true,
         refusal_reason: None,
         target_epoch,
         target_head_event_id,
         work,
+        complete,
+        close_authorized,
+        authorize_close_event_id,
+        drift,
+        remediation,
     }
 }
 
@@ -2127,5 +2197,245 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             dec8_second.work.is_empty(),
             "recomputed decision after applying yielded work must yield no work"
         );
+    }
+
+    #[test]
+    fn change_wi_terminal_projection() {
+        let root = tempfile::tempdir().unwrap();
+
+        // Row 1: non-terminal lifecycle (folded through wi_create, ec_change, td_change, cb_change, no commit) and open issue
+        let created = fold_wi_create("causal", "wi-v1", "agentic-workflow");
+        let ec = reduce_stage(
+            &created,
+            ArtifactKind::Ec,
+            LifecycleEventKind::EcChange,
+            "ec-v1",
+            "aw td check",
+            OwnerVocabulary::Td,
+        );
+        let td = reduce_stage(
+            &ec,
+            ArtifactKind::Td,
+            LifecycleEventKind::TdChange,
+            "td-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+        let lc1 = reduce_stage(
+            &td,
+            ArtifactKind::Cb,
+            LifecycleEventKind::CbChange,
+            "cb-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+
+        let obs_open = TrackerObservation::new(
+            "wi-v1",
+            lc1.head_event_id.clone(),
+            Some(lc1.epoch),
+            lc1.events.iter().map(|e| e.event_id.clone()),
+        );
+
+        let dec1 = decide_projection(&lc1, &obs_open);
+        assert!(dec1.accepted);
+        assert!(!dec1.complete);
+        assert!(!dec1.close_authorized);
+        assert_eq!(dec1.authorize_close_event_id, None);
+        assert!(!dec1.drift);
+        assert!(dec1.remediation.is_empty());
+
+        // Row 2: terminal lifecycle (advanced by accepted cb_commit) and open issue
+        let mut cb_with_evidence = lc1.clone();
+        let tuple = cb_with_evidence.active_digest_tuple();
+        cb_with_evidence.evidence = ["cb_test", "cb_review", "td_reconcile", "ec_verify_cb"]
+            .into_iter()
+            .map(|verifier| EvidenceBinding {
+                verifier: verifier.to_string(),
+                bound_tuple: tuple.clone(),
+                passed: true,
+                summary: "pass".to_string(),
+            })
+            .collect();
+        let active_cb = cb_with_evidence.active_revisions[&ArtifactKind::Cb]
+            .clone()
+            .unwrap();
+        let commit_event = LifecycleEvent {
+            event_id: event_id(&cb_with_evidence),
+            predecessor_id: cb_with_evidence.head_event_id.clone(),
+            kind: LifecycleEventKind::CbCommit,
+            candidate_revision: active_cb,
+            bound_tuple: tuple,
+            next_command: "aw wi show causal".to_string(),
+            next_owner: OwnerVocabulary::Cb,
+        };
+        let commit_res = reduce_event(&cb_with_evidence, commit_event);
+        assert!(commit_res.accepted);
+        let lc2 = commit_res.lifecycle;
+
+        let obs2 = TrackerObservation::new(
+            "wi-v1",
+            lc1.head_event_id.clone(),
+            Some(lc1.epoch),
+            lc1.events.iter().map(|e| e.event_id.clone()),
+        );
+
+        let dec2 = decide_projection(&lc2, &obs2);
+        assert!(dec2.accepted);
+        assert!(dec2.complete);
+        assert!(dec2.close_authorized);
+        assert_eq!(dec2.authorize_close_event_id, lc2.head_event_id);
+        assert_eq!(dec2.authorize_close_event_id, Some("evt-005".to_string()));
+        assert!(!dec2.drift);
+
+        // Row 3: terminal lifecycle and closed issue already at that terminal event
+        let obs3 = TrackerObservation::new(
+            "wi-v1",
+            lc2.head_event_id.clone(),
+            Some(lc2.epoch),
+            lc2.events.iter().map(|e| e.event_id.clone()),
+        )
+        .with_state(IssueState::Closed);
+
+        let dec3 = decide_projection(&lc2, &obs3);
+        assert!(dec3.accepted);
+        assert!(dec3.complete);
+        assert!(!dec3.close_authorized);
+        assert_eq!(dec3.authorize_close_event_id, None);
+        assert!(!dec3.drift);
+
+        // Row 4: non-terminal lifecycle of row 1 and closed issue (drift)
+        let obs4 = TrackerObservation::new(
+            "wi-v1",
+            lc1.head_event_id.clone(),
+            Some(lc1.epoch),
+            lc1.events.iter().map(|e| e.event_id.clone()),
+        )
+        .with_state(IssueState::Closed);
+
+        let dec4 = decide_projection(&lc1, &obs4);
+        assert!(dec4.accepted);
+        assert!(!dec4.complete);
+        assert!(!dec4.close_authorized);
+        assert_eq!(dec4.authorize_close_event_id, None);
+        assert!(dec4.drift);
+        assert_eq!(dec4.remediation.len(), 2);
+        assert_eq!(dec4.remediation[0].owner, OwnerVocabulary::Wi);
+        assert_eq!(
+            dec4.remediation[0].command,
+            format!("aw wi update {} --state open", lc1.slug)
+        );
+        assert_eq!(dec4.remediation[1].command, lc1.next.command);
+        assert_eq!(dec4.remediation[1].owner, lc1.next.owner);
+
+        let created_b = fold_wi_create("other-slug", "wi-v1", "agentic-workflow");
+        let lc1_b = reduce_stage(
+            &created_b,
+            ArtifactKind::Ec,
+            LifecycleEventKind::EcChange,
+            "ec-v1",
+            "aw ec check",
+            OwnerVocabulary::Ec,
+        );
+        let obs4_b = TrackerObservation::new(
+            "wi-v1",
+            lc1_b.head_event_id.clone(),
+            Some(lc1_b.epoch),
+            lc1_b.events.iter().map(|e| e.event_id.clone()),
+        )
+        .with_state(IssueState::Closed);
+
+        let dec4_b = decide_projection(&lc1_b, &obs4_b);
+        assert!(dec4_b.accepted);
+        assert!(!dec4_b.complete);
+        assert!(!dec4_b.close_authorized);
+        assert_eq!(dec4_b.authorize_close_event_id, None);
+        assert!(dec4_b.drift);
+        assert_eq!(dec4_b.remediation.len(), 2);
+        assert_eq!(dec4_b.remediation[0].owner, OwnerVocabulary::Wi);
+        assert_eq!(
+            dec4_b.remediation[0].command,
+            format!("aw wi update {} --state open", lc1_b.slug)
+        );
+        assert_eq!(dec4_b.remediation[1].command, lc1_b.next.command);
+        assert_eq!(dec4_b.remediation[1].owner, lc1_b.next.owner);
+
+        // Row 5: lifecycle whose terminal field is true but head event is td_change (not cb_commit)
+        let mut lc5 = td.clone();
+        lc5.terminal = true;
+        let obs5 = TrackerObservation::new(
+            "wi-v1",
+            lc5.head_event_id.clone(),
+            Some(lc5.epoch),
+            lc5.events.iter().map(|e| e.event_id.clone()),
+        );
+
+        let dec5 = decide_projection(&lc5, &obs5);
+        assert!(dec5.accepted);
+        assert!(!dec5.close_authorized);
+        assert_eq!(dec5.authorize_close_event_id, None);
+        assert!(!dec5.complete);
+
+        // Row 6: cb_commit rejected by reduce_event (missing 4D evidence) applied to row 1 lifecycle against open observation
+        let no_evidence_cb = lc1.clone();
+        let active_cb6 = no_evidence_cb.active_revisions[&ArtifactKind::Cb]
+            .clone()
+            .unwrap();
+        let rejected_commit_event = LifecycleEvent {
+            event_id: event_id(&no_evidence_cb),
+            predecessor_id: no_evidence_cb.head_event_id.clone(),
+            kind: LifecycleEventKind::CbCommit,
+            candidate_revision: active_cb6,
+            bound_tuple: no_evidence_cb.active_digest_tuple(),
+            next_command: "aw wi show causal".to_string(),
+            next_owner: OwnerVocabulary::Cb,
+        };
+        let rejected_res = reduce_event(&no_evidence_cb, rejected_commit_event);
+        assert!(!rejected_res.accepted);
+        let dec6 = decide_projection(&rejected_res.lifecycle, &obs_open);
+        assert_eq!(dec6, dec1);
+        assert!(!dec6.close_authorized);
+
+        // Row 7: terminal lifecycle of row 2 and observation of open issue whose head names an event id the ledger never committed
+        let obs7 = TrackerObservation::new(
+            "wi-v1",
+            Some("evt-999-uncommitted"),
+            Some(99),
+            Vec::<String>::new(),
+        );
+
+        let dec7 = decide_projection(&lc2, &obs7);
+        assert!(!dec7.accepted);
+        assert!(!dec7.close_authorized);
+        assert_eq!(dec7.authorize_close_event_id, None);
+        assert!(
+            dec7.work.is_empty(),
+            "refusal must yield zero milestone work"
+        );
+
+        // Row 8: terminal lifecycle re-read from persisted carrier after save against open observation; then updated by close authorized
+        save(root.path(), &lc2).unwrap();
+        let reloaded_lc2 = load(root.path(), "causal").unwrap().unwrap();
+        let mut obs8 = TrackerObservation::new(
+            "wi-v1",
+            lc1.head_event_id.clone(),
+            Some(lc1.epoch),
+            lc1.events.iter().map(|e| e.event_id.clone()),
+        );
+
+        let dec8_first = decide_projection(&reloaded_lc2, &obs8);
+        assert_eq!(dec8_first, dec2);
+        assert!(dec8_first.close_authorized);
+        assert_eq!(
+            dec8_first.authorize_close_event_id,
+            reloaded_lc2.head_event_id
+        );
+
+        obs8.apply_close();
+        let dec8_second = decide_projection(&reloaded_lc2, &obs8);
+        assert!(dec8_second.accepted);
+        assert!(!dec8_second.close_authorized);
+        assert_eq!(dec8_second.authorize_close_event_id, None);
+        assert!(!dec8_second.drift);
     }
 }
