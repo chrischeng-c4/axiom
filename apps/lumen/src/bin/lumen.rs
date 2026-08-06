@@ -576,9 +576,8 @@ struct ConnectArgs {
     #[arg(long, value_name = "NAME")]
     client_sa: Option<String>,
     /// PEM bundle of the private CA that signed the fleet's serving certificate
-    /// (#3113 R6). This is the `ca.crt` key of the trust-bundle ConfigMap the
-    /// operator publishes at `status.clientTrustBundle` — a ConfigMap, so
-    /// fetching it never means reading a Secret that also holds a private key.
+    /// (#3113 R6). The deployment administrator or external certificate
+    /// platform distributes this public CA separately from the serving Secret.
     ///
     /// With it, the forwarded socket is spoken to over TLS addressed as
     /// `--server-name`, verified against this bundle and against no public root.
@@ -1852,9 +1851,8 @@ fn serving_trust(
 ) -> Result<ServingTrust> {
     let pem = std::fs::read_to_string(ca_file).with_context(|| {
         format!(
-            "read the serving trust bundle {}. This is the `ca.crt` key of the ConfigMap named by \
-             the fleet's `status.clientTrustBundle`: `kubectl -n <namespace> get configmap \
-             <name> -o jsonpath='{{.data.ca\\.crt}}'`",
+            "read the serving trust bundle {}. Obtain the public CA separately \
+             from the deployment administrator or external certificate platform",
             ca_file.display()
         )
     })?;
@@ -1912,7 +1910,7 @@ async fn probe_serving_tls(
         format!(
             "the certificate {server_name} presented was not signed by anything in {ca}. Either \
              the bundle is from another cluster or CA pool, or the fleet's leaf was issued \
-             outside it — compare `status.clientTrustBundle` on the CR with the file you passed"
+             outside it — obtain the public CA separately from the deployment administrator"
         )
     } else if lowered.contains("notvalidforname") || lowered.contains("not valid for name") {
         format!(
@@ -1923,9 +1921,9 @@ async fn probe_serving_tls(
         )
     } else if lowered.contains("expired") {
         format!(
-            "the certificate {server_name} presented has expired. Renewal is the operator's job \
-             and needs no rollout — check the instance's certificate status and the controller's \
-             logs rather than reissuing by hand"
+            "the certificate {server_name} presented has expired. Ask the deployment administrator \
+             or external certificate platform to rotate the externally provisioned serving Secret \
+             and distribute its public CA; keep verification enabled and do not downgrade to plaintext"
         )
     } else if lowered.contains("corrupt message")
         || lowered.contains("handshake eof")
@@ -1937,8 +1935,8 @@ async fn probe_serving_tls(
         format!(
             "svc/{server_name} did not complete a TLS handshake and closed the connection, which \
              is what a port still answering in cleartext does. Use `--plaintext` if that is a \
-             development instance; in production, set `spec.servingTlsSecret` so the operator \
-             issues a serving leaf"
+             development instance; in production, have the deployment administrator or external \
+             certificate platform provision the serving TLS Secret and set `spec.servingTlsSecret`"
         )
     } else {
         format!("could not complete a TLS handshake with {server_name}: {detail}")

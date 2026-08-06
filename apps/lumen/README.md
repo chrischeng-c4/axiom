@@ -660,13 +660,12 @@ a name the instance can impersonate. While no valid leaf is active the port
 refuses connections rather than falling back to plaintext. Omit the field only
 for local and kind development.
 
-Callers verify against the anchor alone: the operator republishes `ca.crt` as
-an owner-scoped, private-key-free ConfigMap and reports it at
-`status.clientTrustBundle` once the material exists. Mount that and point the
-client at it (`lumen connect --ca-file`, or `PrivateTrust` in a generated
-client). Adding it *alongside* the public roots is not equivalent — a public CA
-could then still vouch for the name, which is what a private trust domain
-exists to prevent.
+Callers verify against the anchor alone: the deployment administrator or an
+external certificate platform distributes the public CA separately from the
+private-key-bearing serving Secret. Supply that CA with `lumen connect
+--ca-file`, or as `PrivateTrust` in a generated client. It replaces the public
+roots rather than joining them, so a public CA cannot vouch for this private
+Service DNS name.
 
 #### Request identity: a short-lived KSA token the cluster answers for
 

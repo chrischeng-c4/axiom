@@ -150,7 +150,7 @@ Serving path:
 in-cluster caller
   -> https://<instance>.<namespace>.svc:7373 (ClusterIP, never published)
   -> TLS terminated by the serving pod itself, ALPN h2 / http/1.1
-  -> leaf verified against the operator-published trust anchor
+  -> leaf verified against the externally distributed public CA
 ```
 
 Invariants:
@@ -162,8 +162,9 @@ Invariants:
   nothing else.
 - A configured serving certificate never degrades to plaintext; the client port
   refuses connections while no valid leaf is active.
-- The client trust anchor is published without the private key, and replaces
-  the public roots for callers rather than joining them.
+- Deployment administrators or an external certificate platform distribute the
+  public CA separately from the private-key-bearing serving Secret; clients
+  pass it as `--ca-file` and replace the public roots rather than joining them.
 - Serving and peer certificates are distinct material. Neither authenticates on
   the other's port.
 - Clients authenticate the server with the trust anchor and authenticate
@@ -195,8 +196,7 @@ Claims:
 - `instance-scoped-raft-peer-identity` — only valid instance peers can use the
   Raft transport, including through rotation and failover.
 - `serving-transport-tls` — the rustls-backed serving transport terminates
-  private ClusterIP TLS in-process, publishes a key-free trust anchor, and
-  admits no plaintext or unverified path.
+  private ClusterIP TLS in-process and admits no plaintext or unverified path.
 
 Verification:
 

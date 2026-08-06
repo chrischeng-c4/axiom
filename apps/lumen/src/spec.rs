@@ -186,7 +186,7 @@ Use the smallest topic that answers the task:
   `--namespace`), tearing it down when the command exits. Against an
   `auth: required` fleet, add `--client-sa` to mint a short-lived
   audience-bound token and `--ca-file` to verify the server against the
-  operator-published anchor; the token is attached by a loopback proxy, so it
+  externally distributed public CA; the token is attached by a loopback proxy, so it
   reaches no environment variable and no child process.
 - `lumen query index|search|duplicates|collections list` — one-shot query
   wrappers against a reachable node (`--url`/`LUMEN_URL`); request bodies match
@@ -258,22 +258,11 @@ in the certificate is a name this instance can impersonate, so no node name and
 no external name belongs there. While no valid leaf is active the port refuses
 connections rather than falling back to plaintext.
 
-Callers verify against the anchor alone. The operator republishes `ca.crt` as
-an owner-scoped ConfigMap — never the Secret, which carries `tls.key`, and a
-client that had to read the server's private key in order to verify the server
-has already lost the argument — and reports it once the material exists:
-
-```yaml
-status:
-  clientTrustBundle:
-    configMap: <instance>-client-ca
-    key: ca.crt
-```
-
-Mount that ConfigMap and point the client at it (`lumen connect --ca-file`, or
-`PrivateTrust` in a generated client). Adding it *alongside* the public roots
-is not equivalent: a public CA could then still vouch for the name, which is
-the thing a private trust domain exists to prevent.
+Callers verify against the anchor alone. The deployment administrator or
+external certificate platform distributes the public CA separately from the
+private-key-bearing serving Secret. Pass it to `lumen connect --ca-file`, or
+as `PrivateTrust` in a generated client; it replaces the public roots rather
+than joining them.
 
 `spec.peerTlsSecret` is a separate field for a separate decision — mutual,
 instance-scoped Raft identity on `:7374`. Sharing one Secret between the two
@@ -457,19 +446,10 @@ The names in `LUMEN_TLS_SERVER_NAMES` are the Service's own two spellings and
 nothing else. No node name, no external name: a name in the leaf is a name this
 instance can impersonate.
 
-Callers verify against the CA the operator republishes as a ConfigMap — the
-anchor alone, never the private key — reported on the CR once it exists:
-
-```yaml
-status:
-  clientTrustBundle:
-    configMap: <instance>-client-ca
-    key: ca.crt
-```
-
-Mount that ConfigMap and point your client at it. Adding it *alongside* the
-public roots is not equivalent: a public CA could then still vouch for the
-name, which is the thing a private trust domain exists to prevent.
+Callers verify against the public CA distributed separately by the deployment
+administrator or external certificate platform. Pass that PEM file with
+`lumen connect --ca-file`; it replaces the public roots and is never read from
+the private-key-bearing serving Secret.
 
 Peer traffic on `:7374` is a separate trust decision with its own material
 (`spec.peerTlsSecret`) — mutual, instance-scoped, and never interchangeable
@@ -812,8 +792,8 @@ where multiplexing and connection reuse dominate per-request overhead.
   ClusterIP whose TLS the serving pod terminates itself (ALPN `h2,
   http/1.1`). Nothing published sits in front of it, so the connection you
   authenticate is the connection lumen serves. Verify the server against the
-  CA the operator publishes at `status.clientTrustBundle`, in place of the
-  public roots; authenticate yourself with a short-lived, audience-bound
+  public CA distributed separately by the deployment administrator, in place of
+  the public roots; authenticate yourself with a short-lived, audience-bound
   Kubernetes ServiceAccount token, sent as the request's bearer credential,
   which lumen resolves through TokenReview and SubjectAccessReview. The exact
   header form and how to mint the token are `--topic auth`.
@@ -895,7 +875,7 @@ off shared networks. Clients need `LUMEN_URL` and nothing else.
 
 A production fleet is not reached this way. It answers only at
 `https://<instance>.<namespace>.svc:7373` inside the cluster, verified against
-the CA at `status.clientTrustBundle`, and each request carries a short-lived
+the public CA distributed separately by the deployment administrator, and each request carries a short-lived
 Kubernetes ServiceAccount token that lumen resolves through
 TokenReview/SubjectAccessReview. The bodies below are unchanged; the URL and
 the `Authorization` header are what differ. See `lumen llm --topic auth` and

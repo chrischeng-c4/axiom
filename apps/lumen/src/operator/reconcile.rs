@@ -714,21 +714,6 @@ fn check_peer_identity(lumen: &Lumen) -> Option<String> {
 /// verdict from the plan hook to the condition projection (#2876).
 const AUTH_DELEGATION_CONTEXT_KEY: &str = "authDelegationError";
 
-/// The reconcile-context key naming the ConfigMap this reconcile published the
-/// client trust anchor into (#3113 R4). Same channel and same reason as the
-/// two verdicts above: publishing is a Secret read plus an apply, and the
-/// status projection is I/O-free by contract.
-pub const CLIENT_TRUST_BUNDLE_CONTEXT_KEY: &str = "clientTrustBundle";
-
-/// Read that back out. Absent = nothing was published this reconcile, so no
-/// reference is claimed.
-fn published_client_trust_bundle(context: &serde_json::Value) -> Option<String> {
-    context
-        .get(CLIENT_TRUST_BUNDLE_CONTEXT_KEY)?
-        .as_str()
-        .map(str::to_string)
-}
-
 /// The same channel for [`check_peer_identity`]'s verdict (#2890). Same reason:
 /// the check is a Secret read, and `observe` is I/O-free by contract.
 ///
@@ -839,29 +824,6 @@ impl ManagedService for Lumen {
             "reshard": obs.reshard,
             "message": format!("{}/{} serving pods ready", obs.serving_ready, obs.desired),
         }})
-    }
-
-    /// #3113 R4: where a caller mounts the anchor, reported only for a
-    /// reconcile that actually put the ConfigMap in the plan.
-    ///
-    /// Derived from the context rather than from `spec.servingTlsSecret`,
-    /// because the two answer different questions: the spec says an anchor was
-    /// asked for, and this field says one exists. Publishing the reference off
-    /// the spec would name a ConfigMap that a missing or unreadable Secret
-    /// stopped anything from creating.
-    fn status_patch_with_context(
-        &self,
-        ready: &ReadyFacts,
-        context: &serde_json::Value,
-    ) -> serde_json::Value {
-        let mut patch = self.status_patch(ready);
-        if let Some(config_map) = published_client_trust_bundle(context) {
-            patch["status"]["clientTrustBundle"] = json!({
-                "configMap": config_map,
-                "key": render::CLIENT_TRUST_BUNDLE_KEY,
-            });
-        }
-        patch
     }
 
     /// #2601: the Kubernetes-convention convergence surface, derived from the
@@ -2357,39 +2319,6 @@ mod tests {
     fn complete_peer_material_is_no_finding_at_all() {
         let lumen = peer_test_lumen(Some("search-peer-tls"));
         assert_eq!(check_peer_identity(&lumen), None);
-    }
-
-    // ---- client trust-bundle publication (#3113 R4) ------------------------
-
-    fn serving_trust_lumen(secret: Option<&str>) -> Lumen {
-        let mut lumen = hpa_test_lumen("search", "acme", 1, 1);
-        lumen.spec.serving_tls_secret = secret.map(str::to_string);
-        lumen
-    }
-
-    /// The status reference follows the object, not the spec. A reconcile that
-    /// published nothing claims nothing — a caller told to mount a ConfigMap
-    /// that does not exist gets an empty volume and a verification failure it
-    /// cannot diagnose.
-    #[test]
-    fn the_status_reference_appears_only_when_something_was_published() {
-        let lumen = serving_trust_lumen(Some("search-serving-tls"));
-        let ready = ready_facts("search", 1);
-
-        let unpublished = lumen.status_patch_with_context(&ready, &json!({}));
-        assert!(
-            unpublished["status"].get("clientTrustBundle").is_none(),
-            "got: {unpublished}"
-        );
-
-        let published = lumen.status_patch_with_context(
-            &ready,
-            &json!({ CLIENT_TRUST_BUNDLE_CONTEXT_KEY: "search-client-ca" }),
-        );
-        assert_eq!(
-            published["status"]["clientTrustBundle"],
-            json!({ "configMap": "search-client-ca", "key": "ca.crt" })
-        );
     }
 
     #[test]

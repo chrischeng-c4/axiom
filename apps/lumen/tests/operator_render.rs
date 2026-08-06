@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use kube::api::ObjectMeta;
 use lumen::operator::crd::{
-    AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase, ReshardPolicy,
+    AuthMode, Autoscaling, LogFormat, LumenStatus, PlacementSpec, ReshardPhase, ReshardPolicy,
     ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
 use lumen::operator::render::{
@@ -2258,44 +2258,35 @@ fn serving_tls_never_renders_a_public_address() {
     }
 }
 
-/// R4: the published anchor is a ConfigMap name, derived from the instance and
-/// not from the Secret. A caller sent to the serving Secret for `ca.crt` would
-/// hold the server's private key in order to verify the server.
 #[test]
-fn the_client_trust_bundle_is_named_apart_from_the_serving_secret() {
-    let l = lumen("search", serving_tls_spec(Some("search-serving-tls")));
-
-    let name = lumen::operator::render::client_trust_bundle_name(&l);
-
-    assert_eq!(name, "search-client-ca");
-    assert_ne!(name, "search-serving-tls");
-    assert_eq!(lumen::operator::render::CLIENT_TRUST_BUNDLE_KEY, "ca.crt");
+fn historical_status_unknown_trust_bundle_field_is_ignored() {
+    let historical = serde_json::json!({
+        "phase": "Ready",
+        "observedGeneration": 7,
+        "clientTrustBundle": {"configMap": "search-client-ca", "key": "ca.crt"},
+    });
+    let status: LumenStatus = serde_json::from_value(historical)
+        .expect("historical status with removed field remains readable");
+    let serialized = serde_json::to_value(status).expect("status serializes");
+    assert_eq!(serialized["phase"], "Ready");
+    assert!(serialized.get("clientTrustBundle").is_none());
 }
 
-/// R4: the published object is an owner-scoped ConfigMap holding the anchor and
-/// nothing else. Owner-scoped so it is collected with the instance rather than
-/// outliving it as a trust anchor for a fleet that no longer exists.
 #[test]
-fn the_published_client_trust_bundle_is_an_owned_configmap_of_the_anchor_alone() {
-    let l = lumen("search", serving_tls_spec(Some("search-serving-tls")));
-    let anchor = "-----BEGIN CERTIFICATE-----\nanchor\n-----END CERTIFICATE-----\n";
-
-    let cm = lumen::operator::render::client_trust_bundle(&l, anchor);
-
-    assert_eq!(cm["kind"], "ConfigMap");
-    assert_eq!(cm["metadata"]["name"], "search-client-ca");
-    assert_eq!(cm["data"]["ca.crt"], anchor);
-    assert_eq!(
-        cm["data"].as_object().map(|d| d.len()),
-        Some(1),
-        "the anchor is the only thing a verifying caller needs: {}",
-        cm["data"]
-    );
-    assert_eq!(
-        cm["metadata"]["ownerReferences"][0]["kind"], "Lumen",
-        "an anchor that outlives its instance certifies a fleet that is gone: {}",
-        cm["metadata"]
-    );
+fn render_has_no_trust_anchor_publisher_or_writer_resources() {
+    let objs = render(&lumen(
+        "search",
+        serving_tls_spec(Some("search-serving-tls")),
+    ));
+    assert!(!objs.iter().any(|object| {
+        let kind = object["kind"].as_str().unwrap_or_default();
+        let name = object["metadata"]["name"].as_str().unwrap_or_default();
+        (kind == "ConfigMap" && name == "search-client-ca")
+            || ((kind == "Role" || kind == "RoleBinding") && name.contains("client-ca"))
+    }));
+    let serialized = serde_json::to_string(&objs).expect("rendered objects serialize");
+    assert!(!serialized.contains("clientTrustBundle"));
+    assert!(!serialized.contains("LUMEN_CLIENT_TRUST"));
 }
 
 /// The instance renderer lives in the binary, not the library — the same reason

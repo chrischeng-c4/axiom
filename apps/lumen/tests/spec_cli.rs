@@ -397,7 +397,7 @@ fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
         "LUMEN_URL=https://<instance>.<namespace>.svc:7373",
         "spec.servingTlsSecret",
         "LUMEN_TLS_SERVER_NAMES",
-        "clientTrustBundle",
+        "public CA",
         // Clients, generated and CLI.
         "--ca-file",
         "with_private_ca",
@@ -515,14 +515,14 @@ fn llm_deployment_states_the_private_clusterip_tls_contract() {
         "LUMEN_TLS_KEY",
         "LUMEN_TLS_CA",
         "LUMEN_TLS_SERVER_NAMES",
-        "clientTrustBundle",
+        "public CA",
         "--ca-file",
         "PrivateTrust",
         // The anchor is published without the key, and replaces the public
         // roots rather than joining them. Both are the whole point of a
         // private trust domain, and both are easy to get subtly wrong.
-        "which carries `tls.key`",
-        "alongside* the public roots",
+        "private-key-bearing serving Secret",
+        "replaces the public roots",
     ] {
         assert!(
             deployment.contains(needle),
@@ -848,10 +848,10 @@ fn llm_workflow_separates_production_tls_from_local_h2c() {
     for needle in [
         "https://<instance>.<namespace>.svc:7373",
         "http://localhost:7373",
-        "clientTrustBundle",
+        "public CA distributed separately",
         "TokenReview",
         "SubjectAccessReview",
-        "in place of the\n  public roots",
+        "in place of\n  the public roots",
     ] {
         assert!(
             workflow.contains(needle),
@@ -1004,7 +1004,7 @@ fn llm_quickstart_is_a_copy_paste_end_to_end() {
     }
     for needle in [
         "https://<instance>.<namespace>.svc:7373",
-        "clientTrustBundle",
+        "public CA distributed separately",
         "TokenReview",
     ] {
         assert!(
@@ -1258,7 +1258,7 @@ fn dx_topics_teach_the_private_clusterip_tls_contract() {
     let authenticate = md("authenticate");
     for needle in [
         "https://<instance>.<namespace>.svc:7373",
-        "status.clientTrustBundle",
+        "public CA",
         "in place of the public roots",
     ] {
         assert!(
