@@ -1,6 +1,8 @@
 //! Target verification profiles and pure target verdict evaluation (#3349).
 
-use crate::cli::change_lifecycle::{ArtifactKind, ChangeLifecycle};
+use crate::cli::change_lifecycle::{
+    route_failure, ArtifactKind, ChangeLifecycle, FailureOwnership, NextObligation,
+};
 
 /// Known EC verification dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -213,13 +215,92 @@ pub fn decide_target_verdict(
     }
 }
 
+/// Pure routed target verdict outcome (#3349).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetVerdictRouting {
+    pub obligation: Option<NextObligation>,
+    pub failure_ownership: Option<FailureOwnership>,
+    pub blocked: bool,
+    pub retryable: bool,
+    pub required_declaration: Option<String>,
+}
+
+fn failure_ownership_priority(ownership: FailureOwnership) -> u8 {
+    match ownership {
+        FailureOwnership::Contract => 1,
+        FailureOwnership::Design => 2,
+        FailureOwnership::Implementation => 3,
+        FailureOwnership::Infrastructure => 4,
+        FailureOwnership::WiDrift => 5,
+    }
+}
+
+/// Route a red target verdict to exactly one failure owner and obligation.
+pub fn route_target_verdict(
+    lifecycle: &ChangeLifecycle,
+    verdict: &TargetVerdict,
+    declared_failures: &std::collections::BTreeMap<String, FailureOwnership>,
+) -> Option<TargetVerdictRouting> {
+    if verdict.is_green() {
+        return None;
+    }
+
+    let mut ownerships = Vec::new();
+    for dim in &verdict.failing_dimensions {
+        if let Some(&ownership) = declared_failures.get(dim) {
+            ownerships.push(ownership);
+        }
+    }
+
+    if ownerships.is_empty() {
+        return Some(TargetVerdictRouting {
+            obligation: None,
+            failure_ownership: None,
+            blocked: false,
+            retryable: false,
+            required_declaration: Some(
+                "declared ownership for failing dimension required to route verdict".to_string(),
+            ),
+        });
+    }
+
+    ownerships.sort_by_key(|&o| failure_ownership_priority(o));
+    let winning_ownership = ownerships[0];
+
+    let obligation = route_failure(winning_ownership, &lifecycle.slug, &lifecycle.next.command);
+    let (blocked, retryable) = match winning_ownership {
+        FailureOwnership::Infrastructure => (true, true),
+        _ => (false, false),
+    };
+
+    Some(TargetVerdictRouting {
+        obligation: Some(obligation),
+        failure_ownership: Some(winning_ownership),
+        blocked,
+        retryable,
+        required_declaration: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::change_lifecycle::{
-        ActiveDigestTuple, ArtifactKind, ArtifactRevision, EvidenceBinding,
+        ActiveDigestTuple, ArtifactKind, ArtifactRevision, EvidenceBinding, OwnerVocabulary,
     };
     use std::collections::BTreeMap;
+
+    fn route_target_verdict_with_slice(
+        lifecycle: &ChangeLifecycle,
+        verdict: &TargetVerdict,
+        declared_failures: &[(&str, FailureOwnership)],
+    ) -> Option<TargetVerdictRouting> {
+        let map: std::collections::BTreeMap<String, FailureOwnership> = declared_failures
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect();
+        route_target_verdict(lifecycle, verdict, &map)
+    }
 
     fn make_revision(kind: ArtifactKind, id: &str, digest: &str) -> ArtifactRevision {
         ArtifactRevision {
@@ -524,6 +605,340 @@ mod tests {
         assert!(
             !r10.contains("bound to a revision that is no longer active"),
             "reason must not report stale binding for unpermitted dimension: {r10}"
+        );
+    }
+
+    #[test]
+    fn revisioned_change_wi_verdict_routing() {
+        // Row 1: CB verdict whose only red dimension is behavior, declared contract-owned -> owner ec, command aw ec check
+        let mut lc_row1 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        lc_row1.next = NextObligation {
+            command: "aw cb check".to_string(),
+            owner: OwnerVocabulary::Cb,
+        };
+        let tuple_row1 = lc_row1.active_digest_tuple();
+        add_evidence(&mut lc_row1, "behavior", false, tuple_row1.clone());
+        add_evidence(&mut lc_row1, "efficiency", true, tuple_row1.clone());
+        add_evidence(&mut lc_row1, "security", true, tuple_row1.clone());
+        add_evidence(&mut lc_row1, "stability", true, tuple_row1.clone());
+
+        let v1 = decide_target_verdict(&lc_row1, VerificationTarget::Cb);
+        assert!(!v1.is_green());
+        assert_eq!(v1.failing_dimensions, vec!["behavior"]);
+
+        let r1 = route_target_verdict_with_slice(
+            &lc_row1,
+            &v1,
+            &[("behavior", FailureOwnership::Contract)],
+        )
+        .expect("red verdict must yield routed outcome");
+        assert_eq!(r1.obligation.as_ref().unwrap().owner, OwnerVocabulary::Ec);
+        assert_eq!(r1.obligation.as_ref().unwrap().command, "aw ec check");
+
+        // Row 2: identical CB verdict with identical red behavior dimension, declared implementation-owned -> owner cb, command aw cb check
+        let mut lc_row2 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        lc_row2.next = NextObligation {
+            command: "aw cb check".to_string(),
+            owner: OwnerVocabulary::Cb,
+        };
+        let tuple_row2 = lc_row2.active_digest_tuple();
+        add_evidence(&mut lc_row2, "behavior", false, tuple_row2.clone());
+        add_evidence(&mut lc_row2, "efficiency", true, tuple_row2.clone());
+        add_evidence(&mut lc_row2, "security", true, tuple_row2.clone());
+        add_evidence(&mut lc_row2, "stability", true, tuple_row2.clone());
+
+        let v2 = decide_target_verdict(&lc_row2, VerificationTarget::Cb);
+        assert_eq!(
+            v1, v2,
+            "lifecycles and verdicts for row 1 and row 2 must be identical"
+        );
+
+        let r2 = route_target_verdict_with_slice(
+            &lc_row2,
+            &v2,
+            &[("behavior", FailureOwnership::Implementation)],
+        )
+        .expect("red verdict must yield routed outcome");
+        assert_eq!(r2.obligation.as_ref().unwrap().owner, OwnerVocabulary::Cb);
+        assert_eq!(r2.obligation.as_ref().unwrap().command, "aw cb check");
+        assert_ne!(
+            r1, r2,
+            "row 1 and row 2 outcomes must differ by declared failure owner"
+        );
+
+        // Row 3: CB verdict whose only red dimension is stability, declared contract-owned -> same outcome as row 1 (ec, aw ec check)
+        let mut lc_row3 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        lc_row3.next = NextObligation {
+            command: "aw cb check".to_string(),
+            owner: OwnerVocabulary::Cb,
+        };
+        let tuple_row3 = lc_row3.active_digest_tuple();
+        add_evidence(&mut lc_row3, "behavior", true, tuple_row3.clone());
+        add_evidence(&mut lc_row3, "efficiency", true, tuple_row3.clone());
+        add_evidence(&mut lc_row3, "security", true, tuple_row3.clone());
+        add_evidence(&mut lc_row3, "stability", false, tuple_row3.clone());
+
+        let v3 = decide_target_verdict(&lc_row3, VerificationTarget::Cb);
+        assert!(!v3.is_green());
+        assert_eq!(v3.failing_dimensions, vec!["stability"]);
+
+        let r3 = route_target_verdict_with_slice(
+            &lc_row3,
+            &v3,
+            &[("stability", FailureOwnership::Contract)],
+        )
+        .expect("red verdict must yield routed outcome");
+        assert_eq!(r3.obligation.as_ref().unwrap().owner, OwnerVocabulary::Ec);
+        assert_eq!(r3.obligation.as_ref().unwrap().command, "aw ec check");
+        assert_eq!(
+            r1.obligation, r3.obligation,
+            "row 3 must yield same obligation as row 1"
+        );
+
+        // Row 4: TD verdict whose only red dimension is security, declared design-owned -> owner td, command aw td check
+        let mut lc_row4 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            None,
+        );
+        lc_row4.next = NextObligation {
+            command: "aw td check".to_string(),
+            owner: OwnerVocabulary::Td,
+        };
+        let tuple_row4 = lc_row4.active_digest_tuple();
+        add_evidence(&mut lc_row4, "behavior", true, tuple_row4.clone());
+        add_evidence(&mut lc_row4, "security", false, tuple_row4.clone());
+
+        let v4 = decide_target_verdict(&lc_row4, VerificationTarget::Td);
+        assert!(!v4.is_green());
+        assert_eq!(v4.failing_dimensions, vec!["security"]);
+
+        let r4 = route_target_verdict_with_slice(
+            &lc_row4,
+            &v4,
+            &[("security", FailureOwnership::Design)],
+        )
+        .expect("red verdict must yield routed outcome");
+        assert_eq!(r4.obligation.as_ref().unwrap().owner, OwnerVocabulary::Td);
+        assert_eq!(r4.obligation.as_ref().unwrap().command, "aw td check");
+
+        // Row 5: (negative control) green CB verdict with all four dimensions green -> no owner and no failure obligation
+        let mut lc_row5 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let tuple_row5 = lc_row5.active_digest_tuple();
+        add_evidence(&mut lc_row5, "behavior", true, tuple_row5.clone());
+        add_evidence(&mut lc_row5, "efficiency", true, tuple_row5.clone());
+        add_evidence(&mut lc_row5, "security", true, tuple_row5.clone());
+        add_evidence(&mut lc_row5, "stability", true, tuple_row5.clone());
+
+        let v5 = decide_target_verdict(&lc_row5, VerificationTarget::Cb);
+        assert!(v5.is_green());
+
+        let r5 = route_target_verdict_with_slice(
+            &lc_row5,
+            &v5,
+            &[("behavior", FailureOwnership::Contract)],
+        );
+        assert!(
+            r5.is_none(),
+            "green verdict must produce no failure routing outcome"
+        );
+
+        // Row 6: CB verdict whose only red dimension is behavior, failure declared infrastructure-owned, current command aw cb check
+        let mut lc_row6 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        lc_row6.next = NextObligation {
+            command: "aw cb check".to_string(),
+            owner: OwnerVocabulary::Cb,
+        };
+        let tuple_row6 = lc_row6.active_digest_tuple();
+        add_evidence(&mut lc_row6, "behavior", false, tuple_row6.clone());
+        add_evidence(&mut lc_row6, "efficiency", true, tuple_row6.clone());
+        add_evidence(&mut lc_row6, "security", true, tuple_row6.clone());
+        add_evidence(&mut lc_row6, "stability", true, tuple_row6.clone());
+
+        let v6 = decide_target_verdict(&lc_row6, VerificationTarget::Cb);
+        assert!(!v6.is_green());
+
+        let r6 = route_target_verdict_with_slice(
+            &lc_row6,
+            &v6,
+            &[("behavior", FailureOwnership::Infrastructure)],
+        )
+        .expect("red verdict must yield routed outcome");
+        assert_eq!(r6.obligation.as_ref().unwrap().command, "aw cb check");
+        assert_eq!(r6.obligation.as_ref().unwrap().owner, OwnerVocabulary::Cb);
+        assert!(r6.blocked, "infrastructure outcome must be marked blocked");
+        assert!(
+            r6.retryable,
+            "infrastructure outcome must be marked retryable"
+        );
+        assert_ne!(
+            r6, r2,
+            "infrastructure outcome must not equal implementation outcome r2"
+        );
+
+        // Row 7: CB verdict with two red dimensions whose declared owners differ, routed in order then in reverse order
+        let mut lc_row7_a = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        lc_row7_a.next = NextObligation {
+            command: "aw cb check".to_string(),
+            owner: OwnerVocabulary::Cb,
+        };
+        let tuple_row7_a = lc_row7_a.active_digest_tuple();
+        add_evidence(&mut lc_row7_a, "behavior", false, tuple_row7_a.clone());
+        add_evidence(&mut lc_row7_a, "efficiency", false, tuple_row7_a.clone());
+        add_evidence(&mut lc_row7_a, "security", true, tuple_row7_a.clone());
+        add_evidence(&mut lc_row7_a, "stability", true, tuple_row7_a.clone());
+
+        let v7_a = decide_target_verdict(&lc_row7_a, VerificationTarget::Cb);
+        assert!(!v7_a.is_green());
+
+        let declared_7 = [
+            ("behavior", FailureOwnership::Contract),
+            ("efficiency", FailureOwnership::Implementation),
+        ];
+        let r7_a = route_target_verdict_with_slice(&lc_row7_a, &v7_a, &declared_7)
+            .expect("red verdict must yield routed outcome");
+
+        let mut lc_row7_b = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        lc_row7_b.next = NextObligation {
+            command: "aw cb check".to_string(),
+            owner: OwnerVocabulary::Cb,
+        };
+        let tuple_row7_b = lc_row7_b.active_digest_tuple();
+        add_evidence(&mut lc_row7_b, "efficiency", false, tuple_row7_b.clone());
+        add_evidence(&mut lc_row7_b, "behavior", false, tuple_row7_b.clone());
+        add_evidence(&mut lc_row7_b, "security", true, tuple_row7_b.clone());
+        add_evidence(&mut lc_row7_b, "stability", true, tuple_row7_b.clone());
+
+        let v7_b = decide_target_verdict(&lc_row7_b, VerificationTarget::Cb);
+        assert!(!v7_b.is_green());
+
+        let r7_b = route_target_verdict_with_slice(&lc_row7_b, &v7_b, &declared_7)
+            .expect("red verdict must yield routed outcome");
+
+        assert_eq!(r7_a.obligation.as_ref().unwrap().owner, OwnerVocabulary::Ec);
+        assert_eq!(r7_b.obligation.as_ref().unwrap().owner, OwnerVocabulary::Ec);
+        assert_eq!(
+            r7_a, r7_b,
+            "verdict routing must be invariant under evidence ordering"
+        );
+
+        // Row 8: (negative control) row 1 lifecycle cloned before routing and compared after
+        let lc_row8 = lc_row1.clone();
+        let _ = route_target_verdict_with_slice(
+            &lc_row1,
+            &v1,
+            &[("behavior", FailureOwnership::Contract)],
+        );
+        assert_eq!(lc_row1, lc_row8, "lifecycle must be unchanged by routing");
+
+        // Row 9: red CB verdict identical to row 2's, routed with no declared ownership for failing behavior dimension
+        let r9 = route_target_verdict_with_slice(&lc_row2, &v2, &[])
+            .expect("red verdict must yield routed outcome");
+        assert!(
+            r9.obligation.is_none(),
+            "unattributed outcome must carry no obligation/owner"
+        );
+        assert!(
+            r9.failure_ownership.is_none(),
+            "unattributed outcome must carry no failure ownership"
+        );
+        assert_ne!(
+            r9, r2,
+            "unattributed outcome r9 must not equal row 2 outcome r2"
+        );
+        assert!(
+            r9.required_declaration.is_some(),
+            "unattributed outcome must name required declaration"
+        );
+
+        // Row 10: CB verdict red only because required dimensions have no evidence at all (failing_dimensions empty, missing_dimensions naming them)
+        let mut lc_row10 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let tuple_row10 = lc_row10.active_digest_tuple();
+        add_evidence(&mut lc_row10, "behavior", true, tuple_row10.clone());
+        add_evidence(&mut lc_row10, "security", true, tuple_row10.clone());
+
+        let v10 = decide_target_verdict(&lc_row10, VerificationTarget::Cb);
+        assert!(!v10.is_green());
+        assert!(v10.failing_dimensions.is_empty());
+        assert_eq!(v10.missing_dimensions, vec!["efficiency", "stability"]);
+
+        let r10 = route_target_verdict_with_slice(&lc_row10, &v10, &[])
+            .expect("red verdict must yield routed outcome");
+        assert_eq!(
+            r9, r10,
+            "row 10 missing-evidence unattributed outcome must equal row 9 unattributed outcome"
+        );
+        assert_ne!(
+            r10, r2,
+            "unattributed outcome r10 must not equal row 2 outcome r2"
+        );
+
+        // Row 11: row 9 verdict routed with declared ownership naming security (a green dimension in this verdict)
+        let r11 = route_target_verdict_with_slice(
+            &lc_row2,
+            &v2,
+            &[("security", FailureOwnership::Design)],
+        )
+        .expect("red verdict must yield routed outcome");
+        assert_eq!(
+            r9, r11,
+            "row 11 declaration for green dimension must yield same unattributed outcome as row 9"
+        );
+
+        // Row 12: (negative control) row 2 input - one failing dimension with declared owner for that dimension
+        let r12 = route_target_verdict_with_slice(
+            &lc_row2,
+            &v2,
+            &[("behavior", FailureOwnership::Implementation)],
+        )
+        .expect("red verdict must yield routed outcome");
+        assert_eq!(r12, r2, "row 12 outcome must be unchanged from row 2");
+        assert_eq!(r12.obligation.as_ref().unwrap().owner, OwnerVocabulary::Cb);
+        assert_eq!(r12.obligation.as_ref().unwrap().command, "aw cb check");
+        assert_eq!(
+            r12.failure_ownership,
+            Some(FailureOwnership::Implementation)
         );
     }
 }
