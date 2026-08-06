@@ -98,6 +98,19 @@ The loop is `worktree → doctor → scaffold → (fill) → lint → snapshot �
 `verify`. `discard` releases the round. Exit codes are `0` clean, `1` VOID, `2`
 findings for the controller to adjudicate.
 
+Every verb returns in seconds except `dispatch` and `resume`, which run for the
+profile's whole `timeout`. Start those two with the Bash tool's
+`run_in_background`, which keeps the process tracked and wakes the controller
+when it exits. Do not background them by hand with `nohup ... &`: that returns
+immediately, orphans the run from the harness, and then needs a second polling
+watcher to notice an exit the harness would have reported for free.
+
+Size `timeout` to the round rather than reusing the previous one. A worker cut
+off at its deadline exits non-zero with its work already on disk and no
+`## EXEC REPORT`, so the round reads as a failure while the candidate is
+complete. `dispatch` names that case separately from a denial; when it does,
+read the worktree diff and run the gate before deciding whether to redispatch.
+
 For an unticketed one-shot profile, use its explicit unique `RUN_ID` in place
 of `ISSUE` for `snapshot`, `dispatch`, and `verify`. Never call `resume` for a
 one-shot run. The dispatcher rejects both a resumed one-shot and a second
