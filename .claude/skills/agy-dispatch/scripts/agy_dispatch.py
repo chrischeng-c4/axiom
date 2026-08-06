@@ -2459,6 +2459,7 @@ def prove(profile: dict, task_key: str, label: str) -> None:
         "label": label,
         "command": command,
         "exit_code": result.returncode,
+        "compiled": "could not compile" not in output,
         "tree_digest": candidate_tree_digest(profile),
         "output_tail": output.splitlines()[-20:],
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -2467,6 +2468,8 @@ def prove(profile: dict, task_key: str, label: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(record, indent=2) + "\n")
     print(f"exit  : {result.returncode}")
+    if not record["compiled"]:
+        print("note  : did not compile; this red says nothing about behaviour")
     print(f"digest: {record['tree_digest'][:12]}")
     print(f"saved : {path}")
 
@@ -2515,6 +2518,33 @@ def proof_findings(profile: dict, task_key: str) -> list[str]:
     return findings
 
 
+def proof_notes(profile: dict, task_key: str) -> list[str]:
+    """What the recorded proofs do not establish, short of blocking acceptance.
+
+    A mutant that failed to *compile* is red for a reason that has nothing to
+    do with behaviour: the symbol the gate names did not exist yet. For a round
+    introducing a new function that is the only answer the revert can give, so
+    it cannot block acceptance -- but stored as an ordinary non-zero exit it
+    reads exactly like a behavioural kill, which is the false confidence this
+    note exists to deny. The remedy is a sweep whose mutants keep the product
+    compiling, so that a specific row is what goes red.
+    """
+    notes = []
+    record = {}
+    for label in PROOF_LABELS:
+        path = proof_path(profile, task_key, label)
+        if not path.exists():
+            return notes
+        record[label] = json.loads(path.read_text())
+    if record["mutant"].get("compiled") is False:
+        notes.append(
+            "the `mutant` proof did not compile, so the gate is shown to need "
+            "the new symbol, not to measure its behaviour; discrimination "
+            "rests on a sweep whose mutants still compile"
+        )
+    return notes
+
+
 def accept(profile: dict, task_key: str) -> None:
     """Commit the candidate on its own branch and name the integration step.
 
@@ -2535,6 +2565,8 @@ def accept(profile: dict, task_key: str) -> None:
                 "discriminate:\n"
                 + "\n".join(f"  - {item}" for item in unproven)
             )
+        for note in proof_notes(profile, task_key):
+            print(f"note: {note}")
     subprocess.run(
         ["git", "-C", str(root), "add", "--", *touched],
         check=True,

@@ -388,6 +388,40 @@ touched paths with `!` on anything outside `allowed_repo_writes`, every finding,
 exits `2` if there is a finding. Read it before deciding anything; the worker's
 report is a claim about the diff, not the diff.
 
+### Measure the gate before you trust it
+
+A gate nobody has seen fail proves nothing: a test written against the
+implementation that was just produced passes by construction. So a
+bounded-write round cannot be accepted without a proof pair, and `accept`
+names what is missing.
+
+`prove` reverts nothing. It runs the round's gate over the worktree exactly as
+it stands and files the result under the label you give it, which means the
+reverting is yours: restore the product change to the round's baseline while
+keeping the worker's tests, record `mutant`, restore the candidate, record
+`candidate`. `accept` then refuses a mutant that passed, a candidate that
+failed, two proofs over an identical tree, and a candidate proof taken before
+the tree moved again.
+
+That pair is a floor, not a ceiling. When the round introduces a new symbol,
+the reverted tree cannot compile, so the gate goes red because the function it
+names does not exist yet — nothing about behaviour was measured. That is the
+only answer the revert can give for such a round, so it does not block; `prove`
+and `accept` both say so instead of letting a build failure read like a
+behavioural kill.
+
+Where discrimination actually comes from is a sweep whose mutants keep the
+product compiling: one single-defect mutant per rule the oracle claims, each
+expected to be killed by a named row. A mutant that fails to build is a badly
+written mutant, not a kill. Apply and restore by writing the whole file — a
+copy that preserves an older mtime lets cargo skip the rebuild, which turns the
+mutant into a false kill and the next candidate run into a false green. A
+survivor is a finding against the round's *evidence*, not against the product:
+the code may be right and simply have no row that would notice if it stopped
+being right. Close it by authoring the missing row in a round, never by editing
+the test yourself — the controller writing the evidence it then judges is the
+same failure the oracle freeze exists to prevent.
+
 Three outcomes:
 
 - **Take it.** `accept` stages exactly the touched paths and commits them on the
