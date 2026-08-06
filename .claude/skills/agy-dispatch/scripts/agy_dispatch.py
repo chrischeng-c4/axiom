@@ -456,8 +456,8 @@ def split_rule_tokens(pattern: str) -> list[str]:
     return tokens
 
 
-def command_rule_matches(rule: str, command: str) -> bool:
-    match = re.fullmatch(r"command\((.*)\)", rule)
+def rule_matches(rule: str, command: str, prefix: str = "command") -> bool:
+    match = re.fullmatch(rf"{prefix}\((.*)\)", rule)
     if not match:
         return False
     pattern = match.group(1)
@@ -478,6 +478,48 @@ def command_rule_matches(rule: str, command: str) -> bool:
             if rule_token != command_token:
                 return False
     return True
+
+
+def command_rule_matches(rule: str, command: str) -> bool:
+    return rule_matches(rule, command, "command")
+
+
+def unsandboxed_rules(allow: list[str]) -> list[str]:
+    return [rule for rule in allow if re.fullmatch(r"unsandboxed\(.*\)", rule)]
+
+
+def runs_unsandboxed(
+    project_surface: dict[str, list[str]],
+    global_surface: dict[str, list[str]],
+    command: str,
+) -> bool:
+    return any(
+        rule_matches(rule, command, "unsandboxed")
+        for surface in (project_surface, global_surface)
+        for rule in unsandboxed_rules(surface.get("allow", []))
+    )
+
+
+def inert_unsandboxed_rules(surface: dict[str, list[str]]) -> list[str]:
+    """`unsandboxed(P)` rules with no `command(P)` twin, which can never fire.
+
+    Sandbox escape is only ever consulted after a command has already resolved
+    to `allow`. An `unsandboxed` rule whose pattern no `command` rule admits is
+    therefore inert: the command stops at `ask` and the worker blocks on a
+    prompt no one is there to answer, while the profile reads as though the
+    round granted it. This is decidable from the two lists alone, unlike the
+    opposite direction -- whether a given command *needs* the escape is a
+    judgement about network and out-of-tree writes, so `doctor` reports that as
+    data rather than guessing at it.
+    """
+    allow = surface.get("allow", [])
+    inert = []
+    for rule in unsandboxed_rules(allow):
+        pattern = re.fullmatch(r"unsandboxed\((.*)\)", rule).group(1)
+        twin = f"command({pattern})"
+        if twin not in allow:
+            inert.append(rule)
+    return sorted(inert)
 
 
 def permission_decision(
@@ -566,6 +608,13 @@ def project_policy_report(profile: dict) -> dict:
             "Project scope or explicitly revise the project policy"
         )
 
+    inert_escapes = inert_unsandboxed_rules(actual)
+    if inert_escapes:
+        blockers.append(
+            f"{len(inert_escapes)} unsandboxed rule(s) have no `command(...)` "
+            "twin and can never fire: " + ", ".join(inert_escapes)
+        )
+
     for expected_decision in ("allow", "deny"):
         for command in profile["task_commands"].get(expected_decision, []):
             decision, rule = permission_decision(actual, global_surface, command)
@@ -575,6 +624,12 @@ def project_policy_report(profile: dict) -> dict:
                     "expected": expected_decision,
                     "decision": decision,
                     "matched_rule": rule,
+                    # Reported, never blocked: whether a command needs to leave
+                    # the sandbox depends on whether it touches the network or
+                    # writes outside the worktree, which the profile cannot
+                    # state. A sandboxed `cargo` is the failure that reads like
+                    # a product defect, so the controller sees this per command.
+                    "unsandboxed": runs_unsandboxed(actual, global_surface, command),
                 }
             )
             if decision != expected_decision:

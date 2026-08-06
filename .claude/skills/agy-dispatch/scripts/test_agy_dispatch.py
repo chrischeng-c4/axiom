@@ -332,6 +332,88 @@ class DispatchControllerTest(unittest.TestCase):
             ("deny", "command(git push)"),
         )
 
+    def test_unsandboxed_rule_without_command_twin_is_inert(self) -> None:
+        surface = agy_dispatch.normalize_permission_surface(
+            {
+                "allow": [
+                    "command(cargo build -p x --lib)",
+                    "unsandboxed(cargo build -p x --lib)",
+                    "unsandboxed(cargo test -p x --lib gate)",
+                ],
+                "deny": [],
+                "ask": [],
+            }
+        )
+        self.assertEqual(
+            agy_dispatch.inert_unsandboxed_rules(surface),
+            ["unsandboxed(cargo test -p x --lib gate)"],
+        )
+        # A sandbox escape is consulted only after the command already resolved
+        # to allow, so the unpaired rule can never fire on its own.
+        empty = agy_dispatch.normalize_permission_surface({})
+        self.assertEqual(
+            agy_dispatch.permission_decision(
+                surface, empty, "cargo test -p x --lib gate"
+            ),
+            ("ask", None),
+        )
+
+    def test_fully_paired_escape_surface_reports_nothing_inert(self) -> None:
+        surface = agy_dispatch.normalize_permission_surface(
+            {
+                "allow": [
+                    "command(rustfmt --edition 2021)",
+                    "command(cargo build -p x --lib)",
+                    "unsandboxed(cargo build -p x --lib)",
+                ],
+                "deny": [],
+                "ask": [],
+            }
+        )
+        self.assertEqual(agy_dispatch.inert_unsandboxed_rules(surface), [])
+
+    def test_task_command_check_reports_sandbox_escape_per_command(self) -> None:
+        profile = self.profile(self.repo_a, "project-a", "1")
+        profile["project_permissions"] = {
+            "allow": [
+                "command(rustfmt --edition 2021)",
+                "command(cargo build -p x --lib)",
+                "unsandboxed(cargo build -p x --lib)",
+            ],
+            "deny": [],
+            "ask": [],
+        }
+        profile["task_commands"] = {
+            "allow": [
+                "rustfmt --edition 2021 src/a.rs",
+                "cargo build -p x --lib",
+            ],
+            "deny": [],
+        }
+        project_path = self.project_dir / "project-a.json"
+        project = json.loads(project_path.read_text())
+        project["permissionGrants"]["permissionGrants"] = (
+            agy_dispatch.normalize_permission_surface(
+                profile["project_permissions"]
+            )
+        )
+        project_path.write_text(json.dumps(project))
+        report = agy_dispatch.project_policy_report(profile)
+        escapes = {
+            check["command"]: check["unsandboxed"]
+            for check in report["task_command_checks"]
+        }
+        self.assertEqual(
+            escapes,
+            {
+                "rustfmt --edition 2021 src/a.rs": False,
+                "cargo build -p x --lib": True,
+            },
+        )
+        # Reported, not blocked: whether a command needs the escape is a
+        # judgement the profile cannot state.
+        self.assertEqual(report["blockers"], [])
+
     def test_permission_digest_detects_midrun_project_drift(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "1")
         snapshot = {
