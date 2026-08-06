@@ -1435,6 +1435,53 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertIn("passed with the product change reverted", message)
         self.assertIn("identical tree", message)
 
+    def failing_to_compile_gate(self) -> dict:
+        """A gate whose red is a build failure rather than a failed assertion."""
+        contract = self.contract_with_design_input()
+        # `sys.exit(str)` writes the message to stderr and exits non-zero.
+        contract["gate_command"] = (
+            "python3 -c \"import sys; sys.exit('error: could not compile it')\""
+        )
+        return contract
+
+    def test_prove_records_whether_the_gate_compiled(self) -> None:
+        """Exit code alone cannot tell a failed assertion from a build failure,
+        and the two are not the same evidence."""
+        profile = self.derive(self.profile_path(task_contract=self.failing_to_compile_gate()))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            agy_dispatch.prove(profile, "round-1", "mutant")
+        record = json.loads(
+            agy_dispatch.proof_path(profile, "round-1", "mutant").read_text()
+        )
+        self.assertNotEqual(record["exit_code"], 0)
+        self.assertFalse(record["compiled"])
+        self.assertIn("says nothing about behaviour", out.getvalue())
+
+    def test_accept_says_a_compile_error_mutant_measured_no_behaviour(self) -> None:
+        """A round that introduces a new symbol can only answer the revert with
+        a build failure, so this cannot block acceptance -- but recorded as an
+        ordinary non-zero exit it reads exactly like a behavioural kill."""
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        self.record_proofs(profile, worker)
+        path = agy_dispatch.proof_path(profile, "round-1", "mutant")
+        record = json.loads(path.read_text())
+        record["compiled"] = False
+        path.write_text(json.dumps(record))
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            agy_dispatch.accept(profile, "round-1")
+        self.assertIn("did not compile", out.getvalue())
+        self.assertIn("still compile", out.getvalue())
+
+    def test_a_compiling_mutant_earns_no_note(self) -> None:
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        self.record_proofs(profile, worker)
+        self.assertEqual(agy_dispatch.proof_notes(profile, "round-1"), [])
+
     def test_accept_refuses_when_the_tree_moved_after_the_proof(self) -> None:
         profile = self.derive(self.profile_path())
         worker = Path(profile["worktree"]["path"])
