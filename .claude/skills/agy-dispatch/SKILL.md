@@ -261,12 +261,25 @@ The profile separates two contracts:
   `verify` audits AGY's post-snapshot command requests from the conversation
   database and voids any command not copied exactly from this allowlist.
 
-Keep `project_permissions.require_empty_global=true` unless the project has a
-reviewed reason to inherit Global rules. Project, Shared, and Global rules are
-additive, and deny/ask rules can override an allow; an unnoticed Global rule
-therefore destroys project isolation. `doctor` blocks on live Project drift,
-inherited Global rules, unresolved ticket commands, or a project/root mismatch.
-It never changes any permission surface.
+Project, Shared, and Global rules are additive, and deny/ask rules can override
+an allow, so an unnoticed Global rule destroys project isolation. `doctor`
+blocks on live Project drift, an inherited Global rule that widens the worker
+past the declared surface, an unresolved ticket command, an inert sandbox
+escape, or a project/root mismatch. It never changes any permission surface.
+Add `project_permissions.require_empty_global=true` by hand for a round that
+wants to refuse *any* inherited Global rule, including the harmless denies most
+setups carry; the generator leaves it off, because a flag the controller flips
+off every round teaches it to flip past the finding standing next to it.
+
+A command runs sandboxed unless a paired `unsandboxed(...)` allow rule matches
+it. Escape is consulted only after the command has already resolved to `allow`,
+so an `unsandboxed(P)` rule with no `command(P)` twin can never fire and
+`doctor` blocks on it. The opposite direction is a judgement the profile cannot
+state — whether a command needs the network or writes outside the worktree —
+so `doctor` reports `unsandboxed` per ticket command instead of guessing.
+`cargo` needs it; `rustfmt` on a file in the worktree does not. A sandboxed
+`cargo` fails in a way that reads like a product defect, so check that column
+before dispatching a round with a build gate.
 
 Project rules use AGY's token-prefix matching, so a reusable
 `command(rg)` Project allow can cover multiple tickets. Ticket commands remain
