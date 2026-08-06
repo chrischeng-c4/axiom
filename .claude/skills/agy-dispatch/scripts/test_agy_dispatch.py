@@ -1107,6 +1107,47 @@ class DerivedWorktreeTest(unittest.TestCase):
             agy_dispatch.load_profile(str(path))
         self.assertIn("inject_prompt_file is not a file", str(caught.exception))
 
+    def test_grant_refuses_a_gate_the_declared_surface_would_still_ask_for(
+        self,
+    ) -> None:
+        """A round's profile is derived from the previous round's and the gate
+        command is what changes; the hand-maintained grant list is what gets
+        left behind."""
+        path = self.profile_path(task_contract=self.contract_with_design_input())
+        self.derive(path)
+        loaded = json.loads(path.read_text())
+        loaded["task_commands"]["allow"] = ["cargo test --lib this_rounds_gate"]
+        path.write_text(json.dumps(loaded))
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.grant(
+                agy_dispatch.load_profile(str(path), validate_design=False)
+            )
+        self.assertIn("cargo test --lib this_rounds_gate", str(caught.exception))
+        self.assertIn("do not cover", str(caught.exception))
+
+    def test_grant_reports_nothing_to_change_only_when_the_gate_is_covered(
+        self,
+    ) -> None:
+        """The stale-grant bug reached the worker through the early return, so
+        the coverage check has to run before it."""
+        path = self.profile_path(task_contract=self.contract_with_design_input())
+        self.derive(path)
+        loaded = json.loads(path.read_text())
+        loaded["task_commands"]["allow"] = ["cargo test --lib this_rounds_gate"]
+        loaded["project_permissions"]["allow"].append(
+            "command(cargo test --lib this_rounds_gate)"
+        )
+        path.write_text(json.dumps(loaded))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            agy_dispatch.grant(
+                agy_dispatch.load_profile(str(path), validate_design=False)
+            )
+        self.assertIn(
+            "command(cargo test --lib this_rounds_gate)",
+            self.project_grants()["allow"],
+        )
+
     def test_grant_refuses_without_a_restorable_baseline(self) -> None:
         """Widening a Project that `discard` cannot narrow again is how a
         round-local grant becomes permanent by accident."""

@@ -2068,6 +2068,27 @@ def restore_grants_baseline(state_dir: Path, project_id: str) -> dict | None:
     }
 
 
+def uncovered_task_commands(profile: dict, surface: dict[str, list[str]]) -> list[str]:
+    """Which `task_commands` a permission surface would still refuse.
+
+    A round's profile is normally derived from the previous round's, and the
+    gate command is the one field that always changes. `project_permissions` is
+    a second, hand-maintained statement of the same surface, so the derived
+    profile keeps granting the *previous* round's gate. `grant` then compares
+    live grants against those stale declarations, finds them equal, and reports
+    "nothing to change" -- a green that reads as ready while the worker cannot
+    run the only command it is being judged on. Resolving through
+    `permission_decision`, the same function `doctor` uses, is deliberate: a
+    second coverage rule here would be the same defect one layer down.
+    """
+    global_surface = global_permission_surface()
+    return [
+        command
+        for command in profile["task_commands"].get("allow", [])
+        if permission_decision(surface, global_surface, command)[0] != "allow"
+    ]
+
+
 def grant(profile: dict) -> None:
     """Make the live Project grants match what this profile declares.
 
@@ -2086,6 +2107,17 @@ def grant(profile: dict) -> None:
             "could not restore the Project. Run `worktree` first."
         )
     declared = expected_project_surface(profile)
+    uncovered = uncovered_task_commands(profile, declared)
+    if uncovered:
+        raise SystemExit(
+            "the profile's `project_permissions` do not cover its own "
+            "`task_commands`, so installing them would leave the worker "
+            "unable to run:\n"
+            + "\n".join(f"  - {command}" for command in uncovered)
+            + "\n\nAdd `command(...)` (and `unsandboxed(...)` where the "
+            "command needs the network or writes outside the worktree) to "
+            "`project_permissions.allow`."
+        )
     project_path = project_path_by_id(project_id)
     project = json.loads(project_path.read_text())
     before = project_permission_surface(project)
