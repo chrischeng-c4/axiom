@@ -1016,6 +1016,39 @@ mod tests {
             "verdict routing must be invariant under evidence ordering"
         );
 
+        // Row 7 tie-break: same CB verdict, but declared owners are swapped so the first dimension in required order (behavior) carries lower-priority owner
+        let declared_7_swapped = [
+            ("behavior", FailureOwnership::Implementation),
+            ("efficiency", FailureOwnership::Contract),
+        ];
+        let r7_swapped_a = route_target_verdict_with_slice(&lc_row7_a, &v7_a, &declared_7_swapped)
+            .expect("red verdict must yield routed outcome");
+        let r7_swapped_b = route_target_verdict_with_slice(&lc_row7_b, &v7_b, &declared_7_swapped)
+            .expect("red verdict must yield routed outcome");
+
+        assert_eq!(
+            r7_swapped_a.obligation.as_ref().unwrap().owner,
+            OwnerVocabulary::Ec,
+            "higher-priority owner (Contract) must win regardless of required dimension order"
+        );
+        assert_eq!(
+            r7_swapped_a.failure_ownership,
+            Some(FailureOwnership::Contract)
+        );
+        assert_eq!(
+            r7_swapped_b.obligation.as_ref().unwrap().owner,
+            OwnerVocabulary::Ec,
+            "higher-priority owner (Contract) must win regardless of required dimension order"
+        );
+        assert_eq!(
+            r7_swapped_b.failure_ownership,
+            Some(FailureOwnership::Contract)
+        );
+        assert_eq!(
+            r7_swapped_a, r7_swapped_b,
+            "verdict routing with tie-break must be invariant under evidence ordering"
+        );
+
         // Row 8: (negative control) row 1 lifecycle cloned before routing and compared after
         let lc_row8 = lc_row1.clone();
         let _ = route_target_verdict_with_slice(
@@ -1035,6 +1068,14 @@ mod tests {
         assert!(
             r9.failure_ownership.is_none(),
             "unattributed outcome must carry no failure ownership"
+        );
+        assert!(
+            !r9.blocked,
+            "unattributed outcome must not be marked blocked"
+        );
+        assert!(
+            !r9.retryable,
+            "unattributed outcome must not be marked retryable"
         );
         assert_ne!(
             r9, r2,
