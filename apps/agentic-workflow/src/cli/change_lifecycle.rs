@@ -2731,4 +2731,187 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let dec8_row4 = decide_projection(&reloaded_lc4, &obs4);
         assert_eq!(dec8_row4, dec4);
     }
+
+    #[test]
+    fn reducer_evidence_eviction() {
+        use crate::cli::ec_verdict::{decide_target_verdict, VerificationTarget};
+
+        // Assemble starting lifecycle with 4 accepted revisions (WI, EC, TD, CB)
+        let mut start_lc = complete_lifecycle();
+        let starting_tuple = start_lc.active_digest_tuple();
+
+        // 8 passing evidence bindings: 4 commit verifiers + 4 dimension verifiers
+        let verifiers = [
+            "cb_test",
+            "cb_review",
+            "td_reconcile",
+            "ec_verify_cb",
+            "behavior",
+            "efficiency",
+            "security",
+            "stability",
+        ];
+        start_lc.evidence = verifiers
+            .iter()
+            .map(|v| EvidenceBinding {
+                verifier: v.to_string(),
+                bound_tuple: starting_tuple.clone(),
+                passed: true,
+                summary: format!("evidence for {v}"),
+            })
+            .collect();
+
+        let initial_evidence = start_lc.evidence.clone();
+        assert_eq!(initial_evidence.len(), 8);
+
+        // Row 1: Reduce starting lifecycle with an accepted CbChange for a new CB revision
+        let cb_candidate = artifact_revision(
+            ArtifactKind::Cb,
+            canonical_digest("cb-v2"),
+            expected_parent_set(&start_lc, ArtifactKind::Cb).expect("active CB parents"),
+            start_lc.epoch + 1,
+        );
+        let cb_change_event = LifecycleEvent {
+            event_id: event_id(&start_lc),
+            predecessor_id: start_lc.head_event_id.clone(),
+            kind: LifecycleEventKind::CbChange,
+            bound_tuple: candidate_tuple(&start_lc, &cb_candidate),
+            candidate_revision: cb_candidate.clone(),
+            next_command: "aw cb check".to_string(),
+            next_owner: OwnerVocabulary::Cb,
+        };
+        let res1 = reduce_event(&start_lc, cb_change_event);
+        assert!(
+            res1.accepted,
+            "Row 1 event must be accepted: {:?}",
+            res1.rejection_reason
+        );
+        let lc_row1 = res1.lifecycle;
+
+        assert!(
+            lc_row1.evidence.is_empty(),
+            "Row 1: returned evidence must be empty"
+        );
+        assert_eq!(
+            lc_row1.active_revisions[&ArtifactKind::Td],
+            start_lc.active_revisions[&ArtifactKind::Td],
+            "Row 1: active Td revision must be unchanged and still active"
+        );
+        assert!(
+            lc_row1.active_revisions[&ArtifactKind::Td].is_some(),
+            "Row 1: Td revision must still be active"
+        );
+        assert_eq!(
+            lc_row1.active_revisions[&ArtifactKind::Cb]
+                .as_ref()
+                .map(|r| &r.id),
+            Some(&cb_candidate.id),
+            "Row 1: active Cb revision must be the new candidate"
+        );
+        assert_eq!(
+            lc_row1.invalidations.len(),
+            start_lc.invalidations.len() + 1,
+            "Row 1: exactly one invalidation record must be appended"
+        );
+        let inv1 = lc_row1.invalidations.last().unwrap();
+        assert!(
+            inv1.invalidated_kinds.is_empty(),
+            "Row 1: invalidated_kinds must be empty"
+        );
+
+        // Row 2: Invalidation record appended in Row 1
+        let mut expected_verifiers = verifiers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        expected_verifiers.sort();
+        assert_eq!(
+            inv1.evicted_evidence_verifiers, expected_verifiers,
+            "Row 2: evicted_evidence_verifiers must name all eight verifiers"
+        );
+        assert_eq!(
+            inv1.evicted_evidence, initial_evidence,
+            "Row 2: evicted_evidence must carry all eight bindings"
+        );
+
+        // Row 3: Target verdict for Cb target on Row 1's lifecycle
+        let verdict_row3 = decide_target_verdict(&lc_row1, VerificationTarget::Cb);
+        assert!(
+            !verdict_row3.is_green(),
+            "Row 3: Cb verdict must not be green"
+        );
+        assert!(
+            verdict_row3.stale_dimensions.is_empty(),
+            "Row 3: stale_dimensions must be empty"
+        );
+        assert_eq!(
+            verdict_row3.missing_dimensions,
+            vec!["behavior", "efficiency", "security", "stability"],
+            "Row 3: missing_dimensions must name all four CB required dimensions"
+        );
+        assert_eq!(
+            verdict_row3.reason(),
+            Some("missing required dimension(s): behavior, efficiency, security, stability"),
+            "Row 3: reason must match exact missing dimensions string"
+        );
+
+        // Row 4: Starting lifecycle reduced with accepted WiChange, passed to decide_target_verdict for Td target
+        let res4 = fold_wi_update(&start_lc, "wi-v2", Some("wi-v1"));
+        assert!(
+            res4.accepted,
+            "Row 4: WiChange event must be accepted: {:?}",
+            res4.rejection_reason
+        );
+        let lc_row4 = res4.lifecycle;
+
+        assert!(
+            lc_row4.active_revisions[&ArtifactKind::Ec].is_none(),
+            "Row 4: Ec must be None"
+        );
+        assert!(
+            lc_row4.active_revisions[&ArtifactKind::Td].is_none(),
+            "Row 4: Td must be None"
+        );
+        assert!(
+            lc_row4.active_revisions[&ArtifactKind::Cb].is_none(),
+            "Row 4: Cb must be None"
+        );
+        assert!(lc_row4.evidence.is_empty(), "Row 4: evidence must be empty");
+
+        let verdict_row4 = decide_target_verdict(&lc_row4, VerificationTarget::Td);
+        assert!(
+            !verdict_row4.is_green(),
+            "Row 4: Td verdict must not be green"
+        );
+        assert!(
+            verdict_row4.stale_dimensions.is_empty(),
+            "Row 4: stale_dimensions must be empty"
+        );
+        assert_eq!(
+            verdict_row4.reason(),
+            Some("missing required dimension(s): behavior, security"),
+            "Row 4: reason must match exact missing Td dimensions string"
+        );
+
+        // Row 5: Negative control - starting lifecycle reduced with accepted CbCommit for already-active CB revision
+        let active_cb = start_lc.active_revisions[&ArtifactKind::Cb]
+            .clone()
+            .expect("active CB revision present");
+        let commit_event = LifecycleEvent {
+            event_id: event_id(&start_lc),
+            predecessor_id: start_lc.head_event_id.clone(),
+            kind: LifecycleEventKind::CbCommit,
+            candidate_revision: active_cb,
+            bound_tuple: starting_tuple,
+            next_command: "aw wi show causal".to_string(),
+            next_owner: OwnerVocabulary::Cb,
+        };
+        let res5 = reduce_event(&start_lc, commit_event);
+        assert!(
+            res5.accepted,
+            "Row 5: CbCommit event must be accepted: {:?}",
+            res5.rejection_reason
+        );
+        assert_eq!(
+            res5.lifecycle.evidence, initial_evidence,
+            "Row 5: CbCommit retaining branch must retain all eight evidence bindings"
+        );
+    }
 }
