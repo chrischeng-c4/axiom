@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 cli-std = { path = "../cli-std", default-features = false }
+server-lifecycle = { path = "../server-lifecycle" }
 reqwest = { workspace = true }
 h2 = "0.4"
 tokio = { workspace = true }
