@@ -800,6 +800,55 @@ def conversation_step_max(conversation_id: str | None) -> int:
     return -1 if not row or row[0] is None else int(row[0])
 
 
+def round_document_digests(profile: dict, task_key: str) -> dict[str, str | None]:
+    """The oracle and injection as they read at snapshot time.
+
+    These two files are the only statement of what the round asked for and how
+    it will be judged, and the controller is the one party able to edit them
+    after the worker is already running. Everything else in the round -- the
+    permission surface, the dispatch contract, the protected repo files, the
+    conversation lineage -- is frozen and compared, so freeze these the same
+    way; an oracle that can be retro-fitted to the answer it received is not an
+    oracle. `None` records a document that was absent, which has to stay absent:
+    a round that grew an injection after the snapshot is exactly as suspect as
+    one whose injection changed.
+    """
+    return {
+        "oracle": (
+            sha256(path) if (path := oracle_path(profile, task_key)).is_file() else None
+        ),
+        "injection": (
+            sha256(path)
+            if (path := injection_path(profile, task_key)).is_file()
+            else None
+        ),
+    }
+
+
+def assert_round_documents_unchanged(
+    profile: dict, task_key: str, snapshot_data: dict
+) -> bool:
+    """Whether the round's two documents were compared and matched.
+
+    Returns False for a snapshot taken before this check existed, so callers
+    can say "not compared" instead of "unchanged" -- the distinction the old
+    unverified `oracle sha256=` line erased.
+    """
+    expected = snapshot_data.get("round_documents")
+    if expected is None:
+        print("note: snapshot predates round-document freezing; not compared")
+        return False
+    actual = round_document_digests(profile, task_key)
+    for name in ("oracle", "injection"):
+        if actual[name] == expected[name]:
+            continue
+        raise SystemExit(
+            f"VOID: {name} changed after snapshot: "
+            f"{expected[name]} -> {actual[name]}"
+        )
+    return True
+
+
 def snapshot(profile: dict, task_key: str) -> Path:
     readiness = require_project_ready(profile)
     task_state = frozen_task_state(profile, task_key)
@@ -838,6 +887,7 @@ def snapshot(profile: dict, task_key: str) -> Path:
         "protected_contents_base64": protected_contents,
         "writable_contents": writable_contents,
         "dispatch_contract": dispatch_contract(profile),
+        "round_documents": round_document_digests(profile, task_key),
         "agy_project_id": agy_project_id(profile),
         "permission_state_digest": readiness["permission_state_digest"],
         "conversation_id": conversation_id,
@@ -1700,6 +1750,7 @@ def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
     snapshot_data = load_snapshot(profile, task_key)
     assert_snapshot_identity(profile, task_key, snapshot_data)
     assert_permission_state_unchanged(profile, snapshot_data)
+    assert_round_documents_unchanged(profile, task_key, snapshot_data)
     audited_commands = audit_task_commands(profile, task_key, snapshot_data)
     conversation_id = validate_conversation_action(
         profile,
@@ -2576,7 +2627,15 @@ def verify(profile: dict, task_key: str) -> None:
     if snapshot_data.get("agy_project_id") != agy_project_id(profile):
         raise SystemExit("VOID: AGY project changed after snapshot")
     assert_permission_state_unchanged(profile, snapshot_data)
+    documents_frozen = assert_round_documents_unchanged(
+        profile, task_key, snapshot_data
+    )
     audited_commands = audit_task_commands(profile, task_key, snapshot_data)
+    documents = (
+        "oracle and injection unchanged since snapshot"
+        if documents_frozen
+        else "oracle and injection NOT compared"
+    )
 
     state = Path(profile["state_dir"])
     root = Path(profile["root"])
@@ -2611,7 +2670,7 @@ def verify(profile: dict, task_key: str) -> None:
         print(
             "integrity holds: static Project policy, conversation lineage, and "
             f"{len(audited_commands)} task-local shell command(s) match; "
-            f"oracle sha256={sha256(oracle)}"
+            f"{documents}; oracle sha256={sha256(oracle)}"
         )
         if findings:
             print(f"\nscope findings ({len(findings)}) for `review` to adjudicate:")
@@ -2686,7 +2745,7 @@ def verify(profile: dict, task_key: str) -> None:
     print(
         "snapshot, protected artifacts, static Project policy, and "
         f"{len(audited_commands)} task-local shell command(s) match; "
-        f"oracle sha256={sha256(oracle)}"
+        f"{documents}; oracle sha256={sha256(oracle)}"
     )
 
 

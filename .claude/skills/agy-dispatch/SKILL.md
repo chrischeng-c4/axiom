@@ -103,7 +103,9 @@ profile's whole `timeout`. Start those two with the Bash tool's
 `run_in_background`, which keeps the process tracked and wakes the controller
 when it exits. Do not background them by hand with `nohup ... &`: that returns
 immediately, orphans the run from the harness, and then needs a second polling
-watcher to notice an exit the harness would have reported for free.
+watcher to notice an exit the harness would have reported for free. Never wrap
+them in an orchestration helper that can return before the nested subprocess
+finishes — an early empty wrapper result is not an AGY report.
 
 Size `timeout` to the round rather than reusing the previous one. A worker cut
 off at its deadline exits non-zero with its work already on disk and no
@@ -126,12 +128,6 @@ result the controller dislikes. The dead attempt's logs are parked under
 `runs/abandoned/` rather than deleted — they are evidence, and leaving them in
 place would let the id lookup recover the dead conversation.
 
-Run `dispatch` and `resume` as direct long-lived host processes. Do not wrap
-them in an orchestration helper that can return before the nested subprocess
-finishes. When the host yields a process/session id, poll that same session
-until terminal output is captured; an early empty wrapper result is not an AGY
-report.
-
 ### Author the round from the scaffold, not from memory
 
 `scaffold` writes the round's two documents as blank forms and prefills what
@@ -139,12 +135,19 @@ the profile already knows — the gate command and the frozen design inputs. Fil
 the slots, then `lint`. It never overwrites an authored file, so re-running it
 mid-round is safe.
 
-- **Oracle** — `state_dir/oracles/<task-key>.md`, injected immutable and
-  re-checked at `verify`. `## Claim`, `## Measurements`, `## Gate`,
-  `## Fabrication tells`.
+- **Oracle** — `state_dir/oracles/<task-key>.md`. `## Claim`,
+  `## Measurements`, `## Gate`, `## Fabrication tells`.
 - **Injection** — the profile's `inject_prompt_file`. `## Task`,
   `## Current behavior`, `## Required change`, `## Shape to follow`,
   `## Reference`, `## Out of scope`, `## Definition of done`.
+
+`snapshot` records the sha256 of both, and `dispatch`, `resume`, and `verify`
+each VOID on a mismatch. Finish authoring before snapshotting: an edit after
+that point is refused, including one that adds an injection the round did not
+have. The controller is the only party able to edit these two files while a
+worker runs, which is exactly why they are frozen — an oracle that can be
+softened to fit the answer it received is not an oracle, and a hash that is
+printed but never compared reads like a freeze without being one.
 
 The injection answers four questions in order: what to do, from what starting
 point, against what constraint, and how it will be judged. It deliberately does
