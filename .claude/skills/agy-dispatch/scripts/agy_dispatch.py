@@ -1199,13 +1199,21 @@ def referenced_paths(text: str) -> list[str]:
     return tokens
 
 
-def document_findings(root: str | None, text: str, label: str) -> list[str]:
+def document_findings(
+    root: str | None,
+    text: str,
+    label: str,
+    declared: set[str] | None = None,
+) -> list[str]:
     """Checks that apply to any controller-authored round document.
 
     Both defects here are of one kind: the document says something the
     controller never actually established. An unfilled slot is a form dispatched
     before it was written; a path that does not resolve is a citation from
     memory rather than from the checkout the worker is about to see.
+
+    A path the round declares writable is exempt: a round may create a file, and
+    naming the file it is about to create is the opposite of citing from memory.
     """
     findings: list[str] = []
     if FILL_MARKER.search(text):
@@ -1214,10 +1222,12 @@ def document_findings(root: str | None, text: str, label: str) -> list[str]:
             "`<!-- fill -->` slot(s) from the scaffold"
         )
     if root:
+        declared = declared or set()
         missing = [
             token
             for token in referenced_paths(text)
-            if not (Path(token) if Path(token).is_absolute() else Path(root) / token).exists()
+            if token not in declared
+            and not (Path(token) if Path(token).is_absolute() else Path(root) / token).exists()
         ]
         if missing:
             findings.append(
@@ -1239,7 +1249,11 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
     """
     sections = oracle_sections(text)
     findings = missing_or_misordered(text, ORACLE_SECTIONS, "oracle")
-    findings.extend(document_findings(profile.get("root"), text, "oracle"))
+    findings.extend(
+        document_findings(
+            profile.get("root"), text, "oracle", set(profile.get("allowed_repo_writes") or [])
+        )
+    )
 
     # A missing section is one defect. Reporting its emptiness and its missing
     # rows as further defects inflates the count and buries the real fix, so
@@ -1310,7 +1324,11 @@ def injection_findings(profile: dict, text: str, oracle_text: str) -> list[str]:
     """
     sections = oracle_sections(text)
     findings = missing_or_misordered(text, INJECTION_SECTIONS, "injection")
-    findings.extend(document_findings(profile.get("root"), text, "injection"))
+    findings.extend(
+        document_findings(
+            profile.get("root"), text, "injection", set(profile.get("allowed_repo_writes") or [])
+        )
+    )
 
     for name in ("Task", "Required change"):
         if name in sections and not sections[name]:
@@ -1741,7 +1759,7 @@ def abandon(profile: dict, task_key: str) -> None:
             f"nothing to abandon for {task_key}: no conversation is recorded, "
             "so the run id is already free to dispatch"
         )
-    touched = worker_touched_paths(profile)
+    touched = worker_touched_paths(profile, task_key)
     if touched:
         raise SystemExit(
             f"refusing to abandon {task_key}: the worker changed "
@@ -2057,17 +2075,58 @@ def worktree_spec(profile: dict) -> dict:
     return spec
 
 
-def worker_touched_paths(profile: dict) -> list[str]:
+def round_baseline(profile: dict, task_key: str) -> dict[str, str | None]:
+    """Pre-round content of every path the snapshot recorded, by repo path.
+
+    `base_sha` is only the round's baseline when the round started from a clean
+    checkout. A revision continues on the prior round's worktree, where that
+    round's candidate is still uncommitted, so measuring against `base_sha`
+    charges this worker for its predecessor's diff. The snapshot is the tree as
+    it stood when this round was dispatched, which is what "what did this worker
+    change" means for both cases. `None` marks a path absent before the round.
+    """
+    try:
+        snap = load_snapshot(profile, task_key)
+    except SystemExit:
+        return {}
+    baseline: dict[str, str | None] = dict(snap.get("writable_contents") or {})
+    for relative, encoded in (snap.get("protected_contents_base64") or {}).items():
+        baseline.setdefault(
+            relative, base64.b64decode(encoded).decode(errors="surrogateescape")
+        )
+    return baseline
+
+
+def current_text(root: Path, relative: str) -> str | None:
+    path = root / relative
+    return path.read_text(errors="surrogateescape") if path.is_file() else None
+
+
+def worker_touched_paths(profile: dict, task_key: str | None = None) -> list[str]:
     root = Path(profile["root"])
     base = worktree_spec(profile)["base_sha"]
     changed = git_output(root, "diff", "--name-only", base).splitlines()
     untracked = git_output(
         root, "ls-files", "--others", "--exclude-standard"
     ).splitlines()
-    return sorted({line for line in [*changed, *untracked] if line})
+    touched = {line for line in [*changed, *untracked] if line}
+    if task_key:
+        # Drop paths the git comparison reports only because an earlier round on
+        # this same worktree left them uncommitted. A path whose content still
+        # equals what the snapshot recorded was not written by this worker.
+        baseline = round_baseline(profile, task_key)
+        touched = {
+            relative
+            for relative in touched
+            if relative not in baseline
+            or baseline[relative] != current_text(root, relative)
+        }
+    return sorted(touched)
 
 
-def scope_findings(profile: dict, touched: list[str]) -> list[str]:
+def scope_findings(
+    profile: dict, touched: list[str], task_key: str | None = None
+) -> list[str]:
     """Classify the candidate against the declared contract.
 
     In derived-worktree mode these are review inputs, not verdicts. The
@@ -2090,7 +2149,7 @@ def scope_findings(profile: dict, touched: list[str]) -> list[str]:
             + ", ".join(unwritten)
         )
     for relative, budget in (profile.get("path_change_budgets") or {}).items():
-        delta = changed_line_count(profile, relative)
+        delta = changed_line_count(profile, relative, task_key)
         if delta > int(budget):
             findings.append(
                 f"{relative}: {delta} changed lines exceeds the "
@@ -2110,8 +2169,20 @@ def scope_findings(profile: dict, touched: list[str]) -> list[str]:
     return findings
 
 
-def changed_line_count(profile: dict, relative: str) -> int:
+def changed_line_count(profile: dict, relative: str, task_key: str | None = None) -> int:
     root = Path(profile["root"])
+    baseline = round_baseline(profile, task_key) if task_key else {}
+    if relative in baseline:
+        # Same reason as `worker_touched_paths`: on a revision the git baseline
+        # is the commit before the *previous* round, so an untracked file the
+        # predecessor created bills its whole length to this worker.
+        before = (baseline[relative] or "").splitlines()
+        after = (current_text(root, relative) or "").splitlines()
+        return sum(
+            1
+            for line in difflib.unified_diff(before, after, n=0, lineterm="")
+            if line[:1] in "+-" and line[:3] not in ("+++", "---")
+        )
     base = worktree_spec(profile)["base_sha"]
     numstat = git_output(root, "diff", "--numstat", base, "--", relative)
     for line in numstat.splitlines():
@@ -2134,8 +2205,8 @@ def review(profile: dict, task_key: str) -> None:
     validate_task_key(profile, task_key)
     spec = worktree_spec(profile)
     root = Path(profile["root"])
-    touched = worker_touched_paths(profile)
-    findings = scope_findings(profile, touched)
+    touched = worker_touched_paths(profile, task_key)
+    findings = scope_findings(profile, touched, task_key)
     allowed = set(profile["allowed_repo_writes"])
 
     print(f"worktree : {root}")
@@ -2287,7 +2358,7 @@ def accept(profile: dict, task_key: str) -> None:
     validate_task_key(profile, task_key)
     spec = worktree_spec(profile)
     root = Path(profile["root"])
-    touched = worker_touched_paths(profile)
+    touched = worker_touched_paths(profile, task_key)
     if not touched:
         raise SystemExit("nothing to accept: the worker changed no files")
     if profile["mode"] == "bounded-write":
@@ -2416,7 +2487,9 @@ def verify(profile: dict, task_key: str) -> None:
         # worker did to its own checkout is a diff for the controller to read.
         # A write outside the declared set costs a read, not the round, so it
         # is reported here and adjudicated by `review`.
-        findings = scope_findings(profile, worker_touched_paths(profile))
+        findings = scope_findings(
+            profile, worker_touched_paths(profile, task_key), task_key
+        )
         oracle = state / "oracles" / f"{task_key}.md"
         if not oracle.exists():
             raise SystemExit("VOID: oracle disappeared")
