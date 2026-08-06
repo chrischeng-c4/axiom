@@ -9,25 +9,3 @@ paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p metrics-prometheus"
 verify_cold = true
-
-# AW-EC-BEGIN
-[aw.ec.generated]
-version = 1
-project = "metrics-prometheus"
-generated_from_td_digest = "sha256:dbce233ccba8494abd369ca4dff4ac06bad6407ae2da500ac78eceab51c80186"
-
-[[aw.ec.generated.cases]]
-id = "shared-prometheus-metric-primitives-contract"
-capability_id = "shared-prometheus-metric-primitives"
-claim_id = "shared-prometheus-metric-primitives-contract"
-contract_id = "shared-prometheus-metric-primitives-contract"
-category = "behavior"
-td_ref = "libs/metrics-prometheus/external-contracts/behavior/shared-prometheus-metric-primitives-contract.md#shared-prometheus-metric-primitives-contract"
-test_path = "libs/metrics-prometheus/tests/behavior_shared_prometheus_metric_primitives_contract.rs"
-command = "cargo test -p metrics-prometheus"
-required_for_production = true
-assertions = [
-    "Shared Prometheus Metric Primitives public Rust API behavior remains covered by the configured library test suite.",
-    "The library contract stays usable through its documented README capability surface.",
-]
-# AW-EC-END
