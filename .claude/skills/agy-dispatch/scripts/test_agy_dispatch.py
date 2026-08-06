@@ -332,6 +332,74 @@ class DispatchControllerTest(unittest.TestCase):
             ("deny", "command(git push)"),
         )
 
+    def test_reads_wal_conversation_store_after_agy_removed_sidecars(self) -> None:
+        database = Path(tempfile.mkdtemp()) / "conversation.db"
+        writer = sqlite3.connect(database)
+        writer.execute("pragma journal_mode=wal")
+        writer.execute("create table steps (idx integer, step_payload text)")
+        writer.execute("insert into steps values (0, '{}')")
+        writer.commit()
+        writer.close()
+        # AGY checkpoints and removes the sidecars on exit while leaving the
+        # header in WAL format -- bytes 18 and 19 are the write/read file
+        # versions, and 2 means WAL.
+        for sidecar in ("-wal", "-shm"):
+            side = database.with_name(database.name + sidecar)
+            if side.exists():
+                side.unlink()
+        self.assertEqual(database.read_bytes()[18:20], b"\x02\x02")
+
+        plain = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        with self.assertRaises(sqlite3.OperationalError):
+            plain.execute("select count(*) from steps").fetchone()
+        plain.close()
+
+        connection = agy_dispatch.connect_conversation(database)
+        try:
+            self.assertEqual(
+                connection.execute("select count(*) from steps").fetchone()[0], 1
+            )
+        finally:
+            connection.close()
+
+    def test_live_conversation_is_read_through_its_wal_not_around_it(self) -> None:
+        database = Path(tempfile.mkdtemp()) / "conversation.db"
+        writer = sqlite3.connect(database)
+        # Schema in the main file, rows in the WAL: the difference the two
+        # reads disagree about is then the steps, not the table's existence.
+        writer.execute("create table steps (idx integer, step_payload text)")
+        writer.commit()
+        writer.execute("pragma journal_mode=wal")
+        writer.execute("pragma wal_autocheckpoint=0")
+        writer.execute("insert into steps values (0, '{}')")
+        writer.execute("insert into steps values (1, '{}')")
+        writer.commit()
+        try:
+            # A running AGY leaves committed steps in an uncheckpointed WAL.
+            self.assertTrue(database.with_name(database.name + "-wal").exists())
+            skipped = sqlite3.connect(
+                f"file:{database}?mode=ro&immutable=1", uri=True
+            )
+            try:
+                # `immutable=1` promises the file is not being written and so
+                # reads around the WAL, returning a conversation missing the
+                # worker's most recent commands.
+                self.assertEqual(
+                    skipped.execute("select count(*) from steps").fetchone()[0], 0
+                )
+            finally:
+                skipped.close()
+
+            connection = agy_dispatch.connect_conversation(database)
+            try:
+                self.assertEqual(
+                    connection.execute("select count(*) from steps").fetchone()[0], 2
+                )
+            finally:
+                connection.close()
+        finally:
+            writer.close()
+
     def test_unsandboxed_rule_without_command_twin_is_inert(self) -> None:
         surface = agy_dispatch.normalize_permission_surface(
             {

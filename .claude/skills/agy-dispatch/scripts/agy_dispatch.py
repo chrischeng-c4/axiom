@@ -757,6 +757,33 @@ def conversation_database(conversation_id: str) -> Path:
     return CONVERSATION_DIR / f"{conversation_id}.db"
 
 
+def connect_conversation(database: Path) -> sqlite3.Connection:
+    """Open AGY's conversation store read-only, WAL sidecar or not.
+
+    A WAL-mode database needs its `-shm` sidecar to be readable, and SQLite
+    creates that sidecar on open -- which `mode=ro` cannot do once AGY has
+    exited and checkpointed the sidecars away. Every reader here then dies on
+    `unable to open database file`, and the one verb that exists to explain a
+    failed dispatch fails with it.
+
+    `immutable=1` skips the sidecar, at the cost of promising the file is not
+    being written. That promise is exactly what the first open failing already
+    told us, so it is the fallback and never the first attempt: a live AGY
+    keeps its sidecars present, so the plain read-only open succeeds and the
+    unsafe path is not reached.
+    """
+    # `sqlite3.connect` defers the real open to the first statement, so the
+    # fallback has to be driven by a query, not by construction.
+    for uri in (f"file:{database}?mode=ro", f"file:{database}?mode=ro&immutable=1"):
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            connection.execute("select 1 from sqlite_master limit 1").fetchone()
+            return connection
+        except sqlite3.OperationalError:
+            connection.close()
+    raise SystemExit(f"cannot read AGY conversation store: {database}")
+
+
 def conversation_step_max(conversation_id: str | None) -> int:
     if not conversation_id:
         return -1
@@ -765,7 +792,7 @@ def conversation_step_max(conversation_id: str | None) -> int:
         raise SystemExit(
             f"conversation state is missing for {conversation_id}: {database}"
         )
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection = connect_conversation(database)
     try:
         row = connection.execute("select max(idx) from steps").fetchone()
     finally:
@@ -1009,7 +1036,7 @@ def requested_run_commands(
         raise SystemExit(
             f"conversation state is missing for {conversation_id}: {database}"
         )
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection = connect_conversation(database)
     try:
         rows = connection.execute(
             "select idx, status, step_payload from steps "
@@ -1075,7 +1102,7 @@ def denied(profile: dict, task_key: str) -> None:
     database = conversation_database(conversation_id)
     if not database.is_file():
         raise SystemExit(f"cannot inspect {task_key}: missing {database}")
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection = connect_conversation(database)
     try:
         rows = connection.execute(
             "select idx, step_payload from steps "
