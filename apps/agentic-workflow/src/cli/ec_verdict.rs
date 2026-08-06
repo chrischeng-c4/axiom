@@ -69,6 +69,7 @@ pub struct TargetVerdict {
     pub missing_dimensions: Vec<String>,
     pub unpermitted_dimensions: Vec<String>,
     pub stale_dimensions: Vec<String>,
+    pub contradictory_dimensions: Vec<String>,
 }
 
 impl TargetVerdict {
@@ -100,16 +101,14 @@ pub fn decide_target_verdict(
         .get(&ArtifactKind::Td)
         .and_then(|r| r.as_ref())
         .map(|r| r.digest.clone());
-    let active_cb = lifecycle
-        .active_revisions
-        .get(&ArtifactKind::Cb)
-        .and_then(|r| r.as_ref())
-        .map(|r| r.digest.clone());
+
+    let active_tuple = lifecycle.active_digest_tuple();
 
     let mut green_dimensions = Vec::new();
     let mut failing_dimensions = Vec::new();
     let mut unpermitted_dimensions = Vec::new();
     let mut stale_dimensions = Vec::new();
+    let mut contradictory_dimensions = Vec::new();
 
     let mut active_green_set = std::collections::BTreeSet::new();
     let mut active_fail_set = std::collections::BTreeSet::new();
@@ -123,11 +122,10 @@ pub fn decide_target_verdict(
             if req_dims_strs.contains(&dim_str) {
                 let ec_ok = active_ec.is_some() && binding.bound_tuple.ec_digest == active_ec;
                 let td_ok = active_td.is_some() && binding.bound_tuple.td_digest == active_td;
-                let cb_ok = active_cb.is_some() && binding.bound_tuple.cb_digest == active_cb;
 
                 let is_active = match target {
                     VerificationTarget::Td => ec_ok && td_ok,
-                    VerificationTarget::Cb => ec_ok && td_ok && cb_ok,
+                    VerificationTarget::Cb => binding.bound_tuple == active_tuple,
                 };
 
                 if is_active {
@@ -147,9 +145,14 @@ pub fn decide_target_verdict(
 
     let mut missing_dimensions = Vec::new();
     for dim_str in req_dims_strs {
-        if active_fail_set.contains(dim_str) {
+        let has_fail = active_fail_set.contains(dim_str);
+        let has_green = active_green_set.contains(dim_str);
+
+        if has_fail && has_green {
+            contradictory_dimensions.push(dim_str.to_string());
+        } else if has_fail {
             failing_dimensions.push(dim_str.to_string());
-        } else if active_green_set.contains(dim_str) {
+        } else if has_green {
             green_dimensions.push(dim_str.to_string());
         } else if stale_set.contains(dim_str) {
             stale_dimensions.push(dim_str.to_string());
@@ -165,7 +168,8 @@ pub fn decide_target_verdict(
     let is_green = failing_dimensions.is_empty()
         && missing_dimensions.is_empty()
         && unpermitted_dimensions.is_empty()
-        && stale_dimensions.is_empty();
+        && stale_dimensions.is_empty()
+        && contradictory_dimensions.is_empty();
 
     let reason = if is_green {
         None
@@ -176,6 +180,12 @@ pub fn decide_target_verdict(
             parts.push(format!(
                 "evidence for dimension(s) {} is bound to a revision that is no longer active",
                 stale_dimensions.join(", ")
+            ));
+        }
+        if !contradictory_dimensions.is_empty() {
+            parts.push(format!(
+                "evidence for dimension(s) {} contains contradictory observations under active digest tuple",
+                contradictory_dimensions.join(", ")
             ));
         }
         if !unpermitted_dimensions.is_empty() {
@@ -212,6 +222,7 @@ pub fn decide_target_verdict(
         missing_dimensions,
         unpermitted_dimensions,
         stale_dimensions,
+        contradictory_dimensions,
     }
 }
 
@@ -939,6 +950,164 @@ mod tests {
         assert_eq!(
             r12.failure_ownership,
             Some(FailureOwnership::Implementation)
+        );
+    }
+
+    #[test]
+    fn ec_target_evidence_binding() {
+        // Row 1: CB lifecycle whose active WI revision is W1, with all four required dimensions
+        // passing on evidence whose bound_tuple.wi_digest is W0 (superseded) and ec/td/cb current.
+        let mut lc_row1 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let active_tuple_row1 = lc_row1.active_digest_tuple();
+        let mut tuple_row1_w0 = active_tuple_row1.clone();
+        tuple_row1_w0.wi_digest = Some("d-wi-0".to_string());
+
+        add_evidence(&mut lc_row1, "behavior", true, tuple_row1_w0.clone());
+        add_evidence(&mut lc_row1, "efficiency", true, tuple_row1_w0.clone());
+        add_evidence(&mut lc_row1, "security", true, tuple_row1_w0.clone());
+        add_evidence(&mut lc_row1, "stability", true, tuple_row1_w0.clone());
+
+        let v1 = decide_target_verdict(&lc_row1, VerificationTarget::Cb);
+        assert!(!v1.is_green());
+        let r1 = v1.reason().expect("verdict 1 must have reason");
+        assert!(
+            r1.contains("bound to a revision that is no longer active"),
+            "reason must name superseded binding: {r1}"
+        );
+        assert!(
+            !r1.contains("failing dimension"),
+            "reason must not name a failing dimension: {r1}"
+        );
+        assert!(v1.failing_dimensions.is_empty());
+        assert!(!v1.stale_dimensions.is_empty());
+
+        // Row 2: (negative control) row 1's lifecycle with evidence wi_digest set to active W1
+        let mut lc_row2 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let tuple_row2 = lc_row2.active_digest_tuple();
+        add_evidence(&mut lc_row2, "behavior", true, tuple_row2.clone());
+        add_evidence(&mut lc_row2, "efficiency", true, tuple_row2.clone());
+        add_evidence(&mut lc_row2, "security", true, tuple_row2.clone());
+        add_evidence(&mut lc_row2, "stability", true, tuple_row2.clone());
+
+        let v2 = decide_target_verdict(&lc_row2, VerificationTarget::Cb);
+        assert!(v2.is_green());
+        assert!(v2.stale_dimensions.is_empty());
+        assert!(v2.reason().is_none());
+
+        // Row 3: CB lifecycle with all four dimensions passing on current tuple, plus a fifth binding
+        // for behavior that fails on the identical current tuple.
+        let mut lc_row3 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let tuple_row3 = lc_row3.active_digest_tuple();
+        add_evidence(&mut lc_row3, "behavior", true, tuple_row3.clone());
+        add_evidence(&mut lc_row3, "efficiency", true, tuple_row3.clone());
+        add_evidence(&mut lc_row3, "security", true, tuple_row3.clone());
+        add_evidence(&mut lc_row3, "stability", true, tuple_row3.clone());
+        add_evidence(&mut lc_row3, "behavior", false, tuple_row3.clone());
+
+        let v3 = decide_target_verdict(&lc_row3, VerificationTarget::Cb);
+        assert!(!v3.is_green());
+
+        // Row 4: (negative control) same lifecycle with only failing behavior binding and no contradicting green one
+        let mut lc_row4 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let tuple_row4 = lc_row4.active_digest_tuple();
+        add_evidence(&mut lc_row4, "behavior", false, tuple_row4.clone());
+        add_evidence(&mut lc_row4, "efficiency", true, tuple_row4.clone());
+        add_evidence(&mut lc_row4, "security", true, tuple_row4.clone());
+        add_evidence(&mut lc_row4, "stability", true, tuple_row4.clone());
+
+        let v4 = decide_target_verdict(&lc_row4, VerificationTarget::Cb);
+        assert!(!v4.is_green());
+        assert_eq!(v4.failing_dimensions, vec!["behavior"]);
+        assert_eq!(
+            v4.reason().as_deref(),
+            Some("failing dimension(s): behavior")
+        );
+
+        // Row 3 outcome must not equal Row 4 outcome, and must name contradiction
+        assert_ne!(v3, v4, "Row 3 outcome must not equal Row 4 outcome");
+        assert!(v3.failing_dimensions.is_empty());
+        let r3 = v3.reason().expect("verdict 3 must have reason");
+        assert!(
+            r3.contains("contradictory"),
+            "Row 3 reason must name contradiction: {r3}"
+        );
+
+        // Row 5: row 3's lifecycle with the contradicting binding inserted first instead of last
+        let mut lc_row5 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let tuple_row5 = lc_row5.active_digest_tuple();
+        add_evidence(&mut lc_row5, "behavior", false, tuple_row5.clone());
+        add_evidence(&mut lc_row5, "behavior", true, tuple_row5.clone());
+        add_evidence(&mut lc_row5, "efficiency", true, tuple_row5.clone());
+        add_evidence(&mut lc_row5, "security", true, tuple_row5.clone());
+        add_evidence(&mut lc_row5, "stability", true, tuple_row5.clone());
+
+        let v5 = decide_target_verdict(&lc_row5, VerificationTarget::Cb);
+        assert_eq!(v3, v5, "Row 5 outcome must be identical to Row 3 outcome");
+
+        // Row 6: row 1's binding and row 3's pair, each also passed to ActiveDigestTuple::matches against active tuple
+        assert_eq!(
+            tuple_row1_w0 == active_tuple_row1,
+            false,
+            "Row 1 binding tuple must not match active tuple"
+        );
+        assert_eq!(
+            tuple_row3 == lc_row3.active_digest_tuple(),
+            true,
+            "Row 3 binding tuple matches active tuple"
+        );
+        assert_eq!(
+            v1.is_green(),
+            tuple_row1_w0 == active_tuple_row1,
+            "Verdict admissibility must agree with matches for Row 1"
+        );
+
+        // Row 7: row 1 and row 3 verdicts passed to route_target_verdict with declared implementation ownership for behavior
+        let declared = [("behavior", FailureOwnership::Implementation)];
+        let r_route1 = route_target_verdict_with_slice(&lc_row1, &v1, &declared)
+            .expect("red verdict must yield routing result");
+        assert!(
+            r_route1.obligation.is_none(),
+            "Row 1 verdict routing must yield no implementation obligation"
+        );
+        assert!(
+            r_route1.failure_ownership.is_none(),
+            "Row 1 verdict routing must yield no failure ownership"
+        );
+
+        let r_route3 = route_target_verdict_with_slice(&lc_row3, &v3, &declared)
+            .expect("red verdict must yield routing result");
+        assert!(
+            r_route3.obligation.is_none(),
+            "Row 3 verdict routing must yield no implementation obligation"
+        );
+        assert!(
+            r_route3.failure_ownership.is_none(),
+            "Row 3 verdict routing must yield no failure ownership"
         );
     }
 }
