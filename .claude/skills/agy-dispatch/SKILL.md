@@ -174,6 +174,7 @@ finding. The checks are structural and carry no project knowledge:
 | `## Gate` names only `task_contract.gate_command` | a second command that reads as judged when it is only authorized |
 | `## Definition of done` ≡ the oracle's `## Gate` | instruction and judgement drifting apart, each satisfiable alone |
 | `## Current behavior` has a non-empty fenced quote | a round authored from memory rather than from the checkout |
+| every quoted line appears in one of the round's files | a quote that was true at an earlier base and is now fiction |
 | no fenced block outside `Current behavior` / `Definition of done` | pasting the implementation, which leaves the worker nothing to derive |
 | no numbered steps in `Required change` / `Shape to follow` | a recipe to retype instead of a requirement to satisfy |
 | `## Shape to follow` names a backticked symbol, within its line budget | a free-prose slot growing into the design the round was meant to buy |
@@ -192,6 +193,23 @@ commands in one fence and every one can be authorized, but `prove` runs
 row whose observation no proof ever makes. Name the compound command in the
 profile if both must be judged, or keep the fence to the judged command and
 state the rest as prose the controller checks by hand.
+
+The two `## Current behavior` checks pair the same way. Requiring a fence asks
+whether the controller opened the file at all; requiring each quoted line to
+exist asks whether they opened it *at this round's base*. Rounds get re-based
+constantly here — a follow-up inherits the previous round's worktree block, a
+document gets drafted while an earlier round is still landing — and a quote
+goes stale without anyone editing it. That block is the one part of the
+injection a worker is entitled to treat as ground truth, because it is labelled
+as the code as it stands, so a worker that greps for it, finds nothing, and
+improvises was sent to do that by the document. Re-indenting is fine; content
+that is gone is not.
+
+The same staleness reaches the oracle, where no check can catch it: a
+`## Background` that says a fact was *measured* must have been measured against
+the base this round starts from. Re-run the measurement before `snapshot` when
+the base has moved. A false "measured" is worse than an empty Background — the
+worker builds its rows on it.
 
 An injection is optional — a measure-only round can carry its instruction in
 the oracle — but a declared `inject_prompt_file` must exist and conform, since

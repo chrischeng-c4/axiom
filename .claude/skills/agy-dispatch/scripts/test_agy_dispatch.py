@@ -1792,7 +1792,11 @@ class InjectionContractTest(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         (self.root / "src").mkdir()
-        (self.root / "src" / "thing.rs").write_text("fn main() {}\n")
+        # The conformant injection quotes this line under `## Current behavior`,
+        # and a quote is only conformant when the file actually carries it.
+        (self.root / "src" / "thing.rs").write_text(
+            "fn store(body: &str) {\n    let digest = canonical_digest(body);\n}\n"
+        )
         self.profile = {
             "root": str(self.root),
             "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
@@ -1854,6 +1858,47 @@ class InjectionContractTest(unittest.TestCase):
             "```\nlet digest = canonical_digest(body);\n```", "```\n```"
         )
         self.assert_single_finding(text, "no non-empty fenced quote")
+
+    def test_a_quote_no_file_carries_is_reported(self) -> None:
+        """A fence satisfies the quote rule whether or not the code is still
+        there, so a document re-based onto a moved tree keeps its old excerpt and
+        the worker greps for a line that no longer exists."""
+        text = CONFORMANT_INJECTION.replace(
+            "let digest = canonical_digest(body);",
+            "let digest = canonical_digest(body, opts);",
+        )
+        self.assert_single_finding(text, "appear in none of the round's files")
+
+    def test_a_re_indented_quote_is_not_reported(self) -> None:
+        """Indentation is not content: a quote lifted out of its block is still
+        the code that is there, and flagging it would train the controller to
+        satisfy the check by pasting whitespace rather than by re-reading."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```\n        let digest = canonical_digest(body);\n```",
+        )
+        self.assertEqual(self.findings(text), [])
+
+    def test_an_elision_marker_is_not_reported(self) -> None:
+        """An excerpt that skips lines has to say so, and the marker saying so is
+        not itself a claim about the file."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```\nlet digest = canonical_digest(body);\n// ...\n```",
+        )
+        self.assertEqual(self.findings(text), [])
+
+    def test_a_stale_comment_line_is_still_reported(self) -> None:
+        """The elision marker is a comment, so the exemption is one careless
+        widening away from skipping every comment -- and a doc comment quoted
+        from a version where it said something else is exactly the excerpt a
+        worker would trust hardest."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```\n// markers are excluded here\n"
+            "let digest = canonical_digest(body);\n```",
+        )
+        self.assert_single_finding(text, "appear in none of the round's files")
 
     def test_reference_naming_nothing_is_reported(self) -> None:
         text = CONFORMANT_INJECTION.replace(

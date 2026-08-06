@@ -1272,6 +1272,8 @@ TABLE_DIVIDER = re.compile(r"^[ \t]*\|[\s:|-]+\|[ \t]*$")
 FILL_MARKER = re.compile(r"<!--[ \t]*fill\b.*?-->", re.DOTALL)
 BACKTICKED = re.compile(r"`([^`\n]+)`")
 LINE_SUFFIX = re.compile(r":\d+(?:[:-]\d+)?$")
+# A quoted excerpt may skip lines; the marker for that is not itself a quote.
+ELISION = re.compile(r"(?://|#)?[ \t]*(?:\.{3}|…|snip|omitted)[ \t]*", re.IGNORECASE)
 
 
 def oracle_sections(text: str) -> dict[str, str]:
@@ -1330,6 +1332,53 @@ def unjudged_gate_commands(profile: dict, gate_commands: list[str]) -> list[str]
     if not judged:
         return []
     return [command for command in gate_commands if command != judged]
+
+
+def unquoted_current_behavior_lines(
+    root: str | None, section: str, candidates: list[str]
+) -> list[str]:
+    """Lines an injection quotes as current behavior that no candidate file has.
+
+    `injection_findings` already refuses a `## Current behavior` with no fenced
+    quote, on the reasoning that a round should be grounded in what was read
+    rather than what was remembered. That check reaches the form and stops: a
+    block pasted from an earlier round, from a base two commits back, or from
+    memory satisfies it exactly as well as a block copied out of the file.
+
+    A stale quote is worse than no quote. It is the one part of the injection a
+    worker is entitled to treat as ground truth -- it is labelled as the code as
+    it stands -- so a worker that greps for it, finds nothing, and improvises has
+    been sent to do that by the document. Rounds are re-based often here (a
+    follow-up reuses the previous worktree block; documents get drafted while an
+    earlier round is still in flight), which is exactly when a quote goes stale
+    without anyone editing it.
+
+    Matching is on the stripped line, so re-indenting a quote is not a finding:
+    the dangerous class is content that is gone, not content that moved. Lines
+    that are only an elision marker are skipped for the same reason.
+    """
+    if not root:
+        return []
+    haystacks: list[set[str]] = []
+    for rel in candidates:
+        path = Path(rel) if Path(rel).is_absolute() else Path(root) / rel
+        try:
+            haystacks.append({line.strip() for line in path.read_text().splitlines()})
+        except (OSError, UnicodeDecodeError):
+            continue
+    if not haystacks:
+        return []
+    missing: list[str] = []
+    for block in ORACLE_FENCE.findall(section):
+        for line in block.splitlines():
+            bare = line.strip()
+            if not bare or ELISION.fullmatch(bare):
+                continue
+            if any(bare in hay for hay in haystacks):
+                continue
+            if bare not in missing:
+                missing.append(bare)
+    return missing
 
 
 def referenced_paths(text: str) -> list[str]:
@@ -1525,6 +1574,21 @@ def injection_findings(profile: dict, text: str, oracle_text: str) -> list[str]:
                 "code as it stands today so the round is grounded in what was "
                 "read rather than what was remembered"
             )
+        else:
+            candidates = list(profile.get("allowed_repo_writes") or [])
+            candidates += [p for p in referenced_paths(text) if p not in candidates]
+            stale = unquoted_current_behavior_lines(
+                profile.get("root"), sections["Current behavior"], candidates
+            )
+            if stale:
+                shown = ", ".join(f"`{line}`" for line in stale[:3])
+                more = f" (+{len(stale) - 3} more)" if len(stale) > 3 else ""
+                findings.append(
+                    "`## Current behavior` quotes line(s) that appear in none of "
+                    f"the round's files: {shown}{more}. The worker is entitled to "
+                    "treat that block as the code as it stands; re-read the file "
+                    "at this round's base and paste what is actually there"
+                )
 
     if "Shape to follow" in sections:
         body = sections["Shape to follow"]
