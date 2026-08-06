@@ -9022,5 +9022,3 @@ def assert_efficiency_fields_render_their_generated_section(migrated: str) -> No
         for _title, _cap_id, point, cube, _dimension in _EFFICIENCY_SUBJECTS
     ]
     assert blocks == expected, (blocks, expected)
-
-

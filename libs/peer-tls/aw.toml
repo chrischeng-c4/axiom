@@ -9,4 +9,3 @@ paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p peer-tls"
 verify_cold = true
-
