@@ -332,6 +332,29 @@ class DispatchControllerTest(unittest.TestCase):
             ("deny", "command(git push)"),
         )
 
+    def test_agy_deadline_is_not_reported_as_a_denial(self) -> None:
+        log_dir = Path(tempfile.mkdtemp())
+        agy_log = log_dir / "run.agy.log"
+
+        agy_log.write_text("startup chatter\n")
+        # The local report is what AGY writes when its own deadline fires.
+        self.assertTrue(
+            agy_dispatch.timed_out("Error: timeout waiting for response\n", agy_log)
+        )
+        # A deadline that killed the process before it wrote a report is only
+        # visible in the AGY log.
+        agy_log.write_text(
+            "chatter\nE0806 printmode.go:499] Print mode: timed out after 13412 polls\n"
+        )
+        self.assertTrue(agy_dispatch.timed_out("", agy_log))
+        # A denial must keep routing the controller to `denied`.
+        agy_log.write_text("chatter\npermission denied for command: cargo publish\n")
+        self.assertFalse(
+            agy_dispatch.timed_out("Error: command not permitted\n", agy_log)
+        )
+        # A missing log is not evidence of a deadline.
+        self.assertFalse(agy_dispatch.timed_out("", log_dir / "absent.agy.log"))
+
     def test_reads_wal_conversation_store_after_agy_removed_sidecars(self) -> None:
         database = Path(tempfile.mkdtemp()) / "conversation.db"
         writer = sqlite3.connect(database)

@@ -1783,8 +1783,17 @@ def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
         f"oracle sha256={sha256(oracle)}; exit={completed.returncode}"
     )
     if completed.returncode != 0:
+        verb = "resume" if resume else "dispatch"
+        if timed_out(report, log_dir / f"{task_key}{suffix}.agy.log"):
+            raise SystemExit(
+                f"{verb} timed out for {task_key} at the profile's "
+                f"{profile['timeout']}; this is not a denial. The worker was "
+                "cut off mid-run, so its checkout may already hold complete "
+                "work with no report: read the worktree diff and run the gate "
+                "before deciding whether to raise `timeout` and redispatch"
+            )
         raise SystemExit(
-            f"{'resume' if resume else 'dispatch'} failed for {task_key}: "
+            f"{verb} failed for {task_key}: "
             f"AGY exited {completed.returncode}; inspect `denied`, verify the "
             "snapshot, and update the persistent Project policy only when the "
             "missing command is a reusable project capability"
@@ -1805,6 +1814,30 @@ def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
         f"reported {task_key}; run status, then independently verify before "
         "acceptance"
     )
+
+
+TIMEOUT_MARKERS = (
+    "timeout waiting for response",
+    "Print mode: timed out after",
+)
+
+
+def timed_out(report: str, agy_log: Path) -> bool:
+    """Whether AGY's non-zero exit was its own deadline rather than a refusal.
+
+    Both failures exit non-zero and the caller cannot tell them apart, so the
+    generic message sent the controller to `denied` for a round where nothing
+    was ever denied -- and `denied` correctly reported no denial, which reads
+    like the tooling is broken rather than like the diagnosis was wrong. The
+    local report is authoritative and cheap; the AGY log is the fallback for a
+    deadline that killed the process before it wrote one.
+    """
+    if any(marker in report for marker in TIMEOUT_MARKERS):
+        return True
+    if not agy_log.is_file():
+        return False
+    tail = agy_log.read_text(errors="replace")[-20000:]
+    return any(marker in tail for marker in TIMEOUT_MARKERS)
 
 
 def dispatch(profile: dict, task_key: str) -> None:
