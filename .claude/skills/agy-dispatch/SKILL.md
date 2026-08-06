@@ -170,6 +170,7 @@ finding. The checks are structural and carry no project knowledge:
 | Check | What it prevents |
 |---|---|
 | `## Measurements` has ≥2 rows, ≥1 marked `negative control` | a table an unchanged implementation also satisfies |
+| the control is marked in a row's input or observation, not its rationale | prose *about* a control counted as *having* one |
 | `## Gate` commands ⊆ the task allowlist | a gate the worker is not authorized to run, so nobody runs it |
 | `## Gate` names only `task_contract.gate_command` | a second command that reads as judged when it is only authorized |
 | `## Definition of done` ≡ the oracle's `## Gate` | instruction and judgement drifting apart, each satisfiable alone |
@@ -193,6 +194,14 @@ commands in one fence and every one can be authorized, but `prove` runs
 row whose observation no proof ever makes. Name the compound command in the
 profile if both must be judged, or keep the fence to the judged command and
 state the rest as prose the controller checks by hand.
+
+The two control checks pair that way too. Counting rows asks whether the table
+has a control at all; reading where the marker sits asks whether that row *is*
+one. A control is defined by what it feeds and what that must not produce, so
+the marker belongs in the row's input or its expected observation. Written into
+a trailing rationale cell it is almost always about a different row — "unlike
+the negative control, this row…" is a true sentence that leaves the table
+without a control of its own, and it used to make the oracle conformant.
 
 The two `## Current behavior` checks pair the same way. Requiring a fence asks
 whether the controller opened the file at all; requiring each quoted line to
