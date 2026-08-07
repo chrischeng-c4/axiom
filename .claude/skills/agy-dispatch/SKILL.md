@@ -496,10 +496,16 @@ mutation — a moved branch `HEAD` is how a worker commit surfaces.
 
 ## `review` — adjudicate the diff
 
-**Does.** Prints the round's branch and base, the touched paths with `!` on
-anything outside `allowed_repo_writes`, every finding, `git diff --stat`, the
-full diff, and the body of each new untracked file; exits `2` if there is a
-finding.
+**Does.** Prints the round's branch and base, the paths this revision wrote
+with `!` on anything outside `allowed_repo_writes`, the paths carried forward
+from an earlier revision, every finding, `git diff --stat`, the full diff, and
+the body of each new untracked file; exits `2` if there is a finding.
+
+On a revised round `touched` and the diff answer different questions. `touched`
+is what *this* worker wrote, which is what a scope finding is about; `carried`
+is the rest of the candidate, which `revise` kept uncommitted across the new
+run id. The diff below both is always the whole candidate against the frozen
+base, and that is what `accept` commits.
 
 **Run.**
 
@@ -635,8 +641,9 @@ than dropping it, so the sweep's own count stays honest.
 
 ## `accept` / `revise` / `discard` — the three outcomes
 
-**Does.** `accept` stages exactly the touched paths and commits them on the
-round's branch (with `Refs #<issue>` for ticketed work), then prints the
+**Does.** `accept` stages the whole candidate — every path the worktree changed
+since its frozen base, across every revision — and commits it on the round's
+branch (with `Refs #<issue>` for ticketed work), then prints the
 `git cherry-pick <sha>` for you to run from `controller_root`. `revise` and
 `resume` send the round back. `discard` restores the Project's home root and
 removes the worktree and branch.

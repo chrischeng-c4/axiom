@@ -2662,6 +2662,13 @@ def scope_findings(
     In derived-worktree mode these are review inputs, not verdicts. The
     worker's tree is its own, so writing outside the declared set costs the
     controller a read, never a lost round.
+
+    The two halves ask different questions and are measured differently.
+    "Wrote outside the declared set" is about this worker, so it reads the
+    per-revision `touched` its caller passed. "Declared but did not write" is
+    about the candidate: `revise` carries uncommitted work forward, so a path
+    written in an earlier revision is in the tree and absent from `touched`,
+    and charging the revision for it fires the finding on correct work.
     """
     findings = []
     root = Path(profile["root"])
@@ -2672,7 +2679,8 @@ def scope_findings(
             f"wrote {len(outside)} path(s) outside allowed_repo_writes: "
             + ", ".join(outside)
         )
-    unwritten = sorted(allowed - set(touched))
+    candidate = worker_touched_paths(profile) if profile.get("worktree") else touched
+    unwritten = sorted(allowed - set(candidate))
     if unwritten:
         findings.append(
             f"declared but did not write {len(unwritten)} path(s): "
@@ -2738,14 +2746,28 @@ def review(profile: dict, task_key: str) -> None:
     touched = worker_touched_paths(profile, task_key)
     findings = scope_findings(profile, touched, task_key)
     allowed = set(profile["allowed_repo_writes"])
+    # On a revised round the diff below spans every revision while `touched`
+    # names only this one. Naming the difference keeps the header from reading
+    # as the whole candidate, which is how a two-file candidate got reviewed
+    # as one file on #3351 R6.
+    carried = [
+        path for path in worker_touched_paths(profile) if path not in touched
+    ]
 
     print(f"worktree : {root}")
     print(f"branch   : {spec['branch']}")
     print(f"base     : {spec['base_sha']}")
-    print(f"touched  : {len(touched)} path(s)")
+    print(f"touched  : {len(touched)} path(s) written this revision")
     for path in touched:
         mark = "  " if path in allowed else "! "
         print(f"  {mark}{path}")
+    if carried:
+        print(
+            f"carried  : {len(carried)} path(s) from an earlier revision, "
+            "committed by `accept` with the rest"
+        )
+        for path in carried:
+            print(f"    {path}")
     if findings:
         print(f"\nfindings ({len(findings)}):")
         for item in findings:
@@ -3037,11 +3059,21 @@ def accept(profile: dict, task_key: str) -> None:
 
     The controller commits; the worker never runs a git mutation. Integration
     into a persistent branch stays a separate, explicitly invoked command.
+
+    What is committed is the whole candidate, not this revision's writes. The
+    two differ the moment a round is revised: `revise` exists to carry the
+    worker's uncommitted work forward under a new run id, so a revised round's
+    candidate spans every revision while `task_key` names only the last. Passing
+    the key here once committed one file of a two-file candidate whose second
+    file defined a symbol the first called -- a commit that does not build, and
+    `discard` deletes the worktree holding the missing half. `review` still asks
+    the narrower question, because "what did this revision write" is exactly
+    what a scope finding is about.
     """
     validate_task_key(profile, task_key)
     spec = worktree_spec(profile)
     root = Path(profile["root"])
-    touched = worker_touched_paths(profile, task_key)
+    touched = worker_touched_paths(profile)
     if not touched:
         raise SystemExit("nothing to accept: the worker changed no files")
     if profile["mode"] == "bounded-write":

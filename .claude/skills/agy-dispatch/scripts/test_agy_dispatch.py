@@ -1600,6 +1600,146 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertEqual((self.controller / "README.md").read_text(), "base\n")
         self.assertEqual(self.git("status", "--porcelain").strip(), "")
 
+    def test_accept_commits_the_whole_candidate_not_the_last_revision(self) -> None:
+        """A revised round's candidate spans every revision, and all of it lands.
+
+        `revise` exists to carry uncommitted work forward under a new run id,
+        so the last revision's writes are a strict subset of the candidate.
+        Committing only that subset lands a tree missing the half that
+        `discard` is about to delete -- observed on #3351 R6, where the commit
+        held the caller and not the file defining the symbol it calls.
+        """
+        (self.controller / "HELPER.md").write_text("helper\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "helper")
+        self.isolate_permission_files()
+
+        profile, delta = self.revisable_round(
+            allowed_repo_writes=["README.md", "HELPER.md"]
+        )
+        worker = Path(profile["worktree"]["path"])
+        # The first revision's write. The second never touches it again, so a
+        # diff taken against this round's snapshot cannot see it.
+        self.assertEqual((worker / "README.md").read_text(), "base\naccepted\n")
+
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        agy_dispatch.snapshot(revised, "round-2")
+        (worker / "HELPER.md").write_text("helper\nsecond revision\n")
+        self.record_proofs(revised, worker, task_key="round-2")
+
+        agy_dispatch.accept(revised, "round-2")
+
+        self.assertEqual(
+            sorted(
+                agy_dispatch.git_output(
+                    worker, "show", "--name-only", "--format=", "HEAD"
+                ).split()
+            ),
+            ["HELPER.md", "README.md"],
+        )
+        self.assertEqual(agy_dispatch.git_output(worker, "status", "--porcelain"), "")
+
+    def test_review_still_asks_what_this_revision_wrote(self) -> None:
+        """Scope is a per-revision question even though acceptance is not.
+
+        A finding says "this worker wrote outside its contract", so charging a
+        revision for its predecessor's paths would report the carried-forward
+        candidate as overreach on every revision after the first.
+        """
+        (self.controller / "HELPER.md").write_text("helper\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "helper")
+        self.isolate_permission_files()
+
+        profile, delta = self.revisable_round(
+            allowed_repo_writes=["README.md", "HELPER.md"]
+        )
+        worker = Path(profile["worktree"]["path"])
+
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        agy_dispatch.snapshot(revised, "round-2")
+        (worker / "HELPER.md").write_text("helper\nsecond revision\n")
+
+        self.assertEqual(
+            agy_dispatch.worker_touched_paths(revised, "round-2"), ["HELPER.md"]
+        )
+        self.assertEqual(
+            agy_dispatch.worker_touched_paths(revised), ["HELPER.md", "README.md"]
+        )
+
+        # ...and says so, so the header cannot be read as the whole candidate.
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            agy_dispatch.review(revised, "round-2")
+        printed = out.getvalue()
+        self.assertIn("touched  : 1 path(s) written this revision", printed)
+        self.assertIn("carried  : 1 path(s) from an earlier revision", printed)
+        self.assertRegex(printed, r"carried  :[^\n]*\n    README\.md")
+
+    def test_review_does_not_call_a_carried_path_unwritten(self) -> None:
+        """#3424: the finding must not fire on work the candidate contains.
+
+        A scope finding that fires on a correct revised round trains the
+        controller to accept over a non-empty findings list, which is the one
+        habit the check exists to prevent.
+        """
+        (self.controller / "HELPER.md").write_text("helper\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "helper")
+        self.isolate_permission_files()
+
+        profile, delta = self.revisable_round(
+            allowed_repo_writes=["README.md", "HELPER.md"]
+        )
+        worker = Path(profile["worktree"]["path"])
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        agy_dispatch.snapshot(revised, "round-2")
+        (worker / "HELPER.md").write_text("helper\nsecond revision\n")
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            agy_dispatch.review(revised, "round-2")
+        self.assertIn("findings: none", out.getvalue())
+
+    def test_a_declared_path_nobody_wrote_is_still_a_finding(self) -> None:
+        """The negative control for #3424: widening the measurement must not
+        retire the check. Nothing in either revision writes `HELPER.md`."""
+        (self.controller / "HELPER.md").write_text("helper\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "helper")
+        self.isolate_permission_files()
+
+        profile, delta = self.revisable_round(
+            allowed_repo_writes=["README.md", "HELPER.md"]
+        )
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        agy_dispatch.snapshot(revised, "round-2")
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(SystemExit):
+                agy_dispatch.review(revised, "round-2")
+        self.assertIn(
+            "declared but did not write 1 path(s): HELPER.md", out.getvalue()
+        )
+
     def test_discard_keeps_the_branch_when_asked(self) -> None:
         path = self.profile_path()
         profile = self.derive(path)
