@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -249,12 +250,12 @@ class RetainedGkeEvidenceTests(unittest.TestCase):
             self.assertNotIn(key, environment)
 
     def test_evidence_directory_git_ignore_rules(self) -> None:
-        json_path = "apps/lumen/external-contracts/evidence/gke-ksa-rbac-authorization.json"
-        log_path = "apps/lumen/external-contracts/evidence/gke-runs/example/run.log"
+        json_path = f"apps/lumen/external-contracts/evidence/{RUNNER.EVIDENCE_NAME}"
+        log_path = f"apps/lumen/external-contracts/evidence/{RUNNER.RUNS_DIR}/example/run.log"
         readme_path = "apps/lumen/external-contracts/evidence/README.md"
 
         completed_json = subprocess.run(
-            ["git", "check-ignore", json_path],
+            ["git", "check-ignore", "--no-index", json_path],
             check=False,
             capture_output=True,
             encoding="utf-8",
@@ -262,7 +263,7 @@ class RetainedGkeEvidenceTests(unittest.TestCase):
         self.assertEqual(completed_json.returncode, 0, completed_json.stderr)
 
         completed_log = subprocess.run(
-            ["git", "check-ignore", log_path],
+            ["git", "check-ignore", "--no-index", log_path],
             check=False,
             capture_output=True,
             encoding="utf-8",
@@ -270,12 +271,46 @@ class RetainedGkeEvidenceTests(unittest.TestCase):
         self.assertEqual(completed_log.returncode, 0, completed_log.stderr)
 
         completed_readme = subprocess.run(
-            ["git", "check-ignore", readme_path],
+            ["git", "check-ignore", "--no-index", readme_path],
             check=False,
             capture_output=True,
             encoding="utf-8",
         )
         self.assertEqual(completed_readme.returncode, 1, completed_readme.stdout)
+
+        completed_ls_files = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", readme_path],
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(completed_ls_files.returncode, 0, completed_ls_files.stderr)
+
+    def test_acceptance_gcp_readme_closed_mode_set_matches_run_sh(self) -> None:
+        repo_root = Path(__file__).resolve().parents[5]
+        run_sh_path = repo_root / "acceptance" / "gcp" / "scripts" / "run.sh"
+        readme_path = repo_root / "acceptance" / "gcp" / "README.md"
+
+        run_sh_content = run_sh_path.read_text(encoding="utf-8")
+        readme_content = readme_path.read_text(encoding="utf-8")
+
+        case_start = run_sh_content.find('case "$ACCEPTANCE_APPS" in')
+        self.assertNotEqual(case_start, -1, 'case "$ACCEPTANCE_APPS" in not found in run.sh')
+        case_end = run_sh_content.find("esac", case_start)
+        self.assertNotEqual(case_end, -1, "esac not found after case in run.sh")
+        case_block = run_sh_content[case_start:case_end]
+
+        run_sh_modes = set(re.findall(r'^\s*"([^"]+)"\)', case_block, re.MULTILINE))
+        self.assertTrue(run_sh_modes, "No mode arms extracted from run.sh")
+
+        readme_match = re.search(r'`ACCEPTANCE_APPS`[\s\S]*?closed:[\s\S]*?\.', readme_content)
+        self.assertIsNotNone(readme_match, "Closed mode set statement for ACCEPTANCE_APPS not found in README.md")
+
+        readme_modes = {
+            m for m in re.findall(r'`([^`]+)`', readme_match.group(0))
+            if m != "ACCEPTANCE_APPS"
+        }
+        self.assertEqual(readme_modes, run_sh_modes)
 
 
     def test_harness_callback_without_immediate_credential_destroy_is_rejected(self) -> None:
