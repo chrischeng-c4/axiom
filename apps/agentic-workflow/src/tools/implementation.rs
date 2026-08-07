@@ -39,19 +39,21 @@ fn validate_change_id(change_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Check if current directory is a git repository
-fn is_git_repo() -> bool {
+/// Check if a directory is inside a git repository
+fn is_git_repo(dir: &Path) -> bool {
     Command::new("git")
         .args(&["rev-parse", "--git-dir"])
+        .current_dir(dir)
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
 
-/// Get current git branch name
-fn get_current_branch() -> Result<String> {
+/// Get current git branch name in specified directory
+fn get_current_branch(dir: &Path) -> Result<String> {
     let output = Command::new("git")
         .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(dir)
         .output()?;
 
     if !output.status.success() {
@@ -62,9 +64,9 @@ fn get_current_branch() -> Result<String> {
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
-/// Run a git command and return output
-fn run_git_command(args: &[&str]) -> Result<String> {
-    let output = Command::new("git").args(args).output()?;
+/// Run a git command in specified directory and return output
+fn run_git_command(dir: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git").args(args).current_dir(dir).output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -75,8 +77,8 @@ fn run_git_command(args: &[&str]) -> Result<String> {
 }
 
 /// Validate that current branch matches expected pattern and return (branch, is_match)
-fn validate_branch(change_id: &str) -> Result<(String, bool)> {
-    let current_branch = get_current_branch()?;
+fn validate_branch(change_id: &str, dir: &Path) -> Result<(String, bool)> {
+    let current_branch = get_current_branch(dir)?;
     let expected_branch = format!("cclab/{}", change_id);
     let is_match = current_branch == expected_branch;
     Ok((current_branch, is_match))
@@ -229,14 +231,14 @@ pub fn read_implementation_summary_definition() -> ToolDefinition {
 
 /// Execute the read_implementation_summary tool
 /// @spec apps/agentic-workflow/tech-design/core/tools/implementation/read-implementation-summary.md#source
-pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -> Result<String> {
+pub fn execute_read_implementation_summary(args: &Value, project_root: &Path) -> Result<String> {
     let change_id = get_required_string(args, "change_id")?;
     validate_change_id(&change_id)?;
 
     let base_branch =
         get_optional_string(args, "base_branch").unwrap_or_else(|| "main".to_string());
 
-    if !is_git_repo() {
+    if !is_git_repo(project_root) {
         anyhow::bail!("Not in a git repository");
     }
 
@@ -244,7 +246,7 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
     output.push_str(&format!("# Implementation Summary for: {}\n\n", change_id));
 
     // Branch validation
-    match validate_branch(&change_id) {
+    match validate_branch(&change_id, project_root) {
         Ok((current_branch, is_match)) => {
             output.push_str(&format!("**Current Branch**: `{}`\n", current_branch));
             if !is_match {
@@ -264,8 +266,10 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
     }
 
     // Commits ahead of base
-    let commits_ahead =
-        run_git_command(&["rev-list", "--count", &format!("{}..HEAD", base_branch)])?;
+    let commits_ahead = run_git_command(
+        project_root,
+        &["rev-list", "--count", &format!("{}..HEAD", base_branch)],
+    )?;
     output.push_str(&format!(
         "**Commits ahead of {}**: {}\n\n",
         base_branch, commits_ahead
@@ -273,7 +277,7 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
 
     // Changed files (name-status)
     output.push_str("## Changed Files\n\n");
-    let name_status = run_git_command(&["diff", "--name-status", &base_branch])?;
+    let name_status = run_git_command(project_root, &["diff", "--name-status", &base_branch])?;
     if name_status.is_empty() {
         output.push_str("*No changes detected*\n\n");
     } else {
@@ -284,7 +288,7 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
 
     // Diff statistics
     output.push_str("## Diff Statistics\n\n");
-    let diff_stat = run_git_command(&["diff", "--stat", &base_branch])?;
+    let diff_stat = run_git_command(project_root, &["diff", "--stat", &base_branch])?;
     if diff_stat.is_empty() {
         output.push_str("*No changes*\n\n");
     } else {
@@ -295,7 +299,10 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
 
     // Commit log
     output.push_str("## Commit Log\n\n");
-    let commit_log = run_git_command(&["log", "--oneline", &format!("{}..HEAD", base_branch)])?;
+    let commit_log = run_git_command(
+        project_root,
+        &["log", "--oneline", &format!("{}..HEAD", base_branch)],
+    )?;
     if commit_log.is_empty() {
         output.push_str("*No commits*\n\n");
     } else {
@@ -353,7 +360,7 @@ pub fn list_changed_files_definition() -> ToolDefinition {
 
 /// Execute the list_changed_files tool
 /// @spec apps/agentic-workflow/tech-design/core/tools/implementation/list-changed-files.md#source
-pub fn execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<String> {
+pub fn execute_list_changed_files(args: &Value, project_root: &Path) -> Result<String> {
     let change_id = get_required_string(args, "change_id")?;
     validate_change_id(&change_id)?;
 
@@ -361,7 +368,7 @@ pub fn execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<
         get_optional_string(args, "base_branch").unwrap_or_else(|| "main".to_string());
     let filter = get_optional_string(args, "filter");
 
-    if !is_git_repo() {
+    if !is_git_repo(project_root) {
         anyhow::bail!("Not in a git repository");
     }
 
@@ -373,7 +380,7 @@ pub fn execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<
     }
 
     // Get numstat output
-    let numstat = run_git_command(&["diff", "--numstat", &base_branch])?;
+    let numstat = run_git_command(project_root, &["diff", "--numstat", &base_branch])?;
 
     if numstat.is_empty() || numstat.starts_with("⚠️") {
         output.push_str("*No changes detected*\n");
@@ -902,6 +909,37 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn setup_temp_git_repo() -> TempDir {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let _ = Command::new("git")
+            .args(&["init"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["config", "user.name", "Test User"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["config", "user.email", "test@example.com"])
+            .current_dir(root)
+            .output();
+        let _ = std::fs::write(root.join("init.txt"), "init");
+        let _ = Command::new("git")
+            .args(&["add", "init.txt"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["commit", "-m", "initial commit"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["branch", "-M", "main"])
+            .current_dir(root)
+            .output();
+        temp_dir
+    }
+
     #[test]
     fn test_validate_change_id_valid() {
         assert!(validate_change_id("test-change").is_ok());
@@ -1021,21 +1059,71 @@ mod tests {
 
     #[test]
     fn test_is_git_repo() {
-        // This test will pass or fail depending on whether we're in a git repo
-        // Just verify it doesn't panic
-        let _ = is_git_repo();
+        let non_git_dir = TempDir::new().unwrap();
+        assert!(!is_git_repo(non_git_dir.path()));
+
+        let git_dir = setup_temp_git_repo();
+        assert!(is_git_repo(git_dir.path()));
     }
 
     #[test]
     fn test_git_helpers_in_git_repo() {
-        // Only run if we're in a git repo
-        if is_git_repo() {
-            let branch = get_current_branch();
-            assert!(branch.is_ok());
+        let temp_dir = setup_temp_git_repo();
+        let root = temp_dir.path();
+        assert!(is_git_repo(root));
 
-            let status = run_git_command(&["status", "--short"]);
-            assert!(status.is_ok());
-        }
+        let test_branch = "unique_branch_3420_test";
+        let _ = Command::new("git")
+            .args(&["checkout", "-b", test_branch])
+            .current_dir(root)
+            .output();
+
+        let branch = get_current_branch(root).unwrap();
+        assert_eq!(branch, test_branch);
+
+        let status = run_git_command(root, &["status", "--short"]);
+        assert!(status.is_ok());
+    }
+
+    #[test]
+    fn test_git_tools_with_project_root() {
+        let temp_git_dir = setup_temp_git_repo();
+        let root = temp_git_dir.path();
+
+        let test_filename = "unique_file_3420_test.txt";
+        std::fs::write(root.join(test_filename), "content").unwrap();
+        let _ = Command::new("git")
+            .args(&["add", test_filename])
+            .current_dir(root)
+            .output();
+
+        let args = json!({
+            "change_id": "test-change",
+            "base_branch": "main"
+        });
+
+        let summary_res = execute_read_implementation_summary(&args, root).unwrap();
+        assert!(summary_res.contains(test_filename));
+
+        let list_res = execute_list_changed_files(&args, root).unwrap();
+        assert!(list_res.contains(test_filename));
+
+        let non_git_dir = TempDir::new().unwrap();
+        let non_git_root = non_git_dir.path();
+
+        let err_summary = execute_read_implementation_summary(&args, non_git_root);
+        assert!(err_summary.is_err());
+        assert!(err_summary
+            .unwrap_err()
+            .to_string()
+            .contains("Not in a git repository"));
+
+        let err_list = execute_list_changed_files(&args, non_git_root);
+        assert!(err_list.is_err());
+        assert!(err_list
+            .unwrap_err()
+            .to_string()
+            .contains("Not in a git repository"));
     }
 }
 // CODEGEN-END

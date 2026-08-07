@@ -25,9 +25,9 @@ Public API manifest for `apps/agentic-workflow/src/tools/implementation.rs` gene
 | `create_review_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 477 | create_review_definition() -> ToolDefinition |
 | `execute_create_merge_review` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 781 | execute_create_merge_review(args: &Value, project_root: &Path) -> Result<String> |
 | `execute_create_review` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 559 | execute_create_review(args: &Value, project_root: &Path) -> Result<String> |
-| `execute_list_changed_files` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 356 | execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<String> |
+| `execute_list_changed_files` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 356 | execute_list_changed_files(args: &Value, project_root: &Path) -> Result<String> |
 | `execute_read_all_requirements` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 117 | execute_read_all_requirements(args: &Value, project_root: &Path) -> Result<String> |
-| `execute_read_implementation_summary` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 232 | execute_read_implementation_summary(args: &Value, _project_root: &Path) -> Result<String> |
+| `execute_read_implementation_summary` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 232 | execute_read_implementation_summary(args: &Value, project_root: &Path) -> Result<String> |
 | `list_changed_files_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 323 | list_changed_files_definition() -> ToolDefinition |
 | `read_all_requirements_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 93 | read_all_requirements_definition() -> ToolDefinition |
 | `read_implementation_summary_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 204 | read_implementation_summary_definition() -> ToolDefinition |
@@ -39,6 +39,37 @@ Public API manifest for `apps/agentic-workflow/src/tools/implementation.rs` gene
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn setup_temp_git_repo() -> TempDir {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let _ = Command::new("git")
+            .args(&["init"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["config", "user.name", "Test User"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["config", "user.email", "test@example.com"])
+            .current_dir(root)
+            .output();
+        let _ = std::fs::write(root.join("init.txt"), "init");
+        let _ = Command::new("git")
+            .args(&["add", "init.txt"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["commit", "-m", "initial commit"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["branch", "-M", "main"])
+            .current_dir(root)
+            .output();
+        temp_dir
+    }
 
     #[test]
     fn test_validate_change_id_valid() {
@@ -159,21 +190,65 @@ mod tests {
 
     #[test]
     fn test_is_git_repo() {
-        // This test will pass or fail depending on whether we're in a git repo
-        // Just verify it doesn't panic
-        let _ = is_git_repo();
+        let non_git_dir = TempDir::new().unwrap();
+        assert!(!is_git_repo(non_git_dir.path()));
+
+        let git_dir = setup_temp_git_repo();
+        assert!(is_git_repo(git_dir.path()));
     }
 
     #[test]
     fn test_git_helpers_in_git_repo() {
-        // Only run if we're in a git repo
-        if is_git_repo() {
-            let branch = get_current_branch();
-            assert!(branch.is_ok());
+        let temp_dir = setup_temp_git_repo();
+        let root = temp_dir.path();
+        assert!(is_git_repo(root));
 
-            let status = run_git_command(&["status", "--short"]);
-            assert!(status.is_ok());
-        }
+        let test_branch = "unique_branch_3420_test";
+        let _ = Command::new("git")
+            .args(&["checkout", "-b", test_branch])
+            .current_dir(root)
+            .output();
+
+        let branch = get_current_branch(root).unwrap();
+        assert_eq!(branch, test_branch);
+
+        let status = run_git_command(root, &["status", "--short"]);
+        assert!(status.is_ok());
+    }
+
+    #[test]
+    fn test_git_tools_with_project_root() {
+        let temp_git_dir = setup_temp_git_repo();
+        let root = temp_git_dir.path();
+
+        let test_filename = "unique_file_3420_test.txt";
+        std::fs::write(root.join(test_filename), "content").unwrap();
+        let _ = Command::new("git")
+            .args(&["add", test_filename])
+            .current_dir(root)
+            .output();
+
+        let args = json!({
+            "change_id": "test-change",
+            "base_branch": "main"
+        });
+
+        let summary_res = execute_read_implementation_summary(&args, root).unwrap();
+        assert!(summary_res.contains(test_filename));
+
+        let list_res = execute_list_changed_files(&args, root).unwrap();
+        assert!(list_res.contains(test_filename));
+
+        let non_git_dir = TempDir::new().unwrap();
+        let non_git_root = non_git_dir.path();
+
+        let err_summary = execute_read_implementation_summary(&args, non_git_root);
+        assert!(err_summary.is_err());
+        assert!(err_summary.unwrap_err().to_string().contains("Not in a git repository"));
+
+        let err_list = execute_list_changed_files(&args, non_git_root);
+        assert!(err_list.is_err());
+        assert!(err_list.unwrap_err().to_string().contains("Not in a git repository"));
     }
 }
 ````

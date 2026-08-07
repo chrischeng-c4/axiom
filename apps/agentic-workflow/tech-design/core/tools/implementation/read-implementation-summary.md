@@ -25,9 +25,9 @@ Public API manifest for `apps/agentic-workflow/src/tools/implementation.rs` gene
 | `create_review_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 477 | create_review_definition() -> ToolDefinition |
 | `execute_create_merge_review` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 781 | execute_create_merge_review(args: &Value, project_root: &Path) -> Result<String> |
 | `execute_create_review` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 559 | execute_create_review(args: &Value, project_root: &Path) -> Result<String> |
-| `execute_list_changed_files` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 356 | execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<String> |
+| `execute_list_changed_files` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 356 | execute_list_changed_files(args: &Value, project_root: &Path) -> Result<String> |
 | `execute_read_all_requirements` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 117 | execute_read_all_requirements(args: &Value, project_root: &Path) -> Result<String> |
-| `execute_read_implementation_summary` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 232 | execute_read_implementation_summary(args: &Value, _project_root: &Path) -> Result<String> |
+| `execute_read_implementation_summary` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 232 | execute_read_implementation_summary(args: &Value, project_root: &Path) -> Result<String> |
 | `list_changed_files_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 323 | list_changed_files_definition() -> ToolDefinition |
 | `read_all_requirements_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 93 | read_all_requirements_definition() -> ToolDefinition |
 | `read_implementation_summary_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 204 | read_implementation_summary_definition() -> ToolDefinition |
@@ -63,14 +63,14 @@ pub fn read_implementation_summary_definition() -> ToolDefinition {
 }
 
 /// Execute the read_implementation_summary tool
-pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -> Result<String> {
+pub fn execute_read_implementation_summary(args: &Value, project_root: &Path) -> Result<String> {
     let change_id = get_required_string(args, "change_id")?;
     validate_change_id(&change_id)?;
 
     let base_branch =
         get_optional_string(args, "base_branch").unwrap_or_else(|| "main".to_string());
 
-    if !is_git_repo() {
+    if !is_git_repo(project_root) {
         anyhow::bail!("Not in a git repository");
     }
 
@@ -78,7 +78,7 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
     output.push_str(&format!("# Implementation Summary for: {}\n\n", change_id));
 
     // Branch validation
-    match validate_branch(&change_id) {
+    match validate_branch(&change_id, project_root) {
         Ok((current_branch, is_match)) => {
             output.push_str(&format!("**Current Branch**: `{}`\n", current_branch));
             if !is_match {
@@ -99,7 +99,7 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
 
     // Commits ahead of base
     let commits_ahead =
-        run_git_command(&["rev-list", "--count", &format!("{}..HEAD", base_branch)])?;
+        run_git_command(project_root, &["rev-list", "--count", &format!("{}..HEAD", base_branch)])?;
     output.push_str(&format!(
         "**Commits ahead of {}**: {}\n\n",
         base_branch, commits_ahead
@@ -107,7 +107,7 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
 
     // Changed files (name-status)
     output.push_str("## Changed Files\n\n");
-    let name_status = run_git_command(&["diff", "--name-status", &base_branch])?;
+    let name_status = run_git_command(project_root, &["diff", "--name-status", &base_branch])?;
     if name_status.is_empty() {
         output.push_str("*No changes detected*\n\n");
     } else {
@@ -118,7 +118,7 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
 
     // Diff statistics
     output.push_str("## Diff Statistics\n\n");
-    let diff_stat = run_git_command(&["diff", "--stat", &base_branch])?;
+    let diff_stat = run_git_command(project_root, &["diff", "--stat", &base_branch])?;
     if diff_stat.is_empty() {
         output.push_str("*No changes*\n\n");
     } else {
@@ -129,7 +129,7 @@ pub fn execute_read_implementation_summary(args: &Value, _project_root: &Path) -
 
     // Commit log
     output.push_str("## Commit Log\n\n");
-    let commit_log = run_git_command(&["log", "--oneline", &format!("{}..HEAD", base_branch)])?;
+    let commit_log = run_git_command(project_root, &["log", "--oneline", &format!("{}..HEAD", base_branch)])?;
     if commit_log.is_empty() {
         output.push_str("*No commits*\n\n");
     } else {

@@ -717,9 +717,10 @@ async fn build_codegen_prompt(
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/tools/create_change_impl/utils.md#source
 // CODEGEN-BEGIN
 /// Run git command and return stdout (empty string on failure).
-fn git_output(args: &[&str]) -> String {
+fn git_output(dir: &Path, args: &[&str]) -> String {
     std::process::Command::new("git")
         .args(args)
+        .current_dir(dir)
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -741,8 +742,8 @@ fn auto_populate_impl_baseline(change_id: &str, project_root: &Path) {
         }
     }
 
-    let stat = git_output(&["diff", "--stat", "main"]);
-    let name_status = git_output(&["diff", "--name-status", "main"]);
+    let stat = git_output(project_root, &["diff", "--stat", "main"]);
+    let name_status = git_output(project_root, &["diff", "--name-status", "main"]);
     if stat.is_empty() && name_status.is_empty() {
         return;
     }
@@ -766,7 +767,7 @@ fn auto_populate_impl_baseline(change_id: &str, project_root: &Path) {
     }
 
     // Include truncated diff
-    let diff = git_output(&["diff", "main", "--", ".", ":!cclab/"]);
+    let diff = git_output(project_root, &["diff", "main", "--", ".", ":!cclab/"]);
     if !diff.is_empty() {
         content.push_str("## Diff\n\n```diff\n");
         const MAX_LINES: usize = 2000;
@@ -999,6 +1000,80 @@ mod tests {
         assert_eq!(parsed["status"], "ok");
         let prompt = read_prompt(&parsed, &change_dir, "write_implementation_diff");
         assert!(prompt.contains("Write Implementation Diff"));
+    }
+
+    #[test]
+    fn test_auto_populate_impl_baseline_anchored_to_project_root() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["checkout", "-b", "main"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let unique_filename = "unique_file_3420_r2_test_marker.txt";
+        std::fs::write(root.join(unique_filename), "initial content").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial commit"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+
+        std::fs::write(root.join(unique_filename), "modified content").unwrap();
+
+        let change_id = "test-auto-populate-anchored";
+        let change_dir = root.join(".aw/changes").join(change_id);
+        std::fs::create_dir_all(&change_dir).unwrap();
+
+        auto_populate_impl_baseline(change_id, root);
+
+        let impl_path = change_dir.join("implementation.md");
+        assert!(impl_path.exists(), "implementation.md should be created");
+        let content = std::fs::read_to_string(&impl_path).unwrap();
+        assert!(
+            content.contains(unique_filename),
+            "implementation.md should contain unique filename from isolated repo, got: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_auto_populate_impl_baseline_non_git_dir_produces_no_diff() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let change_id = "test-auto-populate-non-git";
+        let change_dir = root.join(".aw/changes").join(change_id);
+        std::fs::create_dir_all(&change_dir).unwrap();
+
+        auto_populate_impl_baseline(change_id, root);
+
+        let impl_path = change_dir.join("implementation.md");
+        assert!(
+            !impl_path.exists(),
+            "implementation.md should NOT be created when root is not a git repo"
+        );
     }
 
     #[test]

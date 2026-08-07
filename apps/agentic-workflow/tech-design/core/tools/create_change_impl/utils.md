@@ -31,9 +31,10 @@ Public API manifest for `apps/agentic-workflow/src/tools/create_change_impl.rs` 
 
 ````rust
 /// Run git command and return stdout (empty string on failure).
-fn git_output(args: &[&str]) -> String {
+fn git_output(dir: &Path, args: &[&str]) -> String {
     std::process::Command::new("git")
         .args(args)
+        .current_dir(dir)
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -55,8 +56,8 @@ fn auto_populate_impl_baseline(change_id: &str, project_root: &Path) {
         }
     }
 
-    let stat = git_output(&["diff", "--stat", "main"]);
-    let name_status = git_output(&["diff", "--name-status", "main"]);
+    let stat = git_output(project_root, &["diff", "--stat", "main"]);
+    let name_status = git_output(project_root, &["diff", "--name-status", "main"]);
     if stat.is_empty() && name_status.is_empty() {
         return;
     }
@@ -80,7 +81,7 @@ fn auto_populate_impl_baseline(change_id: &str, project_root: &Path) {
     }
 
     // Include truncated diff
-    let diff = git_output(&["diff", "main", "--", ".", ":!cclab/"]);
+    let diff = git_output(project_root, &["diff", "main", "--", ".", ":!cclab/"]);
     if !diff.is_empty() {
         content.push_str("## Diff\n\n```diff\n");
         const MAX_LINES: usize = 2000;

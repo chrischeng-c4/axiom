@@ -25,9 +25,9 @@ Public API manifest for `apps/agentic-workflow/src/tools/implementation.rs` gene
 | `create_review_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 477 | create_review_definition() -> ToolDefinition |
 | `execute_create_merge_review` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 781 | execute_create_merge_review(args: &Value, project_root: &Path) -> Result<String> |
 | `execute_create_review` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 559 | execute_create_review(args: &Value, project_root: &Path) -> Result<String> |
-| `execute_list_changed_files` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 356 | execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<String> |
+| `execute_list_changed_files` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 356 | execute_list_changed_files(args: &Value, project_root: &Path) -> Result<String> |
 | `execute_read_all_requirements` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 117 | execute_read_all_requirements(args: &Value, project_root: &Path) -> Result<String> |
-| `execute_read_implementation_summary` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 232 | execute_read_implementation_summary(args: &Value, _project_root: &Path) -> Result<String> |
+| `execute_read_implementation_summary` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 232 | execute_read_implementation_summary(args: &Value, project_root: &Path) -> Result<String> |
 | `list_changed_files_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 323 | list_changed_files_definition() -> ToolDefinition |
 | `read_all_requirements_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 93 | read_all_requirements_definition() -> ToolDefinition |
 | `read_implementation_summary_definition` | apps/agentic-workflow/src/tools/implementation.rs | function | pub | 204 | read_implementation_summary_definition() -> ToolDefinition |
@@ -68,7 +68,7 @@ pub fn list_changed_files_definition() -> ToolDefinition {
 }
 
 /// Execute the list_changed_files tool
-pub fn execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<String> {
+pub fn execute_list_changed_files(args: &Value, project_root: &Path) -> Result<String> {
     let change_id = get_required_string(args, "change_id")?;
     validate_change_id(&change_id)?;
 
@@ -76,7 +76,7 @@ pub fn execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<
         get_optional_string(args, "base_branch").unwrap_or_else(|| "main".to_string());
     let filter = get_optional_string(args, "filter");
 
-    if !is_git_repo() {
+    if !is_git_repo(project_root) {
         anyhow::bail!("Not in a git repository");
     }
 
@@ -88,7 +88,7 @@ pub fn execute_list_changed_files(args: &Value, _project_root: &Path) -> Result<
     }
 
     // Get numstat output
-    let numstat = run_git_command(&["diff", "--numstat", &base_branch])?;
+    let numstat = run_git_command(project_root, &["diff", "--numstat", &base_branch])?;
 
     if numstat.is_empty() || numstat.starts_with("⚠️") {
         output.push_str("*No changes detected*\n");
