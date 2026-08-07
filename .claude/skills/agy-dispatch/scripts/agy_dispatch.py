@@ -26,6 +26,16 @@ TEMP_ROOT = Path("/tmp").resolve()
 PERMISSION_KINDS = ("allow", "deny", "ask")
 TASK_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
+# Every git call below reads or writes state directly and none of them needs
+# the fsmonitor daemon's cache. That daemon is a liability here: on a large
+# working tree it stops answering, and then any git command that touches the
+# index blocks in `fsmonitor_ipc__send_query` -> `read()` indefinitely -- 0%
+# CPU, no output, no timeout. A controller stuck there looks exactly like a
+# worker that is still thinking, which is the one failure this tool must never
+# imitate. Bypassing the client costs one index refresh and cannot change what
+# git reports, so it is always the right trade for a round's control plane.
+GIT = ("git", "-c", "core.fsmonitor=false")
+
 # Derived-worktree dispatch. The worker gets its own checkout on its own
 # branch, so the controller keeps working while a round is in flight and a
 # scope overrun is a diff to read rather than a destroyed round. The AGY
@@ -856,7 +866,7 @@ def snapshot(profile: dict, task_key: str) -> Path:
     state = Path(profile["state_dir"])
     (state / "snapshots").mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
+        [*GIT, "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
         text=True,
         capture_output=True,
         check=True,
@@ -2186,7 +2196,7 @@ def park_original(
 
 def git_output(root: Path, *args: str) -> str:
     result = subprocess.run(
-        ["git", "-C", str(root), *args],
+        [*GIT, "-C", str(root), *args],
         text=True,
         capture_output=True,
         check=True,
@@ -2384,7 +2394,7 @@ def worktree(profile_path: str, task_key: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             [
-                "git",
+                *GIT,
                 "-C",
                 str(controller_root),
                 "worktree",
@@ -2780,14 +2790,14 @@ def accept(profile: dict, task_key: str) -> None:
         for note in proof_notes(profile, task_key):
             print(f"note: {note}")
     subprocess.run(
-        ["git", "-C", str(root), "add", "--", *touched],
+        [*GIT, "-C", str(root), "add", "--", *touched],
         check=True,
     )
     issue = profile["task_contract"].get("issue")
     trailer = f"\n\nRefs #{issue}" if issue else ""
     subprocess.run(
         [
-            "git",
+            *GIT,
             "-C",
             str(root),
             "commit",
@@ -2837,19 +2847,19 @@ def discard(profile_path: str, task_key: str, *, keep_branch: bool = False) -> N
     path = spec.get("path")
     if path and Path(path).exists():
         subprocess.run(
-            ["git", "-C", controller_root, "worktree", "remove", "--force", path],
+            [*GIT, "-C", controller_root, "worktree", "remove", "--force", path],
             check=True,
         )
         print(f"removed worktree {path}")
     subprocess.run(
-        ["git", "-C", controller_root, "worktree", "prune"],
+        [*GIT, "-C", controller_root, "worktree", "prune"],
         check=True,
     )
     if keep_branch:
         print(f"kept branch {branch} as requested")
     elif branch.startswith(DERIVED_BRANCH_PREFIX):
         subprocess.run(
-            ["git", "-C", controller_root, "branch", "-D", branch],
+            [*GIT, "-C", controller_root, "branch", "-D", branch],
             check=False,
         )
         print(f"deleted branch {branch}")
@@ -2884,7 +2894,7 @@ def verify(profile: dict, task_key: str) -> None:
     state = Path(profile["state_dir"])
     root = Path(profile["root"])
     result = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
+        [*GIT, "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
         text=True,
         capture_output=True,
         check=True,
