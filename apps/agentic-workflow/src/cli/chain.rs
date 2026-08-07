@@ -464,6 +464,41 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         sample: "aw wi plan-apply --evidence-file /tmp/aw/project-plan.decision.json --json",
         note: "the sole project-plan tracker writer consumes eligible stage evidence and returns to the same root",
     },
+    EmitSite {
+        source: "change_lifecycle.rs:wi_remediation",
+        sample: "aw wi validate 915",
+        note: "remediation command for WI drift, stale predecessor, or invalid parent set",
+    },
+    EmitSite {
+        source: "change_lifecycle.rs:route_failure (Contract)",
+        sample: "aw ec check",
+        note: "pure ownership routing for contract-owned stage failure",
+    },
+    EmitSite {
+        source: "change_lifecycle.rs:route_failure (Design)",
+        sample: "aw td check",
+        note: "pure ownership routing for design-owned stage failure",
+    },
+    EmitSite {
+        source: "change_lifecycle.rs:route_failure (Implementation)",
+        sample: "aw cb check 915",
+        note: "pure ownership routing for implementation-owned stage failure",
+    },
+    EmitSite {
+        source: "change_lifecycle.rs:reduce_event (rejected cb_commit)",
+        sample: "aw ec verify --stage cb",
+        note: "remediation command when cb_commit is rejected due to incomplete 4D active tuple evidence",
+    },
+    EmitSite {
+        source: "change_lifecycle.rs:reduce_event (accepted cb_commit)",
+        sample: "aw wi show 915",
+        note: "terminal obligation command when cb_commit is accepted",
+    },
+    EmitSite {
+        source: "change_lifecycle.rs:decide_projection (reopen drift remediation)",
+        sample: "aw wi update 915 --state open",
+        note: "remediation command to reopen a closed tracker issue when lifecycle is non-terminal",
+    },
 ];
 
 // ---------------------------------------------------------------------------

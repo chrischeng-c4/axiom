@@ -972,7 +972,7 @@ mod tests {
             Some(("cb-1", "d-cb-1")),
         );
         lc_row1.next = NextObligation {
-            command: "aw cb check".to_string(),
+            command: "aw cb check test-change".to_string(),
             owner: OwnerVocabulary::Cb,
         };
         let tuple_row1 = lc_row1.active_digest_tuple();
@@ -994,7 +994,7 @@ mod tests {
         assert_eq!(r1.obligation.as_ref().unwrap().owner, OwnerVocabulary::Ec);
         assert_eq!(r1.obligation.as_ref().unwrap().command, "aw ec check");
 
-        // Row 2: identical CB verdict with identical red behavior dimension, declared implementation-owned -> owner cb, command aw cb check
+        // Row 2: identical CB verdict with identical red behavior dimension, declared implementation-owned -> owner cb, command aw cb check test-change
         let mut lc_row2 = make_lifecycle(
             Some(("wi-1", "d-wi-1")),
             Some(("ec-1", "d-ec-1")),
@@ -1002,7 +1002,7 @@ mod tests {
             Some(("cb-1", "d-cb-1")),
         );
         lc_row2.next = NextObligation {
-            command: "aw cb check".to_string(),
+            command: "aw cb check test-change".to_string(),
             owner: OwnerVocabulary::Cb,
         };
         let tuple_row2 = lc_row2.active_digest_tuple();
@@ -1024,7 +1024,10 @@ mod tests {
         )
         .expect("red verdict must yield routed outcome");
         assert_eq!(r2.obligation.as_ref().unwrap().owner, OwnerVocabulary::Cb);
-        assert_eq!(r2.obligation.as_ref().unwrap().command, "aw cb check");
+        assert_eq!(
+            r2.obligation.as_ref().unwrap().command,
+            "aw cb check test-change"
+        );
         assert_ne!(
             r1, r2,
             "row 1 and row 2 outcomes must differ by declared failure owner"
@@ -1038,7 +1041,7 @@ mod tests {
             Some(("cb-1", "d-cb-1")),
         );
         lc_row3.next = NextObligation {
-            command: "aw cb check".to_string(),
+            command: "aw cb check test-change".to_string(),
             owner: OwnerVocabulary::Cb,
         };
         let tuple_row3 = lc_row3.active_digest_tuple();
@@ -1118,7 +1121,7 @@ mod tests {
             "green verdict must produce no failure routing outcome"
         );
 
-        // Row 6: CB verdict whose only red dimension is behavior, failure declared infrastructure-owned, current command aw cb check
+        // Row 6: CB verdict whose only red dimension is behavior, failure declared infrastructure-owned, current command aw cb check test-change
         let mut lc_row6 = make_lifecycle(
             Some(("wi-1", "d-wi-1")),
             Some(("ec-1", "d-ec-1")),
@@ -1126,7 +1129,7 @@ mod tests {
             Some(("cb-1", "d-cb-1")),
         );
         lc_row6.next = NextObligation {
-            command: "aw cb check".to_string(),
+            command: "aw cb check test-change".to_string(),
             owner: OwnerVocabulary::Cb,
         };
         let tuple_row6 = lc_row6.active_digest_tuple();
@@ -1144,7 +1147,10 @@ mod tests {
             &[("behavior", FailureOwnership::Infrastructure)],
         )
         .expect("red verdict must yield routed outcome");
-        assert_eq!(r6.obligation.as_ref().unwrap().command, "aw cb check");
+        assert_eq!(
+            r6.obligation.as_ref().unwrap().command,
+            "aw cb check test-change"
+        );
         assert_eq!(r6.obligation.as_ref().unwrap().owner, OwnerVocabulary::Cb);
         assert!(r6.blocked, "infrastructure outcome must be marked blocked");
         assert!(
@@ -1164,7 +1170,7 @@ mod tests {
             Some(("cb-1", "d-cb-1")),
         );
         lc_row7_a.next = NextObligation {
-            command: "aw cb check".to_string(),
+            command: "aw cb check test-change".to_string(),
             owner: OwnerVocabulary::Cb,
         };
         let tuple_row7_a = lc_row7_a.active_digest_tuple();
@@ -1190,7 +1196,7 @@ mod tests {
             Some(("cb-1", "d-cb-1")),
         );
         lc_row7_b.next = NextObligation {
-            command: "aw cb check".to_string(),
+            command: "aw cb check test-change".to_string(),
             owner: OwnerVocabulary::Cb,
         };
         let tuple_row7_b = lc_row7_b.active_digest_tuple();
@@ -1330,7 +1336,10 @@ mod tests {
         .expect("red verdict must yield routed outcome");
         assert_eq!(r12, r2, "row 12 outcome must be unchanged from row 2");
         assert_eq!(r12.obligation.as_ref().unwrap().owner, OwnerVocabulary::Cb);
-        assert_eq!(r12.obligation.as_ref().unwrap().command, "aw cb check");
+        assert_eq!(
+            r12.obligation.as_ref().unwrap().command,
+            "aw cb check test-change"
+        );
         assert_eq!(
             r12.failure_ownership,
             Some(FailureOwnership::Implementation)

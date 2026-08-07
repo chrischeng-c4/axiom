@@ -431,7 +431,7 @@ pub fn route_failure(
             owner: OwnerVocabulary::Td,
         },
         FailureOwnership::Implementation => NextObligation {
-            command: "aw cb check".to_string(),
+            command: format!("aw cb check {slug}"),
             owner: OwnerVocabulary::Cb,
         },
         FailureOwnership::Infrastructure => NextObligation {
@@ -1617,6 +1617,45 @@ mod tests {
     }
 
     #[test]
+    fn route_failure_all_variants_are_chain_valid_and_slug_sensitive() {
+        use crate::cli::chain::validate_aw_command_string;
+
+        let variants = [
+            FailureOwnership::WiDrift,
+            FailureOwnership::Contract,
+            FailureOwnership::Design,
+            FailureOwnership::Implementation,
+            FailureOwnership::Infrastructure,
+        ];
+
+        let slug1 = "slug-alpha";
+        let slug2 = "slug-beta";
+        let current_cmd = "aw cb check slug-alpha";
+
+        for variant in variants {
+            let obl1 = route_failure(variant, slug1, current_cmd);
+            let obl2 = route_failure(variant, slug2, current_cmd);
+
+            assert!(
+                validate_aw_command_string(&obl1.command).is_ok(),
+                "route_failure({variant:?}, {slug1}) produced chain-invalid command `{}`",
+                obl1.command
+            );
+            assert!(
+                validate_aw_command_string(&obl2.command).is_ok(),
+                "route_failure({variant:?}, {slug2}) produced chain-invalid command `{}`",
+                obl2.command
+            );
+        }
+
+        let impl1 = route_failure(FailureOwnership::Implementation, slug1, current_cmd);
+        let impl2 = route_failure(FailureOwnership::Implementation, slug2, current_cmd);
+        assert_eq!(impl1.command, format!("aw cb check {slug1}"));
+        assert_eq!(impl2.command, format!("aw cb check {slug2}"));
+        assert_ne!(impl1.command, impl2.command);
+    }
+
+    #[test]
     fn revisioned_change_wi_parent_rebind() {
         let created = fold_wi_create("causal", "wi-v1", "agentic-workflow");
         let with_ec = reduce_stage(
@@ -1769,7 +1808,7 @@ mod tests {
         );
         assert!(!non_cb_commit.accepted);
         assert!(!non_cb_commit.lifecycle.terminal);
-        assert_eq!(non_cb_commit.lifecycle.next.command, "aw cb check");
+        assert_eq!(non_cb_commit.lifecycle.next.command, "aw cb check causal");
 
         let no_evidence = complete_lifecycle();
         let rejected = reduce_event(
