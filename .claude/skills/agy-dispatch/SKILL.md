@@ -81,10 +81,14 @@ so greenfield and edit rounds are expressed identically. For a one-shot round,
 **Never** hand-write the profile, and never enumerate the protected list
 instead of freezing the complement — an enumerated list silently stops covering
 files added since the last round, and `verify` then cannot tell a stray write
-from an intended one. Never keep a profile carrying local paths or mutable pins
-inside the repository. Never put project-specific selectors, denominators,
-expected bands, or fabrication tells here or anywhere else in this skill; they
-belong in the ticket or the round's oracle, which the dispatcher injects whole.
+from an intended one. Never derive the next round's profile by editing the last
+one: editing `--write` leaves the frozen complement describing the round it came
+from, so the new write target arrives already frozen and the round ends in a
+scope finding whichever way it goes (#3428). Regenerate. Never keep a profile
+carrying local paths or mutable pins inside the repository. Never put
+project-specific selectors, denominators, expected bands, or fabrication tells
+here or anywhere else in this skill; they belong in the ticket or the round's
+oracle, which the dispatcher injects whole.
 
 **Done when** the class minimums hold:
 
@@ -203,7 +207,8 @@ granted and this round's not.
 **Does.** Compares the live Project surface exactly with `project_permissions`,
 read-only. Blocks on live Project drift, an inherited Global rule that widens
 the worker past the declared surface, an unresolved ticket command, an inert
-sandbox escape, or a project/root mismatch.
+sandbox escape, a project/root mismatch, or a profile that both authorizes and
+freezes the same path.
 
 **Run.**
 

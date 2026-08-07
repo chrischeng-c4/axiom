@@ -632,6 +632,24 @@ def project_policy_report(profile: dict) -> dict:
             "twin and can never fire: " + ", ".join(inert_escapes)
         )
 
+    # A path cannot be both the round's write target and frozen against
+    # writing. `make_profile.py` cannot emit this, because it freezes the
+    # complement of the write set; a profile derived from an earlier round's
+    # can, because deriving edits the write set and leaves the complement
+    # describing the round it came from. The result is a finding that fires on
+    # correct work, and a finding that always fires is one the controller
+    # learns to skim past (#3428).
+    frozen_targets = sorted(
+        set(profile["allowed_repo_writes"])
+        & {entry["path"] for entry in profile["protected_artifacts"]}
+    )
+    if frozen_targets:
+        blockers.append(
+            f"{len(frozen_targets)} declared write target(s) are also frozen "
+            "as protected artifacts, so writing them is a finding and not "
+            "writing them is a finding: " + ", ".join(frozen_targets)
+        )
+
     for expected_decision in ("allow", "deny"):
         for command in profile["task_commands"].get(expected_decision, []):
             decision, rule = permission_decision(actual, global_surface, command)

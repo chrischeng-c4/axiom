@@ -240,6 +240,31 @@ class DispatchControllerTest(unittest.TestCase):
             ["command(cargo test)"],
         )
 
+    def test_a_write_target_that_is_also_frozen_blocks_dispatch(self) -> None:
+        """The round would end in a finding whichever way it went: writing the
+        path changes a protected artifact, and not writing it leaves a declared
+        path unwritten. A finding that fires on correct work teaches the
+        controller to skim the list the protected set depends on (#3428)."""
+        profile = self.profile(self.repo_a, "project-a", "1")
+        profile["allowed_repo_writes"] = ["src/a.py"]
+        profile["protected_artifacts"] = [{"path": "src/a.py", "sha256": "deadbeef"}]
+        report = agy_dispatch.project_policy_report(profile)
+        self.assertFalse(report["dispatch_ready"])
+        self.assertTrue(
+            any("src/a.py" in blocker for blocker in report["blockers"]),
+            report["blockers"],
+        )
+
+    def test_a_frozen_path_the_round_does_not_write_is_fine(self) -> None:
+        """The other half. Freezing the complement is the whole design, so the
+        blocker must key on the intersection and not on a profile having both
+        lists non-empty."""
+        profile = self.profile(self.repo_a, "project-a", "1")
+        profile["allowed_repo_writes"] = ["src/a.py"]
+        profile["protected_artifacts"] = [{"path": "src/b.py", "sha256": "deadbeef"}]
+        report = agy_dispatch.project_policy_report(profile)
+        self.assertTrue(report["dispatch_ready"], report["blockers"])
+
     def test_global_permissions_block_project_isolation(self) -> None:
         self.settings.write_text(
             json.dumps(
