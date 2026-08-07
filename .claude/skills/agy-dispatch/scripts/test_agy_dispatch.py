@@ -559,9 +559,25 @@ class DispatchControllerTest(unittest.TestCase):
         self,
         conversation_id: str,
         commands: list[tuple[int, str]],
+        outcomes: list[tuple[int, int, str]] | None = None,
     ) -> None:
+        """A conversation store shaped like AGY's.
+
+        `commands` are request rows; `outcomes` are the result rows that say
+        what became of them, and a request is joined to the outcome at the very
+        next index, so callers space their own indices. Omitting an outcome is
+        the honest fixture for a process that died mid-command, not a shortcut.
+        """
         database = self.conversation_dir / f"{conversation_id}.db"
         connection = sqlite3.connect(database)
+
+        def payload_for(command: str) -> bytes:
+            return (
+                b"prefix"
+                + json.dumps({"CommandLine": command}, separators=(",", ":")).encode()
+                + b"suffix"
+            )
+
         try:
             connection.execute(
                 "create table steps ("
@@ -572,17 +588,14 @@ class DispatchControllerTest(unittest.TestCase):
                 ")"
             )
             for idx, command in commands:
-                payload = (
-                    b"prefix"
-                    + json.dumps(
-                        {"CommandLine": command},
-                        separators=(",", ":"),
-                    ).encode()
-                    + b"suffix"
-                )
                 connection.execute(
                     "insert into steps values (?, 15, 3, ?)",
-                    (idx, payload),
+                    (idx, payload_for(command)),
+                )
+            for idx, status, command in outcomes or []:
+                connection.execute(
+                    "insert into steps values (?, 21, ?, ?)",
+                    (idx, status, payload_for(command)),
                 )
             connection.commit()
         finally:
@@ -602,7 +615,7 @@ class DispatchControllerTest(unittest.TestCase):
                 (3, "rg -n TODO src"),
             ],
         )
-        audited = agy_dispatch.audit_task_commands(
+        audited, findings = agy_dispatch.audit_task_commands(
             profile,
             "7",
             {
@@ -614,6 +627,7 @@ class DispatchControllerTest(unittest.TestCase):
             [item["command"] for item in audited],
             ["pwd", "rg -n TODO src"],
         )
+        self.assertEqual(findings, [])
 
     def test_task_command_audit_rejects_broader_project_command(self) -> None:
         profile = self.profile(self.repo_a, "project-a", "8")
@@ -635,6 +649,118 @@ class DispatchControllerTest(unittest.TestCase):
                 },
             )
         self.assertIn("task-local exact allowlist", str(caught.exception))
+
+    def test_a_denied_command_is_a_finding_not_a_void(self) -> None:
+        """The VOID protects the evidence: an unaudited command may have left
+        state in the tree that nobody can reconstruct. A denied request left
+        none, so voiding the round discards a candidate to punish an intention
+        -- and makes `denied`'s own remedy, tighten the prompt and resume,
+        reachable only on a round that is already dead (#3427)."""
+        profile = self.profile(self.repo_a, "project-a", "9")
+        runs = Path(profile["state_dir"]) / "runs"
+        runs.mkdir(parents=True)
+        (runs / "9.conversation").write_text("conversation-9\n")
+        self.write_conversation(
+            "conversation-9",
+            [(1, "pwd"), (3, "rg -n SECRET unrelated")],
+            outcomes=[(2, 3, "pwd"), (4, 7, "rg -n SECRET unrelated")],
+        )
+        audited, findings = agy_dispatch.audit_task_commands(
+            profile,
+            "9",
+            {"conversation_id": None, "conversation_step_floor": -1},
+        )
+        self.assertEqual([item["command"] for item in audited], ["pwd"])
+        self.assertEqual(len(findings), 1)
+        self.assertIn("rg -n SECRET unrelated", findings[0])
+        self.assertIn("nothing ran", findings[0])
+
+    def test_an_unlisted_command_that_ran_still_voids(self) -> None:
+        """The other half of the pair. Same request, same allowlist; the only
+        difference is that the permission layer let this one through, and that
+        difference is the whole reason the VOID exists."""
+        profile = self.profile(self.repo_a, "project-a", "10")
+        runs = Path(profile["state_dir"]) / "runs"
+        runs.mkdir(parents=True)
+        (runs / "10.conversation").write_text("conversation-10\n")
+        self.write_conversation(
+            "conversation-10",
+            [(1, "rg -n SECRET unrelated")],
+            outcomes=[(2, 3, "rg -n SECRET unrelated")],
+        )
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.audit_task_commands(
+                profile,
+                "10",
+                {"conversation_id": None, "conversation_step_floor": -1},
+            )
+        self.assertIn("task-local exact allowlist", str(caught.exception))
+
+    def test_a_command_with_no_outcome_row_is_read_as_having_run(self) -> None:
+        """A process killed mid-command leaves the request recorded and the
+        outcome never written. Reading that absence as a denial would let a
+        crash launder an escape, so an unknown outcome takes the fatal branch."""
+        profile = self.profile(self.repo_a, "project-a", "11")
+        runs = Path(profile["state_dir"]) / "runs"
+        runs.mkdir(parents=True)
+        (runs / "11.conversation").write_text("conversation-11\n")
+        self.write_conversation(
+            "conversation-11",
+            [(1, "rg -n SECRET unrelated")],
+        )
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.audit_task_commands(
+                profile,
+                "11",
+                {"conversation_id": None, "conversation_step_floor": -1},
+            )
+        self.assertIn("task-local exact allowlist", str(caught.exception))
+
+    def test_a_later_denial_does_not_excuse_an_earlier_request(self) -> None:
+        """The outcome is the row immediately after the request, not the next
+        denial anywhere ahead of it. Scanning forward would let one refused
+        command launder every escape that preceded it, which is the exact shape
+        of a run that died with its own outcome row unwritten."""
+        profile = self.profile(self.repo_a, "project-a", "13")
+        runs = Path(profile["state_dir"]) / "runs"
+        runs.mkdir(parents=True)
+        (runs / "13.conversation").write_text("conversation-13\n")
+        self.write_conversation(
+            "conversation-13",
+            [(1, "rg -n SECRET unrelated"), (2, "rg -n TOKEN elsewhere")],
+            outcomes=[(3, 7, "rg -n TOKEN elsewhere")],
+        )
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.audit_task_commands(
+                profile,
+                "13",
+                {"conversation_id": None, "conversation_step_floor": -1},
+            )
+        self.assertIn("rg -n SECRET unrelated", str(caught.exception))
+        self.assertNotIn("rg -n TOKEN elsewhere", str(caught.exception))
+
+    def test_a_denied_command_the_profile_forbids_by_name_still_voids(self) -> None:
+        """Asking for a command the profile listed as forbidden is a different
+        act from asking for one it merely did not list: the round named that
+        command as out of bounds, so the request is the finding regardless of
+        who stopped it."""
+        profile = self.profile(self.repo_a, "project-a", "12")
+        profile["task_commands"]["deny"] = ["git push"]
+        runs = Path(profile["state_dir"]) / "runs"
+        runs.mkdir(parents=True)
+        (runs / "12.conversation").write_text("conversation-12\n")
+        self.write_conversation(
+            "conversation-12",
+            [(1, "git push")],
+            outcomes=[(2, 7, "git push")],
+        )
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.audit_task_commands(
+                profile,
+                "12",
+                {"conversation_id": None, "conversation_step_floor": -1},
+            )
+        self.assertIn("git push", str(caught.exception))
 
     def test_prompt_separates_static_project_policy_from_ticket_commands(
         self,
@@ -1272,6 +1398,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         self,
         *,
         commands: tuple[tuple[int, str], ...] = (),
+        outcomes: tuple[tuple[int, int], ...] = (),
         report: str = "request failed (code 502)\n",
         task_key: str = "round-1",
         conversation_id: str = "conversation-dead",
@@ -1316,6 +1443,11 @@ class DerivedWorktreeTest(unittest.TestCase):
                             {"CommandLine": command}, separators=(",", ":")
                         ).encode(),
                     ),
+                )
+            for idx, status in outcomes:
+                connection.execute(
+                    "insert into steps values (?, 21, ?, ?)",
+                    (idx, status, b""),
                 )
             connection.commit()
         finally:
@@ -1377,6 +1509,21 @@ class DerivedWorktreeTest(unittest.TestCase):
             agy_dispatch.abandon(profile, "round-1")
 
         self.assertIn("ran 1 command(s)", str(error.exception))
+
+    def test_abandon_releases_a_round_whose_only_command_was_denied(self) -> None:
+        """`abandon` releases a run that provably produced nothing, and a
+        request the permission layer refused produced nothing. Counting it as a
+        run strands the id behind a command that never started a process."""
+        profile = self.dead_round(
+            commands=((0, "pwd"),),
+            outcomes=((1, 7),),
+        )
+
+        agy_dispatch.abandon(profile, "round-1")
+
+        self.assertIsNone(
+            agy_dispatch.conversation_id_for_task(profile, "round-1")
+        )
 
     def test_abandon_refuses_when_the_worker_filed_a_report(self) -> None:
         profile = self.dead_round(report="## EXEC REPORT\nverdict: PASS\n")

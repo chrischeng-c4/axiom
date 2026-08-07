@@ -502,8 +502,9 @@ narrow Project-scope rule through `/permissions`, update the profile's exact
 resuming. Never use `abandon` to retry away a result you dislike.
 
 **Done when** `abandon` accepts — which it does only if the run provably
-produced nothing: no path changed in the worker checkout, no command requested
-after the snapshot floor, no `## EXEC REPORT` filed. A round that produced any
+produced nothing: no path changed in the worker checkout, no command *ran*
+after the snapshot floor, no `## EXEC REPORT` filed. A refused request started
+no process, so it does not strand the run id. A round that produced any
 of those is judged with `review` and `verify`, never released. The dead
 attempt's logs are parked under `runs/abandoned/` rather than deleted; they are
 evidence, and leaving them in place would let the id lookup recover the dead
@@ -524,13 +525,25 @@ python3 .claude/skills/agy-dispatch/scripts/agy_dispatch.py verify profile.json 
 
 **Never** read exit `2` as exit `1`. The two outcomes are different claims:
 
-- **Integrity failures exit `1` (VOID)** — permission drift, a command outside
-  the audited allowlist, a changed dispatch contract, a swapped Project, a
-  missing oracle. The evidence cannot be trusted at all.
+- **Integrity failures exit `1` (VOID)** — permission drift, a command that
+  *ran* outside the audited allowlist, a request for a command the profile
+  names in `deny`, a changed dispatch contract, a swapped Project, a missing
+  oracle. The evidence cannot be trusted at all.
 - **Scope problems exit `2` (findings)** — a write outside
   `allowed_repo_writes`, a changed protected artifact, a declared path left
-  unwritten, a budget overrun, a moved branch `HEAD`. These are handed to
-  `review` for you to adjudicate against the diff.
+  unwritten, a budget overrun, a moved branch `HEAD`, a command the permission
+  layer *refused*. These are handed to `review` for you to adjudicate against
+  the diff.
+
+An unlisted command splits on whether it ran. The VOID protects the evidence:
+if an unaudited command executed, the tree may hold state nobody authorized and
+nobody can reconstruct. A refused request left none, so it is a finding — the
+guard held, and discarding the round would punish the intention while throwing
+away the candidate. The audit reads the outcome row, not the request row: every
+request carries the same status, so the request alone cannot tell the two apart
+(#3427). An outcome that was never written — a process killed mid-command —
+reads as *ran*, because the conservative direction for an unknown is the fatal
+one.
 
 That split is sound only because the worker's tree is disposable; a profile
 with no `worktree` key keeps the old behavior of voiding on scope.

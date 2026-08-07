@@ -48,6 +48,13 @@ ABANDONED_RUNS = "abandoned"
 EXIT_VOID = 1
 EXIT_FINDINGS = 2
 
+# AGY's conversation store records a shell command as two rows: the request and
+# what became of it. The request always carries status 3, so the outcome row is
+# the only place that says whether the command ran.
+RUN_COMMAND_REQUEST_STEP = 15
+RUN_COMMAND_OUTCOME_STEP = 21
+RUN_COMMAND_DENIED_STATUS = 7
+
 
 def resolved_under(path: Path, root: Path) -> bool:
     """Containment on real paths. `/tmp` is a symlink on macOS, so comparing the
@@ -1110,6 +1117,19 @@ def requested_run_commands(
     *,
     after_step: int = -1,
 ) -> list[dict]:
+    """Every shell command AGY asked for after the floor, with its outcome.
+
+    A request (`step_type` 15) and what became of it (`step_type` 21) are two
+    rows. The request row's status is 3 for all of them -- it records that a
+    request was made, not what happened next -- so reading it alone cannot tell
+    a command that ran from one the permission layer refused (#3427). The
+    outcome row is the next one, and status 7 there means denied.
+
+    `denied` is asserted only on that positive evidence. An outcome row that is
+    missing, because the process died mid-command, reads as *ran*: the caller
+    treats an unaudited execution as fatal, and the conservative direction for
+    an unknown is the fatal one.
+    """
     database = conversation_database(conversation_id)
     if not database.is_file():
         raise SystemExit(
@@ -1118,15 +1138,28 @@ def requested_run_commands(
     connection = connect_conversation(database)
     try:
         rows = connection.execute(
-            "select idx, status, step_payload from steps "
-            "where step_type = 15 and idx > ? order by idx",
+            "select idx, status, step_type, step_payload from steps "
+            "where idx > ? order by idx",
             (after_step,),
         ).fetchall()
     finally:
         connection.close()
+    outcomes = {}
+    for position, (idx, status, step_type, _payload) in enumerate(rows):
+        if int(step_type) != RUN_COMMAND_REQUEST_STEP:
+            continue
+        following = rows[position + 1] if position + 1 < len(rows) else None
+        if following and int(following[2]) == RUN_COMMAND_OUTCOME_STEP:
+            outcomes[int(idx)] = int(following[1])
     return [
-        {"step": int(idx), "status": int(status), "command": command}
-        for idx, status, payload in rows
+        {
+            "step": int(idx),
+            "status": int(status),
+            "command": command,
+            "denied": outcomes.get(int(idx)) == RUN_COMMAND_DENIED_STATUS,
+        }
+        for idx, status, step_type, payload in rows
+        if int(step_type) == RUN_COMMAND_REQUEST_STEP
         for command in extract_run_command_lines(payload or b"")
     ]
 
@@ -1144,7 +1177,7 @@ def audit_task_commands(
             f"{snapshot_id} -> {current_id or '<missing>'}"
         )
     if not current_id:
-        return []
+        return [], []
     commands = requested_run_commands(
         current_id,
         after_step=int(snapshot_data.get("conversation_step_floor", -1)),
@@ -1152,17 +1185,29 @@ def audit_task_commands(
     allowed = set(profile["task_commands"]["allow"])
     denied_commands = set(profile["task_commands"]["deny"])
     forbidden = [item for item in commands if item["command"] in denied_commands]
-    unlisted = [item for item in commands if item["command"] not in allowed]
-    if forbidden or unlisted:
+    unlisted = [
+        item
+        for item in commands
+        if item["command"] not in allowed and item["command"] not in denied_commands
+    ]
+    executed = [item for item in unlisted if not item["denied"]]
+    refused = [item for item in unlisted if item["denied"]]
+    if forbidden or executed:
         details = {
             "forbidden": forbidden,
-            "unlisted": unlisted,
+            "unlisted": executed,
         }
         raise SystemExit(
-            "VOID: AGY requested shell commands outside the task-local "
+            "VOID: AGY ran shell commands outside the task-local "
             "exact allowlist: " + json.dumps(details, sort_keys=True)
         )
-    return commands
+    return [item for item in commands if item["command"] in allowed], [
+        f"AGY asked for `{item['command']}` at step {item['step']}, which the "
+        "task allowlist does not name; the permission layer refused it and "
+        "nothing ran. Tighten the prompt, or add the command to the profile "
+        "and re-snapshot, before dispatching again."
+        for item in refused
+    ]
 
 
 def denied(profile: dict, task_key: str) -> None:
@@ -1185,7 +1230,8 @@ def denied(profile: dict, task_key: str) -> None:
     try:
         rows = connection.execute(
             "select idx, step_payload from steps "
-            "where status = 7 order by idx"
+            "where status = ? order by idx",
+            (RUN_COMMAND_DENIED_STATUS,),
         ).fetchall()
     finally:
         connection.close()
@@ -2061,7 +2107,9 @@ def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
     assert_snapshot_identity(profile, task_key, snapshot_data)
     assert_permission_state_unchanged(profile, snapshot_data)
     assert_round_documents_unchanged(profile, task_key, snapshot_data)
-    audited_commands = audit_task_commands(profile, task_key, snapshot_data)
+    # Called for its VOID: a refused request is `verify`'s to report, not a
+    # reason to refuse the dispatch that has not happened yet.
+    audit_task_commands(profile, task_key, snapshot_data)
     conversation_id = validate_conversation_action(
         profile,
         task_key,
@@ -2321,10 +2369,14 @@ def abandon(profile: dict, task_key: str) -> None:
             "not discarded as dead"
         )
     snapshot_data = load_snapshot(profile, task_key)
-    commands = requested_run_commands(
-        conversation_id,
-        after_step=int(snapshot_data.get("conversation_step_floor", -1)),
-    )
+    commands = [
+        item
+        for item in requested_run_commands(
+            conversation_id,
+            after_step=int(snapshot_data.get("conversation_step_floor", -1)),
+        )
+        if not item["denied"]
+    ]
     if commands:
         raise SystemExit(
             f"refusing to abandon {task_key}: the worker ran "
@@ -3322,7 +3374,9 @@ def verify(profile: dict, task_key: str) -> None:
     documents_frozen = assert_round_documents_unchanged(
         profile, task_key, snapshot_data
     )
-    audited_commands = audit_task_commands(profile, task_key, snapshot_data)
+    audited_commands, denial_findings = audit_task_commands(
+        profile, task_key, snapshot_data
+    )
     documents = (
         "oracle and injection unchanged since snapshot"
         if documents_frozen
@@ -3353,9 +3407,12 @@ def verify(profile: dict, task_key: str) -> None:
         # worker did to its own checkout is a diff for the controller to read.
         # A write outside the declared set costs a read, not the round, so it
         # is reported here and adjudicated by `review`.
-        findings = scope_findings(
-            profile, worker_touched_paths(profile, task_key), task_key
-        )
+        findings = [
+            *scope_findings(
+                profile, worker_touched_paths(profile, task_key), task_key
+            ),
+            *denial_findings,
+        ]
         oracle = state / "oracles" / f"{task_key}.md"
         if not oracle.exists():
             raise SystemExit("VOID: oracle disappeared")
@@ -3439,6 +3496,11 @@ def verify(profile: dict, task_key: str) -> None:
         f"{len(audited_commands)} task-local shell command(s) match; "
         f"{documents}; oracle sha256={sha256(oracle)}"
     )
+    if denial_findings:
+        print(f"\nfindings ({len(denial_findings)}) for you to adjudicate:")
+        for item in denial_findings:
+            print(f"  - {item}")
+        sys.exit(EXIT_FINDINGS)
 
 
 def status(profile: dict) -> None:
