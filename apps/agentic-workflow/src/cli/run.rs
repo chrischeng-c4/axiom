@@ -2092,7 +2092,7 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
     };
 
     if issue.state == IssueState::Closed {
-        return closed_wi_envelope(&issue);
+        return closed_wi_envelope(&project_root, &issue);
     }
 
     if let Some(envelope) = explicitly_deferred_wi_envelope(&issue) {
@@ -2771,7 +2771,31 @@ fn loop_state_envelope(
     }
 }
 
-fn closed_wi_envelope(issue: &Issue) -> WorkflowEnvelope {
+fn closed_wi_envelope(project_root: &Path, issue: &Issue) -> WorkflowEnvelope {
+    let projection = crate::cli::change_lifecycle::projection_for_issue(project_root, issue);
+    if projection["drift"].as_bool() == Some(true) {
+        let command = projection["remediation"][0]["command"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("aw wi update {} --state open", issue_cli_ref(issue)));
+        let kind = if issue.issue_type == IssueType::Epic {
+            "epic"
+        } else {
+            "change"
+        };
+        let node = WorkflowNode {
+            kind: kind.to_string(),
+            id: issue_ref(issue),
+        };
+        return blocked_envelope(
+            node.clone(),
+            node,
+            command,
+            format!("{kind} work item is closed in tracker while lifecycle carrier remains active"),
+            false,
+        );
+    }
+
     let kind = if issue.issue_type == IssueType::Epic {
         "epic"
     } else {
@@ -5947,43 +5971,13 @@ review_status: pending
 
     #[test]
     fn closed_change_outputs_parent_inspection() {
-        let issue = Issue {
-            issue_type: IssueType::Enhancement,
-            title: "Bounded change".to_string(),
-            state: crate::issues::IssueState::Closed,
-            id: None,
-            github_id: Some(4102),
-            gitlab_id: None,
-            url: None,
-            author: None,
-            created_at: None,
-            updated_at: None,
-            slug: "4102".to_string(),
-            body: String::new(),
-            labels: vec!["app:mamba".to_string()],
-            related: vec!["parent #4101".to_string()],
-            implements: Vec::new(),
-            phase: None,
-            branch: None,
-            target_branch: None,
-            git_workflow: None,
-            change_id: None,
-            iteration: None,
-            current_task_id: None,
-            impl_spec_phase: None,
-            task_revisions: None,
-            revision_counts: None,
-            last_action: None,
-            session_id: None,
-            validation_errors: Vec::new(),
-            review_count: None,
-            flagged_sections: None,
-            fill_retry_count: None,
-            ship_status: None,
-            ship_commit: None,
-            regen_verified_at: None,
-        };
-        let envelope = closed_wi_envelope(&issue);
+        let root = tempfile::tempdir().unwrap();
+        let mut issue = open_issue(IssueType::Enhancement, 4102);
+        issue.title = "Bounded change".to_string();
+        issue.state = crate::issues::IssueState::Closed;
+        issue.labels = vec!["app:mamba".to_string()];
+        issue.related = vec!["parent #4101".to_string()];
+        let envelope = closed_wi_envelope(root.path(), &issue);
         assert_eq!(envelope.action, "done");
         assert!(envelope.completion.root_complete);
         assert!(!envelope.completion.workflow_complete);
@@ -5993,44 +5987,169 @@ review_status: pending
 
     #[test]
     fn closed_change_without_parent_outputs_executable_show_command() {
-        let issue = Issue {
-            issue_type: IssueType::Enhancement,
-            title: "Bounded change".to_string(),
-            state: crate::issues::IssueState::Closed,
-            id: None,
-            github_id: Some(4041),
-            gitlab_id: None,
-            url: None,
-            author: None,
-            created_at: None,
-            updated_at: None,
-            slug: "4041".to_string(),
-            body: String::new(),
-            labels: vec!["app:jet".to_string()],
-            related: Vec::new(),
-            implements: Vec::new(),
-            phase: None,
-            branch: None,
-            target_branch: None,
-            git_workflow: None,
-            change_id: None,
-            iteration: None,
-            current_task_id: None,
-            impl_spec_phase: None,
-            task_revisions: None,
-            revision_counts: None,
-            last_action: None,
-            session_id: None,
-            validation_errors: Vec::new(),
-            review_count: None,
-            flagged_sections: None,
-            fill_retry_count: None,
-            ship_status: None,
-            ship_commit: None,
-            regen_verified_at: None,
-        };
-        let envelope = closed_wi_envelope(&issue);
+        let root = tempfile::tempdir().unwrap();
+        let mut issue = open_issue(IssueType::Enhancement, 4041);
+        issue.title = "Bounded change".to_string();
+        issue.state = crate::issues::IssueState::Closed;
+        let envelope = closed_wi_envelope(root.path(), &issue);
         assert_eq!(envelope.next.command, "aw wi show 4041");
+    }
+
+    #[test]
+    fn closed_change_with_active_carrier_reports_drift_and_reopen_command() {
+        let root = tempfile::tempdir().unwrap();
+        let mut open_issue = open_issue(IssueType::Change, 3399);
+        open_issue.title = "Active change".to_string();
+        open_issue.body = "Active change body".to_string();
+        open_issue.labels = vec!["app:agentic-workflow".to_string()];
+        crate::cli::change_lifecycle::record_create(root.path(), &open_issue).unwrap();
+
+        let mut closed_issue = open_issue;
+        closed_issue.state = crate::issues::IssueState::Closed;
+
+        let envelope = closed_wi_envelope(root.path(), &closed_issue);
+        assert_ne!(envelope.action, "done");
+        assert_eq!(envelope.action, "blocked");
+        assert!(!envelope.completion.root_complete);
+        assert!(!envelope.completion.missing.is_empty());
+        assert_eq!(
+            envelope.completion.criteria,
+            vec!["blocker is resolved".to_string()]
+        );
+        assert_eq!(envelope.next.command, "aw wi update 3399 --state open");
+        assert_eq!(envelope.invoke.command, "aw wi update 3399 --state open");
+    }
+
+    #[test]
+    fn wi_envelope_closed_change_with_active_carrier_reports_drift_and_reopen_command() {
+        use crate::issues::IssueBackend;
+
+        struct EnvGuard {
+            previous_dir: std::path::PathBuf,
+            previous_fixture_backend: Option<String>,
+            _lock: std::sync::MutexGuard<'static, ()>,
+        }
+
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.previous_dir);
+                match &self.previous_fixture_backend {
+                    Some(v) => std::env::set_var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV, v),
+                    None => std::env::remove_var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV),
+                }
+            }
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".aw")).unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[agentic_workflow.issue_platform]
+type = "local"
+
+[[projects]]
+name = "demo"
+label = "app:demo"
+path = "."
+"#,
+        )
+        .unwrap();
+
+        let mut issue = open_issue(IssueType::Change, 3399);
+        issue.title = "Active change".to_string();
+        issue.body = "Active change body".to_string();
+        issue.labels = vec!["app:demo".to_string()];
+
+        crate::cli::change_lifecycle::record_create(root.path(), &issue).unwrap();
+
+        issue.state = crate::issues::IssueState::Closed;
+
+        let backend = crate::issues::LocalBackend::from_project_root(root.path());
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { backend.write(&issue).await })
+            .unwrap();
+
+        let lock = crate::cli::shell_env::CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_dir = std::env::current_dir().unwrap();
+        let previous_fixture_backend =
+            std::env::var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV).ok();
+        std::env::set_var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1");
+        std::env::set_current_dir(root.path()).unwrap();
+        let _guard = EnvGuard {
+            previous_dir,
+            previous_fixture_backend,
+            _lock: lock,
+        };
+
+        let progress_root = ResolvedRunRoot::Wi {
+            wi: "3399".to_string(),
+            command: "aw goal wi 3399".to_string(),
+        };
+        let progress = RunProgressSink::new(&progress_root, false);
+
+        let envelope = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(wi_envelope("3399", &progress));
+
+        assert_eq!(envelope.action, "blocked");
+        assert!(!envelope.completion.root_complete);
+        assert_eq!(envelope.next.command, "aw wi update 3399 --state open");
+    }
+
+    #[test]
+    fn closed_change_with_terminal_carrier_finishes_root() {
+        let root = tempfile::tempdir().unwrap();
+        let slug = "3399";
+        crate::cli::change_lifecycle::record_terminal_lifecycle(root.path(), slug);
+
+        let mut closed_issue = open_issue(IssueType::Change, 3399);
+        closed_issue.title = "Terminal change".to_string();
+        closed_issue.state = crate::issues::IssueState::Closed;
+        closed_issue.body = "wi-v1".to_string();
+        closed_issue.labels = vec!["app:agentic-workflow".to_string()];
+
+        let envelope = closed_wi_envelope(root.path(), &closed_issue);
+        assert_eq!(envelope.action, "done");
+        assert!(envelope.completion.root_complete);
+        assert!(envelope.completion.missing.is_empty());
+        assert_eq!(envelope.next.command, "aw wi show 3399");
+    }
+
+    #[test]
+    fn closed_change_with_legacy_loop_state_finishes_root() {
+        let root = tempfile::tempdir().unwrap();
+        let mut issue = open_issue(IssueType::Change, 4042);
+        issue.title = "Legacy change".to_string();
+        issue.state = crate::issues::IssueState::Closed;
+        issue.body = "<!-- aw:loop-state {\"version\":\"1.0\"} -->".to_string();
+        let envelope = closed_wi_envelope(root.path(), &issue);
+        assert_eq!(envelope.action, "done");
+        assert!(envelope.completion.root_complete);
+        assert!(envelope.completion.missing.is_empty());
+        assert_eq!(envelope.next.command, "aw wi show 4042");
+    }
+
+    #[test]
+    fn closed_epic_finishes_root() {
+        let root = tempfile::tempdir().unwrap();
+        let mut issue = open_issue(IssueType::Epic, 4043);
+        issue.title = "Epic root".to_string();
+        issue.state = crate::issues::IssueState::Closed;
+        let envelope = closed_wi_envelope(root.path(), &issue);
+        assert_eq!(envelope.action, "done");
+        assert!(envelope.completion.root_complete);
+        assert!(envelope.completion.missing.is_empty());
+        assert_eq!(
+            envelope.next.command,
+            "aw goal capability --project jet --non-interactive --max-ticks 1"
+        );
     }
 
     #[test]

@@ -1289,6 +1289,106 @@ pub fn projection_for_issue(project_root: &Path, issue: &Issue) -> serde_json::V
 }
 
 #[cfg(test)]
+fn candidate_tuple(lifecycle: &ChangeLifecycle, candidate: &ArtifactRevision) -> ActiveDigestTuple {
+    let mut tuple = lifecycle.active_digest_tuple();
+    match candidate.kind {
+        ArtifactKind::Wi => tuple.wi_digest = Some(candidate.digest.clone()),
+        ArtifactKind::Ec => tuple.ec_digest = Some(candidate.digest.clone()),
+        ArtifactKind::Td => tuple.td_digest = Some(candidate.digest.clone()),
+        ArtifactKind::Cb => tuple.cb_digest = Some(candidate.digest.clone()),
+    }
+    tuple
+}
+
+#[cfg(test)]
+fn reduce_stage(
+    lifecycle: &ChangeLifecycle,
+    kind: ArtifactKind,
+    event_kind: LifecycleEventKind,
+    source: &str,
+    command: &str,
+    owner: OwnerVocabulary,
+) -> ChangeLifecycle {
+    let candidate = artifact_revision(
+        kind,
+        canonical_digest(source),
+        expected_parent_set(lifecycle, kind).expect("all stage parents are active"),
+        lifecycle.epoch + 1,
+    );
+    let result = reduce_event(
+        lifecycle,
+        LifecycleEvent {
+            event_id: event_id(lifecycle),
+            predecessor_id: lifecycle.head_event_id.clone(),
+            kind: event_kind,
+            bound_tuple: candidate_tuple(lifecycle, &candidate),
+            candidate_revision: candidate,
+            next_command: command.to_string(),
+            next_owner: owner,
+        },
+    );
+    assert!(result.accepted, "{:?}", result.rejection_reason);
+    result.lifecycle
+}
+
+/// Persists a valid 5-event terminal lifecycle carrier for `slug` under `project_root`.
+///
+/// Builds `wi_create`, `ec_change`, `td_change`, `cb_change`, and `cb_commit` events
+/// with green 4D evidence (`cb_test`, `cb_review`, `td_reconcile`, `ec_verify_cb`)
+/// through the reducer and persists the resulting carrier via `save`.
+#[cfg(test)]
+pub(crate) fn record_terminal_lifecycle(project_root: &std::path::Path, slug: &str) {
+    let created = fold_wi_create(slug, "wi-v1", "agentic-workflow");
+    let ec = reduce_stage(
+        &created,
+        ArtifactKind::Ec,
+        LifecycleEventKind::EcChange,
+        "ec-v1",
+        "aw td check",
+        OwnerVocabulary::Td,
+    );
+    let td = reduce_stage(
+        &ec,
+        ArtifactKind::Td,
+        LifecycleEventKind::TdChange,
+        "td-v1",
+        "aw cb check",
+        OwnerVocabulary::Cb,
+    );
+    let mut cb = reduce_stage(
+        &td,
+        ArtifactKind::Cb,
+        LifecycleEventKind::CbChange,
+        "cb-v1",
+        "aw cb check",
+        OwnerVocabulary::Cb,
+    );
+    let tuple = cb.active_digest_tuple();
+    cb.evidence = ["cb_test", "cb_review", "td_reconcile", "ec_verify_cb"]
+        .into_iter()
+        .map(|v| EvidenceBinding {
+            verifier: v.to_string(),
+            bound_tuple: tuple.clone(),
+            passed: true,
+            summary: "pass".to_string(),
+        })
+        .collect();
+    let active_cb = cb.active_revisions[&ArtifactKind::Cb].clone().unwrap();
+    let commit_evt = LifecycleEvent {
+        event_id: event_id(&cb),
+        predecessor_id: cb.head_event_id.clone(),
+        kind: LifecycleEventKind::CbCommit,
+        candidate_revision: active_cb,
+        bound_tuple: tuple,
+        next_command: format!("aw wi show {slug}"),
+        next_owner: OwnerVocabulary::Cb,
+    };
+    let committed = reduce_event(&cb, commit_evt);
+    assert!(committed.accepted);
+    save(project_root, &committed.lifecycle).unwrap();
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::issues::{IssueState, IssueType};
@@ -1330,50 +1430,6 @@ mod tests {
             ship_commit: None,
             regen_verified_at: None,
         }
-    }
-
-    fn candidate_tuple(
-        lifecycle: &ChangeLifecycle,
-        candidate: &ArtifactRevision,
-    ) -> ActiveDigestTuple {
-        let mut tuple = lifecycle.active_digest_tuple();
-        match candidate.kind {
-            ArtifactKind::Wi => tuple.wi_digest = Some(candidate.digest.clone()),
-            ArtifactKind::Ec => tuple.ec_digest = Some(candidate.digest.clone()),
-            ArtifactKind::Td => tuple.td_digest = Some(candidate.digest.clone()),
-            ArtifactKind::Cb => tuple.cb_digest = Some(candidate.digest.clone()),
-        }
-        tuple
-    }
-
-    fn reduce_stage(
-        lifecycle: &ChangeLifecycle,
-        kind: ArtifactKind,
-        event_kind: LifecycleEventKind,
-        source: &str,
-        command: &str,
-        owner: OwnerVocabulary,
-    ) -> ChangeLifecycle {
-        let candidate = artifact_revision(
-            kind,
-            canonical_digest(source),
-            expected_parent_set(lifecycle, kind).expect("all stage parents are active"),
-            lifecycle.epoch + 1,
-        );
-        let result = reduce_event(
-            lifecycle,
-            LifecycleEvent {
-                event_id: event_id(lifecycle),
-                predecessor_id: lifecycle.head_event_id.clone(),
-                kind: event_kind,
-                bound_tuple: candidate_tuple(lifecycle, &candidate),
-                candidate_revision: candidate,
-                next_command: command.to_string(),
-                next_owner: owner,
-            },
-        );
-        assert!(result.accepted, "{:?}", result.rejection_reason);
-        result.lifecycle
     }
 
     fn complete_lifecycle() -> ChangeLifecycle {
