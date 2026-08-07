@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-for script in "$SCRIPT_DIR"/*.sh; do
+for script in "$SCRIPT_DIR"/*.sh "$ACCEPTANCE_ROOT"/tests/*.sh; do
   bash -n "$script"
   [[ -x "$script" ]] || {
     echo "acceptance script is not executable: $script" >&2
@@ -50,6 +50,7 @@ done
 LUMEN_TERRAFORM="$(cd "$ACCEPTANCE_ROOT/../../apps/lumen/terraform" && pwd)"
 terraform -chdir="$LUMEN_TERRAFORM" fmt -check -recursive
 bash "$ACCEPTANCE_ROOT/tests/acceptance_mode_selection.sh"
+bash "$ACCEPTANCE_ROOT/tests/manifest_render_matrix.sh"
 bash "$ACCEPTANCE_ROOT/tests/lumen_pki_ownership.sh"
 
 # Validate in a disposable copy so provider initialization never writes a

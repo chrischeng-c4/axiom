@@ -159,5 +159,8 @@ ns_delete_line="$(line_of 'kubectl delete namespace "$namespace" --ignore-not-fo
 (( fleet_crd_line < ns_delete_line )) \
   || fail "the LumenFleet CRD must be deleted before the namespace sweep (crd@$fleet_crd_line, namespaces@$ns_delete_line)"
 
+present "the lumen-sift pre-flight list names lumen-auth-client" \
+  'mode_namespaces=(lumen lumen-system sift sift-system lumen-auth-client)' "$RUN_SCRIPT"
+
 echo "acceptance-mode oracle: ok"
 # HANDWRITE-END

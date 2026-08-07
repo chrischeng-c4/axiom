@@ -554,7 +554,7 @@ if [[ "$acceptance_mode" == "tape" ]]; then
 elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
   mode_namespaces=(lumen lumen-system lumen-auth-client)
 else
-  mode_namespaces=(lumen lumen-system sift sift-system)
+  mode_namespaces=(lumen lumen-system sift sift-system lumen-auth-client)
 fi
 for namespace in "${mode_namespaces[@]}"; do
   if kubectl get namespace "$namespace" --no-headers >/dev/null 2>&1; then
