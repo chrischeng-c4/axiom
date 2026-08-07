@@ -127,7 +127,7 @@ the worker's checkout with no further arguments.
 **Run.**
 
 ```bash
-python3 .claude/skills/agy-dispatch/scripts/agy_dispatch.py worktree profile.json 3348
+python3 .claude/skills/agy-dispatch/scripts/agy_dispatch.py worktree profile.json KEY
 ```
 
 **Never** dispatch into the tree you are working in, and never hand-create the
@@ -331,6 +331,32 @@ Git state is captured with `--untracked-files=all` at both `snapshot` and
 misreports every greenfield dispatch. Because of that flag a round creating a
 brand-new source tree is verified path by path exactly like one editing tracked
 files: keep listing exact files, never a directory.
+
+## Baseline check — no verb, still mandatory
+
+**Does.** Proves the worker's checkout is green *before* the worker touches it,
+and leaves a warm `target/` behind so the round's timeout pays for reasoning
+rather than a cold build. A worker dispatched onto a red base spends its whole
+budget on a failure it did not cause, and then reports it as one it could not
+fix.
+
+**Run.** From the worker worktree, one gate that already passes at this base —
+not the round's own gate, which does not exist yet. Take it verbatim from the
+profile's `project_permissions.allow`:
+
+```bash
+cd <worktree> && <one landed gate from the allowlist>
+```
+
+**Never** run the round's whole allowlist here. One landed gate proves the tree
+builds and the harness works; the rest is the worker's job and its evidence.
+Never widen it past the allowlist either — the allowlist is narrow by
+construction, and a broader suite can hang or fail for reasons this round does
+not own, so a controller stuck there has burned the round's wall-clock before
+it started.
+
+**Done when** that gate reports `test result: ok` and `target/` exists in the
+worktree.
 
 ## `dispatch` / `resume` — run the worker
 
