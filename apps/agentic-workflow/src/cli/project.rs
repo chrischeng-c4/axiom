@@ -173,6 +173,7 @@ pub struct ProjectHealthReport {
     pub ec: ProjectEcGateReport,
     pub claim_closure: ProjectClaimClosureReport,
     pub intake_queue: IntakeQueueHealthReport,
+    pub change_lifecycle: ChangeLifecycleHealthReport,
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
     pub preflight_gate_reports: Vec<PreFlightGateReport>,
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
@@ -242,6 +243,16 @@ pub struct IntakeQueueHealthReport {
     pub expired_spike_count: usize,
     pub open_reports: Vec<String>,
     pub expired_spikes: Vec<String>,
+    pub next_command: Option<String>,
+    pub finding: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct ChangeLifecycleHealthReport {
+    pub evaluated: bool,
+    pub status: String,
+    pub drift_count: usize,
+    pub drifted: Vec<String>,
     pub next_command: Option<String>,
     pub finding: Option<String>,
 }
@@ -805,7 +816,7 @@ fn build_health_report_with_options_and_plan(
                 );
             }
         }
-        if let Err(error) = apply_artifact_preflight_to_report(&mut report) {
+        if let Err(error) = apply_artifact_preflight_to_report(&project_root, &mut report) {
             report.record_axis_unavailable(
                 "artifact_preflight",
                 ProjectHealthAxisRequirement::Advisory,
@@ -1552,6 +1563,7 @@ impl ProjectHealthReport {
             ec: ProjectEcGateReport::not_evaluated(project),
             claim_closure: ProjectClaimClosureReport::not_evaluated(project),
             intake_queue: IntakeQueueHealthReport::default(),
+            change_lifecycle: ChangeLifecycleHealthReport::default(),
             preflight_gate_reports: Vec::new(),
             optional_quality_warnings: Vec::new(),
             managed_percent: managed.percent,
@@ -2848,6 +2860,7 @@ fn project_health_axes_summary(report: &ProjectHealthReport) -> serde_json::Valu
         "drift_marker": health_axis_with_assessment(report, "td", project_health_drift_marker_axis(report)),
         "takeover_audit": health_axis_with_assessment(report, "takeover_audit", project_health_takeover_audit_axis(report)),
         "intake_queue": health_axis_with_assessment(report, "intake_queue", serde_json::json!(&report.intake_queue)),
+        "change_lifecycle": health_axis_with_assessment(report, "change_lifecycle", serde_json::json!(&report.change_lifecycle)),
     })
 }
 
@@ -3782,6 +3795,118 @@ async fn apply_intake_queue_to_report(report: &mut ProjectHealthReport) {
     };
 }
 
+/// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+async fn apply_change_lifecycle_to_report(report: &mut ProjectHealthReport) {
+    let project_root = match crate::find_project_root() {
+        Ok(root) => root,
+        Err(err) => {
+            report.change_lifecycle = ChangeLifecycleHealthReport {
+                evaluated: false,
+                status: "unavailable".to_string(),
+                drift_count: 0,
+                drifted: Vec::new(),
+                next_command: None,
+                finding: Some(err.to_string()),
+            };
+            return;
+        }
+    };
+    report.change_lifecycle =
+        evaluate_change_lifecycle_health(&project_root, &report.project).await;
+}
+
+pub async fn evaluate_change_lifecycle_health(
+    project_root: &std::path::Path,
+    project: &str,
+) -> ChangeLifecycleHealthReport {
+    let project_label = match crate::cli::issues::resolve_project_label(project_root, project) {
+        Ok(label) => label,
+        Err(error) => {
+            return ChangeLifecycleHealthReport {
+                evaluated: false,
+                status: "unavailable".to_string(),
+                drift_count: 0,
+                drifted: Vec::new(),
+                next_command: None,
+                finding: Some(error.to_envelope_message()),
+            };
+        }
+    };
+    let (kind, repo, host) = match resolve_default_backend(project_root) {
+        Ok(res) => res,
+        Err(_) => ("local".to_string(), None, None),
+    };
+    let backend = match make_backend(&kind, project_root, repo, host) {
+        Ok(backend) => backend,
+        Err(err) => {
+            return ChangeLifecycleHealthReport {
+                evaluated: false,
+                status: "unavailable".to_string(),
+                drift_count: 0,
+                drifted: Vec::new(),
+                next_command: None,
+                finding: Some(err.to_string()),
+            };
+        }
+    };
+    let issues = match backend
+        .list(&IssueFilter {
+            state: Some(IssueState::Closed),
+            issue_type: Some(IssueType::Change),
+            label: Some(project_label),
+            author: None,
+        })
+        .await
+    {
+        Ok(issues) => issues,
+        Err(error) => {
+            return ChangeLifecycleHealthReport {
+                evaluated: false,
+                status: "unavailable".to_string(),
+                drift_count: 0,
+                drifted: Vec::new(),
+                next_command: None,
+                finding: Some(error.to_string()),
+            };
+        }
+    };
+
+    let mut issues = issues;
+    issues.sort_by(|a, b| health_issue_ref(a).cmp(&health_issue_ref(b)));
+
+    let mut drifted = Vec::new();
+    let mut next_command = None;
+
+    for issue in &issues {
+        let projection = crate::cli::change_lifecycle::projection_for_issue(project_root, issue);
+        if projection["drift"].as_bool() == Some(true) {
+            let ref_id = health_issue_ref(issue);
+            if next_command.is_none() {
+                next_command = projection["remediation"][0]["command"]
+                    .as_str()
+                    .map(|s| s.to_string());
+            }
+            drifted.push(ref_id);
+        }
+    }
+
+    let drift_count = drifted.len();
+    let status = if drift_count > 0 {
+        "drift".to_string()
+    } else {
+        "clean".to_string()
+    };
+
+    ChangeLifecycleHealthReport {
+        evaluated: true,
+        status,
+        drift_count,
+        drifted,
+        next_command,
+        finding: None,
+    }
+}
+
 fn health_issue_ref(issue: &Issue) -> String {
     issue
         .github_id
@@ -3905,6 +4030,7 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
         report.record_axis_unavailable("workflow", supporting_requirement, error);
     }
     apply_intake_queue_to_report(&mut report).await;
+    apply_change_lifecycle_to_report(&mut report).await;
     apply_meta_to_report(&mut report);
     report.refresh_observation_assessment();
     let payload_path = write_health_payload(&report)?;
@@ -4740,10 +4866,12 @@ pub(crate) fn apply_mutation_adequacy_to_report(report: &mut ProjectHealthReport
 /// projects that have never created `evidence/artifact-preflight/`, so this
 /// axis is a zero-blast-radius no-op everywhere until a project opts in.
 /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#logic
-pub(crate) fn apply_artifact_preflight_to_report(report: &mut ProjectHealthReport) -> Result<()> {
-    let project_root = crate::find_project_root()?;
+pub(crate) fn apply_artifact_preflight_to_report(
+    project_root: &std::path::Path,
+    report: &mut ProjectHealthReport,
+) -> Result<()> {
     let evaluated =
-        crate::services::artifact_preflight_health::evaluate(&project_root, &report.project)?;
+        crate::services::artifact_preflight_health::evaluate(project_root, &report.project)?;
     for gate_report in evaluated {
         report.apply_preflight_gate_report(gate_report);
     }
@@ -6077,12 +6205,6 @@ mod tests {
     /// above.
     #[test]
     fn apply_artifact_preflight_to_report_reads_real_evidence_from_disk() {
-        use crate::cli::shell_env::CWD_LOCK;
-        let _guard = CWD_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let prev = std::env::current_dir().unwrap();
-
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("aw.toml"),
@@ -6106,10 +6228,8 @@ mod tests {
         )
         .unwrap();
 
-        std::env::set_current_dir(tmp.path()).unwrap();
         let mut report = ready_project_health_report("demo");
-        let result = apply_artifact_preflight_to_report(&mut report);
-        std::env::set_current_dir(&prev).unwrap();
+        let result = apply_artifact_preflight_to_report(tmp.path(), &mut report);
 
         result.unwrap();
         assert_eq!(report.preflight_gate_reports.len(), 1);
@@ -7453,6 +7573,218 @@ target = "rust"
         );
         let reparsed: crate::models::project::ProjectsToml = toml::from_str(&reserialized).unwrap();
         assert_eq!(parsed, reparsed);
+    }
+
+    #[tokio::test]
+    async fn change_lifecycle_health() {
+        use crate::issues::IssueBackend;
+
+        let root = tempfile::tempdir().unwrap();
+
+        std::fs::write(
+            root.path().join("aw.toml"),
+            r#"
+[agentic_workflow.issue_platform]
+type = "local"
+
+[[projects]]
+name = "demo"
+label = "app:demo"
+path = "."
+"#,
+        )
+        .unwrap();
+
+        let backend = crate::issues::LocalBackend::from_project_root(root.path());
+
+        // Row 1: carrier for S is non-terminal, tracker issue for S is closed
+        let lc_row1 = crate::cli::change_lifecycle::fold_wi_create("change-row1", "body-1", "demo");
+        let carrier_path_row1 = crate::shared::workspace::workspace_runtime_path(root.path())
+            .join("causal-lifecycle")
+            .join("change-row1.json");
+        std::fs::create_dir_all(carrier_path_row1.parent().unwrap()).unwrap();
+        std::fs::write(
+            &carrier_path_row1,
+            serde_json::to_vec_pretty(&lc_row1).unwrap(),
+        )
+        .unwrap();
+
+        let issue_row1 = Issue {
+            issue_type: IssueType::Change,
+            title: "Row 1 Change".to_string(),
+            state: IssueState::Closed,
+            id: Some("change-row1".to_string()),
+            github_id: None,
+            gitlab_id: None,
+            url: None,
+            author: None,
+            labels: vec!["app:demo".to_string()],
+            created_at: None,
+            updated_at: None,
+            slug: "change-row1".to_string(),
+            body: "body-1".to_string(),
+            related: Vec::new(),
+            implements: Vec::new(),
+            phase: Some("created".to_string()),
+            branch: None,
+            target_branch: None,
+            git_workflow: None,
+            change_id: None,
+            iteration: None,
+            current_task_id: None,
+            impl_spec_phase: None,
+            task_revisions: None,
+            revision_counts: None,
+            last_action: None,
+            session_id: None,
+            validation_errors: Vec::new(),
+            review_count: None,
+            flagged_sections: None,
+            fill_retry_count: None,
+            ship_status: None,
+            ship_commit: None,
+            regen_verified_at: None,
+        };
+        backend.write(&issue_row1).await.unwrap();
+
+        let axis_row1 = evaluate_change_lifecycle_health(root.path(), "demo").await;
+
+        assert_eq!(axis_row1.evaluated, true);
+        assert_eq!(axis_row1.status, "drift");
+        assert_eq!(axis_row1.drift_count, 1);
+        assert_eq!(axis_row1.drifted, vec!["change-row1"]);
+
+        // Row 2: next_command equals projection_for_issue(root, issue)["remediation"][0]["command"] computed in the test itself
+        let expected_proj_row1 =
+            crate::cli::change_lifecycle::projection_for_issue(root.path(), &issue_row1);
+        let expected_remediation = expected_proj_row1["remediation"][0]["command"]
+            .as_str()
+            .map(|s| s.to_string());
+        assert!(expected_remediation.is_some());
+        assert_eq!(axis_row1.next_command, expected_remediation);
+
+        // Row 3: (negative control) carrier for S is terminal, tracker issue for S is closed
+        let root_row3 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root_row3.path().join("aw.toml"),
+            r#"
+[agentic_workflow.issue_platform]
+type = "local"
+
+[[projects]]
+name = "demo"
+label = "app:demo"
+path = "."
+"#,
+        )
+        .unwrap();
+        let backend_row3 = crate::issues::LocalBackend::from_project_root(root_row3.path());
+
+        crate::cli::change_lifecycle::record_terminal_lifecycle(root_row3.path(), "change-row3");
+        let mut issue_row3 = issue_row1.clone();
+        issue_row3.slug = "change-row3".to_string();
+        issue_row3.id = Some("change-row3".to_string());
+        issue_row3.state = IssueState::Closed;
+        backend_row3.write(&issue_row3).await.unwrap();
+
+        let axis_row3 = evaluate_change_lifecycle_health(root_row3.path(), "demo").await;
+
+        assert_eq!(axis_row3.status, "clean");
+        assert_eq!(axis_row3.drift_count, 0);
+        assert_eq!(axis_row3.next_command, None);
+
+        // Row 4: (negative control) carrier for S is non-terminal, tracker issue for S is open
+        let root_row4 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root_row4.path().join("aw.toml"),
+            r#"
+[agentic_workflow.issue_platform]
+type = "local"
+
+[[projects]]
+name = "demo"
+label = "app:demo"
+path = "."
+"#,
+        )
+        .unwrap();
+        let backend_row4 = crate::issues::LocalBackend::from_project_root(root_row4.path());
+
+        let lc_row4 = crate::cli::change_lifecycle::fold_wi_create("change-row4", "body-4", "demo");
+        let carrier_path_row4 = crate::shared::workspace::workspace_runtime_path(root_row4.path())
+            .join("causal-lifecycle")
+            .join("change-row4.json");
+        std::fs::create_dir_all(carrier_path_row4.parent().unwrap()).unwrap();
+        std::fs::write(
+            &carrier_path_row4,
+            serde_json::to_vec_pretty(&lc_row4).unwrap(),
+        )
+        .unwrap();
+
+        let mut issue_row4 = issue_row1.clone();
+        issue_row4.slug = "change-row4".to_string();
+        issue_row4.id = Some("change-row4".to_string());
+        issue_row4.state = IssueState::Open;
+        backend_row4.write(&issue_row4).await.unwrap();
+
+        let axis_row4 = evaluate_change_lifecycle_health(root_row4.path(), "demo").await;
+
+        assert_eq!(axis_row4.status, "clean");
+        assert_eq!(axis_row4.drift_count, 0);
+
+        // Row 5: (negative control) tracker issue for S is closed, no carrier file exists
+        let root_row5 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root_row5.path().join("aw.toml"),
+            r#"
+[agentic_workflow.issue_platform]
+type = "local"
+
+[[projects]]
+name = "demo"
+label = "app:demo"
+path = "."
+"#,
+        )
+        .unwrap();
+        let backend_row5 = crate::issues::LocalBackend::from_project_root(root_row5.path());
+
+        let mut issue_row5 = issue_row1.clone();
+        issue_row5.slug = "change-row5".to_string();
+        issue_row5.id = Some("change-row5".to_string());
+        issue_row5.state = IssueState::Closed;
+        backend_row5.write(&issue_row5).await.unwrap();
+
+        let axis_row5 = evaluate_change_lifecycle_health(root_row5.path(), "demo").await;
+
+        assert_eq!(axis_row5.status, "clean");
+        assert_eq!(axis_row5.drift_count, 0);
+
+        // Row 6: observed through the value the command prints (printed JSON)
+        let mut report = ready_project_health_report("demo");
+        report.change_lifecycle = axis_row1.clone();
+        let summary_json =
+            project_health_compact_summary_with_payload_path(&report, "/tmp/payload.json");
+
+        let change_lc_axis = &summary_json["axes"]["change_lifecycle"];
+        assert_eq!(change_lc_axis["status"], "drift");
+        assert_eq!(change_lc_axis["drift_count"], 1);
+        assert_eq!(
+            change_lc_axis["drifted"],
+            serde_json::json!(["change-row1"])
+        );
+        assert_eq!(
+            change_lc_axis["next_command"],
+            serde_json::json!(expected_remediation)
+        );
+
+        // Row 7: observed twice in one test, carrier byte-identical
+        let carrier_bytes_before = std::fs::read(&carrier_path_row1).unwrap();
+        let axis_obs2 = evaluate_change_lifecycle_health(root.path(), "demo").await;
+        let carrier_bytes_after = std::fs::read(&carrier_path_row1).unwrap();
+
+        assert_eq!(axis_row1, axis_obs2);
+        assert_eq!(carrier_bytes_before, carrier_bytes_after);
     }
 }
 // CODEGEN-END
