@@ -1082,13 +1082,116 @@ pub(crate) fn save(project_root: &Path, lifecycle: &ChangeLifecycle) -> Result<(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PublishOutcome {
+    Applied,
+    AlreadyApplied(String),
+    Refused(String),
+}
+
+impl PublishOutcome {
+    pub(crate) fn is_applied(&self) -> bool {
+        matches!(self, Self::Applied)
+    }
+
+    pub(crate) fn is_already_applied(&self) -> bool {
+        matches!(self, Self::AlreadyApplied(_))
+    }
+
+    pub(crate) fn is_refused(&self) -> bool {
+        matches!(self, Self::Refused(_))
+    }
+}
+
+pub(crate) struct LeaseGuard {
+    lock_path: PathBuf,
+}
+
+impl Drop for LeaseGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.lock_path);
+    }
+}
+
+pub(crate) fn acquire_project_lease(project_root: &Path) -> Result<Option<LeaseGuard>> {
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("causal-lifecycle");
+    std::fs::create_dir_all(&dir)?;
+    let lock_path = dir.join(".publish.lock");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(_) => Ok(Some(LeaseGuard { lock_path })),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+pub(crate) fn publish_lifecycle_cas(
+    project_root: &Path,
+    expected_head_event_id: Option<&str>,
+    candidate: &ChangeLifecycle,
+) -> Result<PublishOutcome> {
+    let _lease = match acquire_project_lease(project_root)? {
+        Some(guard) => guard,
+        None => {
+            return Ok(PublishOutcome::Refused(
+                "refused: held lease: exclusive project publish lease is currently held"
+                    .to_string(),
+            ));
+        }
+    };
+
+    let candidate_event = candidate
+        .events
+        .last()
+        .context("candidate lifecycle has no events")?;
+    let cand_predecessor = candidate_event.predecessor_id.as_deref();
+    let cand_rev_id = &candidate_event.candidate_revision.id;
+
+    let disk_carrier_opt = load(project_root, &candidate.slug)?;
+
+    if let Some(disk_carrier) = &disk_carrier_opt {
+        let already_landed = disk_carrier.events.iter().any(|evt| {
+            evt.predecessor_id.as_deref() == cand_predecessor
+                && &evt.candidate_revision.id == cand_rev_id
+        });
+        if already_landed {
+            return Ok(PublishOutcome::AlreadyApplied(format!(
+                "already applied: candidate revision {} with predecessor {:?} is already on disk",
+                cand_rev_id, cand_predecessor
+            )));
+        }
+    }
+
+    let disk_head = disk_carrier_opt
+        .as_ref()
+        .and_then(|c| c.head_event_id.as_deref());
+
+    if disk_head != expected_head_event_id {
+        return Ok(PublishOutcome::Refused(format!(
+            "refused: moved head: expected head {:?} does not match disk head {:?}",
+            expected_head_event_id, disk_head
+        )));
+    }
+
+    save(project_root, candidate)?;
+    Ok(PublishOutcome::Applied)
+}
+
 /// Fold a successful issue creation into the durable carrier.  Legacy
 /// loop-state WIs deliberately remain unmigrated and are rendered fail-closed.
 pub fn record_create(project_root: &Path, issue: &Issue) -> Result<()> {
     if !issue.issue_type.is_change() || is_legacy_loop_state(issue) {
         return Ok(());
     }
-    save(project_root, &initial_lifecycle(issue))
+    let candidate = initial_lifecycle(issue);
+    match publish_lifecycle_cas(project_root, None, &candidate)? {
+        PublishOutcome::Applied | PublishOutcome::AlreadyApplied(_) => Ok(()),
+        PublishOutcome::Refused(reason) => anyhow::bail!("{reason}"),
+    }
 }
 
 /// Fold a successful WI body update.  A same-content update is deliberately
@@ -1100,11 +1203,15 @@ pub fn record_update(project_root: &Path, before: &Issue, updated: &Issue) -> Re
     let Some(lifecycle) = load(project_root, &updated.slug)? else {
         return Ok(());
     };
+    let expected_head = lifecycle.head_event_id.clone();
     let result = fold_wi_update(&lifecycle, &updated.body, Some(&before.body));
     if !result.accepted {
         return Ok(());
     }
-    save(project_root, &result.lifecycle)
+    match publish_lifecycle_cas(project_root, expected_head.as_deref(), &result.lifecycle)? {
+        PublishOutcome::Applied | PublishOutcome::AlreadyApplied(_) => Ok(()),
+        PublishOutcome::Refused(reason) => anyhow::bail!("{reason}"),
+    }
 }
 
 fn zero_head_projection(slug: &str, owner: OwnerVocabulary) -> serde_json::Value {
@@ -3419,6 +3526,271 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         assert_eq!(
             res5.lifecycle.evidence, initial_evidence,
             "Row 5: CbCommit retaining branch must retain all eight evidence bindings"
+        );
+    }
+
+    #[test]
+    fn test_carrier_publish_cas_lease_rows_1_to_8() {
+        let root = tempfile::tempdir().unwrap();
+        let project_root = root.path();
+
+        // Initial setup: carrier at head H (H = Some("evt-001")) for "causal"
+        let issue_a = change("wi-v1");
+        record_create(project_root, &issue_a).unwrap();
+        let lc_h = load(project_root, "causal").unwrap().unwrap();
+        let head_h = lc_h.head_event_id.clone();
+        assert_eq!(head_h, Some("evt-001".to_string()));
+
+        // Two writers load at head H
+        // Writer 1 folds candidate 1
+        let res1 = fold_wi_update(&lc_h, "wi-v2-w1", Some("wi-v1"));
+        assert!(res1.accepted);
+        let cand1 = res1.lifecycle;
+
+        // Writer 2 folds candidate 2
+        let res2 = fold_wi_update(&lc_h, "wi-v2-w2", Some("wi-v1"));
+        assert!(res2.accepted);
+        let cand2 = res2.lifecycle;
+
+        // Row 1: First publish (Writer 1) succeeds; second publish (Writer 2) is refused for moved head
+        let outcome1 = publish_lifecycle_cas(project_root, head_h.as_deref(), &cand1).unwrap();
+        assert_eq!(outcome1, PublishOutcome::Applied);
+
+        let bytes_before_refusal = std::fs::read(carrier_path(project_root, "causal")).unwrap();
+
+        let outcome2 = publish_lifecycle_cas(project_root, head_h.as_deref(), &cand2).unwrap();
+        let outcome2_refusal_text = match &outcome2 {
+            PublishOutcome::Refused(reason) => {
+                assert!(
+                    reason.contains("moved head"),
+                    "Row 1: refusal reason must contain 'moved head', got: {reason}"
+                );
+                reason.clone()
+            }
+            other => panic!("Row 1: expected Refused, got: {other:?}"),
+        };
+
+        let reloaded_after_w2 = load(project_root, "causal").unwrap().unwrap();
+        assert_eq!(
+            reloaded_after_w2.head_event_id,
+            Some("evt-002".to_string()),
+            "Row 1: head_event_id must be Writer 1's event"
+        );
+        assert_eq!(
+            reloaded_after_w2.events.len(),
+            2,
+            "Row 1: events must not contain Writer 2's event"
+        );
+        assert_eq!(
+            reloaded_after_w2
+                .events
+                .last()
+                .unwrap()
+                .candidate_revision
+                .id,
+            cand1.events.last().unwrap().candidate_revision.id,
+            "Row 1: last event must be Writer 1's event"
+        );
+        assert_eq!(
+            reloaded_after_w2.epoch, 2,
+            "Row 1: epoch must advance exactly once"
+        );
+
+        // Row 2: Bytes of carrier file read immediately before and immediately after refused publish are identical
+        let bytes_after_refusal = std::fs::read(carrier_path(project_root, "causal")).unwrap();
+        assert_eq!(
+            bytes_before_refusal, bytes_after_refusal,
+            "Row 2: carrier file bytes must be identical before and after refused publish"
+        );
+
+        // Row 3: Retry winning publish with same (predecessor, candidate revision id) -> reported as already applied
+        let outcome3 = publish_lifecycle_cas(project_root, head_h.as_deref(), &cand1).unwrap();
+        let outcome3_text = match &outcome3 {
+            PublishOutcome::AlreadyApplied(reason) => {
+                assert!(
+                    reason.contains("already applied"),
+                    "Row 3: outcome text must contain 'already applied', got: {reason}"
+                );
+                reason.clone()
+            }
+            other => panic!("Row 3: expected AlreadyApplied, got: {other:?}"),
+        };
+        assert_ne!(
+            outcome3_text, outcome2_refusal_text,
+            "Row 3: already applied outcome text must be distinct from Row 1's refusal text"
+        );
+
+        let bytes_after_row3 = std::fs::read(carrier_path(project_root, "causal")).unwrap();
+        assert_eq!(
+            bytes_after_row3, bytes_after_refusal,
+            "Row 3: carrier bytes must be identical to immediately after winning publish"
+        );
+
+        let reloaded_after_row3 = load(project_root, "causal").unwrap().unwrap();
+        assert_eq!(
+            reloaded_after_row3.events.len(),
+            2,
+            "Row 3: no second event appended"
+        );
+        assert_eq!(reloaded_after_row3.epoch, 2, "Row 3: no second epoch bump");
+
+        // Row 4: Publish with same predecessor H but different candidate revision id -> refused for moved head, text differs from Row 3
+        let outcome4 = publish_lifecycle_cas(project_root, head_h.as_deref(), &cand2).unwrap();
+        let outcome4_refusal_text = match &outcome4 {
+            PublishOutcome::Refused(reason) => {
+                assert!(
+                    reason.contains("moved head"),
+                    "Row 4: refusal reason must contain 'moved head', got: {reason}"
+                );
+                reason.clone()
+            }
+            other => panic!("Row 4: expected Refused, got: {other:?}"),
+        };
+        assert_ne!(
+            outcome4_refusal_text, outcome3_text,
+            "Row 4: refusal text must differ from Row 3's already-applied outcome"
+        );
+
+        // Row 5: Publish for slug A while lease held -> refused for held lease
+        let lease = acquire_project_lease(project_root).unwrap().unwrap();
+        let bytes_before_row5 = std::fs::read(carrier_path(project_root, "causal")).unwrap();
+
+        let outcome5 = publish_lifecycle_cas(project_root, Some("evt-002"), &cand1).unwrap();
+        let outcome5_refusal_text = match &outcome5 {
+            PublishOutcome::Refused(reason) => {
+                assert!(
+                    reason.contains("held lease"),
+                    "Row 5: refusal reason must contain 'held lease', got: {reason}"
+                );
+                reason.clone()
+            }
+            other => panic!("Row 5: expected Refused for held lease, got: {other:?}"),
+        };
+        assert_ne!(
+            outcome5_refusal_text, outcome2_refusal_text,
+            "Row 5: held lease refusal must be textually distinct from moved head refusal"
+        );
+        assert_ne!(
+            outcome5_refusal_text, outcome4_refusal_text,
+            "Row 5: held lease refusal must be textually distinct from Row 4 refusal"
+        );
+
+        let bytes_after_row5 = std::fs::read(carrier_path(project_root, "causal")).unwrap();
+        assert_eq!(
+            bytes_before_row5, bytes_after_row5,
+            "Row 5: carrier bytes must remain unchanged"
+        );
+
+        // Row 6: Publish for slug A attempted after refused publish's lease released -> succeeds
+        drop(lease);
+        let res3 = fold_wi_update(&reloaded_after_w2, "wi-v3", Some("wi-v2-w1"));
+        assert!(res3.accepted);
+        let cand3 = res3.lifecycle;
+
+        let outcome6 = publish_lifecycle_cas(project_root, Some("evt-002"), &cand3).unwrap();
+        assert_eq!(
+            outcome6,
+            PublishOutcome::Applied,
+            "Row 6: publish after lease release must succeed"
+        );
+
+        // Row 7: Publish for slug B attempted while slug A holds project lease -> refused for held lease; succeeds after release
+        let lease2 = acquire_project_lease(project_root).unwrap().unwrap();
+        let cand_b = fold_wi_create("slug-b", "wi-b1", "agentic-workflow");
+
+        let outcome7_held = publish_lifecycle_cas(project_root, None, &cand_b).unwrap();
+        match &outcome7_held {
+            PublishOutcome::Refused(reason) => {
+                assert!(
+                    reason.contains("held lease"),
+                    "Row 7: refusal while held must contain 'held lease', got: {reason}"
+                );
+                assert_eq!(
+                    reason, &outcome5_refusal_text,
+                    "Row 7: refusal reason must match Row 5's held lease refusal"
+                );
+            }
+            other => panic!("Row 7: expected Refused for held lease, got: {other:?}"),
+        }
+
+        drop(lease2);
+        let outcome7_released = publish_lifecycle_cas(project_root, None, &cand_b).unwrap();
+        assert_eq!(
+            outcome7_released,
+            PublishOutcome::Applied,
+            "Row 7: publish after project lease release must succeed"
+        );
+
+        // Row 8: Negative control: publish with expected_head = None against populated carrier -> refused for moved head
+        let issue_a_new = change("wi-v1-new");
+        let cand_a_new = initial_lifecycle(&issue_a_new); // slug is "causal", head event "evt-001", predecessor None
+        let outcome8 = publish_lifecycle_cas(project_root, None, &cand_a_new).unwrap();
+        match &outcome8 {
+            PublishOutcome::Refused(reason) => {
+                assert!(
+                    reason.contains("moved head"),
+                    "Row 8: refusal reason must contain 'moved head', got: {reason}"
+                );
+            }
+            other => panic!("Row 8: expected Refused for moved head, got: {other:?}"),
+        }
+
+        let reloaded_after_row8 = load(project_root, "causal").unwrap().unwrap();
+        assert_eq!(
+            reloaded_after_row8.head_event_id,
+            Some("evt-003".to_string()),
+            "Row 8: populated carrier must not be replaced"
+        );
+    }
+
+    #[test]
+    fn test_record_writers_refusal_and_retry_outcomes() {
+        let root = tempfile::tempdir().unwrap();
+        let project_root = root.path();
+
+        let issue_v1 = change("wi-v1");
+
+        // 1. record_create against project whose publish lease is held returns Err with held-lease reason
+        let lease_create = acquire_project_lease(project_root).unwrap().unwrap();
+        let err_create = record_create(project_root, &issue_v1).unwrap_err();
+        let err_create_text = err_create.to_string();
+        assert!(
+            err_create_text.contains("held lease"),
+            "record_create while lease held must return Err containing 'held lease', got: {err_create_text}"
+        );
+        drop(lease_create);
+
+        // First successful record_create after lease released
+        record_create(project_root, &issue_v1).unwrap();
+        let bytes_after_first_create = std::fs::read(carrier_path(project_root, "causal")).unwrap();
+
+        // 2. record_create called twice with identical issue returns Ok(()) both times and carrier bytes are identical
+        record_create(project_root, &issue_v1).unwrap();
+        let bytes_after_second_create =
+            std::fs::read(carrier_path(project_root, "causal")).unwrap();
+        assert_eq!(
+            bytes_after_first_create, bytes_after_second_create,
+            "record_create second call with identical issue must leave carrier bytes identical"
+        );
+
+        // 3. record_update against project whose publish lease is held, for change WI whose body genuinely changed, returns Err with held-lease reason
+        let issue_v2 = change("wi-v2");
+        let lease_update = acquire_project_lease(project_root).unwrap().unwrap();
+        let err_update = record_update(project_root, &issue_v1, &issue_v2).unwrap_err();
+        let err_update_text = err_update.to_string();
+        assert!(
+            err_update_text.contains("held lease"),
+            "record_update while lease held must return Err containing 'held lease', got: {err_update_text}"
+        );
+        drop(lease_update);
+
+        // Successful record_update after lease released
+        record_update(project_root, &issue_v1, &issue_v2).unwrap();
+        let lc_after_update = load(project_root, "causal").unwrap().unwrap();
+        assert_eq!(
+            lc_after_update.head_event_id,
+            Some("evt-002".to_string()),
+            "record_update after lease release must publish updated lifecycle"
         );
     }
 }
