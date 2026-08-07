@@ -1339,13 +1339,24 @@ def missing_or_misordered(text: str, required: tuple[str, ...], label: str) -> l
 
 
 def gate_commands_in(section: str) -> list[str]:
-    """The command lines inside a section's fenced blocks, in order."""
-    return [
-        line.strip()
-        for block in ORACLE_FENCE.findall(section)
-        for line in block.splitlines()
-        if line.strip()
-    ]
+    """The command lines inside a section's fenced blocks, in order.
+
+    A block that prompts with `$ ` is a transcript: its commands are the
+    prompted lines and everything else is output. Reading output as a command
+    is how `## Definition of done` came to "name a different gate" than the
+    oracle while naming the same one -- once as `$ cargo test ...` against the
+    oracle's bare `cargo test ...`, and again with the expected `test result:`
+    line counted as a second gate. Showing the controller what green looks like
+    is worth keeping, so the prompt is what marks the command.
+    """
+    commands = []
+    for block in ORACLE_FENCE.findall(section):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        prompted = [line for line in lines if line.startswith("$ ")]
+        commands.extend(
+            [line[2:].strip() for line in prompted] if prompted else lines
+        )
+    return commands
 
 
 def unjudged_gate_commands(profile: dict, gate_commands: list[str]) -> list[str]:

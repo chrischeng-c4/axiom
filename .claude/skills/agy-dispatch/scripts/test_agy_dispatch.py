@@ -2260,6 +2260,31 @@ class InjectionContractTest(unittest.TestCase):
         text = CONFORMANT_INJECTION.replace("some_gate", "other_gate")
         self.assert_single_finding(text, "names a different gate")
 
+    def test_a_definition_of_done_may_show_the_gate_as_a_transcript(self) -> None:
+        """The same gate written as a transcript is the same gate.
+
+        Showing the command with its prompt and the green it produces is the
+        most useful form of a done condition, and it was the one form the
+        cross-check rejected: the prompt made it a different string, and the
+        expected output counted as a second gate.
+        """
+        text = CONFORMANT_INJECTION.replace(
+            "```\ncargo test -p target --lib some_gate\n```",
+            "```console\n$ cargo test -p target --lib some_gate\n"
+            "test result: ok. 12 passed; 0 failed\n```",
+        )
+        self.assertEqual(self.findings(text), [])
+
+    def test_a_transcript_still_reports_a_gate_that_drifted(self) -> None:
+        """The prompt must not become a way to smuggle a different command
+        past the cross-check."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\ncargo test -p target --lib some_gate\n```",
+            "```console\n$ cargo test -p target --lib other_gate\n"
+            "test result: ok. 12 passed; 0 failed\n```",
+        )
+        self.assert_single_finding(text, "names a different gate")
+
     def test_unfilled_scaffold_slot_is_reported(self) -> None:
         text = CONFORMANT_INJECTION.replace(
             "Exclude AW-owned marker blocks from the contract digest.",
