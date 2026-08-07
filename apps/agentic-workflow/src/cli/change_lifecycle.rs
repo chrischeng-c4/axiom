@@ -1015,6 +1015,10 @@ fn zero_head_projection(slug: &str, owner: OwnerVocabulary) -> serde_json::Value
         "next": {"command": format!("aw wi validate {slug}"), "owner": owner.as_str()},
         "terminal": false,
         "milestones": [],
+        "drift": false,
+        "remediation": [],
+        "close_authorized": false,
+        "authorize_close_event_id": serde_json::Value::Null,
     })
 }
 
@@ -1224,7 +1228,7 @@ pub fn decide_projection(
     }
 }
 
-fn render(lifecycle: &ChangeLifecycle) -> serde_json::Value {
+fn render(lifecycle: &ChangeLifecycle, decision: &ProjectionDecision) -> serde_json::Value {
     let revision = |kind| match lifecycle
         .active_revisions
         .get(&kind)
@@ -1237,6 +1241,16 @@ fn render(lifecycle: &ChangeLifecycle) -> serde_json::Value {
         .events
         .iter()
         .map(|event| render_milestone(lifecycle, event))
+        .collect::<Vec<_>>();
+    let remediation = decision
+        .remediation
+        .iter()
+        .map(|ob| {
+            serde_json::json!({
+                "command": ob.command,
+                "owner": ob.owner.as_str(),
+            })
+        })
         .collect::<Vec<_>>();
     serde_json::json!({
         "schema": SCHEMA,
@@ -1251,6 +1265,10 @@ fn render(lifecycle: &ChangeLifecycle) -> serde_json::Value {
         "next": {"command": lifecycle.next.command, "owner": lifecycle.next.owner.as_str()},
         "terminal": lifecycle.terminal,
         "milestones": milestones,
+        "drift": decision.drift,
+        "remediation": remediation,
+        "close_authorized": decision.close_authorized,
+        "authorize_close_event_id": decision.authorize_close_event_id,
     })
 }
 
@@ -1262,7 +1280,9 @@ pub fn projection_for_issue(project_root: &Path, issue: &Issue) -> serde_json::V
     }
     match load(project_root, &issue.slug) {
         Ok(Some(lifecycle)) if valid_persisted_lifecycle(&lifecycle, &issue.slug) => {
-            render(&lifecycle)
+            let observation = TrackerObservation::empty(&issue.body).with_state(issue.state);
+            let decision = decide_projection(&lifecycle, &observation);
+            render(&lifecycle, &decision)
         }
         Ok(Some(_)) | Ok(None) | Err(_) => zero_head_projection(&issue.slug, OwnerVocabulary::Wi),
     }
@@ -2087,7 +2107,10 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         );
 
         // Row 1: milestones is an array of exactly 4 entries in commit order, matching event_ids
-        let proj_4 = render(&cb);
+        let proj_4 = render(
+            &cb,
+            &decide_projection(&cb, &TrackerObservation::empty("wi-v1")),
+        );
         let milestones_4 = proj_4["milestones"]
             .as_array()
             .expect("milestones is array");
@@ -2155,7 +2178,10 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let terminal_lc = committed.lifecycle;
 
         // Row 4: cb_commit milestone next.command is "aw wi show causal", next.owner is "cb"
-        let terminal_proj = render(&terminal_lc);
+        let terminal_proj = render(
+            &terminal_lc,
+            &decide_projection(&terminal_lc, &TrackerObservation::empty("wi-v1")),
+        );
         let term_milestones = terminal_proj["milestones"].as_array().unwrap();
         assert_eq!(term_milestones.len(), 5);
         let cb_commit_ms = &term_milestones[4];
@@ -2181,18 +2207,129 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         };
         let rej = reduce_event(&terminal_lc, stale_event);
         assert!(!rej.accepted);
-        let proj_after_rej = render(&rej.lifecycle);
+        let proj_after_rej = render(
+            &rej.lifecycle,
+            &decide_projection(&rej.lifecycle, &TrackerObservation::empty("wi-v1")),
+        );
         assert_eq!(proj_after_rej["milestones"], terminal_proj["milestones"]);
 
         // Row 8: empty evidence on terminal lifecycle: cb_commit milestone still reports aw wi show and owner cb, and evidence []
         let mut emptied_lc = terminal_lc.clone();
         emptied_lc.evidence.clear();
-        let emptied_proj = render(&emptied_lc);
+        let emptied_proj = render(
+            &emptied_lc,
+            &decide_projection(&emptied_lc, &TrackerObservation::empty("wi-v1")),
+        );
         let emptied_ms = emptied_proj["milestones"].as_array().unwrap();
         let emptied_cb_ms = &emptied_ms[4];
         assert_eq!(emptied_cb_ms["next"]["command"], "aw wi show causal");
         assert_eq!(emptied_cb_ms["next"]["owner"], "cb");
         assert_eq!(emptied_cb_ms["evidence"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn projection_for_issue_reflects_tracker_observation_state() {
+        let root = tempfile::tempdir().unwrap();
+
+        // Row 1: valid, non-terminal carrier & closed issue -> drift reported with reopen remediation
+        let issue_open = change("wi-v1");
+        let non_terminal_lc = fold_wi_create("causal", "wi-v1", "agentic-workflow");
+        save(root.path(), &non_terminal_lc).unwrap();
+
+        let mut issue_closed = issue_open.clone();
+        issue_closed.state = IssueState::Closed;
+
+        let proj_row1 = projection_for_issue(root.path(), &issue_closed);
+        assert_eq!(proj_row1["drift"], true);
+        let remed = proj_row1["remediation"]
+            .as_array()
+            .expect("remediation is array");
+        assert_eq!(remed.len(), 2);
+        assert_eq!(remed[0]["command"], "aw wi update causal --state open");
+        assert_eq!(remed[0]["owner"], "wi");
+        assert_eq!(remed[1]["command"], non_terminal_lc.next.command);
+        assert_eq!(remed[1]["owner"], non_terminal_lc.next.owner.as_str());
+        assert_eq!(proj_row1["close_authorized"], false);
+        assert!(proj_row1["authorize_close_event_id"].is_null());
+
+        // Row 2: valid, non-terminal carrier & open issue (negative control) -> no drift, no remediation
+        let proj_row2 = projection_for_issue(root.path(), &issue_open);
+        assert_eq!(proj_row2["drift"], false);
+        assert_eq!(proj_row2["remediation"], serde_json::json!([]));
+        assert_eq!(proj_row2["close_authorized"], false);
+        assert!(proj_row2["authorize_close_event_id"].is_null());
+
+        // Construct terminal lifecycle (with CbCommit and 4D evidence)
+        let ec = reduce_stage(
+            &non_terminal_lc,
+            ArtifactKind::Ec,
+            LifecycleEventKind::EcChange,
+            "ec-v1",
+            "aw td check",
+            OwnerVocabulary::Td,
+        );
+        let td = reduce_stage(
+            &ec,
+            ArtifactKind::Td,
+            LifecycleEventKind::TdChange,
+            "td-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+        let mut cb = reduce_stage(
+            &td,
+            ArtifactKind::Cb,
+            LifecycleEventKind::CbChange,
+            "cb-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+        let tuple = cb.active_digest_tuple();
+        cb.evidence = ["cb_test", "cb_review", "td_reconcile", "ec_verify_cb"]
+            .into_iter()
+            .map(|v| EvidenceBinding {
+                verifier: v.to_string(),
+                bound_tuple: tuple.clone(),
+                passed: true,
+                summary: "pass".to_string(),
+            })
+            .collect();
+        let active_cb = cb.active_revisions[&ArtifactKind::Cb].clone().unwrap();
+        let commit_evt = LifecycleEvent {
+            event_id: event_id(&cb),
+            predecessor_id: cb.head_event_id.clone(),
+            kind: LifecycleEventKind::CbCommit,
+            candidate_revision: active_cb,
+            bound_tuple: tuple,
+            next_command: "aw wi show causal".to_string(),
+            next_owner: OwnerVocabulary::Cb,
+        };
+        let committed = reduce_event(&cb, commit_evt);
+        assert!(committed.accepted);
+        let terminal_lc = committed.lifecycle;
+        save(root.path(), &terminal_lc).unwrap();
+
+        // Row 3: valid, terminal carrier (head event is cb_commit) & open issue -> close_authorized true with authorize_close_event_id
+        let proj_row3 = projection_for_issue(root.path(), &issue_open);
+        assert_eq!(proj_row3["drift"], false);
+        assert_eq!(proj_row3["close_authorized"], true);
+        assert_eq!(proj_row3["authorize_close_event_id"], "evt-005");
+
+        // Row 4: valid, terminal carrier & closed issue (negative control) -> no drift, close_authorized false
+        let proj_row4 = projection_for_issue(root.path(), &issue_closed);
+        assert_eq!(proj_row4["drift"], false);
+        assert_eq!(proj_row4["close_authorized"], false);
+        assert!(proj_row4["authorize_close_event_id"].is_null());
+
+        // Row 5: absent, malformed, or legacy carrier & closed issue -> fail-closed projection, no drift
+        let legacy_issue = change("<!-- aw:loop-state\nversion: 1\n-->");
+        let mut legacy_closed = legacy_issue.clone();
+        legacy_closed.state = IssueState::Closed;
+        let proj_row5 = projection_for_issue(root.path(), &legacy_closed);
+        assert_eq!(proj_row5["drift"], false);
+        assert_eq!(proj_row5["close_authorized"], false);
+        assert!(proj_row5["authorize_close_event_id"].is_null());
+        assert_eq!(proj_row5["ledger"]["epoch"], 0);
     }
 
     #[test]
