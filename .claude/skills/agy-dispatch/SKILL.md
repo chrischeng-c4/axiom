@@ -121,9 +121,15 @@ per-criterion verdict in such a report is fabricated by construction.
   target arrives already frozen: writing it is a finding and not writing it is
   a finding. `doctor` has a check for this and it cannot fire (#3439).
 - **Never author a fresh round after a one-shot id is spent.** The refusal says
-  "create a new one-shot run id", which reads as exactly that — but the
-  candidate is uncommitted in the worktree `worktree` would re-create from
-  `HEAD`, so that path silently deletes it. Use `revise`.
+  "create a new one-shot run id", which reads as exactly that — but a new key
+  derives a new branch and path, so `worktree` builds a *second* checkout from
+  `HEAD` and strands the uncommitted candidate in the first, where no verb of
+  the new round can see it. Use `revise`. When the contract itself must widen,
+  `revise` is not enough either: it copies the write set and the oracle
+  unchanged. Generate a fresh profile over the full widened write set — so
+  `protected_artifacts` is recomputed rather than left stale — and graft the
+  spent round's `worktree` block into it. `worktree` reuses a path whose branch
+  matches, so the candidate carries.
 - **Never treat a timeout as a denial.** The worker was cut off with its work on
   disk. Read the diff and run the gate before deciding anything.
 - **Never `abandon` a result you dislike** — it releases a run id, and it is for
