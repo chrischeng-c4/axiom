@@ -10011,7 +10011,10 @@ target = "rust"
             "Row 6: carrier bytes untouched after row 1"
         );
         assert_eq!(env1["available"], true);
-        assert_eq!(env1["next"]["command"], format!("aw ec verify cb {slug1}"));
+        assert_eq!(
+            env1["next"]["command"],
+            format!("aw ec verify --stage cb --wi {slug1}")
+        );
         assert_eq!(env1["next"]["owner"], "cb");
         assert_eq!(env1["owner"], "cb");
 
@@ -10025,7 +10028,7 @@ target = "rust"
             "Row 6: carrier bytes untouched after row 2"
         );
         assert_eq!(env2["available"], true);
-        assert_eq!(env2["next"]["command"], format!("aw td change {slug1}"));
+        assert_eq!(env2["next"]["command"], format!("aw td create {slug1}"));
         assert_eq!(env2["next"]["owner"], "td");
         assert_eq!(env2["owner"], "td");
 
@@ -10039,15 +10042,16 @@ target = "rust"
         let chain = env2["obligation_chain"]
             .as_array()
             .expect("obligation_chain array");
-        assert_eq!(chain.len(), 4);
-        assert_eq!(chain[0]["command"], format!("aw td check {slug1}"));
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[0]["command"], format!("aw td check --wi {slug1}"));
         assert_eq!(chain[0]["owner"], "td");
-        assert_eq!(chain[1]["command"], format!("aw ec verify td {slug1}"));
+        assert_eq!(
+            chain[1]["command"],
+            format!("aw ec verify --stage td --wi {slug1}")
+        );
         assert_eq!(chain[1]["owner"], "ec");
-        assert_eq!(chain[2]["command"], format!("aw td review {slug1}"));
-        assert_eq!(chain[2]["owner"], "td");
-        assert_eq!(chain[3]["command"], format!("aw cb check {slug1}"));
-        assert_eq!(chain[3]["owner"], "cb");
+        assert_eq!(chain[2]["command"], format!("aw cb check {slug1}"));
+        assert_eq!(chain[2]["owner"], "cb");
 
         // Row 3: carrier whose cb_review binding is absent; claim no_change
         let tmp3 = tempfile::TempDir::new().unwrap();

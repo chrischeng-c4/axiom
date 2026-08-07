@@ -499,6 +499,31 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         sample: "aw wi update 915 --state open",
         note: "remediation command to reopen a closed tracker issue when lifecycle is non-terminal",
     },
+    EmitSite {
+        source: "ec_verdict.rs:decide_td_impact (Rebind route)",
+        sample: "aw td reconcile --result no_change 915",
+        note: "#3359: TD impact obligation when candidate TD source digest matches pre-repair digest",
+    },
+    EmitSite {
+        source: "ec_verdict.rs:decide_td_impact (Change route)",
+        sample: "aw td check --wi 915",
+        note: "#3359: TD impact obligation when candidate TD source digest differs from pre-repair digest",
+    },
+    EmitSite {
+        source: "ec_verdict.rs:decide_td_reconciliation (NoChange claim)",
+        sample: "aw ec verify --stage cb --wi 915",
+        note: "#3359: post-CB TD reconciliation obligation when claim is NoChange",
+    },
+    EmitSite {
+        source: "ec_verdict.rs:decide_td_reconciliation (Amended claim)",
+        sample: "aw td create 915",
+        note: "#3359: post-CB TD reconciliation obligation when claim is Amended",
+    },
+    EmitSite {
+        source: "ec_verdict.rs:decide_td_reconciliation (Amended obligation chain step 2)",
+        sample: "aw ec verify --stage td --wi 915",
+        note: "#3359: post-CB TD reconciliation amended obligation chain step 2",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2013,6 +2038,84 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn extract_production_aw_commands(source: &str, sample_slug: &str) -> Vec<String> {
+        let prod_half = source.split("#[cfg(test)]").next().unwrap_or(source);
+        let mut commands = Vec::new();
+        let mut rest = prod_half;
+        while let Some(start) = rest.find("\"aw ") {
+            let content_start = start + 1;
+            let after_start = &rest[content_start..];
+            if let Some(end) = after_start.find('"') {
+                let raw_cmd = &after_start[..end];
+                let instantiated = raw_cmd.replace("{}", sample_slug);
+                commands.push(instantiated);
+                rest = &after_start[end + 1..];
+            } else {
+                break;
+            }
+        }
+        commands
+    }
+
+    #[test]
+    fn ec_verdict_production_emitted_commands_are_all_chain_valid() {
+        let source = include_str!("ec_verdict.rs");
+        let commands = extract_production_aw_commands(source, "3359");
+        assert!(
+            commands.len() >= 8,
+            "extraction must return at least 8 commands from ec_verdict.rs production half, got {}",
+            commands.len()
+        );
+        for cmd in &commands {
+            if let Err(blocker) = validate_aw_command_string(cmd) {
+                panic!(
+                    "extracted ec_verdict command `{}` is chain-invalid: {}",
+                    cmd, blocker
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ec_verdict_command_extractor_reports_rejection_on_invalid_fixture() {
+        let fixture = r#"
+            fn emit_invalid_command() {
+                let cmd = "aw td review {}";
+            }
+        "#;
+        let commands = extract_production_aw_commands(fixture, "3359");
+        assert_eq!(commands.len(), 1);
+        let rejections: Vec<_> = commands
+            .iter()
+            .filter_map(|cmd| validate_aw_command_string(cmd).err())
+            .collect();
+        assert!(
+            !rejections.is_empty(),
+            "extraction routine must report rejection on fixture containing invalid command `aw td review {{}}`"
+        );
+    }
+
+    #[test]
+    fn ec_verdict_command_extractor_respects_cfg_test_boundary() {
+        let fixture = r#"
+            fn emit_valid_command() {
+                let cmd = "aw wi validate {}";
+            }
+            #[cfg(test)]
+            mod tests {
+                fn test_command() {
+                    let cmd = "aw td review 915";
+                }
+            }
+        "#;
+        let commands = extract_production_aw_commands(fixture, "3359");
+        assert_eq!(
+            commands,
+            vec!["aw wi validate 3359".to_string()],
+            "extractor must return exactly one production-half command and ignore #[cfg(test)] half"
+        );
     }
 
     #[test]

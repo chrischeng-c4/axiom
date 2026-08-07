@@ -422,11 +422,11 @@ pub fn decide_td_impact(
 
     let obligation = match route {
         TdImpactRoute::Rebind => NextObligation {
-            command: "aw td review".to_string(),
+            command: format!("aw td reconcile --result no_change {}", lifecycle.slug),
             owner: OwnerVocabulary::Td,
         },
         TdImpactRoute::Change => NextObligation {
-            command: "aw td check".to_string(),
+            command: format!("aw td check --wi {}", lifecycle.slug),
             owner: OwnerVocabulary::Td,
         },
     };
@@ -552,11 +552,11 @@ pub fn decide_td_reconciliation(
 
     let obligation = match claim {
         TdReconcileClaim::NoChange => NextObligation {
-            command: format!("aw ec verify cb {}", lifecycle.slug),
+            command: format!("aw ec verify --stage cb --wi {}", lifecycle.slug),
             owner: OwnerVocabulary::Cb,
         },
         TdReconcileClaim::Amended => NextObligation {
-            command: format!("aw td change {}", lifecycle.slug),
+            command: format!("aw td create {}", lifecycle.slug),
             owner: OwnerVocabulary::Td,
         },
     };
@@ -603,16 +603,12 @@ pub fn decide_td_reconciliation(
 
             let chain = vec![
                 NextObligation {
-                    command: format!("aw td check {}", lifecycle.slug),
+                    command: format!("aw td check --wi {}", lifecycle.slug),
                     owner: OwnerVocabulary::Td,
                 },
                 NextObligation {
-                    command: format!("aw ec verify td {}", lifecycle.slug),
+                    command: format!("aw ec verify --stage td --wi {}", lifecycle.slug),
                     owner: OwnerVocabulary::Ec,
-                },
-                NextObligation {
-                    command: format!("aw td review {}", lifecycle.slug),
-                    owner: OwnerVocabulary::Td,
                 },
                 NextObligation {
                     command: format!("aw cb check {}", lifecycle.slug),
@@ -1593,7 +1589,10 @@ mod tests {
         assert!(dec_row1.claim_accepted);
         assert!(dec_row1.refusal_reason.is_none());
         assert_eq!(dec_row1.obligation.owner, OwnerVocabulary::Td);
-        assert_eq!(dec_row1.obligation.command, "aw td review");
+        assert_eq!(
+            dec_row1.obligation.command,
+            format!("aw td reconcile --result no_change {}", repaired_lc.slug)
+        );
 
         // Row 2: candidate claiming TdReconcile whose digest differs ("d-td-v9") from pre-repair TD digest
         let cand_row2 = ArtifactRevision {
@@ -1615,7 +1614,10 @@ mod tests {
         assert!(!dec_row2.claim_accepted);
         assert!(dec_row2.refusal_reason.is_some());
         assert_eq!(dec_row2.obligation.owner, OwnerVocabulary::Td);
-        assert_eq!(dec_row2.obligation.command, "aw td check");
+        assert_eq!(
+            dec_row2.obligation.command,
+            format!("aw td check --wi {}", repaired_lc.slug)
+        );
 
         // Row 3: candidate claiming TdChange whose digest equals pre-repair TD digest ("d-td-1")
         let cand_row3 = ArtifactRevision {
@@ -1757,7 +1759,10 @@ mod tests {
         assert!(dec_row8.claim_accepted);
         assert!(dec_row8.refusal_reason.is_none());
         assert_eq!(dec_row8.obligation.owner, OwnerVocabulary::Td);
-        assert_eq!(dec_row8.obligation.command, "aw td check");
+        assert_eq!(
+            dec_row8.obligation.command,
+            format!("aw td check --wi {}", repaired_lc.slug)
+        );
 
         // Row 9: lifecycle built from repaired_lc by making Td active again, with invalidations left unchanged
         let mut lc_row9 = repaired_lc.clone();
@@ -1824,7 +1829,10 @@ mod tests {
             .as_ref()
             .expect("obligation must be present");
         assert_eq!(ob1.owner, OwnerVocabulary::Cb);
-        assert_eq!(ob1.command, format!("aw ec verify cb {}", lc_row1.slug));
+        assert_eq!(
+            ob1.command,
+            format!("aw ec verify --stage cb --wi {}", lc_row1.slug)
+        );
 
         let active_td_after = lc_row1.active_revisions.get(&ArtifactKind::Td).cloned();
         assert_eq!(active_td_before, active_td_after);
@@ -1839,7 +1847,7 @@ mod tests {
             .as_ref()
             .expect("obligation must be present");
         assert_eq!(ob2.owner, OwnerVocabulary::Td);
-        assert_eq!(ob2.command, format!("aw td change {}", lc_row1.slug));
+        assert_eq!(ob2.command, format!("aw td create {}", lc_row1.slug));
 
         // Row 3: the same lifecycle with the cb_review binding's passed set to false (negative control)
         let mut lc_row3 = make_lifecycle(
@@ -1935,7 +1943,7 @@ mod tests {
             .as_ref()
             .expect("obligation must be present");
         assert_eq!(ob1.owner, OwnerVocabulary::Td);
-        assert_eq!(ob1.command, format!("aw td change {}", lc_f.slug));
+        assert_eq!(ob1.command, format!("aw td create {}", lc_f.slug));
 
         // Eviction set: exactly cb_test, cb_review, ec_verify_cb; td_behavior absent
         assert_eq!(dec1.evicted_evidence.len(), 3);
@@ -1949,26 +1957,21 @@ mod tests {
             "td_behavior must be absent from eviction set"
         );
 
-        // Obligation chain: 4 entries in exact order
-        assert_eq!(dec1.obligation_chain.len(), 4);
+        // Obligation chain: 3 entries in exact order
+        assert_eq!(dec1.obligation_chain.len(), 3);
         assert_eq!(dec1.obligation_chain[0].owner, OwnerVocabulary::Td);
         assert_eq!(
             dec1.obligation_chain[0].command,
-            format!("aw td check {}", lc_f.slug)
+            format!("aw td check --wi {}", lc_f.slug)
         );
         assert_eq!(dec1.obligation_chain[1].owner, OwnerVocabulary::Ec);
         assert_eq!(
             dec1.obligation_chain[1].command,
-            format!("aw ec verify td {}", lc_f.slug)
+            format!("aw ec verify --stage td --wi {}", lc_f.slug)
         );
-        assert_eq!(dec1.obligation_chain[2].owner, OwnerVocabulary::Td);
+        assert_eq!(dec1.obligation_chain[2].owner, OwnerVocabulary::Cb);
         assert_eq!(
             dec1.obligation_chain[2].command,
-            format!("aw td review {}", lc_f.slug)
-        );
-        assert_eq!(dec1.obligation_chain[3].owner, OwnerVocabulary::Cb);
-        assert_eq!(
-            dec1.obligation_chain[3].command,
             format!("aw cb check {}", lc_f.slug)
         );
 
@@ -2000,7 +2003,10 @@ mod tests {
             .as_ref()
             .expect("obligation must be present");
         assert_eq!(ob3.owner, OwnerVocabulary::Cb);
-        assert_eq!(ob3.command, format!("aw ec verify cb {}", lc_f.slug));
+        assert_eq!(
+            ob3.command,
+            format!("aw ec verify --stage cb --wi {}", lc_f.slug)
+        );
         assert!(dec3.evicted_evidence.is_empty());
         assert!(dec3.obligation_chain.is_empty());
 
