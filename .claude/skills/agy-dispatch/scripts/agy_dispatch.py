@@ -1458,31 +1458,74 @@ def referenced_paths(text: str) -> list[str]:
     return tokens
 
 
-def transcript_findings(section: str) -> list[str]:
-    """Console blocks that do not say which command produced them.
+def transcript_body(block: str) -> list[str]:
+    """A console block's output lines, normalized for comparison.
+
+    Blank lines and trailing spaces survive a copy-paste unevenly, and neither
+    carries any of the observation, so neither may decide whether a transcript
+    matches the run it claims to be.
+    """
+    return [line.rstrip() for line in block.splitlines()[1:] if line.strip()]
+
+
+def transcript_findings(section: str, captures: dict[str, list[str]]) -> list[str]:
+    """Console blocks that are not the output of a command anyone ran.
 
     Exempting a ```console fence from the file comparison removes the only check
-    that block had, so it has to gain one of its own. The check that fits a
-    transcript is provenance: a reader who can see the command can re-run it and
-    watch the claim fail, while output pasted alone is indistinguishable from
-    output remembered, from an older build, or from a different argument.
+    that block had, so it has to gain one of its own. The prompt line was that
+    check, and it turned out to be an assertion rather than a measurement:
+    nothing compared the lines under it to anything, so a paraphrase typed from
+    memory and a capture taken a second ago read identically. Two shipped in one
+    round -- one naming a flag the verb does not accept, one whose behavior only
+    existed in a build newer than the installed binary -- and lint reported the
+    round clean (#3426).
 
-    The prompt line is the cheapest form of that, and it is the form a controller
-    already has, since the transcript was produced by running the command.
+    So the block is now compared against a stored capture. `capture` runs the
+    command and writes what it printed; this checks the pasted block against
+    that. The honest path stays the cheapest one, because pasting what `capture`
+    prints is less work than typing output, and fabricating now means forging a
+    record that names its own command, directory, and exit code.
     """
     findings: list[str] = []
+    unprompted = False
+    uncaptured: list[str] = []
+    diverged: list[str] = []
     for info, block in INFO_FENCE.findall(section):
         if not TRANSCRIPT_INFO.match(info.strip()):
             continue
         lines = [line for line in block.splitlines() if line.strip()]
         if not lines or not TRANSCRIPT_COMMAND.match(lines[0].strip()):
-            findings.append(
-                "a ```console block in `## Current behavior` does not open with "
-                "the `$ <command>` that produced it: a transcript is exempt from "
-                "the file comparison, so the command is the only thing that lets "
-                "a reader reproduce it rather than trust it"
-            )
-            break
+            unprompted = True
+            continue
+        command = lines[0].strip()[2:].strip()
+        if command not in captures:
+            uncaptured.append(command)
+        elif transcript_body(block) != captures[command]:
+            diverged.append(command)
+    if unprompted:
+        findings.append(
+            "a ```console block in `## Current behavior` does not open with "
+            "the `$ <command>` that produced it: a transcript is exempt from "
+            "the file comparison, so the command is the only thing that lets "
+            "a reader reproduce it rather than trust it"
+        )
+    if uncaptured:
+        findings.append(
+            "`## Current behavior` shows output for command(s) this round never "
+            "captured: "
+            + ", ".join(f"`{command}`" for command in uncaptured)
+            + ". Run `capture <profile> <task_key> <command>` and paste what it "
+            "prints; output typed from memory is what the worker will treat as "
+            "the behavior as it stands"
+        )
+    if diverged:
+        findings.append(
+            "`## Current behavior` shows output that differs from what the "
+            "captured run of "
+            + ", ".join(f"`{command}`" for command in diverged)
+            + " printed. Re-capture and paste the result rather than editing "
+            "the block, or the document says one thing and the record another"
+        )
     return findings
 
 
@@ -1628,7 +1671,12 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
     return findings
 
 
-def injection_findings(profile: dict, text: str, oracle_text: str) -> list[str]:
+def injection_findings(
+    profile: dict,
+    text: str,
+    oracle_text: str,
+    captures: dict[str, list[str]] | None = None,
+) -> list[str]:
     """Structural check on the round-specific injection.
 
     The oracle says how the round will be judged; this document says what to do
@@ -1683,7 +1731,9 @@ def injection_findings(profile: dict, text: str, oracle_text: str) -> list[str]:
             for info, body in INFO_FENCE.findall(sections["Current behavior"])
             if body.strip() and not TRANSCRIPT_INFO.match(info.strip())
         ]
-        findings.extend(transcript_findings(sections["Current behavior"]))
+        findings.extend(
+            transcript_findings(sections["Current behavior"], captures or {})
+        )
         if not quotes:
             findings.append(
                 "`## Current behavior` has no non-empty fenced quote: paste the "
@@ -1961,7 +2011,12 @@ def round_findings(profile: dict, task_key: str) -> list[str]:
             findings.append(f"declared injection is missing at {injection}")
         else:
             findings.extend(
-                injection_findings(profile, injection.read_text(), oracle_text)
+                injection_findings(
+                    profile,
+                    injection.read_text(),
+                    oracle_text,
+                    load_captures(profile, task_key),
+                )
             )
     return findings
 
@@ -2860,6 +2915,92 @@ def prove(profile: dict, task_key: str, label: str) -> None:
     print(f"saved : {path}")
 
 
+def capture_path(profile: dict, task_key: str) -> Path:
+    return Path(profile["state_dir"]) / "transcripts" / f"{task_key}.json"
+
+
+def load_captures(profile: dict, task_key: str) -> dict[str, list[str]]:
+    """Every transcript this round captured, keyed by the command that made it.
+
+    An absent file is an empty set rather than an error: a round whose current
+    behavior is entirely a code quote never captures anything, and that is a
+    complete round.
+    """
+    path = capture_path(profile, task_key)
+    if not path.exists():
+        return {}
+    try:
+        records = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        record["command"]: record["output"]
+        for record in records
+        if isinstance(record, dict) and "command" in record
+    }
+
+
+def capture(profile: dict, task_key: str, command: str, cwd: str | None) -> None:
+    """Run a command and store what it printed, for `## Current behavior`.
+
+    The section quoting source is grounded by the checkout; the section showing
+    behavior had nothing, because there is no file holding what a binary prints.
+    The prompt line was meant to ground it and could not: it says a command was
+    run, and saying so is free. This makes the claim cost a run.
+
+    The record keeps the command, the directory, and the exit code, so a reader
+    who doubts the block can reproduce it instead of trusting it -- which is the
+    property the prompt line only ever promised.
+    """
+    validate_task_key(profile, task_key)
+    root = Path(cwd) if cwd else Path(profile["root"])
+    if not root.is_dir():
+        raise SystemExit(f"capture directory does not exist: {root}")
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        cwd=root,
+        text=True,
+        capture_output=True,
+    )
+    output = [
+        line.rstrip()
+        for line in (result.stdout + result.stderr).splitlines()
+        if line.strip()
+    ]
+    record = {
+        "task_key": task_key,
+        "command": command,
+        "cwd": str(root),
+        "exit_code": result.returncode,
+        "output": output,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = capture_path(profile, task_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = []
+    if path.exists():
+        try:
+            records = [
+                item
+                for item in json.loads(path.read_text())
+                if isinstance(item, dict) and item.get("command") != command
+            ]
+        except (OSError, json.JSONDecodeError):
+            records = []
+    records.append(record)
+    path.write_text(json.dumps(records, indent=2) + "\n")
+
+    print(f"cwd   : {root}")
+    print(f"exit  : {result.returncode}")
+    print(f"saved : {path}")
+    print("\npaste this into `## Current behavior`:\n")
+    print("```console")
+    print(f"$ {command}")
+    for line in output:
+        print(line)
+    print("```")
+
+
 def sweep_path(profile: dict, task_key: str) -> Path:
     return Path(profile["state_dir"]) / "proofs" / f"{task_key}.sweep.json"
 
@@ -3325,6 +3466,7 @@ TASK_KEY_VERBS = (
     "worktree",
     "scaffold",
     "lint",
+    "capture",
     "prove",
     "sweep",
     "dispatch",
@@ -3349,6 +3491,7 @@ def main() -> None:
         "doctor",
         "scaffold",
         "lint",
+        "capture",
         "prove",
         "sweep",
         "dispatch",
@@ -3387,6 +3530,17 @@ def main() -> None:
                 help="delta contract naming what was wrong and what must "
                 "become true",
             )
+        if verb == "capture":
+            item.add_argument(
+                "command",
+                help="shell command to run; what it prints becomes the "
+                "transcript `## Current behavior` may show",
+            )
+            item.add_argument(
+                "--cwd",
+                default=None,
+                help="directory to run in; defaults to the round root",
+            )
         if verb == "prove":
             item.add_argument(
                 "label",
@@ -3415,7 +3569,16 @@ def main() -> None:
         # `scaffold` and `lint` run while the round is still being authored, so
         # they must not require the design inputs to be frozen yet.
         validate_design=args.verb
-        not in ("verify", "status", "denied", "review", "grant", "scaffold", "lint"),
+        not in (
+            "verify",
+            "status",
+            "denied",
+            "review",
+            "grant",
+            "scaffold",
+            "lint",
+            "capture",
+        ),
         # `doctor` preflights the round before `scaffold` writes the injection.
         require_injection=args.verb
         not in (
@@ -3427,6 +3590,7 @@ def main() -> None:
             "doctor",
             "scaffold",
             "lint",
+            "capture",
         ),
     )
     {
@@ -3434,6 +3598,9 @@ def main() -> None:
         "doctor": lambda: doctor(profile),
         "scaffold": lambda: scaffold(profile, args.task_key),
         "lint": lambda: lint(profile, args.task_key),
+        "capture": lambda: capture(
+            profile, args.task_key, args.command, args.cwd
+        ),
         "prove": lambda: prove(profile, args.task_key, args.label),
         "sweep": lambda: sweep(profile, args.task_key, args.script),
         "snapshot": lambda: snapshot(profile, args.task_key),

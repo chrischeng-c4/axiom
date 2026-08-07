@@ -23,7 +23,7 @@ may replace AGY only by preserving its states and evidence contracts.
 ## The round
 
 ```
-worktree → grant → doctor → scaffold → (fill) → lint → snapshot → dispatch
+worktree → grant → doctor → scaffold → (fill, capture) → lint → snapshot → dispatch
         → verify → review → prove ×2 → sweep → accept | revise | discard
 ```
 
@@ -36,6 +36,7 @@ python3 $S worktree profile.json KEY     # derive the worker's checkout
 python3 $S grant    profile.json         # install the Project permission set
 python3 $S doctor   profile.json         # read-only permission preflight
 python3 $S scaffold profile.json KEY     # write both documents as blank forms
+python3 $S capture  profile.json KEY CMD # run CMD, store what it printed
 python3 $S lint     profile.json KEY     # structural checks on both documents
 python3 $S snapshot profile.json KEY     # freeze contract, tree, permissions
 python3 $S dispatch profile.json KEY     # run the worker (long)
@@ -282,6 +283,46 @@ safe. An injection is optional — a measure-only round can carry its instructio
 in the oracle — but a *declared* `inject_prompt_file` must exist and conform,
 since that is the half through which the last false green entered.
 
+## `capture` — ground a transcript in a run
+
+**Does.** Runs a command, stores what it printed under the round's task key, and
+prints the ```console block to paste into `## Current behavior`. `lint` compares
+every transcript in that section against these records.
+
+**Run.**
+
+```bash
+python3 .claude/skills/agy-dispatch/scripts/agy_dispatch.py capture profile.json KEY \
+  'AW_FIXTURE_LOCAL_BACKEND=1 aw health --project probe | tail -1' [--cwd DIR]
+```
+
+Runs in the profile's `root` unless `--cwd` names somewhere else — a temporary
+fixture usually lives outside the checkout. Stores command, directory, exit
+code, and output in `state_dir/transcripts/<task-key>.json`; re-capturing the
+same command replaces its record rather than appending. Nothing about the
+command is authorized by this: `capture` is a controller tool, and the round's
+`task_commands.allow` still decides what the *worker* may run.
+
+| Check `lint` gains from this | What it prevents |
+|---|---|
+| every ```console block opens with `$ <command>` | a transcript with no claim of where it came from |
+| that command has a stored capture | output typed from memory reaching the worker as the behavior as it stands |
+| the pasted lines equal what the capture recorded | a real run edited afterwards into the observation you wanted |
+
+**Never** hand-write a transcript. This is the injection's one section the
+source-quote rule cannot reach — there is no file to find those lines in — so a
+paraphrase there passes every other check. #3426 is the round where two shipped:
+one naming a flag the verb does not accept, one whose behaviour existed only in
+a build newer than the installed binary. Both were true *observations*; neither
+was a run. Capture first, then paste, and the two stay the same thing.
+
+State in the round evidence any capture whose command differs from what the
+transcript shows — an explicit `target/debug/aw` path pasted as `aw`, an
+absolute fixture path shortened. The record is what actually ran; the block is
+what the worker reads.
+
+**Done when** `lint` reports no transcript finding.
+
 ## `lint` — structural checks
 
 **Does.** Enforces both documents' structure, carrying no project knowledge.
@@ -302,6 +343,7 @@ python3 .claude/skills/agy-dispatch/scripts/agy_dispatch.py lint profile.json KE
 | `## Definition of done` ≡ the oracle's `## Gate` | instruction and judgement drifting apart, each satisfiable alone |
 | `## Current behavior` has a non-empty fenced quote | a round authored from memory rather than from the checkout |
 | every quoted line appears in one of the round's files | a quote that was true at an earlier base and is now fiction |
+| every ```console block was produced by `capture` | a transcript nobody ran, or one edited after its run |
 | no fenced block outside `Current behavior` / `Definition of done` | pasting the implementation, which leaves the worker nothing to derive |
 | no numbered steps in `Required change` / `Shape to follow` | a recipe to retype instead of a requirement to satisfy |
 | `## Shape to follow` names a backticked symbol, within its line budget | a free-prose slot growing into the design the round was meant to buy |
@@ -317,7 +359,9 @@ widen the fence. The **control** pair asks whether the table has a control at
 all and whether the marked row *is* one. The **`Current behavior`** pair asks
 whether you opened the file and whether you opened it *at this round's base* —
 rounds get re-based constantly here, so a quote goes stale with nobody editing
-it.
+it. A console block answers to `capture` instead, since there is no file
+to find its lines in; the remedy for a transcript finding is to run the
+command, never to reword the block.
 
 **Done when** it exits `0`. The gate cross-check is skipped when the round
 grants no shell: a measure-only oracle names what *you* will run.

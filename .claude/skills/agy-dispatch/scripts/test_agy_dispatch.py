@@ -2229,10 +2229,14 @@ class InjectionContractTest(unittest.TestCase):
             "root": str(self.root),
             "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
         }
+        # What `capture` would have stored for the transcript these rows show.
+        self.captures = {
+            "target/debug/thing show": ["digest: 9f2c (markers included)"]
+        }
 
     def findings(self, text: str) -> list[str]:
         return agy_dispatch.injection_findings(
-            self.profile, text, CONFORMANT_ORACLE
+            self.profile, text, CONFORMANT_ORACLE, self.captures
         )
 
     def assert_single_finding(self, text: str, fragment: str) -> None:
@@ -2355,11 +2359,49 @@ class InjectionContractTest(unittest.TestCase):
         """Otherwise the exemption is a way out of the quote rule itself: tag the
         one fence `console` and the section is never checked against the tree the
         worker is about to open."""
+        self.captures = {"target/debug/thing show": ["digest: 9f2c"]}
         text = CONFORMANT_INJECTION.replace(
             "```\nlet digest = canonical_digest(body);\n```",
             "```console\n$ target/debug/thing show\ndigest: 9f2c\n```",
         )
         self.assert_single_finding(text, "no non-empty fenced quote")
+
+    def test_a_transcript_nobody_captured_is_reported(self) -> None:
+        """The prompt line says a command was run, and saying so is free. Two
+        paraphrases shipped past it in one round -- one naming a flag the verb
+        does not accept, one whose behavior existed only in a build newer than
+        the installed binary -- and lint called the round clean (#3426)."""
+        self.captures = {}
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```\nlet digest = canonical_digest(body);\n```\n\n"
+            "```console\n$ target/debug/thing show\ndigest: 9f2c (markers included)\n```",
+        )
+        self.assert_single_finding(text, "this round never captured")
+
+    def test_a_transcript_edited_after_its_capture_is_reported(self) -> None:
+        """Capturing and then editing the block is the same defect wearing the
+        record as cover, and it is the one a capture step invites: the honest
+        run happened, and the pasted lines are still not what it printed."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```\nlet digest = canonical_digest(body);\n```\n\n"
+            "```console\n$ target/debug/thing show\ndigest: 9f2c (markers excluded)\n```",
+        )
+        self.assert_single_finding(text, "differs from what the captured run")
+
+    def test_copy_paste_whitespace_does_not_count_as_an_edit(self) -> None:
+        """The comparison has to survive the paste it exists to encourage.
+        Trailing spaces and a blank line before the fence carry none of the
+        observation, and a rule that reads them as divergence teaches the
+        controller to stop capturing and go back to typing."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```\nlet digest = canonical_digest(body);\n```\n\n"
+            "```console\n$ target/debug/thing show   \n"
+            "digest: 9f2c (markers included)  \n\n```",
+        )
+        self.assertEqual(self.findings(text), [])
 
     def test_a_stale_quote_in_a_non_console_fence_is_still_reported(self) -> None:
         """The exemption keys on the info string alone, so a language-tagged
@@ -2492,6 +2534,95 @@ class InjectionContractTest(unittest.TestCase):
             "reducer `fold_wi_create`, module `cli::chain::tests`, flag `--lib`",
         )
         self.assertEqual(self.findings(text), [])
+
+
+class CaptureTest(unittest.TestCase):
+    """A transcript costs a run, and the record is what the block is checked against."""
+
+    def setUp(self) -> None:
+        self.state = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.state, ignore_errors=True)
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.profile = {
+            "root": str(self.root),
+            "state_dir": str(self.state),
+            "task_contract": {
+                "session_policy": "one-shot",
+                "run_id": "r1",
+                "intent": "measure what the binary prints",
+            },
+        }
+
+    def capture(self, command: str, cwd: str | None = None) -> str:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            agy_dispatch.capture(self.profile, "r1", command, cwd)
+        return buffer.getvalue()
+
+    def test_capture_records_what_the_command_printed(self) -> None:
+        printed = self.capture("echo one; echo two")
+        stored = json.loads(
+            (self.state / "transcripts" / "r1.json").read_text()
+        )
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["command"], "echo one; echo two")
+        self.assertEqual(stored[0]["output"], ["one", "two"])
+        self.assertEqual(stored[0]["exit_code"], 0)
+        self.assertEqual(stored[0]["cwd"], str(self.root))
+        self.assertIn("```console\n$ echo one; echo two\none\ntwo\n```", printed)
+
+    def test_a_failing_command_is_captured_with_its_exit_code(self) -> None:
+        """Current behavior is often a refusal. A capture step that only records
+        successes would push exactly those observations back into prose."""
+        self.capture("echo boom >&2; exit 3")
+        stored = json.loads(
+            (self.state / "transcripts" / "r1.json").read_text()
+        )
+        self.assertEqual(stored[0]["exit_code"], 3)
+        self.assertEqual(stored[0]["output"], ["boom"])
+
+    def test_recapturing_a_command_replaces_its_record(self) -> None:
+        """Otherwise the file accumulates every attempt and `load_captures` keys
+        on the command, so which run the block is checked against would depend on
+        dict ordering rather than on which one is current."""
+        self.capture("echo first")
+        (self.root / "marker").write_text("changed\n")
+        self.capture("echo first")
+        self.capture("echo second")
+        stored = json.loads(
+            (self.state / "transcripts" / "r1.json").read_text()
+        )
+        self.assertEqual(
+            [record["command"] for record in stored],
+            ["echo first", "echo second"],
+        )
+
+    def test_captures_load_keyed_by_command(self) -> None:
+        self.capture("echo one")
+        self.assertEqual(
+            agy_dispatch.load_captures(self.profile, "r1"),
+            {"echo one": ["one"]},
+        )
+
+    def test_a_round_that_captured_nothing_loads_an_empty_set(self) -> None:
+        """A round whose current behavior is entirely a code quote captures
+        nothing, and that is a complete round, not a broken one."""
+        self.assertEqual(agy_dispatch.load_captures(self.profile, "r1"), {})
+
+    def test_capture_runs_where_it_is_told(self) -> None:
+        """The observation usually lives in a fixture outside the round root, and
+        a capture taken in the wrong directory is the stale transcript again."""
+        elsewhere = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, elsewhere, ignore_errors=True)
+        self.capture("pwd", cwd=str(elsewhere))
+        stored = json.loads(
+            (self.state / "transcripts" / "r1.json").read_text()
+        )
+        self.assertEqual(stored[0]["cwd"], str(elsewhere))
+        self.assertEqual(
+            stored[0]["output"], [str(Path(elsewhere).resolve())]
+        )
 
 
 class ScaffoldTest(unittest.TestCase):
