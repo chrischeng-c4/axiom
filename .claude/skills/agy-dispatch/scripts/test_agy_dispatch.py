@@ -1516,12 +1516,39 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertIn("did not compile", out.getvalue())
         self.assertIn("still compile", out.getvalue())
 
-    def test_a_compiling_mutant_earns_no_note(self) -> None:
+    def test_a_compiling_mutant_earns_no_compile_note(self) -> None:
+        """Scoped to the compile note. Asserting the whole list is empty makes
+        this test speak for every note class there will ever be, and it silently
+        started failing the moment the sweep note was added -- a red that says
+        nothing about whether a compiling mutant is treated correctly."""
         profile = self.derive(self.profile_path())
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
-        self.assertEqual(agy_dispatch.proof_notes(profile, "round-1"), [])
+        notes = agy_dispatch.proof_notes(profile, "round-1")
+        self.assertEqual([n for n in notes if "did not compile" in n], [])
+
+    def test_a_round_without_a_sweep_earns_a_note(self) -> None:
+        """The proof pair shows the gate notices *this* change. It cannot show
+        the gate would notice a different defect in the same code, which is what
+        the sweep is for, so its absence has to be said out loud."""
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        self.record_proofs(profile, worker)
+        notes = agy_dispatch.proof_notes(profile, "round-1")
+        self.assertEqual(len([n for n in notes if "no mutation sweep" in n]), 1)
+
+    def test_a_recorded_sweep_clears_the_note(self) -> None:
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        self.record_proofs(profile, worker)
+        path = agy_dispatch.sweep_path(profile, "round-1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"killed": 1, "survived": 0}))
+        notes = agy_dispatch.proof_notes(profile, "round-1")
+        self.assertEqual([n for n in notes if "no mutation sweep" in n], [])
 
     def test_accept_refuses_when_the_tree_moved_after_the_proof(self) -> None:
         profile = self.derive(self.profile_path())
@@ -1924,6 +1951,49 @@ class InjectionContractTest(unittest.TestCase):
             "```\nlet digest = canonical_digest(body);\n```",
             "```\n// markers are excluded here\n"
             "let digest = canonical_digest(body);\n```",
+        )
+        self.assert_single_finding(text, "appear in none of the round's files")
+
+    def test_a_console_transcript_is_not_compared_against_the_files(self) -> None:
+        """Current behavior is often what the binary prints, and no file carries
+        those lines. Comparing them against the source reported every real
+        transcript as stale, and the only fix available was to delete the fence
+        and paraphrase -- trading a verbatim observation for prose."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```\nlet digest = canonical_digest(body);\n```\n\n"
+            "```console\n$ target/debug/thing show\ndigest: 9f2c (markers included)\n```",
+        )
+        self.assertEqual(self.findings(text), [])
+
+    def test_a_console_transcript_without_its_command_is_reported(self) -> None:
+        """The exemption removes this block's only check, so it has to carry
+        another. Output pasted alone is indistinguishable from output remembered,
+        from an older build, or from a different argument."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```\nlet digest = canonical_digest(body);\n```\n\n"
+            "```console\ndigest: 9f2c (markers included)\n```",
+        )
+        self.assert_single_finding(text, "does not open with")
+
+    def test_a_transcript_alone_does_not_satisfy_the_quote_rule(self) -> None:
+        """Otherwise the exemption is a way out of the quote rule itself: tag the
+        one fence `console` and the section is never checked against the tree the
+        worker is about to open."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```console\n$ target/debug/thing show\ndigest: 9f2c\n```",
+        )
+        self.assert_single_finding(text, "no non-empty fenced quote")
+
+    def test_a_stale_quote_in_a_non_console_fence_is_still_reported(self) -> None:
+        """The exemption keys on the info string alone, so a language-tagged
+        fence must stay in scope -- otherwise ```rust becomes the same escape
+        hatch by a different name."""
+        text = CONFORMANT_INJECTION.replace(
+            "```\nlet digest = canonical_digest(body);\n```",
+            "```rust\nlet digest = canonical_digest(body, opts);\n```",
         )
         self.assert_single_finding(text, "appear in none of the round's files")
 

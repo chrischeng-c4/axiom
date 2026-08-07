@@ -1294,6 +1294,12 @@ NUMBERED_STEP = re.compile(r"^[ \t]*\d+[.)][ \t]+\S", re.MULTILINE)
 SHAPE_LINE_BUDGET = 4
 ORACLE_HEADING = re.compile(r"^##[ \t]+(.+?)[ \t]*$", re.MULTILINE)
 ORACLE_FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
+INFO_FENCE = re.compile(r"^```([^\n]*)\n(.*?)^```", re.MULTILINE | re.DOTALL)
+# Current behavior is sometimes a thing the binary *does*, not a thing a file
+# says, and the two are grounded differently: a source quote is checked against
+# the checkout, a transcript against the command that produced it.
+TRANSCRIPT_INFO = re.compile(r"^console$", re.IGNORECASE)
+TRANSCRIPT_COMMAND = re.compile(r"^\$[ \t]+\S")
 NEGATIVE_CONTROL = re.compile(r"negative control", re.IGNORECASE)
 LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S", re.MULTILINE)
 TABLE_ROW = re.compile(r"^[ \t]*\|.*\|[ \t]*$", re.MULTILINE)
@@ -1385,6 +1391,15 @@ def unquoted_current_behavior_lines(
     Matching is on the stripped line, so re-indenting a quote is not a finding:
     the dangerous class is content that is gone, not content that moved. Lines
     that are only an elision marker are skipped for the same reason.
+
+    A ```console fence is skipped, because it is not claiming to be in a file.
+    Current behavior is often what the binary *prints* -- an envelope, a refusal,
+    an exit code -- and there is no file to find those lines in. Checking them
+    against the source anyway reported every real transcript as stale, whose only
+    available fix was to strip the fence and paraphrase the output; that trades a
+    verbatim observation for prose, which is the failure this whole rule exists
+    to prevent. `transcript_findings` grounds these instead, by requiring the
+    command that produced them.
     """
     if not root:
         return []
@@ -1398,7 +1413,9 @@ def unquoted_current_behavior_lines(
     if not haystacks:
         return []
     missing: list[str] = []
-    for block in ORACLE_FENCE.findall(section):
+    for info, block in INFO_FENCE.findall(section):
+        if TRANSCRIPT_INFO.match(info.strip()):
+            continue
         for line in block.splitlines():
             bare = line.strip()
             if not bare or ELISION.fullmatch(bare):
@@ -1428,6 +1445,34 @@ def referenced_paths(text: str) -> list[str]:
         if bare and bare not in tokens:
             tokens.append(bare)
     return tokens
+
+
+def transcript_findings(section: str) -> list[str]:
+    """Console blocks that do not say which command produced them.
+
+    Exempting a ```console fence from the file comparison removes the only check
+    that block had, so it has to gain one of its own. The check that fits a
+    transcript is provenance: a reader who can see the command can re-run it and
+    watch the claim fail, while output pasted alone is indistinguishable from
+    output remembered, from an older build, or from a different argument.
+
+    The prompt line is the cheapest form of that, and it is the form a controller
+    already has, since the transcript was produced by running the command.
+    """
+    findings: list[str] = []
+    for info, block in INFO_FENCE.findall(section):
+        if not TRANSCRIPT_INFO.match(info.strip()):
+            continue
+        lines = [line for line in block.splitlines() if line.strip()]
+        if not lines or not TRANSCRIPT_COMMAND.match(lines[0].strip()):
+            findings.append(
+                "a ```console block in `## Current behavior` does not open with "
+                "the `$ <command>` that produced it: a transcript is exempt from "
+                "the file comparison, so the command is the only thing that lets "
+                "a reader reproduce it rather than trust it"
+            )
+            break
+    return findings
 
 
 def document_findings(
@@ -1618,7 +1663,16 @@ def injection_findings(profile: dict, text: str, oracle_text: str) -> list[str]:
             )
 
     if "Current behavior" in sections:
-        quotes = [b for b in ORACLE_FENCE.findall(sections["Current behavior"]) if b.strip()]
+        # A transcript does not satisfy the quote rule. It is grounded by its
+        # command instead of by the checkout, so a section holding only
+        # transcripts has never been checked against the tree the worker will
+        # open -- which is the one thing this rule was added to force.
+        quotes = [
+            body
+            for info, body in INFO_FENCE.findall(sections["Current behavior"])
+            if body.strip() and not TRANSCRIPT_INFO.match(info.strip())
+        ]
+        findings.extend(transcript_findings(sections["Current behavior"]))
         if not quotes:
             findings.append(
                 "`## Current behavior` has no non-empty fenced quote: paste the "
