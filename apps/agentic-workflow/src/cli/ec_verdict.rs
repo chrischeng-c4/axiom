@@ -638,8 +638,9 @@ pub fn decide_td_reconciliation(
 mod tests {
     use super::*;
     use crate::cli::change_lifecycle::{
-        ActiveDigestTuple, ArtifactKind, ArtifactRevision, CausalParent, EvidenceBinding,
-        InvalidationRecord, LifecycleEventKind, OwnerVocabulary,
+        reduce_event, ActiveDigestTuple, ArtifactKind, ArtifactRevision, CausalParent,
+        EvidenceBinding, InvalidationRecord, LifecycleEvent, LifecycleEventKind, OwnerVocabulary,
+        ReducerResult,
     };
     use std::collections::BTreeMap;
 
@@ -2021,5 +2022,184 @@ mod tests {
         );
         assert!(dec4.evicted_evidence.is_empty());
         assert!(dec4.obligation_chain.is_empty());
+    }
+
+    #[test]
+    fn td_reconciliation_side_effect_boundary() {
+        // Row 1: production half of ec_verdict.rs contains no Command::new, std::process, std::fs, or std::env, and contains fn decide_td_reconciliation
+        let source = include_str!("ec_verdict.rs");
+        let non_test = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("ec_verdict.rs must contain #[cfg(test)]");
+        assert!(
+            !non_test.contains("Command::new"),
+            "production code must contain no Command::new"
+        );
+        assert!(
+            !non_test.contains("std::process"),
+            "production code must contain no std::process"
+        );
+        assert!(
+            !non_test.contains("std::fs"),
+            "production code must contain no std::fs"
+        );
+        assert!(
+            !non_test.contains("std::env"),
+            "production code must contain no std::env"
+        );
+        assert!(
+            non_test.contains("fn decide_td_reconciliation"),
+            "production code scan must contain fn decide_td_reconciliation"
+        );
+
+        // Fixture L: lifecycle at a reviewed, tested, current CB candidate carrying two evidence bindings (cb_test and cb_review)
+        let mut l = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let tuple_l = l.active_digest_tuple();
+        add_evidence(&mut l, "cb_test", true, tuple_l.clone());
+        add_evidence(&mut l, "cb_review", true, tuple_l.clone());
+
+        let expected_td_parents =
+            expected_parent_set(&l, ArtifactKind::Td).expect("L must have expected parents for TD");
+
+        // Row 2: L and a TdReconcile event e whose candidate carries expected parent set
+        let cand_row2 = ArtifactRevision {
+            id: "rev-td-reconciled".to_string(),
+            kind: ArtifactKind::Td,
+            digest: "d-td-reconciled".to_string(),
+            parents: expected_td_parents.clone(),
+            iteration: 2,
+            superseded_by: None,
+            invalidation_reason: None,
+        };
+        let e_row2 = LifecycleEvent {
+            event_id: "evt-001".to_string(),
+            predecessor_id: l.head_event_id.clone(),
+            kind: LifecycleEventKind::TdReconcile,
+            candidate_revision: cand_row2,
+            bound_tuple: ActiveDigestTuple {
+                td_digest: Some("d-td-reconciled".to_string()),
+                ..l.active_digest_tuple()
+            },
+            next_command: format!("aw td review {}", l.slug),
+            next_owner: OwnerVocabulary::Td,
+        };
+
+        let res2 = reduce_event(&l, e_row2.clone());
+        assert!(
+            res2.accepted,
+            "Row 2: expected accepted == true, got {:?}",
+            res2
+        );
+        assert_eq!(
+            res2.lifecycle.epoch,
+            l.epoch + 1,
+            "Row 2: expected epoch L.epoch + 1 ({}), got {}",
+            l.epoch + 1,
+            res2.lifecycle.epoch
+        );
+        assert_eq!(
+            res2.lifecycle.events.len(),
+            l.events.len() + 1,
+            "Row 2: expected events.len() L.events.len() + 1 ({}), got {}",
+            l.events.len() + 1,
+            res2.lifecycle.events.len()
+        );
+        assert_eq!(
+            res2.lifecycle.events.last(),
+            Some(&e_row2),
+            "Row 2: expected last event equal to e"
+        );
+
+        // Row 3: L and a TdReconcile whose candidate is L's active TD revision replayed verbatim (parent set is empty, not active causal predecessor set)
+        let active_td_verbatim = l
+            .active_revisions
+            .get(&ArtifactKind::Td)
+            .and_then(|r| r.as_ref())
+            .expect("L must have active TD revision")
+            .clone();
+        let e_stale = LifecycleEvent {
+            event_id: "evt-001".to_string(),
+            predecessor_id: l.head_event_id.clone(),
+            kind: LifecycleEventKind::TdReconcile,
+            candidate_revision: active_td_verbatim,
+            bound_tuple: l.active_digest_tuple(),
+            next_command: format!("aw wi validate {}", l.slug),
+            next_owner: OwnerVocabulary::Wi,
+        };
+
+        let res3 = reduce_event(&l, e_stale);
+        assert!(
+            !res3.accepted,
+            "Row 3: expected accepted == false, got accepted == true"
+        );
+        let r3_reason = res3
+            .rejection_reason
+            .as_ref()
+            .expect("Row 3 must have rejection_reason");
+        assert!(
+            r3_reason.contains("causal predecessor set"),
+            "Row 3 rejection reason must name causal predecessor set: {r3_reason}"
+        );
+        assert_eq!(
+            res3.lifecycle.epoch, l.epoch,
+            "Row 3: epoch must equal L.epoch ({}), got {}",
+            l.epoch, res3.lifecycle.epoch
+        );
+        assert_eq!(
+            res3.lifecycle.events.len(),
+            l.events.len(),
+            "Row 3: events.len() must equal L.events.len() ({}), got {}",
+            l.events.len(),
+            res3.lifecycle.events.len()
+        );
+        assert_eq!(
+            res3.lifecycle.evidence.len(),
+            l.evidence.len(),
+            "Row 3: evidence.len() must equal L.evidence.len() ({}), got {}",
+            l.evidence.len(),
+            res3.lifecycle.evidence.len()
+        );
+        assert_eq!(
+            res3.lifecycle.invalidations.len(),
+            l.invalidations.len(),
+            "Row 3: invalidations.len() must equal L.invalidations.len() ({}), got {}",
+            l.invalidations.len(),
+            res3.lifecycle.invalidations.len()
+        );
+        assert_eq!(
+            res3.lifecycle.head_event_id, l.head_event_id,
+            "Row 3: head_event_id must equal L.head_event_id ({:?}), got {:?}",
+            l.head_event_id, res3.lifecycle.head_event_id
+        );
+        assert_eq!(
+            res3.lifecycle.active_revisions.get(&ArtifactKind::Cb),
+            l.active_revisions.get(&ArtifactKind::Cb),
+            "Row 3: active CB revision must equal L's active CB revision"
+        );
+
+        // Row 4: L and a TdReconcile carrying a changed TD digest with expected parent set
+        let res4 = res2;
+        assert_eq!(
+            res4.lifecycle.active_revisions.get(&ArtifactKind::Cb),
+            Some(&None),
+            "Row 4: active CB revision must be cleared to None"
+        );
+        assert_eq!(
+            res4.lifecycle.invalidations.len(),
+            1,
+            "Row 4: expected exactly 1 invalidation record appended, got {}",
+            res4.lifecycle.invalidations.len()
+        );
+        assert_eq!(
+            res4.lifecycle.invalidations[0].trigger_kind,
+            ArtifactKind::Td,
+            "Row 4: invalidation trigger_kind must be ArtifactKind::Td"
+        );
     }
 }
