@@ -149,17 +149,21 @@ worker runs, which is exactly why they are frozen — an oracle that can be
 softened to fit the answer it received is not an oracle, and a hash that is
 printed but never compared reads like a freeze without being one.
 
-The injection answers four questions in order: what to do, from what starting
-point, against what constraint, and how it will be judged. It deliberately does
-not answer *how*. A round is only worth dispatching if the worker still has the
-design left to do, so `## Shape to follow` is capped and may only point at a
-convention already in the tree — an existing function or error shape to match
-rather than a second one to invent. The `Current behavior` quote is the other
-end of the same discipline: it grounds the round in what was read instead of
-what was remembered. Everything the worker needs but the round does not choose —
-the write allowlist, the command allowlist, the stop-and-report rule, the report
-shape — is already in the static prompt and must not be restated here, where the
-two copies would drift.
+The seven injection slots are the whole of what a round decides: what to do,
+what the code does today, what must become true, which convention to follow,
+what to read, what not to touch, and what counts as done. Everything else the
+worker receives — the write allowlist, the command allowlist, the stop-and-report
+rule, the report shape, the session policy — is hardcoded in `render_prompt` and
+is not the controller's to choose. Do not restate it in a slot; the second copy
+is the one that drifts.
+
+Each slot's rule lives in the slot, as a `<!-- fill -->` comment the scaffold
+writes. Read the form rather than this file when authoring: the rules are stated
+where they apply and are what the lint below enforces. Those comments are
+controller-facing and never reach the worker — `render_prompt` strips every HTML
+comment from both documents, so a rule's rationale cannot arrive as an
+instruction, and a hint can be as long as it needs to be without costing the
+worker a token.
 
 Record the oracle's SHA-256 in the issue comment for ticketed work or the
 controller log for one-shot work.
@@ -186,39 +190,16 @@ finding. The checks are structural and carry no project knowledge:
 The gate cross-check is skipped when the round grants no shell: a measure-only
 oracle names what the *controller* will run.
 
-The two gate checks answer different questions and both are needed. The
-allowlist check asks whether the worker *may* run the command; the
-`gate_command` check asks whether `prove` *will*. An oracle can list several
-commands in one fence and every one can be authorized, but `prove` runs
-`task_contract.gate_command` and nothing else — so any extra command produces a
-row whose observation no proof ever makes. Name the compound command in the
-profile if both must be judged, or keep the fence to the judged command and
-state the rest as prose the controller checks by hand.
-
-The two control checks pair that way too. Counting rows asks whether the table
-has a control at all; reading where the marker sits asks whether that row *is*
-one. A control is defined by what it feeds and what that must not produce, so
-the marker belongs in the row's input or its expected observation. Written into
-a trailing rationale cell it is almost always about a different row — "unlike
-the negative control, this row…" is a true sentence that leaves the table
-without a control of its own, and it used to make the oracle conformant.
-
-The two `## Current behavior` checks pair the same way. Requiring a fence asks
-whether the controller opened the file at all; requiring each quoted line to
-exist asks whether they opened it *at this round's base*. Rounds get re-based
-constantly here — a follow-up inherits the previous round's worktree block, a
-document gets drafted while an earlier round is still landing — and a quote
-goes stale without anyone editing it. That block is the one part of the
-injection a worker is entitled to treat as ground truth, because it is labelled
-as the code as it stands, so a worker that greps for it, finds nothing, and
-improvises was sent to do that by the document. Re-indenting is fine; content
-that is gone is not.
-
-The same staleness reaches the oracle, where no check can catch it: a
-`## Background` that says a fact was *measured* must have been measured against
-the base this round starts from. Re-run the measurement before `snapshot` when
-the base has moved. A false "measured" is worse than an empty Background — the
-worker builds its rows on it.
+Three of those checks come in pairs, and reading a finding from the wrong half
+sends the repair the wrong way. The gate pair asks separately whether the worker
+*may* run a command and whether `prove` *will*: every command in a fence can be
+authorized and still produce a row no proof covers, because `prove` runs
+`task_contract.gate_command` alone. The remedy is to name the compound command
+in the profile, not to widen the fence. The control pair asks whether the table
+has a control at all and whether the marked row *is* one. The `Current behavior`
+pair asks whether the controller opened the file and whether they opened it *at
+this round's base* — rounds get re-based constantly here, so a quote goes stale
+with nobody editing it.
 
 An injection is optional — a measure-only round can carry its instruction in
 the oracle — but a declared `inject_prompt_file` must exist and conform, since
