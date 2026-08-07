@@ -2806,13 +2806,19 @@ def sweep(profile: dict, task_key: str, script: str) -> None:
     for line in output.splitlines()[-30:]:
         print(f"  {line}")
     print(f"exit  : {result.returncode}")
-    if not record["restored"]:
-        print(
-            "note  : the tree digest changed across the sweep -- it did not "
-            "restore what it mutated, so every result after the first is "
-            "measured against a corrupted baseline"
-        )
     print(f"saved : {path}")
+    # Recorded first, then refused: the record is the evidence that the sweep
+    # went wrong, and discarding it would leave the controller with a refusal
+    # and nothing to diagnose it from.
+    if not record["restored"]:
+        raise SystemExit(
+            "the tree digest changed across the sweep: it did not restore what "
+            "it mutated, so every result after the first was measured against a "
+            "corrupted baseline and the kills it reports are unearned. Restore "
+            "the tree, fix the script's restore path -- `write_text`, never "
+            "`copy2`, whose preserved mtime makes cargo skip the rebuild -- and "
+            "record the sweep again"
+        )
 
 
 def proof_findings(profile: dict, task_key: str) -> list[str]:
@@ -2901,12 +2907,39 @@ def proof_notes(profile: dict, task_key: str) -> list[str]:
             "the new symbol, not to measure its behaviour; discrimination "
             "rests on a sweep whose mutants still compile"
         )
-    if not sweep_path(profile, task_key).exists():
+    # Presence was the whole test, so a sweep that went wrong counted exactly
+    # as much as one that went right: `sweep` refuses an unrestored tree, but
+    # the record it wrote first is still on disk, and a controller who pressed
+    # on past that refusal had the note cleared by the very file proving the
+    # sweep was worthless.
+    recorded = sweep_path(profile, task_key)
+    if not recorded.exists():
         notes.append(
             "no mutation sweep is recorded, so the gate is shown to notice "
             "this change and nothing else; a constant standing in for a "
             "computed value, or an untouched arm of the same enum, would pass "
             "it unseen. Record one with `sweep PROFILE TASK_KEY SCRIPT`"
+        )
+        return notes
+    try:
+        sweep_record = json.loads(recorded.read_text())
+    except (OSError, json.JSONDecodeError):
+        notes.append(
+            f"the mutation sweep record at {recorded} cannot be read, so the "
+            "sweep counts for nothing; record it again"
+        )
+        return notes
+    if not sweep_record.get("restored"):
+        notes.append(
+            "the recorded mutation sweep did not restore the tree, so every "
+            "result after its first mutant was measured against a corrupted "
+            "baseline; the kills it reports are unearned"
+        )
+    elif sweep_record.get("exit_code"):
+        notes.append(
+            f"the recorded mutation sweep exited {sweep_record['exit_code']}: "
+            "either a mutant survived or the sweep itself failed, and the "
+            "round's evidence has to say which"
         )
     return notes
 

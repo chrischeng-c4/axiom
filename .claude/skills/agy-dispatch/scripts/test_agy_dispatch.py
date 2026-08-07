@@ -1539,16 +1539,93 @@ class DerivedWorktreeTest(unittest.TestCase):
         notes = agy_dispatch.proof_notes(profile, "round-1")
         self.assertEqual(len([n for n in notes if "no mutation sweep" in n]), 1)
 
+    def record_sweep(self, profile: dict, **overrides: object) -> Path:
+        record = {"restored": True, "exit_code": 0}
+        record.update(overrides)
+        path = agy_dispatch.sweep_path(profile, "round-1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record))
+        return path
+
     def test_a_recorded_sweep_clears_the_note(self) -> None:
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        self.record_proofs(profile, worker)
+        self.record_sweep(profile)
+        self.assertEqual(agy_dispatch.proof_notes(profile, "round-1"), [])
+
+    def test_a_sweep_that_did_not_restore_the_tree_still_earns_a_note(self) -> None:
+        """`sweep` refuses an unrestored tree, but it writes the record before
+        refusing, so the file proving the sweep was worthless was the same file
+        that cleared the note."""
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        self.record_proofs(profile, worker)
+        self.record_sweep(profile, restored=False)
+        notes = agy_dispatch.proof_notes(profile, "round-1")
+        self.assertEqual(len([n for n in notes if "did not restore" in n]), 1)
+
+    def test_an_unreadable_sweep_record_earns_a_note(self) -> None:
+        """A truncated or hand-edited record is the one file standing in for the
+        whole sweep, so failing to read it has to be louder than reading a clean
+        one -- not quieter, which is what returning early gives."""
         profile = self.derive(self.profile_path())
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
         path = agy_dispatch.sweep_path(profile, "round-1")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"killed": 1, "survived": 0}))
+        path.write_text('{"restored": tru')
         notes = agy_dispatch.proof_notes(profile, "round-1")
-        self.assertEqual([n for n in notes if "no mutation sweep" in n], [])
+        self.assertEqual(len([n for n in notes if "cannot be read" in n]), 1)
+
+    def test_a_sweep_that_exited_non_zero_earns_a_note(self) -> None:
+        """A sweep that crashed halfway and a sweep whose mutant survived both
+        exit non-zero, and the round has to say which it was."""
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        self.record_proofs(profile, worker)
+        self.record_sweep(profile, exit_code=2)
+        notes = agy_dispatch.proof_notes(profile, "round-1")
+        self.assertEqual(len([n for n in notes if "exited 2" in n]), 1)
+
+    def test_sweep_refuses_when_the_script_leaves_the_tree_mutated(self) -> None:
+        """A sweep that does not put back what it took out measures every later
+        mutant against the wrong baseline, and reports them all as killed."""
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        script = Path(profile["state_dir"]) / "leaky_sweep.py"
+        script.write_text(
+            "from pathlib import Path\n"
+            "Path('README.md').write_text('base\\nmutated\\n')\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                agy_dispatch.sweep(profile, "round-1", str(script))
+        self.assertIn("did not restore what it mutated", str(caught.exception))
+        self.assertTrue(agy_dispatch.sweep_path(profile, "round-1").exists())
+
+    def test_sweep_accepts_a_script_that_restores_the_tree(self) -> None:
+        profile = self.derive(self.profile_path())
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        script = Path(profile["state_dir"]) / "clean_sweep.py"
+        script.write_text(
+            "from pathlib import Path\n"
+            "p = Path('README.md')\n"
+            "original = p.read_text()\n"
+            "p.write_text('base\\nmutated\\n')\n"
+            "p.write_text(original)\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.sweep(profile, "round-1", str(script))
+        record = json.loads(agy_dispatch.sweep_path(profile, "round-1").read_text())
+        self.assertTrue(record["restored"])
+        self.assertEqual(record["exit_code"], 0)
 
     def test_accept_refuses_when_the_tree_moved_after_the_proof(self) -> None:
         profile = self.derive(self.profile_path())
