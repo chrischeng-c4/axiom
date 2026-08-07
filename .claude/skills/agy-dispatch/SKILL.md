@@ -107,6 +107,13 @@ exact writable paths — never directory globs — and set `path_change_budgets`
 when a path should receive only a small localized change. Design-input
 selection is caller-owned; the task-class minimums are not.
 
+`intent` reaches the worker verbatim alongside the oracle, so it is a third
+document able to disagree with the other two. Write it after the oracle and as
+a summary of it, never before: an intent drafted first survives the edits that
+fixed the oracle, and the worker then satisfies the contradiction — delivering
+the very row the oracle lists as fabrication, because the intent asked for it
+by name.
+
 Size the ticket so every required witness fits in the terminal report. Split a
 large exact-set inventory before dispatch if admitted plus discarded rows
 cannot be printed completely: a digest and total do not replace the rows needed
@@ -249,6 +256,16 @@ which convention to follow, what to read, what not to touch, what counts as
 done. The write allowlist, the command allowlist, the stop-and-report rule, the
 report shape, and the session policy are hardcoded in `render_prompt` and are
 not yours to choose; a second copy is the one that drifts.
+
+Run each measurement row against the checkout before freezing it. `lint` reads
+structure and cannot tell a row stating what the code does from a row stating
+what you assumed it does; the two are indistinguishable until dispatch, and
+they fail differently. A true row the worker satisfies. A false one it can
+neither satisfy nor — in a round barred from changing behaviour — refuse, and
+what comes back is that row asserted against something that does hold, usually
+the fixture instead of the result. It passes, it reads correct, and it measures
+nothing. An unexecuted row is a hypothesis, and the oracle is not where a
+hypothesis goes.
 
 **Done when** no `<!-- fill -->` slot remains and `lint` is clean. Each slot's
 rule lives *in the slot*, as a `<!-- fill -->` comment the scaffold writes —
