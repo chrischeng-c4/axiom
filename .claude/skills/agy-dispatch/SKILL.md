@@ -543,6 +543,14 @@ function it names does not exist yet and nothing about behaviour was measured.
 That is the only answer the revert can give for such a round, so it does not
 block — `prove` and `accept` both say so.
 
+Guard the revert with assertions, and anchor them on the declaration the round
+extends rather than on a bare identifier — a file large enough to be worth a
+round usually already carries that name for something else. When such a guard
+fires anyway, read the namesake before loosening it. Two things in one file
+answering to one name is either the duplication the round was supposed to avoid
+or a second implementation of the same rule that will now drift from the first,
+and both are worth a work item before this round lands.
+
 **Done when** the pair discriminates *and* a mutation sweep backs it. A gate
 nobody has seen fail proves nothing: a test written against the implementation
 just produced passes by construction. The pair is a floor, not a ceiling.
