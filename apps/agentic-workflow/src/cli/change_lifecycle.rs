@@ -423,9 +423,39 @@ fn strip_aw_marker_blocks(body: &str) -> String {
     result
 }
 
+const CANONICAL_WI_SECTIONS: &[&str] = &[
+    "## Problem",
+    "## Capability Alignment",
+    "## Requirements",
+    "## Scope",
+    "## Acceptance Criteria",
+    "## Reference Context",
+];
+
 fn canonicalize_wi_body(body: &str) -> String {
     let stripped = strip_aw_marker_blocks(body);
-    let normalized = stripped.replace("\r\n", "\n");
+    let sections = crate::cli::issues::split_body_by_h2(&stripped);
+    let canonical_sections: Vec<_> = sections
+        .into_iter()
+        .filter(|(heading, _)| CANONICAL_WI_SECTIONS.contains(&heading.as_str()))
+        .collect();
+
+    let target_body = if canonical_sections.is_empty() {
+        stripped
+    } else {
+        let mut out = String::new();
+        for (heading, content) in &canonical_sections {
+            out.push_str(heading);
+            out.push('\n');
+            out.push_str(content);
+            if !content.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        out
+    };
+
+    let normalized = target_body.replace("\r\n", "\n");
     let mut lines = Vec::new();
     let mut previous_blank = true;
     for line in normalized.lines() {
@@ -3791,6 +3821,199 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             lc_after_update.head_event_id,
             Some("evt-002".to_string()),
             "record_update after lease release must publish updated lifecycle"
+        );
+    }
+
+    #[test]
+    fn test_canonical_wi_digest_six_sections_allowlist() {
+        let base_body = "\
+Preamble line to be ignored.
+
+## Problem
+Problem section text.
+
+## Capability Alignment
+Capability alignment text.
+
+## Requirements
+Requirements section text.
+
+## Scope
+Scope section text.
+
+## Acceptance Criteria
+Acceptance criteria text.
+
+## Reference Context
+Reference context text.
+";
+
+        // Row 1: base body vs base body with AW-authored ## Status section appended
+        let body_row1 = format!("{base_body}\n\n## Status\nStatus section text.");
+        assert_eq!(
+            canonical_wi_digest(base_body),
+            canonical_wi_digest(&body_row1),
+            "Row 1: Appended ## Status section must not change canonical digest"
+        );
+
+        // Row 2: same pair, but with ## Status between ## Requirements and ## Scope
+        let body_row2 = "\
+Preamble line to be ignored.
+
+## Problem
+Problem section text.
+
+## Capability Alignment
+Capability alignment text.
+
+## Requirements
+Requirements section text.
+
+## Status
+Interleaved status section text.
+
+## Scope
+Scope section text.
+
+## Acceptance Criteria
+Acceptance criteria text.
+
+## Reference Context
+Reference context text.
+";
+        assert_eq!(
+            canonical_wi_digest(base_body),
+            canonical_wi_digest(body_row2),
+            "Row 2: Interleaved ## Status section must not change canonical digest"
+        );
+
+        // Row 3: row 1 body with one word changed inside ## Problem
+        let body_row3 =
+            base_body.replace("Problem section text.", "Problem section text modified.");
+        assert_ne!(
+            canonical_wi_digest(base_body),
+            canonical_wi_digest(&body_row3),
+            "Row 3: Editing ## Problem must change canonical digest"
+        );
+
+        // Row 4: row 1 body with one word changed inside ## Reference Context
+        let body_row4 = base_body.replace(
+            "Reference context text.",
+            "Reference context text modified.",
+        );
+        assert_ne!(
+            canonical_wi_digest(base_body),
+            canonical_wi_digest(&body_row4),
+            "Row 4: Editing ## Reference Context must change canonical digest"
+        );
+
+        // Row 5: preamble added before first heading
+        let body_row5 = format!("Extra preamble paragraph.\n\n{base_body}");
+        assert_eq!(
+            canonical_wi_digest(base_body),
+            canonical_wi_digest(&body_row5),
+            "Row 5: Adding preamble must not change canonical digest"
+        );
+
+        // Row 6: unstructured bodies (negative control)
+        let body_v1 = "## Description\nInitial WI body.";
+        let body_v2 = "## Description\nUpdated WI body v2.";
+        assert_ne!(
+            canonical_wi_digest(body_v1),
+            canonical_wi_digest(body_v2),
+            "Row 6: Unstructured bodies must yield distinct digests"
+        );
+
+        // Row 7: marker stripping on canonical section body
+        let marker = "<!-- aw:projection\nversion: 1\n-->";
+        let body_with_marker = format!("{base_body}\n\n{marker}");
+        assert_eq!(
+            canonical_wi_digest(base_body),
+            canonical_wi_digest(&body_with_marker),
+            "Row 7: Marker stripping must compose with section allowlist"
+        );
+
+        // Row 8: section order swapped
+        let body_row8 = "\
+Preamble line to be ignored.
+
+## Problem
+Problem section text.
+
+## Capability Alignment
+Capability alignment text.
+
+## Scope
+Scope section text.
+
+## Requirements
+Requirements section text.
+
+## Acceptance Criteria
+Acceptance criteria text.
+
+## Reference Context
+Reference context text.
+";
+        assert_ne!(
+            canonical_wi_digest(base_body),
+            canonical_wi_digest(body_row8),
+            "Row 8: Swapping section order must change canonical digest"
+        );
+
+        // Prefix test: ## Problem Statement alongside six recognized sections
+        let body_problem_statement =
+            format!("{base_body}\n\n## Problem Statement\nProblem statement text.");
+        let body_problem_statement_edited =
+            format!("{base_body}\n\n## Problem Statement\nProblem statement text modified.");
+        assert_eq!(
+            canonical_wi_digest(&body_problem_statement),
+            canonical_wi_digest(&body_problem_statement_edited),
+            "Editing unrecognized heading ## Problem Statement must not change canonical digest"
+        );
+
+        // Prefix test: ## Problems alongside six recognized sections
+        let body_problems = format!("{base_body}\n\n## Problems\nProblems text.");
+        let body_problems_edited = format!("{base_body}\n\n## Problems\nProblems text modified.");
+        assert_eq!(
+            canonical_wi_digest(&body_problems),
+            canonical_wi_digest(&body_problems_edited),
+            "Editing unrecognized heading ## Problems must not change canonical digest"
+        );
+
+        // Duplicate section test: ## Scope carried twice
+        let body_double_scope = "\
+Preamble line to be ignored.
+
+## Problem
+Problem section text.
+
+## Capability Alignment
+Capability alignment text.
+
+## Requirements
+Requirements section text.
+
+## Scope
+First scope section text.
+
+## Acceptance Criteria
+Acceptance criteria text.
+
+## Reference Context
+Reference context text.
+
+## Scope
+Second scope section text.
+";
+        let body_double_scope_edited = body_double_scope.replace(
+            "Second scope section text.",
+            "Second scope section text modified.",
+        );
+        assert_ne!(
+            canonical_wi_digest(body_double_scope),
+            canonical_wi_digest(&body_double_scope_edited),
+            "Editing text under second occurrence of ## Scope must change canonical digest"
         );
     }
 }

@@ -3102,7 +3102,7 @@ fn section_arg_is_all(s: &str) -> bool {
 // callers can re-emit them verbatim at the top.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#scenarios
-fn split_body_by_h2(body: &str) -> Vec<(String, String)> {
+pub(crate) fn split_body_by_h2(body: &str) -> Vec<(String, String)> {
     let mut sections: Vec<(String, String)> = Vec::new();
     let mut current_heading = String::new();
     let mut current_content = String::new();
