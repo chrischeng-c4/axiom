@@ -206,6 +206,84 @@ pub struct MilestoneWork {
     pub milestone: serde_json::Value,
 }
 
+const PROJECTION_MARKER_START: &str = "<!-- aw:projection";
+const PROJECTION_MARKER_END: &str = "-->";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectionMarker {
+    pub version: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub present_event_ids: BTreeSet<String>,
+}
+
+pub fn render_projection_marker(
+    head_event_id: Option<&str>,
+    epoch: Option<u64>,
+    present_event_ids: &BTreeSet<String>,
+) -> String {
+    let marker = ProjectionMarker {
+        version: 1,
+        head_event_id: head_event_id.map(String::from),
+        epoch,
+        present_event_ids: present_event_ids.clone(),
+    };
+    let yaml = serde_yaml::to_string(&marker).unwrap_or_default();
+    format!(
+        "{PROJECTION_MARKER_START}\n{}\n{PROJECTION_MARKER_END}\n",
+        yaml.trim_end()
+    )
+}
+
+pub fn render_projection_marker_for_lifecycle(lifecycle: &ChangeLifecycle) -> String {
+    let present_event_ids = lifecycle
+        .events
+        .iter()
+        .map(|e| e.event_id.clone())
+        .collect();
+    render_projection_marker(
+        lifecycle.head_event_id.as_deref(),
+        Some(lifecycle.epoch),
+        &present_event_ids,
+    )
+}
+
+pub fn upsert_projection_marker(body: &str, lifecycle: &ChangeLifecycle) -> Result<String> {
+    let block = render_projection_marker_for_lifecycle(lifecycle);
+    if let Some(start) = body.find(PROJECTION_MARKER_START) {
+        let rest = &body[start + PROJECTION_MARKER_START.len()..];
+        if let Some(end_rel) = rest.find(PROJECTION_MARKER_END) {
+            let end = start + PROJECTION_MARKER_START.len() + end_rel + PROJECTION_MARKER_END.len();
+            let mut out = String::new();
+            let head = body[..start].trim_end();
+            out.push_str(head);
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(&block);
+            out.push_str(body[end..].trim_start_matches('\n'));
+            return Ok(out);
+        }
+    }
+    let mut out = body.trim_end().to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(&block);
+    Ok(out)
+}
+
+pub fn parse_projection_marker(body: &str) -> Option<ProjectionMarker> {
+    let start = body.find(PROJECTION_MARKER_START)?;
+    let rest = &body[start + PROJECTION_MARKER_START.len()..];
+    let end = rest.find(PROJECTION_MARKER_END)?;
+    let yaml = rest[..end].trim();
+    serde_yaml::from_str(yaml).ok()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TrackerObservation {
     pub body: String,
@@ -239,6 +317,34 @@ impl TrackerObservation {
             epoch: None,
             present_event_ids: BTreeSet::new(),
             state: Some(IssueState::Open),
+        }
+    }
+
+    pub fn from_body(body: impl Into<String>) -> Self {
+        let body_str = body.into();
+        if let Some(start) = body_str.find(PROJECTION_MARKER_START) {
+            let rest = &body_str[start + PROJECTION_MARKER_START.len()..];
+            if let Some(end) = rest.find(PROJECTION_MARKER_END) {
+                let yaml = rest[..end].trim();
+                if let Ok(marker) = serde_yaml::from_str::<ProjectionMarker>(yaml) {
+                    return Self {
+                        body: body_str,
+                        head_event_id: marker.head_event_id,
+                        epoch: marker.epoch,
+                        present_event_ids: marker.present_event_ids,
+                        state: Some(IssueState::Open),
+                    };
+                }
+            }
+            Self {
+                body: body_str,
+                head_event_id: Some("malformed-projection-marker".to_string()),
+                epoch: None,
+                present_event_ids: BTreeSet::new(),
+                state: Some(IssueState::Open),
+            }
+        } else {
+            Self::empty(body_str)
         }
     }
 
@@ -1269,6 +1375,8 @@ fn render(lifecycle: &ChangeLifecycle, decision: &ProjectionDecision) -> serde_j
         "remediation": remediation,
         "close_authorized": decision.close_authorized,
         "authorize_close_event_id": decision.authorize_close_event_id,
+        "accepted": decision.accepted,
+        "refusal_reason": decision.refusal_reason,
     })
 }
 
@@ -1280,7 +1388,7 @@ pub fn projection_for_issue(project_root: &Path, issue: &Issue) -> serde_json::V
     }
     match load(project_root, &issue.slug) {
         Ok(Some(lifecycle)) if valid_persisted_lifecycle(&lifecycle, &issue.slug) => {
-            let observation = TrackerObservation::empty(&issue.body).with_state(issue.state);
+            let observation = TrackerObservation::from_body(&issue.body).with_state(issue.state);
             let decision = decide_projection(&lifecycle, &observation);
             render(&lifecycle, &decision)
         }
@@ -2507,6 +2615,150 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             dec8_second.work.is_empty(),
             "recomputed decision after applying yielded work must yield no work"
         );
+    }
+
+    #[test]
+    fn tracker_observation_from_marker_measurements() {
+        let root = tempfile::tempdir().unwrap();
+
+        // Build a 3-event lifecycle carrier (evt-001, evt-002, evt-003, head = evt-003, epoch = 3)
+        let created = fold_wi_create("causal", "## Problem\n\nInitial prose", "agentic-workflow");
+        let ec = reduce_stage(
+            &created,
+            ArtifactKind::Ec,
+            LifecycleEventKind::EcChange,
+            "ec-v1",
+            "aw td check",
+            OwnerVocabulary::Td,
+        );
+        let lc = reduce_stage(
+            &ec,
+            ArtifactKind::Td,
+            LifecycleEventKind::TdChange,
+            "td-v1",
+            "aw cb check",
+            OwnerVocabulary::Cb,
+        );
+        assert_eq!(lc.events.len(), 3);
+        assert_eq!(lc.epoch, 3);
+        assert_eq!(lc.head_event_id.as_deref(), Some("evt-003"));
+        save(root.path(), &lc).unwrap();
+
+        let base_body = "## Problem\n\nInitial prose";
+
+        // Row 1: Change WI; tracker body carries the marker rendered for that lifecycle
+        let body_with_marker = upsert_projection_marker(base_body, &lc).unwrap();
+        let issue_row1 = change(&body_with_marker);
+        let proj_row1 = projection_for_issue(root.path(), &issue_row1);
+        assert_eq!(proj_row1["accepted"], true);
+        assert!(proj_row1["refusal_reason"].is_null());
+        let parsed1 = parse_projection_marker(&body_with_marker).expect("marker must parse back");
+        assert_eq!(parsed1.head_event_id.as_deref(), Some("evt-003"));
+        assert_eq!(parsed1.epoch, Some(3));
+        let expected_present: BTreeSet<String> = vec!["evt-001", "evt-002", "evt-003"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(parsed1.present_event_ids, expected_present);
+
+        // Row 2: the same ledger; the body's marker names head evt-999, an id the ledger never committed
+        let marker_row2 = render_projection_marker(Some("evt-999"), Some(4), &expected_present);
+        let body_row2 = format!("{base_body}\n\n{marker_row2}");
+        let issue_row2 = change(&body_row2);
+        let proj_row2 = projection_for_issue(root.path(), &issue_row2);
+        assert_eq!(proj_row2["accepted"], false);
+        let reason2 = proj_row2["refusal_reason"]
+            .as_str()
+            .expect("refusal reason string");
+        assert!(
+            reason2.contains("evt-999"),
+            "reason should contain evt-999: {reason2}"
+        );
+
+        // Row 3: the same ledger; the body's marker names head evt-002, which is committed, together with epoch 7
+        let marker_row3 = render_projection_marker(
+            Some("evt-002"),
+            Some(7),
+            &vec!["evt-001", "evt-002"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
+        let body_row3 = format!("{base_body}\n\n{marker_row3}");
+        let issue_row3 = change(&body_row3);
+        let proj_row3 = projection_for_issue(root.path(), &issue_row3);
+        assert_eq!(proj_row3["accepted"], false);
+        let reason3 = proj_row3["refusal_reason"]
+            .as_str()
+            .expect("refusal reason string");
+        assert!(
+            reason3.contains("epoch 7"),
+            "reason should contain epoch 7: {reason3}"
+        );
+        assert!(
+            reason3.contains("ledger epoch 2"),
+            "reason should contain ledger epoch 2: {reason3}"
+        );
+        assert_ne!(reason2, reason3);
+
+        // Row 4: one body carrying the marker, and the same body with the marker block deleted, prose byte-identical otherwise
+        let digest_with_marker = canonical_wi_digest(&body_with_marker);
+        let digest_without_marker = canonical_wi_digest(base_body);
+        assert_eq!(digest_with_marker, digest_without_marker);
+
+        // Row 5: row 4's pair again, but with one word of ## Problem prose changed and the same marker on both (negative control)
+        let body_modified_prose = "## Problem\n\nModified prose";
+        let body_modified_with_marker = upsert_projection_marker(body_modified_prose, &lc).unwrap();
+        let digest_modified = canonical_wi_digest(&body_modified_with_marker);
+        assert_ne!(digest_with_marker, digest_modified);
+
+        // Row 6: a Change WI body carrying <!-- aw:loop-state ... --> and no lifecycle marker (negative control)
+        let legacy_body = "## Problem\n\n<!-- aw:loop-state\nversion: 1\n-->";
+        let issue_legacy = change(legacy_body);
+        let proj_legacy = projection_for_issue(root.path(), &issue_legacy);
+        assert_eq!(proj_legacy["ledger"]["epoch"], 0);
+        assert_eq!(proj_legacy["next"]["owner"], "migration");
+        assert!(proj_legacy.get("accepted").is_none());
+
+        // Row 7: the same ledger; the body's marker names head evt-003 and epoch 3 — both agreeing — and a projected-event set that includes one id the ledger never committed
+        let marker_row7 = render_projection_marker(
+            Some("evt-003"),
+            Some(3),
+            &vec!["evt-001", "evt-002", "evt-003", "evt-bogus"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
+        let body_row7 = format!("{base_body}\n\n{marker_row7}");
+        let issue_row7 = change(&body_row7);
+        let proj_row7 = projection_for_issue(root.path(), &issue_row7);
+        assert_eq!(proj_row7["accepted"], false);
+        let reason7 = proj_row7["refusal_reason"]
+            .as_str()
+            .expect("refusal reason string");
+        assert!(
+            reason7.contains("evt-bogus"),
+            "reason should contain uncommitted id evt-bogus: {reason7}"
+        );
+        assert!(
+            reason7.contains("milestone"),
+            "reason should identify it as a milestone: {reason7}"
+        );
+        assert_ne!(reason7, reason2);
+        assert_ne!(reason7, reason3);
+    }
+
+    #[test]
+    fn tracker_observation_malformed_marker_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let lc = fold_wi_create("causal", "wi-v1", "agentic-workflow");
+        save(root.path(), &lc).unwrap();
+
+        let malformed_body = "wi-v1\n\n<!-- aw:projection\nnot: yaml: ::::\n-->";
+        let issue = change(malformed_body);
+        let proj = projection_for_issue(root.path(), &issue);
+        assert_eq!(proj["accepted"], false);
+        assert!(!proj["refusal_reason"].is_null());
     }
 
     #[test]
