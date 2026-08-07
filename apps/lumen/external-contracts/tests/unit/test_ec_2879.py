@@ -242,11 +242,41 @@ class RetainedGkeEvidenceTests(unittest.TestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
-        self.assertEqual(environment["ACCEPTANCE_APPS"], "lumen sift")
+        self.assertEqual(environment["ACCEPTANCE_APPS"], "lumen auth")
         self.assertTrue(environment["LUMEN_AUTH_REDACTION_AUDITOR"].endswith("redaction_auditor.py"))
         self.assertTrue(environment["LUMEN_AUTH_REDACTION_AUDIT_PATH"].endswith("lumen-auth-redaction-audit.json"))
         for key in inherited:
             self.assertNotIn(key, environment)
+
+    def test_evidence_directory_git_ignore_rules(self) -> None:
+        json_path = "apps/lumen/external-contracts/evidence/gke-ksa-rbac-authorization.json"
+        log_path = "apps/lumen/external-contracts/evidence/gke-runs/example/run.log"
+        readme_path = "apps/lumen/external-contracts/evidence/README.md"
+
+        completed_json = subprocess.run(
+            ["git", "check-ignore", json_path],
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(completed_json.returncode, 0, completed_json.stderr)
+
+        completed_log = subprocess.run(
+            ["git", "check-ignore", log_path],
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(completed_log.returncode, 0, completed_log.stderr)
+
+        completed_readme = subprocess.run(
+            ["git", "check-ignore", readme_path],
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(completed_readme.returncode, 1, completed_readme.stdout)
+
 
     def test_harness_callback_without_immediate_credential_destroy_is_rejected(self) -> None:
         incomplete = """lumen_auth_redaction_audit_and_destroy() {
