@@ -166,7 +166,7 @@ def _cloud_build_environment(
         "EVIDENCE_DIR": str(run_dir),
         "LUMEN_AUTH_REDACTION_AUDITOR": str(Path(__file__).with_name("redaction_auditor.py")),
         "LUMEN_AUTH_REDACTION_AUDIT_PATH": str(audit_path),
-        "ACCEPTANCE_APPS": "lumen sift",
+        "ACCEPTANCE_APPS": "lumen auth",
     }
     for override in (
         "LUMEN_IMAGE",
