@@ -905,6 +905,25 @@ def snapshot(profile: dict, task_key: str) -> Path:
     return output
 
 
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def controller_notes_removed(text: str) -> str:
+    """Strip the round form's own guidance before the worker sees the document.
+
+    Both halves of the round are authored by filling a form whose slots carry
+    the rule that governs them, and those rules are addressed to the controller:
+    what a vacuous measurement looks like, why a stale quote is dangerous, which
+    slot a condition belongs in. Reaching the worker they stop being guidance
+    and read as task instructions, and a slot's rationale is the one thing a
+    bounded executor has no use for -- it is material to reason around a
+    constraint with. `lint` already refuses a document with `<!-- fill -->`
+    slots left in it, so this is what makes the separation structural rather
+    than a habit: nothing written in a comment can reach the worker.
+    """
+    return HTML_COMMENT.sub("", text).strip()
+
+
 def render_prompt(
     profile: dict,
     task_key: str,
@@ -927,7 +946,7 @@ def render_prompt(
     injection = ""
     inject_prompt_file = profile.get("inject_prompt_file")
     if inject_prompt_file:
-        injection = Path(inject_prompt_file).read_text().strip()
+        injection = controller_notes_removed(Path(inject_prompt_file).read_text())
     policy = task_session_policy(profile)
     if continuation:
         phase = (
@@ -1005,7 +1024,7 @@ new shell command.
 
 ## Controller oracle (injected, immutable)
 
-{oracle_text.strip()}
+{controller_notes_removed(oracle_text)}
 
 ## Round-specific controller injection
 
@@ -1691,9 +1710,22 @@ ORACLE_SKELETON = """\
 ## Claim
 
 <!-- fill: one falsifiable sentence about behavior observable from outside the
-     change; not a description of the edit -->
+     change; not a description of the edit. Revert the change in your head: a
+     claim that stays true either way is not this round's claim. -->
 
 ## Measurements
+
+<!-- fill: the rows the gate has to make. At least two, at least one of them
+     the negative control, and the control marked in its input or its expected
+     observation -- a control named only in the rationale cell is a sentence
+     about a control, and the table passes lint while measuring nothing.
+
+     Every row must be a state the product can actually reach. A row resting on
+     a value the product never produces is vacuous: it stays green whatever the
+     worker writes, and that is how this round most plausibly ends green and
+     empty. Where a row rests on something you measured, measure it against the
+     base this round starts from -- a stale "measured" is worse than silence,
+     because the worker builds on it. -->
 
 | # | input | expected observation | why it cannot hold by accident |
 |---|---|---|---|
@@ -1703,44 +1735,65 @@ ORACLE_SKELETON = """\
 
 ## Gate
 
+<!-- fill: prefilled from the profile. `prove` runs this one command and
+     nothing else, so a second command here creates a row no proof ever
+     makes. -->
+
 ```
 {gate}
 ```
 
 ## Fabrication tells
 
-<!-- fill: what would a passing report look like if the worker faked it -->
+<!-- fill: what a passing report would look like if the worker faked it. Not
+     the worker lying -- the shapes you would otherwise accept. A gate green
+     because its rows are unreachable. An assertion on a value the check itself
+     just wrote. A name borrowed from a vocabulary the code under test never
+     reads. One list item each. -->
 -
 """
 
 INJECTION_SKELETON = """\
 ## Task
 
-<!-- fill: one imperative sentence naming the change -->
+<!-- fill: one imperative sentence naming the change. The worker reads this
+     first and reads it as the whole job, so a sentence naming two things buys
+     a diff that does one of them. -->
 
 ## Current behavior
 
-<!-- fill: quote the code as it stands today, citing `path:line` in backticks;
-     the quote is what proves this round was written against the checkout -->
+<!-- fill: quote the code as it stands, citing the file and line in backticks.
+     Lint checks that every quoted line still exists, because the worker is
+     told this block is the code as it stands and will go looking for it: a
+     quote that was true at an earlier base sends the worker off to improvise.
+     Re-indenting is fine, content that has moved is not. Quote what the change
+     must displace, not the whole neighbourhood. -->
 
 ```
 ```
 
 ## Required change
 
-<!-- fill: what becomes true afterwards, as conditions an outside observer could
-     check. No code, no numbered steps: the worker is being paid to derive the
-     implementation, so writing it here buys nothing and costs twice. -->
+<!-- fill: what becomes true afterwards, as conditions someone outside the
+     change could check. No code and no numbered steps: the worker is being
+     paid to derive the implementation, so writing it here buys nothing and
+     costs twice. A condition you can only state by naming the lines that
+     satisfy it is a measurement -- it belongs in the oracle. -->
 -
 
 ## Shape to follow
 
-<!-- fill: at most {shape_budget} lines. Name the convention already in the tree
-     that this change must match — an existing function, module, or error shape
-     in backticks — and say to follow it rather than invent a second one. This
-     slot is a constraint on the answer, not the answer. -->
+<!-- fill: at most {shape_budget} lines. Name the convention already in the
+     tree that this change must match -- an existing function, module, type, or
+     error shape, in backticks -- and say to follow it rather than invent a
+     second one. Where two conventions in the tree could both apply, saying
+     which one wins is exactly this slot's job. A constraint on the answer, not
+     the answer. -->
 
 ## Reference
+
+<!-- fill: one row per file, and the reason must say what the worker will learn
+     there. "Relevant context" is not a reason and gets the file skimmed. -->
 
 | path | why the worker must read it |
 |---|---|
@@ -1748,13 +1801,20 @@ INJECTION_SKELETON = """\
 
 ## Out of scope
 
-<!-- fill: what must not be touched beyond the mechanical write allowlist -->
+<!-- fill: what must not be touched, beyond what the write allowlist already
+     blocks mechanically. The allowlist bounds where the worker may write; this
+     bounds what it may redesign, rename, or clean up on the way past. Do not
+     restate the allowlists, the report shape, or the stop-and-report rule --
+     the dispatcher already sends those, and a second copy is one that
+     drifts. -->
 -
 
 ## Definition of done
 
-<!-- fill: name in backticks where the gate's check lands — the module, file, or
-     suite it joins. The gate says what to run; this says where to put it. -->
+<!-- fill: name in backticks where the gate's check lands -- the module, file,
+     or suite it joins. The gate says what to run; without this the worker
+     guesses and a correct diff arrives in the wrong place. The fence must
+     match the oracle's `## Gate` exactly. -->
 
 ```
 {gate}
