@@ -31,18 +31,19 @@ fn validate_change_id(change_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Check if current directory is a git repository
-fn is_git_repo() -> bool {
+/// Check if a directory is inside a git repository
+fn is_git_repo(dir: &Path) -> bool {
     Command::new("git")
         .args(&["rev-parse", "--git-dir"])
+        .current_dir(dir)
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
 
-/// Run a git command and return output
-fn run_git_command(args: &[&str]) -> Result<String> {
-    let output = Command::new("git").args(args).output()?;
+/// Run a git command in specified directory and return output
+fn run_git_command(dir: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git").args(args).current_dir(dir).output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -138,13 +139,13 @@ pub fn list_changed_files(
     change_id: &str,
     base_branch: Option<&str>,
     filter: Option<&str>,
-    _project_root: &Path,
+    project_root: &Path,
 ) -> Result<String> {
     validate_change_id(change_id)?;
 
     let base_branch = base_branch.unwrap_or("main");
 
-    if !is_git_repo() {
+    if !is_git_repo(project_root) {
         anyhow::bail!("Not in a git repository");
     }
 
@@ -156,7 +157,7 @@ pub fn list_changed_files(
     }
 
     // Get numstat output
-    let numstat = run_git_command(&["diff", "--numstat", base_branch])?;
+    let numstat = run_git_command(project_root, &["diff", "--numstat", base_branch])?;
 
     if numstat.is_empty() || numstat.starts_with("⚠️") {
         output.push_str("*No changes detected*\n");
@@ -840,11 +841,70 @@ mod tests {
             .contains("proposal.md not found"));
     }
 
+    fn setup_temp_git_repo() -> TempDir {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let _ = Command::new("git")
+            .args(&["init"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["config", "user.name", "Test User"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["config", "user.email", "test@example.com"])
+            .current_dir(root)
+            .output();
+        let _ = std::fs::write(root.join("init.txt"), "init");
+        let _ = Command::new("git")
+            .args(&["add", "init.txt"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["commit", "-m", "initial commit"])
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .args(&["branch", "-M", "main"])
+            .current_dir(root)
+            .output();
+        temp_dir
+    }
+
     #[test]
     fn test_is_git_repo() {
-        // This test will pass or fail depending on whether we're in a git repo
-        // Just verify it doesn't panic
-        let _ = is_git_repo();
+        let non_git_dir = TempDir::new().unwrap();
+        assert!(!is_git_repo(non_git_dir.path()));
+
+        let git_dir = setup_temp_git_repo();
+        assert!(is_git_repo(git_dir.path()));
+    }
+
+    #[test]
+    fn test_list_changed_files() {
+        let temp_git_dir = setup_temp_git_repo();
+        let root = temp_git_dir.path();
+
+        let test_filename = "unique_file_3443_r1_test.txt";
+        std::fs::write(root.join(test_filename), "content").unwrap();
+        let _ = Command::new("git")
+            .args(&["add", test_filename])
+            .current_dir(root)
+            .output();
+
+        let list_res = list_changed_files("test-change", Some("main"), None, root).unwrap();
+        assert!(list_res.contains(test_filename));
+
+        let non_git_dir = TempDir::new().unwrap();
+        let non_git_root = non_git_dir.path();
+
+        let err_list = list_changed_files("test-change", Some("main"), None, non_git_root);
+        assert!(err_list.is_err());
+        assert!(err_list
+            .unwrap_err()
+            .to_string()
+            .contains("Not in a git repository"));
     }
 }
 // CODEGEN-END
