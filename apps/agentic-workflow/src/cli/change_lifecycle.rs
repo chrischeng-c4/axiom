@@ -1444,6 +1444,30 @@ mod tests {
     fn persisted_multistage_carrier_with_td_event_vocabulary_hydrates() {
         let root = tempfile::tempdir().unwrap();
         let issue = change("before");
+        let initial = initial_lifecycle(&issue);
+        let lifecycle = reduce_stage(
+            &initial,
+            ArtifactKind::Ec,
+            LifecycleEventKind::EcChange,
+            "ec-v1",
+            "aw td create causal --project agentic-workflow",
+            OwnerVocabulary::Td,
+        );
+        save(root.path(), &lifecycle).unwrap();
+
+        let projection = projection_for_issue(root.path(), &issue);
+        let ec_revision = lifecycle.active_revisions[&ArtifactKind::Ec]
+            .as_ref()
+            .unwrap();
+        assert_eq!(projection["ledger"]["head_event_id"], "evt-002");
+        assert_eq!(projection["ec_revision"]["id"], ec_revision.id);
+        assert_eq!(projection["next"]["owner"], "td");
+    }
+
+    #[test]
+    fn hydration_rejects_carrier_with_missing_invalidation_record() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change("before");
         let mut lifecycle = initial_lifecycle(&issue);
         let ec_digest = canonical_digest("ec-v1");
         let ec_revision = artifact_revision(
@@ -1477,9 +1501,8 @@ mod tests {
         save(root.path(), &lifecycle).unwrap();
 
         let projection = projection_for_issue(root.path(), &issue);
-        assert_eq!(projection["ledger"]["head_event_id"], "evt-002");
-        assert_eq!(projection["ec_revision"]["id"], ec_revision.id);
-        assert_eq!(projection["next"]["owner"], "td");
+        assert!(projection["wi_revision"].is_null());
+        assert_eq!(projection["next"]["owner"], "wi");
     }
 
     #[test]
