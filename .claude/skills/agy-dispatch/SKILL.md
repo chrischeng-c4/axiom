@@ -585,6 +585,11 @@ a named row.
 - Apply *and* restore by writing the whole file. A copy that preserves an older
   mtime lets cargo skip the rebuild, which turns the mutant into a false kill
   and the next candidate run into a false green.
+- Classify a mutant by whether the harness *ran*, not by searching its output
+  for the word "error". Build tools announce an ordinary assertion failure in
+  the same vocabulary they use for a broken build — cargo prints `error: test
+  failed` — so a scan for that word reports every real kill as a malformed
+  mutant, and a sweep of nine kills reads as a sweep that measured nothing.
 - A survivor is a finding against the round's **evidence**, not the product:
   the code may be right and simply have no row that would notice if it stopped
   being right. Close it by authoring the missing row in a round, never by
