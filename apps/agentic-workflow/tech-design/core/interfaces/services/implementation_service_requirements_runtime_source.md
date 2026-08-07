@@ -21,19 +21,19 @@ Public API manifest for `apps/agentic-workflow/src/services/implementation_servi
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `CreateMergeReviewInput` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 261 |  |
-| `CreateReviewInput` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 289 |  |
-| `MergeQuality` | apps/agentic-workflow/src/services/implementation_service.rs | enum | pub | 309 |  |
-| `MergeReviewIssue` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 318 |  |
-| `MergeReviewVerdict` | apps/agentic-workflow/src/services/implementation_service.rs | enum | pub | 328 |  |
-| `ReviewIssue` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 337 |  |
-| `ReviewVerdict` | apps/agentic-workflow/src/services/implementation_service.rs | enum | pub | 355 |  |
-| `Severity` | apps/agentic-workflow/src/services/implementation_service.rs | enum | pub | 364 |  |
-| `TestResults` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 373 |  |
-| `create_merge_review` | apps/agentic-workflow/src/services/implementation_service.rs | function | pub | 601 | create_merge_review(input: CreateMergeReviewInput, project_root: &Path) -> Result<String> |
-| `create_review` | apps/agentic-workflow/src/services/implementation_service.rs | function | pub | 435 | create_review(input: CreateReviewInput, project_root: &Path) -> Result<String> |
-| `list_changed_files` | apps/agentic-workflow/src/services/implementation_service.rs | function | pub | 137 | list_changed_files(     change_id: &str,     base_branch: Option<&str>,     filter: Option<&str>,     _project_root: &Path, ) -> Result<String> |
-| `read_all_requirements` | apps/agentic-workflow/src/services/implementation_service.rs | function | pub | 57 | read_all_requirements(change_id: &str, project_root: &Path) -> Result<String> |
+| `CreateMergeReviewInput` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 262 |  |
+| `CreateReviewInput` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 290 |  |
+| `MergeQuality` | apps/agentic-workflow/src/services/implementation_service.rs | enum | pub | 310 |  |
+| `MergeReviewIssue` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 319 |  |
+| `MergeReviewVerdict` | apps/agentic-workflow/src/services/implementation_service.rs | enum | pub | 329 |  |
+| `ReviewIssue` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 338 |  |
+| `ReviewVerdict` | apps/agentic-workflow/src/services/implementation_service.rs | enum | pub | 356 |  |
+| `Severity` | apps/agentic-workflow/src/services/implementation_service.rs | enum | pub | 365 |  |
+| `TestResults` | apps/agentic-workflow/src/services/implementation_service.rs | struct | pub | 374 |  |
+| `create_merge_review` | apps/agentic-workflow/src/services/implementation_service.rs | function | pub | 602 | create_merge_review(input: CreateMergeReviewInput, project_root: &Path) -> Result<String> |
+| `create_review` | apps/agentic-workflow/src/services/implementation_service.rs | function | pub | 436 | create_review(input: CreateReviewInput, project_root: &Path) -> Result<String> |
+| `list_changed_files` | apps/agentic-workflow/src/services/implementation_service.rs | function | pub | 138 | list_changed_files(     change_id: &str,     base_branch: Option<&str>,     filter: Option<&str>,     project_root: &Path, ) -> Result<String> |
+| `read_all_requirements` | apps/agentic-workflow/src/services/implementation_service.rs | function | pub | 58 | read_all_requirements(change_id: &str, project_root: &Path) -> Result<String> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: handwrite-gap implementation-service-requirements-runtime -->
