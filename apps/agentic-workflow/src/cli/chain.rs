@@ -1006,6 +1006,18 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         sunset_criterion: "",
     },
     VerbLifecycle {
+        path: "cb.materialize",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "cb.publish",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
         path: "cb.gen-source",
         class: VerbLifecycleClass::Utility,
         mutates_lifecycle: true,
@@ -1742,6 +1754,8 @@ mod tests {
             "wi.fill-section",
             "td.create",
             "cb.gen",
+            "cb.materialize",
+            "cb.publish",
             "cb.gen-source",
             "cb.fill",
             "td.claim",
@@ -1796,6 +1810,98 @@ mod tests {
                 "{path} must be classified mutates_lifecycle: false"
             );
         }
+    }
+
+    #[test]
+    fn cb_materialize_and_publish_mutates_lifecycle_classification_matches_implementation_writes() {
+        // Row 1: no `cb.*` leaf verb resolves to `None`, and `cb.materialize` and `cb.publish` exist
+        let cb_leaf_paths: Vec<String> = leaf_verb_paths()
+            .into_iter()
+            .filter(|p| p.starts_with("cb."))
+            .collect();
+        assert!(
+            !cb_leaf_paths.is_empty(),
+            "leaf_verb_paths() found no cb.* leaf verbs"
+        );
+        assert!(
+            cb_leaf_paths.contains(&"cb.materialize".to_string()),
+            "cb.materialize missing from leaf_verb_paths(): {cb_leaf_paths:?}"
+        );
+        assert!(
+            cb_leaf_paths.contains(&"cb.publish".to_string()),
+            "cb.publish missing from leaf_verb_paths(): {cb_leaf_paths:?}"
+        );
+        for path in &cb_leaf_paths {
+            let res = verb_mutates_lifecycle(path);
+            assert!(
+                res.is_some(),
+                "cb.* leaf verb `{path}` returned None for verb_mutates_lifecycle"
+            );
+        }
+
+        // Row 2 & 3: body slices out of `cb.rs`
+        let cb_source = include_str!("cb.rs");
+
+        let mat_header = "pub async fn run_materialize(";
+        let mat_header_count = cb_source.matches(mat_header).count();
+        assert_eq!(
+            mat_header_count, 1,
+            "expected header `{mat_header}` to occur exactly once in cb.rs, found {mat_header_count}"
+        );
+
+        let pub_header = "pub async fn run_publish(";
+        let pub_header_count = cb_source.matches(pub_header).count();
+        assert_eq!(
+            pub_header_count, 1,
+            "expected header `{pub_header}` to occur exactly once in cb.rs, found {pub_header_count}"
+        );
+
+        let mat_start = cb_source
+            .find(mat_header)
+            .unwrap_or_else(|| panic!("failed to find `{mat_header}` in cb.rs"));
+        let mat_tail = &cb_source[mat_start..];
+        let mat_end = mat_tail.find("\npub ").unwrap_or(mat_tail.len());
+        let mat_body = &mat_tail[..mat_end];
+
+        let pub_start = cb_source
+            .find(pub_header)
+            .unwrap_or_else(|| panic!("failed to find `{pub_header}` in cb.rs"));
+        let pub_tail = &cb_source[pub_start..];
+        let pub_end = pub_tail.find("\npub ").unwrap_or(pub_tail.len());
+        let pub_body = &pub_tail[..pub_end];
+
+        // Row 2: run_materialize body markers and verb classification
+        let mat_has_write = mat_body.contains("std::fs::write(");
+        let mat_has_mkdir = mat_body.contains("create_dir_all(");
+        let mat_has_update = mat_body.contains("backend.update(");
+        let mat_flag = verb_mutates_lifecycle("cb.materialize");
+        assert!(
+            mat_has_write && mat_has_mkdir && !mat_has_update && mat_flag == Some(true),
+            "run_materialize body checks failed: has std::fs::write({mat_has_write}), has create_dir_all({mat_has_mkdir}), has backend.update({mat_has_update}), verb_mutates_lifecycle={mat_flag:?}"
+        );
+
+        // Row 3: run_publish body markers and verb classification
+        let pub_has_update = pub_body.contains("backend.update(");
+        let pub_has_write = pub_body.contains("std::fs::write(");
+        let pub_flag = verb_mutates_lifecycle("cb.publish");
+        assert!(
+            pub_has_update && !pub_has_write && pub_flag == Some(true),
+            "run_publish body checks failed: has backend.update({pub_has_update}), has std::fs::write({pub_has_write}), verb_mutates_lifecycle={pub_flag:?}"
+        );
+
+        // Row 4: Discriminator / negative controls
+        let readonly_flag = verb_mutates_lifecycle("health");
+        let absent_flag = verb_mutates_lifecycle("absent.verb.path");
+        assert_eq!(
+            readonly_flag,
+            Some(false),
+            "negative control failed: read-only verb `health` expected Some(false), got {readonly_flag:?}"
+        );
+        assert_eq!(
+            absent_flag,
+            None,
+            "negative control failed: absent verb path `absent.verb.path` expected None, got {absent_flag:?}"
+        );
     }
 
     #[test]
