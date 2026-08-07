@@ -2,7 +2,7 @@
 
 use crate::cli::change_lifecycle::{
     expected_parent_set, route_failure, ArtifactKind, ArtifactRevision, ChangeLifecycle,
-    FailureOwnership, LifecycleEventKind, NextObligation, OwnerVocabulary,
+    EvidenceBinding, FailureOwnership, LifecycleEventKind, NextObligation, OwnerVocabulary,
 };
 
 /// Known EC verification dimensions.
@@ -453,6 +453,8 @@ pub struct TdReconciliationDecision {
     pub result: Option<TdReconcileClaim>,
     pub refusal_reason: Option<String>,
     pub obligation: Option<NextObligation>,
+    pub evicted_evidence: Vec<EvidenceBinding>,
+    pub obligation_chain: Vec<NextObligation>,
 }
 
 /// Pure decision function answering whether post-CB TD reconciliation is available,
@@ -477,6 +479,8 @@ pub fn decide_td_reconciliation(
                     .to_string(),
             ),
             obligation: None,
+            evicted_evidence: Vec::new(),
+            obligation_chain: Vec::new(),
         };
     }
 
@@ -500,6 +504,8 @@ pub fn decide_td_reconciliation(
                         .to_string(),
                 ),
                 obligation: None,
+                evicted_evidence: Vec::new(),
+                obligation_chain: Vec::new(),
             };
         }
     }
@@ -514,6 +520,8 @@ pub fn decide_td_reconciliation(
                         .to_string(),
                 ),
                 obligation: None,
+                evicted_evidence: Vec::new(),
+                obligation_chain: Vec::new(),
             };
         }
     }
@@ -537,6 +545,8 @@ pub fn decide_td_reconciliation(
             result: None,
             refusal_reason: Some(refusal_reason),
             obligation: None,
+            evicted_evidence: Vec::new(),
+            obligation_chain: Vec::new(),
         };
     }
 
@@ -551,11 +561,76 @@ pub fn decide_td_reconciliation(
         },
     };
 
+    let (evicted_evidence, obligation_chain) = match claim {
+        TdReconcileClaim::NoChange => (Vec::new(), Vec::new()),
+        TdReconcileClaim::Amended => {
+            let mut evicted: Vec<EvidenceBinding> = lifecycle
+                .evidence
+                .iter()
+                .filter(|b| {
+                    matches!(
+                        b.verifier.as_str(),
+                        "cb_test" | "cb_review" | "ec_verify_cb"
+                    )
+                })
+                .cloned()
+                .collect();
+
+            fn verifier_rank(v: &str) -> usize {
+                match v {
+                    "cb_test" => 0,
+                    "cb_review" => 1,
+                    "ec_verify_cb" => 2,
+                    _ => 3,
+                }
+            }
+
+            evicted.sort_by(|a, b| {
+                verifier_rank(&a.verifier)
+                    .cmp(&verifier_rank(&b.verifier))
+                    .then_with(|| a.verifier.cmp(&b.verifier))
+                    .then_with(|| {
+                        a.bound_tuple
+                            .wi_digest
+                            .cmp(&b.bound_tuple.wi_digest)
+                            .then_with(|| a.bound_tuple.ec_digest.cmp(&b.bound_tuple.ec_digest))
+                            .then_with(|| a.bound_tuple.td_digest.cmp(&b.bound_tuple.td_digest))
+                            .then_with(|| a.bound_tuple.cb_digest.cmp(&b.bound_tuple.cb_digest))
+                    })
+                    .then_with(|| a.passed.cmp(&b.passed))
+                    .then_with(|| a.summary.cmp(&b.summary))
+            });
+
+            let chain = vec![
+                NextObligation {
+                    command: format!("aw td check {}", lifecycle.slug),
+                    owner: OwnerVocabulary::Td,
+                },
+                NextObligation {
+                    command: format!("aw ec verify td {}", lifecycle.slug),
+                    owner: OwnerVocabulary::Ec,
+                },
+                NextObligation {
+                    command: format!("aw td review {}", lifecycle.slug),
+                    owner: OwnerVocabulary::Td,
+                },
+                NextObligation {
+                    command: format!("aw cb check {}", lifecycle.slug),
+                    owner: OwnerVocabulary::Cb,
+                },
+            ];
+
+            (evicted, chain)
+        }
+    };
+
     TdReconciliationDecision {
         available: true,
         result: Some(claim),
         refusal_reason: None,
         obligation: Some(obligation),
+        evicted_evidence,
+        obligation_chain,
     }
 }
 
@@ -1823,5 +1898,128 @@ mod tests {
         );
         assert_ne!(r3, r5, "row 3 and row 5 refusal reasons must differ");
         assert_ne!(r4, r5, "row 4 and row 5 refusal reasons must differ");
+    }
+
+    #[test]
+    fn td_reconciliation_invalidation() {
+        // Fixture F: cb_test passed, cb_review passed, ec_verify_cb failed, td_behavior passed
+        let mut lc_f = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let active_tuple = lc_f.active_digest_tuple();
+        add_evidence(&mut lc_f, "cb_test", true, active_tuple.clone());
+        add_evidence(&mut lc_f, "cb_review", true, active_tuple.clone());
+        add_evidence(&mut lc_f, "ec_verify_cb", false, active_tuple.clone());
+        add_evidence(&mut lc_f, "td_behavior", true, active_tuple.clone());
+
+        // Row 1: F, claim Amended
+        let dec1 = decide_td_reconciliation(&lc_f, TdReconcileClaim::Amended);
+        assert!(dec1.available);
+        assert_eq!(dec1.result, Some(TdReconcileClaim::Amended));
+        assert!(dec1.refusal_reason.is_none());
+        let ob1 = dec1
+            .obligation
+            .as_ref()
+            .expect("obligation must be present");
+        assert_eq!(ob1.owner, OwnerVocabulary::Td);
+        assert_eq!(ob1.command, format!("aw td change {}", lc_f.slug));
+
+        // Eviction set: exactly cb_test, cb_review, ec_verify_cb; td_behavior absent
+        assert_eq!(dec1.evicted_evidence.len(), 3);
+        assert_eq!(dec1.evicted_evidence[0], lc_f.evidence[0]);
+        assert_eq!(dec1.evicted_evidence[1], lc_f.evidence[1]);
+        assert_eq!(dec1.evicted_evidence[2], lc_f.evidence[2]);
+        assert!(
+            dec1.evicted_evidence
+                .iter()
+                .all(|b| b.verifier != "td_behavior"),
+            "td_behavior must be absent from eviction set"
+        );
+
+        // Obligation chain: 4 entries in exact order
+        assert_eq!(dec1.obligation_chain.len(), 4);
+        assert_eq!(dec1.obligation_chain[0].owner, OwnerVocabulary::Td);
+        assert_eq!(
+            dec1.obligation_chain[0].command,
+            format!("aw td check {}", lc_f.slug)
+        );
+        assert_eq!(dec1.obligation_chain[1].owner, OwnerVocabulary::Ec);
+        assert_eq!(
+            dec1.obligation_chain[1].command,
+            format!("aw ec verify td {}", lc_f.slug)
+        );
+        assert_eq!(dec1.obligation_chain[2].owner, OwnerVocabulary::Td);
+        assert_eq!(
+            dec1.obligation_chain[2].command,
+            format!("aw td review {}", lc_f.slug)
+        );
+        assert_eq!(dec1.obligation_chain[3].owner, OwnerVocabulary::Cb);
+        assert_eq!(
+            dec1.obligation_chain[3].command,
+            format!("aw cb check {}", lc_f.slug)
+        );
+
+        // Row 2: F with the four bindings pushed onto lifecycle.evidence in reverse
+        let mut lc_f_rev = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        add_evidence(&mut lc_f_rev, "td_behavior", true, active_tuple.clone());
+        add_evidence(&mut lc_f_rev, "ec_verify_cb", false, active_tuple.clone());
+        add_evidence(&mut lc_f_rev, "cb_review", true, active_tuple.clone());
+        add_evidence(&mut lc_f_rev, "cb_test", true, active_tuple.clone());
+
+        let dec2 = decide_td_reconciliation(&lc_f_rev, TdReconcileClaim::Amended);
+        assert!(dec2.available);
+        assert_eq!(dec2.result, Some(TdReconcileClaim::Amended));
+        assert_eq!(dec2.evicted_evidence, dec1.evicted_evidence);
+        assert_eq!(dec2.obligation_chain, dec1.obligation_chain);
+
+        // Row 3: F, claim NoChange
+        let dec3 = decide_td_reconciliation(&lc_f, TdReconcileClaim::NoChange);
+        assert!(dec3.available);
+        assert_eq!(dec3.result, Some(TdReconcileClaim::NoChange));
+        assert!(dec3.refusal_reason.is_none());
+        let ob3 = dec3
+            .obligation
+            .as_ref()
+            .expect("obligation must be present");
+        assert_eq!(ob3.owner, OwnerVocabulary::Cb);
+        assert_eq!(ob3.command, format!("aw ec verify cb {}", lc_f.slug));
+        assert!(dec3.evicted_evidence.is_empty());
+        assert!(dec3.obligation_chain.is_empty());
+
+        // Row 4: F with ec_verify_cb flipped to passed (negative control)
+        let mut lc_f_neg = lc_f.clone();
+        if let Some(b) = lc_f_neg
+            .evidence
+            .iter_mut()
+            .find(|b| b.verifier == "ec_verify_cb")
+        {
+            b.passed = true;
+        }
+        let dec4 = decide_td_reconciliation(&lc_f_neg, TdReconcileClaim::Amended);
+        assert!(!dec4.available);
+        assert!(dec4.result.is_none());
+        assert!(dec4.obligation.is_none());
+        let r4 = dec4
+            .refusal_reason
+            .as_ref()
+            .expect("refusal reason must be set for row 4");
+        assert!(
+            r4.contains("ordering violation"),
+            "refusal reason must name ordering violation: {r4}"
+        );
+        assert_eq!(
+            r4,
+            "ordering violation: passing ec_verify_cb evidence already exists for current active digest tuple"
+        );
+        assert!(dec4.evicted_evidence.is_empty());
+        assert!(dec4.obligation_chain.is_empty());
     }
 }
