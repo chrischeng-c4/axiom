@@ -439,6 +439,126 @@ pub fn decide_td_impact(
     }
 }
 
+/// Caller-supplied post-CB TD reconciliation claim (#3350).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TdReconcileClaim {
+    NoChange,
+    Amended,
+}
+
+/// Pure decision result for post-CB TD reconciliation (#3350).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TdReconciliationDecision {
+    pub available: bool,
+    pub result: Option<TdReconcileClaim>,
+    pub refusal_reason: Option<String>,
+    pub obligation: Option<NextObligation>,
+}
+
+/// Pure decision function answering whether post-CB TD reconciliation is available,
+/// which result it records, and the single next command that follows (#3350).
+pub fn decide_td_reconciliation(
+    lifecycle: &ChangeLifecycle,
+    claim: TdReconcileClaim,
+) -> TdReconciliationDecision {
+    let active_tuple = lifecycle.active_digest_tuple();
+
+    // 1. Check ordering: reconciliation is ordered before EC CB verification.
+    let has_passing_ec_verify_cb = lifecycle.evidence.iter().any(|binding| {
+        binding.verifier == "ec_verify_cb" && binding.passed && binding.bound_tuple == active_tuple
+    });
+
+    if has_passing_ec_verify_cb {
+        return TdReconciliationDecision {
+            available: false,
+            result: None,
+            refusal_reason: Some(
+                "ordering violation: passing ec_verify_cb evidence already exists for current active digest tuple"
+                    .to_string(),
+            ),
+            obligation: None,
+        };
+    }
+
+    // 2. Check for passing cb_test and cb_review evidence bound to active_tuple.
+    let cb_test_active = lifecycle
+        .evidence
+        .iter()
+        .find(|b| b.verifier == "cb_test" && b.bound_tuple == active_tuple);
+    let cb_review_active = lifecycle
+        .evidence
+        .iter()
+        .find(|b| b.verifier == "cb_review" && b.bound_tuple == active_tuple);
+
+    if let Some(b) = cb_test_active {
+        if !b.passed {
+            return TdReconciliationDecision {
+                available: false,
+                result: None,
+                refusal_reason: Some(
+                    "unaccepted CB test: cb_test evidence binding on active tuple has passed set to false"
+                        .to_string(),
+                ),
+                obligation: None,
+            };
+        }
+    }
+
+    if let Some(b) = cb_review_active {
+        if !b.passed {
+            return TdReconciliationDecision {
+                available: false,
+                result: None,
+                refusal_reason: Some(
+                    "unaccepted CB review: cb_review evidence binding on active tuple has passed set to false"
+                        .to_string(),
+                ),
+                obligation: None,
+            };
+        }
+    }
+
+    let has_passing_cb_test = cb_test_active.is_some_and(|b| b.passed);
+    let has_passing_cb_review = cb_review_active.is_some_and(|b| b.passed);
+
+    if !has_passing_cb_test || !has_passing_cb_review {
+        let has_stale_cb_evidence = lifecycle.evidence.iter().any(|b| {
+            (b.verifier == "cb_test" || b.verifier == "cb_review") && b.bound_tuple != active_tuple
+        });
+
+        let refusal_reason = if has_stale_cb_evidence {
+            "stale evidence binding: cb_test or cb_review evidence bound_tuple does not match current active digest tuple".to_string()
+        } else {
+            "missing required evidence: passing cb_test and cb_review evidence bound to active tuple required".to_string()
+        };
+
+        return TdReconciliationDecision {
+            available: false,
+            result: None,
+            refusal_reason: Some(refusal_reason),
+            obligation: None,
+        };
+    }
+
+    let obligation = match claim {
+        TdReconcileClaim::NoChange => NextObligation {
+            command: format!("aw ec verify cb {}", lifecycle.slug),
+            owner: OwnerVocabulary::Cb,
+        },
+        TdReconcileClaim::Amended => NextObligation {
+            command: format!("aw td change {}", lifecycle.slug),
+            owner: OwnerVocabulary::Td,
+        },
+    };
+
+    TdReconciliationDecision {
+        available: true,
+        result: Some(claim),
+        refusal_reason: None,
+        obligation: Some(obligation),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1593,5 +1713,115 @@ mod tests {
         assert!(!status_row10.has_pending_impact);
         assert!(status_row10.pre_repair_td_digest.is_none());
         assert!(status_row10.verifiers_owing_rerun.is_empty());
+    }
+
+    #[test]
+    fn revisioned_change_wi_td_reconciliation() {
+        // Row 1: lifecycle with a complete WI/EC/TD/CB active tuple and passing cb_test + cb_review bound to that tuple; claim no_change
+        let mut lc_row1 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let active_tuple = lc_row1.active_digest_tuple();
+        add_evidence(&mut lc_row1, "cb_test", true, active_tuple.clone());
+        add_evidence(&mut lc_row1, "cb_review", true, active_tuple.clone());
+
+        let active_td_before = lc_row1.active_revisions.get(&ArtifactKind::Td).cloned();
+
+        let dec1 = decide_td_reconciliation(&lc_row1, TdReconcileClaim::NoChange);
+        assert!(dec1.available);
+        assert_eq!(dec1.result, Some(TdReconcileClaim::NoChange));
+        assert!(dec1.refusal_reason.is_none());
+        let ob1 = dec1
+            .obligation
+            .as_ref()
+            .expect("obligation must be present");
+        assert_eq!(ob1.owner, OwnerVocabulary::Cb);
+        assert_eq!(ob1.command, format!("aw ec verify cb {}", lc_row1.slug));
+
+        let active_td_after = lc_row1.active_revisions.get(&ArtifactKind::Td).cloned();
+        assert_eq!(active_td_before, active_td_after);
+
+        // Row 2: the same lifecycle; claim amended
+        let dec2 = decide_td_reconciliation(&lc_row1, TdReconcileClaim::Amended);
+        assert!(dec2.available);
+        assert_eq!(dec2.result, Some(TdReconcileClaim::Amended));
+        assert!(dec2.refusal_reason.is_none());
+        let ob2 = dec2
+            .obligation
+            .as_ref()
+            .expect("obligation must be present");
+        assert_eq!(ob2.owner, OwnerVocabulary::Td);
+        assert_eq!(ob2.command, format!("aw td change {}", lc_row1.slug));
+
+        // Row 3: the same lifecycle with the cb_review binding's passed set to false (negative control)
+        let mut lc_row3 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        add_evidence(&mut lc_row3, "cb_test", true, active_tuple.clone());
+        add_evidence(&mut lc_row3, "cb_review", false, active_tuple.clone());
+
+        let dec3 = decide_td_reconciliation(&lc_row3, TdReconcileClaim::NoChange);
+        assert!(!dec3.available);
+        assert!(dec3.result.is_none());
+        assert!(dec3.obligation.is_none());
+        let r3 = dec3
+            .refusal_reason
+            .as_ref()
+            .expect("refusal reason must be set for row 3");
+        assert!(
+            r3.contains("unaccepted CB review"),
+            "refusal reason must name unaccepted CB review: {r3}"
+        );
+
+        // Row 4: the same lifecycle whose cb_test and cb_review bindings carry a bound_tuple whose td_digest differs from the active tuple
+        let mut lc_row4 = make_lifecycle(
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let mut stale_tuple = active_tuple.clone();
+        stale_tuple.td_digest = Some("d-td-stale".to_string());
+        add_evidence(&mut lc_row4, "cb_test", true, stale_tuple.clone());
+        add_evidence(&mut lc_row4, "cb_review", true, stale_tuple.clone());
+
+        let dec4 = decide_td_reconciliation(&lc_row4, TdReconcileClaim::NoChange);
+        assert!(!dec4.available);
+        assert!(dec4.result.is_none());
+        assert!(dec4.obligation.is_none());
+        let r4 = dec4
+            .refusal_reason
+            .as_ref()
+            .expect("refusal reason must be set for row 4");
+        assert!(
+            r4.contains("stale evidence"),
+            "refusal reason must name stale binding: {r4}"
+        );
+        assert_ne!(r3, r4, "row 3 and row 4 refusal reasons must differ");
+
+        // Row 5: the same lifecycle as row 1 plus a passing ec_verify_cb binding on the current tuple
+        let mut lc_row5 = lc_row1.clone();
+        add_evidence(&mut lc_row5, "ec_verify_cb", true, active_tuple.clone());
+
+        let dec5 = decide_td_reconciliation(&lc_row5, TdReconcileClaim::NoChange);
+        assert!(!dec5.available);
+        assert!(dec5.result.is_none());
+        assert!(dec5.obligation.is_none());
+        let r5 = dec5
+            .refusal_reason
+            .as_ref()
+            .expect("refusal reason must be set for row 5");
+        assert!(
+            r5.contains("ordering violation"),
+            "refusal reason must name ordering violation: {r5}"
+        );
+        assert_ne!(r3, r5, "row 3 and row 5 refusal reasons must differ");
+        assert_ne!(r4, r5, "row 4 and row 5 refusal reasons must differ");
     }
 }
