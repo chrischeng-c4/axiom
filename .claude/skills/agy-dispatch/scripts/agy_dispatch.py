@@ -639,10 +639,22 @@ def project_policy_report(profile: dict) -> dict:
     # describing the round it came from. The result is a finding that fires on
     # correct work, and a finding that always fires is one the controller
     # learns to skim past (#3428).
-    frozen_targets = sorted(
-        set(profile["allowed_repo_writes"])
-        & {entry["path"] for entry in profile["protected_artifacts"]}
-    )
+    root = Path(profile["root"])
+    write_map = {}
+    for write in profile["allowed_repo_writes"]:
+        w_path = Path(write)
+        if not w_path.is_absolute():
+            w_path = root / w_path
+        write_map[w_path.resolve()] = write
+
+    frozen_targets_list = []
+    for entry in profile["protected_artifacts"]:
+        p_path = Path(entry["path"])
+        if not p_path.is_absolute():
+            p_path = root / p_path
+        if p_path.resolve() in write_map:
+            frozen_targets_list.append(write_map[p_path.resolve()])
+    frozen_targets = sorted(set(frozen_targets_list))
     if frozen_targets:
         blockers.append(
             f"{len(frozen_targets)} declared write target(s) are also frozen "

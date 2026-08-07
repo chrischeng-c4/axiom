@@ -265,6 +265,116 @@ class DispatchControllerTest(unittest.TestCase):
         report = agy_dispatch.project_policy_report(profile)
         self.assertTrue(report["dispatch_ready"], report["blockers"])
 
+    def test_loaded_profile_with_repo_relative_protected_write_target_blocks_dispatch(
+        self,
+    ) -> None:
+        """A profile written to disk with repo-relative protected_artifacts
+        matching allowed_repo_writes, read back with load_profile, then passed
+        to project_policy_report, blocks dispatch and names the offending path."""
+        profile = self.one_shot_profile(self.repo_a, "project-a")
+        profile["mode"] = "bounded-write"
+        profile["task_contract"]["kind"] = "implementation"
+        profile["task_contract"]["gate_command"] = "true"
+        profile["task_contract"]["design_inputs"] = [
+            {"path": "SKILL.md", "sha256": "deadbeef"}
+        ]
+        profile["allowed_repo_writes"] = ["src/a.py"]
+        profile["protected_artifacts"] = [{"path": "src/a.py", "sha256": "deadbeef"}]
+        profile_path = self.root / "profile-relative.json"
+        profile_path.write_text(json.dumps(profile))
+        loaded = agy_dispatch.load_profile(
+            str(profile_path), require_injection=False, validate_design=False
+        )
+        report = agy_dispatch.project_policy_report(loaded)
+        self.assertFalse(report["dispatch_ready"])
+        self.assertTrue(
+            any("src/a.py" in blocker for blocker in report["blockers"]),
+            report["blockers"],
+        )
+
+    def test_loaded_profile_with_absolute_protected_write_target_blocks_dispatch(
+        self,
+    ) -> None:
+        """A profile written to disk with absolute protected_artifacts under root
+        matching allowed_repo_writes, read back with load_profile, then passed
+        to project_policy_report, blocks dispatch and names the offending path."""
+        profile = self.one_shot_profile(self.repo_a, "project-a")
+        profile["mode"] = "bounded-write"
+        profile["task_contract"]["kind"] = "implementation"
+        profile["task_contract"]["gate_command"] = "true"
+        profile["task_contract"]["design_inputs"] = [
+            {"path": "SKILL.md", "sha256": "deadbeef"}
+        ]
+        profile["allowed_repo_writes"] = ["src/a.py"]
+        profile["protected_artifacts"] = [
+            {"path": str(self.repo_a / "src/a.py"), "sha256": "deadbeef"}
+        ]
+        profile_path = self.root / "profile-absolute.json"
+        profile_path.write_text(json.dumps(profile))
+        loaded = agy_dispatch.load_profile(
+            str(profile_path), require_injection=False, validate_design=False
+        )
+        report = agy_dispatch.project_policy_report(loaded)
+        self.assertFalse(report["dispatch_ready"])
+        self.assertTrue(
+            any("src/a.py" in blocker for blocker in report["blockers"]),
+            report["blockers"],
+        )
+
+    def test_loaded_profile_frozen_path_not_in_allowed_writes_is_fine(
+        self,
+    ) -> None:
+        """A profile whose frozen set names a path the round does not write,
+        read back with load_profile, is dispatch_ready (negative control)."""
+        profile = self.one_shot_profile(self.repo_a, "project-a")
+        profile["mode"] = "bounded-write"
+        profile["task_contract"]["kind"] = "implementation"
+        profile["task_contract"]["gate_command"] = "true"
+        profile["task_contract"]["design_inputs"] = [
+            {"path": "SKILL.md", "sha256": "deadbeef"}
+        ]
+        profile["allowed_repo_writes"] = ["src/a.py"]
+        profile["protected_artifacts"] = [{"path": "src/b.py", "sha256": "deadbeef"}]
+        profile_path = self.root / "profile-neg.json"
+        profile_path.write_text(json.dumps(profile))
+        loaded = agy_dispatch.load_profile(
+            str(profile_path), require_injection=False, validate_design=False
+        )
+        report = agy_dispatch.project_policy_report(loaded)
+        self.assertTrue(report["dispatch_ready"], report["blockers"])
+        self.assertFalse(
+            any("src/a.py" in blocker or "src/b.py" in blocker for blocker in report["blockers"]),
+            report["blockers"],
+        )
+
+    def test_doctor_exits_non_zero_and_reports_blocker_for_loaded_profile(
+        self,
+    ) -> None:
+        """doctor's exit status and emitted report for a profile loaded from disk
+        with a frozen write target: exits with 2 and includes the blocker."""
+        profile = self.one_shot_profile(self.repo_a, "project-a")
+        profile["mode"] = "bounded-write"
+        profile["task_contract"]["kind"] = "implementation"
+        profile["task_contract"]["gate_command"] = "true"
+        profile["task_contract"]["design_inputs"] = [
+            {"path": "SKILL.md", "sha256": "deadbeef"}
+        ]
+        profile["allowed_repo_writes"] = ["src/a.py"]
+        profile["protected_artifacts"] = [{"path": "src/a.py", "sha256": "deadbeef"}]
+        profile_path = self.root / "profile-doctor.json"
+        profile_path.write_text(json.dumps(profile))
+        loaded = agy_dispatch.load_profile(
+            str(profile_path), require_injection=False, validate_design=False
+        )
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            with self.assertRaises(SystemExit) as caught:
+                agy_dispatch.doctor(loaded)
+        self.assertEqual(caught.exception.code, 2)
+        output = buffer.getvalue()
+        self.assertIn("src/a.py", output)
+        self.assertIn("declared write target(s) are also frozen", output)
+
     def test_global_permissions_block_project_isolation(self) -> None:
         self.settings.write_text(
             json.dumps(
