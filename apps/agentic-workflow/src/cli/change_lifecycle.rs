@@ -389,7 +389,7 @@ pub struct ProjectionDecision {
     pub remediation: Vec<NextObligation>,
 }
 
-fn carrier_path(project_root: &Path, slug: &str) -> PathBuf {
+pub(crate) fn carrier_path(project_root: &Path, slug: &str) -> PathBuf {
     crate::shared::workspace::workspace_runtime_path(project_root)
         .join("causal-lifecycle")
         .join(format!("{slug}.json"))
@@ -884,7 +884,7 @@ pub fn reduce_event(lifecycle: &ChangeLifecycle, event: LifecycleEvent) -> Reduc
     }
 }
 
-fn load(project_root: &Path, slug: &str) -> Result<Option<ChangeLifecycle>> {
+pub(crate) fn load(project_root: &Path, slug: &str) -> Result<Option<ChangeLifecycle>> {
     let path = carrier_path(project_root, slug);
     if !path.exists() {
         return Ok(None);
@@ -1060,7 +1060,7 @@ fn valid_persisted_lifecycle(lifecycle: &ChangeLifecycle, requested_slug: &str) 
             .all(|(persisted, replayed)| same_invalidation_shape(persisted, replayed))
 }
 
-fn save(project_root: &Path, lifecycle: &ChangeLifecycle) -> Result<()> {
+pub(crate) fn save(project_root: &Path, lifecycle: &ChangeLifecycle) -> Result<()> {
     let path = carrier_path(project_root, &lifecycle.slug);
     let parent = path.parent().expect("carrier path has parent");
     std::fs::create_dir_all(parent).with_context(|| {

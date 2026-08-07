@@ -1033,6 +1033,12 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: true,
         sunset_criterion: "",
     },
+    VerbLifecycle {
+        path: "td.reconcile",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
     // -- cb (codebase materialization lifecycle) -----------------------
     VerbLifecycle {
         path: "cb.gen",
@@ -1770,6 +1776,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn td_reconcile_classification_matches_utility_read_only_semantics() {
+        let entry = VERB_LIFECYCLE_REGISTRY
+            .iter()
+            .find(|entry| entry.path == "td.reconcile")
+            .unwrap_or_else(|| panic!("td.reconcile must have a lifecycle classification"));
+        assert_eq!(entry.class, VerbLifecycleClass::Utility, "td.reconcile");
+        assert!(!entry.mutates_lifecycle, "td.reconcile");
+        assert!(entry.sunset_criterion.is_empty(), "td.reconcile");
+    }
+
     // #1417: spot-check the `mutates_lifecycle` classification for a
     // representative sample of each named category from the issue's design
     // (td/wi/capability/ec/conf/top-level mutating verbs vs. read-only
@@ -1831,6 +1848,7 @@ mod tests {
             "td.check",
             "td.lock",
             "td.ast",
+            "td.reconcile",
             "ec.check",
             "ec.verify",
             "capability.report",

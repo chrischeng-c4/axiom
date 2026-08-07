@@ -55,6 +55,8 @@ pub enum TdCommand {
     /// command.
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-standardize-audit-first-quality.md#schema
     AuditRecord(TdAuditRecordArgs),
+    /// Surface post-CB TD reconciliation availability over the persisted lifecycle carrier (#3350).
+    Reconcile(TdReconcileArgs),
 }
 
 /// Args for `aw td claim <slug>`.
@@ -113,6 +115,36 @@ pub struct TdAuditRecordArgs {
     /// Pretty-print the JSON output.
     #[arg(long)]
     pub pretty: bool,
+}
+
+/// Args for `aw td reconcile <slug> --result no_change|amended`.
+#[derive(Debug, Args)]
+/// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
+pub struct TdReconcileArgs {
+    /// Work item slug identifying the change work item to reconcile.
+    pub slug: String,
+    /// Reconciliation claim result: no_change or amended.
+    #[arg(long, value_enum)]
+    pub result: TdReconcileResultArg,
+    /// Emit the dispatch envelope as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum TdReconcileResultArg {
+    NoChange,
+    Amended,
+}
+
+impl From<TdReconcileResultArg> for crate::cli::ec_verdict::TdReconcileClaim {
+    fn from(arg: TdReconcileResultArg) -> Self {
+        match arg {
+            TdReconcileResultArg::NoChange => crate::cli::ec_verdict::TdReconcileClaim::NoChange,
+            TdReconcileResultArg::Amended => crate::cli::ec_verdict::TdReconcileClaim::Amended,
+        }
+    }
 }
 
 /// Args for `aw td ast <path>`.
@@ -3665,7 +3697,8 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::Check(_)
         | TdCommand::Ast(_)
         | TdCommand::Lock(_)
-        | TdCommand::AuditRecord(_) => {}
+        | TdCommand::AuditRecord(_)
+        | TdCommand::Reconcile(_) => {}
         TdCommand::Create(a) => {
             validate_python_td_create_args(a)?;
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
@@ -3693,6 +3726,88 @@ pub async fn run(args: TdArgs) -> Result<()> {
             )
             .await
         }
+        TdCommand::Reconcile(a) => run_reconcile(a, &project_root),
+    }
+}
+
+/// `aw td reconcile <slug> --result no_change|amended` — report post-CB TD reconciliation decision.
+pub fn run_reconcile(args: TdReconcileArgs, project_root: &std::path::Path) -> Result<()> {
+    let env = reconcile_td_surface(project_root, &args.slug, args.result.into())?;
+    print_json_value(&env, true)?;
+    Ok(())
+}
+
+pub fn reconcile_td_surface(
+    project_root: &std::path::Path,
+    slug: &str,
+    claim: crate::cli::ec_verdict::TdReconcileClaim,
+) -> Result<serde_json::Value> {
+    let carrier_opt = crate::cli::change_lifecycle::load(project_root, slug)?;
+    let Some(lifecycle) = carrier_opt else {
+        let refusal_reason = format!("nothing to reconcile: no carrier found for slug '{}'", slug);
+        let next = next_none(&refusal_reason);
+        return Ok(serde_json::json!({
+            "action": "reconcile",
+            "slug": slug,
+            "available": false,
+            "result": serde_json::Value::Null,
+            "refusal_reason": refusal_reason,
+            "next": next,
+            "owner": serde_json::Value::Null,
+            "obligation": serde_json::Value::Null,
+            "evicted_evidence": [],
+            "obligation_chain": []
+        }));
+    };
+
+    let decision = crate::cli::ec_verdict::decide_td_reconciliation(&lifecycle, claim);
+    if decision.available {
+        let ob = decision
+            .obligation
+            .as_ref()
+            .expect("available decision has obligation");
+        let next = serde_json::json!({
+            "kind": "dispatch",
+            "command": ob.command,
+            "owner": ob.owner,
+            "reason": "post-CB TD reconciliation available",
+            "requires_hitl": false,
+            "payload_path": serde_json::Value::Null
+        });
+        let result_str = match claim {
+            crate::cli::ec_verdict::TdReconcileClaim::NoChange => "no_change",
+            crate::cli::ec_verdict::TdReconcileClaim::Amended => "amended",
+        };
+        Ok(serde_json::json!({
+            "action": "reconcile",
+            "slug": slug,
+            "available": true,
+            "result": result_str,
+            "refusal_reason": serde_json::Value::Null,
+            "next": next,
+            "owner": ob.owner,
+            "obligation": decision.obligation,
+            "evicted_evidence": decision.evicted_evidence,
+            "obligation_chain": decision.obligation_chain
+        }))
+    } else {
+        let refusal_reason = decision
+            .refusal_reason
+            .clone()
+            .unwrap_or_else(|| "reconciliation unavailable".to_string());
+        let next = next_none(&refusal_reason);
+        Ok(serde_json::json!({
+            "action": "reconcile",
+            "slug": slug,
+            "available": false,
+            "result": serde_json::Value::Null,
+            "refusal_reason": refusal_reason,
+            "next": next,
+            "owner": serde_json::Value::Null,
+            "obligation": serde_json::Value::Null,
+            "evicted_evidence": decision.evicted_evidence,
+            "obligation_chain": decision.obligation_chain
+        }))
     }
 }
 
@@ -9765,6 +9880,317 @@ target = "rust"
         let rel = super::super::standardize::resolve_promote_target(tmp.path(), "issue-42")
             .expect("marker tracker id should resolve to its owning file");
         assert_eq!(rel, "projects/tool/src/lib.rs");
+    }
+
+    fn make_test_revision(
+        kind: crate::cli::change_lifecycle::ArtifactKind,
+        id: &str,
+        digest: &str,
+    ) -> crate::cli::change_lifecycle::ArtifactRevision {
+        crate::cli::change_lifecycle::ArtifactRevision {
+            id: id.to_string(),
+            kind,
+            digest: digest.to_string(),
+            parents: Vec::new(),
+            iteration: 1,
+            superseded_by: None,
+            invalidation_reason: None,
+        }
+    }
+
+    fn make_test_lifecycle(
+        slug: &str,
+        wi: Option<(&str, &str)>,
+        ec: Option<(&str, &str)>,
+        td: Option<(&str, &str)>,
+        cb: Option<(&str, &str)>,
+    ) -> crate::cli::change_lifecycle::ChangeLifecycle {
+        let mut active_revisions = std::collections::BTreeMap::new();
+        if let Some((id, digest)) = wi {
+            active_revisions.insert(
+                crate::cli::change_lifecycle::ArtifactKind::Wi,
+                Some(make_test_revision(
+                    crate::cli::change_lifecycle::ArtifactKind::Wi,
+                    id,
+                    digest,
+                )),
+            );
+        }
+        if let Some((id, digest)) = ec {
+            active_revisions.insert(
+                crate::cli::change_lifecycle::ArtifactKind::Ec,
+                Some(make_test_revision(
+                    crate::cli::change_lifecycle::ArtifactKind::Ec,
+                    id,
+                    digest,
+                )),
+            );
+        }
+        if let Some((id, digest)) = td {
+            active_revisions.insert(
+                crate::cli::change_lifecycle::ArtifactKind::Td,
+                Some(make_test_revision(
+                    crate::cli::change_lifecycle::ArtifactKind::Td,
+                    id,
+                    digest,
+                )),
+            );
+        }
+        if let Some((id, digest)) = cb {
+            active_revisions.insert(
+                crate::cli::change_lifecycle::ArtifactKind::Cb,
+                Some(make_test_revision(
+                    crate::cli::change_lifecycle::ArtifactKind::Cb,
+                    id,
+                    digest,
+                )),
+            );
+        }
+
+        crate::cli::change_lifecycle::ChangeLifecycle {
+            schema: "aw.change-lifecycle.v1".to_string(),
+            slug: slug.to_string(),
+            epoch: 1,
+            head_event_id: None,
+            active_revisions,
+            events: Vec::new(),
+            evidence: Vec::new(),
+            invalidations: Vec::new(),
+            iteration: 1,
+            terminal: false,
+            next: crate::cli::change_lifecycle::NextObligation {
+                command: "aw ec verify".to_string(),
+                owner: crate::cli::change_lifecycle::OwnerVocabulary::Ec,
+            },
+        }
+    }
+
+    fn add_test_evidence(
+        lc: &mut crate::cli::change_lifecycle::ChangeLifecycle,
+        verifier: &str,
+        passed: bool,
+        tuple: crate::cli::change_lifecycle::ActiveDigestTuple,
+    ) {
+        lc.evidence
+            .push(crate::cli::change_lifecycle::EvidenceBinding {
+                verifier: verifier.to_string(),
+                bound_tuple: tuple,
+                passed,
+                summary: format!("evidence for {verifier}"),
+            });
+    }
+
+    #[test]
+    fn td_reconcile_surface_measurements_rows_1_to_7() {
+        use crate::cli::change_lifecycle::OwnerVocabulary;
+        use crate::cli::ec_verdict::TdReconcileClaim;
+
+        // Row 1: carrier with complete WI/EC/TD/CB active tuple and passing cb_test + cb_review bound to active tuple; claim no_change
+        let tmp1 = tempfile::TempDir::new().unwrap();
+        let slug1 = "row1-change";
+        let mut lc1 = make_test_lifecycle(
+            slug1,
+            Some(("wi-1", "d-wi-1")),
+            Some(("ec-1", "d-ec-1")),
+            Some(("td-1", "d-td-1")),
+            Some(("cb-1", "d-cb-1")),
+        );
+        let tuple1 = lc1.active_digest_tuple();
+        add_test_evidence(&mut lc1, "cb_test", true, tuple1.clone());
+        add_test_evidence(&mut lc1, "cb_review", true, tuple1.clone());
+        crate::cli::change_lifecycle::save(tmp1.path(), &lc1).unwrap();
+
+        let carrier_path1 = crate::cli::change_lifecycle::carrier_path(tmp1.path(), slug1);
+        let bytes1_before = std::fs::read(&carrier_path1).unwrap();
+
+        let env1 = reconcile_td_surface(tmp1.path(), slug1, TdReconcileClaim::NoChange).unwrap();
+        let bytes1_after = std::fs::read(&carrier_path1).unwrap();
+
+        assert_eq!(
+            bytes1_before, bytes1_after,
+            "Row 6: carrier bytes untouched after row 1"
+        );
+        assert_eq!(env1["available"], true);
+        assert_eq!(env1["next"]["command"], format!("aw ec verify cb {slug1}"));
+        assert_eq!(env1["next"]["owner"], "cb");
+        assert_eq!(env1["owner"], "cb");
+
+        // Row 2: the same carrier; claim amended
+        let bytes2_before = std::fs::read(&carrier_path1).unwrap();
+        let env2 = reconcile_td_surface(tmp1.path(), slug1, TdReconcileClaim::Amended).unwrap();
+        let bytes2_after = std::fs::read(&carrier_path1).unwrap();
+
+        assert_eq!(
+            bytes2_before, bytes2_after,
+            "Row 6: carrier bytes untouched after row 2"
+        );
+        assert_eq!(env2["available"], true);
+        assert_eq!(env2["next"]["command"], format!("aw td change {slug1}"));
+        assert_eq!(env2["next"]["owner"], "td");
+        assert_eq!(env2["owner"], "td");
+
+        let evicted = env2["evicted_evidence"]
+            .as_array()
+            .expect("evicted_evidence array");
+        assert_eq!(evicted.len(), 2);
+        assert_eq!(evicted[0]["verifier"], "cb_test");
+        assert_eq!(evicted[1]["verifier"], "cb_review");
+
+        let chain = env2["obligation_chain"]
+            .as_array()
+            .expect("obligation_chain array");
+        assert_eq!(chain.len(), 4);
+        assert_eq!(chain[0]["command"], format!("aw td check {slug1}"));
+        assert_eq!(chain[0]["owner"], "td");
+        assert_eq!(chain[1]["command"], format!("aw ec verify td {slug1}"));
+        assert_eq!(chain[1]["owner"], "ec");
+        assert_eq!(chain[2]["command"], format!("aw td review {slug1}"));
+        assert_eq!(chain[2]["owner"], "td");
+        assert_eq!(chain[3]["command"], format!("aw cb check {slug1}"));
+        assert_eq!(chain[3]["owner"], "cb");
+
+        // Row 3: carrier whose cb_review binding is absent; claim no_change
+        let tmp3 = tempfile::TempDir::new().unwrap();
+        let slug3 = "row3-change";
+        let mut lc3 = make_test_lifecycle(
+            slug3,
+            Some(("wi-3", "d-wi-3")),
+            Some(("ec-3", "d-ec-3")),
+            Some(("td-3", "d-td-3")),
+            Some(("cb-3", "d-cb-3")),
+        );
+        let tuple3 = lc3.active_digest_tuple();
+        add_test_evidence(&mut lc3, "cb_test", true, tuple3.clone());
+        crate::cli::change_lifecycle::save(tmp3.path(), &lc3).unwrap();
+
+        let carrier_path3 = crate::cli::change_lifecycle::carrier_path(tmp3.path(), slug3);
+        let bytes3_before = std::fs::read(&carrier_path3).unwrap();
+        let env3 = reconcile_td_surface(tmp3.path(), slug3, TdReconcileClaim::NoChange).unwrap();
+        let bytes3_after = std::fs::read(&carrier_path3).unwrap();
+
+        assert_eq!(
+            bytes3_before, bytes3_after,
+            "Row 6: carrier bytes untouched after row 3"
+        );
+        assert_eq!(env3["available"], false);
+        let r3_text = env3["refusal_reason"]
+            .as_str()
+            .expect("refusal reason string");
+        assert!(
+            r3_text.contains("missing required evidence"),
+            "Row 3 refusal text: {r3_text}"
+        );
+        assert_eq!(env3["next"]["kind"], "none");
+        assert!(env3["next"]["command"].is_null());
+
+        // Row 4: carrier whose cb_test and cb_review are bound to a tuple that is no longer active; claim no_change
+        let tmp4 = tempfile::TempDir::new().unwrap();
+        let slug4 = "row4-change";
+        let mut lc4 = make_test_lifecycle(
+            slug4,
+            Some(("wi-4", "d-wi-4")),
+            Some(("ec-4", "d-ec-4")),
+            Some(("td-4", "d-td-4")),
+            Some(("cb-4", "d-cb-4")),
+        );
+        let stale_tuple = crate::cli::change_lifecycle::ActiveDigestTuple {
+            wi_digest: Some("d-wi-old".to_string()),
+            ec_digest: Some("d-ec-old".to_string()),
+            td_digest: Some("d-td-old".to_string()),
+            cb_digest: Some("d-cb-old".to_string()),
+        };
+        add_test_evidence(&mut lc4, "cb_test", true, stale_tuple.clone());
+        add_test_evidence(&mut lc4, "cb_review", true, stale_tuple.clone());
+        crate::cli::change_lifecycle::save(tmp4.path(), &lc4).unwrap();
+
+        let carrier_path4 = crate::cli::change_lifecycle::carrier_path(tmp4.path(), slug4);
+        let bytes4_before = std::fs::read(&carrier_path4).unwrap();
+        let env4 = reconcile_td_surface(tmp4.path(), slug4, TdReconcileClaim::NoChange).unwrap();
+        let bytes4_after = std::fs::read(&carrier_path4).unwrap();
+
+        assert_eq!(
+            bytes4_before, bytes4_after,
+            "Row 6: carrier bytes untouched after row 4"
+        );
+        assert_eq!(env4["available"], false);
+        let r4_text = env4["refusal_reason"]
+            .as_str()
+            .expect("refusal reason string");
+        assert!(
+            r4_text.contains("stale evidence binding"),
+            "Row 4 refusal text: {r4_text}"
+        );
+        assert_ne!(
+            r3_text, r4_text,
+            "Row 4 refusal text must differ from Row 3"
+        );
+        assert_eq!(env4["next"]["kind"], "none");
+
+        // Row 5: carrier that already holds passing ec_verify_cb on active tuple, otherwise identical to row 1's; claim amended
+        let tmp5 = tempfile::TempDir::new().unwrap();
+        let slug5 = "row5-change";
+        let mut lc5 = make_test_lifecycle(
+            slug5,
+            Some(("wi-5", "d-wi-5")),
+            Some(("ec-5", "d-ec-5")),
+            Some(("td-5", "d-td-5")),
+            Some(("cb-5", "d-cb-5")),
+        );
+        let tuple5 = lc5.active_digest_tuple();
+        add_test_evidence(&mut lc5, "cb_test", true, tuple5.clone());
+        add_test_evidence(&mut lc5, "cb_review", true, tuple5.clone());
+        add_test_evidence(&mut lc5, "ec_verify_cb", true, tuple5.clone());
+        crate::cli::change_lifecycle::save(tmp5.path(), &lc5).unwrap();
+
+        let carrier_path5 = crate::cli::change_lifecycle::carrier_path(tmp5.path(), slug5);
+        let bytes5_before = std::fs::read(&carrier_path5).unwrap();
+        let env5 = reconcile_td_surface(tmp5.path(), slug5, TdReconcileClaim::Amended).unwrap();
+        let bytes5_after = std::fs::read(&carrier_path5).unwrap();
+
+        assert_eq!(
+            bytes5_before, bytes5_after,
+            "Row 6: carrier bytes untouched after row 5"
+        );
+        assert_eq!(env5["available"], false);
+        let r5_text = env5["refusal_reason"]
+            .as_str()
+            .expect("refusal reason string");
+        assert!(
+            r5_text.contains("ordering violation"),
+            "Row 5 refusal text: {r5_text}"
+        );
+        assert_ne!(
+            r3_text, r5_text,
+            "Row 5 refusal text must differ from Row 3"
+        );
+        assert_ne!(
+            r4_text, r5_text,
+            "Row 5 refusal text must differ from Row 4"
+        );
+        assert_eq!(env5["next"]["kind"], "none");
+
+        // Row 7: slug with no carrier on disk under project root (negative control)
+        let tmp7 = tempfile::TempDir::new().unwrap();
+        let slug7 = "nonexistent-slug";
+        let env7 = reconcile_td_surface(tmp7.path(), slug7, TdReconcileClaim::NoChange).unwrap();
+
+        assert_eq!(env7["available"], false);
+        let r7_text = env7["refusal_reason"]
+            .as_str()
+            .expect("refusal reason string");
+        assert!(
+            r7_text.contains("no carrier found"),
+            "Row 7 refusal text: {r7_text}"
+        );
+        assert_ne!(
+            r3_text, r7_text,
+            "Row 7 refusal text must differ from Row 3"
+        );
+        let carrier_path7 = crate::cli::change_lifecycle::carrier_path(tmp7.path(), slug7);
+        assert!(
+            !carrier_path7.exists(),
+            "Row 7: carrier file must not be created"
+        );
     }
 }
 
