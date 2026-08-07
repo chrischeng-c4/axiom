@@ -24,7 +24,7 @@ may replace AGY only by preserving its states and evidence contracts.
 
 ```
 worktree → grant → doctor → scaffold → (fill) → lint → snapshot → dispatch
-        → verify → review → prove ×2 → accept | resume | discard
+        → verify → review → prove ×2 → sweep → accept | resume | discard
 ```
 
 Every verb takes the profile; those marked below also take the task key — the
@@ -45,6 +45,7 @@ python3 $S denied   profile.json KEY     # triage a soft-denied command
 python3 $S verify   profile.json KEY     # integrity + scope audit
 python3 $S review   profile.json KEY     # print the diff to adjudicate
 python3 $S prove    profile.json KEY mutant|candidate
+python3 $S sweep    profile.json KEY SCRIPT   # record the mutation sweep
 python3 $S accept   profile.json KEY     # commit the candidate on its branch
 python3 $S discard  profile.json KEY     # release worktree, branch, binding
 python3 $S status   profile.json
@@ -602,6 +603,34 @@ a named row.
   the round which performs its deletions and skips its additions — the gate is
   green whether or not the missing rows exist, so the report reads as done, and
   only a surviving mutant says otherwise.
+
+## `sweep` — put the sweep in the round record
+
+**Does.** Runs your mutation script over the worktree and files its text, its
+output, its exit code, and whether the tree digest survived it.
+
+**Run.**
+
+```bash
+S=.claude/skills/agy-dispatch/scripts/agy_dispatch.py
+python3 $S sweep profile.json KEY /path/to/mutate.py
+```
+
+Run it after `prove candidate`, so a script that fails to restore what it
+mutated shows up as a moved digest rather than as the next round's mystery.
+
+**Never** publish a sweep result the round does not hold. The proof pair is
+recorded, cherry-picked, and quotable; a sweep living in a scratch directory is
+the strongest claim in the evidence and the only one nobody else can re-run,
+which inverts exactly the wrong way. `accept` refuses a recorded sweep that
+exited non-zero or failed to restore, and says so when no sweep exists at all —
+a gate shown to notice this change and nothing else is a floor, and the note
+names it as one.
+
+Exit code is the script's own, so write it to exit non-zero when any mutant
+misses its expected verdict. An expected *survivor* is a legitimate row when it
+probes redundancy the product genuinely has; declare it in the script rather
+than dropping it, so the sweep's own count stays honest.
 
 ## `accept` / `resume` / `discard` — the three outcomes
 

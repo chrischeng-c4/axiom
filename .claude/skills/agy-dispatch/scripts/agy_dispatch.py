@@ -2696,6 +2696,71 @@ def prove(profile: dict, task_key: str, label: str) -> None:
     print(f"saved : {path}")
 
 
+def sweep_path(profile: dict, task_key: str) -> Path:
+    return Path(profile["state_dir"]) / "proofs" / f"{task_key}.sweep.json"
+
+
+def sweep(profile: dict, task_key: str, script: str) -> None:
+    """Run the controller's mutation sweep over the worktree and record it.
+
+    The proof pair shows the gate notices *this* change. It says nothing about
+    the neighbouring wrong changes a reviewer actually fears: a constant where
+    a computed value belongs, an untouched arm of the same enum, a guard
+    relaxed by one clause. Only a sweep measures those, and until now the
+    strongest evidence a round produced lived in a scratch file that was
+    deleted with the job -- so the round's published claim of "8/8 killed" was
+    the one number nobody else could re-run. This stores the script's own text
+    beside its result.
+
+    It also answers a question the sweep cannot ask about itself: a sweep that
+    fails to restore the tree leaves every later mutant measured against the
+    wrong baseline. Comparing the digest across the run is cheap and turns that
+    silent corruption into a refusal.
+    """
+    validate_task_key(profile, task_key)
+    worktree_spec(profile)
+    source = Path(script)
+    if not source.exists():
+        raise SystemExit(f"sweep script does not exist: {script}")
+    root = Path(profile["root"])
+    text = source.read_text()
+    before = candidate_tree_digest(profile)
+    print(f"sweep : {source}")
+    print(f"tree  : {root}")
+    command = (
+        [sys.executable, str(source)]
+        if source.suffix == ".py"
+        else [str(source)]
+    )
+    result = subprocess.run(command, cwd=root, text=True, capture_output=True)
+    output = (result.stdout + result.stderr).strip()
+    after = candidate_tree_digest(profile)
+    record = {
+        "task_key": task_key,
+        "script": str(source.resolve()),
+        "script_sha256": hashlib.sha256(text.encode()).hexdigest(),
+        "script_source": text,
+        "exit_code": result.returncode,
+        "restored": before == after,
+        "tree_digest": after,
+        "output": output.splitlines(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = sweep_path(profile, task_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2) + "\n")
+    for line in output.splitlines()[-30:]:
+        print(f"  {line}")
+    print(f"exit  : {result.returncode}")
+    if not record["restored"]:
+        print(
+            "note  : the tree digest changed across the sweep -- it did not "
+            "restore what it mutated, so every result after the first is "
+            "measured against a corrupted baseline"
+        )
+    print(f"saved : {path}")
+
+
 def proof_findings(profile: dict, task_key: str) -> list[str]:
     """Why this round's gate is not yet shown to discriminate."""
     records = {}
@@ -2737,6 +2802,24 @@ def proof_findings(profile: dict, task_key: str) -> list[str]:
             "the worktree changed after the `candidate` proof was recorded; "
             "re-run it"
         )
+
+    # A recorded sweep is evidence the round will publish, so a broken one is
+    # worse than none: it reads as discrimination while measuring nothing.
+    path = sweep_path(profile, task_key)
+    if path.exists():
+        record = json.loads(path.read_text())
+        if not record.get("restored", True):
+            findings.append(
+                "the recorded sweep did not restore the tree it mutated, so "
+                "its results are measured against a corrupted baseline; fix "
+                "the restore and re-run `sweep`"
+            )
+        if record["exit_code"] != 0:
+            findings.append(
+                f"the recorded sweep exited {record['exit_code']}: at least "
+                "one mutant did not match its expected verdict, so the gate "
+                "is not yet shown to notice the neighbouring wrong changes"
+            )
     return findings
 
 
@@ -2763,6 +2846,13 @@ def proof_notes(profile: dict, task_key: str) -> list[str]:
             "the `mutant` proof did not compile, so the gate is shown to need "
             "the new symbol, not to measure its behaviour; discrimination "
             "rests on a sweep whose mutants still compile"
+        )
+    if not sweep_path(profile, task_key).exists():
+        notes.append(
+            "no mutation sweep is recorded, so the gate is shown to notice "
+            "this change and nothing else; a constant standing in for a "
+            "computed value, or an untouched arm of the same enum, would pass "
+            "it unseen. Record one with `sweep PROFILE TASK_KEY SCRIPT`"
         )
     return notes
 
@@ -3029,6 +3119,7 @@ TASK_KEY_VERBS = (
     "scaffold",
     "lint",
     "prove",
+    "sweep",
     "dispatch",
     "resume",
     "abandon",
@@ -3051,6 +3142,7 @@ def main() -> None:
         "scaffold",
         "lint",
         "prove",
+        "sweep",
         "dispatch",
         "resume",
         "abandon",
@@ -3080,6 +3172,12 @@ def main() -> None:
                 "label",
                 choices=PROOF_LABELS,
                 help="mutant: product change reverted; candidate: as accepted",
+            )
+        if verb == "sweep":
+            item.add_argument(
+                "script",
+                help="mutation sweep the controller wrote; its text is stored "
+                "with its result so the published claim can be re-run",
             )
     args = parser.parse_args()
 
@@ -3117,6 +3215,7 @@ def main() -> None:
         "scaffold": lambda: scaffold(profile, args.task_key),
         "lint": lambda: lint(profile, args.task_key),
         "prove": lambda: prove(profile, args.task_key, args.label),
+        "sweep": lambda: sweep(profile, args.task_key, args.script),
         "snapshot": lambda: snapshot(profile, args.task_key),
         "dispatch": lambda: dispatch(profile, args.task_key),
         "resume": lambda: resume(profile, args.task_key),
