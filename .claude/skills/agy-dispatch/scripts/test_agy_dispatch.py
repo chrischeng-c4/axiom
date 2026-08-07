@@ -1408,6 +1408,163 @@ class DerivedWorktreeTest(unittest.TestCase):
             ["round-1.1", "round-1.2"],
         )
 
+    def revisable_round(
+        self, candidate: bool = True, **overrides: object
+    ) -> tuple[dict, Path]:
+        """A dispatched round whose candidate is still uncommitted."""
+        state = self.root / "state"
+        (state / "oracles").mkdir(parents=True, exist_ok=True)
+        (state / "injections").mkdir(parents=True, exist_ok=True)
+        (state / "oracles" / "round-1.md").write_text("## Claim\n\nthe judge\n")
+        (state / "injections" / "round-1.md").write_text("## Task\n\nthe first ask\n")
+        path = self.profile_path(
+            inject_prompt_file=str(state / "injections" / "round-1.md"),
+            path_change_budgets={"README.md": 40},
+            **overrides,
+        )
+        profile = self.derive(path)
+        if candidate:
+            (Path(profile["worktree"]["path"]) / "README.md").write_text(
+                "base\naccepted\n"
+            )
+        delta = self.root / "delta.md"
+        delta.write_text("## Task\n\nwhat was wrong\n")
+        return profile, delta
+
+    def test_a_revision_keeps_the_checkout_and_mints_a_new_run_id(self) -> None:
+        """The whole point: the worker's uncommitted candidate survives.
+
+        A fresh round would run `worktree`, which branches from HEAD and
+        silently discards it.
+        """
+        profile, delta = self.revisable_round()
+        worker = Path(profile["worktree"]["path"])
+
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        self.assertEqual(revised["task_contract"]["run_id"], "round-2")
+        # Carried, not re-derived: same tree, same branch, same base.
+        self.assertEqual(revised["root"], str(worker))
+        self.assertEqual(revised["worktree"], profile["worktree"])
+        # The candidate is still there to be revised.
+        self.assertEqual((worker / "README.md").read_text(), "base\naccepted\n")
+        # The budget is inherited so the revision is judged against the same
+        # ceiling as the round it continues, not given a second one.
+        self.assertEqual(revised["path_change_budgets"], {"README.md": 40})
+        injection = self.root / "state" / "injections" / "round-2.md"
+        self.assertEqual(revised["inject_prompt_file"], str(injection))
+        self.assertEqual(injection.read_text(), "## Task\n\nwhat was wrong\n")
+        self.assertEqual(
+            (self.root / "state" / "oracles" / "round-2.md").read_text(),
+            "## Claim\n\nthe judge\n",
+        )
+        # The round being revised is untouched; its logs stay the record.
+        self.assertEqual(
+            (self.root / "state" / "injections" / "round-1.md").read_text(),
+            "## Task\n\nthe first ask\n",
+        )
+
+    def test_a_revision_refuses_to_reuse_the_spent_run_id(self) -> None:
+        profile, delta = self.revisable_round()
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.revise(
+                profile,
+                str(self.root / "profile.json"),
+                "round-1",
+                "round-1",
+                str(delta),
+            )
+
+        self.assertIn("needs its own run id", str(error.exception))
+
+    def test_a_revision_needs_a_candidate_to_carry(self) -> None:
+        """No candidate means nothing is being preserved, and a fresh round is
+        both cheaper to author and honest about starting from HEAD."""
+        profile, delta = self.revisable_round(candidate=False)
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.revise(
+                profile,
+                str(self.root / "profile.json"),
+                "round-1",
+                "round-2",
+                str(delta),
+            )
+
+        self.assertIn("the worker changed nothing", str(error.exception))
+        self.assertFalse(
+            (self.root / "state" / "rounds" / "round-2.profile.json").exists()
+        )
+
+    def test_a_revision_refuses_a_profile_that_never_derived_a_checkout(self) -> None:
+        profile, delta = self.revisable_round()
+        # A profile still pointing at the controller has no worker tree to keep.
+        profile["root"] = str(self.controller)
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.revise(
+                profile,
+                str(self.root / "profile.json"),
+                "round-1",
+                "round-2",
+                str(delta),
+            )
+
+        self.assertIn("no round in progress to revise", str(error.exception))
+
+    def test_a_revision_refuses_to_overwrite_a_round_in_flight(self) -> None:
+        profile, delta = self.revisable_round()
+        taken = self.root / "state" / "rounds" / "round-2.profile.json"
+        taken.parent.mkdir(parents=True, exist_ok=True)
+        taken.write_text("{}\n")
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.revise(
+                profile,
+                str(self.root / "profile.json"),
+                "round-1",
+                "round-2",
+                str(delta),
+            )
+
+        self.assertIn("refusing to overwrite an existing round", str(error.exception))
+        self.assertEqual(taken.read_text(), "{}\n")
+
+    def test_a_revision_inherits_a_sealed_claim_or_refuses(self) -> None:
+        profile, delta = self.revisable_round()
+        (self.root / "state" / "oracles" / "round-1.md").unlink()
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.revise(
+                profile,
+                str(self.root / "profile.json"),
+                "round-1",
+                "round-2",
+                str(delta),
+            )
+
+        self.assertIn("no sealed claim", str(error.exception))
+
+    def test_a_revision_refuses_a_delta_contract_that_does_not_exist(self) -> None:
+        profile, _ = self.revisable_round()
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.revise(
+                profile,
+                str(self.root / "profile.json"),
+                "round-1",
+                "round-2",
+                str(self.root / "absent.md"),
+            )
+
+        self.assertIn("revision injection does not exist", str(error.exception))
+
     def test_a_clean_round_reports_no_findings(self) -> None:
         profile = self.derive(self.profile_path())
         worker = Path(profile["worktree"]["path"])

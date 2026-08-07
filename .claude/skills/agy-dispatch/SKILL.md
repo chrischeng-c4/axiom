@@ -24,7 +24,7 @@ may replace AGY only by preserving its states and evidence contracts.
 
 ```
 worktree → grant → doctor → scaffold → (fill) → lint → snapshot → dispatch
-        → verify → review → prove ×2 → sweep → accept | resume | discard
+        → verify → review → prove ×2 → sweep → accept | revise | discard
 ```
 
 Every verb takes the profile; those marked below also take the task key — the
@@ -40,6 +40,7 @@ python3 $S lint     profile.json KEY     # structural checks on both documents
 python3 $S snapshot profile.json KEY     # freeze contract, tree, permissions
 python3 $S dispatch profile.json KEY     # run the worker (long)
 python3 $S resume   profile.json KEY     # revision round, ticketed only (long)
+python3 $S revise   profile.json KEY NEXT_KEY DELTA.md   # one-shot revision
 python3 $S abandon  profile.json KEY     # release a run that produced nothing
 python3 $S denied   profile.json KEY     # triage a soft-denied command
 python3 $S verify   profile.json KEY     # integrity + scope audit
@@ -632,29 +633,46 @@ misses its expected verdict. An expected *survivor* is a legitimate row when it
 probes redundancy the product genuinely has; declare it in the script rather
 than dropping it, so the sweep's own count stays honest.
 
-## `accept` / `resume` / `discard` — the three outcomes
+## `accept` / `revise` / `discard` — the three outcomes
 
 **Does.** `accept` stages exactly the touched paths and commits them on the
 round's branch (with `Refs #<issue>` for ticketed work), then prints the
-`git cherry-pick <sha>` for you to run from `controller_root`. `resume` sends
-the round back. `discard` restores the Project's home root and removes the
-worktree and branch.
+`git cherry-pick <sha>` for you to run from `controller_root`. `revise` and
+`resume` send the round back. `discard` restores the Project's home root and
+removes the worktree and branch.
 
 **Run.**
 
 ```bash
 S=.claude/skills/agy-dispatch/scripts/agy_dispatch.py
 python3 $S accept  profile.json KEY
+python3 $S revise  profile.json KEY NEXT_KEY delta.md
 python3 $S discard profile.json KEY [--keep-branch]
 ```
 
 **Never** expect `accept` to merge. Integration and gates are yours and they
-run against *your* branch, not the worker's checkout. To send a round back,
-write the exact delta contract to a file, point `inject_prompt_file` at it,
-re-`snapshot` if the contract changed, and `resume` (ticketed only) — the
-worker's checkout persists across the revision, so the next round builds on the
-same tree instead of starting over. Never leave a round undiscarded; use
-`--keep-branch` to throw away the checkout but keep the candidate commit.
+run against *your* branch, not the worker's checkout.
+
+To send a round back, write the exact delta contract to a file, then:
+
+- **ticketed** — point `inject_prompt_file` at it, re-`snapshot` if the
+  contract changed, and `resume`.
+- **one-shot** — run `revise`, which mints the new run id for you. A one-shot
+  id is spent the moment a conversation exists, and the refusal says only
+  "create a new run id", which reads as an instruction to author a fresh
+  round. Do not: the candidate is *uncommitted* in the very worktree
+  `worktree` would re-create from HEAD, so that path silently deletes it.
+  `revise` changes two things and carries everything else — root, worktree,
+  policy, protected artifacts, and budgets — so the revision is measured
+  against the same tree under the same ceiling. It copies the oracle
+  unchanged, because a revision exists to satisfy the sealed claim, not to
+  move it. Then `lint`, `grant`, `doctor`, `snapshot`, `dispatch` on the new
+  key.
+
+Either way the worker's checkout persists across the revision, so the next
+round builds on the same tree instead of starting over. Never leave a round
+undiscarded; use `--keep-branch` to throw away the checkout but keep the
+candidate commit.
 
 **Done when** the candidate is cherry-picked into your branch and `discard` has
 restored the Project's home root. `discard` also restores the grants baseline,

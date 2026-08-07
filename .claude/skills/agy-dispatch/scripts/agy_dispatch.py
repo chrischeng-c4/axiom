@@ -2143,6 +2143,83 @@ def resume(profile: dict, task_key: str) -> None:
     run_agent(profile, task_key, resume=True)
 
 
+def revise(
+    profile: dict, raw_path: str, task_key: str, next_key: str, injection: str
+) -> None:
+    """Mint a new run id for a round that must go back, keeping its checkout.
+
+    `resume` is for a ticketed round. A one-shot run id is spent the moment a
+    conversation exists, and the refusal says only "create a new run id" -- so
+    the obvious next move is to author a new round and run `worktree`. That
+    throws the candidate away: the worker's work is uncommitted in the very
+    worktree `worktree` would re-create from HEAD, and nothing warns first.
+
+    A revision is two changes and no more: a fresh run id, and the delta
+    contract that says what was wrong. Everything else is deliberately carried
+    over -- root, worktree, policy, protected artifacts, budgets -- so the next
+    round measures the same tree under the same rules. The oracle is copied
+    unchanged, because a revision exists to satisfy the sealed claim rather than
+    to move it; `lint` still grades the new pair against the checkout.
+
+    The budget is carried too, and that is the point of carrying it: the
+    revision's diff is judged against the same ceiling as the round it
+    continues, not given a second one.
+    """
+    validate_task_key(profile, task_key)
+    if next_key == task_key:
+        raise SystemExit(
+            "the revision needs its own run id: a one-shot id is spent once a "
+            "conversation exists, so reusing it cannot dispatch"
+        )
+    spec = worktree_spec(profile)
+    if str(Path(profile["root"])) != str(Path(spec["path"])):
+        raise SystemExit(
+            f"profile root {profile['root']} is not the worker checkout "
+            f"{spec['path']}: there is no round in progress to revise. Author "
+            "a fresh round and run `worktree` instead"
+        )
+    touched = worker_touched_paths(profile)
+    if not touched:
+        raise SystemExit(
+            f"refusing to revise {task_key}: the worker changed nothing, so "
+            "there is no candidate to carry forward and a fresh round costs "
+            "nothing to author"
+        )
+    source = Path(injection)
+    if not source.is_file():
+        raise SystemExit(f"revision injection does not exist: {injection}")
+
+    state = Path(profile["state_dir"])
+    target = state / "rounds" / f"{next_key}.profile.json"
+    if target.exists():
+        raise SystemExit(
+            f"refusing to overwrite an existing round: {target}. A round in "
+            "flight owns its profile; choose a run id that is not taken"
+        )
+    oracle = oracle_path(profile, task_key)
+    if not oracle.is_file():
+        raise SystemExit(
+            f"the round being revised has no oracle at {oracle}, so there is "
+            "no sealed claim for the revision to inherit"
+        )
+
+    revised = json.loads(Path(raw_path).read_text())
+    revised["task_contract"]["run_id"] = next_key
+    next_injection = state / "injections" / f"{next_key}.md"
+    next_injection.parent.mkdir(parents=True, exist_ok=True)
+    next_injection.write_text(source.read_text())
+    revised["inject_prompt_file"] = str(next_injection)
+    (state / "oracles" / f"{next_key}.md").write_text(oracle.read_text())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(revised, indent=2) + "\n")
+
+    print(f"carried  : {len(touched)} changed path(s) in {profile['root']}")
+    print(f"injection: {next_injection}")
+    print(f"oracle   : copied unchanged from {task_key}")
+    print(f"profile  : {target}")
+    print(f"next     : lint, grant, doctor, snapshot, dispatch -- {next_key}")
+
+
 def abandon(profile: dict, task_key: str) -> None:
     """Release a run id whose dispatch produced nothing.
 
@@ -3209,6 +3286,7 @@ TASK_KEY_VERBS = (
     "sweep",
     "dispatch",
     "resume",
+    "revise",
     "abandon",
     "snapshot",
     "verify",
@@ -3232,6 +3310,7 @@ def main() -> None:
         "sweep",
         "dispatch",
         "resume",
+        "revise",
         "abandon",
         "snapshot",
         "verify",
@@ -3253,6 +3332,17 @@ def main() -> None:
                 "--keep-branch",
                 action="store_true",
                 help="release the worktree but retain the worker branch",
+            )
+        if verb == "revise":
+            item.add_argument(
+                "next_key",
+                help="run id for the revision; a spent one-shot id cannot "
+                "dispatch again",
+            )
+            item.add_argument(
+                "injection",
+                help="delta contract naming what was wrong and what must "
+                "become true",
             )
         if verb == "prove":
             item.add_argument(
@@ -3306,6 +3396,9 @@ def main() -> None:
         "snapshot": lambda: snapshot(profile, args.task_key),
         "dispatch": lambda: dispatch(profile, args.task_key),
         "resume": lambda: resume(profile, args.task_key),
+        "revise": lambda: revise(
+            profile, args.profile, args.task_key, args.next_key, args.injection
+        ),
         "abandon": lambda: abandon(profile, args.task_key),
         "verify": lambda: verify(profile, args.task_key),
         "review": lambda: review(profile, args.task_key),
