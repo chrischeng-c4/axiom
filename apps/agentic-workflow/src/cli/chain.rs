@@ -2078,7 +2078,7 @@ mod tests {
     }
 
     fn extract_production_aw_commands(source: &str, sample_slug: &str) -> Vec<String> {
-        let prod_half = source.split("#[cfg(test)]").next().unwrap_or(source);
+        let prod_half = source.split("mod tests {").next().unwrap_or(source);
         let mut commands = Vec::new();
         let mut rest = prod_half;
         while let Some(start) = rest.find("\"aw ") {
@@ -2152,6 +2152,41 @@ mod tests {
             commands,
             vec!["aw wi validate 3359".to_string()],
             "extractor must return exactly one production-half command and ignore #[cfg(test)] half"
+        );
+    }
+
+    #[test]
+    fn command_extractor_ignores_cfg_test_attribute_on_helper_function() {
+        let fixture = r#"
+            #[cfg(test)]
+            fn helper() {}
+
+            fn emit_command() {
+                let cmd = "aw wi show {}";
+            }
+
+            mod tests {
+                fn test_command() {
+                    let cmd = "aw td review 915";
+                }
+            }
+        "#;
+        let commands = extract_production_aw_commands(fixture, "3359");
+        assert_eq!(
+            commands,
+            vec!["aw wi show 3359".to_string()],
+            "extractor must scan past #[cfg(test)] attributes on helper functions and stop at mod tests"
+        );
+    }
+
+    #[test]
+    fn run_production_emitted_commands_are_scanned_past_helper_cfg_test_attribute() {
+        let source = include_str!("run.rs");
+        let commands = extract_production_aw_commands(source, "3359");
+        assert!(
+            commands.len() >= 40,
+            "extraction must return at least 40 commands from run.rs production half, got {}",
+            commands.len()
         );
     }
 
