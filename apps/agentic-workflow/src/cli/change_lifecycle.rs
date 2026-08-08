@@ -563,7 +563,7 @@ pub fn route_failure(
             owner: OwnerVocabulary::Ec,
         },
         FailureOwnership::Design => NextObligation {
-            command: "aw td check".to_string(),
+            command: format!("aw td check --wi {slug}"),
             owner: OwnerVocabulary::Td,
         },
         FailureOwnership::Implementation => NextObligation {
@@ -1968,6 +1968,12 @@ mod tests {
                 obl2.command
             );
         }
+
+        let design1 = route_failure(FailureOwnership::Design, slug1, current_cmd);
+        let design2 = route_failure(FailureOwnership::Design, slug2, current_cmd);
+        assert_eq!(design1.command, format!("aw td check --wi {slug1}"));
+        assert_eq!(design2.command, format!("aw td check --wi {slug2}"));
+        assert_ne!(design1.command, design2.command);
 
         let impl1 = route_failure(FailureOwnership::Implementation, slug1, current_cmd);
         let impl2 = route_failure(FailureOwnership::Implementation, slug2, current_cmd);

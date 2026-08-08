@@ -100,6 +100,15 @@ impl std::fmt::Display for ChainBlocker {
     }
 }
 
+/// Validation strategy for a chain-required positional/argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PositionalValidator {
+    /// Non-empty positional argument required.
+    Present,
+    /// Either `--wi <slug>` is present and non-empty, or `target` positional is non-empty and contains '/'.
+    WiOrPathPositional,
+}
+
 /// One entry in the chain-policy table: a subcommand path (as clap kebab-case
 /// names, e.g. `["td", "code-check"]`) plus the id of a positional/optional
 /// argument that must be present on that leaf for the command to be safe to
@@ -108,6 +117,7 @@ struct ChainRequiredPositional {
     path: &'static [&'static str],
     arg_id: &'static str,
     note: &'static str,
+    validator: PositionalValidator,
 }
 
 /// #844: `aw td code-check`'s `target` (`CbCheckArgs.target: Option<String>`
@@ -115,13 +125,22 @@ struct ChainRequiredPositional {
 /// `aw td code-check` — but a bare invocation silently runs a whole-tree
 /// audit instead of the terminal check for the WI that emitted the command.
 /// Every EMIT_REGISTRY producer must substitute a real target/slug here.
-const CHAIN_REQUIRED_POSITIONALS: &[ChainRequiredPositional] = &[ChainRequiredPositional {
-    path: &["cb", "check"],
-    arg_id: "target",
-    note: "clap-optional (CbCheckArgs.target: Option<String>) but chain-required: a bare \
-           `aw td code-check` runs a whole-tree audit instead of the terminal check for the \
-           emitting WI (#844)",
-}];
+const CHAIN_REQUIRED_POSITIONALS: &[ChainRequiredPositional] = &[
+    ChainRequiredPositional {
+        path: &["cb", "check"],
+        arg_id: "target",
+        note: "clap-optional (CbCheckArgs.target: Option<String>) but chain-required: a bare \
+               `aw td code-check` runs a whole-tree audit instead of the terminal check for the \
+               emitting WI (#844)",
+        validator: PositionalValidator::Present,
+    },
+    ChainRequiredPositional {
+        path: &["td", "check"],
+        arg_id: "target",
+        note: "requires `--wi <slug>` or a project-root path target containing '/'",
+        validator: PositionalValidator::WiOrPathPositional,
+    },
+];
 
 /// Validate one emitted `aw ...` next-command string.
 ///
@@ -231,7 +250,25 @@ fn check_chain_required_positionals(
 ) -> Result<(), ChainBlocker> {
     for req in CHAIN_REQUIRED_POSITIONALS {
         if let Some(sub) = descend_subcommand(matches, req.path) {
-            if sub.get_one::<String>(req.arg_id).is_none() {
+            let valid = match req.validator {
+                PositionalValidator::Present => sub
+                    .get_one::<String>(req.arg_id)
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false),
+                PositionalValidator::WiOrPathPositional => {
+                    let wi_valid = sub
+                        .get_one::<String>("wi")
+                        .map(|s| !s.trim().is_empty())
+                        .unwrap_or(false);
+                    let target_valid = sub
+                        .get_one::<String>(req.arg_id)
+                        .map(|s| !s.trim().is_empty() && s.contains('/'))
+                        .unwrap_or(false);
+                    wi_valid || target_valid
+                }
+            };
+
+            if !valid {
                 return Err(ChainBlocker::new(
                     ChainBlockerKind::MissingChainRequiredPositional,
                     cmd,
@@ -476,7 +513,7 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "change_lifecycle.rs:route_failure (Design)",
-        sample: "aw td check",
+        sample: "aw td check --wi 915",
         note: "pure ownership routing for design-owned stage failure",
     },
     EmitSite {
@@ -2137,6 +2174,47 @@ mod tests {
     #[test]
     fn code_check_with_target_is_chain_valid() {
         assert!(validate_aw_command_string("aw cb check 915").is_ok());
+    }
+
+    #[test]
+    fn bare_td_check_is_chain_invalid() {
+        let err = validate_aw_command_string("aw td check").unwrap_err();
+        assert_eq!(err.kind, ChainBlockerKind::MissingChainRequiredPositional);
+    }
+
+    #[test]
+    fn td_check_with_slug_positional_is_chain_invalid() {
+        let err = validate_aw_command_string("aw td check 915").unwrap_err();
+        assert_eq!(err.kind, ChainBlockerKind::MissingChainRequiredPositional);
+
+        let err2 = validate_aw_command_string("aw td check slug-alpha").unwrap_err();
+        assert_eq!(err2.kind, ChainBlockerKind::MissingChainRequiredPositional);
+    }
+
+    #[test]
+    fn td_check_with_empty_wi_flag_is_chain_invalid() {
+        let err = validate_aw_command_string("aw td check --wi \"\"").unwrap_err();
+        assert_eq!(err.kind, ChainBlockerKind::MissingChainRequiredPositional);
+
+        let err2 = validate_aw_command_string("aw td check --wi \"  \"").unwrap_err();
+        assert_eq!(err2.kind, ChainBlockerKind::MissingChainRequiredPositional);
+    }
+
+    #[test]
+    fn td_check_with_wi_flag_is_chain_valid() {
+        assert!(validate_aw_command_string("aw td check --wi 915").is_ok());
+    }
+
+    #[test]
+    fn td_check_with_path_target_is_chain_valid() {
+        assert!(
+            validate_aw_command_string("aw td check apps/agentic-workflow/tech-design/specs")
+                .is_ok()
+        );
+        assert!(
+            validate_aw_command_string("aw td check libs/no-such-project/tech-design/specs")
+                .is_ok()
+        );
     }
 
     // #1276 AC2/AC3c: no cataloged emit site's sample is the bare, slug-less

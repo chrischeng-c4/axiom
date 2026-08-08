@@ -1089,7 +1089,10 @@ mod tests {
         )
         .expect("red verdict must yield routed outcome");
         assert_eq!(r4.obligation.as_ref().unwrap().owner, OwnerVocabulary::Td);
-        assert_eq!(r4.obligation.as_ref().unwrap().command, "aw td check");
+        assert_eq!(
+            r4.obligation.as_ref().unwrap().command,
+            "aw td check --wi test-change"
+        );
 
         // Row 5: (negative control) green CB verdict with all four dimensions green -> no owner and no failure obligation
         let mut lc_row5 = make_lifecycle(
