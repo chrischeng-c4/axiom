@@ -8,12 +8,14 @@ import json
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("agy_dispatch.py")
+MAKE_PROFILE = Path(__file__).with_name("make_profile.py")
 SPEC = importlib.util.spec_from_file_location("agy_dispatch", SCRIPT)
 assert SPEC and SPEC.loader
 agy_dispatch = importlib.util.module_from_spec(SPEC)
@@ -275,7 +277,7 @@ class DispatchControllerTest(unittest.TestCase):
         profile = self.one_shot_profile(self.repo_a, "project-a")
         profile["mode"] = "bounded-write"
         profile["task_contract"]["kind"] = "implementation"
-        profile["task_contract"]["gate_command"] = "true"
+        profile["task_contract"]["gate_command"] = "pwd"
         profile["task_contract"]["design_inputs"] = [
             {"path": "SKILL.md", "sha256": "deadbeef"}
         ]
@@ -302,7 +304,7 @@ class DispatchControllerTest(unittest.TestCase):
         profile = self.one_shot_profile(self.repo_a, "project-a")
         profile["mode"] = "bounded-write"
         profile["task_contract"]["kind"] = "implementation"
-        profile["task_contract"]["gate_command"] = "true"
+        profile["task_contract"]["gate_command"] = "pwd"
         profile["task_contract"]["design_inputs"] = [
             {"path": "SKILL.md", "sha256": "deadbeef"}
         ]
@@ -330,7 +332,7 @@ class DispatchControllerTest(unittest.TestCase):
         profile = self.one_shot_profile(self.repo_a, "project-a")
         profile["mode"] = "bounded-write"
         profile["task_contract"]["kind"] = "implementation"
-        profile["task_contract"]["gate_command"] = "true"
+        profile["task_contract"]["gate_command"] = "pwd"
         profile["task_contract"]["design_inputs"] = [
             {"path": "SKILL.md", "sha256": "deadbeef"}
         ]
@@ -356,7 +358,7 @@ class DispatchControllerTest(unittest.TestCase):
         profile = self.one_shot_profile(self.repo_a, "project-a")
         profile["mode"] = "bounded-write"
         profile["task_contract"]["kind"] = "implementation"
-        profile["task_contract"]["gate_command"] = "true"
+        profile["task_contract"]["gate_command"] = "pwd"
         profile["task_contract"]["design_inputs"] = [
             {"path": "SKILL.md", "sha256": "deadbeef"}
         ]
@@ -1123,7 +1125,12 @@ class DerivedWorktreeTest(unittest.TestCase):
                     },
                     "permissionGrants": {
                         "permissionGrants": {
-                            "allow": ["command(pwd)"],
+                            # The live surface a round starts from is the one
+                            # `grant` installed, so it carries the gate too.
+                            "allow": [
+                                "command(pwd)",
+                                "command(grep -q accepted README.md)",
+                            ],
                             "deny": ["command(git push)"],
                             "ask": [],
                         }
@@ -1151,13 +1158,19 @@ class DerivedWorktreeTest(unittest.TestCase):
                 # reverted tree from the candidate, or `prove` measures nothing.
                 "gate_command": "grep -q accepted README.md",
             },
+            # Shaped like `make_profile.py --gate` output: the round's gate
+            # appears in all three places, so the worker is authorized to run
+            # the one command it is judged by.
             "project_permissions": {
-                "allow": ["command(pwd)"],
+                "allow": ["command(pwd)", "command(grep -q accepted README.md)"],
                 "deny": ["command(git push)"],
                 "ask": [],
                 "require_empty_global": True,
             },
-            "task_commands": {"allow": [], "deny": []},
+            "task_commands": {
+                "allow": ["grep -q accepted README.md"],
+                "deny": [],
+            },
             "protected_artifacts": [],
             "snapshot_paths": [],
             "allowed_repo_writes": ["README.md"],
@@ -1378,7 +1391,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         path = self.profile_path(task_contract=self.contract_with_design_input())
         self.derive(path)
         loaded = json.loads(path.read_text())
-        loaded["task_commands"]["allow"] = ["cargo test --lib this_rounds_gate"]
+        loaded["task_commands"]["allow"].append("cargo test --lib this_rounds_gate")
         path.write_text(json.dumps(loaded))
         with self.assertRaises(SystemExit) as caught:
             agy_dispatch.grant(
@@ -1395,7 +1408,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         path = self.profile_path(task_contract=self.contract_with_design_input())
         self.derive(path)
         loaded = json.loads(path.read_text())
-        loaded["task_commands"]["allow"] = ["cargo test --lib this_rounds_gate"]
+        loaded["task_commands"]["allow"].append("cargo test --lib this_rounds_gate")
         loaded["project_permissions"]["allow"].append(
             "command(cargo test --lib this_rounds_gate)"
         )
@@ -1423,6 +1436,180 @@ class DerivedWorktreeTest(unittest.TestCase):
                 agy_dispatch.load_profile(str(path), validate_design=False)
             )
         self.assertIn("no grants baseline", str(caught.exception))
+
+    def project_document_text(self, project_id: str = "project-a") -> str:
+        return (self.project_dir / f"{project_id}.json").read_text()
+
+    def unfilled_surface(self, **patch: object) -> Path:
+        """A derived round whose profile is then patched and written back."""
+        path = self.profile_path(task_contract=self.contract_with_design_input())
+        self.derive(path)
+        loaded = json.loads(path.read_text())
+        for key, value in patch.items():
+            section, _, field = key.partition("__")
+            loaded[section][field] = value
+        path.write_text(json.dumps(loaded))
+        return path
+
+    def test_grant_refuses_a_surface_that_authorizes_no_command(self) -> None:
+        """`make_profile.py` emitted `"allow": []` and `grant` installs the
+        declared surface verbatim, so an unfilled profile revoked every
+        permission the Project held — and every check downstream then iterated
+        an empty list and found nothing wrong."""
+        path = self.unfilled_surface(project_permissions__allow=[])
+        before = self.project_document_text()
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.grant(
+                agy_dispatch.load_profile(str(path), validate_design=False)
+            )
+        self.assertIn("authorizes no command at all", str(caught.exception))
+        self.assertIn('"no_shell": true', str(caught.exception))
+        self.assertEqual(
+            self.project_document_text(),
+            before,
+            "a refused grant must leave the live Project byte-identical",
+        )
+
+    def test_grant_installs_the_empty_surface_a_round_declares_it_wants(
+        self,
+    ) -> None:
+        """A measure-only round authorizes nothing on purpose (negative
+        control). Without this the refusal would ban a legitimate shape rather
+        than catch a profile nobody filled in."""
+        path = self.unfilled_surface(
+            project_permissions__allow=[],
+            project_permissions__no_shell=True,
+            task_commands__allow=[],
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.grant(
+                agy_dispatch.load_profile(str(path), validate_design=False)
+            )
+        self.assertEqual(self.project_grants()["allow"], [])
+
+    def test_grant_refuses_when_the_worker_cannot_run_its_own_gate(self) -> None:
+        """The gate is the one command every round has and the one field a
+        derived profile always changes, so it is the one most often missing
+        from the hand-maintained allowlist."""
+        path = self.unfilled_surface(task_commands__allow=["pwd"])
+        before = self.project_document_text()
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.grant(
+                agy_dispatch.load_profile(str(path), validate_design=False)
+            )
+        self.assertIn("cannot run what it is judged by", str(caught.exception))
+        self.assertIn("grep -q accepted README.md", str(caught.exception))
+        self.assertEqual(
+            self.project_document_text(),
+            before,
+            "a refused grant must leave the live Project byte-identical",
+        )
+
+    def test_doctor_blocks_on_a_gate_the_worker_cannot_run(self) -> None:
+        """`grant` is not the only route to a live surface, so the preflight
+        has to see the same omission. Reading ready-then-blocked off one
+        profile keeps the blocker attributable to the gate."""
+        self.isolate_permission_files()
+        path = self.profile_path(task_contract=self.contract_with_design_input())
+        self.derive(path)
+        ready = agy_dispatch.project_policy_report(
+            agy_dispatch.load_profile(str(path), validate_design=False)
+        )
+        self.assertTrue(ready["dispatch_ready"], ready["blockers"])
+
+        loaded = json.loads(path.read_text())
+        loaded["task_commands"]["allow"] = ["pwd"]
+        path.write_text(json.dumps(loaded))
+        blocked = agy_dispatch.project_policy_report(
+            agy_dispatch.load_profile(str(path), validate_design=False)
+        )
+        self.assertFalse(blocked["dispatch_ready"], blocked["blockers"])
+        self.assertTrue(
+            any(
+                "grep -q accepted README.md" in blocker
+                for blocker in blocked["blockers"]
+            ),
+            blocked["blockers"],
+        )
+
+    def test_a_narrowing_installs_and_is_printed_as_a_revocation(self) -> None:
+        """Removals used to print as `- allow command(sed)`, the same shape as
+        an addition. Narrowing stays legal; it has to announce itself, so the
+        heading has to be there and has to come first."""
+        path = self.profile_path(task_contract=self.contract_with_design_input())
+        self.derive(path)
+        self.widen_grants("command(cargo publish)")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            agy_dispatch.grant(
+                agy_dispatch.load_profile(str(path), validate_design=False)
+            )
+        printed = out.getvalue()
+        self.assertIn("revocations (1)", printed)
+        self.assertIn("- allow command(cargo publish)", printed)
+        self.assertLess(
+            printed.index("revocations (1)"),
+            printed.index("- allow command(cargo publish)"),
+            printed,
+        )
+        self.assertNotIn("command(cargo publish)", self.project_grants()["allow"])
+
+    def make_profile(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        (self.controller / "design.md").write_text("frozen design\n")
+        source = self.controller / "src"
+        source.mkdir(exist_ok=True)
+        (source / "a.py").write_text("x = 1\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "design")
+        return subprocess.run(
+            [
+                sys.executable,
+                str(MAKE_PROFILE),
+                "--root", str(self.controller),
+                "--repo", "owner/repo",
+                "--project-id", "project-a",
+                "--scope", "src",
+                "--run-id", "generated-1",
+                "--intent", "bounded change",
+                "--design-input", "design.md",
+                "--write", "src/a.py",
+                "--out", str(self.root / "generated.json"),
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_make_profile_output_is_grantable_without_hand_editing(self) -> None:
+        """The empty surface came from the generator, not from a user, so the
+        generator's own output is what has to survive the new refusals — and
+        surviving them means reaching the live Project, not just satisfying the
+        predicate in isolation."""
+        gate = "cargo test -p target --lib some_gate"
+        result = self.make_profile("--gate", gate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        generated = self.root / "generated.json"
+        profile = json.loads(generated.read_text())
+        self.assertEqual(profile["task_contract"]["gate_command"], gate)
+        self.assertIn(gate, profile["task_commands"]["allow"])
+        self.assertIn(f"command({gate})", profile["project_permissions"]["allow"])
+
+        agy_dispatch.worktree(str(generated), "generated-1")
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.grant(
+                agy_dispatch.load_profile(str(generated), require_injection=False)
+            )
+        self.assertIn(f"command({gate})", self.project_grants()["allow"])
+
+    def test_make_profile_refuses_a_bounded_write_round_without_a_gate(
+        self,
+    ) -> None:
+        """Emitting a gateless bounded-write profile is what left the gate out
+        of the allowlist in the first place."""
+        result = self.make_profile()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("needs --gate", result.stderr)
+        self.assertFalse((self.root / "generated.json").exists())
 
     def test_doctor_runs_before_the_injection_is_scaffolded(self) -> None:
         """`doctor` preflights the round; `scaffold` is what creates the

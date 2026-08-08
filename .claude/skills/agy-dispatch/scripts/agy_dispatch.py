@@ -620,6 +620,10 @@ def project_policy_report(profile: dict) -> dict:
         blockers.append(
             "Project-scope permission rules differ from project_permissions"
         )
+    # The same two omissions `grant` refuses on. Repeated here because a
+    # surface can reach the Project by a route `grant` never saw, and every
+    # other check in this report iterates a list those omissions leave empty.
+    blockers.extend(unauthorized_surface_refusals(profile))
     if global_broadening:
         blockers.append(
             "inherited global rules allow "
@@ -2725,6 +2729,44 @@ def uncovered_task_commands(profile: dict, surface: dict[str, list[str]]) -> lis
     ]
 
 
+def unauthorized_surface_refusals(profile: dict) -> list[str]:
+    """Ways a declared surface authorizes nothing the round is judged by.
+
+    `grant` installs the declared surface verbatim, so it cannot tell a profile
+    that *declares* the empty surface from one that never declared a surface at
+    all — and `make_profile.py` used to emit the second. Installing it revoked
+    every command the Project held, and the checks downstream then all iterate
+    `task_commands.allow`: an empty allow leaves nothing uncovered, matches the
+    live surface it just overwrote, and probes zero commands, so `doctor`
+    printed `dispatch_ready: true` for a worker that could not run its own gate.
+
+    The two omissions are named here once. `grant` refuses on them, so a round
+    cannot start beneath them, and `doctor` blocks on them, so a surface
+    installed by some route other than `grant` is caught too.
+    """
+    findings = []
+    declared = expected_project_surface(profile)
+    permissions = profile.get("project_permissions", {})
+    if not declared["allow"] and not permissions.get("no_shell", False):
+        findings.append(
+            "`project_permissions.allow` is empty, so the declared surface "
+            "authorizes no command at all; a round whose worker genuinely "
+            'needs no shell must say so with `"no_shell": true`'
+        )
+    gate = profile.get("task_contract", {}).get("gate_command")
+    allowed = profile.get("task_commands", {}).get("allow", [])
+    # A `no_shell` round is exempt because its gate is the controller's own
+    # instrument, not the worker's: `prove` runs it here, after the worker is
+    # done. `oracle_findings` already skips its gate cross-check for the same
+    # reason, and refusing here would make measure-only rounds unrunnable.
+    if gate and not permissions.get("no_shell", False) and gate not in allowed:
+        findings.append(
+            "`task_commands.allow` omits the round's own gate command, so the "
+            f"worker cannot run what it is judged by: {gate}"
+        )
+    return findings
+
+
 def grant(profile: dict) -> None:
     """Make the live Project grants match what this profile declares.
 
@@ -2743,6 +2785,14 @@ def grant(profile: dict) -> None:
             "could not restore the Project. Run `worktree` first."
         )
     declared = expected_project_surface(profile)
+    refusals = unauthorized_surface_refusals(profile)
+    if refusals:
+        raise SystemExit(
+            "refusing to install this surface, because it would leave the "
+            "worker unable to work:\n"
+            + "\n".join(f"  - {finding}" for finding in refusals)
+            + "\n\nThe Project's live grants are unchanged."
+        )
     uncovered = uncovered_task_commands(profile, declared)
     if uncovered:
         raise SystemExit(
@@ -2765,7 +2815,20 @@ def grant(profile: dict) -> None:
     for kind in PERMISSION_KINDS:
         for rule in sorted(set(declared[kind]) - set(before[kind])):
             print(f"+ {kind} {rule}")
-        for rule in sorted(set(before[kind]) - set(declared[kind])):
+    # A removal used to print as `- allow command(sed)`, shaped exactly like an
+    # addition and reading as a deliberate narrowing whether or not it was one.
+    # Narrowing stays legal; it just has to announce itself as a revocation.
+    revoked = [
+        (kind, rule)
+        for kind in PERMISSION_KINDS
+        for rule in sorted(set(before[kind]) - set(declared[kind]))
+    ]
+    if revoked:
+        print(
+            f"\nrevocations ({len(revoked)}) — the Project held these and this "
+            "round's profile does not:"
+        )
+        for kind, rule in revoked:
             print(f"- {kind} {rule}")
     print(f"\n`discard` restores the baseline at {grants_baseline_path(state_dir, project_id)}")
 

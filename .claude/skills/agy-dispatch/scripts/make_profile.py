@@ -38,11 +38,18 @@ branch from the controller's current `HEAD` and points the AGY Project at it.
 Protected paths are therefore emitted repo-relative so the frozen complement
 follows the round rather than the tree it was generated from.
 
-The default is a worker with no shell (`project_permissions.allow` and
-`task_commands.allow` both empty), which is what a pure authoring round wants:
-any test result or per-criterion verdict in the report is then fabricated by
-construction. Pass `--allow-shell` only when the round genuinely needs command
-access, and list the exact commands in the emitted profile afterwards.
+`--gate` names the one command the round is judged by. It is required whenever
+`--write` is passed, and it lands in three places at once — `task_contract`,
+`task_commands.allow`, and `project_permissions.allow` — so the emitted profile
+authorizes its own gate and `grant` has a real surface to install. Add the
+round's build and format commands to both lists by hand afterwards.
+
+Without `--gate` the profile declares a worker with no shell, marked
+`project_permissions.no_shell: true` so that a deliberate silence stays
+distinguishable from an unfilled profile. That is what a pure authoring round
+wants: any test result or per-criterion verdict in the report is then fabricated
+by construction. Pass `--allow-shell` when the round needs commands this script
+cannot guess, and replace the placeholders in the emitted profile.
 """
 
 from __future__ import annotations
@@ -163,6 +170,13 @@ def main() -> int:
         default=[],
         help="repo-relative writable path, optionally PATH:BUDGET; repeatable",
     )
+    ap.add_argument(
+        "--gate",
+        help="the one command this round is judged by; required with --write. "
+        "It is emitted into task_contract, task_commands.allow, and "
+        "project_permissions.allow, so the profile authorizes its own gate "
+        "without hand editing",
+    )
     ap.add_argument("--model", default="gemini-3.6-flash-high")
     ap.add_argument("--timeout", default="45m")
     ap.add_argument(
@@ -203,6 +217,15 @@ def main() -> int:
     if writes and not args.design_input:
         print(
             "error: a bounded-write round needs at least one --design-input",
+            file=sys.stderr,
+        )
+        return 2
+
+    gate = (args.gate or "").strip()
+    if writes and not gate:
+        print(
+            "error: a bounded-write round needs --gate: it is the one command "
+            "the round is judged by, and the worker has to be allowed to run it",
             file=sys.stderr,
         )
         return 2
@@ -258,6 +281,21 @@ def main() -> int:
     }
     task_commands: dict[str, list[str]] = {"allow": [], "deny": []}
 
+    # An empty `allow` is what `grant` installs verbatim, so emitting one meant
+    # emitting a surface that revokes everything the Project holds and lets
+    # every downstream check iterate an empty list and find nothing wrong. The
+    # gate is the one command every round has, so it is the one command a
+    # generated profile can authorize without guessing.
+    if gate:
+        contract["gate_command"] = gate
+        task_commands["allow"].append(gate)
+        project_permissions["allow"].append(f"command({gate})")
+    elif not args.allow_shell:
+        # A round that measures without running anything is legitimate; it just
+        # has to say so, so that an unfilled profile stays distinguishable from
+        # a deliberately silent one.
+        project_permissions["no_shell"] = True
+
     profile: dict[str, object] = {
         # `controller_root` is authored; `root` is a placeholder that
         # `agy_dispatch.py worktree` overwrites with the round's derived
@@ -284,8 +322,8 @@ def main() -> int:
         # Deliberately left for the controller to fill in: an auto-generated
         # allowlist would be a guess, and `verify` voids any command that is not
         # a byte-exact copy of an entry here.
-        project_permissions["allow"] = ["REPLACE-WITH-EXACT-command(...)"]
-        task_commands["allow"] = ["REPLACE-WITH-EXACT-COMMAND-LINE"]
+        project_permissions["allow"].append("REPLACE-WITH-EXACT-command(...)")
+        task_commands["allow"].append("REPLACE-WITH-EXACT-COMMAND-LINE")
 
     out = Path(args.out)
     out.write_text(json.dumps(profile, indent=2) + "\n")
