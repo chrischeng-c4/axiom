@@ -1328,7 +1328,20 @@ async fn run_test(args: TestArgs) -> Result<()> {
     ensure_change_id(&args.slug)?;
     let issue = load_issue_for_change_lifecycle(&args.slug).await?;
     ensure_change_issue(&issue, "test")?;
-    anyhow::bail!("stage `test` is not implemented yet (requires #3363 R4)");
+    let project_root = crate::find_project_root()?;
+    let (kind, repo, host) = resolve_backend(None, &project_root)?;
+    let backend = make_backend(&kind, &project_root, repo, host)?;
+    let filter = crate::issues::IssueFilter {
+        state: None,
+        issue_type: None,
+        label: None,
+        author: None,
+    };
+    let all_issues = backend.list(&filter).await?;
+    let projection =
+        crate::cli::change_lifecycle::run_test_leaf(&project_root, &issue, &all_issues)?;
+    println!("{}", serde_json::to_string_pretty(&projection)?);
+    Ok(())
 }
 
 async fn run_review(args: ReviewArgs) -> Result<()> {

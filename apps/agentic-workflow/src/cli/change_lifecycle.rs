@@ -1308,12 +1308,31 @@ fn valid_persisted_lifecycle(lifecycle: &ChangeLifecycle, requested_slug: &str) 
         }
         replayed = result.lifecycle;
     }
+    let expected_next = if lifecycle.evidence.iter().any(|b| {
+        b.verifier == "wi-test"
+            && b.passed
+            && b.bound_tuple.matches(&replayed.active_digest_tuple())
+    }) {
+        NextObligation {
+            command: format!("aw wi review {}", requested_slug),
+            owner: OwnerVocabulary::Wi,
+        }
+    } else if lifecycle.evidence.iter().any(|b| {
+        b.verifier == "wi-test"
+            && !b.passed
+            && b.bound_tuple.matches(&replayed.active_digest_tuple())
+    }) {
+        wi_remediation(requested_slug)
+    } else {
+        replayed.next.clone()
+    };
+
     replayed.epoch == lifecycle.epoch
         && replayed.head_event_id == lifecycle.head_event_id
         && replayed.active_revisions == lifecycle.active_revisions
         && replayed.iteration == lifecycle.iteration
         && replayed.terminal == lifecycle.terminal
-        && replayed.next == lifecycle.next
+        && expected_next == lifecycle.next
         && lifecycle.invalidations.len() == replayed.invalidations.len()
         && lifecycle
             .invalidations
@@ -1798,6 +1817,407 @@ pub fn run_change_leaf(project_root: &Path, issue: &Issue) -> Result<serde_json:
     Ok(projection_for_issue(project_root, issue))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WiDimensionResult {
+    pub dimension: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WiValidationOutcome {
+    pub passed: bool,
+    pub dimensions: Vec<WiDimensionResult>,
+    pub summary: String,
+}
+
+/// Sync leaf execution for `aw wi test <id>`.
+///
+/// Validates the WI-bound lifecycle's committed CanonicalWiSnapshot along R4's 6 dimensions,
+/// appends the outcome as a wi-test EvidenceBinding without advancing the lifecycle,
+/// and sets next.command to `aw wi review <slug>`.
+pub fn run_test_leaf(
+    project_root: &Path,
+    issue: &Issue,
+    all_issues: &[Issue],
+) -> Result<serde_json::Value> {
+    if load(project_root, &issue.slug)?.is_none() {
+        record_create(project_root, issue)?;
+    }
+    let mut lifecycle = load(project_root, &issue.slug)?
+        .context("failed to load causal lifecycle carrier after creation")?;
+
+    let snapshot = lifecycle
+        .wi_snapshot()
+        .unwrap_or_else(|| CanonicalWiSnapshot::from_issue(issue));
+
+    let bound_tuple = lifecycle.active_digest_tuple();
+    let outcome = validate_canonical_wi_snapshot(&snapshot, all_issues);
+
+    let binding = EvidenceBinding {
+        verifier: "wi-test".to_string(),
+        bound_tuple,
+        passed: outcome.passed,
+        summary: outcome.summary,
+    };
+
+    lifecycle.evidence.retain(|b| b.verifier != "wi-test");
+    lifecycle.evidence.push(binding);
+
+    lifecycle.next = if outcome.passed {
+        NextObligation {
+            command: format!("aw wi review {}", lifecycle.slug),
+            owner: OwnerVocabulary::Wi,
+        }
+    } else {
+        wi_remediation(&lifecycle.slug)
+    };
+
+    save(project_root, &lifecycle)?;
+
+    Ok(projection_for_issue(project_root, issue))
+}
+
+/// Validate a CanonicalWiSnapshot along R4's 6 dimensions.
+pub fn validate_canonical_wi_snapshot(
+    snapshot: &CanonicalWiSnapshot,
+    all_issues: &[Issue],
+) -> WiValidationOutcome {
+    let temp_issue = Issue {
+        issue_type: match snapshot.issue_type.as_str() {
+            "epic" => crate::issues::IssueType::Epic,
+            "spike" => crate::issues::IssueType::Spike,
+            "report" => crate::issues::IssueType::Report,
+            _ => crate::issues::IssueType::Change,
+        },
+        title: snapshot.title.clone(),
+        state: crate::issues::IssueState::Open,
+        id: Some(snapshot.identity.clone()),
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: {
+            let mut labels = vec![format!("app:{}", snapshot.project)];
+            for ep in &snapshot.epic_parents {
+                labels.push(format!("epic:{ep}"));
+            }
+            for dep in &snapshot.dependencies {
+                labels.push(format!("depends-on:{dep}"));
+            }
+            labels
+        },
+        created_at: None,
+        updated_at: None,
+        slug: snapshot.identity.clone(),
+        body: snapshot.body.clone(),
+        related: Vec::new(),
+        implements: Vec::new(),
+        phase: None,
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+
+    let mut dimensions = Vec::new();
+
+    // 1. Section Structure
+    dimensions.push(validate_dim_section_structure(snapshot, &temp_issue));
+
+    // 2. Boundedness
+    dimensions.push(validate_dim_boundedness(snapshot, &temp_issue));
+
+    // 3. Requirement/AC/Gate Coverage
+    dimensions.push(validate_dim_coverage(snapshot, &temp_issue));
+
+    // 4. References
+    dimensions.push(validate_dim_references(snapshot, &temp_issue, all_issues));
+
+    // 5. Ownership
+    dimensions.push(validate_dim_ownership(snapshot, &temp_issue, all_issues));
+
+    // 6. Dependency Graph
+    dimensions.push(validate_dim_dependency_graph(snapshot, &temp_issue));
+
+    let passed = dimensions.iter().all(|d| d.passed);
+    let summary = if passed {
+        "pass: all 6 structural dimensions valid".to_string()
+    } else {
+        let fails: Vec<String> = dimensions
+            .iter()
+            .filter(|d| !d.passed)
+            .map(|d| format!("[{}]: {}", d.dimension, d.detail))
+            .collect();
+        format!("fail: {}", fails.join("; "))
+    };
+
+    WiValidationOutcome {
+        passed,
+        dimensions,
+        summary,
+    }
+}
+
+fn validate_dim_section_structure(
+    snapshot: &CanonicalWiSnapshot,
+    _temp_issue: &Issue,
+) -> WiDimensionResult {
+    let dimension = "section_structure".to_string();
+    if let Err(err) =
+        crate::services::issue_parser::validate_structured_issue(&snapshot.body, IssueState::Open)
+    {
+        return WiDimensionResult {
+            dimension,
+            passed: false,
+            detail: err.to_string(),
+        };
+    }
+    let Some(structured) = crate::services::issue_parser::parse_structured_issue(&snapshot.body)
+    else {
+        return WiDimensionResult {
+            dimension,
+            passed: false,
+            detail: "body missing required section headers".to_string(),
+        };
+    };
+    if structured.requirements.is_empty() {
+        return WiDimensionResult {
+            dimension,
+            passed: false,
+            detail: "## Requirements section contains no requirement items".to_string(),
+        };
+    }
+    WiDimensionResult {
+        dimension,
+        passed: true,
+        detail: "section structure valid".to_string(),
+    }
+}
+
+fn validate_dim_boundedness(
+    snapshot: &CanonicalWiSnapshot,
+    temp_issue: &Issue,
+) -> WiDimensionResult {
+    let dimension = "boundedness".to_string();
+    if crate::issues::planner::looks_too_large_for_atomic_wi(temp_issue) {
+        return WiDimensionResult {
+            dimension,
+            passed: false,
+            detail: format!(
+                "work item `{}` looks too large for an atomic WI",
+                snapshot.identity
+            ),
+        };
+    }
+    WiDimensionResult {
+        dimension,
+        passed: true,
+        detail: "work item is bounded".to_string(),
+    }
+}
+
+fn validate_dim_coverage(snapshot: &CanonicalWiSnapshot, temp_issue: &Issue) -> WiDimensionResult {
+    let dimension = "coverage".to_string();
+    let Some(structured) = crate::services::issue_parser::parse_structured_issue(&snapshot.body)
+    else {
+        return WiDimensionResult {
+            dimension,
+            passed: false,
+            detail: "cannot parse structured issue body".to_string(),
+        };
+    };
+
+    let verif_errors =
+        crate::issues::planner::validate_requirement_verification_inventory(temp_issue);
+    let mut missing = Vec::new();
+
+    let ac_text = snapshot
+        .body
+        .split("## Acceptance Criteria")
+        .nth(1)
+        .unwrap_or("")
+        .split("## ")
+        .next()
+        .unwrap_or("");
+
+    for req in &structured.requirements {
+        let rid = req.id.trim();
+        if rid.is_empty() {
+            continue;
+        }
+
+        let ac_covers = ac_text.contains(rid);
+        let verif_covers = !verif_errors
+            .iter()
+            .any(|e| e.contains(&format!("must map {rid} to")));
+
+        if !ac_covers || !verif_covers {
+            missing.push(rid.to_string());
+        }
+    }
+
+    if !missing.is_empty() {
+        missing.sort();
+        missing.dedup();
+        return WiDimensionResult {
+            dimension,
+            passed: false,
+            detail: format!("uncovered requirement id(s): {}", missing.join(", ")),
+        };
+    }
+
+    WiDimensionResult {
+        dimension,
+        passed: true,
+        detail: "requirement/AC/gate coverage complete".to_string(),
+    }
+}
+
+fn validate_dim_references(
+    snapshot: &CanonicalWiSnapshot,
+    temp_issue: &Issue,
+    all_issues: &[Issue],
+) -> WiDimensionResult {
+    let dimension = "references".to_string();
+    let mut deps = snapshot.dependencies.clone();
+    for d in crate::issues::graph::body_dependency_references(temp_issue) {
+        if !deps.contains(&d) {
+            deps.push(d);
+        }
+    }
+
+    if !all_issues.is_empty() {
+        let known_keys: BTreeSet<String> = all_issues
+            .iter()
+            .flat_map(|i| {
+                let mut keys = vec![i.slug.clone()];
+                if let Some(id) = &i.id {
+                    keys.push(id.clone());
+                }
+                keys
+            })
+            .collect();
+
+        for dep in &deps {
+            let norm = dep.trim_start_matches('#').trim();
+            if !norm.is_empty() && !known_keys.contains(norm) {
+                return WiDimensionResult {
+                    dimension,
+                    passed: false,
+                    detail: format!("referenced dependency work item `{dep}` does not exist"),
+                };
+            }
+        }
+    }
+
+    WiDimensionResult {
+        dimension,
+        passed: true,
+        detail: "all references exist".to_string(),
+    }
+}
+
+fn validate_dim_ownership(
+    snapshot: &CanonicalWiSnapshot,
+    _temp_issue: &Issue,
+    all_issues: &[Issue],
+) -> WiDimensionResult {
+    let dimension = "ownership".to_string();
+    let parents = &snapshot.epic_parents;
+
+    if parents.len() > 1 {
+        return WiDimensionResult {
+            dimension,
+            passed: false,
+            detail: format!(
+                "work item `{}` has multiple declared parent epics: {}",
+                snapshot.identity,
+                parents.join(", ")
+            ),
+        };
+    }
+
+    if !parents.is_empty() && !all_issues.is_empty() {
+        let parent_id = &parents[0];
+        let parent_issue = all_issues
+            .iter()
+            .find(|i| i.slug == *parent_id || i.id.as_deref() == Some(parent_id.as_str()));
+        match parent_issue {
+            None => {
+                return WiDimensionResult {
+                    dimension,
+                    passed: false,
+                    detail: format!("parent epic `{parent_id}` does not exist"),
+                };
+            }
+            Some(p) if p.issue_type != crate::issues::IssueType::Epic => {
+                return WiDimensionResult {
+                    dimension,
+                    passed: false,
+                    detail: format!("parent `{parent_id}` is not an epic"),
+                };
+            }
+            Some(_) => {}
+        }
+    }
+
+    WiDimensionResult {
+        dimension,
+        passed: true,
+        detail: if parents.is_empty() {
+            "ownership unconstrained".to_string()
+        } else {
+            format!("owned by epic `{}`", parents[0])
+        },
+    }
+}
+
+fn validate_dim_dependency_graph(
+    snapshot: &CanonicalWiSnapshot,
+    temp_issue: &Issue,
+) -> WiDimensionResult {
+    let dimension = "dependency_graph".to_string();
+    let dep_errors =
+        crate::issues::planner::validate_requirement_verification_inventory(temp_issue);
+    let graph_errors: Vec<_> = dep_errors
+        .into_iter()
+        .filter(|e| {
+            e.contains("depends on unknown")
+                || e.contains("cannot depend on itself")
+                || e.contains("must be acyclic")
+        })
+        .collect();
+
+    if !graph_errors.is_empty() {
+        return WiDimensionResult {
+            dimension,
+            passed: false,
+            detail: graph_errors.join("; "),
+        };
+    }
+
+    WiDimensionResult {
+        dimension,
+        passed: true,
+        detail: "dependency graph valid and acyclic".to_string(),
+    }
+}
+
 #[cfg(test)]
 fn candidate_tuple(lifecycle: &ChangeLifecycle, candidate: &ArtifactRevision) -> ActiveDigestTuple {
     let mut tuple = lifecycle.active_digest_tuple();
@@ -1908,6 +2328,7 @@ pub(crate) fn record_terminal_lifecycle(project_root: &std::path::Path, slug: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::issues::{ensure_change_id, ensure_change_issue};
     use crate::issues::{IssueState, IssueType};
 
     fn canonical_wi_digest(body: &str) -> String {
@@ -4890,5 +5311,453 @@ Reference info.
         let proj_spike = run_change_leaf(root.path(), &spike_issue).unwrap();
         assert!(proj_spike["wi_revision"].is_null());
         assert!(!carrier_path(root.path(), &spike_issue.slug).exists());
+    }
+
+    fn complete_change_body() -> &'static str {
+        "\
+## Problem
+Problem statement describing the change.
+
+## Capability Alignment
+Capability: Test
+Capability Gap: Missing test.
+Progress Evidence: Evidence is recorded.
+
+## Requirements
+- R1: Deliver the test gate.
+
+## Scope
+### In Scope
+- Deliver the test gate.
+
+### Out of Scope
+- Unrelated features.
+
+## Acceptance Criteria
+- AC1: R1 is delivered and verified.
+
+## Verification Inventory
+| Requirement | Gate | Oracle | Depends On |
+|-------------|------|--------|------------|
+| R1 | `cargo test` | Pass | - |
+
+## Reference Context
+### Related Specs
+| Spec | Relevance |
+|------|-----------|
+| spec.md | source |
+
+### Spec Plan
+| Spec ID | Action | Main Spec Ref |
+|---------|--------|---------------|
+| wi-draft | update | spec.md |
+"
+    }
+
+    #[test]
+    fn wi_contract_test_gate_measurement_1_complete_change() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change(complete_change_body());
+        let slug = issue.slug.clone();
+
+        let proj =
+            run_test_leaf(root.path(), &issue, &[issue.clone()]).expect("run_test_leaf succeeds");
+        let carrier = load(root.path(), &slug).unwrap().expect("carrier loadable");
+
+        assert_eq!(
+            carrier.evidence.len(),
+            1,
+            "must hold exactly 1 EvidenceBinding"
+        );
+        let binding = &carrier.evidence[0];
+        assert_eq!(binding.verifier, "wi-test");
+        assert!(binding.passed, "passed must be true for complete change");
+        assert_eq!(binding.bound_tuple, carrier.active_digest_tuple());
+
+        assert_eq!(carrier.next.command, format!("aw wi review {slug}"));
+        assert_eq!(carrier.next.owner, OwnerVocabulary::Wi);
+        assert_eq!(carrier.epoch, 1);
+        assert_eq!(carrier.events.len(), 1);
+        assert!(!carrier.terminal);
+
+        assert_eq!(
+            proj["next"]["command"],
+            serde_json::json!(format!("aw wi review {slug}"))
+        );
+    }
+
+    #[test]
+    fn wi_contract_test_gate_measurement_2_failing_dimensions() {
+        // 2a: Missing ## Requirements
+        {
+            let root = tempfile::tempdir().unwrap();
+            let no_reqs_body = "\
+## Problem
+Problem description.
+
+## Scope
+### In Scope
+- Scope.
+### Out of Scope
+- None.
+";
+            let mut issue_no_reqs = change(no_reqs_body);
+            issue_no_reqs.slug = "2a".to_string();
+            issue_no_reqs.id = Some("2a".to_string());
+            let proj_no_reqs =
+                run_test_leaf(root.path(), &issue_no_reqs, &[issue_no_reqs.clone()]).unwrap();
+            let carrier_no_reqs = load(root.path(), &issue_no_reqs.slug).unwrap().unwrap();
+            assert!(valid_persisted_lifecycle(
+                &carrier_no_reqs,
+                &issue_no_reqs.slug
+            ));
+            assert!(!proj_no_reqs["wi_revision"].is_null());
+            assert_eq!(
+                proj_no_reqs["next"]["command"],
+                serde_json::json!("aw wi change 2a")
+            );
+            assert_eq!(proj_no_reqs["next"]["owner"], serde_json::json!("wi"));
+            assert_eq!(
+                proj_no_reqs["evidence"][0]["passed"],
+                serde_json::json!(false)
+            );
+            assert_eq!(carrier_no_reqs.evidence.len(), 1);
+            assert!(!carrier_no_reqs.evidence[0].passed);
+            assert!(carrier_no_reqs.evidence[0]
+                .summary
+                .contains("section_structure"));
+        }
+
+        // 2b: Requirement item not matching ^R\d+:
+        {
+            let root = tempfile::tempdir().unwrap();
+            let bad_rid_body = complete_change_body().replace("- R1:", "- InvalidItem:");
+            let mut issue_bad_rid = change(&bad_rid_body);
+            issue_bad_rid.slug = "2b".to_string();
+            issue_bad_rid.id = Some("2b".to_string());
+            let proj_bad_rid =
+                run_test_leaf(root.path(), &issue_bad_rid, &[issue_bad_rid.clone()]).unwrap();
+            let carrier_bad_rid = load(root.path(), &issue_bad_rid.slug).unwrap().unwrap();
+            assert!(valid_persisted_lifecycle(
+                &carrier_bad_rid,
+                &issue_bad_rid.slug
+            ));
+            assert!(!proj_bad_rid["wi_revision"].is_null());
+            assert_eq!(
+                proj_bad_rid["next"]["command"],
+                serde_json::json!("aw wi change 2b")
+            );
+            assert_eq!(proj_bad_rid["next"]["owner"], serde_json::json!("wi"));
+            assert_eq!(
+                proj_bad_rid["evidence"][0]["passed"],
+                serde_json::json!(false)
+            );
+            assert_eq!(carrier_bad_rid.evidence.len(), 1);
+            assert!(!carrier_bad_rid.evidence[0].passed);
+            assert!(carrier_bad_rid.evidence[0]
+                .summary
+                .contains("section_structure"));
+        }
+
+        // 2c: Body looks_too_large_for_atomic_wi
+        {
+            let root = tempfile::tempdir().unwrap();
+            let large_body = complete_change_body().replace(
+                "- Deliver the test gate.",
+                "- Rewrite all codebases from scratch across the fleet.",
+            );
+            let mut issue_large = change(&large_body);
+            issue_large.slug = "2c".to_string();
+            issue_large.id = Some("2c".to_string());
+            let proj_large =
+                run_test_leaf(root.path(), &issue_large, &[issue_large.clone()]).unwrap();
+            let carrier_large = load(root.path(), &issue_large.slug).unwrap().unwrap();
+            assert!(valid_persisted_lifecycle(&carrier_large, &issue_large.slug));
+            assert!(!proj_large["wi_revision"].is_null());
+            assert_eq!(
+                proj_large["next"]["command"],
+                serde_json::json!("aw wi change 2c")
+            );
+            assert_eq!(proj_large["next"]["owner"], serde_json::json!("wi"));
+            assert_eq!(
+                proj_large["evidence"][0]["passed"],
+                serde_json::json!(false)
+            );
+            assert_eq!(carrier_large.evidence.len(), 1);
+            assert!(!carrier_large.evidence[0].passed);
+            assert!(carrier_large.evidence[0].summary.contains("boundedness"));
+        }
+
+        // 2d: Depends On reference to non-existent WI
+        {
+            let root = tempfile::tempdir().unwrap();
+            let missing_ref_body = complete_change_body().replace(
+                "## Requirements",
+                "## Requirements\nDepends On: #nonexistent-wi-999\n",
+            );
+            let mut issue_missing_ref = change(&missing_ref_body);
+            issue_missing_ref.slug = "2d".to_string();
+            issue_missing_ref.id = Some("2d".to_string());
+            issue_missing_ref
+                .labels
+                .push("depends-on:nonexistent-wi-999".to_string());
+            let proj_missing_ref = run_test_leaf(
+                root.path(),
+                &issue_missing_ref,
+                &[issue_missing_ref.clone()],
+            )
+            .unwrap();
+            let carrier_missing_ref = load(root.path(), &issue_missing_ref.slug).unwrap().unwrap();
+            assert!(valid_persisted_lifecycle(
+                &carrier_missing_ref,
+                &issue_missing_ref.slug
+            ));
+            assert!(!proj_missing_ref["wi_revision"].is_null());
+            assert_eq!(
+                proj_missing_ref["next"]["command"],
+                serde_json::json!("aw wi change 2d")
+            );
+            assert_eq!(proj_missing_ref["next"]["owner"], serde_json::json!("wi"));
+            assert_eq!(
+                proj_missing_ref["evidence"][0]["passed"],
+                serde_json::json!(false)
+            );
+            assert_eq!(carrier_missing_ref.evidence.len(), 1);
+            assert!(!carrier_missing_ref.evidence[0].passed);
+            assert!(carrier_missing_ref.evidence[0]
+                .summary
+                .contains("references"));
+        }
+    }
+
+    #[test]
+    fn wi_contract_test_gate_measurement_3_uncovered_requirement() {
+        let root = tempfile::tempdir().unwrap();
+        let partial_cov_body = "\
+## Problem
+Problem description.
+
+## Capability Alignment
+Capability: Test
+Capability Gap: Gap.
+Progress Evidence: Evidence.
+
+## Requirements
+- R1: First requirement.
+- R2: Second requirement.
+
+## Scope
+### In Scope
+- Scope.
+### Out of Scope
+- None.
+
+## Acceptance Criteria
+- AC1: R1 is delivered.
+
+## Verification Inventory
+| Requirement | Gate | Oracle | Depends On |
+|-------------|------|--------|------------|
+| R1 | `cargo test` | Pass | - |
+
+## Reference Context
+### Related Specs
+| Spec | Relevance |
+|------|-----------|
+| spec.md | source |
+
+### Spec Plan
+| Spec ID | Action | Main Spec Ref |
+|---------|--------|---------------|
+| wi-draft | update | spec.md |
+";
+        let issue = change(partial_cov_body);
+        let proj = run_test_leaf(root.path(), &issue, &[issue.clone()]).unwrap();
+        let carrier = load(root.path(), &issue.slug).unwrap().unwrap();
+
+        assert!(valid_persisted_lifecycle(&carrier, &issue.slug));
+        assert!(!proj["wi_revision"].is_null());
+        assert_eq!(
+            proj["next"]["command"],
+            serde_json::json!(format!("aw wi change {}", issue.slug))
+        );
+        assert_eq!(proj["next"]["owner"], serde_json::json!("wi"));
+        assert_eq!(proj["evidence"][0]["passed"], serde_json::json!(false));
+        assert_eq!(carrier.evidence.len(), 1);
+        assert!(
+            !carrier.evidence[0].passed,
+            "passed must be false when R2 is uncovered"
+        );
+        assert!(
+            carrier.evidence[0].summary.contains("R2"),
+            "summary must name uncovered requirement id R2, got: {}",
+            carrier.evidence[0].summary
+        );
+    }
+
+    #[test]
+    fn wi_contract_test_gate_measurement_4_marker_block_churn_preserves_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let before_issue = change(complete_change_body());
+        let slug = before_issue.slug.clone();
+
+        record_create(root.path(), &before_issue).unwrap();
+        let proj_before =
+            run_test_leaf(root.path(), &before_issue, &[before_issue.clone()]).unwrap();
+        assert!(!proj_before["wi_revision"].is_null());
+
+        let carrier1 = load(root.path(), &slug).unwrap().unwrap();
+        assert_eq!(carrier1.evidence.len(), 1);
+        assert!(carrier1.evidence[0].passed);
+
+        let churned_body = format!(
+            "{}\n\n<!-- aw:loop-state\nversion: 1\n-->\n",
+            complete_change_body()
+        );
+        let churned_issue = change(&churned_body);
+
+        record_update(root.path(), &before_issue, &churned_issue).unwrap();
+
+        let carrier2 = load(root.path(), &slug).unwrap().unwrap();
+        assert_eq!(
+            carrier2.evidence.len(),
+            1,
+            "evidence must be preserved across marker churn"
+        );
+        assert_eq!(carrier2.evidence[0].verifier, "wi-test");
+        assert!(
+            carrier2.evidence[0].passed,
+            "outcome must remain passed: true"
+        );
+    }
+
+    #[test]
+    fn wi_contract_test_gate_measurement_4b_drifted_tracker_row_uses_committed_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change(complete_change_body());
+        let slug = issue.slug.clone();
+
+        record_create(root.path(), &issue).unwrap();
+        let proj_before = run_test_leaf(root.path(), &issue, &[issue.clone()]).unwrap();
+        assert_eq!(
+            proj_before["evidence"][0]["passed"],
+            serde_json::json!(true)
+        );
+
+        let mut drifted = issue.clone();
+        drifted.labels.push("depends-on:no-such-wi-999".to_string());
+
+        let drifted_outcome = validate_canonical_wi_snapshot(
+            &CanonicalWiSnapshot::from_issue(&drifted),
+            &[drifted.clone()],
+        );
+        assert!(!drifted_outcome.passed);
+        assert!(
+            drifted_outcome.summary.contains("references"),
+            "expected summary to contain `references`, got: {}",
+            drifted_outcome.summary
+        );
+
+        let proj_after = run_test_leaf(root.path(), &drifted, &[drifted.clone()]).unwrap();
+        assert_eq!(proj_after["evidence"][0]["passed"], serde_json::json!(true));
+        assert_eq!(
+            proj_after["next"]["command"],
+            serde_json::json!(format!("aw wi review {slug}"))
+        );
+    }
+
+    #[test]
+    fn wi_contract_test_gate_measurement_5_problem_prose_change_evicts_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let before_issue = change(complete_change_body());
+        let slug = before_issue.slug.clone();
+
+        record_create(root.path(), &before_issue).unwrap();
+        let proj_before =
+            run_test_leaf(root.path(), &before_issue, &[before_issue.clone()]).unwrap();
+        assert!(!proj_before["wi_revision"].is_null());
+
+        let carrier1 = load(root.path(), &slug).unwrap().unwrap();
+        assert_eq!(carrier1.evidence.len(), 1);
+        assert!(carrier1.evidence[0].passed);
+
+        let edited_body = complete_change_body().replace(
+            "Problem statement describing the change.",
+            "Edited problem statement prose.",
+        );
+        let edited_issue = change(&edited_body);
+
+        record_update(root.path(), &before_issue, &edited_issue).unwrap();
+
+        let carrier2 = load(root.path(), &slug).unwrap().unwrap();
+        assert!(
+            carrier2.evidence.is_empty(),
+            "active evidence must be evicted after problem prose change"
+        );
+        assert_eq!(carrier2.invalidations.len(), 1);
+        assert!(carrier2.invalidations[0]
+            .evicted_evidence_verifiers
+            .contains(&"wi-test".to_string()));
+    }
+
+    #[test]
+    fn wi_contract_test_gate_measurement_6_projection_after_green_test() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change(complete_change_body());
+        let slug = issue.slug.clone();
+
+        record_create(root.path(), &issue).unwrap();
+        let carrier_before = load(root.path(), &slug).unwrap().unwrap();
+        let rev_before = carrier_before.active_revisions[&ArtifactKind::Wi].clone();
+        let head_before = carrier_before.head_event_id.clone();
+
+        let proj = run_test_leaf(root.path(), &issue, &[issue.clone()]).unwrap();
+        let carrier_after = load(root.path(), &slug).unwrap().unwrap();
+
+        assert_eq!(
+            proj["next"]["command"],
+            serde_json::json!(format!("aw wi review {slug}"))
+        );
+        assert_eq!(proj["next"]["owner"], serde_json::json!("wi"));
+
+        let rev_after = carrier_after.active_revisions[&ArtifactKind::Wi].clone();
+        let head_after = carrier_after.head_event_id.clone();
+
+        assert_eq!(
+            rev_before, rev_after,
+            "active_revisions[Wi] must be byte-identical"
+        );
+        assert_eq!(
+            head_before, head_after,
+            "head_event_id must be byte-identical"
+        );
+        assert!(!carrier_after.terminal, "terminal must remain false");
+    }
+
+    #[test]
+    fn wi_contract_test_gate_measurement_7_refusals() {
+        let root = tempfile::tempdir().unwrap();
+
+        assert!(ensure_change_id("").is_err());
+        assert!(ensure_change_id("   ").is_err());
+
+        let mut spike_issue = change("spike body");
+        spike_issue.issue_type = IssueType::Spike;
+        spike_issue.slug = "3363-spike".to_string();
+
+        let err_spike = ensure_change_issue(&spike_issue, "test").unwrap_err();
+        assert!(err_spike.to_string().contains("has immutable type `spike`"));
+
+        let mut report_issue = change("report body");
+        report_issue.issue_type = IssueType::Report;
+        report_issue.slug = "3363-report".to_string();
+
+        let err_report = ensure_change_issue(&report_issue, "test").unwrap_err();
+        assert!(err_report
+            .to_string()
+            .contains("has immutable type `report`"));
+
+        assert!(!carrier_path(root.path(), &spike_issue.slug).exists());
+        assert!(!carrier_path(root.path(), &report_issue.slug).exists());
     }
 }
