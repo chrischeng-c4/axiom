@@ -2106,6 +2106,7 @@ mod tests {
             },
             next_command: format!("aw td review {}", l.slug),
             next_owner: OwnerVocabulary::Td,
+            wi_snapshot: None,
         };
 
         let res2 = reduce_event(&l, e_row2.clone());
@@ -2149,6 +2150,7 @@ mod tests {
             bound_tuple: l.active_digest_tuple(),
             next_command: format!("aw wi validate {}", l.slug),
             next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: None,
         };
 
         let res3 = reduce_event(&l, e_stale);

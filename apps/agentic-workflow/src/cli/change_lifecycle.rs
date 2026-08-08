@@ -142,6 +142,8 @@ pub struct LifecycleEvent {
     pub bound_tuple: ActiveDigestTuple,
     pub next_command: String,
     pub next_owner: OwnerVocabulary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wi_snapshot: Option<CanonicalWiSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +170,10 @@ pub struct ChangeLifecycle {
 }
 
 impl ChangeLifecycle {
+    pub fn wi_snapshot(&self) -> Option<CanonicalWiSnapshot> {
+        self.events.iter().rev().find_map(|e| e.wi_snapshot.clone())
+    }
+
     pub fn active_digest_tuple(&self) -> ActiveDigestTuple {
         let digest = |kind| {
             self.active_revisions
@@ -292,6 +298,8 @@ pub struct TrackerObservation {
     pub present_event_ids: BTreeSet<String>,
     #[serde(default)]
     pub state: Option<IssueState>,
+    #[serde(default)]
+    pub snapshot: Option<CanonicalWiSnapshot>,
 }
 
 impl TrackerObservation {
@@ -307,6 +315,7 @@ impl TrackerObservation {
             epoch,
             present_event_ids: present_event_ids.into_iter().map(Into::into).collect(),
             state: Some(IssueState::Open),
+            snapshot: None,
         }
     }
 
@@ -317,6 +326,7 @@ impl TrackerObservation {
             epoch: None,
             present_event_ids: BTreeSet::new(),
             state: Some(IssueState::Open),
+            snapshot: None,
         }
     }
 
@@ -333,6 +343,7 @@ impl TrackerObservation {
                         epoch: marker.epoch,
                         present_event_ids: marker.present_event_ids,
                         state: Some(IssueState::Open),
+                        snapshot: None,
                     };
                 }
             }
@@ -342,9 +353,48 @@ impl TrackerObservation {
                 epoch: None,
                 present_event_ids: BTreeSet::new(),
                 state: Some(IssueState::Open),
+                snapshot: None,
             }
         } else {
-            Self::empty(body_str)
+            Self {
+                body: body_str,
+                head_event_id: None,
+                epoch: None,
+                present_event_ids: BTreeSet::new(),
+                state: Some(IssueState::Open),
+                snapshot: None,
+            }
+        }
+    }
+
+    pub fn from_issue(issue: &Issue) -> Self {
+        let snapshot = CanonicalWiSnapshot::from_issue(issue);
+        let mut obs = Self::from_body(&issue.body).with_state(issue.state);
+        obs.snapshot = Some(snapshot);
+        obs
+    }
+
+    pub fn wi_digest(&self, lifecycle: &ChangeLifecycle) -> String {
+        if let Some(ref snapshot) = self.snapshot {
+            if let Some(committed) = lifecycle.wi_snapshot() {
+                if !committed.ownership_observed {
+                    return committed.with_body(&self.body).digest();
+                }
+            }
+            snapshot.digest()
+        } else if let Some(committed) = lifecycle.wi_snapshot() {
+            committed.with_body(&self.body).digest()
+        } else {
+            CanonicalWiSnapshot::from_parts(
+                &lifecycle.slug,
+                "",
+                "change",
+                "agentic-workflow",
+                Vec::new(),
+                Vec::new(),
+                &self.body,
+            )
+            .digest()
         }
     }
 
@@ -473,8 +523,145 @@ fn canonicalize_wi_body(body: &str) -> String {
     lines.join("\n")
 }
 
-fn canonical_wi_digest(body: &str) -> String {
-    canonical_digest(&canonicalize_wi_body(body))
+fn normalize_reference_val(value: &str) -> String {
+    crate::issues::graph::dependency_label(value)
+        .strip_prefix("depends-on:")
+        .unwrap_or(value)
+        .to_string()
+}
+
+fn reference_sort_key(value: &str) -> (bool, u64, String) {
+    let norm = normalize_reference_val(value);
+    if let Ok(num) = norm.parse::<u64>() {
+        (true, num, norm)
+    } else {
+        (false, 0, norm)
+    }
+}
+
+fn normalize_references(refs: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<String> {
+    let mut vec = refs
+        .into_iter()
+        .map(|r| normalize_reference_val(r.as_ref()))
+        .filter(|r| !r.is_empty())
+        .collect::<Vec<_>>();
+    vec.sort_by(|left, right| reference_sort_key(left).cmp(&reference_sort_key(right)));
+    vec.dedup();
+    vec
+}
+
+fn dependencies_for_labels(labels: &[String]) -> Vec<String> {
+    let raw = labels
+        .iter()
+        .filter_map(|label| label.strip_prefix("depends-on:"))
+        .collect::<Vec<_>>();
+    normalize_references(raw)
+}
+
+fn project_for_labels(labels: &[String]) -> &str {
+    labels
+        .iter()
+        .find_map(|label| {
+            label
+                .strip_prefix("app:")
+                .or_else(|| label.strip_prefix("lib:"))
+                .or_else(|| label.strip_prefix("project:"))
+        })
+        .unwrap_or("agentic-workflow")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CanonicalWiSnapshot {
+    pub identity: String,
+    pub title: String,
+    pub issue_type: String,
+    pub project: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub epic_parents: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+    pub body: String,
+    #[serde(default)]
+    pub ownership_observed: bool,
+}
+
+impl CanonicalWiSnapshot {
+    pub fn from_issue(issue: &Issue) -> Self {
+        let identity = issue.slug.trim().to_string();
+        let title = issue.title.split_whitespace().collect::<Vec<_>>().join(" ");
+        let issue_type = issue.issue_type.as_str().to_string();
+        let project = project_for(issue).to_string();
+        let epic_parents = crate::issues::graph::explicit_parent_references(issue);
+        let dependencies = dependencies_for_labels(&issue.labels);
+        let body = issue.body.clone();
+
+        Self {
+            identity,
+            title,
+            issue_type,
+            project,
+            epic_parents,
+            dependencies,
+            body,
+            ownership_observed: true,
+        }
+    }
+
+    pub fn from_parts(
+        slug: &str,
+        title: &str,
+        issue_type: &str,
+        project: &str,
+        epic_parents: Vec<String>,
+        dependencies: Vec<String>,
+        body: &str,
+    ) -> Self {
+        let identity = slug.trim().to_string();
+        let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+        let issue_type = if issue_type.is_empty() {
+            "change".to_string()
+        } else {
+            issue_type.to_string()
+        };
+        let project = if project.is_empty() {
+            "agentic-workflow".to_string()
+        } else {
+            project.to_string()
+        };
+        let epic_parents = normalize_references(epic_parents);
+        let dependencies = normalize_references(dependencies);
+        Self {
+            identity,
+            title,
+            issue_type,
+            project,
+            epic_parents,
+            dependencies,
+            body: body.to_string(),
+            ownership_observed: false,
+        }
+    }
+
+    pub fn with_body(&self, new_body: &str) -> Self {
+        let mut cloned = self.clone();
+        cloned.body = new_body.to_string();
+        cloned
+    }
+
+    pub fn digest(&self) -> String {
+        let canonical_body = canonicalize_wi_body(&self.body);
+        let normalized = format!(
+            "identity:{}\ntitle:{}\ntype:{}\nproject:{}\nepics:{}\ndeps:{}\nbody:\n{}",
+            self.identity,
+            self.title,
+            self.issue_type,
+            self.project,
+            self.epic_parents.join(","),
+            self.dependencies.join(","),
+            canonical_body
+        );
+        canonical_digest(&normalized)
+    }
 }
 
 fn revision_id(kind: ArtifactKind, digest: &str, parents: &[CausalParent]) -> String {
@@ -497,16 +684,7 @@ fn revision_id(kind: ArtifactKind, digest: &str, parents: &[CausalParent]) -> St
 }
 
 fn project_for(issue: &Issue) -> &str {
-    issue
-        .labels
-        .iter()
-        .find_map(|label| {
-            label
-                .strip_prefix("app:")
-                .or_else(|| label.strip_prefix("lib:"))
-                .or_else(|| label.strip_prefix("project:"))
-        })
-        .unwrap_or("agentic-workflow")
+    project_for_labels(&issue.labels)
 }
 
 fn is_legacy_loop_state(issue: &Issue) -> bool {
@@ -649,16 +827,17 @@ fn transitive_invalidation(
     }
 }
 
-/// Construct the post-backend-success WI creation event and durable record.
-pub fn fold_wi_create(slug: &str, body: &str, project: &str) -> ChangeLifecycle {
-    let digest = canonical_wi_digest(body);
+pub fn fold_wi_create_from_snapshot(snapshot: CanonicalWiSnapshot) -> ChangeLifecycle {
+    let slug = snapshot.identity.clone();
+    let digest = snapshot.digest();
+    let project = snapshot.project.clone();
     let revision = artifact_revision(ArtifactKind::Wi, digest.clone(), Vec::new(), 1);
-    let command = crate::cli::run::ec_draft_command(project, slug);
+    let command = crate::cli::run::ec_draft_command(&project, &slug);
     let mut active_revisions = empty_revisions();
     active_revisions.insert(ArtifactKind::Wi, Some(revision.clone()));
     ChangeLifecycle {
         schema: SCHEMA.to_string(),
-        slug: slug.to_string(),
+        slug,
         epoch: 1,
         head_event_id: Some("evt-001".to_string()),
         active_revisions,
@@ -673,6 +852,7 @@ pub fn fold_wi_create(slug: &str, body: &str, project: &str) -> ChangeLifecycle 
             },
             next_command: command.clone(),
             next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: Some(snapshot),
         }],
         evidence: Vec::new(),
         invalidations: Vec::new(),
@@ -685,16 +865,26 @@ pub fn fold_wi_create(slug: &str, body: &str, project: &str) -> ChangeLifecycle 
     }
 }
 
-fn initial_lifecycle(issue: &Issue) -> ChangeLifecycle {
-    fold_wi_create(&issue.slug, &issue.body, project_for(issue))
+pub fn fold_wi_create_from_issue(issue: &Issue) -> ChangeLifecycle {
+    let snapshot = CanonicalWiSnapshot::from_issue(issue);
+    fold_wi_create_from_snapshot(snapshot)
 }
 
-/// Fold a body update against the persisted carrier.  Equal canonical bodies
-/// remain event-free so callers can preserve the carrier bytes exactly.
-pub fn fold_wi_update(
+/// Construct the post-backend-success WI creation event and durable record.
+pub fn fold_wi_create(slug: &str, body: &str, project: &str) -> ChangeLifecycle {
+    let snapshot =
+        CanonicalWiSnapshot::from_parts(slug, "", "change", project, Vec::new(), Vec::new(), body);
+    fold_wi_create_from_snapshot(snapshot)
+}
+
+fn initial_lifecycle(issue: &Issue) -> ChangeLifecycle {
+    fold_wi_create_from_issue(issue)
+}
+
+pub fn fold_wi_update_from_snapshots(
     prior_lifecycle: &ChangeLifecycle,
-    new_body: &str,
-    pre_update_body: Option<&str>,
+    new_snapshot: &CanonicalWiSnapshot,
+    pre_update_snapshot: Option<&CanonicalWiSnapshot>,
 ) -> ReducerResult {
     let stored_digest = prior_lifecycle
         .active_revisions
@@ -702,8 +892,8 @@ pub fn fold_wi_update(
         .and_then(|revision| revision.as_ref())
         .map(|revision| revision.digest.clone());
 
-    if let (Some(observed), Some(stored)) = (pre_update_body, &stored_digest) {
-        let observed_digest = canonical_wi_digest(observed);
+    if let (Some(observed_snap), Some(stored)) = (pre_update_snapshot, &stored_digest) {
+        let observed_digest = observed_snap.digest();
         if observed_digest != *stored {
             return ReducerResult {
                 lifecycle: prior_lifecycle.clone(),
@@ -716,8 +906,8 @@ pub fn fold_wi_update(
         }
     }
 
-    let new_digest = canonical_wi_digest(new_body);
-    let old_digest = stored_digest.or_else(|| pre_update_body.map(canonical_wi_digest));
+    let new_digest = new_snapshot.digest();
+    let old_digest = stored_digest.or_else(|| pre_update_snapshot.map(|s| s.digest()));
     if old_digest.as_deref() == Some(new_digest.as_str()) {
         return ReducerResult {
             lifecycle: prior_lifecycle.clone(),
@@ -744,8 +934,44 @@ pub fn fold_wi_update(
             },
             next_command: format!("aw wi validate {}", prior_lifecycle.slug),
             next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: Some(new_snapshot.clone()),
         },
     )
+}
+
+pub fn fold_wi_update_from_issues(
+    prior_lifecycle: &ChangeLifecycle,
+    updated_issue: &Issue,
+    pre_update_issue: Option<&Issue>,
+) -> ReducerResult {
+    let new_snapshot = CanonicalWiSnapshot::from_issue(updated_issue);
+    let pre_update_snapshot = pre_update_issue.map(CanonicalWiSnapshot::from_issue);
+    fold_wi_update_from_snapshots(prior_lifecycle, &new_snapshot, pre_update_snapshot.as_ref())
+}
+
+/// Fold a body update against the persisted carrier.  Equal canonical bodies
+/// remain event-free so callers can preserve the carrier bytes exactly.
+pub fn fold_wi_update(
+    prior_lifecycle: &ChangeLifecycle,
+    new_body: &str,
+    pre_update_body: Option<&str>,
+) -> ReducerResult {
+    let slug = &prior_lifecycle.slug;
+    let base_snap = prior_lifecycle.wi_snapshot().unwrap_or_else(|| {
+        CanonicalWiSnapshot::from_parts(
+            slug,
+            "",
+            "change",
+            "agentic-workflow",
+            Vec::new(),
+            Vec::new(),
+            "",
+        )
+    });
+
+    let new_snapshot = base_snap.with_body(new_body);
+    let pre_update_snapshot = pre_update_body.map(|b| base_snap.with_body(b));
+    fold_wi_update_from_snapshots(prior_lifecycle, &new_snapshot, pre_update_snapshot.as_ref())
 }
 
 /// Deterministically accept or reject one append-only lifecycle event.
@@ -1234,7 +1460,7 @@ pub fn record_update(project_root: &Path, before: &Issue, updated: &Issue) -> Re
         return Ok(());
     };
     let expected_head = lifecycle.head_event_id.clone();
-    let result = fold_wi_update(&lifecycle, &updated.body, Some(&before.body));
+    let result = fold_wi_update_from_issues(&lifecycle, updated, Some(before));
     if !result.accepted {
         return Ok(());
     }
@@ -1316,7 +1542,7 @@ pub fn decide_projection(
         .and_then(|r| r.as_ref())
         .map(|r| &r.digest)
     {
-        let obs_wi_digest = canonical_wi_digest(&observation.body);
+        let obs_wi_digest = observation.wi_digest(lifecycle);
         if obs_wi_digest != *active_wi_digest {
             return ProjectionDecision {
                 accepted: false,
@@ -1525,7 +1751,7 @@ pub fn projection_for_issue(project_root: &Path, issue: &Issue) -> serde_json::V
     }
     match load(project_root, &issue.slug) {
         Ok(Some(lifecycle)) if valid_persisted_lifecycle(&lifecycle, &issue.slug) => {
-            let observation = TrackerObservation::from_body(&issue.body).with_state(issue.state);
+            let observation = TrackerObservation::from_issue(issue);
             let decision = decide_projection(&lifecycle, &observation);
             render(&lifecycle, &decision)
         }
@@ -1570,6 +1796,7 @@ fn reduce_stage(
             candidate_revision: candidate,
             next_command: command.to_string(),
             next_owner: owner,
+            wi_snapshot: None,
         },
     );
     assert!(result.accepted, "{:?}", result.rejection_reason);
@@ -1627,6 +1854,7 @@ pub(crate) fn record_terminal_lifecycle(project_root: &std::path::Path, slug: &s
         bound_tuple: tuple,
         next_command: format!("aw wi show {slug}"),
         next_owner: OwnerVocabulary::Cb,
+        wi_snapshot: None,
     };
     let committed = reduce_event(&cb, commit_evt);
     assert!(committed.accepted);
@@ -1637,6 +1865,19 @@ pub(crate) fn record_terminal_lifecycle(project_root: &std::path::Path, slug: &s
 mod tests {
     use super::*;
     use crate::issues::{IssueState, IssueType};
+
+    fn canonical_wi_digest(body: &str) -> String {
+        CanonicalWiSnapshot::from_parts(
+            "causal",
+            "",
+            "change",
+            "agentic-workflow",
+            Vec::new(),
+            Vec::new(),
+            body,
+        )
+        .digest()
+    }
 
     fn change(body: &str) -> Issue {
         Issue {
@@ -1809,6 +2050,7 @@ mod tests {
             },
             next_command: "aw td create causal --project agentic-workflow".to_string(),
             next_owner: OwnerVocabulary::Td,
+            wi_snapshot: None,
         });
         lifecycle.epoch = 2;
         lifecycle.head_event_id = Some("evt-002".to_string());
@@ -1844,6 +2086,7 @@ mod tests {
             candidate_revision: invalid_ec.clone(),
             next_command: "aw td check".to_string(),
             next_owner: OwnerVocabulary::Td,
+            wi_snapshot: None,
         });
         persisted
             .active_revisions
@@ -2018,6 +2261,7 @@ mod tests {
                 candidate_revision: rebound.clone(),
                 next_command: "aw ec check".to_string(),
                 next_owner: OwnerVocabulary::Ec,
+                wi_snapshot: None,
             },
         );
         assert!(result.accepted, "{:?}", result.rejection_reason);
@@ -2085,6 +2329,7 @@ mod tests {
                 candidate_revision: stale_ec,
                 next_command: "aw ec check".to_string(),
                 next_owner: OwnerVocabulary::Ec,
+                wi_snapshot: None,
             },
         );
         assert!(!stale.accepted);
@@ -2116,6 +2361,7 @@ mod tests {
             bound_tuple: tuple,
             next_command: "ignored: reducer emits canonical show".to_string(),
             next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: None,
         };
         let committed = reduce_event(&full, commit.clone());
         assert!(committed.accepted, "{:?}", committed.rejection_reason);
@@ -2479,6 +2725,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             bound_tuple: tuple.clone(),
             next_command: "PROPOSED-BY-EVENT".to_string(),
             next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: None,
         };
         let committed = reduce_event(&cb, commit_event);
         assert!(committed.accepted);
@@ -2511,6 +2758,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             bound_tuple: ActiveDigestTuple::default(),
             next_command: "aw wi validate causal".to_string(),
             next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: None,
         };
         let rej = reduce_event(&terminal_lc, stale_event);
         assert!(!rej.accepted);
@@ -2610,6 +2858,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             bound_tuple: tuple,
             next_command: "aw wi show causal".to_string(),
             next_owner: OwnerVocabulary::Cb,
+            wi_snapshot: None,
         };
         let committed = reduce_event(&cb, commit_evt);
         assert!(committed.accepted);
@@ -2734,6 +2983,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             bound_tuple: ActiveDigestTuple::default(),
             next_command: "aw wi validate causal".to_string(),
             next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: None,
         };
         let rejected_res = reduce_event(&lc, stale_event);
         assert!(!rejected_res.accepted);
@@ -2973,6 +3223,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             bound_tuple: tuple,
             next_command: "aw wi show causal".to_string(),
             next_owner: OwnerVocabulary::Cb,
+            wi_snapshot: None,
         };
         let commit_res = reduce_event(&cb_with_evidence, commit_event);
         assert!(commit_res.accepted);
@@ -3094,6 +3345,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             bound_tuple: no_evidence_cb.active_digest_tuple(),
             next_command: "aw wi show causal".to_string(),
             next_owner: OwnerVocabulary::Cb,
+            wi_snapshot: None,
         };
         let rejected_res = reduce_event(&no_evidence_cb, rejected_commit_event);
         assert!(!rejected_res.accepted);
@@ -3229,6 +3481,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             bound_tuple: no_evidence_cb.active_digest_tuple(),
             next_command: "aw wi show causal".to_string(),
             next_owner: OwnerVocabulary::Cb,
+            wi_snapshot: None,
         };
         let rejected_res = reduce_event(&no_evidence_cb, cb_commit_event.clone());
         assert!(!rejected_res.accepted);
@@ -3429,6 +3682,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             candidate_revision: cb_candidate.clone(),
             next_command: "aw cb check".to_string(),
             next_owner: OwnerVocabulary::Cb,
+            wi_snapshot: None,
         };
         let res1 = reduce_event(&start_lc, cb_change_event);
         assert!(
@@ -3552,6 +3806,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             bound_tuple: starting_tuple,
             next_command: "aw wi show causal".to_string(),
             next_owner: OwnerVocabulary::Cb,
+            wi_snapshot: None,
         };
         let res5 = reduce_event(&start_lc, commit_event);
         assert!(
@@ -4020,6 +4275,250 @@ Second scope section text.
             canonical_wi_digest(body_double_scope),
             canonical_wi_digest(&body_double_scope_edited),
             "Editing text under second occurrence of ## Scope must change canonical digest"
+        );
+    }
+
+    #[test]
+    fn test_wi_contract_canonical_snapshot_measurements() {
+        let base_body = "\
+## Problem
+Problem section text.
+
+## Capability Alignment
+Capability alignment text.
+
+## Requirements
+Requirements section text.
+
+## Scope
+Scope section text.
+
+## Acceptance Criteria
+Acceptance criteria text.
+
+## Reference Context
+Reference context text.
+";
+
+        let make_base_issue = || Issue {
+            issue_type: IssueType::Change,
+            title: "Bounded change".to_string(),
+            state: IssueState::Open,
+            id: Some("id-1".to_string()),
+            github_id: Some(101),
+            gitlab_id: None,
+            url: Some("https://github.com/org/repo/issues/101".to_string()),
+            author: Some("alice".to_string()),
+            labels: vec![
+                "type:change".to_string(),
+                "app:demo".to_string(),
+                "epic:10".to_string(),
+                "depends-on:9".to_string(),
+                "depends-on:12".to_string(),
+            ],
+            created_at: Some("2026-08-01T00:00:00Z".to_string()),
+            updated_at: Some("2026-08-01T00:00:00Z".to_string()),
+            slug: "bounded-change".to_string(),
+            body: base_body.to_string(),
+            related: Vec::new(),
+            implements: Vec::new(),
+            phase: None,
+            branch: None,
+            target_branch: None,
+            git_workflow: None,
+            change_id: None,
+            iteration: None,
+            current_task_id: None,
+            impl_spec_phase: None,
+            task_revisions: None,
+            revision_counts: None,
+            last_action: None,
+            session_id: None,
+            validation_errors: Vec::new(),
+            review_count: None,
+            flagged_sections: None,
+            fill_retry_count: None,
+            ship_status: None,
+            ship_commit: None,
+            regen_verified_at: None,
+        };
+
+        // 1. Two Issues alike in body and labels, differing only in title ("Bounded change" vs "Bounded change, revised")
+        let issue1 = make_base_issue();
+        let mut issue1_revised = make_base_issue();
+        issue1_revised.title = "Bounded change, revised".to_string();
+
+        let lc1 = initial_lifecycle(&issue1);
+        let lc1_revised = initial_lifecycle(&issue1_revised);
+
+        let digest1 = lc1
+            .active_revisions
+            .get(&ArtifactKind::Wi)
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .digest
+            .clone();
+        let digest1_revised = lc1_revised
+            .active_revisions
+            .get(&ArtifactKind::Wi)
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .digest
+            .clone();
+
+        assert_ne!(
+            digest1, digest1_revised,
+            "Measurement 1: Two issues differing only in title must produce different WI revision digests"
+        );
+
+        // 2. One Issue with ["type:change", "app:demo", "epic:10", "depends-on:9", "depends-on:12"], and three variants: permuted, duplicated, epic:20
+        let orig_snap = CanonicalWiSnapshot::from_issue(&issue1);
+
+        let mut issue2_permuted = make_base_issue();
+        issue2_permuted.labels = vec![
+            "depends-on:12".to_string(),
+            "epic:10".to_string(),
+            "app:demo".to_string(),
+            "depends-on:9".to_string(),
+            "type:change".to_string(),
+        ];
+        let permuted_snap = CanonicalWiSnapshot::from_issue(&issue2_permuted);
+
+        let mut issue2_duplicated = make_base_issue();
+        issue2_duplicated.labels = vec![
+            "type:change".to_string(),
+            "app:demo".to_string(),
+            "epic:10".to_string(),
+            "depends-on:9".to_string(),
+            "depends-on:12".to_string(),
+            "depends-on:12".to_string(),
+        ];
+        let duplicated_snap = CanonicalWiSnapshot::from_issue(&issue2_duplicated);
+
+        let mut issue2_epic20 = make_base_issue();
+        issue2_epic20.labels = vec![
+            "type:change".to_string(),
+            "app:demo".to_string(),
+            "epic:20".to_string(),
+            "depends-on:9".to_string(),
+            "depends-on:12".to_string(),
+        ];
+        let epic20_snap = CanonicalWiSnapshot::from_issue(&issue2_epic20);
+
+        assert_eq!(
+            orig_snap.digest(),
+            permuted_snap.digest(),
+            "Measurement 2: Permuted ownership labels must produce the same WI digest"
+        );
+        assert_eq!(
+            orig_snap.digest(),
+            duplicated_snap.digest(),
+            "Measurement 2: Duplicated depends-on label must produce the same WI digest"
+        );
+        assert_ne!(
+            orig_snap.digest(),
+            epic20_snap.digest(),
+            "Measurement 2: Changed epic parent must produce a different WI digest"
+        );
+
+        // 3. Two Issues alike but for state: Closed, priority:p0 -> priority:p2, phase: Some("impl"), updated_at, url/author/github_id
+        let mut issue3 = make_base_issue();
+        issue3.state = IssueState::Closed;
+        issue3.labels.push("priority:p2".to_string());
+        issue3.phase = Some("impl".to_string());
+        issue3.updated_at = Some("2026-08-02T12:00:00Z".to_string());
+        issue3.url = Some("https://example.com/3".to_string());
+        issue3.author = Some("bob".to_string());
+        issue3.github_id = Some(999);
+
+        let snap1 = CanonicalWiSnapshot::from_issue(&issue1);
+        let snap3 = CanonicalWiSnapshot::from_issue(&issue3);
+        assert_eq!(
+            snap1.digest(),
+            snap3.digest(),
+            "Measurement 3: Editing state, priority, phase, updated_at, url, author, github_id must leave WI digest unchanged"
+        );
+
+        // 4. Committed lifecycle + TrackerObservation built the way projection_for_issue builds one from an Issue whose title alone was edited on tracker (negative control)
+        let observation_title_edited = TrackerObservation::from_issue(&issue1_revised);
+        let decision4 = decide_projection(&lc1, &observation_title_edited);
+        assert!(
+            !decision4.accepted,
+            "Measurement 4: decide_projection must fail when tracker title was edited"
+        );
+        assert!(
+            decision4
+                .refusal_reason
+                .as_ref()
+                .map_or(false, |r| r.contains("digest")),
+            "Measurement 4: refusal reason must name the WI digest mismatch"
+        );
+
+        // 5. The same lifecycle, and the observation built the same way from the unedited Issue
+        let observation_unedited = TrackerObservation::from_issue(&issue1);
+        let decision5 = decide_projection(&lc1, &observation_unedited);
+        assert!(
+            decision5.accepted,
+            "Measurement 5: decide_projection must accept when tracker issue is unedited"
+        );
+
+        // 6. Refusal holds for a lifecycle whose committed title is empty and whose committed epic and dependency lists are empty, created through the path that observes ownership
+        let issue_empty_title_no_ownership = Issue {
+            issue_type: IssueType::Change,
+            title: "".to_string(),
+            state: IssueState::Open,
+            id: Some("empty-title-slug".to_string()),
+            github_id: None,
+            gitlab_id: None,
+            url: None,
+            author: None,
+            labels: vec!["app:agentic-workflow".to_string()],
+            created_at: None,
+            updated_at: None,
+            slug: "empty-title-slug".to_string(),
+            body: issue1.body.clone(),
+            related: Vec::new(),
+            implements: Vec::new(),
+            phase: None,
+            branch: None,
+            target_branch: None,
+            git_workflow: None,
+            change_id: None,
+            iteration: None,
+            current_task_id: None,
+            impl_spec_phase: None,
+            task_revisions: None,
+            revision_counts: None,
+            last_action: None,
+            session_id: None,
+            validation_errors: Vec::new(),
+            review_count: None,
+            flagged_sections: None,
+            fill_retry_count: None,
+            ship_status: None,
+            ship_commit: None,
+            regen_verified_at: None,
+        };
+        let lc_empty_title = fold_wi_create_from_issue(&issue_empty_title_no_ownership);
+        assert!(lc_empty_title.wi_snapshot().unwrap().ownership_observed);
+
+        let mut issue_with_added_title = issue_empty_title_no_ownership.clone();
+        issue_with_added_title.title = "Added Title".to_string();
+        let obs_added_title = TrackerObservation::from_issue(&issue_with_added_title);
+
+        let decision6 = decide_projection(&lc_empty_title, &obs_added_title);
+        assert!(
+            !decision6.accepted,
+            "Measurement 6: decide_projection must fail when tracker title was edited on a lifecycle with empty committed title created via observed path"
+        );
+        assert!(
+            decision6
+                .refusal_reason
+                .as_ref()
+                .map_or(false, |r| r.contains("digest")),
+            "Measurement 6: refusal reason must name the WI digest mismatch"
         );
     }
 }
