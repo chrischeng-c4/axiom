@@ -11819,7 +11819,7 @@ label = "app:agentic-workflow"
     }
 
     #[test]
-    fn change_wi_contract_lifecycle_identity_gate_accepts_change_and_refuses_others() {
+    fn wi_contract_lifecycle_surface_identity_gate_accepts_change_and_refuses_others() {
         let mut change_issue = Issue {
             issue_type: IssueType::Change,
             title: "Test Change".to_string(),
@@ -11909,7 +11909,7 @@ label = "app:agentic-workflow"
     }
 
     #[test]
-    fn change_wi_contract_lifecycle_id_gate_refuses_empty_or_whitespace() {
+    fn wi_contract_lifecycle_surface_id_gate_refuses_empty_or_whitespace() {
         assert!(ensure_change_id("").is_err());
         assert!(ensure_change_id("   ").is_err());
         let err = ensure_change_id("").unwrap_err();
@@ -11919,7 +11919,7 @@ label = "app:agentic-workflow"
 
     // Measurement 2 & 3: Clap parsing for change, test, review, commit leaves
     #[test]
-    fn change_wi_leaves_require_positional_work_item_id() {
+    fn wi_contract_lifecycle_surface_leaves_require_positional_work_item_id() {
         use crate::cli::standardize::TraceabilityCli;
         use clap::CommandFactory;
 
@@ -11953,7 +11953,7 @@ label = "app:agentic-workflow"
 
     // Measurement 7: aw wi spike, triage, show, list, graph still parse and reach existing commands
     #[test]
-    fn existing_wi_leaves_keep_behavior_and_acceptance() {
+    fn wi_contract_lifecycle_surface_existing_wi_leaves_keep_behavior_and_acceptance() {
         use crate::cli::standardize::TraceabilityCli;
         use clap::CommandFactory;
 
@@ -12020,6 +12020,37 @@ label = "app:agentic-workflow"
                 .map(String::as_str),
             Some("test")
         );
+    }
+
+    #[test]
+    fn wi_r1_lifecycle_surface_selector_guard() {
+        let source_code = include_str!("issues.rs");
+        let required_tests = [
+            concat!(
+                "wi_contract_lifecycle_surface_",
+                "identity_gate_accepts_change_and_refuses_others"
+            ),
+            concat!(
+                "wi_contract_lifecycle_surface_",
+                "id_gate_refuses_empty_or_whitespace"
+            ),
+            concat!(
+                "wi_contract_lifecycle_surface_",
+                "leaves_require_positional_work_item_id"
+            ),
+            concat!(
+                "wi_contract_lifecycle_surface_",
+                "existing_wi_leaves_keep_behavior_and_acceptance"
+            ),
+        ];
+
+        for test_name in required_tests {
+            let needle = format!("fn {}()", test_name);
+            assert!(
+                source_code.contains(&needle),
+                "missing expected R1 test function `{test_name}` in issues.rs"
+            );
+        }
     }
 }
 // CODEGEN-END
