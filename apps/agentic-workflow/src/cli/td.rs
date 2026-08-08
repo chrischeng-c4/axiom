@@ -4001,34 +4001,22 @@ pub(crate) fn lifecycle_stage_for_slug_exists(
 ) -> Result<bool> {
     use crate::issues::types::lifecycle_trailer;
 
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let slug_line = format!("Lifecycle-Slug: {slug}");
-    let output = std::process::Command::new(git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args([
-            "log",
+    let output_stdout = crate::git::git_log(
+        project_root,
+        &[
             "--format=%B%x1e",
             "--fixed-strings",
             "--grep",
             slug_line.as_str(),
             "HEAD",
-        ])
-        .output()
-        .context("git log failed while locating Python TD source baseline")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git log failed while locating Python TD source baseline: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .split('\x1e')
-        .any(|body| {
-            lifecycle_trailer::body_has_slug_trailer(body, slug)
-                && lifecycle_trailer::body_has_stage_trailer(body, stage)
-        }))
+        ],
+    )
+    .context("git log failed while locating Python TD source baseline")?;
+    Ok(output_stdout.split('\x1e').any(|body| {
+        lifecycle_trailer::body_has_slug_trailer(body, slug)
+            && lifecycle_trailer::body_has_stage_trailer(body, stage)
+    }))
 }
 
 fn canonical_python_td_root(
@@ -5623,21 +5611,16 @@ async fn prepare_td_generation_before_lifecycle(
     let spec_content = if should_use_td_branch(&current_branch)
         && crate::branch_switch::branch_exists_local(project_root, &target_branch).unwrap_or(false)
     {
-        let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
         let object = format!("refs/heads/{target_branch}:{spec_path}");
-        let output = std::process::Command::new(git)
-            .arg("-C")
-            .arg(project_root)
-            .args(["cat-file", "blob", &object])
-            .output()
-            .with_context(|| format!("reading TD spec `{spec_path}` from `{target_branch}`"))?;
-        if !output.status.success() {
-            anyhow::bail!(
-                "td gen could not read `{spec_path}` from existing branch `{target_branch}` before activation: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        String::from_utf8(output.stdout)
+        let blob_bytes = match crate::git::git_cat_file_blob(project_root, &object) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                anyhow::bail!(
+                    "td gen could not read `{spec_path}` from existing branch `{target_branch}` before activation: {err}"
+                );
+            }
+        };
+        String::from_utf8(blob_bytes)
             .with_context(|| format!("TD spec `{spec_path}` on `{target_branch}` is not UTF-8"))?
     } else {
         std::fs::read_to_string(project_root.join(&spec_path)).with_context(|| {
@@ -9669,17 +9652,7 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
 fn branch_has_trailer(repo: &std::path::Path, branch: &str, stage: &str) -> Option<bool> {
     use crate::issues::types::lifecycle_trailer;
 
-    let git_bin = crate::git::find_git_bin()?;
-    let out = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(repo)
-        .args(["log", "--format=%B", branch])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return Some(false);
-    }
-    let body = String::from_utf8_lossy(&out.stdout);
+    let body = crate::git::git_log(repo, &["--format=%B", branch]).ok()?;
     let expect_canonical = lifecycle_trailer::normalize(stage);
     Some(lifecycle_trailer::body_has_stage_trailer(
         &body,

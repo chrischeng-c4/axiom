@@ -360,6 +360,136 @@ fn repo_relative_paths(project_root: &Path, paths: &[PathBuf]) -> Result<Vec<Pat
     Ok(rel_paths)
 }
 
+fn format_git_error(op: &str, status: std::process::ExitStatus, stderr: &[u8]) -> anyhow::Error {
+    let stderr_str = String::from_utf8_lossy(stderr);
+    let trimmed = stderr_str.trim();
+    if let Some(code) = status.code() {
+        anyhow::anyhow!("{op} failed with exit code {code}: {trimmed}")
+    } else {
+        anyhow::anyhow!("{op} terminated without an exit code: {trimmed}")
+    }
+}
+
+/// Run `git log` with args in `project_root`.
+pub fn git_log(project_root: &Path, args: &[&str]) -> Result<String> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .arg("log")
+        .args(args)
+        .output()
+        .context("git log failed")?;
+    if !output.status.success() {
+        return Err(format_git_error("git log", output.status, &output.stderr));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Run `git rev-parse` with args in `project_root`.
+pub fn git_rev_parse(project_root: &Path, args: &[&str]) -> Result<String> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .arg("rev-parse")
+        .args(args)
+        .output()
+        .context("git rev-parse failed")?;
+    if !output.status.success() {
+        return Err(format_git_error(
+            "git rev-parse",
+            output.status,
+            &output.stderr,
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Run `git rev-list` with args in `project_root`.
+pub fn git_rev_list(project_root: &Path, args: &[&str]) -> Result<Vec<String>> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .arg("rev-list")
+        .args(args)
+        .output()
+        .context("git rev-list failed")?;
+    if !output.status.success() {
+        return Err(format_git_error(
+            "git rev-list",
+            output.status,
+            &output.stderr,
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
+/// Run `git merge-base --is-ancestor` in `project_root`.
+pub fn git_merge_base_is_ancestor(
+    project_root: &Path,
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .output()
+        .context("git merge-base --is-ancestor failed")?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        Some(_) => Err(format_git_error(
+            "git merge-base --is-ancestor",
+            output.status,
+            &output.stderr,
+        )),
+        None => anyhow::bail!("git merge-base --is-ancestor terminated without an exit code"),
+    }
+}
+
+/// Run `git cat-file blob <object>` in `project_root`.
+pub fn git_cat_file_blob(project_root: &Path, object: &str) -> Result<Vec<u8>> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["cat-file", "blob", object])
+        .output()
+        .context("git cat-file failed")?;
+    if !output.status.success() {
+        return Err(format_git_error(
+            "git cat-file",
+            output.status,
+            &output.stderr,
+        ));
+    }
+    Ok(output.stdout)
+}
+
+/// Run `git show` with args in `project_root`.
+pub fn git_show(project_root: &Path, args: &[&str]) -> Result<String> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .arg("show")
+        .args(args)
+        .output()
+        .context("git show failed")?;
+    if !output.status.success() {
+        return Err(format_git_error("git show", output.status, &output.stderr));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,6 +615,25 @@ mod lifecycle_commit_boundary {
         let mut test_depth = 0;
         let mut pending_cfg_test = false;
 
+        let forbidden_subcommands = [
+            "\"add\"",
+            "'add'",
+            "\"commit\"",
+            "'commit'",
+            "\"log\"",
+            "'log'",
+            "\"rev-list\"",
+            "'rev-list'",
+            "\"rev-parse\"",
+            "'rev-parse'",
+            "\"merge-base\"",
+            "'merge-base'",
+            "\"cat-file\"",
+            "'cat-file'",
+            "\"show\"",
+            "'show'",
+        ];
+
         for (line_idx, line) in lines.iter().enumerate() {
             let line_num = line_idx + 1;
             let code_line = strip_line_comment(line);
@@ -520,11 +669,10 @@ mod lifecycle_commit_boundary {
             if line.contains("Command::new") || line.contains("Command :: new") {
                 let end_idx = (line_idx + 15).min(lines.len());
                 let block = lines[line_idx..end_idx].join("\n");
-                let has_git_add = block.contains("\"add\"") || block.contains("'add'");
-                let has_git_commit = block.contains("\"commit\"") || block.contains("'commit'");
-                if has_git_add || has_git_commit {
+                let has_forbidden = forbidden_subcommands.iter().any(|cmd| block.contains(cmd));
+                if has_forbidden {
                     violations.push(format!(
-                        "{}:{}: Direct Git process spawn with add/commit found: {}",
+                        "{}:{}: Direct Git process spawn with add/commit/history probe found: {}",
                         rel_file,
                         line_num,
                         line.trim()
@@ -567,7 +715,7 @@ mod lifecycle_commit_boundary {
 
         assert!(
             violations.is_empty(),
-            "Found direct git add/commit calls in lifecycle modules:\n{}",
+            "Found direct git calls in lifecycle modules:\n{}",
             violations.join("\n")
         );
     }
@@ -598,6 +746,190 @@ fn test_fn() {
             violations[0].contains("fixture.rs:4:"),
             "expected violation at line 4, got: {}",
             violations[0]
+        );
+    }
+
+    #[test]
+    fn scan_reports_git_log_in_production_fn() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let output = std::process::Command::new("git")
+        .args(["log", "--format=%B"])
+        .output();
+}
+
+#[cfg(test)]
+fn test_fn() {
+    let output = std::process::Command::new("git")
+        .args(["log", "--format=%B"])
+        .output();
+}
+"#;
+        let violations =
+            scan_source_for_git_add_or_commit("apps/agentic-workflow/src/cli/cb.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("apps/agentic-workflow/src/cli/cb.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn scan_reports_git_rev_parse_in_production_fn() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output();
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("src/cli/cb.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn scan_reports_git_rev_list_in_production_fn() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let output = std::process::Command::new("git")
+        .args(["rev-list", "HEAD"])
+        .output();
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("src/cli/cb.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn scan_reports_git_add_in_production_fn() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let output = std::process::Command::new("git")
+        .args(["add", "sample.txt"])
+        .output();
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("src/cli/cb.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn scan_reports_git_merge_base_in_production_fn() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let output = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", "feature", "HEAD"])
+        .output();
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("src/cli/cb.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn scan_reports_git_cat_file_in_production_fn() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let output = std::process::Command::new("git")
+        .args(["cat-file", "blob", "HEAD:sample.txt"])
+        .output();
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("src/cli/cb.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn scan_reports_git_show_in_production_fn() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let output = std::process::Command::new("git")
+        .args(["show", "HEAD:sample.txt"])
+        .output();
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("src/cli/cb.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn scan_ignores_git_status_or_diff_in_production_fn() {
+        let fixture = r#"
+pub fn prod_status() {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output();
+}
+
+pub fn prod_diff() {
+    let output = std::process::Command::new("git")
+        .args(["diff", "--name-only"])
+        .output();
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert!(
+            violations.is_empty(),
+            "expected 0 violations for status/diff, got: {violations:?}"
         );
     }
 
@@ -651,6 +983,259 @@ fn test_fn() {
         assert!(
             err2.contains("git diff --cached failed with exit code"),
             "expected non-0/1 exit code error text, got: {err2}"
+        );
+    }
+
+    #[test]
+    fn test_history_primitives_fidelity_and_absence() {
+        let dir = TempDir::new().unwrap();
+        let repo = dir.path();
+        let git_bin = find_git_bin().unwrap();
+
+        let init = std::process::Command::new(&git_bin)
+            .args(["init", "-q"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(init.status.success());
+
+        // Configure git identity for commits
+        let _ = std::process::Command::new(&git_bin)
+            .args(["config", "user.name", "Test"])
+            .current_dir(repo)
+            .output();
+        let _ = std::process::Command::new(&git_bin)
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(repo)
+            .output();
+
+        let f = repo.join("sample.txt");
+        std::fs::write(&f, "content v1\n").unwrap();
+
+        let add = std::process::Command::new(&git_bin)
+            .args(["add", "sample.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(add.status.success());
+
+        let commit1 = std::process::Command::new(&git_bin)
+            .args(["commit", "-m", "initial commit"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(commit1.status.success());
+
+        let branch_cmd = std::process::Command::new(&git_bin)
+            .args(["branch", "feature"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(branch_cmd.status.success());
+
+        std::fs::write(&f, "content v2\n").unwrap();
+        let add2 = std::process::Command::new(&git_bin)
+            .args(["add", "sample.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(add2.status.success());
+        let commit2 = std::process::Command::new(&git_bin)
+            .args(["commit", "-m", "second commit"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(commit2.status.success());
+
+        std::fs::write(&f, "content v3\n").unwrap();
+        let add3 = std::process::Command::new(&git_bin)
+            .args(["add", "sample.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(add3.status.success());
+        let commit3 = std::process::Command::new(&git_bin)
+            .args(["commit", "-m", "third commit"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(commit3.status.success());
+
+        // 1. git_log - present & absent
+        let log_p = git_log(repo, &["-1", "--format=%B"]).unwrap();
+        let indep_log_p = std::process::Command::new(&git_bin)
+            .args(["log", "-1", "--format=%B"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert_eq!(
+            log_p.trim(),
+            String::from_utf8_lossy(&indep_log_p.stdout).trim()
+        );
+
+        let log_a = git_log(repo, &["--grep", "nonexistent_grep_string_999"]).unwrap();
+        let indep_log_a = std::process::Command::new(&git_bin)
+            .args(["log", "--grep", "nonexistent_grep_string_999"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert_eq!(
+            log_a.trim(),
+            String::from_utf8_lossy(&indep_log_a.stdout).trim()
+        );
+
+        // 2. git_rev_parse - present & absent
+        let rev_p = git_rev_parse(repo, &["HEAD"]).unwrap();
+        let indep_rev_p = std::process::Command::new(&git_bin)
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert_eq!(rev_p, String::from_utf8_lossy(&indep_rev_p.stdout).trim());
+
+        assert!(git_rev_parse(repo, &["--verify", "-q", "refs/heads/nonexistent"]).is_err());
+
+        // 3. git_rev_list - present & absent
+        let list_p = git_rev_list(repo, &["HEAD"]).unwrap();
+        let indep_list_p = std::process::Command::new(&git_bin)
+            .args(["rev-list", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        let expected_list: Vec<String> = String::from_utf8_lossy(&indep_list_p.stdout)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(
+            expected_list.len(),
+            3,
+            "expected 3 commits in independent rev-list output"
+        );
+        assert_eq!(
+            list_p.len(),
+            3,
+            "expected 3 commits in git_rev_list output, got {}",
+            list_p.len()
+        );
+        assert_eq!(list_p, expected_list);
+
+        let c3_sha = std::process::Command::new(&git_bin)
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        let c3_str = String::from_utf8_lossy(&c3_sha.stdout).trim().to_string();
+
+        let c2_sha = std::process::Command::new(&git_bin)
+            .args(["rev-parse", "HEAD~1"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        let c2_str = String::from_utf8_lossy(&c2_sha.stdout).trim().to_string();
+
+        let c1_sha = std::process::Command::new(&git_bin)
+            .args(["rev-parse", "HEAD~2"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        let c1_str = String::from_utf8_lossy(&c1_sha.stdout).trim().to_string();
+
+        assert_eq!(list_p, vec![c3_str, c2_str, c1_str]);
+
+        assert!(git_rev_list(repo, &["nonexistent_ref_xyz"]).is_err());
+
+        // 4. git_merge_base_is_ancestor - present & absent
+        // feature is at initial commit, HEAD is at third commit
+        // feature is ancestor of HEAD
+        let is_anc = git_merge_base_is_ancestor(repo, "feature", "HEAD").unwrap();
+        let indep_anc = std::process::Command::new(&git_bin)
+            .args(["merge-base", "--is-ancestor", "feature", "HEAD"])
+            .current_dir(repo)
+            .status()
+            .unwrap()
+            .success();
+        assert_eq!(is_anc, indep_anc);
+        assert!(is_anc);
+
+        // HEAD is NOT ancestor of feature
+        let not_anc = git_merge_base_is_ancestor(repo, "HEAD", "feature").unwrap();
+        let indep_not_anc = std::process::Command::new(&git_bin)
+            .args(["merge-base", "--is-ancestor", "HEAD", "feature"])
+            .current_dir(repo)
+            .status()
+            .unwrap()
+            .success();
+        assert_eq!(not_anc, indep_not_anc);
+        assert!(!not_anc);
+
+        // 5. git_cat_file_blob - present & absent
+        let cat_p = git_cat_file_blob(repo, "HEAD:sample.txt").unwrap();
+        let indep_cat_p = std::process::Command::new(&git_bin)
+            .args(["cat-file", "blob", "HEAD:sample.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert_eq!(cat_p, indep_cat_p.stdout);
+        assert_eq!(String::from_utf8_lossy(&cat_p), "content v3\n");
+
+        assert!(git_cat_file_blob(repo, "HEAD:nonexistent.txt").is_err());
+
+        // 6. git_show - present & absent
+        let show_p = git_show(repo, &["HEAD:sample.txt"]).unwrap();
+        let indep_show_p = std::process::Command::new(&git_bin)
+            .args(["show", "HEAD:sample.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert_eq!(show_p, String::from_utf8_lossy(&indep_show_p.stdout));
+
+        assert!(git_show(repo, &["HEAD:nonexistent.txt"]).is_err());
+    }
+
+    #[test]
+    fn test_history_primitives_non_repo_failure() {
+        let dir = TempDir::new().unwrap();
+        let non_repo = dir.path();
+
+        let err_log = git_log(non_repo, &["HEAD"]).unwrap_err().to_string();
+        assert!(
+            err_log.contains("exit code 128"),
+            "expected exit code 128 error, got: {err_log}"
+        );
+
+        let err_rp = git_rev_parse(non_repo, &["HEAD"]).unwrap_err().to_string();
+        assert!(
+            err_rp.contains("exit code 128"),
+            "expected exit code 128 error, got: {err_rp}"
+        );
+
+        let err_rl = git_rev_list(non_repo, &["HEAD"]).unwrap_err().to_string();
+        assert!(
+            err_rl.contains("exit code 128"),
+            "expected exit code 128 error, got: {err_rl}"
+        );
+
+        let err_mb = git_merge_base_is_ancestor(non_repo, "HEAD", "HEAD")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err_mb.contains("exit code 128"),
+            "expected exit code 128 error, got: {err_mb}"
+        );
+
+        let err_cf = git_cat_file_blob(non_repo, "HEAD:file")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err_cf.contains("exit code 128"),
+            "expected exit code 128 error, got: {err_cf}"
+        );
+
+        let err_sh = git_show(non_repo, &["HEAD"]).unwrap_err().to_string();
+        assert!(
+            err_sh.contains("exit code 128"),
+            "expected exit code 128 error, got: {err_sh}"
         );
     }
 }

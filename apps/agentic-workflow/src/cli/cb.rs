@@ -152,26 +152,16 @@ fn resolve_git_dir(project_root: &std::path::Path) -> Result<std::path::PathBuf>
             }
         }
     }
-    if let Some(git_bin) = crate::git::find_git_bin() {
-        let out = std::process::Command::new(git_bin)
-            .arg("-C")
-            .arg(project_root)
-            .args(["rev-parse", "--git-dir"])
-            .output();
-        if let Ok(out) = out {
-            if out.status.success() {
-                let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !path_str.is_empty() {
-                    let p = std::path::PathBuf::from(&path_str);
-                    let resolved = if p.is_absolute() {
-                        p
-                    } else {
-                        project_root.join(p)
-                    };
-                    if resolved.exists() {
-                        return Ok(resolved);
-                    }
-                }
+    if let Ok(path_str) = crate::git::git_rev_parse(project_root, &["--git-dir"]) {
+        if !path_str.is_empty() {
+            let p = std::path::PathBuf::from(&path_str);
+            let resolved = if p.is_absolute() {
+                p
+            } else {
+                project_root.join(p)
+            };
+            if resolved.exists() {
+                return Ok(resolved);
             }
         }
     }
@@ -7125,32 +7115,22 @@ fn reachable_exact_td_baseline_from_head(
 ) -> Result<TdInitReachability> {
     use crate::issues::types::lifecycle_trailer;
 
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let slug_line = format!("Lifecycle-Slug: {slug}");
-    let log = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args([
-            "log",
+    let stdout = crate::git::git_log(
+        project_root,
+        &[
             "--format=%H%x00%B%x1e",
             "--fixed-strings",
             "--grep",
             &slug_line,
             "HEAD",
-        ])
-        .output()
-        .context("git log failed while locating exact TD lifecycle baseline")?;
-    if !log.status.success() {
-        anyhow::bail!(
-            "git log failed while locating exact TD lifecycle baseline: {}",
-            String::from_utf8_lossy(&log.stderr).trim()
-        );
-    }
+        ],
+    )
+    .context("git log failed while locating exact TD lifecycle baseline")?;
 
     let mut saw_slug_history = false;
     let mut init_commit = None;
-    for record in String::from_utf8_lossy(&log.stdout).split('\x1e') {
+    for record in stdout.split('\x1e') {
         let record = record.trim_start_matches('\n');
         let Some((hash, body)) = record.split_once('\0') else {
             continue;
@@ -7414,20 +7394,13 @@ fn committed_paths_since_td_init(
         }
     };
 
-    let parent = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args(["rev-parse", &format!("{init_commit}^")])
-        .output()
-        .context("git rev-parse TD baseline parent failed")?;
-    if !parent.status.success() {
-        anyhow::bail!(
-            "cannot resolve parent of TD baseline commit {}: {}",
-            init_commit,
-            String::from_utf8_lossy(&parent.stderr).trim()
-        );
-    }
-    let baseline = String::from_utf8_lossy(&parent.stdout).trim().to_string();
+    let rev_spec = format!("{init_commit}^");
+    let baseline = match crate::git::git_rev_parse(project_root, &[&rev_spec]) {
+        Ok(res) => res,
+        Err(err) => {
+            anyhow::bail!("cannot resolve parent of TD baseline commit {init_commit}: {err}");
+        }
+    };
     let diff_range = format!("{baseline}..HEAD");
     let diff = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -7693,13 +7666,8 @@ fn land_td_lifecycle_branch(
 
     let git_bin = crate::git::find_git_bin()
         .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-    let already_merged = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args(["merge-base", "--is-ancestor", &td_branch, &target])
-        .status()
-        .context("git merge-base --is-ancestor")?
-        .success();
+    let already_merged = crate::git::git_merge_base_is_ancestor(project_root, &td_branch, &target)
+        .context("git merge-base --is-ancestor")?;
     if already_merged {
         crate::branch_switch::delete_local_branch(project_root, &td_branch)?;
         return Ok(BranchLandingOutcome::AlreadyMerged {
@@ -7751,30 +7719,20 @@ fn land_td_lifecycle_branch(
 fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) -> Result<bool> {
     use crate::issues::types::lifecycle_trailer;
 
-    let Some(git_bin) = crate::git::find_git_bin() else {
-        // No git binary: can't check either way. Treat as "not yet
-        // committed" so the commit attempt below runs and surfaces the same
-        // "git binary not found" error the fresh-entry path would.
-        return Ok(false);
-    };
     let slug_line = format!("Lifecycle-Slug: {}", slug);
-    let output = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args([
-            "log",
+    let stdout = match crate::git::git_log(
+        project_root,
+        &[
             "--format=%B%x1e",
             "--all",
             "--fixed-strings",
             "--grep",
             &slug_line,
-        ])
-        .output()
-        .context("git log failed")?;
-    if !output.status.success() {
-        return Ok(false);
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+        ],
+    ) {
+        Ok(out) => out,
+        Err(_) => return Ok(false),
+    };
     for entry in stdout.split('\x1e') {
         if lifecycle_trailer::body_has_slug_trailer(entry, slug)
             && lifecycle_trailer::body_has_stage_trailer(entry, lifecycle_trailer::CB_CODE_CHECK)
@@ -7794,27 +7752,20 @@ fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) ->
 /// the right remediation) when the local issue is missing. Deliberately
 /// read-only and side-effect-free, unlike `td::bootstrap_td_issue`.
 fn slug_has_lifecycle_history(project_root: &std::path::Path, slug: &str) -> Result<bool> {
-    let Some(git_bin) = crate::git::find_git_bin() else {
-        return Ok(false);
-    };
     let slug_line = format!("Lifecycle-Slug: {}", slug);
-    let output = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args([
-            "log",
+    let stdout = match crate::git::git_log(
+        project_root,
+        &[
             "--format=%B%x1e",
             "--all",
             "--fixed-strings",
             "--grep",
             &slug_line,
-        ])
-        .output()
-        .context("git log failed")?;
-    if !output.status.success() {
-        return Ok(false);
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+        ],
+    ) {
+        Ok(out) => out,
+        Err(_) => return Ok(false),
+    };
     for entry in stdout.split('\x1e') {
         if entry.lines().any(|line| line.trim_end() == slug_line) {
             return Ok(true);

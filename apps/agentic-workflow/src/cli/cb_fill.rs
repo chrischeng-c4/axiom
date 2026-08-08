@@ -1331,20 +1331,13 @@ fn resolve_base_branch() -> String {
 // prior behaviour there.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
-fn resolve_diff_base_ref(git_bin: &Path, worktree: &Path, base_branch: &str) -> String {
+fn resolve_diff_base_ref(_git_bin: &Path, worktree: &Path, base_branch: &str) -> String {
     let remote_ref = format!("origin/{base_branch}");
-    let remote_resolves = std::process::Command::new(git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args([
-            "rev-parse",
-            "--verify",
-            "-q",
-            &format!("refs/remotes/{remote_ref}"),
-        ])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let remote_resolves = crate::git::git_rev_parse(
+        worktree,
+        &["--verify", "-q", &format!("refs/remotes/{remote_ref}")],
+    )
+    .is_ok();
     if remote_resolves {
         remote_ref
     } else {
@@ -2542,10 +2535,7 @@ pub fn before() {}\n\
             .output()
             .unwrap();
         let show_text = String::from_utf8_lossy(&show_out.stdout);
-        let paths: HashSet<&str> = show_text
-            .lines()
-            .filter(|l| !l.is_empty())
-            .collect();
+        let paths: HashSet<&str> = show_text.lines().filter(|l| !l.is_empty()).collect();
         assert!(paths.contains("issue.json"), "paths: {paths:?}");
         assert!(paths.contains("src/filled.rs"), "paths: {paths:?}");
 
@@ -2637,10 +2627,7 @@ pub fn before() {}\n\
             .output()
             .unwrap();
         let show_text = String::from_utf8_lossy(&show_out.stdout);
-        let paths: HashSet<&str> = show_text
-            .lines()
-            .filter(|l| !l.is_empty())
-            .collect();
+        let paths: HashSet<&str> = show_text.lines().filter(|l| !l.is_empty()).collect();
         assert!(paths.contains("issue.json"), "paths: {paths:?}");
         assert!(paths.contains("src/part.rs"), "paths: {paths:?}");
 
@@ -2703,10 +2690,7 @@ pub fn before() {}\n\
             .output()
             .unwrap();
         let show_text = String::from_utf8_lossy(&show_out.stdout);
-        let paths: HashSet<&str> = show_text
-            .lines()
-            .filter(|l| !l.is_empty())
-            .collect();
+        let paths: HashSet<&str> = show_text.lines().filter(|l| !l.is_empty()).collect();
         assert!(paths.contains("issue.json"), "paths: {paths:?}");
 
         // Case 2: empty staged diff -> produces empty commit (allow_empty: true)
