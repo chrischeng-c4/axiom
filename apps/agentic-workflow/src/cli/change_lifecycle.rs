@@ -719,8 +719,65 @@ fn artifact_revision(
     }
 }
 
-fn event_id(lifecycle: &ChangeLifecycle) -> String {
-    format!("evt-{:03}", lifecycle.events.len() + 1)
+fn event_id(
+    slug: &str,
+    predecessor_id: Option<&str>,
+    kind: LifecycleEventKind,
+    candidate_revision_id: &str,
+    bound_tuple: &ActiveDigestTuple,
+) -> String {
+    let kind_str = match kind {
+        LifecycleEventKind::WiCreate => "wi_create",
+        LifecycleEventKind::WiChange => "wi_change",
+        LifecycleEventKind::EcChange => "ec_change",
+        LifecycleEventKind::TdChange => "td_change",
+        LifecycleEventKind::CbChange => "cb_change",
+        LifecycleEventKind::EcVerify => "ec_verify",
+        LifecycleEventKind::TdReconcile => "td_reconcile",
+        LifecycleEventKind::Feedback => "feedback",
+        LifecycleEventKind::Blocked => "blocked",
+        LifecycleEventKind::Rebind => "rebind",
+        LifecycleEventKind::StalePredecessor => "stale_predecessor",
+        LifecycleEventKind::Malformed => "malformed",
+        LifecycleEventKind::CbCommit => "cb_commit",
+    };
+    let pred_str = match predecessor_id {
+        Some(id) => format!("some:{}:{}", id.len(), id),
+        None => "none".to_string(),
+    };
+    let tuple_str = format!(
+        "wi:{}:ec:{}:td:{}:cb:{}",
+        bound_tuple
+            .wi_digest
+            .as_ref()
+            .map_or("none".to_string(), |d| format!("some:{}:{}", d.len(), d)),
+        bound_tuple
+            .ec_digest
+            .as_ref()
+            .map_or("none".to_string(), |d| format!("some:{}:{}", d.len(), d)),
+        bound_tuple
+            .td_digest
+            .as_ref()
+            .map_or("none".to_string(), |d| format!("some:{}:{}", d.len(), d)),
+        bound_tuple
+            .cb_digest
+            .as_ref()
+            .map_or("none".to_string(), |d| format!("some:{}:{}", d.len(), d)),
+    );
+    let raw = format!(
+        "{}:{}:{}:{}:{}:{}",
+        slug.len(),
+        slug,
+        pred_str,
+        kind_str,
+        candidate_revision_id.len(),
+        candidate_revision_id,
+    );
+    let raw = format!("{raw}:{tuple_str}");
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    format!("evt-{}", &digest[..12])
 }
 
 fn wi_remediation(slug: &str) -> NextObligation {
@@ -964,17 +1021,25 @@ pub fn fold_wi_update_from_snapshots(
         Vec::new(),
         prior_lifecycle.iteration + 1,
     );
+    let bound_tuple = ActiveDigestTuple {
+        wi_digest: Some(new_digest),
+        ..ActiveDigestTuple::default()
+    };
+    let evt_id = event_id(
+        &prior_lifecycle.slug,
+        prior_lifecycle.head_event_id.as_deref(),
+        LifecycleEventKind::WiChange,
+        &revision.id,
+        &bound_tuple,
+    );
     reduce_event(
         prior_lifecycle,
         LifecycleEvent {
-            event_id: event_id(prior_lifecycle),
+            event_id: evt_id,
             predecessor_id: prior_lifecycle.head_event_id.clone(),
             kind: LifecycleEventKind::WiChange,
             candidate_revision: revision,
-            bound_tuple: ActiveDigestTuple {
-                wi_digest: Some(new_digest),
-                ..ActiveDigestTuple::default()
-            },
+            bound_tuple,
             next_command: format!("aw wi validate {}", prior_lifecycle.slug),
             next_owner: OwnerVocabulary::Wi,
             wi_snapshot: Some(new_snapshot.clone()),
@@ -2365,13 +2430,21 @@ fn reduce_stage(
         expected_parent_set(lifecycle, kind).expect("all stage parents are active"),
         lifecycle.epoch + 1,
     );
+    let tuple = candidate_tuple(lifecycle, &candidate);
+    let evt_id = event_id(
+        &lifecycle.slug,
+        lifecycle.head_event_id.as_deref(),
+        event_kind,
+        &candidate.id,
+        &tuple,
+    );
     let result = reduce_event(
         lifecycle,
         LifecycleEvent {
-            event_id: event_id(lifecycle),
+            event_id: evt_id,
             predecessor_id: lifecycle.head_event_id.clone(),
             kind: event_kind,
-            bound_tuple: candidate_tuple(lifecycle, &candidate),
+            bound_tuple: tuple,
             candidate_revision: candidate,
             next_command: command.to_string(),
             next_owner: owner,
@@ -2430,8 +2503,15 @@ pub(crate) fn record_terminal_lifecycle(project_root: &std::path::Path, slug: &s
         })
         .collect();
     let active_cb = cb.active_revisions[&ArtifactKind::Cb].clone().unwrap();
+    let evt_id = event_id(
+        &cb.slug,
+        cb.head_event_id.as_deref(),
+        LifecycleEventKind::CbCommit,
+        &active_cb.id,
+        &tuple,
+    );
     let commit_evt = LifecycleEvent {
-        event_id: event_id(&cb),
+        event_id: evt_id,
         predecessor_id: cb.head_event_id.clone(),
         kind: LifecycleEventKind::CbCommit,
         candidate_revision: active_cb,
@@ -2450,6 +2530,343 @@ mod tests {
     use super::*;
     use crate::cli::issues::{ensure_change_id, ensure_change_issue};
     use crate::issues::{IssueState, IssueType};
+
+    #[test]
+    fn test_event_id_oracle_rows() {
+        let slug = "change-test";
+        let predecessor_id = Some("evt-001a2b3c4d5e");
+        let kind = LifecycleEventKind::WiChange;
+        let digest = "abc123digest";
+        let parents = vec![
+            CausalParent {
+                revision_id: "rev-111111111111".to_string(),
+                digest: "digest1".to_string(),
+            },
+            CausalParent {
+                revision_id: "rev-222222222222".to_string(),
+                digest: "digest2".to_string(),
+            },
+        ];
+        let candidate_rev =
+            artifact_revision(ArtifactKind::Wi, digest.to_string(), parents.clone(), 1);
+        let candidate_rev_id = &candidate_rev.id;
+        let tuple = ActiveDigestTuple {
+            wi_digest: Some("wi_dig_1".to_string()),
+            ec_digest: None,
+            td_digest: None,
+            cb_digest: None,
+        };
+
+        // Row 1: two internally consistent ChangeLifecycle values — each one's head_event_id
+        // is the id of its own last event — sharing a slug and that head id, one holding a single
+        // prior event at a low iteration and one holding four at a much higher iteration;
+        // fold each through the production entry point fold_wi_update_from_snapshots with the
+        // same new snapshot, and compare the event_id of the event each fold appends -> identical
+        let head_id = "evt-001a2b3c4d5e";
+        let snap_initial = CanonicalWiSnapshot::from_parts(
+            slug,
+            "title",
+            "change",
+            "proj",
+            vec![],
+            vec![],
+            "initial body content",
+        );
+        let rev_initial = artifact_revision(ArtifactKind::Wi, snap_initial.digest(), vec![], 1);
+
+        let evt_head = LifecycleEvent {
+            event_id: head_id.to_string(),
+            predecessor_id: None,
+            kind: LifecycleEventKind::WiCreate,
+            candidate_revision: rev_initial.clone(),
+            bound_tuple: ActiveDigestTuple {
+                wi_digest: Some(snap_initial.digest()),
+                ..ActiveDigestTuple::default()
+            },
+            next_command: format!("aw wi validate {slug}"),
+            next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: Some(snap_initial.clone()),
+        };
+
+        let mut lc_one = fold_wi_create(slug, "initial body content", "proj");
+        lc_one.events = vec![evt_head.clone()];
+        lc_one.head_event_id = Some(head_id.to_string());
+        lc_one.iteration = 1;
+
+        let mut lc_four = fold_wi_create(slug, "initial body content", "proj");
+        let dummy_evt1 = LifecycleEvent {
+            event_id: "evt-000000000001".to_string(),
+            predecessor_id: None,
+            kind: LifecycleEventKind::WiCreate,
+            candidate_revision: rev_initial.clone(),
+            bound_tuple: ActiveDigestTuple::default(),
+            next_command: "cmd".to_string(),
+            next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: None,
+        };
+        let dummy_evt2 = LifecycleEvent {
+            event_id: "evt-000000000002".to_string(),
+            predecessor_id: Some("evt-000000000001".to_string()),
+            kind: LifecycleEventKind::WiChange,
+            candidate_revision: rev_initial.clone(),
+            bound_tuple: ActiveDigestTuple::default(),
+            next_command: "cmd".to_string(),
+            next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: None,
+        };
+        let dummy_evt3 = LifecycleEvent {
+            event_id: "evt-000000000003".to_string(),
+            predecessor_id: Some("evt-000000000002".to_string()),
+            kind: LifecycleEventKind::WiChange,
+            candidate_revision: rev_initial.clone(),
+            bound_tuple: ActiveDigestTuple::default(),
+            next_command: "cmd".to_string(),
+            next_owner: OwnerVocabulary::Wi,
+            wi_snapshot: None,
+        };
+        lc_four.events = vec![dummy_evt1, dummy_evt2, dummy_evt3, evt_head.clone()];
+        lc_four.head_event_id = Some(head_id.to_string());
+        lc_four.iteration = 7;
+
+        let snap_new = CanonicalWiSnapshot::from_parts(
+            slug,
+            "title",
+            "change",
+            "proj",
+            vec![],
+            vec![],
+            "updated body content for row 1 fold",
+        );
+
+        let res1 = fold_wi_update_from_snapshots(&lc_one, &snap_new, None);
+        let res2 = fold_wi_update_from_snapshots(&lc_four, &snap_new, None);
+
+        assert!(res1.accepted, "res1 must be accepted");
+        assert!(res2.accepted, "res2 must be accepted");
+
+        let id1_row1 = res1.lifecycle.events.last().unwrap().event_id.clone();
+        let id2_row1 = res2.lifecycle.events.last().unwrap().event_id.clone();
+
+        assert_eq!(
+            id1_row1, id2_row1,
+            "Row 1: ledgers with different events.len() and iteration folded via production fold_wi_update_from_snapshots must derive identical event_id"
+        );
+
+        // Row 2: one head; two WiChange events whose candidate_revision was built by artifact_revision from two different WI body digests, every other binding equal -> differ
+        let rev_a = artifact_revision(ArtifactKind::Wi, "digest_a".to_string(), parents.clone(), 1);
+        let rev_b = artifact_revision(ArtifactKind::Wi, "digest_b".to_string(), parents.clone(), 1);
+        let id_row2_a = event_id(slug, predecessor_id, kind, &rev_a.id, &tuple);
+        let id_row2_b = event_id(slug, predecessor_id, kind, &rev_b.id, &tuple);
+        assert_ne!(
+            id_row2_a, id_row2_b,
+            "Row 2: candidates built from different digests must yield different event_ids"
+        );
+
+        // Row 3: two events equal in every binding except predecessor_id, one Some("evt-…a") and one Some("evt-…b") -> differ
+        let id_row3_a = event_id(
+            slug,
+            Some("evt-00000000000a"),
+            kind,
+            candidate_rev_id,
+            &tuple,
+        );
+        let id_row3_b = event_id(
+            slug,
+            Some("evt-00000000000b"),
+            kind,
+            candidate_rev_id,
+            &tuple,
+        );
+        assert_ne!(
+            id_row3_a, id_row3_b,
+            "Row 3: different predecessor_ids must yield different event_ids"
+        );
+
+        // Row 4: two events equal in every binding except kind, one LifecycleEventKind::WiChange and one LifecycleEventKind::EcChange -> differ
+        let id_row4_a = event_id(
+            slug,
+            predecessor_id,
+            LifecycleEventKind::WiChange,
+            candidate_rev_id,
+            &tuple,
+        );
+        let id_row4_b = event_id(
+            slug,
+            predecessor_id,
+            LifecycleEventKind::EcChange,
+            candidate_rev_id,
+            &tuple,
+        );
+        assert_ne!(
+            id_row4_a, id_row4_b,
+            "Row 4: different kinds must yield different event_ids"
+        );
+
+        // Row 5: two events equal in every binding except the lifecycle slug -> differ
+        let id_row5_a = event_id("slug-a", predecessor_id, kind, candidate_rev_id, &tuple);
+        let id_row5_b = event_id("slug-b", predecessor_id, kind, candidate_rev_id, &tuple);
+        assert_ne!(
+            id_row5_a, id_row5_b,
+            "Row 5: different slugs must yield different event_ids"
+        );
+
+        // Row 6: two events equal in every binding except bound_tuple: one ActiveDigestTuple { wi_digest: Some(D), .. } and one ActiveDigestTuple { ec_digest: Some(D), .. }, with the same D -> differ
+        let tuple_wi = ActiveDigestTuple {
+            wi_digest: Some("shared_digest".to_string()),
+            ec_digest: None,
+            td_digest: None,
+            cb_digest: None,
+        };
+        let tuple_ec = ActiveDigestTuple {
+            wi_digest: None,
+            ec_digest: Some("shared_digest".to_string()),
+            td_digest: None,
+            cb_digest: None,
+        };
+        let id_row6_a = event_id(slug, predecessor_id, kind, candidate_rev_id, &tuple_wi);
+        let id_row6_b = event_id(slug, predecessor_id, kind, candidate_rev_id, &tuple_ec);
+        assert_ne!(
+            id_row6_a, id_row6_b,
+            "Row 6: bound_tuple with same digest in different slots must yield different event_ids"
+        );
+
+        // Row 7: two events equal in every binding except bound_tuple: one { wi_digest: Some(X), ec_digest: Some(Y), .. } and one { wi_digest: Some(Y), ec_digest: Some(X), .. } -> differ
+        let tuple_xy = ActiveDigestTuple {
+            wi_digest: Some("digest_X".to_string()),
+            ec_digest: Some("digest_Y".to_string()),
+            td_digest: None,
+            cb_digest: None,
+        };
+        let tuple_yx = ActiveDigestTuple {
+            wi_digest: Some("digest_Y".to_string()),
+            ec_digest: Some("digest_X".to_string()),
+            td_digest: None,
+            cb_digest: None,
+        };
+        let id_row7_a = event_id(slug, predecessor_id, kind, candidate_rev_id, &tuple_xy);
+        let id_row7_b = event_id(slug, predecessor_id, kind, candidate_rev_id, &tuple_yx);
+        assert_ne!(
+            id_row7_a, id_row7_b,
+            "Row 7: swapped digests across slots must yield different event_ids"
+        );
+
+        // Row 8: one binding tuple, derived twice from two separately constructed values in one process -> identical, and the id matches evt- followed by exactly 12 lowercase hex characters
+        let id_row8_1 = event_id(slug, predecessor_id, kind, candidate_rev_id, &tuple);
+        let id_row8_2 = event_id(
+            &format!("{slug}"),
+            predecessor_id.map(|s| s.to_string()).as_deref(),
+            kind,
+            &format!("{candidate_rev_id}"),
+            &tuple.clone(),
+        );
+        assert_eq!(
+            id_row8_1, id_row8_2,
+            "Row 8: derived twice from separately constructed values must be identical"
+        );
+        assert!(id_row8_1.starts_with("evt-"), "Row 8: must start with evt-");
+        let hex_part = &id_row8_1["evt-".len()..];
+        assert_eq!(hex_part.len(), 12, "Row 8: tail must be exactly 12 chars");
+        assert!(
+            hex_part
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "Row 8: tail must be lowercase hex"
+        );
+
+        // Row 9: two events equal in every binding, whose candidate_revision.parents hold the same two CausalParent values in opposite order -> identical
+        let parents_order1 = vec![
+            CausalParent {
+                revision_id: "rev-a".to_string(),
+                digest: "dig-a".to_string(),
+            },
+            CausalParent {
+                revision_id: "rev-b".to_string(),
+                digest: "dig-b".to_string(),
+            },
+        ];
+        let parents_order2 = vec![
+            CausalParent {
+                revision_id: "rev-b".to_string(),
+                digest: "dig-b".to_string(),
+            },
+            CausalParent {
+                revision_id: "rev-a".to_string(),
+                digest: "dig-a".to_string(),
+            },
+        ];
+        let rev_p1 = artifact_revision(ArtifactKind::Wi, digest.to_string(), parents_order1, 1);
+        let rev_p2 = artifact_revision(ArtifactKind::Wi, digest.to_string(), parents_order2, 1);
+        assert_eq!(rev_p1.id, rev_p2.id, "revision_id already sorts parents");
+        let id_row9_a = event_id(slug, predecessor_id, kind, &rev_p1.id, &tuple);
+        let id_row9_b = event_id(slug, predecessor_id, kind, &rev_p2.id, &tuple);
+        assert_eq!(
+            id_row9_a, id_row9_b,
+            "Row 9: candidate revisions with opposite parent order yield identical event_id"
+        );
+
+        // Row 10: the source text of change_lifecycle.rs, read from the declaration line of fn event_id through the ) that closes its parameter list
+        let source = include_str!("change_lifecycle.rs");
+        let start_idx = source
+            .find("fn event_id(")
+            .expect("source must contain fn event_id(");
+        let after_start = &source[start_idx..];
+        let end_rel = after_start
+            .find(')')
+            .expect("fn event_id declaration must have closing parenthesis");
+        let param_list_span = &after_start[..=end_rel];
+
+        assert!(
+            param_list_span.contains("slug"),
+            "Row 10: parameter list must mention slug"
+        );
+        assert!(
+            param_list_span.contains("predecessor_id"),
+            "Row 10: parameter list must mention predecessor_id"
+        );
+        assert!(
+            param_list_span.contains("kind"),
+            "Row 10: parameter list must mention kind"
+        );
+        assert!(
+            param_list_span.contains("candidate_revision_id"),
+            "Row 10: parameter list must mention candidate_revision_id"
+        );
+        assert!(
+            param_list_span.contains("bound_tuple"),
+            "Row 10: parameter list must mention bound_tuple"
+        );
+
+        assert!(
+            !param_list_span.contains("ChangeLifecycle"),
+            "Row 10: parameter list must not mention ChangeLifecycle"
+        );
+        assert!(
+            !param_list_span
+                .replace("LifecycleEventKind", "")
+                .contains("LifecycleEvent"),
+            "Row 10: parameter list must not mention LifecycleEvent"
+        );
+        assert!(
+            !param_list_span.contains("events"),
+            "Row 10: parameter list must not mention events"
+        );
+        assert!(
+            !param_list_span.contains("iteration"),
+            "Row 10: parameter list must not mention iteration"
+        );
+        assert!(
+            !param_list_span.contains("next_command"),
+            "Row 10: parameter list must not mention next_command"
+        );
+        assert!(
+            !param_list_span.contains("next_owner"),
+            "Row 10: parameter list must not mention next_owner"
+        );
+        assert!(
+            !param_list_span.contains("wi_snapshot"),
+            "Row 10: parameter list must not mention wi_snapshot"
+        );
+    }
 
     fn canonical_wi_digest(body: &str) -> String {
         CanonicalWiSnapshot::from_parts(
@@ -2606,7 +3023,10 @@ mod tests {
         let ec_revision = lifecycle.active_revisions[&ArtifactKind::Ec]
             .as_ref()
             .unwrap();
-        assert_eq!(projection["ledger"]["head_event_id"], "evt-002");
+        assert_eq!(
+            projection["ledger"]["head_event_id"],
+            lifecycle.head_event_id.as_deref().unwrap()
+        );
         assert_eq!(projection["ec_revision"]["id"], ec_revision.id);
         assert_eq!(projection["next"]["owner"], "td");
     }
@@ -2746,7 +3166,7 @@ mod tests {
         assert_eq!(reloaded, lifecycle);
         assert!(valid_persisted_lifecycle(&reloaded, "causal"));
         assert_eq!(reloaded.events.len(), 4);
-        assert_eq!(reloaded.head_event_id.as_deref(), Some("evt-004"));
+        assert_eq!(reloaded.head_event_id, lifecycle.head_event_id);
         assert_eq!(
             reloaded.active_revisions[&ArtifactKind::Cb]
                 .as_ref()
@@ -2836,13 +3256,21 @@ mod tests {
             original_ec.iteration + 1,
         );
         assert_ne!(rebound.id, original_ec.id);
+        let tuple_rebound = candidate_tuple(&after_wi, &rebound);
+        let evt_id = event_id(
+            &after_wi.slug,
+            after_wi.head_event_id.as_deref(),
+            LifecycleEventKind::Rebind,
+            &rebound.id,
+            &tuple_rebound,
+        );
         let result = reduce_event(
             &after_wi,
             LifecycleEvent {
-                event_id: event_id(&after_wi),
+                event_id: evt_id,
                 predecessor_id: after_wi.head_event_id.clone(),
                 kind: LifecycleEventKind::Rebind,
-                bound_tuple: candidate_tuple(&after_wi, &rebound),
+                bound_tuple: tuple_rebound,
                 candidate_revision: rebound.clone(),
                 next_command: "aw ec check".to_string(),
                 next_owner: OwnerVocabulary::Ec,
@@ -2938,8 +3366,15 @@ mod tests {
         let active_cb = full.active_revisions[&ArtifactKind::Cb]
             .clone()
             .expect("active CB");
+        let evt_id_commit = event_id(
+            &full.slug,
+            full.head_event_id.as_deref(),
+            LifecycleEventKind::CbCommit,
+            &active_cb.id,
+            &tuple,
+        );
         let commit = LifecycleEvent {
-            event_id: event_id(&full),
+            event_id: evt_id_commit,
             predecessor_id: full.head_event_id.clone(),
             kind: LifecycleEventKind::CbCommit,
             candidate_revision: active_cb.clone(),
@@ -2954,13 +3389,22 @@ mod tests {
         assert_eq!(committed.lifecycle.next.command, "aw wi show causal");
         assert_eq!(committed.lifecycle.next.owner, OwnerVocabulary::Cb);
 
+        let non_cb_rev = full.active_revisions[&ArtifactKind::Ec].clone().unwrap();
+        let non_cb_tuple = full.active_digest_tuple();
+        let evt_id_non_cb = event_id(
+            &full.slug,
+            full.head_event_id.as_deref(),
+            commit.kind,
+            &non_cb_rev.id,
+            &non_cb_tuple,
+        );
         let non_cb_commit = reduce_event(
             &full,
             LifecycleEvent {
-                event_id: event_id(&full),
+                event_id: evt_id_non_cb,
                 predecessor_id: full.head_event_id.clone(),
-                candidate_revision: full.active_revisions[&ArtifactKind::Ec].clone().unwrap(),
-                bound_tuple: full.active_digest_tuple(),
+                candidate_revision: non_cb_rev,
+                bound_tuple: non_cb_tuple,
                 ..commit.clone()
             },
         );
@@ -2969,15 +3413,24 @@ mod tests {
         assert_eq!(non_cb_commit.lifecycle.next.command, "aw cb check causal");
 
         let no_evidence = complete_lifecycle();
+        let no_ev_cb = no_evidence.active_revisions[&ArtifactKind::Cb]
+            .clone()
+            .unwrap();
+        let no_ev_tuple = no_evidence.active_digest_tuple();
+        let evt_id_rejected = event_id(
+            &no_evidence.slug,
+            no_evidence.head_event_id.as_deref(),
+            LifecycleEventKind::CbCommit,
+            &no_ev_cb.id,
+            &no_ev_tuple,
+        );
         let rejected = reduce_event(
             &no_evidence,
             LifecycleEvent {
-                event_id: event_id(&no_evidence),
+                event_id: evt_id_rejected,
                 predecessor_id: no_evidence.head_event_id.clone(),
-                candidate_revision: no_evidence.active_revisions[&ArtifactKind::Cb]
-                    .clone()
-                    .unwrap(),
-                bound_tuple: no_evidence.active_digest_tuple(),
+                candidate_revision: no_ev_cb,
+                bound_tuple: no_ev_tuple,
                 ..commit
             },
         );
@@ -3302,8 +3755,15 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             })
             .collect();
         let active_cb = cb.active_revisions[&ArtifactKind::Cb].clone().unwrap();
+        let commit_evt_id = event_id(
+            &cb.slug,
+            cb.head_event_id.as_deref(),
+            LifecycleEventKind::CbCommit,
+            &active_cb.id,
+            &tuple,
+        );
         let commit_event = LifecycleEvent {
-            event_id: event_id(&cb),
+            event_id: commit_evt_id,
             predecessor_id: cb.head_event_id.clone(),
             kind: LifecycleEventKind::CbCommit,
             candidate_revision: active_cb,
@@ -3435,8 +3895,15 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             })
             .collect();
         let active_cb = cb.active_revisions[&ArtifactKind::Cb].clone().unwrap();
+        let commit_evt_id = event_id(
+            &cb.slug,
+            cb.head_event_id.as_deref(),
+            LifecycleEventKind::CbCommit,
+            &active_cb.id,
+            &tuple,
+        );
         let commit_evt = LifecycleEvent {
-            event_id: event_id(&cb),
+            event_id: commit_evt_id,
             predecessor_id: cb.head_event_id.clone(),
             kind: LifecycleEventKind::CbCommit,
             candidate_revision: active_cb,
@@ -3454,7 +3921,10 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let proj_row3 = projection_for_issue(root.path(), &issue_open);
         assert_eq!(proj_row3["drift"], false);
         assert_eq!(proj_row3["close_authorized"], true);
-        assert_eq!(proj_row3["authorize_close_event_id"], "evt-005");
+        assert_eq!(
+            proj_row3["authorize_close_event_id"],
+            terminal_lc.head_event_id.as_deref().unwrap()
+        );
 
         // Row 4: valid, terminal carrier & closed issue (negative control) -> no drift, close_authorized false
         let proj_row4 = projection_for_issue(root.path(), &issue_closed);
@@ -3481,7 +3951,11 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let wi_body = "wi-v1";
         assert_eq!(lc.events.len(), 4);
         assert_eq!(lc.epoch, 4);
-        assert_eq!(lc.head_event_id.as_deref(), Some("evt-004"));
+        assert_eq!(
+            lc.head_event_id,
+            lc.events.last().map(|e| e.event_id.clone())
+        );
+        let ev_ids: Vec<String> = lc.events.iter().map(|e| e.event_id.clone()).collect();
 
         // Row 1: no AW projection
         let obs1 = TrackerObservation::empty(wi_body);
@@ -3489,20 +3963,13 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         assert!(dec1.accepted);
         assert_eq!(dec1.refusal_reason, None);
         assert_eq!(dec1.target_epoch, 4);
-        assert_eq!(dec1.target_head_event_id.as_deref(), Some("evt-004"));
+        assert_eq!(dec1.target_head_event_id, lc.head_event_id);
         let covered_events_1: Vec<&str> = dec1.work.iter().map(|w| w.event_id.as_str()).collect();
-        assert_eq!(
-            covered_events_1,
-            vec!["evt-001", "evt-002", "evt-003", "evt-004"]
-        );
+        let expected_events_1: Vec<&str> = ev_ids.iter().map(|s| s.as_str()).collect();
+        assert_eq!(covered_events_1, expected_events_1);
 
         // Row 2: already carrying projection with all milestones present
-        let obs2 = TrackerObservation::new(
-            wi_body,
-            Some("evt-004"),
-            Some(4),
-            vec!["evt-001", "evt-002", "evt-003", "evt-004"],
-        );
+        let obs2 = TrackerObservation::new(wi_body, Some(&ev_ids[3]), Some(4), ev_ids.clone());
         let dec2 = decide_projection(&lc, &obs2);
         assert!(dec2.accepted);
         assert_eq!(dec2.refusal_reason, None);
@@ -3514,26 +3981,29 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         // Row 3: older committed head (first 2 events)
         let obs3 = TrackerObservation::new(
             wi_body,
-            Some("evt-002"),
+            Some(&ev_ids[1]),
             Some(2),
-            vec!["evt-001", "evt-002"],
+            vec![ev_ids[0].clone(), ev_ids[1].clone()],
         );
         let dec3 = decide_projection(&lc, &obs3);
         assert!(dec3.accepted);
         let covered_events_3: Vec<&str> = dec3.work.iter().map(|w| w.event_id.as_str()).collect();
-        assert_eq!(covered_events_3, vec!["evt-003", "evt-004"]);
+        assert_eq!(
+            covered_events_3,
+            vec![ev_ids[2].as_str(), ev_ids[3].as_str()]
+        );
 
         // Row 4: milestone for event 2 absent while 1, 3, and 4 present
         let obs4 = TrackerObservation::new(
             wi_body,
-            Some("evt-004"),
+            Some(&ev_ids[3]),
             Some(4),
-            vec!["evt-001", "evt-003", "evt-004"],
+            vec![ev_ids[0].clone(), ev_ids[2].clone(), ev_ids[3].clone()],
         );
         let dec4 = decide_projection(&lc, &obs4);
         assert!(dec4.accepted);
         let covered_events_4: Vec<&str> = dec4.work.iter().map(|w| w.event_id.as_str()).collect();
-        assert_eq!(covered_events_4, vec!["evt-002"]);
+        assert_eq!(covered_events_4, vec![ev_ids[1].as_str()]);
 
         // Row 5: head names an event id the ledger has never committed
         let obs5 = TrackerObservation::new(
@@ -3619,7 +4089,11 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         );
         assert_eq!(lc.events.len(), 3);
         assert_eq!(lc.epoch, 3);
-        assert_eq!(lc.head_event_id.as_deref(), Some("evt-003"));
+        assert_eq!(
+            lc.head_event_id,
+            lc.events.last().map(|e| e.event_id.clone())
+        );
+        let ev_ids: Vec<String> = lc.events.iter().map(|e| e.event_id.clone()).collect();
         save(root.path(), &lc).unwrap();
 
         let base_body = "## Problem\n\nInitial prose";
@@ -3631,12 +4105,9 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         assert_eq!(proj_row1["accepted"], true);
         assert!(proj_row1["refusal_reason"].is_null());
         let parsed1 = parse_projection_marker(&body_with_marker).expect("marker must parse back");
-        assert_eq!(parsed1.head_event_id.as_deref(), Some("evt-003"));
+        assert_eq!(parsed1.head_event_id, lc.head_event_id);
         assert_eq!(parsed1.epoch, Some(3));
-        let expected_present: BTreeSet<String> = vec!["evt-001", "evt-002", "evt-003"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let expected_present: BTreeSet<String> = ev_ids.iter().cloned().collect();
         assert_eq!(parsed1.present_event_ids, expected_present);
 
         // Row 2: the same ledger; the body's marker names head evt-999, an id the ledger never committed
@@ -3655,11 +4126,10 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
 
         // Row 3: the same ledger; the body's marker names head evt-002, which is committed, together with epoch 7
         let marker_row3 = render_projection_marker(
-            Some("evt-002"),
+            Some(&ev_ids[1]),
             Some(7),
-            &vec!["evt-001", "evt-002"]
+            &vec![ev_ids[0].clone(), ev_ids[1].clone()]
                 .into_iter()
-                .map(String::from)
                 .collect(),
         );
         let body_row3 = format!("{base_body}\n\n{marker_row3}");
@@ -3700,12 +4170,16 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
 
         // Row 7: the same ledger; the body's marker names head evt-003 and epoch 3 — both agreeing — and a projected-event set that includes one id the ledger never committed
         let marker_row7 = render_projection_marker(
-            Some("evt-003"),
+            Some(&ev_ids[2]),
             Some(3),
-            &vec!["evt-001", "evt-002", "evt-003", "evt-bogus"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
+            &vec![
+                ev_ids[0].clone(),
+                ev_ids[1].clone(),
+                ev_ids[2].clone(),
+                "evt-bogus".to_string(),
+            ]
+            .into_iter()
+            .collect(),
         );
         let body_row7 = format!("{base_body}\n\n{marker_row7}");
         let issue_row7 = change(&body_row7);
@@ -3800,8 +4274,15 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let active_cb = cb_with_evidence.active_revisions[&ArtifactKind::Cb]
             .clone()
             .unwrap();
+        let commit_evt_id = event_id(
+            &cb_with_evidence.slug,
+            cb_with_evidence.head_event_id.as_deref(),
+            LifecycleEventKind::CbCommit,
+            &active_cb.id,
+            &tuple,
+        );
         let commit_event = LifecycleEvent {
-            event_id: event_id(&cb_with_evidence),
+            event_id: commit_evt_id,
             predecessor_id: cb_with_evidence.head_event_id.clone(),
             kind: LifecycleEventKind::CbCommit,
             candidate_revision: active_cb,
@@ -3826,7 +4307,6 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         assert!(dec2.complete);
         assert!(dec2.close_authorized);
         assert_eq!(dec2.authorize_close_event_id, lc2.head_event_id);
-        assert_eq!(dec2.authorize_close_event_id, Some("evt-005".to_string()));
         assert!(!dec2.drift);
 
         // Row 3: terminal lifecycle and closed issue already at that terminal event
@@ -3922,12 +4402,20 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let active_cb6 = no_evidence_cb.active_revisions[&ArtifactKind::Cb]
             .clone()
             .unwrap();
+        let tuple6 = no_evidence_cb.active_digest_tuple();
+        let rejected_evt_id = event_id(
+            &no_evidence_cb.slug,
+            no_evidence_cb.head_event_id.as_deref(),
+            LifecycleEventKind::CbCommit,
+            &active_cb6.id,
+            &tuple6,
+        );
         let rejected_commit_event = LifecycleEvent {
-            event_id: event_id(&no_evidence_cb),
+            event_id: rejected_evt_id,
             predecessor_id: no_evidence_cb.head_event_id.clone(),
             kind: LifecycleEventKind::CbCommit,
             candidate_revision: active_cb6,
-            bound_tuple: no_evidence_cb.active_digest_tuple(),
+            bound_tuple: tuple6,
             next_command: "aw wi show causal".to_string(),
             next_owner: OwnerVocabulary::Cb,
             wi_snapshot: None,
@@ -4011,13 +4499,20 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             OwnerVocabulary::Cb,
         );
         let wi_body = "wi-v1";
+        let ev4_ids: Vec<String> = lc4.events.iter().map(|e| e.event_id.clone()).collect();
 
         // Row 1: Observation naming uncommitted event `evt-900`
         let obs1 = TrackerObservation::new(
             wi_body,
             lc4.head_event_id.clone(),
             Some(lc4.epoch),
-            vec!["evt-001", "evt-002", "evt-003", "evt-004", "evt-900"],
+            vec![
+                ev4_ids[0].clone(),
+                ev4_ids[1].clone(),
+                ev4_ids[2].clone(),
+                ev4_ids[3].clone(),
+                "evt-900".to_string(),
+            ],
         );
         let dec1 = decide_projection(&lc4, &obs1);
         assert!(!dec1.accepted);
@@ -4037,7 +4532,13 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             wi_body,
             lc4.head_event_id.clone(),
             Some(lc4.epoch),
-            vec!["evt-001", "evt-002", "evt-0025", "evt-003", "evt-004"],
+            vec![
+                ev4_ids[0].clone(),
+                ev4_ids[1].clone(),
+                "evt-0025".to_string(),
+                ev4_ids[2].clone(),
+                ev4_ids[3].clone(),
+            ],
         );
         let dec9 = decide_projection(&lc4, &obs9);
         assert!(!dec9.accepted);
@@ -4058,12 +4559,20 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let active_cb = no_evidence_cb.active_revisions[&ArtifactKind::Cb]
             .clone()
             .unwrap();
+        let tuple_no_ev = no_evidence_cb.active_digest_tuple();
+        let cb_commit_evt_id = event_id(
+            &no_evidence_cb.slug,
+            no_evidence_cb.head_event_id.as_deref(),
+            LifecycleEventKind::CbCommit,
+            &active_cb.id,
+            &tuple_no_ev,
+        );
         let cb_commit_event = LifecycleEvent {
-            event_id: event_id(&no_evidence_cb),
+            event_id: cb_commit_evt_id.clone(),
             predecessor_id: no_evidence_cb.head_event_id.clone(),
             kind: LifecycleEventKind::CbCommit,
             candidate_revision: active_cb.clone(),
-            bound_tuple: no_evidence_cb.active_digest_tuple(),
+            bound_tuple: tuple_no_ev,
             next_command: "aw wi show causal".to_string(),
             next_owner: OwnerVocabulary::Cb,
             wi_snapshot: None,
@@ -4076,7 +4585,13 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             wi_body,
             lc4.head_event_id.clone(),
             Some(lc4.epoch),
-            vec!["evt-001", "evt-002", "evt-003", "evt-004", "evt-005"],
+            vec![
+                ev4_ids[0].clone(),
+                ev4_ids[1].clone(),
+                ev4_ids[2].clone(),
+                ev4_ids[3].clone(),
+                cb_commit_evt_id.clone(),
+            ],
         );
         let dec2_rejected = decide_projection(&lc_rejected, &obs2);
         assert!(!dec2_rejected.accepted);
@@ -4085,7 +4600,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             .refusal_reason
             .as_deref()
             .unwrap_or("")
-            .contains("evt-005"));
+            .contains(&cb_commit_evt_id));
 
         let mut cb_with_evidence = lc4.clone();
         let tuple = cb_with_evidence.active_digest_tuple();
@@ -4109,9 +4624,9 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         // Row 3: Observed head is committed `evt-002` but observed epoch is 4 (epoch disagreement)
         let obs3 = TrackerObservation::new(
             wi_body,
-            Some("evt-002"),
+            Some(&ev4_ids[1]),
             Some(4),
-            vec!["evt-001", "evt-002"],
+            vec![ev4_ids[0].clone(), ev4_ids[1].clone()],
         );
         let dec3 = decide_projection(&lc4, &obs3);
         assert!(!dec3.accepted);
@@ -4129,14 +4644,17 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         // Row 4: Negative control for Row 3: Observed head `evt-002` with epoch 2
         let obs4 = TrackerObservation::new(
             wi_body,
-            Some("evt-002"),
+            Some(&ev4_ids[1]),
             Some(2),
-            vec!["evt-001", "evt-002"],
+            vec![ev4_ids[0].clone(), ev4_ids[1].clone()],
         );
         let dec4 = decide_projection(&lc4, &obs4);
         assert!(dec4.accepted);
         let covered_events_4: Vec<&str> = dec4.work.iter().map(|w| w.event_id.as_str()).collect();
-        assert_eq!(covered_events_4, vec!["evt-003", "evt-004"]);
+        assert_eq!(
+            covered_events_4,
+            vec![ev4_ids[2].as_str(), ev4_ids[3].as_str()]
+        );
 
         // Row 5: Terminal lifecycle against three refusing observations:
         // (a) foreign milestone id (`evt-900`)
@@ -4147,14 +4665,19 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             lc_accepted.head_event_id.clone(),
             Some(lc_accepted.epoch),
             vec![
-                "evt-001", "evt-002", "evt-003", "evt-004", "evt-005", "evt-900",
+                ev4_ids[0].clone(),
+                ev4_ids[1].clone(),
+                ev4_ids[2].clone(),
+                ev4_ids[3].clone(),
+                cb_commit_evt_id.clone(),
+                "evt-900".to_string(),
             ],
         );
         let obs5_b = TrackerObservation::new(
             wi_body,
-            Some("evt-002"),
+            Some(&ev4_ids[1]),
             Some(99),
-            vec!["evt-001", "evt-002"],
+            vec![ev4_ids[0].clone(), ev4_ids[1].clone()],
         );
         let obs5_c = TrackerObservation::new(
             wi_body,
@@ -4186,7 +4709,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             wi_body,
             lc4.head_event_id.clone(),
             Some(lc4.epoch),
-            vec!["evt-001", "evt-002", "evt-003", "evt-004"],
+            ev4_ids.clone(),
         );
 
         let dec6_a = decide_projection(&lc4, &obs6_a);
@@ -4202,12 +4725,19 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         assert!(dec6_c.work.is_empty());
 
         // Row 7: Negative control: 4-event lifecycle and observation with no epoch (None) at older committed head (evt-002) with present milestones
-        let obs7 =
-            TrackerObservation::new(wi_body, Some("evt-002"), None, vec!["evt-001", "evt-002"]);
+        let obs7 = TrackerObservation::new(
+            wi_body,
+            Some(&ev4_ids[1]),
+            None,
+            vec![ev4_ids[0].clone(), ev4_ids[1].clone()],
+        );
         let dec7 = decide_projection(&lc4, &obs7);
         assert!(dec7.accepted);
         let covered_events_7: Vec<&str> = dec7.work.iter().map(|w| w.event_id.as_str()).collect();
-        assert_eq!(covered_events_7, vec!["evt-003", "evt-004"]);
+        assert_eq!(
+            covered_events_7,
+            vec![ev4_ids[2].as_str(), ev4_ids[3].as_str()]
+        );
 
         // Row 8: Lifecycle re-read from persisted carrier after save against Row 1's and Row 4's observations
         save(root.path(), &lc4).unwrap();
@@ -4259,11 +4789,19 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
             expected_parent_set(&start_lc, ArtifactKind::Cb).expect("active CB parents"),
             start_lc.epoch + 1,
         );
+        let tuple_cb = candidate_tuple(&start_lc, &cb_candidate);
+        let cb_evt_id = event_id(
+            &start_lc.slug,
+            start_lc.head_event_id.as_deref(),
+            LifecycleEventKind::CbChange,
+            &cb_candidate.id,
+            &tuple_cb,
+        );
         let cb_change_event = LifecycleEvent {
-            event_id: event_id(&start_lc),
+            event_id: cb_evt_id,
             predecessor_id: start_lc.head_event_id.clone(),
             kind: LifecycleEventKind::CbChange,
-            bound_tuple: candidate_tuple(&start_lc, &cb_candidate),
+            bound_tuple: tuple_cb,
             candidate_revision: cb_candidate.clone(),
             next_command: "aw cb check".to_string(),
             next_owner: OwnerVocabulary::Cb,
@@ -4383,8 +4921,15 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let active_cb = start_lc.active_revisions[&ArtifactKind::Cb]
             .clone()
             .expect("active CB revision present");
+        let commit_evt_id = event_id(
+            &start_lc.slug,
+            start_lc.head_event_id.as_deref(),
+            LifecycleEventKind::CbCommit,
+            &active_cb.id,
+            &starting_tuple,
+        );
         let commit_event = LifecycleEvent {
-            event_id: event_id(&start_lc),
+            event_id: commit_evt_id,
             predecessor_id: start_lc.head_event_id.clone(),
             kind: LifecycleEventKind::CbCommit,
             candidate_revision: active_cb,
@@ -4448,8 +4993,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
 
         let reloaded_after_w2 = load(project_root, "causal").unwrap().unwrap();
         assert_eq!(
-            reloaded_after_w2.head_event_id,
-            Some("evt-002".to_string()),
+            reloaded_after_w2.head_event_id, cand1.head_event_id,
             "Row 1: head_event_id must be Writer 1's event"
         );
         assert_eq!(
@@ -4531,7 +5075,8 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let lease = acquire_project_lease(project_root).unwrap().unwrap();
         let bytes_before_row5 = std::fs::read(carrier_path(project_root, "causal")).unwrap();
 
-        let outcome5 = publish_lifecycle_cas(project_root, Some("evt-002"), &cand1).unwrap();
+        let outcome5 =
+            publish_lifecycle_cas(project_root, cand1.head_event_id.as_deref(), &cand1).unwrap();
         let outcome5_refusal_text = match &outcome5 {
             PublishOutcome::Refused(reason) => {
                 assert!(
@@ -4563,7 +5108,8 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         assert!(res3.accepted);
         let cand3 = res3.lifecycle;
 
-        let outcome6 = publish_lifecycle_cas(project_root, Some("evt-002"), &cand3).unwrap();
+        let outcome6 =
+            publish_lifecycle_cas(project_root, cand1.head_event_id.as_deref(), &cand3).unwrap();
         assert_eq!(
             outcome6,
             PublishOutcome::Applied,
@@ -4613,8 +5159,7 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
 
         let reloaded_after_row8 = load(project_root, "causal").unwrap().unwrap();
         assert_eq!(
-            reloaded_after_row8.head_event_id,
-            Some("evt-003".to_string()),
+            reloaded_after_row8.head_event_id, cand3.head_event_id,
             "Row 8: populated carrier must not be replaced"
         );
     }
@@ -4665,8 +5210,13 @@ updated_at: 2026-08-05T08:28:25.127361+00:00
         let lc_after_update = load(project_root, "causal").unwrap().unwrap();
         assert_eq!(
             lc_after_update.head_event_id,
-            Some("evt-002".to_string()),
+            lc_after_update.events.last().map(|e| e.event_id.clone()),
             "record_update after lease release must publish updated lifecycle"
+        );
+        assert_eq!(
+            lc_after_update.events.len(),
+            2,
+            "record_update after lease release must append second event"
         );
     }
 

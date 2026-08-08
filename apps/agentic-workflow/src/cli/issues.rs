@@ -11282,7 +11282,11 @@ tech_design_path = "tech-design"
             .await?;
             let reopened = backend.get(&created.slug).await?.unwrap();
             let snapshot = issue_show_json(root.path(), &reopened)?;
-            Ok::<_, anyhow::Error>((before_noop, after_noop, snapshot))
+            let head_event_id = crate::cli::change_lifecycle::load(root.path(), &created.slug)?
+                .unwrap()
+                .head_event_id
+                .unwrap();
+            Ok::<_, anyhow::Error>((before_noop, after_noop, snapshot, head_event_id))
         });
         std::env::set_current_dir(previous).unwrap();
         match previous_fixture_backend {
@@ -11290,12 +11294,12 @@ tech_design_path = "tech-design"
             None => std::env::remove_var(crate::issues::AW_FIXTURE_LOCAL_BACKEND_ENV),
         }
         drop(lock);
-        let (before_noop, after_noop, snapshot) = result.unwrap();
+        let (before_noop, after_noop, snapshot, head_event_id) = result.unwrap();
         assert_eq!(before_noop, after_noop);
         assert_eq!(snapshot["causal_lifecycle"]["ledger"]["epoch"], 2);
         assert_eq!(
             snapshot["causal_lifecycle"]["ledger"]["head_event_id"],
-            "evt-002"
+            head_event_id
         );
     }
 
