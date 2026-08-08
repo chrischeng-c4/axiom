@@ -348,7 +348,7 @@ fn commit_td_lock_update(
     target: &TdLockTarget,
     lock_path: &Path,
 ) -> Result<bool> {
-    if !crate::git::is_git_repo(project_root) {
+    if !crate::lifecycle_commit::is_git_repo(LifecycleLeaf::Td, project_root) {
         return Ok(false);
     }
     let current_lock_path = preflight_repo_relative_td_lock_path(project_root, &target.lock_path)?;

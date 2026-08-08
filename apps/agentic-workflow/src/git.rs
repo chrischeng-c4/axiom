@@ -66,7 +66,14 @@ fn find_bin_on_path(binary: &str, path_env: Option<impl AsRef<OsStr>>) -> Option
 
 /// Return true when `project_root` is inside a git worktree.
 /// @spec apps/agentic-workflow/tech-design/core/logic/git.md#source
-pub fn is_git_repo(project_root: &Path) -> bool {
+pub fn is_git_repo(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
+    project_root: &Path,
+) -> bool {
+    is_git_repo_impl(project_root)
+}
+
+fn is_git_repo_impl(project_root: &Path) -> bool {
     let Some(git_bin) = find_git_bin() else {
         return false;
     };
@@ -123,7 +130,7 @@ pub fn commit_scoped_paths(
     paths: &[PathBuf],
     message: &str,
 ) -> Result<bool> {
-    if paths.is_empty() || !is_git_repo(project_root) {
+    if paths.is_empty() || !is_git_repo_impl(project_root) {
         return Ok(false);
     }
     ensure_no_staged_changes_impl(project_root)?;
@@ -186,7 +193,7 @@ pub fn dirty_paths(
     scopes: &[PathBuf],
     include_untracked: bool,
 ) -> Result<Vec<String>> {
-    if scopes.is_empty() || !is_git_repo(project_root) {
+    if scopes.is_empty() || !is_git_repo_impl(project_root) {
         return Ok(Vec::new());
     }
     let rel_scopes = repo_relative_paths(project_root, scopes)?;
@@ -468,6 +475,7 @@ pub fn git_rev_list(
 
 /// Run `git merge-base --is-ancestor` in `project_root`.
 pub fn git_merge_base_is_ancestor(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
     project_root: &Path,
     ancestor: &str,
     descendant: &str,
@@ -1328,7 +1336,7 @@ pub fn prod_fn() {
         // 4. git_merge_base_is_ancestor - present & absent
         // feature is at initial commit, HEAD is at third commit
         // feature is ancestor of HEAD
-        let is_anc = git_merge_base_is_ancestor(repo, "feature", "HEAD").unwrap();
+        let is_anc = git_merge_base_is_ancestor(&hcap, repo, "feature", "HEAD").unwrap();
         let indep_anc = std::process::Command::new(&git_bin)
             .args(["merge-base", "--is-ancestor", "feature", "HEAD"])
             .current_dir(repo)
@@ -1339,7 +1347,7 @@ pub fn prod_fn() {
         assert!(is_anc);
 
         // HEAD is NOT ancestor of feature
-        let not_anc = git_merge_base_is_ancestor(repo, "HEAD", "feature").unwrap();
+        let not_anc = git_merge_base_is_ancestor(&hcap, repo, "HEAD", "feature").unwrap();
         let indep_not_anc = std::process::Command::new(&git_bin)
             .args(["merge-base", "--is-ancestor", "HEAD", "feature"])
             .current_dir(repo)
@@ -1401,7 +1409,7 @@ pub fn prod_fn() {
             "expected exit code 128 error, got: {err_rl}"
         );
 
-        let err_mb = git_merge_base_is_ancestor(non_repo, "HEAD", "HEAD")
+        let err_mb = git_merge_base_is_ancestor(&hcap, non_repo, "HEAD", "HEAD")
             .unwrap_err()
             .to_string();
         assert!(

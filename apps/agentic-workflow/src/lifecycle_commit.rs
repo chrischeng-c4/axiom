@@ -278,6 +278,24 @@ pub fn git_status<P: AsRef<Path>>(
         .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
 }
 
+/// Return true when `project_root` is inside a git worktree.
+pub fn is_git_repo(leaf: LifecycleLeaf, project_root: &Path) -> bool {
+    let cap = LifecycleWorktreeCapability::get();
+    crate::git::is_git_repo(&cap, project_root)
+}
+
+/// Run `git merge-base --is-ancestor` in `project_root`.
+pub fn git_merge_base_is_ancestor(
+    leaf: LifecycleLeaf,
+    project_root: &Path,
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool> {
+    let cap = LifecycleHistoryCapability::get();
+    crate::git::git_merge_base_is_ancestor(&cap, project_root, ancestor, descendant)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -854,6 +872,8 @@ mod tests {
             "git_show",
             "git_cat_file_blob",
             "git_diff_name_only",
+            "git_merge_base_is_ancestor",
+            "is_git_repo",
             "ensure_no_staged_changes",
             "dirty_paths",
             "has_staged_changes",
@@ -1227,6 +1247,8 @@ pub fn prod_fn() {
             "git_show",
             "git_cat_file_blob",
             "git_diff_name_only",
+            "git_merge_base_is_ancestor",
+            "is_git_repo",
             "ensure_no_staged_changes",
             "dirty_paths",
             "has_staged_changes",
@@ -1243,6 +1265,8 @@ mod tests {
         let _ = crate::git::git_show(project_root, &["HEAD"]);
         let _ = crate::git::git_cat_file_blob(project_root, "oid");
         let _ = crate::git::git_diff_name_only(project_root, &["HEAD~1", "HEAD"]);
+        let _ = crate::git::git_merge_base_is_ancestor(project_root, "feature", "HEAD");
+        let _ = crate::git::is_git_repo(project_root);
         let _ = crate::git::ensure_no_staged_changes(project_root);
         let _ = crate::git::dirty_paths(project_root, &scopes, true);
         let _ = crate::git::has_staged_changes(project_root);
@@ -1259,6 +1283,8 @@ fn test_item_fn() {
     let _ = crate::git::git_show(project_root, &["HEAD"]);
     let _ = crate::git::git_cat_file_blob(project_root, "oid");
     let _ = crate::git::git_diff_name_only(project_root, &["HEAD~1", "HEAD"]);
+    let _ = crate::git::git_merge_base_is_ancestor(project_root, "feature", "HEAD");
+    let _ = crate::git::is_git_repo(project_root);
     let _ = crate::git::ensure_no_staged_changes(project_root);
     let _ = crate::git::dirty_paths(project_root, &scopes, true);
     let _ = crate::git::has_staged_changes(project_root);
@@ -1269,9 +1295,9 @@ fn test_item_fn() {
         let violations = scan_source_for_direct_git_history_probes("src/cli/test_file.rs", fixture);
         assert!(
             violations.is_empty(),
-            "expected 0 violations for all 11 probes in #[cfg(test)] mod and item-level fn, got: {violations:?}"
+            "expected 0 violations for all 13 probes in #[cfg(test)] mod and item-level fn, got: {violations:?}"
         );
-        assert_eq!(expected_probes.len(), 11);
+        assert_eq!(expected_probes.len(), 13);
     }
 
     fn find_pub_fn_param_list(content: &str, probe: &str) -> Option<String> {
@@ -1406,7 +1432,266 @@ fn test_item_fn() {
         false
     }
 
+    fn mask_raw_strings_and_comments(content: &str) -> String {
+        let bytes = content.as_bytes();
+        let len = bytes.len();
+        let mut masked = vec![b' '; len];
+        let mut i = 0;
+
+        while i < len {
+            // Line comments //...
+            if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+                while i < len && bytes[i] != b'\n' {
+                    masked[i] = b' ';
+                    i += 1;
+                }
+                if i < len && bytes[i] == b'\n' {
+                    masked[i] = b'\n';
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Block comments /*...*/
+            if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                masked[i] = b' ';
+                masked[i + 1] = b' ';
+                i += 2;
+                while i < len {
+                    if i + 1 < len && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        masked[i] = b' ';
+                        masked[i + 1] = b' ';
+                        i += 2;
+                        break;
+                    }
+                    if bytes[i] == b'\n' {
+                        masked[i] = b'\n';
+                    } else {
+                        masked[i] = b' ';
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Raw string literals r#"..."# or r"..." or r##"..."##
+            if bytes[i] == b'r' {
+                let mut hash_count = 0;
+                let mut j = i + 1;
+                while j < len && bytes[j] == b'#' {
+                    hash_count += 1;
+                    j += 1;
+                }
+                if j < len && bytes[j] == b'"' {
+                    for k in i..=j {
+                        masked[k] = b' ';
+                    }
+                    i = j + 1;
+                    while i < len {
+                        if bytes[i] == b'"' {
+                            let mut match_hashes = true;
+                            if i + hash_count < len {
+                                for h in 1..=hash_count {
+                                    if bytes[i + h] != b'#' {
+                                        match_hashes = false;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                match_hashes = false;
+                            }
+                            if match_hashes {
+                                for k in 0..=hash_count {
+                                    masked[i + k] = b' ';
+                                }
+                                i += hash_count + 1;
+                                break;
+                            }
+                        }
+                        if bytes[i] == b'\n' {
+                            masked[i] = b'\n';
+                        } else {
+                            masked[i] = b' ';
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+
+            // Normal string literals "..."
+            if bytes[i] == b'"' {
+                masked[i] = b' ';
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        masked[i] = b' ';
+                        if i + 1 < len {
+                            if bytes[i + 1] == b'\n' {
+                                masked[i + 1] = b'\n';
+                            } else {
+                                masked[i + 1] = b' ';
+                            }
+                            i += 2;
+                            continue;
+                        }
+                    }
+                    if bytes[i] == b'"' {
+                        masked[i] = b' ';
+                        i += 1;
+                        break;
+                    }
+                    if bytes[i] == b'\n' {
+                        masked[i] = b'\n';
+                    } else {
+                        masked[i] = b' ';
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+
+            masked[i] = bytes[i];
+            i += 1;
+        }
+
+        String::from_utf8(masked).unwrap()
+    }
+
+    struct PubFnDecl {
+        name: String,
+        param_list: String,
+        body: String,
+    }
+
+    fn find_all_pub_fns(masked_content: &str) -> Vec<PubFnDecl> {
+        let mut decls = Vec::new();
+        let mut search_idx = 0;
+        while let Some(pos) = masked_content[search_idx..].find("pub fn") {
+            let abs_pos = search_idx + pos;
+            search_idx = abs_pos + 6;
+
+            let rest = &masked_content[search_idx..];
+            let trimmed_rest = rest.trim_start();
+
+            let name_end = trimmed_rest
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(trimmed_rest.len());
+            if name_end == 0 {
+                continue;
+            }
+            let fn_name = trimmed_rest[..name_end].to_string();
+
+            let after_name = &trimmed_rest[name_end..];
+            let after_name_trimmed = after_name.trim_start();
+
+            if !after_name_trimmed.starts_with('(') && !after_name_trimmed.starts_with('<') {
+                continue;
+            }
+
+            let mut angle_depth = 0;
+            let mut paren_start_pos = None;
+            for (idx, ch) in after_name_trimmed.char_indices() {
+                match ch {
+                    '<' => angle_depth += 1,
+                    '>' => {
+                        if angle_depth > 0 {
+                            angle_depth -= 1;
+                        }
+                    }
+                    '(' if angle_depth == 0 => {
+                        paren_start_pos = Some(idx);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            let Some(start_idx) = paren_start_pos else {
+                continue;
+            };
+
+            let mut paren_depth = 0;
+            let mut end_idx = None;
+            for (idx, ch) in after_name_trimmed[start_idx..].char_indices() {
+                match ch {
+                    '(' => paren_depth += 1,
+                    ')' => {
+                        paren_depth -= 1;
+                        if paren_depth == 0 {
+                            end_idx = Some(start_idx + idx);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let Some(end_pos) = end_idx else {
+                continue;
+            };
+            let param_list = after_name_trimmed[start_idx + 1..end_pos].to_string();
+
+            let after_params = &after_name_trimmed[end_pos + 1..];
+            let mut body = String::new();
+            if let Some(brace_start) = after_params.find('{') {
+                let mut brace_depth = 0;
+                let mut body_end = None;
+                for (idx, ch) in after_params[brace_start..].char_indices() {
+                    match ch {
+                        '{' => brace_depth += 1,
+                        '}' => {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                body_end = Some(brace_start + idx);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(b_end) = body_end {
+                    body = after_params[brace_start + 1..b_end].to_string();
+                }
+            }
+
+            decls.push(PubFnDecl {
+                name: fn_name,
+                param_list,
+                body,
+            });
+        }
+        decls
+    }
+
     fn scan_source_for_history_probe_capabilities(content: &str) -> Vec<String> {
+        let mutating_primitives = [
+            (
+                "commit_scoped_paths",
+                "&crate::lifecycle_commit::LifecycleCommitCapability",
+            ),
+            (
+                "stage_paths",
+                "&crate::lifecycle_commit::LifecycleCommitCapability",
+            ),
+            (
+                "commit_staged",
+                "&crate::lifecycle_commit::LifecycleCommitCapability",
+            ),
+            (
+                "commit_only_paths",
+                "&crate::lifecycle_commit::LifecycleCommitCapability",
+            ),
+            (
+                "git_reset",
+                "&crate::lifecycle_commit::LifecycleCommitCapability",
+            ),
+            (
+                "git_merge",
+                "&crate::lifecycle_commit::LifecycleCommitCapability",
+            ),
+        ];
+
         let history_probes = [
             (
                 "git_log",
@@ -1432,9 +1717,17 @@ fn test_item_fn() {
                 "git_diff_name_only",
                 "&crate::lifecycle_commit::LifecycleHistoryCapability",
             ),
+            (
+                "git_merge_base_is_ancestor",
+                "&crate::lifecycle_commit::LifecycleHistoryCapability",
+            ),
         ];
 
         let worktree_probes = [
+            (
+                "is_git_repo",
+                "&crate::lifecycle_commit::LifecycleWorktreeCapability",
+            ),
             (
                 "ensure_no_staged_changes",
                 "&crate::lifecycle_commit::LifecycleWorktreeCapability",
@@ -1457,19 +1750,83 @@ fn test_item_fn() {
             ),
         ];
 
+        let exemptions = ["find_git_bin", "find_rustfmt_bin"];
+
+        let masked = mask_raw_strings_and_comments(content);
+        let decls = find_all_pub_fns(&masked);
+
         let mut violations = Vec::new();
 
-        for (probe, target_type) in history_probes.iter().chain(worktree_probes.iter()) {
-            if let Some(param_list) = find_pub_fn_param_list(content, probe) {
-                let has_cap_param = param_list_has_capability(&param_list, target_type);
-                if !has_cap_param {
+        // Direction 1: Every production pub fn found in git.rs must be validly registered and declared.
+        for decl in &decls {
+            if let Some((_, target_type)) = mutating_primitives
+                .iter()
+                .find(|(name, _)| *name == decl.name)
+            {
+                if !param_list_has_capability(&decl.param_list, target_type) {
                     violations.push(format!(
-                        "Probe {probe} in git.rs does not declare a parameter of type {target_type}"
+                        "Probe {} in git.rs does not declare a parameter of type {}",
+                        decl.name, target_type
+                    ));
+                }
+            } else if let Some((_, target_type)) =
+                history_probes.iter().find(|(name, _)| *name == decl.name)
+            {
+                if !param_list_has_capability(&decl.param_list, target_type) {
+                    violations.push(format!(
+                        "Probe {} in git.rs does not declare a parameter of type {}",
+                        decl.name, target_type
+                    ));
+                }
+            } else if let Some((_, target_type)) =
+                worktree_probes.iter().find(|(name, _)| *name == decl.name)
+            {
+                if !param_list_has_capability(&decl.param_list, target_type) {
+                    violations.push(format!(
+                        "Probe {} in git.rs does not declare a parameter of type {}",
+                        decl.name, target_type
+                    ));
+                }
+            } else if exemptions.contains(&decl.name.as_str()) {
+                if param_list_has_capability(&decl.param_list, "LifecycleCommitCapability")
+                    || param_list_has_capability(&decl.param_list, "LifecycleHistoryCapability")
+                    || param_list_has_capability(&decl.param_list, "LifecycleWorktreeCapability")
+                {
+                    violations.push(format!(
+                        "Exempt function {} in git.rs should not declare a capability parameter",
+                        decl.name
+                    ));
+                }
+                if decl.body.contains("Command::new") {
+                    violations.push(format!(
+                        "Exempt function {} in git.rs spawns a child process via Command::new",
+                        decl.name
                     ));
                 }
             } else {
                 violations.push(format!(
+                    "Probe {} in git.rs declaration not found on registered probe or exemption lists",
+                    decl.name
+                ));
+            }
+        }
+
+        // Direction 2: Every registered probe/exemption must exist as a pub fn in git.rs.
+        for (probe, _) in history_probes
+            .iter()
+            .chain(worktree_probes.iter())
+            .chain(mutating_primitives.iter())
+        {
+            if !decls.iter().any(|d| d.name == *probe) {
+                violations.push(format!(
                     "Probe {probe} declaration not found as pub fn in git.rs"
+                ));
+            }
+        }
+        for name in &exemptions {
+            if !decls.iter().any(|d| d.name == *name) {
+                violations.push(format!(
+                    "Exempt function {name} declaration not found as pub fn in git.rs"
                 ));
             }
         }
@@ -1496,6 +1853,17 @@ fn test_item_fn() {
     #[test]
     fn test_history_probe_capability_scanner_negative_control_missing_parameter() {
         let fixture = r#"
+pub fn find_git_bin() -> Option<PathBuf> { None }
+pub fn find_rustfmt_bin() -> Option<PathBuf> { None }
+pub fn is_git_repo(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> bool { true }
+pub fn ensure_no_staged_changes(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<()> { Ok(()) }
+pub fn commit_scoped_paths(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[PathBuf], message: &str) -> Result<bool> { Ok(true) }
+pub fn dirty_paths(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, scopes: &[PathBuf], include_untracked: bool) -> Result<Vec<String>> { Ok(Vec::new()) }
+pub fn stage_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<()> { Ok(()) }
+pub fn has_staged_changes(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<bool> { Ok(true) }
+pub fn has_staged_changes_for_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<bool> { Ok(true) }
+pub fn commit_staged(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, message: &str, allow_empty: bool) -> Result<()> { Ok(()) }
+pub fn commit_only_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[P], message: &str, literal_pathspecs: bool) -> Result<()> { Ok(()) }
 pub fn git_log(
     project_root: &Path,
     args: &[&str],
@@ -1528,13 +1896,14 @@ pub fn git_diff_name_only(
 ) -> Result<Vec<String>> {
     Ok(Vec::new())
 }
-pub fn ensure_no_staged_changes(
-    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
+pub fn git_merge_base_is_ancestor(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
     project_root: &Path,
-) -> Result<()> { Ok(()) }
-pub fn dirty_paths(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, scopes: &[PathBuf], include_untracked: bool) -> Result<Vec<String>> { Ok(Vec::new()) }
-pub fn has_staged_changes(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<bool> { Ok(true) }
-pub fn has_staged_changes_for_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<bool> { Ok(true) }
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool> { Ok(true) }
+pub fn git_reset(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
+pub fn git_merge(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
 pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, literal_pathspecs: bool, args: &[&str], pathspecs: &[P]) -> Result<Vec<u8>> { Ok(Vec::new()) }
 "#;
         let violations = scan_source_for_history_probe_capabilities(fixture);
@@ -1551,7 +1920,7 @@ pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorkt
     }
 
     #[test]
-    fn test_history_probe_capability_scanner_negative_control_all_eleven_missing_parameters() {
+    fn test_history_probe_capability_scanner_negative_control_all_thirteen_missing_parameters() {
         let expected_probes = [
             "git_log",
             "git_rev_parse",
@@ -1559,6 +1928,8 @@ pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorkt
             "git_show",
             "git_cat_file_blob",
             "git_diff_name_only",
+            "git_merge_base_is_ancestor",
+            "is_git_repo",
             "ensure_no_staged_changes",
             "dirty_paths",
             "has_staged_changes",
@@ -1566,6 +1937,15 @@ pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorkt
             "git_status",
         ];
         let fixture = r#"
+pub fn find_git_bin() -> Option<PathBuf> { None }
+pub fn find_rustfmt_bin() -> Option<PathBuf> { None }
+pub fn commit_scoped_paths(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[PathBuf], message: &str) -> Result<bool> { Ok(true) }
+pub fn stage_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<()> { Ok(()) }
+pub fn commit_staged(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, message: &str, allow_empty: bool) -> Result<()> { Ok(()) }
+pub fn commit_only_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[P], message: &str, literal_pathspecs: bool) -> Result<()> { Ok(()) }
+pub fn git_reset(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
+pub fn git_merge(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
+pub fn is_git_repo(project_root: &Path) -> bool { true }
 pub fn git_log(
     project_root: &Path,
     args: &[&str],
@@ -1597,6 +1977,11 @@ pub fn git_diff_name_only(
 ) -> Result<Vec<String>> {
     Ok(Vec::new())
 }
+pub fn git_merge_base_is_ancestor(
+    project_root: &Path,
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool> { Ok(true) }
 pub fn ensure_no_staged_changes(
     project_root: &Path,
 ) -> Result<()> { Ok(()) }
@@ -1608,8 +1993,8 @@ pub fn git_status<P: AsRef<Path>>(project_root: &Path, literal_pathspecs: bool, 
         let violations = scan_source_for_history_probe_capabilities(fixture);
         assert_eq!(
             violations.len(),
-            11,
-            "expected 11 violations when all 11 probe capability parameters are missing, got: {violations:?}"
+            13,
+            "expected 13 violations when all 13 probe capability parameters are missing, got: {violations:?}"
         );
         let violations_text = violations.join("\n");
         for probe in expected_probes {
@@ -1623,6 +2008,17 @@ pub fn git_status<P: AsRef<Path>>(project_root: &Path, literal_pathspecs: bool, 
     #[test]
     fn test_history_probe_capability_scanner_reflow_and_rename() {
         let fixture = r#"
+pub fn find_git_bin() -> Option<PathBuf> { None }
+pub fn find_rustfmt_bin() -> Option<PathBuf> { None }
+pub fn is_git_repo(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> bool { true }
+pub fn ensure_no_staged_changes(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<()> { Ok(()) }
+pub fn commit_scoped_paths(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[PathBuf], message: &str) -> Result<bool> { Ok(true) }
+pub fn dirty_paths(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, scopes: &[PathBuf], include_untracked: bool) -> Result<Vec<String>> { Ok(Vec::new()) }
+pub fn stage_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<()> { Ok(()) }
+pub fn has_staged_changes(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<bool> { Ok(true) }
+pub fn has_staged_changes_for_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<bool> { Ok(true) }
+pub fn commit_staged(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, message: &str, allow_empty: bool) -> Result<()> { Ok(()) }
+pub fn commit_only_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, paths: &[P], message: &str, literal_pathspecs: bool) -> Result<()> { Ok(()) }
 pub fn git_log(
     custom_cap_name:
         &crate::lifecycle_commit::LifecycleHistoryCapability,
@@ -1645,13 +2041,9 @@ pub fn git_cat_file_blob(_cap: &crate::lifecycle_commit::LifecycleHistoryCapabil
 pub fn git_diff_name_only(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability) -> Result<Vec<String>> {
     Ok(Vec::new())
 }
-pub fn ensure_no_staged_changes(
-    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
-    project_root: &Path,
-) -> Result<()> { Ok(()) }
-pub fn dirty_paths(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, scopes: &[PathBuf], include_untracked: bool) -> Result<Vec<String>> { Ok(Vec::new()) }
-pub fn has_staged_changes(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<bool> { Ok(true) }
-pub fn has_staged_changes_for_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<bool> { Ok(true) }
+pub fn git_merge_base_is_ancestor(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability, project_root: &Path, ancestor: &str, descendant: &str) -> Result<bool> { Ok(true) }
+pub fn git_reset(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
+pub fn git_merge(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
 pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, literal_pathspecs: bool, args: &[&str], pathspecs: &[P]) -> Result<Vec<u8>> { Ok(Vec::new()) }
 "#;
         let violations = scan_source_for_history_probe_capabilities(fixture);

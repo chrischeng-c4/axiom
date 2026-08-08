@@ -7659,8 +7659,12 @@ fn land_td_lifecycle_branch(
     crate::branch_switch::switch_or_create_branch(project_root, &target, &target)
         .map_err(|e| anyhow::anyhow!("checking out landing target '{}': {}", target, e))?;
 
-    let already_merged = crate::git::git_merge_base_is_ancestor(project_root, &td_branch, &target)
-        .context("git merge-base --is-ancestor")?;
+    let already_merged = crate::lifecycle_commit::git_merge_base_is_ancestor(
+        LifecycleLeaf::Cb,
+        project_root,
+        &td_branch,
+        &target,
+    )?;
     if already_merged {
         crate::branch_switch::delete_local_branch(project_root, &td_branch)?;
         return Ok(BranchLandingOutcome::AlreadyMerged {
