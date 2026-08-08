@@ -24,6 +24,7 @@ pub mod generate;
 pub mod generators;
 pub mod git;
 pub mod issues;
+pub mod lifecycle_commit;
 pub mod models;
 pub mod parser;
 pub mod runtime;

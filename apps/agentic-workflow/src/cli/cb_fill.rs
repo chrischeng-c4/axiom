@@ -1498,7 +1498,7 @@ fn stage_and_commit_cb_fill(
     for source_path in source_paths {
         paths_to_stage.push(source_path.as_str());
     }
-    crate::git::stage_paths(worktree, &paths_to_stage, false)?;
+    crate::lifecycle_commit::stage_path_set(worktree, &paths_to_stage, false)?;
 
     let msg = format!(
         "cb({slug}) \u{2014} markers filled\n\n\
@@ -1506,7 +1506,7 @@ fn stage_and_commit_cb_fill(
          Work-Item: {slug}\n\
          Lifecycle-Stage: Cb-Fill",
     );
-    crate::git::commit_staged(worktree, &msg, true)
+    crate::lifecycle_commit::commit_staged_changes(worktree, &msg, true)
 }
 
 fn stage_and_commit_cb_marker(
@@ -1523,7 +1523,7 @@ fn stage_and_commit_cb_marker(
             paths_to_stage.push(path);
         }
     }
-    crate::git::stage_paths(worktree, &paths_to_stage, false)?;
+    crate::lifecycle_commit::stage_path_set(worktree, &paths_to_stage, false)?;
 
     let msg = format!(
         "cb({slug}) \u{2014} marker filled: {marker_id}\n\n\
@@ -1534,7 +1534,7 @@ fn stage_and_commit_cb_marker(
          CB-Marker: {marker_id}\n\
          Next-Command: aw cb fill {slug} --apply --marker {next_marker_id}",
     );
-    crate::git::commit_staged(worktree, &msg, false)
+    crate::lifecycle_commit::commit_staged_changes(worktree, &msg, false)
 }
 
 fn stage_and_commit_cb_queue_start(
@@ -1544,7 +1544,7 @@ fn stage_and_commit_cb_queue_start(
     first_marker_id: &str,
 ) -> Result<()> {
     if should_stage_lifecycle_path(worktree, rel_issue) {
-        crate::git::stage_paths(worktree, &[rel_issue], false)?;
+        crate::lifecycle_commit::stage_path_set(worktree, &[rel_issue], false)?;
     }
     let msg = format!(
         "cb({slug}) \u{2014} fill queue started\n\n\
@@ -1554,7 +1554,7 @@ fn stage_and_commit_cb_queue_start(
          Lifecycle-Pass: fill\n\
          Next-Command: aw cb fill {slug} --apply --marker {first_marker_id}",
     );
-    crate::git::commit_staged(worktree, &msg, true)
+    crate::lifecycle_commit::commit_staged_changes(worktree, &msg, true)
 }
 
 fn emit_error(slug: &str, message: &str) -> Result<()> {

@@ -3631,7 +3631,7 @@ fn commit_project_persistence_if_approved(
                 "aw goal capability({project}) lifecycle persistence\n\nProject: {project}\nLifecycle-Stage: Project-Persistence\nDirty-Paths: {}\n",
                 dirty_paths.join(", ")
             );
-            crate::git::commit_scoped_paths(project_root, &paths, &message)?;
+            crate::lifecycle_commit::commit_scoped_path_set(project_root, &paths, &message)?;
             let _ = fs::remove_file(&path);
             return Ok(true);
         }

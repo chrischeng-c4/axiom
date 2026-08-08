@@ -110,7 +110,12 @@ pub fn ensure_no_staged_changes(project_root: &Path) -> Result<()> {
 /// Stage exactly `paths`, create `message` as a lifecycle commit, and no-op
 /// when those paths have no staged diff.
 /// @spec apps/agentic-workflow/tech-design/core/logic/git.md#source
-pub fn commit_scoped_paths(project_root: &Path, paths: &[PathBuf], message: &str) -> Result<bool> {
+pub fn commit_scoped_paths(
+    _cap: &crate::lifecycle_commit::LifecycleCommitCapability,
+    project_root: &Path,
+    paths: &[PathBuf],
+    message: &str,
+) -> Result<bool> {
     if paths.is_empty() || !is_git_repo(project_root) {
         return Ok(false);
     }
@@ -216,6 +221,7 @@ pub fn dirty_paths(
 
 /// Stage specified `paths` into git index.
 pub fn stage_paths<P: AsRef<Path>>(
+    _cap: &crate::lifecycle_commit::LifecycleCommitCapability,
     project_root: &Path,
     paths: &[P],
     literal_pathspecs: bool,
@@ -289,7 +295,12 @@ pub fn has_staged_changes_for_paths<P: AsRef<Path>>(
 }
 
 /// Commit already staged changes with `message`. If `allow_empty` is true, pass `--allow-empty`.
-pub fn commit_staged(project_root: &Path, message: &str, allow_empty: bool) -> Result<()> {
+pub fn commit_staged(
+    _cap: &crate::lifecycle_commit::LifecycleCommitCapability,
+    project_root: &Path,
+    message: &str,
+    allow_empty: bool,
+) -> Result<()> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let mut command = std::process::Command::new(&git_bin);
     command.arg("-C").arg(project_root).arg("commit");
@@ -309,6 +320,7 @@ pub fn commit_staged(project_root: &Path, message: &str, allow_empty: bool) -> R
 
 /// Create a path-scoped commit using `git commit --only -- <paths>`.
 pub fn commit_only_paths<P: AsRef<Path>>(
+    _cap: &crate::lifecycle_commit::LifecycleCommitCapability,
     project_root: &Path,
     paths: &[P],
     message: &str,
@@ -491,7 +503,11 @@ pub fn git_show(project_root: &Path, args: &[&str]) -> Result<String> {
 }
 
 /// Run `git reset` with args in `project_root`.
-pub fn git_reset(project_root: &Path, args: &[&str]) -> Result<()> {
+pub fn git_reset(
+    _cap: &crate::lifecycle_commit::LifecycleCommitCapability,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<()> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -507,7 +523,11 @@ pub fn git_reset(project_root: &Path, args: &[&str]) -> Result<()> {
 }
 
 /// Run `git merge` with args in `project_root`.
-pub fn git_merge(project_root: &Path, args: &[&str]) -> Result<()> {
+pub fn git_merge(
+    _cap: &crate::lifecycle_commit::LifecycleCommitCapability,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<()> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -1049,20 +1069,21 @@ pub fn prod_fn() {
         let file1 = repo.join("test.txt");
         std::fs::write(&file1, "hello\n").unwrap();
 
-        stage_paths(repo, &[Path::new("test.txt")], false).unwrap();
+        let cap = crate::lifecycle_commit::LifecycleCommitCapability::for_test();
+        stage_paths(&cap, repo, &[Path::new("test.txt")], false).unwrap();
         assert!(has_staged_changes(repo).unwrap());
 
-        commit_staged(repo, "commit test", false).unwrap();
+        commit_staged(&cap, repo, "commit test", false).unwrap();
         assert!(!has_staged_changes(repo).unwrap());
 
-        commit_staged(repo, "empty test", true).unwrap();
+        commit_staged(&cap, repo, "empty test", true).unwrap();
 
         let file2 = repo.join("scoped.txt");
         std::fs::write(&file2, "world\n").unwrap();
-        stage_paths(repo, &[Path::new("scoped.txt")], true).unwrap();
+        stage_paths(&cap, repo, &[Path::new("scoped.txt")], true).unwrap();
         assert!(has_staged_changes_for_paths(repo, &[Path::new("scoped.txt")], true).unwrap());
 
-        commit_only_paths(repo, &[Path::new("scoped.txt")], "scoped test", true).unwrap();
+        commit_only_paths(&cap, repo, &[Path::new("scoped.txt")], "scoped test", true).unwrap();
         assert!(!has_staged_changes_for_paths(repo, &[Path::new("scoped.txt")], true).unwrap());
     }
 

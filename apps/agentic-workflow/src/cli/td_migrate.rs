@@ -184,7 +184,7 @@ fn commit_mermaid_migration(
          TD-Block: {block_id}\n\
          TD-Target: {target}\n"
     );
-    crate::git::commit_scoped_paths(project_root, &[path.to_path_buf()], &message)?;
+    crate::lifecycle_commit::commit_scoped_path_set(project_root, &[path.to_path_buf()], &message)?;
     Ok(())
 }
 

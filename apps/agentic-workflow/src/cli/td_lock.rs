@@ -358,7 +358,7 @@ fn commit_td_lock_update(
         );
     }
 
-    crate::git::stage_paths(project_root, &[lock_path], true)?;
+    crate::lifecycle_commit::stage_path_set(project_root, &[lock_path], true)?;
 
     if !crate::git::has_staged_changes_for_paths(project_root, &[lock_path], true)? {
         return Ok(false);
@@ -368,7 +368,7 @@ fn commit_td_lock_update(
         "td-lock({}) — update TD IR snapshot\n\nTD-Lock-Project: {}\nTD-Lock-Path: {}",
         target.project, target.project, target.lock_path_display
     );
-    crate::git::commit_only_paths(project_root, &[lock_path], &message, true)?;
+    crate::lifecycle_commit::commit_only_path_set(project_root, &[lock_path], &message, true)?;
 
     let lock_stdout = crate::git::git_status(
         project_root,
