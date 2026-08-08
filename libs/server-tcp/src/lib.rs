@@ -15,7 +15,7 @@ use std::time::Duration;
 use anyhow::Result;
 use server_lifecycle::{
     BindConfig, ConnectionBudget, ConnectionMetrics, DrainController, DrainSignal,
-    NoopConnectionMetrics,
+    LifecycleController, LifecycleSubscription, NoopConnectionMetrics,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::{TcpListener, TcpStream};
@@ -104,6 +104,74 @@ pub struct ConnectionContext {
     pub local_addr: SocketAddr,
     pub peer_addr: SocketAddr,
     pub drain: DrainSignal,
+    /// Authoritative lifecycle subscription for this accepted connection.
+    pub lifecycle: LifecycleSubscription,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpConnectionTerminal {
+    Completed,
+    Failed,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TcpConnectionResult {
+    pub terminal: TcpConnectionTerminal,
+    pub streams_admitted: u64,
+    pub streams_active_at_drain: u64,
+    pub streams_completed: u64,
+    pub streams_refused: u64,
+    pub streams_timed_out: u64,
+    pub streams_ambiguous: u64,
+}
+
+impl Default for TcpConnectionResult {
+    fn default() -> Self {
+        Self {
+            terminal: TcpConnectionTerminal::Completed,
+            streams_admitted: 0,
+            streams_active_at_drain: 0,
+            streams_completed: 0,
+            streams_refused: 0,
+            streams_timed_out: 0,
+            streams_ambiguous: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TcpServerReport {
+    pub accepted: u64,
+    pub rejected: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub timed_out: u64,
+    pub unfinished: u64,
+    pub streams_completed: u64,
+    pub streams_admitted: u64,
+    pub streams_active_at_drain: u64,
+    pub streams_refused: u64,
+    pub streams_timed_out: u64,
+    pub streams_ambiguous: u64,
+    pub accept_errors: u64,
+    pub deadline_missing: bool,
+}
+
+impl TcpServerReport {
+    fn record(&mut self, result: TcpConnectionResult) {
+        match result.terminal {
+            TcpConnectionTerminal::Completed => self.completed += 1,
+            TcpConnectionTerminal::Failed => self.failed += 1,
+            TcpConnectionTerminal::TimedOut => self.timed_out += 1,
+        }
+        self.streams_completed += result.streams_completed;
+        self.streams_admitted += result.streams_admitted;
+        self.streams_active_at_drain += result.streams_active_at_drain;
+        self.streams_refused += result.streams_refused;
+        self.streams_timed_out += result.streams_timed_out;
+        self.streams_ambiguous += result.streams_ambiguous;
+    }
 }
 
 /// Zero-boxing TCP protocol handler.
@@ -115,6 +183,13 @@ pub trait TcpHandler: Send + Sync + 'static {
     type Future: Future<Output = Result<()>> + Send + 'static;
 
     fn handle(&self, stream: TcpStream, cx: ConnectionContext) -> Self::Future;
+}
+
+struct ConnectionCloseGuard(Arc<dyn ConnectionMetrics>);
+impl Drop for ConnectionCloseGuard {
+    fn drop(&mut self) {
+        self.0.connection_closed();
+    }
 }
 
 impl<F, Fut> TcpHandler for F
@@ -164,37 +239,93 @@ pub async fn serve_arc<H, S>(
     H: TcpHandler,
     S: Future<Output = ()> + Send + 'static,
 {
-    // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
-    let local_addr = listener.local_addr().ok();
-    // Keep handler-owned shared resources alive through the connection-drain
-    // phase. A compiler is otherwise free to drop `handler` as soon as the
-    // accept loop ends, even while its cloned connection tasks are still
-    // draining. Stateful handler adjuncts (for example a readiness owner)
-    // therefore get the same lifetime boundary as those tasks.
-    let handler_drain_owner = Arc::clone(&handler);
-    let mut shutdown = std::pin::pin!(shutdown);
-    let mut tasks = JoinSet::new();
+    let handler_owner = Arc::clone(&handler);
+    let report = serve_core(
+        listener,
+        config,
+        move |stream, cx| {
+            let handler = Arc::clone(&handler_owner);
+            async move {
+                match handler.handle(stream, cx).await {
+                    Ok(()) => TcpConnectionResult::default(),
+                    Err(error) => {
+                        tracing::debug!(%error, "tcp connection handler failed");
+                        TcpConnectionResult {
+                            terminal: TcpConnectionTerminal::Failed,
+                            ..Default::default()
+                        }
+                    }
+                }
+            }
+        },
+        Box::pin(shutdown),
+        None,
+    )
+    .await;
+    let _ = report;
+}
 
-    loop {
+/// Report-capable production listener path. The supplied lifecycle is the
+/// sole source of admission shutdown and its published absolute deadline.
+/// Compatibility [`serve`] and [`serve_arc`] retain their legacy relative
+/// timeout adapters.
+async fn serve_core<H, F>(
+    listener: TcpListener,
+    config: TcpServerConfig,
+    handler: H,
+    shutdown: std::pin::Pin<Box<dyn Future<Output = ()> + Send>>,
+    lifecycle: Option<LifecycleController>,
+) -> TcpServerReport
+where
+    H: Fn(TcpStream, ConnectionContext) -> F + Send + Sync + 'static,
+    F: Future<Output = TcpConnectionResult> + Send + 'static,
+{
+    let local_addr = listener.local_addr().ok();
+    let handler = Arc::new(handler);
+    let owner = Arc::clone(&handler);
+    let lifecycle_mode = lifecycle.is_some();
+    let lifecycle = lifecycle.unwrap_or_else(|| config.drain.lifecycle());
+    let mut subscription = lifecycle.subscribe();
+    let mut shutdown = shutdown;
+    let mut tasks = JoinSet::new();
+    let mut report = TcpServerReport::default();
+
+    while !subscription.observation().phase.is_draining_or_later() {
         tokio::select! {
             joined = tasks.join_next(), if !tasks.is_empty() => {
-                if let Some(Err(error)) = joined {
-                    tracing::debug!(%error, "tcp connection task join failed");
+                match joined {
+                    Some(Ok(result)) => report.record(result),
+                    Some(Err(_)) => report.failed += 1,
+                    None => {}
                 }
+            }
+            changed = subscription.changed() => {
+                if changed.phase.is_draining_or_later() {
+                    break;
+                }
+            }
+            _ = &mut shutdown => {
+                config.drain.start_drain();
+                break;
             }
             accept = listener.accept() => {
                 let (stream, peer_addr) = match accept {
                     Ok(accepted) => accepted,
                     Err(error) => {
                         tracing::warn!(%error, "tcp accept failed");
+                        report.accept_errors += 1;
                         continue;
                     }
                 };
-
+                if lifecycle.observation().phase.is_draining_or_later() {
+                    config.connection_metrics.connection_rejected();
+                    report.rejected += 1;
+                    drop(stream);
+                    break;
+                }
                 if let Err(error) = stream.set_nodelay(config.socket.nodelay) {
                     tracing::debug!(%error, %peer_addr, "failed to set tcp nodelay");
                 }
-
                 let permit = match config.connection_budget.as_ref() {
                     Some(budget) => match budget.try_acquire() {
                         Ok(permit) => Some(permit),
@@ -202,58 +333,101 @@ pub async fn serve_arc<H, S>(
                             config.connection_metrics.connection_rejected();
                             tracing::warn!(%error, %peer_addr, "tcp connection rejected");
                             drop(stream);
+                            report.rejected += 1;
                             continue;
                         }
                     },
                     None => None,
                 };
-
                 config.connection_metrics.connection_accepted();
-
-                let handler = handler.clone();
-                let connection_metrics = config.connection_metrics.clone();
+                report.accepted += 1;
+                let handler = Arc::clone(&handler);
+                let connection_metrics = Arc::clone(&config.connection_metrics);
+                let closed = ConnectionCloseGuard(connection_metrics);
                 let cx = ConnectionContext {
                     local_addr: local_addr.unwrap_or_else(|| stream.local_addr().unwrap_or(config.bind.socket_addr())),
                     peer_addr,
                     drain: config.drain.signal(),
+                    lifecycle: lifecycle.subscribe(),
                 };
                 tasks.spawn(async move {
                     let _permit = permit;
-                    let result = handler.handle(stream, cx).await;
-                    connection_metrics.connection_closed();
-                    result
+                    let _closed = closed;
+                    handler(stream, cx).await
                 });
-            }
-            _ = &mut shutdown => {
-                config.drain.start_drain();
-                tracing::info!("tcp server stopped accepting connections");
-                break;
             }
         }
     }
 
     drop(listener);
+    let remaining = if lifecycle_mode {
+        match lifecycle.subscribe().shutdown_deadline() {
+            Some(deadline) => deadline.remaining(),
+            None => {
+                report.deadline_missing = true;
+                report.unfinished += tasks.len() as u64;
+                tasks.abort_all();
+                while tasks.join_next().await.is_some() {}
+                drop(owner);
+                return report;
+            }
+        }
+    } else {
+        config.drain_timeout
+    };
+    if remaining.is_zero() {
+        report.unfinished += tasks.len() as u64;
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+    } else {
+        let join = async {
+            while let Some(joined) = tasks.join_next().await {
+                match joined {
+                    Ok(result) => report.record(result),
+                    Err(_) => report.failed += 1,
+                }
+            }
+        };
+        if tokio::time::timeout(remaining, join).await.is_err() {
+            report.unfinished += tasks.len() as u64;
+            tasks.abort_all();
+            while tasks.join_next().await.is_some() {}
+        }
+    }
+    drop(owner);
+    report
+}
 
-    let drain = async {
-        while let Some(joined) = tasks.join_next().await {
-            match joined {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => tracing::debug!(%error, "tcp connection handler failed"),
-                Err(error) => tracing::debug!(%error, "tcp connection task join failed"),
+pub async fn serve_with_report<H, F>(
+    listener: TcpListener,
+    config: TcpServerConfig,
+    handler: H,
+    lifecycle: LifecycleController,
+) -> TcpServerReport
+where
+    H: Fn(TcpStream, ConnectionContext) -> F + Send + Sync + 'static,
+    F: Future<Output = TcpConnectionResult> + Send + 'static,
+{
+    let mut subscription = lifecycle.subscribe();
+    let shutdown = async move {
+        if subscription.observation().phase.is_draining_or_later() {
+            return;
+        }
+        loop {
+            let observation = subscription.changed().await;
+            if observation.phase.is_draining_or_later() {
+                break;
             }
         }
     };
-
-    if tokio::time::timeout(config.drain_timeout, drain)
-        .await
-        .is_err()
-    {
-        tracing::warn!(
-            drain_timeout_ms = config.drain_timeout.as_millis(),
-            "tcp drain timeout; abandoning remaining connection tasks"
-        );
-    }
-    drop(handler_drain_owner);
+    serve_core(
+        listener,
+        config,
+        handler,
+        Box::pin(shutdown),
+        Some(lifecycle),
+    )
+    .await
 }
 
 #[cfg(test)]

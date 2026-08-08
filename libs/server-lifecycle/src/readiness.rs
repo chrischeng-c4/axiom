@@ -2,10 +2,27 @@
 //! Protocol-neutral readiness observation.
 
 use crate::drain::{DrainController, DrainSignal};
+use crate::lifecycle::{LifecycleController, LifecycleObservation, LifecycleSubscription};
 
 /// Reports whether a server is draining and should reject new work.
 pub trait Readiness: Send + Sync {
     fn is_draining(&self) -> bool;
+}
+
+impl Readiness for LifecycleController {
+    fn is_draining(&self) -> bool {
+        self.observation().phase.is_draining_or_later()
+    }
+}
+
+impl Readiness for LifecycleSubscription {
+    fn is_draining(&self) -> bool {
+        self.observation().phase.is_draining_or_later()
+    }
+}
+
+pub fn observation_is_healthy(observation: &LifecycleObservation) -> bool {
+    observation.is_healthy()
 }
 
 impl Readiness for DrainController {

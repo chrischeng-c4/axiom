@@ -234,36 +234,7 @@ enum K8sCrdCmd {
 }
 
 #[derive(clap::Args, Clone, Debug, Default)]
-struct IssuerCliArgs {
-    /// Issuer mode: `cas` or `ephemeral`.
-    #[arg(long, env = "LUMEN_ISSUER")]
-    issuer: Option<String>,
-
-    /// Trust domain for workload certificates (e.g. `lumen-prod.svc.id.goog`).
-    #[arg(long, env = "LUMEN_TRUST_DOMAIN")]
-    trust_domain: Option<String>,
-
-    /// CA pool resource name (CAS mode only): `projects/P/locations/L/caPools/N`.
-    #[arg(long, env = "LUMEN_CA_POOL")]
-    ca_pool: Option<String>,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#rust-source-unit
-impl IssuerCliArgs {
-    fn to_raw(&self) -> lumen::operator::RawIssuerConfig {
-        lumen::operator::RawIssuerConfig {
-            mode: self.issuer.clone(),
-            trust_domain: self.trust_domain.clone(),
-            ca_pool: self.ca_pool.clone(),
-        }
-    }
-}
-
-#[derive(clap::Args, Clone, Debug, Default)]
-struct K8sOperatorRunArgs {
-    #[command(flatten)]
-    issuer: IssuerCliArgs,
-}
+struct K8sOperatorRunArgs {}
 
 #[derive(clap::Args)]
 struct K8sOperatorArgs {
@@ -315,8 +286,6 @@ struct K8sOperatorRenderArgs {
     /// `operator.yaml`.
     #[arg(long)]
     out: Option<PathBuf>,
-    #[command(flatten)]
-    issuer: IssuerCliArgs,
 }
 
 #[derive(clap::Args)]
@@ -607,9 +576,8 @@ struct ConnectArgs {
     #[arg(long, value_name = "NAME")]
     client_sa: Option<String>,
     /// PEM bundle of the private CA that signed the fleet's serving certificate
-    /// (#3113 R6). This is the `ca.crt` key of the trust-bundle ConfigMap the
-    /// operator publishes at `status.clientTrustBundle` — a ConfigMap, so
-    /// fetching it never means reading a Secret that also holds a private key.
+    /// (#3113 R6). The deployment administrator or external certificate
+    /// platform distributes this public CA separately from the serving Secret.
     ///
     /// With it, the forwarded socket is spoken to over TLS addressed as
     /// `--server-name`, verified against this bundle and against no public root.
@@ -1387,14 +1355,7 @@ async fn run_operator(args: K8sOperatorRunArgs) -> Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-    let config = args
-        .issuer
-        .to_raw()
-        .validate()
-        .context("operator issuer configuration error")?;
-    let _issuer = config
-        .resolve_issuer()
-        .context("failed to resolve certificate issuer")?;
+    let _ = args;
     lumen::operator::run().await
 }
 
@@ -1890,9 +1851,8 @@ fn serving_trust(
 ) -> Result<ServingTrust> {
     let pem = std::fs::read_to_string(ca_file).with_context(|| {
         format!(
-            "read the serving trust bundle {}. This is the `ca.crt` key of the ConfigMap named by \
-             the fleet's `status.clientTrustBundle`: `kubectl -n <namespace> get configmap \
-             <name> -o jsonpath='{{.data.ca\\.crt}}'`",
+            "read the serving trust bundle {}. Obtain the public CA separately \
+             from the deployment administrator or external certificate platform",
             ca_file.display()
         )
     })?;
@@ -1950,7 +1910,7 @@ async fn probe_serving_tls(
         format!(
             "the certificate {server_name} presented was not signed by anything in {ca}. Either \
              the bundle is from another cluster or CA pool, or the fleet's leaf was issued \
-             outside it — compare `status.clientTrustBundle` on the CR with the file you passed"
+             outside it — obtain the public CA separately from the deployment administrator"
         )
     } else if lowered.contains("notvalidforname") || lowered.contains("not valid for name") {
         format!(
@@ -1961,9 +1921,9 @@ async fn probe_serving_tls(
         )
     } else if lowered.contains("expired") {
         format!(
-            "the certificate {server_name} presented has expired. Renewal is the operator's job \
-             and needs no rollout — check the instance's certificate status and the controller's \
-             logs rather than reissuing by hand"
+            "the certificate {server_name} presented has expired. Ask the deployment administrator \
+             or external certificate platform to rotate the externally provisioned serving Secret \
+             and distribute its public CA; keep verification enabled and do not downgrade to plaintext"
         )
     } else if lowered.contains("corrupt message")
         || lowered.contains("handshake eof")
@@ -1975,8 +1935,8 @@ async fn probe_serving_tls(
         format!(
             "svc/{server_name} did not complete a TLS handshake and closed the connection, which \
              is what a port still answering in cleartext does. Use `--plaintext` if that is a \
-             development instance; in production, set `spec.servingTlsSecret` so the operator \
-             issues a serving leaf"
+             development instance; in production, have the deployment administrator or external \
+             certificate platform provision the serving TLS Secret and set `spec.servingTlsSecret`"
         )
     } else {
         format!("could not complete a TLS handshake with {server_name}: {detail}")
@@ -2393,41 +2353,6 @@ fn render_operator_yaml(args: &K8sOperatorRenderArgs) -> Result<String> {
         namespace,
     );
 
-    let static_issuer_block = "            # Explicit operator certificate issuer for dev/kind (#3222).\n            - name: LUMEN_ISSUER\n              value: \"ephemeral\"\n            - name: LUMEN_TRUST_DOMAIN\n              value: \"lumen-dev.svc.id.goog\"\n";
-    if !deployment.contains(static_issuer_block) {
-        anyhow::bail!(
-            "checked-in operator manifest missing expected static dev issuer block \
-             (`{static_issuer_block}`)"
-        );
-    }
-
-    let config = args.issuer.to_raw().validate()?;
-    match config.mode {
-        lumen::operator::IssuerMode::Ephemeral => {
-            let replacement_block = format!(
-                "            # Explicit operator certificate issuer (#3222).\n            - name: LUMEN_ISSUER\n              value: \"ephemeral\"\n            - name: LUMEN_TRUST_DOMAIN\n              value: \"{}\"\n",
-                config.trust_domain
-            );
-            deployment = deployment.replace(static_issuer_block, &replacement_block);
-        }
-        lumen::operator::IssuerMode::Cas => {
-            let pool = config.ca_pool_resource.as_ref().unwrap();
-
-            let replacement_block = format!(
-                "            # Explicit operator certificate issuer (#3222).\n            - name: LUMEN_ISSUER\n              value: \"cas\"\n            - name: LUMEN_TRUST_DOMAIN\n              value: \"{}\"\n            - name: LUMEN_CA_POOL\n              value: \"{}\"\n",
-                config.trust_domain, pool
-            );
-            deployment = deployment.replace(static_issuer_block, &replacement_block);
-
-            let node_selector =
-                "      nodeSelector:\n        iam.gke.io/gke-metadata-server-enabled: \"true\"\n";
-            deployment = deployment.replace(
-                "      serviceAccountName: lumen-operator\n",
-                &format!("      serviceAccountName: lumen-operator\n{node_selector}"),
-            );
-        }
-    }
-
     // Derived, not hardcoded (#2532): the checked-in manifest pins this
     // workspace's own version, so a release bump that misses `deployment.yaml`
     // fails this render instead of silently handing out a stale image.
@@ -2552,20 +2477,7 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
     let image = args.image.as_deref().unwrap_or(&default_image);
 
-    let header_comment = match args.profile {
-        K8sInstanceProfile::Dev => {
-            "# Operator prerequisite: run `lumen k8s operator render --issuer ephemeral --trust-domain lumen-dev.svc.id.goog`\n# Issuer selection is operator-scoped; this custom resource carries no issuer or CA pool fields.\n"
-        }
-        K8sInstanceProfile::Staging => {
-            "# Operator prerequisite: run `lumen k8s operator render --issuer cas --trust-domain <module.lumen_pki.trust_domain> --ca-pool <module.lumen_pki.issuing_ca_pool_id>`\n# Name the Terraform outputs (`module.lumen_pki.issuing_ca_pool_id`, `module.lumen_pki.trust_domain`) without embedding credentials.\n# Issuer selection is operator-scoped; this custom resource carries no issuer or CA pool fields.\n"
-        }
-        K8sInstanceProfile::Prod => {
-            "# Operator prerequisite: run `lumen k8s operator render --issuer cas --trust-domain <module.lumen_pki.trust_domain> --ca-pool <module.lumen_pki.issuing_ca_pool_id>`\n# Name the Terraform outputs (`module.lumen_pki.issuing_ca_pool_id`, `module.lumen_pki.trust_domain`) without embedding credentials.\n# Issuer selection is operator-scoped; this custom resource carries no issuer or CA pool fields.\n"
-        }
-        K8sInstanceProfile::Template => {
-            "# Operator prerequisite: REPLACE_ME__OPERATOR_PREREQUISITE: `lumen k8s operator render --issuer cas|ephemeral ...`\n# Issuer selection is operator-scoped; this custom resource carries no issuer or CA pool fields.\n"
-        }
-    };
+    let header_comment = "# TLS Secrets are provisioned by the deployment administrator or an external platform.\n# The operator consumes named serving/peer Secrets and performs no issuance.\n";
 
     let yaml = format!(
         "{header_comment}apiVersion: lumen.dev/v1alpha1\nkind: Lumen\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n{}",

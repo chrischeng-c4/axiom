@@ -271,10 +271,6 @@ fn operator_cli_renders_requested_immutable_image_and_preserves_default() {
             "k8s",
             "operator",
             "render",
-            "--issuer",
-            "ephemeral",
-            "--trust-domain",
-            "lumen-dev.svc.id.goog",
         ]);
         command.args(extra);
         let output = command.output().expect("run lumen operator render");
@@ -403,10 +399,6 @@ fn operator_render_and_static_manifest_agree_on_the_ha_shape() {
             "k8s",
             "operator",
             "render",
-            "--issuer",
-            "ephemeral",
-            "--trust-domain",
-            "lumen-dev.svc.id.goog",
         ])
         .output()
         .expect("run lumen operator render");
@@ -432,10 +424,6 @@ fn operator_render_and_static_manifest_agree_on_the_ha_shape() {
             "k8s",
             "operator",
             "render",
-            "--issuer",
-            "ephemeral",
-            "--trust-domain",
-            "lumen-dev.svc.id.goog",
             "--namespace",
             "lumen-live",
         ])
@@ -495,10 +483,6 @@ fn rendered_operator_documents(extra: &[&str]) -> Vec<serde_yaml::Value> {
         "k8s",
         "operator",
         "render",
-        "--issuer",
-        "ephemeral",
-        "--trust-domain",
-        "lumen-dev.svc.id.goog",
     ]);
     command.args(extra);
     let output = command.output().expect("run lumen operator render");

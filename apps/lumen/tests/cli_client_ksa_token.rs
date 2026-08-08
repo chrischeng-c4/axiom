@@ -1066,8 +1066,8 @@ fn an_unrelated_ca_is_refused_and_named_as_such() {
         "#3113 R7: an unrelated CA must be diagnosed as a trust mismatch:\n{stderr}"
     );
     assert!(
-        stderr.contains("clientTrustBundle"),
-        "#3113 R7/R4: the message must say where the right bundle comes from:\n{stderr}"
+        stderr.contains("deployment administrator") || stderr.contains("public CA"),
+        "#3113 R7/R4: the message must say the public CA is supplied separately:\n{stderr}"
     );
     let _ = upstream.seen();
 }

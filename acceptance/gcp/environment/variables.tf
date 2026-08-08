@@ -81,12 +81,12 @@ variable "image_tag" {
 }
 
 variable "acceptance_apps" {
-  description = "Acceptance app scope: 'lumen-sift' (default) for full harness, or 'tape' for tape-only mode."
+  description = "Acceptance app scope: 'lumen-sift', 'lumen-auth', or 'tape'."
   type        = string
   default     = "lumen-sift"
 
   validation {
-    condition     = var.acceptance_apps == "lumen-sift" || var.acceptance_apps == "tape"
-    error_message = "acceptance_apps must be either 'lumen-sift' or 'tape'."
+    condition     = contains(["lumen-sift", "lumen-auth", "tape"], var.acceptance_apps)
+    error_message = "acceptance_apps must be 'lumen-sift', 'lumen-auth', or 'tape'."
   }
 }

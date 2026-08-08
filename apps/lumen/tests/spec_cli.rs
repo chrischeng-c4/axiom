@@ -397,7 +397,7 @@ fn llm_auth_states_the_private_clusterip_tls_and_ksa_contract() {
         "LUMEN_URL=https://<instance>.<namespace>.svc:7373",
         "spec.servingTlsSecret",
         "LUMEN_TLS_SERVER_NAMES",
-        "clientTrustBundle",
+        "public CA",
         // Clients, generated and CLI.
         "--ca-file",
         "with_private_ca",
@@ -515,14 +515,14 @@ fn llm_deployment_states_the_private_clusterip_tls_contract() {
         "LUMEN_TLS_KEY",
         "LUMEN_TLS_CA",
         "LUMEN_TLS_SERVER_NAMES",
-        "clientTrustBundle",
+        "public CA",
         "--ca-file",
         "PrivateTrust",
         // The anchor is published without the key, and replaces the public
         // roots rather than joining them. Both are the whole point of a
         // private trust domain, and both are easy to get subtly wrong.
-        "which carries `tls.key`",
-        "alongside* the public roots",
+        "private-key-bearing serving Secret",
+        "replaces the public roots",
     ] {
         assert!(
             deployment.contains(needle),
@@ -848,10 +848,10 @@ fn llm_workflow_separates_production_tls_from_local_h2c() {
     for needle in [
         "https://<instance>.<namespace>.svc:7373",
         "http://localhost:7373",
-        "clientTrustBundle",
+        "public CA distributed separately",
         "TokenReview",
         "SubjectAccessReview",
-        "in place of the\n  public roots",
+        "in place of\n  the public roots",
     ] {
         assert!(
             workflow.contains(needle),
@@ -1004,7 +1004,7 @@ fn llm_quickstart_is_a_copy_paste_end_to_end() {
     }
     for needle in [
         "https://<instance>.<namespace>.svc:7373",
-        "clientTrustBundle",
+        "public CA distributed separately",
         "TokenReview",
     ] {
         assert!(
@@ -1258,7 +1258,7 @@ fn dx_topics_teach_the_private_clusterip_tls_contract() {
     let authenticate = md("authenticate");
     for needle in [
         "https://<instance>.<namespace>.svc:7373",
-        "status.clientTrustBundle",
+        "public CA",
         "in place of the public roots",
     ] {
         assert!(
@@ -1543,48 +1543,25 @@ const WEAKENINGS: [&str; 6] = [
 ];
 
 #[test]
-fn issuer_contract_is_consistently_documented_across_surfaces() {
+fn operator_tls_ownership_is_consistently_documented_across_surfaces() {
     let deployment_md = llm_deployment_md();
     let readme = std::fs::read_to_string("README.md").expect("read README.md");
     let capabilities = std::fs::read_to_string("CAPABILITIES.md").expect("read CAPABILITIES.md");
 
-    // README.md and llm_deployment_md() provide operator deployment runbooks with exact CLI flags
-    for doc in [&deployment_md, &readme] {
-        assert!(
-            doc.contains("--issuer cas"),
-            "operator deployment doc missing exact '--issuer cas' flag guidance: {doc}"
-        );
-        assert!(
-            doc.contains("--issuer ephemeral"),
-            "operator deployment doc missing exact '--issuer ephemeral' flag guidance: {doc}"
-        );
-    }
-
-    // All three canonical surfaces (README.md, llm_deployment_md(), CAPABILITIES.md) describe the same contract
+    // All three canonical surfaces describe externally provisioned TLS and no
+    // longer teach the retired operator issuer/CAS/controller path.
     for doc in [&deployment_md, &readme, &capabilities] {
         assert!(
-            doc.contains("cas") && doc.contains("ephemeral"),
-            "doc missing explicit cas/ephemeral mode semantics: {doc}"
+            (doc.contains("servingTlsSecret") && doc.contains("peerTlsSecret"))
+                || (doc.contains("serving") && doc.contains("peer") && doc.contains("TLS Secrets")),
+            "doc missing externally provisioned serving/peer TLS Secret boundary: {doc}"
         );
-        assert!(
-            doc.contains("operator-scoped") || doc.contains("operator"),
-            "doc should mention operator scope: {doc}"
-        );
-        assert!(
-            doc.contains("lumen-operator"),
-            "doc should mention lumen-operator KSA identity: {doc}"
-        );
-        assert!(
-            doc.contains("certificate_controller"),
-            "doc should mention Terraform certificate_controller binding: {doc}"
-        );
-        assert!(
-            doc.contains("metadata server") || doc.contains("GKE_METADATA"),
-            "doc should mention GKE metadata server / GKE_METADATA requirement: {doc}"
-        );
-
-        // Reject retired direct-STS CLI and env literal names across documentation
         for retired in [
+            "--issuer cas",
+            "--issuer ephemeral",
+            "--trust-domain",
+            "--ca-pool",
+            "certificate_controller",
             "--workload-identity-audience",
             "--projected-token-path",
             "LUMEN_WORKLOAD_IDENTITY_AUDIENCE",

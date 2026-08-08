@@ -186,7 +186,7 @@ Use the smallest topic that answers the task:
   `--namespace`), tearing it down when the command exits. Against an
   `auth: required` fleet, add `--client-sa` to mint a short-lived
   audience-bound token and `--ca-file` to verify the server against the
-  operator-published anchor; the token is attached by a loopback proxy, so it
+  externally distributed public CA; the token is attached by a loopback proxy, so it
   reaches no environment variable and no child process.
 - `lumen query index|search|duplicates|collections list` — one-shot query
   wrappers against a reachable node (`--url`/`LUMEN_URL`); request bodies match
@@ -209,7 +209,7 @@ instance ownership stay separate:
 ```
 lumen dockerfile render --variant release --version lumen@<version> --out Dockerfile
 lumen k8s crd render --out lumen-crd.yaml
-lumen k8s operator render --namespace lumen-system --issuer ephemeral --trust-domain lumen-dev.svc.id.goog --out operator/
+lumen k8s operator render --namespace lumen-system --out operator/
 lumen k8s instance render --profile prod --out lumen.yaml
 ```
 
@@ -218,13 +218,13 @@ registries all consume the same image artifact. `k8s crd render` is the
 cluster-scoped API layer, `k8s operator render|run` is the control plane, and
 `k8s instance render` is the app-namespace custom resource.
 
-## Operator Issuer Configuration
-Issuer selection is an operator-scoped contract (`--issuer cas` | `--issuer ephemeral`), not a `Lumen` custom resource field. The absence of CRD issuer fields intentionally prevents per-instance trust-domain selection.
+## Externally Provisioned TLS Secrets
+Deployment administrators or an external platform provision the serving and peer TLS Secrets named by each Lumen instance. The operator only consumes those Secrets and does not resolve issuers or perform CAS automation.
 
-- **Dev / Kind**: Select `ephemeral` explicitly with `lumen k8s operator render --issuer ephemeral --trust-domain lumen-dev.svc.id.goog` (or `LUMEN_ISSUER=ephemeral`). No GCP project, credential, or network is required.
-- **Staging / Production**: Select `cas` explicitly with `lumen k8s operator render --issuer cas --trust-domain <module.lumen_pki.trust_domain> --ca-pool <module.lumen_pki.issuing_ca_pool_id>`, naming the Terraform outputs (`module.lumen_pki.issuing_ca_pool_id`, `module.lumen_pki.trust_domain`) without embedding credentials. CAS requires Standard GKE Workload Identity with `GKE_METADATA` enabled and fetches short-lived tokens directly from the GKE metadata server (`iam.gke.io/gke-metadata-server-enabled: "true"` node selector); users provide no STS audience or projected-token path.
-- **Terraform / Identity Mapping**: The operator runs as Kubernetes ServiceAccount `lumen-operator` in the rendered control-plane namespace (`--namespace`, default `lumen-system`). Terraform's `lumen-pki` module binds the federated principal `principal://iam.googleapis.com/.../subject/ns/${certificate_controller.namespace}/sa/${certificate_controller.service_account}` where `certificate_controller.namespace` must equal `--namespace` and `certificate_controller.service_account` is `lumen-operator`. No GSA annotation or credential Secret is added or required.
-- **Instance Profile Render**: Each `lumen k8s instance render --profile <dev|staging|prod|template>` output carries top-level YAML comments detailing its required operator prerequisite (`--issuer ephemeral` for `dev`, `--issuer cas` and Terraform `module.lumen_pki.issuing_ca_pool_id` for `staging`/`prod`, and a replace-me prerequisite for `template`).
+The deployment administrator or an external platform provisions the named
+`servingTlsSecret` and `peerTlsSecret` in the instance namespace. The operator
+consumes those Secrets through the existing TLS loaders and never resolves an
+issuer, contacts CAS, selects a trust domain, or obtains certificate tokens.
 
 ## Serving transport: private ClusterIP TLS
 Production traffic is **not** published. A Lumen instance is reached at its
@@ -258,22 +258,11 @@ in the certificate is a name this instance can impersonate, so no node name and
 no external name belongs there. While no valid leaf is active the port refuses
 connections rather than falling back to plaintext.
 
-Callers verify against the anchor alone. The operator republishes `ca.crt` as
-an owner-scoped ConfigMap — never the Secret, which carries `tls.key`, and a
-client that had to read the server's private key in order to verify the server
-has already lost the argument — and reports it once the material exists:
-
-```yaml
-status:
-  clientTrustBundle:
-    configMap: <instance>-client-ca
-    key: ca.crt
-```
-
-Mount that ConfigMap and point the client at it (`lumen connect --ca-file`, or
-`PrivateTrust` in a generated client). Adding it *alongside* the public roots
-is not equivalent: a public CA could then still vouch for the name, which is
-the thing a private trust domain exists to prevent.
+Callers verify against the anchor alone. The deployment administrator or
+external certificate platform distributes the public CA separately from the
+private-key-bearing serving Secret. Pass it to `lumen connect --ca-file`, or
+as `PrivateTrust` in a generated client; it replaces the public roots rather
+than joining them.
 
 `spec.peerTlsSecret` is a separate field for a separate decision — mutual,
 instance-scoped Raft identity on `:7374`. Sharing one Secret between the two
@@ -457,19 +446,10 @@ The names in `LUMEN_TLS_SERVER_NAMES` are the Service's own two spellings and
 nothing else. No node name, no external name: a name in the leaf is a name this
 instance can impersonate.
 
-Callers verify against the CA the operator republishes as a ConfigMap — the
-anchor alone, never the private key — reported on the CR once it exists:
-
-```yaml
-status:
-  clientTrustBundle:
-    configMap: <instance>-client-ca
-    key: ca.crt
-```
-
-Mount that ConfigMap and point your client at it. Adding it *alongside* the
-public roots is not equivalent: a public CA could then still vouch for the
-name, which is the thing a private trust domain exists to prevent.
+Callers verify against the public CA distributed separately by the deployment
+administrator or external certificate platform. Pass that PEM file with
+`lumen connect --ca-file`; it replaces the public roots and is never read from
+the private-key-bearing serving Secret.
 
 Peer traffic on `:7374` is a separate trust decision with its own material
 (`spec.peerTlsSecret`) — mutual, instance-scoped, and never interchangeable
@@ -812,8 +792,8 @@ where multiplexing and connection reuse dominate per-request overhead.
   ClusterIP whose TLS the serving pod terminates itself (ALPN `h2,
   http/1.1`). Nothing published sits in front of it, so the connection you
   authenticate is the connection lumen serves. Verify the server against the
-  CA the operator publishes at `status.clientTrustBundle`, in place of the
-  public roots; authenticate yourself with a short-lived, audience-bound
+  public CA distributed separately by the deployment administrator, in place of
+  the public roots; authenticate yourself with a short-lived, audience-bound
   Kubernetes ServiceAccount token, sent as the request's bearer credential,
   which lumen resolves through TokenReview and SubjectAccessReview. The exact
   header form and how to mint the token are `--topic auth`.
@@ -895,7 +875,7 @@ off shared networks. Clients need `LUMEN_URL` and nothing else.
 
 A production fleet is not reached this way. It answers only at
 `https://<instance>.<namespace>.svc:7373` inside the cluster, verified against
-the CA at `status.clientTrustBundle`, and each request carries a short-lived
+the public CA distributed separately by the deployment administrator, and each request carries a short-lived
 Kubernetes ServiceAccount token that lumen resolves through
 TokenReview/SubjectAccessReview. The bodies below are unchanged; the URL and
 the `Authorization` header are what differ. See `lumen llm --topic auth` and

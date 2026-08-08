@@ -56,6 +56,13 @@ IDs one way.
 
 ### Core Features
 
+#### Lifecycle-owned HTTP serving
+
+Production services use one `LifecycleController` for probe evidence, listener
+admission, and the shared shutdown deadline via `serve_with_lifecycle` and
+`LifecycleShutdownTrigger`; legacy readiness and drain helpers remain migration
+adapters.
+
 #### Standard Probe Surface
 
 ID: standard-probe-surface

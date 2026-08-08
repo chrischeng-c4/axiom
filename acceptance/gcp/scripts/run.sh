@@ -18,6 +18,7 @@ INPUT_LUMEN_IMAGE="${LUMEN_IMAGE:-}"
 INPUT_SIFT_IMAGE="${SIFT_IMAGE:-}"
 INPUT_TAPE_IMAGE="${TAPE_IMAGE:-}"
 LUMEN_PRIOR_ACCEPTANCE="${LUMEN_PRIOR_ACCEPTANCE:-}"
+LUMEN_AUTH_ISSUER_GSA="${LUMEN_AUTH_ISSUER_GSA:-}"
 # Pre-declared so `export` under `set -u` never fails; each mode branch below
 # fills in only the names it owns. Caller-supplied *_CLI overrides are
 # preserved; the *_IMAGE runtime variables are reset because their caller
@@ -117,12 +118,16 @@ done
 }
 case "$ACCEPTANCE_APPS" in
   "lumen sift") acceptance_mode="lumen-sift" ;;
+  "lumen auth") acceptance_mode="lumen-auth" ;;
   "tape") acceptance_mode="tape" ;;
   *)
-    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default) or 'tape'" >&2
+    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default), 'lumen auth', or 'tape'" >&2
     exit 1
     ;;
 esac
+if [[ "$acceptance_mode" != "tape" ]]; then
+  : "${LUMEN_AUTH_ISSUER_GSA:?LUMEN_AUTH_ISSUER_GSA is required for auth-running modes}"
+fi
 if [[ "$acceptance_mode" == "tape" ]]; then
   [[ -z "$INPUT_TAPE_IMAGE" || "$INPUT_TAPE_IMAGE" == *@sha256:* ]] || {
     echo "caller-supplied service images must be immutable @sha256 digest references" >&2
@@ -138,6 +143,18 @@ if [[ "$acceptance_mode" == "tape" ]]; then
     exit 1
   }
 else
+  if [[ "$acceptance_mode" == "lumen-auth" ]]; then
+    [[ -z "$INPUT_LUMEN_IMAGE" || "$INPUT_LUMEN_IMAGE" == *@sha256:* ]] || {
+      echo "caller-supplied service images must be immutable @sha256 digest references" >&2
+      exit 1
+    }
+    IMAGE_PROVENANCE="prebuilt"
+    [[ -n "$INPUT_LUMEN_IMAGE" ]] || IMAGE_PROVENANCE="cloud-build"
+    [[ -z "$LUMEN_PRIOR_ACCEPTANCE" ]] || {
+      echo "LUMEN_PRIOR_ACCEPTANCE is not used in ACCEPTANCE_APPS=lumen auth mode" >&2
+      exit 1
+    }
+  elif [[ "$acceptance_mode" != "tape" ]]; then
   for input_image in "$INPUT_LUMEN_IMAGE" "$INPUT_SIFT_IMAGE"; do
     [[ -z "$input_image" || "$input_image" == *@sha256:* ]] || {
       echo "caller-supplied service images must be immutable @sha256 digest references" >&2
@@ -150,6 +167,7 @@ else
     IMAGE_PROVENANCE="mixed"
   else
     IMAGE_PROVENANCE="cloud-build"
+  fi
   fi
 fi
 if [[ -n "$LUMEN_PRIOR_ACCEPTANCE" ]]; then
@@ -203,12 +221,14 @@ done
 gcloud artifacts repositories describe "$ARTIFACT_REGISTRY_REPOSITORY" \
   --project="$PROJECT_ID" --location="$REGION" --format=json \
   > "$EVIDENCE_DIR/preexisting-artifact-registry.json"
-require_empty_list "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
-  --filter="name=${PROJECT_ID}-axo-${RUN_ID}-backup" --format='value(name)'
-require_empty_list "backup service account" gcloud iam service-accounts list \
-  --project="$PROJECT_ID" \
-  --filter="email:axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --format='value(email)'
+if [[ "$acceptance_mode" != "lumen-auth" ]]; then
+  require_empty_list "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
+    --filter="name=${PROJECT_ID}-axo-${RUN_ID}-backup" --format='value(name)'
+  require_empty_list "backup service account" gcloud iam service-accounts list \
+    --project="$PROJECT_ID" \
+    --filter="email:axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --format='value(email)'
+fi
 if [[ "$IMAGE_PROVENANCE" != "prebuilt" ]]; then
   source_bucket_path="${GCS_SOURCE_PREFIX#gs://}"
   source_bucket="${source_bucket_path%%/*}"
@@ -234,6 +254,8 @@ fi
 
 if [[ "$acceptance_mode" == "tape" ]]; then
   image_list=(tape)
+elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  image_list=(lumen)
 else
   image_list=(lumen sift)
 fi
@@ -314,9 +336,11 @@ else
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
     -p lumen --bin lumen --features "operator delegated-auth"
   LUMEN_CLI="${LUMEN_CLI:-$REPO_ROOT/target/debug/lumen}"
-  cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
-    -p sift --bin sift
-  SIFT_CLI="${SIFT_CLI:-$REPO_ROOT/target/debug/sift}"
+  if [[ "$acceptance_mode" != "lumen-auth" ]]; then
+    cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+      -p sift --bin sift
+    SIFT_CLI="${SIFT_CLI:-$REPO_ROOT/target/debug/sift}"
+  fi
 fi
 
 cleanup_armed=1
@@ -353,6 +377,8 @@ if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
   echo ">> using caller-supplied immutable release or candidate images"
   if [[ "$acceptance_mode" == "tape" ]]; then
     TAPE_IMAGE="$INPUT_TAPE_IMAGE"
+  elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+    LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
   else
     LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
     SIFT_IMAGE="$INPUT_SIFT_IMAGE"
@@ -360,6 +386,8 @@ if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
 else
   if [[ "$acceptance_mode" == "tape" ]]; then
     CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.tape.yaml"
+  elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.lumen.yaml"
   else
     CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.yaml"
     if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
@@ -412,6 +440,8 @@ else
     --format=json > "$EVIDENCE_DIR/cloud-build-final.json"
   if [[ "$acceptance_mode" == "tape" ]]; then
     TAPE_IMAGE="$(resolve_digest tape)"
+  elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+    LUMEN_IMAGE="$(resolve_digest lumen)"
   else
     if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
       LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
@@ -427,6 +457,8 @@ else
 fi
 if [[ "$acceptance_mode" == "tape" ]]; then
   jq -n --arg tape "$TAPE_IMAGE" '{tape:$tape}' > "$EVIDENCE_DIR/images.json"
+elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  jq -n --arg lumen "$LUMEN_IMAGE" '{lumen:$lumen}' > "$EVIDENCE_DIR/images.json"
 else
   jq -n --arg lumen "$LUMEN_IMAGE" --arg sift "$SIFT_IMAGE" \
     '{lumen:$lumen,sift:$sift}' > "$EVIDENCE_DIR/images.json"
@@ -434,8 +466,11 @@ fi
 
 # Resource names are deterministic Terraform values, so render and validate all
 # app-owned Kubernetes layers before creating the cluster.
-BACKUP_BUCKET="${PROJECT_ID}-axo-${RUN_ID}-backup"
-BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
+if [[ "$acceptance_mode" != "lumen-auth" ]]; then
+  BACKUP_BUCKET="${PROJECT_ID}-axo-${RUN_ID}-backup"
+  BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
+  export BACKUP_BUCKET BACKUP_GSA_EMAIL
+fi
 # The cluster this run actually uses. It was `axo-${RUN_ID}-gke` — a name left
 # over from the disposable-cluster era that has not existed since the run moved
 # to the persistent cluster, so anything reading it (the Sift collector's
@@ -443,12 +478,13 @@ BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
 # a cluster that is not there. Line 491 already asserts the Terraform output
 # equals PERSISTENT_CLUSTER_NAME, so this is the same value, named once.
 GKE_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME"
-export BACKUP_BUCKET BACKUP_GSA_EMAIL
 export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
 # Export mode-specific CLIs and images only
 if [[ "$acceptance_mode" == "tape" ]]; then
   export TAPE_CLI TAPE_IMAGE
+elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  export LUMEN_CLI LUMEN_IMAGE LUMEN_AUTH_ISSUER_GSA
 else
   export LUMEN_CLI LUMEN_IMAGE SIFT_CLI SIFT_IMAGE
 fi
@@ -457,7 +493,11 @@ fi
   exit 1
 }
 
-echo ">> Terraform: run-scoped backup bucket and workload identity on persistent Standard GKE"
+if [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  echo ">> Terraform: auth-only Lumen resources on persistent Standard GKE"
+else
+  echo ">> Terraform: run-scoped backup bucket and workload identity on persistent Standard GKE"
+fi
 mkdir -p "$TERRAFORM_ENVIRONMENT_DIR"
 cp "$ACCEPTANCE_ROOT/environment"/*.tf "$TERRAFORM_ENVIRONMENT_DIR/"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
@@ -471,6 +511,8 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
 # and keeps apply symmetric with cleanup.sh's destroy args.
 if [[ "$acceptance_mode" == "tape" ]]; then
   terraform_acceptance_apps=tape
+elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  terraform_acceptance_apps=lumen-auth
 else
   terraform_acceptance_apps=lumen-sift
 fi
@@ -493,8 +535,10 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
 cluster="$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")"
 test "$(jq -r '.gke_zone.value' "$EVIDENCE_DIR/terraform-output.json")" = "$GKE_ZONE"
 test "$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")" = "$PERSISTENT_CLUSTER_NAME"
-test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_BUCKET"
-test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
+if [[ "$acceptance_mode" != "lumen-auth" ]]; then
+  test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_BUCKET"
+  test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
+fi
 gcloud container clusters get-credentials "$cluster" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE"
 
@@ -507,6 +551,8 @@ gcloud container clusters get-credentials "$cluster" \
 # the other run's namespaces either.
 if [[ "$acceptance_mode" == "tape" ]]; then
   mode_namespaces=(tape tape-system)
+elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  mode_namespaces=(lumen lumen-system lumen-auth-client)
 else
   mode_namespaces=(lumen lumen-system sift sift-system)
 fi
@@ -527,6 +573,12 @@ if [[ "$acceptance_mode" == "tape" ]]; then
   "$SCRIPT_DIR/deploy.sh" tape
   "$SCRIPT_DIR/verify-operator-cell.sh" tape
   "$SCRIPT_DIR/verify-tape.sh"
+elif [[ "$acceptance_mode" == "lumen-auth" ]]; then
+  "$SCRIPT_DIR/deploy.sh" lumen
+  "$SCRIPT_DIR/verify-operator-cell.sh" lumen
+  export LUMEN_AUTH_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-auth-acceptance.json"
+  "$SCRIPT_DIR/verify-lumen-auth.sh"
+  "$SCRIPT_DIR/finalize-lumen-acceptance.sh" lumen-auth
 else
   # Phase 1 is a hard gate: no Sift CRD/operator/instance/collector is applied
   # until Lumen has independently reconciled, recovered, backed up to GCS, and
@@ -547,8 +599,8 @@ else
   # Request authorization is its own proof and runs on every pass, including
   # one reusing a prior persistence/backup/split proof: those legs all opt out
   # of auth, so nothing they established says anything about who may call.
-  "$SCRIPT_DIR/verify-lumen-auth.sh"
   export LUMEN_AUTH_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-auth-acceptance.json"
+  "$SCRIPT_DIR/verify-lumen-auth.sh"
 
   # Only a successful Lumen phase starts the Sift data plane. The collector then
   # reads Lumen's structured stdout from Standard GKE node logs and the proof

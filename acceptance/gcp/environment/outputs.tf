@@ -11,11 +11,11 @@ output "gke_zone" {
 }
 
 output "backup_bucket" {
-  value = google_storage_bucket.backups.name
+  value = local.backup_enabled ? google_storage_bucket.backups[0].name : null
 }
 
 output "backup_gsa_email" {
-  value = google_service_account.backup.email
+  value = local.backup_enabled ? google_service_account.backup[0].email : null
 }
 
 output "registry" {

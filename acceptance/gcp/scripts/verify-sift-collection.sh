@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 : "${PROJECT_ID:?PROJECT_ID is required}"
 : "${REGION:?REGION is required}"
 : "${GKE_ZONE:?GKE_ZONE is required}"
@@ -165,16 +167,4 @@ jq -n \
   '{schema:$schema, operator_reconcile_1x1:"passed", standard_gke_cri_collector:"passed", lumen_structured_stdout_materialized:"passed", scheduled_backup:"passed", gcs_backup:"passed", gcs_object:$object, gcs_object_bytes:$bytes, topology_beyond_1x1:"not_claimed"}' \
   > "$EVIDENCE_DIR/sift-acceptance.json"
 
-jq -n \
-  --arg schema "axiom.gcp.operator.acceptance.v1" \
-  --arg project_id "$PROJECT_ID" \
-  --arg region "$REGION" \
-  --arg gke_zone "$GKE_ZONE" \
-  --arg run_id "$RUN_ID" \
-  --arg bucket "$BACKUP_BUCKET" \
-  --arg lumen_evidence "$LUMEN_ACCEPTANCE_EVIDENCE" \
-  --arg lumen_provenance "$LUMEN_ACCEPTANCE_PROVENANCE" \
-  --slurpfile lumen "$LUMEN_ACCEPTANCE_EVIDENCE" \
-  --slurpfile sift "$EVIDENCE_DIR/sift-acceptance.json" \
-  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, run_id:$run_id, backup_bucket:$bucket, lumen_evidence:$lumen_evidence, lumen_provenance:$lumen_provenance, acceptance:{lumen:$lumen[0],sift:$sift[0]}}' \
-  > "$EVIDENCE_DIR/acceptance.json"
+"$SCRIPT_DIR/finalize-lumen-acceptance.sh" lumen-sift

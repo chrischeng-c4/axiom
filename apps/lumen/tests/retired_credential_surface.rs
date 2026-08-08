@@ -86,7 +86,7 @@ struct Allowance {
 const ALLOWANCES: &[Allowance] = &[
     Allowance {
         path: "apps/lumen/tech-design/semantic/source/",
-        lines: 6,
+        lines: 4,
         reason: "SPEC-MANAGED mirrors. They reproduce their source file byte for byte, so they \
                  carry exactly the retirement notes the source carries; their fidelity is #2806's \
                  gate and duplicating it here would let each check look like it covers the other.",

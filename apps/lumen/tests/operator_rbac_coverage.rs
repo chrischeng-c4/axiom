@@ -225,10 +225,6 @@ fn render_operator_manifest() -> String {
             "k8s",
             "operator",
             "render",
-            "--issuer",
-            "ephemeral",
-            "--trust-domain",
-            "lumen-dev.svc.id.goog",
         ])
         .output()
         .expect("failed to execute lumen CLI");

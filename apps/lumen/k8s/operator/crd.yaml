@@ -359,7 +359,7 @@ spec:
 
                   When set, the client port terminates TLS with ALPN `h2` and `http/1.1`, and refuses connections outright while no valid leaf is active — there is no plaintext fallback to notice too late. Omit it only for local/kind development, where the port stays h2c.
 
-                  Callers verify this leaf against `ca.crt`, which the operator republishes as a private-key-free ConfigMap (see [`LumenStatus::client_trust_bundle`]).
+                  Callers verify this leaf against the public CA distributed separately by the deployment administrator or external certificate platform.
                 nullable: true
                 type: string
               shardCount:
@@ -400,25 +400,6 @@ spec:
             description: Status subresource, written back by the reconcile loop. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
             nullable: true
             properties:
-              clientTrustBundle:
-                description: |-
-                  Where an in-cluster caller mounts the private CA that signs this instance's serving leaf (#3113 R4).
-
-                  A ConfigMap, not the serving Secret: the Secret carries `tls.key`, and a client that had to read it to obtain `ca.crt` would hold the server's private key in order to verify the server. The operator republishes the anchor into an owner-scoped, private-key-free object so a caller's RBAC needs `get` on one ConfigMap and nothing else.
-
-                  Absent until a serving certificate is active — a reference that appears before the material does would send callers to mount an empty volume.
-                nullable: true
-                properties:
-                  configMap:
-                    description: Name of the ConfigMap, in the instance's own namespace.
-                    type: string
-                  key:
-                    description: Key within it holding the PEM bundle.
-                    type: string
-                required:
-                - configMap
-                - key
-                type: object
               conditions:
                 description: |-
                   Kubernetes-convention convergence conditions (#2601): `Ready`, `Progressing`, `ReshardInProgress`. This is the surface `kubectl wait --for=condition=Ready`, Argo CD health assessment, and Flux readiness gates read; `phase` and `reshard.blockingConditions` are unchanged and still populated, so nothing already consuming them breaks.
@@ -911,7 +892,7 @@ spec:
 
                       When set, the client port terminates TLS with ALPN `h2` and `http/1.1`, and refuses connections outright while no valid leaf is active — there is no plaintext fallback to notice too late. Omit it only for local/kind development, where the port stays h2c.
 
-                      Callers verify this leaf against `ca.crt`, which the operator republishes as a private-key-free ConfigMap (see [`LumenStatus::client_trust_bundle`]).
+                      Callers verify this leaf against the public CA distributed separately by the deployment administrator or external certificate platform.
                     nullable: true
                     type: string
                   shardCount:

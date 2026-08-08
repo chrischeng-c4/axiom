@@ -17,8 +17,8 @@
 //!   connections that sit idle past `idle_timeout` (down to `min_connections`).
 //! - **health / failover** — a supervisor PINGs each connection for liveness;
 //!   the connection driver flags GOAWAY / I/O death; dead connections are
-//!   evicted and replenished to `min_connections`. A request that loses its
-//!   connection is retried once on a fresh one.
+//!   evicted and replenished to `min_connections`. Safe requests that lose
+//!   their connection are retried once; mutation outcomes are ambiguous.
 //! - **metrics** — [`H2cManager::stats`] snapshots connection count, health,
 //!   in-flight streams, and lifetime request/error totals.
 //!
@@ -232,11 +232,13 @@ impl H2cManager {
     }
 
     /// Send a fully-built request. Dispatches to the least-loaded healthy
-    /// connection; on a lost connection, retries once on a fresh one.
+    /// connection; safe reads retry once on a fresh connection. Mutations are
+    /// never replayed after dispatch because their outcome may be ambiguous.
     pub async fn request(&self, req: Request<Bytes>) -> Result<Response<Bytes>> {
         let timeout = self.inner.cfg.request_timeout;
         let mut last_err: Option<H2cError> = None;
-        for attempt in 0..2u8 {
+        let safe = is_safe_method(req.method());
+        for attempt in 0..if safe { 2 } else { 1 } {
             let lease = self.acquire().await?;
             lease.conn.touch();
             let res = match timeout {
@@ -253,6 +255,20 @@ impl H2cManager {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
                     let retryable = e.is_connection_lost();
+                    if !safe && retryable {
+                        let method = req.method().clone();
+                        if matches!(&e, H2cError::H2(error) if error.reason() == Some(h2::Reason::REFUSED_STREAM))
+                        {
+                            return Err(H2cError::Refused {
+                                method,
+                                cause: "REFUSED_STREAM".into(),
+                            });
+                        }
+                        return Err(H2cError::Ambiguous {
+                            method,
+                            cause: "connection lost after dispatch".into(),
+                        });
+                    }
                     last_err = Some(e);
                     if attempt == 0 && retryable {
                         continue; // fresh connection on the next loop
@@ -368,6 +384,13 @@ impl H2cManager {
     async fn grow_one(&self) -> Result<Arc<ManagedConn>> {
         connect_tracked(&self.inner).await
     }
+}
+
+fn is_safe_method(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE
+    )
 }
 
 /// Open one connection and track it in the pool, enforcing `max_connections`

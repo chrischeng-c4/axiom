@@ -64,7 +64,7 @@ includes the cancellation path, so a cancelled request cannot leak load.
 Bodies are flow-controlled: a body larger than the stream window is sent in
 capacity-bounded chunks rather than buffered into one frame. When a send fails
 with an error that means the connection is gone — GOAWAY, stream reset, or I/O
-death — the request is retried exactly once on a freshly leased connection;
+death — safe methods (GET, HEAD, OPTIONS, TRACE) are retried exactly once on a freshly leased connection; mutation methods are never replayed and surface an ambiguous outcome;
 any other error is returned immediately. A retry reuses the same method, URI,
 version, headers, and body. A connect that cannot be established surfaces as
 an error the caller can classify, not as a hang.
@@ -73,6 +73,7 @@ Surfaces:
 - Rust API: `transport_h2c::H2cManager::get` / `put` / `post` - the method shorthands.
 - Rust API: `transport_h2c::H2cManager::with_config` - build a manager against one authority.
 - Rust API: `transport_h2c::H2cError::is_connection_lost` - which failures are retryable.
+- Rust API: `transport_h2c::H2cError::is_refused` / `is_ambiguous` - classify refused streams and mutation outcomes that cannot safely be replayed.
 Rust internal: the least-loaded selection, the lease that reserves before send and releases on drop, the flow-controlled body send, and the request duplication used for the retry.
 EC Dimensions:
 - behavior: `cargo test -p transport-h2c --test manager` - a GET round-trips with the expected status and body; a PUT of a 50 KB body is echoed back byte-for-byte through the flow-controlled send path; and under 64 concurrent requests every one succeeds while the pool spreads them instead of concentrating on one socket.
@@ -249,6 +250,7 @@ Surfaces:
 - Rust API: `transport_h2c::H2cPool::for_concurrency` / `with_connections` / `with_connections_and` - a fixed pool of clients.
 - Rust API: `transport_h2c::H2cPool::connections` / `client` / `get` / `post` - round-robin access.
 - Rust API: `transport_h2c::serve_connection` / `serve_connection_with_options` - the server side of the same cleartext contract.
+- Rust API: `transport_h2c::serve_connection_with_drain` / `serve_io_with_drain` - lifecycle-aware Hyper drain with typed `ConnectionReport` accounting and shared shutdown deadline.
 Rust internal: the shared builder that sets prior knowledge before applying optional settings, and the round-robin index.
 EC Dimensions:
 - behavior: `cargo test -p transport-h2c --lib` - a pool built with three connections reports three and rotates across all three over successive calls before repeating, so access is genuinely round-robin rather than always returning the first client.

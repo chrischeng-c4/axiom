@@ -53,10 +53,10 @@ terminates TLS in the serving pod itself — there is no Ingress, Gateway,
 LoadBalancer, NodePort, or mesh in front of it — so a client needs two things
 the public internet would have supplied for it:
 
-1. **The trust anchor.** The operator republishes the serving CA, without the
-   private key, as an owner-scoped ConfigMap named in
-   `status.clientTrustBundle` (key `ca.crt`). Mount it; do not read the serving
-   Secret, which carries `tls.key`.
+1. **The trust anchor.** The deployment administrator or external certificate
+   platform distributes the public serving CA separately from the
+   private-key-bearing serving Secret. Pass its PEM file to `--ca-file`; do
+   not read the serving Secret, which carries `tls.key`.
 2. **The name to verify.** The leaf asserts the instance's own Service DNS
    names and nothing else, so the base URL must address the same name the
    certificate is checked against.
