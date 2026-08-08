@@ -954,11 +954,67 @@ impl StringOrList {
     }
 }
 
+// already be inside a tokio runtime (production runs inside `aw`'s
+// top-level multi-thread runtime; unit tests call in directly with none).
+// Mirrors `standardize.rs`'s `block_on_bridge` (issue #919) for the same
+// duplication reason documented on `CwdGuard` above.
+fn block_on_bridge<F: std::future::Future>(fut: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+        Err(_) => {
+            let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+            rt.block_on(fut)
+        }
+    }
+}
+
+fn extract_wi_from_ec_command(command: &EcCommand) -> Option<&str> {
+    let raw = match command {
+        EcCommand::Draft(a) => a.wi.as_deref(),
+        EcCommand::Check(a) => a.wi.as_deref(),
+        EcCommand::Lock(a) => a.wi.as_deref(),
+        EcCommand::Review(a) => a.wi.as_deref(),
+        EcCommand::Record(a) => Some(a.wi.as_str()),
+        EcCommand::Verify(a) => a.wi.as_deref(),
+        EcCommand::Doc(_) => None,
+    };
+    raw.map(str::trim).filter(|s| !s.is_empty())
+}
+
+fn resolve_ec_project(configured_project: Option<&str>, command: &EcCommand) -> Result<String> {
+    let wi_option = extract_wi_from_ec_command(command);
+    match (configured_project, wi_option) {
+        (Some(project), None) => Ok(project.to_string()),
+        (configured_opt, Some(wi_slug)) => {
+            let project_root = crate::find_project_root()?;
+            let (derived_project, _) = block_on_bridge(async {
+                let backend = crate::issues::LocalBackend::from_project_root(&project_root);
+                use crate::issues::IssueBackend;
+                let issue = backend
+                    .get(wi_slug)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("issue '{wi_slug}' not found in workspace"))?;
+                crate::cli::td::python_td_root_for_issue(&project_root, &issue, wi_slug)
+            })?;
+            if let Some(configured) = configured_opt {
+                if configured != derived_project {
+                    anyhow::bail!(
+                        "--project '{}' disagrees with WI #{} owner project '{}'",
+                        configured,
+                        wi_slug,
+                        derived_project
+                    );
+                }
+            }
+            Ok(derived_project)
+        }
+        (None, None) => anyhow::bail!("ec requires --project <project>"),
+    }
+}
+
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub fn run(args: EcArgs) -> Result<()> {
-    let project = args
-        .project
-        .ok_or_else(|| anyhow::anyhow!("ec requires --project <project>"))?;
+    let project = resolve_ec_project(args.project.as_deref(), &args.command)?;
     match args.command {
         EcCommand::Draft(args) => run_draft(&project, args),
         EcCommand::Check(args) => run_check(&project, args),
@@ -986,27 +1042,23 @@ pub(crate) fn persist_ec_first_next_action(
         bail!("EC lifecycle WI id cannot be empty");
     }
     let backend = crate::issues::local_backend(project_root);
-    tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async {
-            let mut issue =
-                load_or_hydrate_local_lifecycle_issue(project_root, &backend, wi).await?;
-            let mut state =
-                crate::cli::loop_state::parse_loop_state(&issue.body).unwrap_or_default();
-            state.version = 1;
-            if state.issue_id.trim().is_empty() {
-                state.issue_id = wi.to_string();
-            }
-            if state.goal.is_none() {
-                state.goal = Some(format!("ec-first:{wi}"));
-            }
-            state.verifier = Some("ec".to_string());
-            state.status = crate::cli::loop_state::LoopStatus::Iterating;
-            state.next_action = Some(next_action);
-            state.updated_at = Some(chrono::Utc::now().to_rfc3339());
-            issue.body = crate::cli::loop_state::upsert_loop_state(&issue.body, &state)?;
-            backend.write(&issue).await?;
-            Ok::<_, anyhow::Error>(())
-        })
+    block_on_bridge(async {
+        let mut issue = load_or_hydrate_local_lifecycle_issue(project_root, &backend, wi).await?;
+        let mut state = crate::cli::loop_state::parse_loop_state(&issue.body).unwrap_or_default();
+        state.version = 1;
+        if state.issue_id.trim().is_empty() {
+            state.issue_id = wi.to_string();
+        }
+        if state.goal.is_none() {
+            state.goal = Some(format!("ec-first:{wi}"));
+        }
+        state.verifier = Some("ec".to_string());
+        state.status = crate::cli::loop_state::LoopStatus::Iterating;
+        state.next_action = Some(next_action);
+        state.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        issue.body = crate::cli::loop_state::upsert_loop_state(&issue.body, &state)?;
+        backend.write(&issue).await?;
+        Ok::<_, anyhow::Error>(())
     })
 }
 
@@ -11128,6 +11180,188 @@ tool_contracts:
             .findings
             .iter()
             .any(|finding| finding.contains("generated content drifted")));
+    }
+
+    #[test]
+    fn ec_project_derivation_rows_7_to_10() {
+        use crate::issues::IssueBackend;
+        use crate::issues::{Issue, IssueState, LocalBackend};
+
+        fn setup_fixture_workspace(slug: &str, label: Option<&str>) -> tempfile::TempDir {
+            let tmp = tempfile::TempDir::new().unwrap();
+            fs::write(
+                tmp.path().join("aw.toml"),
+                r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+td_path = "projects/tool/tech-design"
+label = "app:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+            )
+            .unwrap();
+
+            let issue = Issue {
+                issue_type: crate::issues::IssueType::Enhancement,
+                title: slug.to_string(),
+                state: IssueState::Open,
+                id: None,
+                github_id: None,
+                gitlab_id: None,
+                url: None,
+                author: None,
+                labels: if let Some(lbl) = label {
+                    vec![lbl.to_string()]
+                } else {
+                    Vec::new()
+                },
+                created_at: None,
+                updated_at: None,
+                slug: slug.to_string(),
+                body: String::new(),
+                related: Vec::new(),
+                implements: Vec::new(),
+                phase: None,
+                branch: None,
+                target_branch: None,
+                git_workflow: None,
+                change_id: None,
+                iteration: None,
+                current_task_id: None,
+                impl_spec_phase: None,
+                task_revisions: None,
+                revision_counts: None,
+                last_action: None,
+                session_id: None,
+                validation_errors: Vec::new(),
+                review_count: None,
+                flagged_sections: None,
+                fill_retry_count: None,
+                ship_status: None,
+                ship_commit: None,
+                regen_verified_at: None,
+            };
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async {
+                    LocalBackend::from_project_root(tmp.path())
+                        .create(&issue)
+                        .await
+                })
+                .unwrap();
+
+            tmp
+        }
+
+        fn extract_ec_production_code(content: &str) -> &str {
+            content.split("mod tests {").next().unwrap_or(content)
+        }
+
+        // Row 7: ec entry point with project: None and subcommand carrying wi: Some(slug)
+        let tmp7 = setup_fixture_workspace("3359", Some("app:tool"));
+        {
+            let _guard = CwdGuard::enter(tmp7.path());
+            let res = run(EcArgs {
+                project: None,
+                command: EcCommand::Verify(EcVerifyArgs {
+                    json: false,
+                    required_only: true,
+                    stage: Some("td".to_string()),
+                    wi: Some("3359".to_string()),
+                }),
+            });
+            assert!(
+                res.is_err(),
+                "Row 7 must fail downstream, not at project resolution"
+            );
+            let err_msg = res.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("tool"),
+                "Row 7: derived project name 'tool' must reach the subcommand: {err_msg}"
+            );
+            assert!(
+                !err_msg.contains("ec requires --project <project>"),
+                "Row 7: must not fail with missing project error"
+            );
+        }
+
+        // Row 8: ec with project: Some("other") and wi resolving to "tool"
+        let tmp8 = setup_fixture_workspace("3359", Some("app:tool"));
+        {
+            let _guard = CwdGuard::enter(tmp8.path());
+            let res = run(EcArgs {
+                project: Some("other".to_string()),
+                command: EcCommand::Verify(EcVerifyArgs {
+                    json: false,
+                    required_only: true,
+                    stage: Some("td".to_string()),
+                    wi: Some("3359".to_string()),
+                }),
+            });
+            assert!(res.is_err(), "Row 8 must fail");
+            let err_msg = res.unwrap_err().to_string();
+            assert_eq!(
+                err_msg,
+                "--project 'other' disagrees with WI #3359 owner project 'tool'"
+            );
+        }
+
+        // Row 9: ec with project: None and a subcommand carrying no wi
+        let tmp9 = setup_fixture_workspace("3359", Some("app:tool"));
+        {
+            let _guard = CwdGuard::enter(tmp9.path());
+            let res = run(EcArgs {
+                project: None,
+                command: EcCommand::Verify(EcVerifyArgs {
+                    json: false,
+                    required_only: true,
+                    stage: Some("td".to_string()),
+                    wi: None,
+                }),
+            });
+            assert!(res.is_err(), "Row 9 must fail");
+            let err_msg = res.unwrap_err().to_string();
+            assert_eq!(err_msg, "ec requires --project <project>");
+        }
+
+        // Row 10: production half of ec.rs excluding mod tests -> literal occurs exactly once
+        let file_content = include_str!("ec.rs");
+        let prod_part = extract_ec_production_code(file_content);
+        let occurrences = prod_part.matches("ec requires --project <project>").count();
+        assert_eq!(
+            occurrences, 1,
+            "literal must occur exactly once in production half of ec.rs"
+        );
+
+        // Boundary proof: count on fixture with literal past line 1301 but before mod tests
+        let fixture_past_1301 = format!(
+            "{}\nfn dummy_subcommand() {{ let _ = \"ec requires --project <project>\"; }}\nmod tests {{}}",
+            file_content.split("mod tests {").next().unwrap()
+        );
+        assert_eq!(
+            extract_ec_production_code(&fixture_past_1301)
+                .matches("ec requires --project <project>")
+                .count(),
+            2,
+            "boundary must include code past line 1301 outside mod tests"
+        );
+
+        let fixture_inside_tests = format!(
+            "{}\nmod tests {{\nfn dummy() {{ let _ = \"ec requires --project <project>\"; }}\n}}",
+            file_content.split("mod tests {").next().unwrap()
+        );
+        assert_eq!(
+            extract_ec_production_code(&fixture_inside_tests)
+                .matches("ec requires --project <project>")
+                .count(),
+            1,
+            "boundary must exclude mod tests"
+        );
     }
 }
 // CODEGEN-END

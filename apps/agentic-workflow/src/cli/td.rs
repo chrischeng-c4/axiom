@@ -2372,7 +2372,7 @@ fn derive_project_td_spec_dir(labels: &[String]) -> String {
 /// Returns `None` when no recognized label prefix is present at all —
 /// callers must fail loudly (#1403) rather than fall back to a legacy
 /// default path.
-fn project_label_for_issue(issue: &Issue) -> Option<String> {
+pub(crate) fn project_label_for_issue(issue: &Issue) -> Option<String> {
     for label in &issue.labels {
         if let Some(crate_name) = label.strip_prefix("crate:") {
             let crate_name = crate_name.trim();
@@ -2634,7 +2634,7 @@ fn python_module_segment(value: &str) -> String {
     output
 }
 
-fn python_td_root_for_issue(
+pub(crate) fn python_td_root_for_issue(
     project_root: &std::path::Path,
     issue: &Issue,
     fallback_slug: &str,
@@ -3811,6 +3811,20 @@ pub fn reconcile_td_surface(
     }
 }
 
+// already be inside a tokio runtime (production runs inside `aw`'s
+// top-level multi-thread runtime; unit tests call in directly with none).
+// Mirrors `standardize.rs`'s `block_on_bridge` (issue #919) for the same
+// duplication reason documented on `CwdGuard` above.
+fn block_on_bridge<F: std::future::Future>(fut: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+        Err(_) => {
+            let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+            rt.block_on(fut)
+        }
+    }
+}
+
 /// `aw td check <target>` — compile one canonical Python TD project root.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
@@ -3824,14 +3838,62 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
         }
         let project_root = crate::find_project_root()?;
         let target = args.target.trim();
-        if target.is_empty() {
-            anyhow::bail!("aw td check requires a Python TD project root");
-        }
-        let candidate = canonical_python_td_root(
-            &project_root,
-            std::path::Path::new(target),
-            configured_project,
-        )?;
+        let wi_slug = args.wi.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+        let (derived_project_name, candidate) = match (target.is_empty(), wi_slug) {
+            (true, None) => anyhow::bail!("aw td check requires a Python TD project root"),
+            (false, None) => {
+                let candidate = canonical_python_td_root(
+                    &project_root,
+                    std::path::Path::new(target),
+                    configured_project,
+                )?;
+                (None, candidate)
+            }
+            (is_empty, Some(slug)) => {
+                let issue = block_on_bridge(async {
+                    let backend = crate::issues::LocalBackend::from_project_root(&project_root);
+                    use crate::issues::IssueBackend;
+                    backend
+                        .get(slug)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("issue '{slug}' not found in workspace"))
+                })?;
+                let (derived_proj, derived_td_root) =
+                    python_td_root_for_issue(&project_root, &issue, slug)?;
+                if let Some(configured) = configured_project {
+                    if configured != derived_proj {
+                        anyhow::bail!(
+                            "--project '{}' disagrees with WI #{} owner project '{}'",
+                            configured,
+                            slug,
+                            derived_proj
+                        );
+                    }
+                }
+                let derived_candidate =
+                    canonical_python_td_root(&project_root, &derived_td_root, configured_project)?;
+                let candidate = if is_empty {
+                    derived_candidate
+                } else {
+                    let explicit_candidate = canonical_python_td_root(
+                        &project_root,
+                        std::path::Path::new(target),
+                        configured_project,
+                    )?;
+                    if explicit_candidate != derived_candidate {
+                        anyhow::bail!(
+                            "explicit Python TD target `{}` disagrees with WI #{slug} derived root `{}`",
+                            explicit_candidate.display(),
+                            derived_candidate.display()
+                        );
+                    }
+                    explicit_candidate
+                };
+                (Some(derived_proj), candidate)
+            }
+        };
+
         let ir = crate::services::python_td::compile_python_td_project(&candidate)?;
         let unit_tests =
             crate::services::python_artifact_unit_tests::run_authored_unit_tests(&candidate)?;
@@ -3845,7 +3907,11 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
                 ir.semantic_digest
             );
         }
-        if let (Some(project), Some(wi)) = (configured_project, args.wi.as_deref()) {
+        if let Some(wi) = wi_slug {
+            let project = derived_project_name
+                .as_deref()
+                .or(configured_project)
+                .expect("derived_project_name is Some when wi_slug is Some");
             let row = crate::services::project_registry::resolve_project_config_row(
                 &project_root,
                 project,
@@ -10195,6 +10261,271 @@ target = "rust"
             !carrier_path7.exists(),
             "Row 7: carrier file must not be created"
         );
+    }
+
+    #[test]
+    fn python_td_check_rows_1_to_6_obligations() {
+        use crate::issues::IssueBackend;
+        use crate::issues::{Issue, IssueState, LocalBackend};
+
+        struct CwdGuard {
+            prev: std::path::PathBuf,
+            _lock: std::sync::MutexGuard<'static, ()>,
+        }
+        impl CwdGuard {
+            fn enter(dir: &std::path::Path) -> Self {
+                let lock = crate::cli::shell_env::CWD_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let prev = std::env::current_dir().expect("read current directory");
+                std::env::set_current_dir(dir).expect("switch cwd");
+                Self { prev, _lock: lock }
+            }
+        }
+        impl Drop for CwdGuard {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.prev);
+            }
+        }
+
+        fn setup_fixture_workspace(
+            slug: &str,
+            label: Option<&str>,
+        ) -> (tempfile::TempDir, std::path::PathBuf) {
+            let tmp = tempfile::TempDir::new().unwrap();
+            init_git_repo(tmp.path());
+            write(
+                tmp.path(),
+                "aw.toml",
+                r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+td_path = "projects/tool/tech-design"
+label = "app:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+            );
+            let td_root = tmp.path().join("projects/tool/tech-design");
+            std::fs::create_dir_all(td_root.join("src/tool/work_items")).unwrap();
+            std::fs::create_dir_all(td_root.join("tests/unit")).unwrap();
+            write(
+                &td_root,
+                "pyproject.toml",
+                "[project]\nname = \"tool-tech-design\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+            );
+            let _ = crate::services::python_artifact::refresh_uv_lock(
+                &td_root,
+                std::path::Path::new("uv"),
+            );
+            write(
+                &td_root,
+                "src/tool/work_items/wi.py",
+                "__aw_artifact_id__ = \"artifact:tool/wi\"\n",
+            );
+            write(
+                &td_root,
+                "tests/unit/test_wi.py",
+                "import unittest\n\nclass TestWi(unittest.TestCase):\n    def test_pass(self):\n        pass\n",
+            );
+
+            let issue = Issue {
+                issue_type: crate::issues::IssueType::Enhancement,
+                title: slug.to_string(),
+                state: IssueState::Open,
+                id: None,
+                github_id: Some(3940),
+                gitlab_id: None,
+                url: None,
+                author: None,
+                labels: if let Some(lbl) = label {
+                    vec![lbl.to_string()]
+                } else {
+                    Vec::new()
+                },
+                created_at: None,
+                updated_at: None,
+                slug: slug.to_string(),
+                body: String::new(),
+                related: Vec::new(),
+                implements: Vec::new(),
+                phase: None,
+                branch: None,
+                target_branch: None,
+                git_workflow: None,
+                change_id: None,
+                iteration: None,
+                current_task_id: None,
+                impl_spec_phase: None,
+                task_revisions: None,
+                revision_counts: None,
+                last_action: None,
+                session_id: None,
+                validation_errors: Vec::new(),
+                review_count: None,
+                flagged_sections: None,
+                fill_retry_count: None,
+                ship_status: None,
+                ship_commit: None,
+                regen_verified_at: None,
+            };
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async {
+                    LocalBackend::from_project_root(tmp.path())
+                        .create(&issue)
+                        .await
+                })
+                .unwrap();
+
+            (tmp, td_root)
+        }
+
+        // Row 1: CheckArgs { target: "", wi: Some("3359") }, configured_project: None
+        let (tmp1, _td_root1) = setup_fixture_workspace("3359", Some("app:tool"));
+        {
+            let _guard = CwdGuard::enter(tmp1.path());
+            let res = run_check(
+                CheckArgs {
+                    target: "".to_string(),
+                    json: false,
+                    section_type_conformance: false,
+                    wi: Some("3359".to_string()),
+                },
+                None,
+            );
+            assert!(res.is_ok(), "Row 1 must succeed: {:?}", res);
+        }
+
+        // Row 6: work item carries the recorded follow-up action
+        {
+            let issue = tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async {
+                    LocalBackend::from_project_root(tmp1.path())
+                        .get("3359")
+                        .await
+                })
+                .unwrap()
+                .expect("issue 3359 exists");
+            let state = crate::cli::loop_state::parse_loop_state(&issue.body).unwrap();
+            assert_eq!(
+                state.next_action.as_deref(),
+                Some("aw ec verify --project tool --required-only --stage td --wi 3359")
+            );
+        }
+
+        // Row 2: target set to that same root and wi set to the same slug
+        let (tmp2, td_root2) = setup_fixture_workspace("3359", Some("app:tool"));
+        {
+            let _guard = CwdGuard::enter(tmp2.path());
+            let res = run_check(
+                CheckArgs {
+                    target: td_root2.to_string_lossy().into_owned(),
+                    json: false,
+                    section_type_conformance: false,
+                    wi: Some("3359".to_string()),
+                },
+                None,
+            );
+            assert!(res.is_ok(), "Row 2 must succeed: {:?}", res);
+        }
+
+        // Row 3: target set to a DIFFERENT Python TD root that also exists, and wi set
+        let (tmp3, td_root3) = setup_fixture_workspace("3359", Some("app:tool"));
+        let other_td_root = tmp3.path().join("projects/other/tech-design");
+        std::fs::create_dir_all(other_td_root.join("src/other/work_items")).unwrap();
+        std::fs::create_dir_all(other_td_root.join("tests/unit")).unwrap();
+        write(
+            &other_td_root,
+            "pyproject.toml",
+            "[project]\nname = \"other-tech-design\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+        );
+        let _ = crate::services::python_artifact::refresh_uv_lock(
+            &other_td_root,
+            std::path::Path::new("uv"),
+        );
+        write(
+            &other_td_root,
+            "src/other/work_items/wi.py",
+            "__aw_artifact_id__ = \"artifact:other/wi\"\n",
+        );
+        write(
+            &other_td_root,
+            "tests/unit/test_other.py",
+            "import unittest\n\nclass TestOther(unittest.TestCase):\n    def test_pass(self):\n        pass\n",
+        );
+        {
+            let _guard = CwdGuard::enter(tmp3.path());
+            let res = run_check(
+                CheckArgs {
+                    target: other_td_root.to_string_lossy().into_owned(),
+                    json: false,
+                    section_type_conformance: false,
+                    wi: Some("3359".to_string()),
+                },
+                None,
+            );
+            assert!(res.is_err(), "Row 3 must fail");
+            let err_msg = res.unwrap_err().to_string();
+            let other_canon = other_td_root.canonicalize().unwrap();
+            let derived_canon = td_root3.canonicalize().unwrap();
+            assert!(
+                err_msg.contains(&other_canon.to_string_lossy().to_string())
+                    || err_msg.contains(&other_td_root.to_string_lossy().to_string()),
+                "Row 3 error message must name explicit target path: {err_msg}"
+            );
+            assert!(
+                err_msg.contains(&derived_canon.to_string_lossy().to_string())
+                    || err_msg.contains("projects/tool/tech-design"),
+                "Row 3 error message must name derived root path: {err_msg}"
+            );
+        }
+
+        // Row 4: target: "", wi: None
+        let (tmp4, _) = setup_fixture_workspace("3359", Some("app:tool"));
+        {
+            let _guard = CwdGuard::enter(tmp4.path());
+            let res = run_check(
+                CheckArgs {
+                    target: "".to_string(),
+                    json: false,
+                    section_type_conformance: false,
+                    wi: None,
+                },
+                None,
+            );
+            assert!(res.is_err(), "Row 4 must fail");
+            let err_msg = res.unwrap_err().to_string();
+            assert_eq!(err_msg, "aw td check requires a Python TD project root");
+        }
+
+        // Row 5: target: "", wi naming an issue with NO project label
+        let (tmp5, _) = setup_fixture_workspace("3359", None);
+        {
+            let _guard = CwdGuard::enter(tmp5.path());
+            let res = run_check(
+                CheckArgs {
+                    target: "".to_string(),
+                    json: false,
+                    section_type_conformance: false,
+                    wi: Some("3359".to_string()),
+                },
+                None,
+            );
+            assert!(res.is_err(), "Row 5 must fail");
+            let err_msg = res.unwrap_err().to_string();
+            assert!(
+                err_msg.contains(
+                    "cannot derive Python TD root for issue '3359': no recognized project label"
+                ),
+                "Row 5 error message: {err_msg}"
+            );
+        }
     }
 }
 
