@@ -20,6 +20,7 @@
 // @spec apps/agentic-workflow/tech-design/core/generate/diagrams/mermaid_plus/migrate.md
 // @spec apps/agentic-workflow/tech-design/core/generate/diagrams/mermaid_plus/migrate-envelope.md
 
+use crate::lifecycle_commit::LifecycleLeaf;
 use anyhow::{Context, Result};
 use clap::Args;
 use std::path::{Path, PathBuf};
@@ -184,7 +185,12 @@ fn commit_mermaid_migration(
          TD-Block: {block_id}\n\
          TD-Target: {target}\n"
     );
-    crate::lifecycle_commit::commit_scoped_path_set(project_root, &[path.to_path_buf()], &message)?;
+    crate::lifecycle_commit::commit_scoped_path_set(
+        LifecycleLeaf::Td,
+        project_root,
+        &[path.to_path_buf()],
+        &message,
+    )?;
     Ok(())
 }
 

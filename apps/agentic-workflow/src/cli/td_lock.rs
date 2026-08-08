@@ -1,5 +1,6 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 // CODEGEN-BEGIN
+use crate::lifecycle_commit::LifecycleLeaf;
 use anyhow::{Context, Result};
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -358,7 +359,7 @@ fn commit_td_lock_update(
         );
     }
 
-    crate::lifecycle_commit::stage_path_set(project_root, &[lock_path], true)?;
+    crate::lifecycle_commit::stage_path_set(LifecycleLeaf::Td, project_root, &[lock_path], true)?;
 
     if !crate::git::has_staged_changes_for_paths(project_root, &[lock_path], true)? {
         return Ok(false);
@@ -368,7 +369,13 @@ fn commit_td_lock_update(
         "td-lock({}) — update TD IR snapshot\n\nTD-Lock-Project: {}\nTD-Lock-Path: {}",
         target.project, target.project, target.lock_path_display
     );
-    crate::lifecycle_commit::commit_only_path_set(project_root, &[lock_path], &message, true)?;
+    crate::lifecycle_commit::commit_only_path_set(
+        LifecycleLeaf::Td,
+        project_root,
+        &[lock_path],
+        &message,
+        true,
+    )?;
 
     let lock_stdout = crate::git::git_status(
         project_root,

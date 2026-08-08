@@ -8,6 +8,7 @@
 //!
 //! @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 
+use crate::lifecycle_commit::LifecycleLeaf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
@@ -235,7 +236,7 @@ fn calculate_candidate_digest(project_root: &std::path::Path, paths: &[String]) 
 }
 
 fn rollback_git_commit(project_root: &std::path::Path) -> Result<()> {
-    crate::lifecycle_commit::rollback_last_commit(project_root)
+    crate::lifecycle_commit::rollback_last_commit(LifecycleLeaf::Cb, project_root)
         .context("rollback git commit failed")?;
     Ok(())
 }
@@ -557,6 +558,7 @@ pub async fn run_publish(args: CbPublishArgs) -> Result<()> {
 
     // 1. Commit Git
     let committed = crate::lifecycle_commit::commit_scoped_path_set(
+        LifecycleLeaf::Cb,
         &project_root,
         &paths_to_commit,
         &commit_message,
@@ -1148,6 +1150,7 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
             crate::issues::types::lifecycle_trailer::CB_GEN,
         );
         if !crate::lifecycle_commit::commit_scoped_path_set(
+            LifecycleLeaf::Cb,
             project_root,
             &generated_paths,
             &message,
@@ -1258,8 +1261,12 @@ async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
          Work-Item: {slug}\n\
          Lifecycle-Stage: Cb-Repair"
     );
-    let committed =
-        crate::lifecycle_commit::commit_scoped_path_set(&project_root, &changed_paths, &message)?;
+    let committed = crate::lifecycle_commit::commit_scoped_path_set(
+        LifecycleLeaf::Cb,
+        &project_root,
+        &changed_paths,
+        &message,
+    )?;
     if !committed {
         anyhow::bail!(
             "terminal CODEGEN repair for `{slug}` produced no committed target change; inspect the accepted TD and retry `aw cb check {slug}`"
@@ -1992,7 +1999,12 @@ fn commit_force_regen(
          Blocks-Updated: {blocks_updated}\n\
          Public-API-Updates: {public_api_updates}\n"
     );
-    crate::lifecycle_commit::commit_scoped_path_set(project_root, paths, &message)?;
+    crate::lifecycle_commit::commit_scoped_path_set(
+        LifecycleLeaf::Cb,
+        project_root,
+        paths,
+        &message,
+    )?;
     Ok(())
 }
 
@@ -7640,7 +7652,12 @@ fn land_td_lifecycle_branch(
          Work-Item: {}",
         td_branch, target, slug, slug,
     );
-    if let Err(err) = crate::lifecycle_commit::merge_branch_no_ff(project_root, &td_branch, &msg) {
+    if let Err(err) = crate::lifecycle_commit::merge_branch_no_ff(
+        LifecycleLeaf::Cb,
+        project_root,
+        &td_branch,
+        &msg,
+    ) {
         anyhow::bail!("merge conflict landing '{td_branch}' into '{target}': {err}");
     }
 
@@ -8345,7 +8362,12 @@ fn commit_cb_claim_trailer(
         relative_paths.push(relative.to_path_buf());
     }
 
-    crate::lifecycle_commit::stage_path_set(checkout_root, &relative_paths, true)?;
+    crate::lifecycle_commit::stage_path_set(
+        LifecycleLeaf::Cb,
+        checkout_root,
+        &relative_paths,
+        true,
+    )?;
 
     let mut msg = format!(
         "cb({slug}) \u{2014} adopted code at {code_path}\n\n\
@@ -8359,6 +8381,12 @@ fn commit_cb_claim_trailer(
         msg.push_str(&format!("\nClaim-Issue: {}", issue.trailer_value()));
     }
 
-    crate::lifecycle_commit::commit_only_path_set(checkout_root, &relative_paths, &msg, true)
+    crate::lifecycle_commit::commit_only_path_set(
+        LifecycleLeaf::Cb,
+        checkout_root,
+        &relative_paths,
+        &msg,
+        true,
+    )
 }
 // CODEGEN-END

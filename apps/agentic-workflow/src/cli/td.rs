@@ -11,6 +11,7 @@ use crate::issues::{
     make_backend, resolve_default_backend, Issue, IssueBackend, IssuePatch, IssueState,
     LocalBackend,
 };
+use crate::lifecycle_commit::LifecycleLeaf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
@@ -903,7 +904,7 @@ pub(crate) fn commit_lifecycle_message(
         LifecycleCommitEmpty::Always => true,
         LifecycleCommitEmpty::IfNothingStaged => !crate::git::has_staged_changes(worktree_path)?,
     };
-    crate::lifecycle_commit::commit_staged_changes(worktree_path, message, allow)
+    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Td, worktree_path, message, allow)
 }
 
 pub(crate) fn stage_lifecycle_paths(worktree_path: &std::path::Path, paths: &[&str]) -> Result<()> {
@@ -912,7 +913,7 @@ pub(crate) fn stage_lifecycle_paths(worktree_path: &std::path::Path, paths: &[&s
         .filter(|p| should_stage_lifecycle_path(worktree_path, p))
         .map(std::path::PathBuf::from)
         .collect();
-    crate::lifecycle_commit::stage_path_set(worktree_path, &valid_paths, false)
+    crate::lifecycle_commit::stage_path_set(LifecycleLeaf::Td, worktree_path, &valid_paths, false)
 }
 
 fn should_stage_lifecycle_path(worktree_path: &std::path::Path, path: &str) -> bool {
@@ -9652,7 +9653,7 @@ pub(crate) fn commit_lifecycle_with_extra(
     }
 
     let allow = !crate::git::has_staged_changes(worktree_path)?;
-    crate::lifecycle_commit::commit_staged_changes(worktree_path, &msg, allow)
+    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Td, worktree_path, &msg, allow)
 }
 
 // ── td promote ────────────────────────────────────────────────────────
