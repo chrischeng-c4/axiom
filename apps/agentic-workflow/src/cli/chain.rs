@@ -2172,6 +2172,12 @@ mod tests {
             sample: "aw cb check 1500",
             note: "cb gen dispatch to terminal cb check when 0 markers remain",
         },
+        InvokeEmitSite {
+            module: "td.rs",
+            source: "td.rs:9613 (td claim completion dispatch)",
+            sample: "aw cb gen",
+            note: "td claim completion dispatch to cb gen",
+        },
     ];
 
     const VARIABLE_INVOKE_EXEMPTIONS: &[VariableInvokeExemption] = &[
@@ -2244,12 +2250,121 @@ mod tests {
         s
     }
 
+    fn count_brace_delta(line: &str) -> i32 {
+        let mut delta = 0i32;
+        let mut in_str = false;
+        let mut escape = false;
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            if in_str {
+                if escape {
+                    escape = false;
+                } else if c == '\\' {
+                    escape = true;
+                } else if c == '"' {
+                    in_str = false;
+                }
+            } else {
+                if c == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                    break;
+                }
+                if c == '"' {
+                    in_str = true;
+                } else if c == '{' {
+                    delta += 1;
+                } else if c == '}' {
+                    delta -= 1;
+                }
+            }
+            i += 1;
+        }
+        delta
+    }
+
+    fn is_test_module_start(line: &str, seen_cfg_test: bool) -> bool {
+        let trimmed = line.trim();
+        let stripped = if trimmed.starts_with("pub(crate) mod ") {
+            Some(&trimmed["pub(crate) mod ".len()..])
+        } else if trimmed.starts_with("pub mod ") {
+            Some(&trimmed["pub mod ".len()..])
+        } else if trimmed.starts_with("mod ") {
+            Some(&trimmed["mod ".len()..])
+        } else {
+            None
+        };
+
+        if let Some(rest) = stripped {
+            let mod_name = rest
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .next()
+                .unwrap_or("");
+            if mod_name.contains("test") || seen_cfg_test {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn extract_production_lines(source: &str) -> Vec<&str> {
+        let lines: Vec<&str> = source.lines().collect();
+        let mut prod_lines = Vec::with_capacity(lines.len());
+        let mut in_test_module = false;
+        let mut test_mod_depth = 0i32;
+        let mut seen_cfg_test = false;
+        let mut test_mod_opened = false;
+
+        for line in lines {
+            let trimmed = line.trim();
+
+            if !in_test_module {
+                if trimmed.starts_with("#[cfg(test)]") {
+                    seen_cfg_test = true;
+                    prod_lines.push(line);
+                    continue;
+                }
+
+                if is_test_module_start(trimmed, seen_cfg_test) {
+                    in_test_module = true;
+                    seen_cfg_test = false;
+                    let delta = count_brace_delta(trimmed);
+                    test_mod_depth = delta;
+                    test_mod_opened = trimmed.contains('{');
+                    prod_lines.push("");
+                    if test_mod_opened && test_mod_depth <= 0 {
+                        in_test_module = false;
+                    }
+                    continue;
+                }
+
+                if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("#[") {
+                    seen_cfg_test = false;
+                }
+
+                prod_lines.push(line);
+            } else {
+                let delta = count_brace_delta(trimmed);
+                test_mod_depth += delta;
+                if trimmed.contains('{') {
+                    test_mod_opened = true;
+                }
+                prod_lines.push("");
+                if test_mod_opened && test_mod_depth <= 0 {
+                    in_test_module = false;
+                    test_mod_depth = 0;
+                }
+            }
+        }
+
+        prod_lines
+    }
+
     fn extract_production_invoke_emit_sites(
         module: &'static str,
         source: &str,
     ) -> Vec<ExtractedInvokeSite> {
-        let prod_half = source.split("mod tests {").next().unwrap_or(source);
-        let lines: Vec<&str> = prod_half.lines().collect();
+        let lines = extract_production_lines(source);
         let mut sites = Vec::new();
 
         for i in 0..lines.len() {
@@ -2386,9 +2501,9 @@ mod tests {
     }
 
     fn count_production_invoke_sites(source: &str) -> usize {
-        let prod_half = source.split("mod tests {").next().unwrap_or(source);
-        prod_half
-            .lines()
+        let lines = extract_production_lines(source);
+        lines
+            .iter()
             .filter(|line| line.contains("\"invoke\":") || line.contains("invoke: Invoke {"))
             .count()
     }
@@ -2442,9 +2557,10 @@ mod tests {
     }
 
     fn extract_production_aw_commands(source: &str, sample_slug: &str) -> Vec<String> {
-        let prod_half = source.split("mod tests {").next().unwrap_or(source);
+        let lines = extract_production_lines(source);
+        let prod_text = lines.join("\n");
         let mut commands = Vec::new();
-        let mut rest = prod_half;
+        let mut rest = prod_text.as_str();
         while let Some(start) = rest.find("\"aw ") {
             let content_start = start + 1;
             let after_start = &rest[content_start..];
@@ -2517,6 +2633,91 @@ mod tests {
             vec!["aw wi validate 3359".to_string()],
             "extractor must return exactly one production-half command and ignore #[cfg(test)] half"
         );
+    }
+
+    #[test]
+    fn command_extractor_scans_production_after_closed_test_module() {
+        let fixture = r#"
+            fn emit_before() {
+                let cmd = "aw wi show {}";
+            }
+
+            mod tests {
+                fn test_command() {
+                    let cmd = "aw td review 915";
+                }
+            }
+
+            fn emit_after() {
+                let cmd = "aw wi validate {}";
+            }
+        "#;
+        let commands = extract_production_aw_commands(fixture, "3359");
+        assert_eq!(
+            commands,
+            vec!["aw wi show 3359".to_string(), "aw wi validate 3359".to_string()],
+            "extractor must return production commands before and after test module in source order, excluding test module"
+        );
+    }
+
+    #[test]
+    fn command_extractor_validates_post_test_module_production_code() {
+        let fixture = r#"
+            fn emit_before() {
+                let cmd = "aw wi show {}";
+            }
+
+            mod tests {
+                fn test_command() {
+                    let cmd = "aw wi validate 915";
+                }
+            }
+
+            fn emit_after() {
+                let cmd = "aw td review {}";
+            }
+        "#;
+        let commands = extract_production_aw_commands(fixture, "3359");
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0], "aw wi show 3359");
+        assert_eq!(commands[1], "aw td review 3359");
+
+        let rejections: Vec<_> = commands
+            .iter()
+            .filter_map(|cmd| validate_aw_command_string(cmd).err())
+            .collect();
+        assert_eq!(
+            rejections.len(),
+            1,
+            "must report rejection on invalid command `aw td review {{}}` after closed test module"
+        );
+    }
+
+    #[test]
+    fn command_extractor_ignores_invalid_command_inside_test_module_when_surrounded_by_production()
+    {
+        let fixture = r#"
+            fn emit_before() {
+                let cmd = "aw wi show {}";
+            }
+
+            mod tests {
+                fn test_command() {
+                    let cmd = "aw td review 915";
+                }
+            }
+
+            fn emit_after() {
+                let cmd = "aw wi validate {}";
+            }
+        "#;
+        let commands = extract_production_aw_commands(fixture, "3359");
+        for cmd in &commands {
+            assert!(
+                validate_aw_command_string(cmd).is_ok(),
+                "all extracted commands must be valid because invalid command was inside test module"
+            );
+        }
     }
 
     #[test]
