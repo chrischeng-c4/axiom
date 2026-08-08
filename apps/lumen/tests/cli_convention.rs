@@ -398,10 +398,6 @@ fn chainable_output_next_line_file_writing_vs_stream() {
         "k8s",
         "operator",
         "render",
-        "--issuer",
-        "ephemeral",
-        "--trust-domain",
-        "lumen-dev.svc.id.goog",
         "--out",
         operator_out.to_str().unwrap(),
     ]);
