@@ -289,7 +289,7 @@ def verify() -> list[str]:
 
         assert generated["action"] == "dispatch"
         assert generated["invoke"] == {
-            "command": "aw cb check",
+            "command": f"aw cb check {slug}",
             "args": {"target": slug},
         }
         assert _git(persistent, "branch", "--show-current").strip() == "project-demo"

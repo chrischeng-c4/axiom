@@ -547,7 +547,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
             "slug": slug,
             "next": format!("aw cb check {slug}"),
             "invoke": {
-                "command": "aw cb check",
+                "command": format!("aw cb check {slug}"),
                 "args": { "target": slug },
             },
         });
@@ -617,7 +617,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
             "slug": slug,
             "next": next_for_td_code_check(&slug),
             "invoke": {
-                "command": "aw cb check",
+                "command": format!("aw cb check {slug}"),
                 "args": { "target": slug },
             },
         });
@@ -672,7 +672,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
         "next": next_for_marker(&slug, first, &first_payload),
         "payload_initialized": first_payload_created,
         "invoke": {
-            "command": "aw cb fill",
+            "command": format!("aw cb fill {slug}"),
             "args": {
                 "slug": slug,
                 "marker_list": markers,
@@ -1068,7 +1068,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             "next": next_for_marker(&slug, next, &next_payload),
             "payload_initialized": next_payload_created,
             "invoke": {
-                "command": "aw cb fill",
+                "command": format!("aw cb fill {slug}"),
                 "args": {
                     "slug": slug,
                     "apply": true,
@@ -1121,7 +1121,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         "slug": slug,
         "next": next_for_td_code_check(&slug),
         "invoke": {
-            "command": "aw cb check",
+            "command": format!("aw cb check {slug}"),
             "args": { "target": slug },
         },
     });

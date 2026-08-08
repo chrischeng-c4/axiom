@@ -2077,6 +2077,370 @@ mod tests {
         }
     }
 
+    struct InvokeEmitSite {
+        module: &'static str,
+        source: &'static str,
+        sample: &'static str,
+        #[allow(dead_code)]
+        note: &'static str,
+    }
+
+    struct VariableInvokeExemption {
+        module: &'static str,
+        source: &'static str,
+        #[allow(dead_code)]
+        note: &'static str,
+    }
+
+    const INVOKE_EMIT_REGISTRY: &[InvokeEmitSite] = &[
+        InvokeEmitSite {
+            module: "cb_fill.rs",
+            source: "cb_fill.rs:549 (python_native_fill dispatch)",
+            sample: "aw cb check 1500",
+            note: "0-marker Python native fill transition to terminal code-check",
+        },
+        InvokeEmitSite {
+            module: "cb_fill.rs",
+            source: "cb_fill.rs:619 (0-marker fast-path dispatch)",
+            sample: "aw cb check 1500",
+            note: "0-marker fast path dispatch to terminal code-check",
+        },
+        InvokeEmitSite {
+            module: "cb_fill.rs",
+            source: "cb_fill.rs:674 (marker queue start dispatch)",
+            sample: "aw cb fill 1500",
+            note: "marker queue start dispatch to first handwrite marker",
+        },
+        InvokeEmitSite {
+            module: "cb_fill.rs",
+            source: "cb_fill.rs:1070 (partial progress marker dispatch)",
+            sample: "aw cb fill 1500",
+            note: "partial-progress dispatch to next handwrite marker",
+        },
+        InvokeEmitSite {
+            module: "cb_fill.rs",
+            source: "cb_fill.rs:1123 (terminal code-check dispatch)",
+            sample: "aw cb check 1500",
+            note: "terminal code-check dispatch after all markers filled",
+        },
+        InvokeEmitSite {
+            module: "issues.rs",
+            source: "issues.rs:2764 (wi draft create dispatch)",
+            sample: "aw wi fill-section --slug 1500",
+            note: "wi draft create dispatch to fill section",
+        },
+        InvokeEmitSite {
+            module: "issues.rs",
+            source: "issues.rs:3442 (wi fill-section dispatch)",
+            sample: "aw wi validate 1500",
+            note: "wi fill-section dispatch to validate",
+        },
+        InvokeEmitSite {
+            module: "td.rs",
+            source: "td.rs:4375 (python td spec create dispatch)",
+            sample: "aw td create",
+            note: "python td spec create dispatch",
+        },
+        InvokeEmitSite {
+            module: "td.rs",
+            source: "td.rs:4484 (python td check dispatch)",
+            sample:
+                "aw td check apps/agentic-workflow/tech-design --project agentic-workflow --wi 1500",
+            note: "python td check dispatch",
+        },
+        InvokeEmitSite {
+            module: "td.rs",
+            source: "td.rs:4803 (td author create dispatch)",
+            sample: "aw td create",
+            note: "td author create dispatch",
+        },
+        InvokeEmitSite {
+            module: "td.rs",
+            source: "td.rs:5232 (td create completion dispatch)",
+            sample: "aw cb gen",
+            note: "td create completion dispatch to cb gen",
+        },
+        InvokeEmitSite {
+            module: "td.rs",
+            source: "td.rs:5878 (cb gen remaining markers dispatch)",
+            sample: "aw cb fill 1500",
+            note: "cb gen dispatch to cb fill for remaining markers",
+        },
+        InvokeEmitSite {
+            module: "td.rs",
+            source: "td.rs:5887 (cb gen 0-marker fast-path dispatch)",
+            sample: "aw cb check 1500",
+            note: "cb gen dispatch to terminal cb check when 0 markers remain",
+        },
+    ];
+
+    const VARIABLE_INVOKE_EXEMPTIONS: &[VariableInvokeExemption] = &[
+        VariableInvokeExemption {
+            module: "issues.rs",
+            source: "issues.rs:4906 (wi run/capability run goal loop dispatch)",
+            note: "variable command string passed from goal loop runner",
+        },
+        VariableInvokeExemption {
+            module: "td.rs",
+            source: "td.rs:5418 (td promote next-command dispatch)",
+            note: "variable command string passed from td promote transition",
+        },
+    ];
+
+    #[derive(Debug, Clone)]
+    struct ExtractedInvokeSite {
+        module: &'static str,
+        line: usize,
+        instantiated_command: Option<String>,
+        is_variable: bool,
+        #[allow(dead_code)]
+        raw_expr: String,
+    }
+
+    fn extract_var_name(cmd_line: &str) -> String {
+        let after_colon = if let Some(idx) = cmd_line.find(':') {
+            &cmd_line[idx + 1..]
+        } else {
+            cmd_line
+        };
+        after_colon
+            .trim()
+            .trim_start_matches('&')
+            .trim_end_matches(',')
+            .trim_end_matches(';')
+            .trim()
+            .to_string()
+    }
+
+    fn instantiate_sample_cmd(fmt_str: &str) -> String {
+        let mut s = fmt_str.to_string();
+        if s.contains("{slug}") {
+            s = s.replace("{slug}", "1500");
+        }
+        if s.contains("{}") {
+            let mut parts = s.split("{}");
+            let mut result = String::new();
+            if let Some(first) = parts.next() {
+                result.push_str(first);
+                let replacements = [
+                    "apps/agentic-workflow/tech-design",
+                    "agentic-workflow",
+                    "1500",
+                ];
+                let mut rep_idx = 0;
+                for part in parts {
+                    let rep = if rep_idx < replacements.len() {
+                        replacements[rep_idx]
+                    } else {
+                        "1500"
+                    };
+                    rep_idx += 1;
+                    result.push_str(rep);
+                    result.push_str(part);
+                }
+                s = result;
+            }
+        }
+        s
+    }
+
+    fn extract_production_invoke_emit_sites(
+        module: &'static str,
+        source: &str,
+    ) -> Vec<ExtractedInvokeSite> {
+        let prod_half = source.split("mod tests {").next().unwrap_or(source);
+        let lines: Vec<&str> = prod_half.lines().collect();
+        let mut sites = Vec::new();
+
+        for i in 0..lines.len() {
+            let line = lines[i];
+            if line.contains("\"invoke\":") || line.contains("invoke: Invoke") {
+                let line_number = i + 1;
+
+                let mut cmd_line_opt = None;
+                for j in i..std::cmp::min(lines.len(), i + 5) {
+                    if lines[j].contains("\"command\":") || lines[j].contains("command:") {
+                        cmd_line_opt = Some((j, lines[j]));
+                        break;
+                    }
+                }
+
+                if let Some((_, cmd_line)) = cmd_line_opt {
+                    let trimmed_cmd = cmd_line.trim();
+
+                    if let Some(start_quote) = cmd_line.find("\"aw ") {
+                        let after_quote = &cmd_line[start_quote + 1..];
+                        if let Some(end_quote) = after_quote.find('"') {
+                            let literal = &after_quote[..end_quote];
+                            sites.push(ExtractedInvokeSite {
+                                module,
+                                line: line_number,
+                                instantiated_command: Some(literal.to_string()),
+                                is_variable: false,
+                                raw_expr: literal.to_string(),
+                            });
+                            continue;
+                        }
+                    }
+
+                    if let Some(format_start) = cmd_line.find("format!(\"aw ") {
+                        let after_quote = &cmd_line[format_start + 9..];
+                        if let Some(end_quote) = after_quote.find('"') {
+                            let fmt_str = &after_quote[..end_quote];
+                            let instantiated = instantiate_sample_cmd(fmt_str);
+                            sites.push(ExtractedInvokeSite {
+                                module,
+                                line: line_number,
+                                instantiated_command: Some(instantiated),
+                                is_variable: false,
+                                raw_expr: fmt_str.to_string(),
+                            });
+                            continue;
+                        }
+                    }
+
+                    let var_name = extract_var_name(trimmed_cmd);
+                    let mut found_definition = None;
+                    for k in (0..i).rev() {
+                        let prev_line = lines[k];
+                        let let_pattern = format!("let {} =", var_name);
+                        let let_pattern2 = format!("let {} = format!", var_name);
+                        if prev_line.contains(&let_pattern) || prev_line.contains(&let_pattern2) {
+                            let combined = if k + 1 < lines.len() {
+                                format!("{} {}", prev_line, lines[k + 1])
+                            } else {
+                                prev_line.to_string()
+                            };
+
+                            if let Some(start_quote) = combined.find("\"aw ") {
+                                let after_quote = &combined[start_quote + 1..];
+                                if let Some(end_quote) = after_quote.find('"') {
+                                    let fmt_str = &after_quote[..end_quote];
+                                    let instantiated = instantiate_sample_cmd(fmt_str);
+                                    found_definition = Some((fmt_str.to_string(), instantiated));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some((raw_fmt, instantiated)) = found_definition {
+                        sites.push(ExtractedInvokeSite {
+                            module,
+                            line: line_number,
+                            instantiated_command: Some(instantiated),
+                            is_variable: false,
+                            raw_expr: raw_fmt,
+                        });
+                    } else {
+                        sites.push(ExtractedInvokeSite {
+                            module,
+                            line: line_number,
+                            instantiated_command: None,
+                            is_variable: true,
+                            raw_expr: var_name,
+                        });
+                    }
+                }
+            }
+        }
+
+        sites
+    }
+
+    #[test]
+    fn invoke_emit_registry_entries_are_all_chain_valid() {
+        let modules = [
+            ("cb_fill.rs", include_str!("cb_fill.rs")),
+            ("issues.rs", include_str!("issues.rs")),
+            ("td.rs", include_str!("td.rs")),
+        ];
+
+        let mut total_validated = 0;
+        for (module_name, source) in modules {
+            let sites = extract_production_invoke_emit_sites(module_name, source);
+            for site in sites {
+                if !site.is_variable {
+                    let cmd = site.instantiated_command.as_ref().unwrap_or_else(|| {
+                        panic!(
+                            "literal invoke emit site in `{}:{}` missing instantiated command",
+                            site.module, site.line
+                        );
+                    });
+                    if let Err(blocker) = validate_aw_command_string(cmd) {
+                        panic!(
+                            "production invoke emit site in `{}:{}` produced a chain-invalid command `{}`: {}",
+                            site.module, site.line, cmd, blocker
+                        );
+                    }
+                    total_validated += 1;
+                }
+            }
+        }
+
+        assert!(
+            total_validated >= 13,
+            "must extract and validate at least 13 literal invoke emit sites across module sources, got {}",
+            total_validated
+        );
+    }
+
+    fn count_production_invoke_sites(source: &str) -> usize {
+        let prod_half = source.split("mod tests {").next().unwrap_or(source);
+        prod_half
+            .lines()
+            .filter(|line| line.contains("\"invoke\":") || line.contains("invoke: Invoke {"))
+            .count()
+    }
+
+    #[test]
+    fn invoke_emit_sites_are_fully_catalogued_or_exempted() {
+        let modules = [
+            ("cb_fill.rs", include_str!("cb_fill.rs")),
+            ("issues.rs", include_str!("issues.rs")),
+            ("td.rs", include_str!("td.rs")),
+        ];
+
+        for (module_name, source) in modules {
+            let sites = extract_production_invoke_emit_sites(module_name, source);
+            let cat_count = INVOKE_EMIT_REGISTRY
+                .iter()
+                .filter(|s| s.module == module_name)
+                .count();
+            let ex_count = VARIABLE_INVOKE_EXEMPTIONS
+                .iter()
+                .filter(|s| s.module == module_name)
+                .count();
+            let expected = cat_count + ex_count;
+            let actual = count_production_invoke_sites(source);
+
+            assert_eq!(
+                actual, expected,
+                "module `{}` production invoke construction sites ({}) must equal catalogued entries ({}) + exemptions ({})",
+                module_name, actual, cat_count, ex_count
+            );
+
+            assert_eq!(
+                sites.len(),
+                actual,
+                "module `{}` extracted invoke sites ({}) must equal actual production invoke sites ({})",
+                module_name,
+                sites.len(),
+                actual
+            );
+
+            let variable_sites: Vec<_> = sites.iter().filter(|s| s.is_variable).collect();
+            assert_eq!(
+                variable_sites.len(),
+                ex_count,
+                "module `{}` variable invoke sites ({}) must equal named exemptions count ({})",
+                module_name,
+                variable_sites.len(),
+                ex_count
+            );
+        }
+    }
+
     fn extract_production_aw_commands(source: &str, sample_slug: &str) -> Vec<String> {
         let prod_half = source.split("mod tests {").next().unwrap_or(source);
         let mut commands = Vec::new();

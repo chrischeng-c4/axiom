@@ -4482,7 +4482,7 @@ async fn run_create_python_apply(
             "semantic_digest": semantic_digest,
         },
         "invoke": {
-            "command": "aw td check",
+            "command": command,
             "args": {
                 "target": td_root_rel,
                 "project": project,
@@ -5872,20 +5872,22 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
     // @spec .aw/tech-design/projects/score/specs/score-cb-fill-workflow.md#logic
     let marker_count = super::cb_fill::count_worktree_handwrite_markers(&worktree_abs);
     if marker_count > 0 {
+        let fill_cmd = format!("aw cb fill {slug}");
         print_envelope(&TdEnvelope::Dispatch {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw cb fill",
+                command: &fill_cmd,
                 args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
             },
         })?;
     } else {
+        let check_cmd = format!("aw cb check {slug}");
         print_envelope(&TdEnvelope::Dispatch {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw cb check",
+                command: &check_cmd,
                 args: serde_json::json!({ "target": slug }),
             },
         })?;

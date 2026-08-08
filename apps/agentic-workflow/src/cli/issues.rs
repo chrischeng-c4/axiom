@@ -2757,12 +2757,13 @@ fn emit_wi_fill_dispatch(project_root: &Path, created: &Issue, emit_output: bool
     } else {
         serde_json::Value::Null
     };
+    let fill_cmd = format!("aw wi fill-section --slug {}", created.slug);
     let envelope = IssueEnvelope::Dispatch {
         agent: None,
         slug: &created.slug,
         artifact: Some(artifact),
         invoke: Invoke {
-            command: "aw wi fill-section",
+            command: &fill_cmd,
             args: serde_json::json!({
                 "slug": created.slug,
                 "sections": ["all"],
@@ -3435,12 +3436,13 @@ async fn run_fill_section_apply(
         let _ = std::fs::remove_dir(parent);
     }
 
+    let validate_cmd = format!("aw wi validate {}", slug);
     print_envelope(&IssueEnvelope::Dispatch {
         agent: None,
         slug,
         artifact: None,
         invoke: Invoke {
-            command: "aw wi validate",
+            command: &validate_cmd,
             args: serde_json::json!({ "slug": slug }),
         },
     })?;
