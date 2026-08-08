@@ -112,7 +112,7 @@ mod tests {
             .unwrap_or_else(|_| "apps/agentic-workflow".to_string());
         let src_dir = Path::new(&manifest_dir).join("src");
 
-        let modules = [
+        let allowlist = [
             ("cli/cb.rs", 8),
             ("cli/cb_fill.rs", 6),
             ("cli/td.rs", 3),
@@ -130,36 +130,126 @@ mod tests {
             "merge_branch_no_ff",
         ];
 
+        let mut violations = Vec::new();
         let mut total_found = 0;
+        let mut visited_allowlist_files = std::collections::HashSet::new();
 
-        for (rel_path, expected_count) in modules {
-            let full_path = src_dir.join(rel_path);
-            let content = std::fs::read_to_string(&full_path)
-                .unwrap_or_else(|e| panic!("Failed to read {}: {}", full_path.display(), e));
+        fn walk_dir(
+            dir: &Path,
+            src_dir: &Path,
+            allowlist: &[(&str, usize)],
+            operations: &[&str],
+            violations: &mut Vec<String>,
+            total_found: &mut usize,
+            visited_allowlist_files: &mut std::collections::HashSet<String>,
+        ) {
+            let mut entries: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.path());
 
-            let mut module_count = 0;
-            for line in content.lines() {
-                let code_line = if let Some((code, _)) = line.split_once("//") {
-                    code
-                } else {
-                    line
-                };
-                if code_line.contains("crate::lifecycle_commit::") {
-                    for op in operations {
-                        if code_line.contains(&format!("crate::lifecycle_commit::{op}")) {
-                            module_count += 1;
+            for entry in entries {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk_dir(
+                        &path,
+                        src_dir,
+                        allowlist,
+                        operations,
+                        violations,
+                        total_found,
+                        visited_allowlist_files,
+                    );
+                } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
+                    if path == src_dir.join("lifecycle_commit.rs") {
+                        continue;
+                    }
+                    let rel_path = path
+                        .strip_prefix(src_dir)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+
+                    let content = std::fs::read_to_string(&path)
+                        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+
+                    let expected_count = allowlist
+                        .iter()
+                        .find(|(m, _)| *m == rel_path)
+                        .map(|(_, c)| *c);
+
+                    if expected_count.is_some() {
+                        visited_allowlist_files.insert(rel_path.clone());
+                    }
+
+                    let mut file_count = 0;
+                    let mut line_violations = Vec::new();
+
+                    for (line_idx, line) in content.lines().enumerate() {
+                        let code_line = if let Some((code, _)) = line.split_once("//") {
+                            code
+                        } else {
+                            line
+                        };
+                        if code_line.contains("crate::lifecycle_commit::") {
+                            for op in operations {
+                                if code_line.contains(&format!("crate::lifecycle_commit::{op}")) {
+                                    file_count += 1;
+                                    if expected_count.is_none() {
+                                        line_violations.push(format!(
+                                            "{}:{}: Call to crate::lifecycle_commit::{} outside allowlist: {}",
+                                            rel_path,
+                                            line_idx + 1,
+                                            op,
+                                            line.trim()
+                                        ));
+                                    }
+                                }
+                            }
                         }
+                    }
+
+                    *total_found += file_count;
+
+                    if let Some(exp) = expected_count {
+                        if file_count != exp {
+                            violations.push(format!(
+                                "Module {} expected {} routed call sites, found {}",
+                                rel_path, exp, file_count
+                            ));
+                        }
+                    } else if file_count > 0 {
+                        violations.extend(line_violations);
                     }
                 }
             }
-
-            assert_eq!(
-                module_count, expected_count,
-                "Module {} expected {} routed call sites, found {}",
-                rel_path, expected_count, module_count
-            );
-            total_found += module_count;
         }
+
+        walk_dir(
+            &src_dir,
+            &src_dir,
+            &allowlist,
+            &operations,
+            &mut violations,
+            &mut total_found,
+            &mut visited_allowlist_files,
+        );
+
+        for (rel_path, expected_count) in allowlist {
+            if !visited_allowlist_files.contains(rel_path) {
+                violations.push(format!(
+                    "Module {} expected {} routed call sites, found 0",
+                    rel_path, expected_count
+                ));
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "Routed call census violations:\n{}",
+            violations.join("\n")
+        );
 
         assert_eq!(total_found, 21, "Expected exactly 21 total routed sites");
     }
