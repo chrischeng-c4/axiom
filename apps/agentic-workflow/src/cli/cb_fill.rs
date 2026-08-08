@@ -1501,7 +1501,18 @@ fn stage_and_commit_cb_fill(
     for source_path in source_paths {
         paths_to_stage.push(source_path.as_str());
     }
-    crate::lifecycle_commit::stage_path_set(LifecycleLeaf::Cb, worktree, &paths_to_stage, false)?;
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Cb,
+        worktree,
+        &paths_to_stage,
+    );
+    crate::lifecycle_commit::stage_path_set(
+        LifecycleLeaf::Cb,
+        &prep,
+        worktree,
+        &paths_to_stage,
+        false,
+    )?;
 
     let msg = format!(
         "cb({slug}) \u{2014} markers filled\n\n\
@@ -1509,7 +1520,7 @@ fn stage_and_commit_cb_fill(
          Work-Item: {slug}\n\
          Lifecycle-Stage: Cb-Fill",
     );
-    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Cb, worktree, &msg, true)
+    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Cb, &prep, worktree, &msg, true)
 }
 
 fn stage_and_commit_cb_marker(
@@ -1526,7 +1537,18 @@ fn stage_and_commit_cb_marker(
             paths_to_stage.push(path);
         }
     }
-    crate::lifecycle_commit::stage_path_set(LifecycleLeaf::Cb, worktree, &paths_to_stage, false)?;
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Cb,
+        worktree,
+        &paths_to_stage,
+    );
+    crate::lifecycle_commit::stage_path_set(
+        LifecycleLeaf::Cb,
+        &prep,
+        worktree,
+        &paths_to_stage,
+        false,
+    )?;
 
     let msg = format!(
         "cb({slug}) \u{2014} marker filled: {marker_id}\n\n\
@@ -1537,7 +1559,7 @@ fn stage_and_commit_cb_marker(
          CB-Marker: {marker_id}\n\
          Next-Command: aw cb fill {slug} --apply --marker {next_marker_id}",
     );
-    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Cb, worktree, &msg, false)
+    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Cb, &prep, worktree, &msg, false)
 }
 
 fn stage_and_commit_cb_queue_start(
@@ -1546,8 +1568,23 @@ fn stage_and_commit_cb_queue_start(
     rel_issue: &str,
     first_marker_id: &str,
 ) -> Result<()> {
+    let mut paths_to_stage = Vec::new();
     if should_stage_lifecycle_path(worktree, rel_issue) {
-        crate::lifecycle_commit::stage_path_set(LifecycleLeaf::Cb, worktree, &[rel_issue], false)?;
+        paths_to_stage.push(rel_issue);
+    }
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Cb,
+        worktree,
+        &paths_to_stage,
+    );
+    if !paths_to_stage.is_empty() {
+        crate::lifecycle_commit::stage_path_set(
+            LifecycleLeaf::Cb,
+            &prep,
+            worktree,
+            &paths_to_stage,
+            false,
+        )?;
     }
     let msg = format!(
         "cb({slug}) \u{2014} fill queue started\n\n\
@@ -1557,7 +1594,7 @@ fn stage_and_commit_cb_queue_start(
          Lifecycle-Pass: fill\n\
          Next-Command: aw cb fill {slug} --apply --marker {first_marker_id}",
     );
-    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Cb, worktree, &msg, true)
+    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Cb, &prep, worktree, &msg, true)
 }
 
 fn emit_error(slug: &str, message: &str) -> Result<()> {

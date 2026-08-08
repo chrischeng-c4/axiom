@@ -238,7 +238,12 @@ fn calculate_candidate_digest(project_root: &std::path::Path, paths: &[String]) 
 }
 
 fn rollback_git_commit(project_root: &std::path::Path) -> Result<()> {
-    crate::lifecycle_commit::rollback_last_commit(LifecycleLeaf::Cb, project_root)
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare::<&std::path::Path>(
+        LifecycleLeaf::Cb,
+        project_root,
+        &[],
+    );
+    crate::lifecycle_commit::rollback_last_commit(LifecycleLeaf::Cb, &prep, project_root)
         .context("rollback git commit failed")?;
     Ok(())
 }
@@ -568,8 +573,14 @@ pub async fn run_publish(args: CbPublishArgs) -> Result<()> {
     );
 
     // 1. Commit Git
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Cb,
+        &project_root,
+        &paths_to_commit,
+    );
     let committed = crate::lifecycle_commit::commit_scoped_path_set(
         LifecycleLeaf::Cb,
+        &prep,
         &project_root,
         &paths_to_commit,
         &commit_message,
@@ -1160,8 +1171,14 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
              Native-Workspace: {workspace}",
             crate::issues::types::lifecycle_trailer::CB_GEN,
         );
+        let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+            LifecycleLeaf::Cb,
+            project_root,
+            &generated_paths,
+        );
         if !crate::lifecycle_commit::commit_scoped_path_set(
             LifecycleLeaf::Cb,
+            &prep,
             project_root,
             &generated_paths,
             &message,
@@ -1272,8 +1289,14 @@ async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
          Work-Item: {slug}\n\
          Lifecycle-Stage: Cb-Repair"
     );
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Cb,
+        &project_root,
+        &changed_paths,
+    );
     let committed = crate::lifecycle_commit::commit_scoped_path_set(
         LifecycleLeaf::Cb,
+        &prep,
         &project_root,
         &changed_paths,
         &message,
@@ -2010,8 +2033,11 @@ fn commit_force_regen(
          Blocks-Updated: {blocks_updated}\n\
          Public-API-Updates: {public_api_updates}\n"
     );
+    let prep =
+        crate::lifecycle_commit::PreparedCommit::prepare(LifecycleLeaf::Cb, project_root, paths);
     crate::lifecycle_commit::commit_scoped_path_set(
         LifecycleLeaf::Cb,
+        &prep,
         project_root,
         paths,
         &message,
@@ -7679,8 +7705,14 @@ fn land_td_lifecycle_branch(
          Work-Item: {}",
         td_branch, target, slug, slug,
     );
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare::<&std::path::Path>(
+        LifecycleLeaf::Cb,
+        project_root,
+        &[],
+    );
     if let Err(err) = crate::lifecycle_commit::merge_branch_no_ff(
         LifecycleLeaf::Cb,
+        &prep,
         project_root,
         &td_branch,
         &msg,
@@ -8391,8 +8423,15 @@ fn commit_cb_claim_trailer(
         relative_paths.push(relative.to_path_buf());
     }
 
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Cb,
+        checkout_root,
+        &relative_paths,
+    );
+
     crate::lifecycle_commit::stage_path_set(
         LifecycleLeaf::Cb,
+        &prep,
         checkout_root,
         &relative_paths,
         true,
@@ -8412,6 +8451,7 @@ fn commit_cb_claim_trailer(
 
     crate::lifecycle_commit::commit_only_path_set(
         LifecycleLeaf::Cb,
+        &prep,
         checkout_root,
         &relative_paths,
         &msg,

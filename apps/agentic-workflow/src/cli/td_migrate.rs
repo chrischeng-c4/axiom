@@ -185,8 +185,14 @@ fn commit_mermaid_migration(
          TD-Block: {block_id}\n\
          TD-Target: {target}\n"
     );
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Td,
+        project_root,
+        &[path.to_path_buf()],
+    );
     crate::lifecycle_commit::commit_scoped_path_set(
         LifecycleLeaf::Td,
+        &prep,
         project_root,
         &[path.to_path_buf()],
         &message,

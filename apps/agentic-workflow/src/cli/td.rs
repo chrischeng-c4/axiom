@@ -906,7 +906,7 @@ pub(crate) fn commit_lifecycle_message(
     message: &str,
     allow_empty: LifecycleCommitEmpty,
 ) -> Result<()> {
-    stage_lifecycle_paths(worktree_path, paths)?;
+    let prep = stage_lifecycle_paths(worktree_path, paths)?;
 
     let allow = match allow_empty {
         LifecycleCommitEmpty::Always => true,
@@ -914,16 +914,37 @@ pub(crate) fn commit_lifecycle_message(
             !crate::lifecycle_commit::has_staged_changes(LifecycleLeaf::Td, worktree_path)?
         }
     };
-    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Td, worktree_path, message, allow)
+    crate::lifecycle_commit::commit_staged_changes(
+        LifecycleLeaf::Td,
+        &prep,
+        worktree_path,
+        message,
+        allow,
+    )
 }
 
-pub(crate) fn stage_lifecycle_paths(worktree_path: &std::path::Path, paths: &[&str]) -> Result<()> {
+pub(crate) fn stage_lifecycle_paths(
+    worktree_path: &std::path::Path,
+    paths: &[&str],
+) -> Result<crate::lifecycle_commit::PreparedCommit> {
     let valid_paths: Vec<std::path::PathBuf> = paths
         .iter()
         .filter(|p| should_stage_lifecycle_path(worktree_path, p))
         .map(std::path::PathBuf::from)
         .collect();
-    crate::lifecycle_commit::stage_path_set(LifecycleLeaf::Td, worktree_path, &valid_paths, false)
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Td,
+        worktree_path,
+        &valid_paths,
+    );
+    crate::lifecycle_commit::stage_path_set(
+        LifecycleLeaf::Td,
+        &prep,
+        worktree_path,
+        &valid_paths,
+        false,
+    )?;
+    Ok(prep)
 }
 
 fn should_stage_lifecycle_path(worktree_path: &std::path::Path, path: &str) -> bool {
@@ -9656,7 +9677,7 @@ pub(crate) fn commit_lifecycle_with_extra(
     paths: &[&str],
     extra_trailers: &[(&str, &str)],
 ) -> Result<()> {
-    stage_lifecycle_paths(worktree_path, paths)?;
+    let prep = stage_lifecycle_paths(worktree_path, paths)?;
 
     let mut msg = format!(
         "td({slug}) \u{2014} {detail}\n\n\
@@ -9669,7 +9690,13 @@ pub(crate) fn commit_lifecycle_with_extra(
     }
 
     let allow = !crate::lifecycle_commit::has_staged_changes(LifecycleLeaf::Td, worktree_path)?;
-    crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Td, worktree_path, &msg, allow)
+    crate::lifecycle_commit::commit_staged_changes(
+        LifecycleLeaf::Td,
+        &prep,
+        worktree_path,
+        &msg,
+        allow,
+    )
 }
 
 // ── td promote ────────────────────────────────────────────────────────

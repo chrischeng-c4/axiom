@@ -359,7 +359,19 @@ fn commit_td_lock_update(
         );
     }
 
-    crate::lifecycle_commit::stage_path_set(LifecycleLeaf::Td, project_root, &[lock_path], true)?;
+    let prep = crate::lifecycle_commit::PreparedCommit::prepare(
+        LifecycleLeaf::Td,
+        project_root,
+        &[lock_path],
+    );
+
+    crate::lifecycle_commit::stage_path_set(
+        LifecycleLeaf::Td,
+        &prep,
+        project_root,
+        &[lock_path],
+        true,
+    )?;
 
     if !crate::lifecycle_commit::has_staged_changes_for_paths(
         LifecycleLeaf::Td,
@@ -376,6 +388,7 @@ fn commit_td_lock_update(
     );
     crate::lifecycle_commit::commit_only_path_set(
         LifecycleLeaf::Td,
+        &prep,
         project_root,
         &[lock_path],
         &message,

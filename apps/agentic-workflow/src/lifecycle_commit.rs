@@ -5,7 +5,12 @@
 //! `LifecycleCommitCapability`.
 
 use anyhow::{Context, Result};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+
+thread_local! {
+    static ACTIVE_PREPARED_COMMIT: RefCell<Option<PreparedCommit>> = const { RefCell::new(None) };
+}
 
 /// Artifact leaf enum declared per routed call site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,27 +32,173 @@ impl LifecycleLeaf {
     }
 }
 
-/// Unforgeable capability token required by `crate::git` mutating primitives.
-///
-/// Code outside `crate::lifecycle_commit` cannot construct this type because
-/// its single field is private and no public constructor or `Default` / `Clone`
-/// implementation exists.
-pub struct LifecycleCommitCapability {
-    _private: (),
+/// Origin of a prepared commit operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitOrigin {
+    Leaf(LifecycleLeaf),
+    ProjectPersistence,
 }
 
-impl LifecycleCommitCapability {
-    /// Internal constructor accessible only within `crate::lifecycle_commit`.
-    fn get() -> Self {
-        Self { _private: () }
-    }
-
-    /// Test-only constructor available when compiled under `#[cfg(test)]`.
-    #[cfg(test)]
-    pub(crate) fn for_test() -> Self {
-        Self { _private: () }
+impl CommitOrigin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Leaf(leaf) => leaf.as_str(),
+            Self::ProjectPersistence => "project_persistence",
+        }
     }
 }
+
+impl From<LifecycleLeaf> for CommitOrigin {
+    fn from(leaf: LifecycleLeaf) -> Self {
+        Self::Leaf(leaf)
+    }
+}
+
+/// A prepared commit operation recording origin, project root, and declared path set.
+#[derive(Debug, Clone)]
+pub struct PreparedCommit {
+    origin: CommitOrigin,
+    project_root: PathBuf,
+    declared_paths: Vec<PathBuf>,
+}
+
+impl PreparedCommit {
+    pub fn prepare<P: AsRef<Path>>(
+        origin: impl Into<CommitOrigin>,
+        project_root: &Path,
+        declared_paths: &[P],
+    ) -> Self {
+        let declared = declared_paths
+            .iter()
+            .map(|p| p.as_ref().to_path_buf())
+            .collect();
+        Self {
+            origin: origin.into(),
+            project_root: project_root.to_path_buf(),
+            declared_paths: declared,
+        }
+    }
+
+    pub fn origin(&self) -> CommitOrigin {
+        self.origin
+    }
+
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    pub fn declared_paths(&self) -> &[PathBuf] {
+        &self.declared_paths
+    }
+
+    pub fn authorize<P: AsRef<Path>>(
+        &self,
+        project_root: &Path,
+        actual_paths: &[P],
+    ) -> Result<LifecycleCommitCapability> {
+        capability::authorize_prepared_commit(self, project_root, actual_paths)
+    }
+}
+
+mod capability {
+    use super::*;
+
+    /// Unforgeable capability token required by `crate::git` mutating primitives.
+    ///
+    /// Code outside `crate::lifecycle_commit` cannot construct this type because
+    /// its single field is private and no public constructor or `Default` / `Clone`
+    /// implementation exists.
+    pub struct LifecycleCommitCapability {
+        _private: (),
+        origin: CommitOrigin,
+    }
+
+    impl LifecycleCommitCapability {
+        pub fn origin(&self) -> CommitOrigin {
+            self.origin
+        }
+
+        /// Test-only constructor available when compiled under `#[cfg(test)]`.
+        #[cfg(test)]
+        pub(crate) fn for_test() -> Self {
+            Self {
+                _private: (),
+                origin: CommitOrigin::ProjectPersistence,
+            }
+        }
+    }
+
+    pub(super) fn authorize_prepared_commit<P: AsRef<Path>>(
+        prep: &PreparedCommit,
+        project_root: &Path,
+        actual_paths: &[P],
+    ) -> Result<LifecycleCommitCapability> {
+        if prep.project_root != project_root {
+            anyhow::bail!(
+                "Prepared commit project root '{}' does not match actual project root '{}'",
+                prep.project_root.display(),
+                project_root.display()
+            );
+        }
+
+        let actual_vec: Vec<PathBuf> = actual_paths
+            .iter()
+            .map(|p| p.as_ref().to_path_buf())
+            .collect();
+
+        if prep.declared_paths.is_empty() {
+            let temp_cap = LifecycleWorktreeCapability::get();
+            if crate::git::has_staged_changes(&temp_cap, project_root)? {
+                anyhow::bail!(
+                    "Cannot authorize operation with no declared paths when unrelated staged changes exist in {}",
+                    project_root.display()
+                );
+            }
+        } else {
+            for actual in &actual_vec {
+                let norm_actual = normalize_path_for_cmp(project_root, actual);
+                let in_declared = prep.declared_paths.iter().any(|decl| {
+                    decl == actual || normalize_path_for_cmp(project_root, decl) == norm_actual
+                });
+                if !in_declared {
+                    anyhow::bail!(
+                        "Actual path '{}' is not within declared path set {:?} (actual set: {:?})",
+                        actual.display(),
+                        prep.declared_paths,
+                        actual_vec
+                    );
+                }
+            }
+        }
+
+        Ok(LifecycleCommitCapability {
+            _private: (),
+            origin: prep.origin,
+        })
+    }
+
+    fn normalize_path_for_cmp(root: &Path, p: &Path) -> PathBuf {
+        let rel = if p.is_absolute() {
+            p.strip_prefix(root).unwrap_or(p)
+        } else {
+            p
+        };
+        let mut components = Vec::new();
+        for comp in rel.components() {
+            match comp {
+                std::path::Component::Normal(c) => components.push(c),
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    components.pop();
+                }
+                _ => {}
+            }
+        }
+        components.iter().collect()
+    }
+}
+
+pub use capability::LifecycleCommitCapability;
 
 /// Unforgeable capability token required by `crate::git` history probes.
 ///
@@ -97,69 +248,120 @@ impl LifecycleWorktreeCapability {
 /// when those paths have no staged diff.
 pub fn commit_scoped_path_set(
     leaf: LifecycleLeaf,
+    prep: &PreparedCommit,
     project_root: &Path,
     paths: &[PathBuf],
     message: &str,
 ) -> Result<bool> {
-    let cap = LifecycleCommitCapability::get();
+    if prep.origin() != CommitOrigin::Leaf(leaf) {
+        anyhow::bail!(
+            "Prepared commit origin '{:?}' does not match expected leaf '{:?}'",
+            prep.origin(),
+            leaf
+        );
+    }
+    let cap = prep.authorize(project_root, paths)?;
     crate::git::commit_scoped_paths(&cap, project_root, paths, message)
-        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+        .with_context(|| format!("lifecycle leaf {}", cap.origin().as_str()))
 }
 
 /// Stage specified `paths` into git index.
 pub fn stage_path_set<P: AsRef<Path>>(
     leaf: LifecycleLeaf,
+    prep: &PreparedCommit,
     project_root: &Path,
     paths: &[P],
     literal_pathspecs: bool,
 ) -> Result<()> {
-    let cap = LifecycleCommitCapability::get();
+    if prep.origin() != CommitOrigin::Leaf(leaf) {
+        anyhow::bail!(
+            "Prepared commit origin '{:?}' does not match expected leaf '{:?}'",
+            prep.origin(),
+            leaf
+        );
+    }
+    let cap = prep.authorize(project_root, paths)?;
     crate::git::stage_paths(&cap, project_root, paths, literal_pathspecs)
-        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+        .with_context(|| format!("lifecycle leaf {}", cap.origin().as_str()))
 }
 
 /// Commit already staged changes with `message`. If `allow_empty` is true, pass `--allow-empty`.
 pub fn commit_staged_changes(
     leaf: LifecycleLeaf,
+    prep: &PreparedCommit,
     project_root: &Path,
     message: &str,
     allow_empty: bool,
 ) -> Result<()> {
-    let cap = LifecycleCommitCapability::get();
+    if prep.origin() != CommitOrigin::Leaf(leaf) {
+        anyhow::bail!(
+            "Prepared commit origin '{:?}' does not match expected leaf '{:?}'",
+            prep.origin(),
+            leaf
+        );
+    }
+    let cap = prep.authorize(project_root, prep.declared_paths())?;
     crate::git::commit_staged(&cap, project_root, message, allow_empty)
-        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+        .with_context(|| format!("lifecycle leaf {}", cap.origin().as_str()))
 }
 
 /// Create a path-scoped commit using `git commit --only -- <paths>`.
 pub fn commit_only_path_set<P: AsRef<Path>>(
     leaf: LifecycleLeaf,
+    prep: &PreparedCommit,
     project_root: &Path,
     paths: &[P],
     message: &str,
     literal_pathspecs: bool,
 ) -> Result<()> {
-    let cap = LifecycleCommitCapability::get();
+    if prep.origin() != CommitOrigin::Leaf(leaf) {
+        anyhow::bail!(
+            "Prepared commit origin '{:?}' does not match expected leaf '{:?}'",
+            prep.origin(),
+            leaf
+        );
+    }
+    let cap = prep.authorize(project_root, paths)?;
     crate::git::commit_only_paths(&cap, project_root, paths, message, literal_pathspecs)
-        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+        .with_context(|| format!("lifecycle leaf {}", cap.origin().as_str()))
 }
 
 /// Roll back the previous commit (`HEAD~1`).
-pub fn rollback_last_commit(leaf: LifecycleLeaf, project_root: &Path) -> Result<()> {
-    let cap = LifecycleCommitCapability::get();
+pub fn rollback_last_commit(
+    leaf: LifecycleLeaf,
+    prep: &PreparedCommit,
+    project_root: &Path,
+) -> Result<()> {
+    if prep.origin() != CommitOrigin::Leaf(leaf) {
+        anyhow::bail!(
+            "Prepared commit origin '{:?}' does not match expected leaf '{:?}'",
+            prep.origin(),
+            leaf
+        );
+    }
+    let cap = prep.authorize::<&Path>(project_root, &[])?;
     crate::git::git_reset(&cap, project_root, &["HEAD~1"])
-        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+        .with_context(|| format!("lifecycle leaf {}", cap.origin().as_str()))
 }
 
 /// Merge a branch using `--no-ff` with `message`.
 pub fn merge_branch_no_ff(
     leaf: LifecycleLeaf,
+    prep: &PreparedCommit,
     project_root: &Path,
     branch: &str,
     message: &str,
 ) -> Result<()> {
-    let cap = LifecycleCommitCapability::get();
+    if prep.origin() != CommitOrigin::Leaf(leaf) {
+        anyhow::bail!(
+            "Prepared commit origin '{:?}' does not match expected leaf '{:?}'",
+            prep.origin(),
+            leaf
+        );
+    }
+    let cap = prep.authorize::<&Path>(project_root, &[])?;
     crate::git::git_merge(&cap, project_root, &["--no-ff", "-m", message, branch])
-        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+        .with_context(|| format!("lifecycle leaf {}", cap.origin().as_str()))
 }
 
 /// Stage exactly `paths` for project persistence, create `message`, and no-op
@@ -169,7 +371,8 @@ pub fn commit_project_persistence(
     paths: &[PathBuf],
     message: &str,
 ) -> Result<bool> {
-    let cap = LifecycleCommitCapability::get();
+    let prep = PreparedCommit::prepare(CommitOrigin::ProjectPersistence, project_root, paths);
+    let cap = prep.authorize(project_root, paths)?;
     crate::git::commit_scoped_paths(&cap, project_root, paths, message)
 }
 
@@ -1432,7 +1635,7 @@ fn test_item_fn() {
         false
     }
 
-    fn mask_raw_strings_and_comments(content: &str) -> String {
+    pub(super) fn mask_raw_strings_and_comments(content: &str) -> String {
         let bytes = content.as_bytes();
         let len = bytes.len();
         let mut masked = vec![b' '; len];
@@ -2117,6 +2320,386 @@ pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorkt
         assert!(
             err.contains("lifecycle leaf wi"),
             "error message should contain leaf context: {err}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_commit_receipt {
+    use super::*;
+
+    fn init_git_repo(repo: &Path) {
+        let git_bin = crate::git::find_git_bin().expect("git binary required for test");
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test User"],
+        ] {
+            let out = std::process::Command::new(&git_bin)
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .expect("git setup failed");
+            assert!(out.status.success());
+        }
+    }
+
+    fn initial_commit(repo: &Path) {
+        let git_bin = crate::git::find_git_bin().expect("git binary required");
+        let init_file = repo.join("init.txt");
+        std::fs::write(&init_file, "init").unwrap();
+        for args in [
+            vec!["add", "."],
+            vec!["commit", "-m", "initial commit", "-q"],
+        ] {
+            let out = std::process::Command::new(&git_bin)
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .expect("git commit failed");
+            assert!(out.status.success());
+        }
+    }
+
+    #[test]
+    fn test_prepared_commit_path_mismatch_refused() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let git_bin = crate::git::find_git_bin().unwrap();
+        let head_before = git_rev_parse(LifecycleLeaf::Td, repo, &["HEAD"]).unwrap();
+
+        let a_path = repo.join("a.txt");
+        let b_path = repo.join("b.txt");
+        std::fs::write(&a_path, "content a").unwrap();
+        std::fs::write(&b_path, "content b").unwrap();
+
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, repo, &[a_path.clone()]);
+        let auth_res = prep.authorize(repo, &[b_path.clone()]);
+
+        assert!(
+            auth_res.is_err(),
+            "Authorization must fail when actual path is outside declared set"
+        );
+        let err_msg = auth_res.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("b.txt"),
+            "Error message must name actual path: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("a.txt"),
+            "Error message must name declared path: {}",
+            err_msg
+        );
+
+        let head_after = git_rev_parse(LifecycleLeaf::Td, repo, &["HEAD"]).unwrap();
+        assert_eq!(
+            head_before, head_after,
+            "HEAD must remain unchanged after refused authorization"
+        );
+
+        let status_out = std::process::Command::new(&git_bin)
+            .args(["status", "--porcelain"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        let status_str = String::from_utf8_lossy(&status_out.stdout);
+        assert!(
+            !status_str.contains("A  b.txt") && !status_str.contains("M  b.txt"),
+            "b.txt must remain unstaged: {}",
+            status_str
+        );
+    }
+
+    #[test]
+    fn test_prepared_commit_matching_path_authorized_and_committed() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let a_path = repo.join("a.txt");
+        std::fs::write(&a_path, "content a").unwrap();
+
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, repo, &[a_path.clone()]);
+        let cap = prep
+            .authorize(repo, &[a_path.clone()])
+            .expect("Authorization should succeed for declared path");
+
+        let committed =
+            crate::git::commit_scoped_paths(&cap, repo, &[a_path], "add a.txt").unwrap();
+        assert!(committed, "commit_scoped_paths should return true");
+
+        let hcap = LifecycleHistoryCapability::for_test();
+        let rev_list = crate::git::git_rev_list(&hcap, repo, &["HEAD"]).unwrap();
+        assert_eq!(
+            rev_list.len(),
+            2,
+            "HEAD should advance by exactly one commit"
+        );
+
+        let show_paths = crate::git::git_diff_name_only(&hcap, repo, &["HEAD~1", "HEAD"]).unwrap();
+        assert_eq!(
+            show_paths,
+            vec!["a.txt"],
+            "git show should list a.txt alone"
+        );
+    }
+
+    #[test]
+    fn test_prepared_commit_project_root_mismatch_refused() {
+        let temp_x = tempfile::TempDir::new().unwrap();
+        let temp_y = tempfile::TempDir::new().unwrap();
+        let root_x = temp_x.path();
+        let root_y = temp_y.path();
+
+        let file_path = PathBuf::from("a.txt");
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, root_x, &[file_path.clone()]);
+
+        let auth_res = prep.authorize(root_y, &[file_path]);
+        assert!(
+            auth_res.is_err(),
+            "Authorization must fail when project roots differ"
+        );
+        let err_msg = auth_res.err().unwrap().to_string();
+        assert!(
+            err_msg.contains(&root_x.display().to_string()),
+            "Error message must name declared root X: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains(&root_y.display().to_string()),
+            "Error message must name actual root Y: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_prepared_commit_no_paths_staged_changes_refused() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let git_bin = crate::git::find_git_bin().unwrap();
+        let c_path = repo.join("c.txt");
+        std::fs::write(&c_path, "staged c").unwrap();
+        let add_out = std::process::Command::new(&git_bin)
+            .args(["add", "c.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(add_out.status.success());
+
+        let prep = PreparedCommit::prepare::<&Path>(LifecycleLeaf::Td, repo, &[]);
+        let auth_res = prep.authorize::<&Path>(repo, &[]);
+        assert!(
+            auth_res.is_err(),
+            "Authorization for empty path set must fail when unrelated staged changes exist"
+        );
+    }
+
+    #[test]
+    fn test_stage_then_commit_spans_prepared_operation() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let f_path = repo.join("file1.txt");
+        std::fs::write(&f_path, "file1 content").unwrap();
+
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, repo, &[f_path.clone()]);
+        stage_path_set(LifecycleLeaf::Td, &prep, repo, &[f_path.clone()], false).unwrap();
+        commit_staged_changes(LifecycleLeaf::Td, &prep, repo, "commit file1", false).unwrap();
+
+        let hcap = LifecycleHistoryCapability::for_test();
+        let rev_list = crate::git::git_rev_list(&hcap, repo, &["HEAD"]).unwrap();
+        assert_eq!(rev_list.len(), 2);
+    }
+
+    #[test]
+    fn test_wrapper_commit_scoped_path_set_path_mismatch_refused() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let hcap = LifecycleHistoryCapability::for_test();
+        let head_before = crate::git::git_rev_parse(&hcap, repo, &["HEAD"]).unwrap();
+
+        let a_path = repo.join("a.txt");
+        let b_path = repo.join("b.txt");
+        std::fs::write(&a_path, "content a").unwrap();
+        std::fs::write(&b_path, "content b").unwrap();
+
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, repo, &[a_path.clone()]);
+        let res = commit_scoped_path_set(LifecycleLeaf::Td, &prep, repo, &[b_path], "commit b.txt");
+
+        assert!(
+            res.is_err(),
+            "commit_scoped_path_set must return Err when actual path is outside declared set"
+        );
+
+        let head_after = crate::git::git_rev_parse(&hcap, repo, &["HEAD"]).unwrap();
+        assert_eq!(
+            head_before, head_after,
+            "HEAD must remain unchanged when wrapper refuses path mismatch"
+        );
+    }
+
+    #[test]
+    fn test_wrapper_leaf_mismatch_refused() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let a_path = repo.join("a.txt");
+        std::fs::write(&a_path, "content a").unwrap();
+
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, repo, &[a_path.clone()]);
+        let res = commit_scoped_path_set(LifecycleLeaf::Cb, &prep, repo, &[a_path], "commit a.txt");
+
+        assert!(
+            res.is_err(),
+            "Wrapper must return Err when prepared commit leaf differs from wrapper leaf"
+        );
+        let err_msg = res.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("Td") && err_msg.contains("Cb"),
+            "Error message must name both declared leaf (Td) and expected leaf (Cb): {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_lifecycle_commit_capability_construction_exclusive_to_authorize() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .unwrap_or_else(|_| "apps/agentic-workflow".to_string());
+        let file_path = Path::new(&manifest_dir).join("src/lifecycle_commit.rs");
+        let content = std::fs::read_to_string(&file_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", file_path.display(), e));
+
+        let masked = super::tests::mask_raw_strings_and_comments(&content);
+        let lines: Vec<&str> = masked.lines().collect();
+
+        let mut mod_cap_start = None;
+        for (idx, line) in lines.iter().enumerate() {
+            if line.contains("mod capability") && line.contains('{') {
+                mod_cap_start = Some(idx);
+                break;
+            }
+        }
+        let mod_cap_start =
+            mod_cap_start.expect("mod capability { block not found in lifecycle_commit.rs");
+
+        let mut mod_cap_end = lines.len();
+        let mut depth = 0;
+        for idx in mod_cap_start..lines.len() {
+            let line = lines[idx];
+            let open = line.chars().filter(|&c| c == '{').count();
+            let close = line.chars().filter(|&c| c == '}').count();
+            depth += open;
+            depth = depth.saturating_sub(close);
+            if idx > mod_cap_start && depth == 0 {
+                mod_cap_end = idx;
+                break;
+            }
+        }
+
+        let mut capability_returning_fns = Vec::new();
+        let mut pending_cfg_test = false;
+        let mut in_cfg_test_depth = 0;
+        let mut current_impl: Option<String> = None;
+        let mut impl_brace_depth = 0;
+
+        let mut in_fn_sig = false;
+        let mut current_sig = String::new();
+        let mut sig_start_line = 0;
+
+        for line_idx in mod_cap_start..mod_cap_end {
+            let line = lines[line_idx];
+            let code_trimmed = line.trim();
+
+            if code_trimmed.starts_with("#[cfg(test)]") {
+                pending_cfg_test = true;
+            }
+
+            let open_braces = line.chars().filter(|&c| c == '{').count();
+            let close_braces = line.chars().filter(|&c| c == '}').count();
+
+            if in_cfg_test_depth > 0 || pending_cfg_test {
+                if pending_cfg_test {
+                    if open_braces > 0 {
+                        in_cfg_test_depth = open_braces.saturating_sub(close_braces);
+                        pending_cfg_test = false;
+                    } else if code_trimmed.ends_with(';') {
+                        pending_cfg_test = false;
+                    }
+                } else {
+                    in_cfg_test_depth =
+                        (in_cfg_test_depth + open_braces).saturating_sub(close_braces);
+                }
+                continue;
+            }
+
+            if line.contains("impl LifecycleCommitCapability") {
+                current_impl = Some("LifecycleCommitCapability".to_string());
+                impl_brace_depth = 0;
+            }
+
+            if current_impl.is_some() {
+                impl_brace_depth += open_braces;
+                impl_brace_depth = impl_brace_depth.saturating_sub(close_braces);
+                if impl_brace_depth == 0 && close_braces > 0 {
+                    current_impl = None;
+                }
+            }
+
+            if !in_fn_sig && line.contains("fn ") {
+                in_fn_sig = true;
+                current_sig.clear();
+                sig_start_line = line_idx + 1;
+            }
+
+            if in_fn_sig {
+                if !current_sig.is_empty() {
+                    current_sig.push(' ');
+                }
+                current_sig.push_str(code_trimmed);
+
+                if line.contains('{') || line.contains(';') {
+                    in_fn_sig = false;
+
+                    if let Some(arrow_idx) = current_sig.find("->") {
+                        let return_type_str = &current_sig[arrow_idx + 2..];
+                        let returns_cap_by_name =
+                            return_type_str.contains("LifecycleCommitCapability");
+                        let returns_self_in_impl = current_impl.as_deref()
+                            == Some("LifecycleCommitCapability")
+                            && return_type_str.contains("Self");
+
+                        if returns_cap_by_name || returns_self_in_impl {
+                            capability_returning_fns.push(format!(
+                                "{}: {}",
+                                sig_start_line,
+                                current_sig.trim()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            capability_returning_fns.len(),
+            1,
+            "mod capability must offer exactly 1 production function returning LifecycleCommitCapability (authorize_prepared_commit), found: {:?}",
+            capability_returning_fns
         );
     }
 }
