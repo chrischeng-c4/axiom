@@ -370,30 +370,14 @@ fn commit_td_lock_update(
     );
     crate::git::commit_only_paths(project_root, &[lock_path], &message, true)?;
 
-    let git = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-
-    let lock_status = Command::new(&git)
-        .arg("--literal-pathspecs")
-        .arg("-C")
-        .arg(project_root)
-        .args([
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--",
-        ])
-        .arg(&lock_path)
-        .output()
-        .context("git status generated TD lock")?;
-    if !lock_status.status.success() {
-        anyhow::bail!(
-            "git status generated TD lock failed: {}",
-            String::from_utf8_lossy(&lock_status.stderr).trim()
-        );
-    }
-    if !lock_status.stdout.is_empty() {
+    let lock_stdout = crate::git::git_status(
+        project_root,
+        true,
+        &["--porcelain=v1", "-z", "--untracked-files=all"],
+        &[lock_path],
+    )
+    .context("git status generated TD lock")?;
+    if !lock_stdout.is_empty() {
         anyhow::bail!(
             "generated TD lock remained dirty after commit: {}",
             target.lock_path_display

@@ -235,20 +235,7 @@ fn calculate_candidate_digest(project_root: &std::path::Path, paths: &[String]) 
 }
 
 fn rollback_git_commit(project_root: &std::path::Path) -> Result<()> {
-    let git_bin =
-        crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found"))?;
-    let out = std::process::Command::new(git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args(["reset", "HEAD~1"])
-        .output()
-        .context("git reset HEAD~1 failed")?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "rollback git commit failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
+    crate::git::git_reset(project_root, &["HEAD~1"]).context("rollback git commit failed")?;
     Ok(())
 }
 
@@ -6852,7 +6839,7 @@ fn terminal_touched_codegen_findings(
 /// same failure-open policy `touched_scope_standardization_gate_message`
 /// (via `project_touched_scope_standardization`) and the marker gate above
 /// already follow for their own git/lookup failures.
-fn dirty_touched_scope_gate_message(
+pub(crate) fn dirty_touched_scope_gate_message(
     project_root: &std::path::Path,
     slug: &str,
     touched: &[String],
@@ -6860,23 +6847,14 @@ fn dirty_touched_scope_gate_message(
     if touched.is_empty() {
         return None;
     }
-    let git_bin = crate::git::find_git_bin()?;
-    // `--untracked-files=all` (not the default `normal` mode): an untracked
-    // *directory* otherwise collapses to a single `?? some/dir/` porcelain
-    // line instead of one line per file inside it, which would silently
-    // miss a touched path like `src/demo.rs` sitting inside a still-wholly-
-    // untracked `src/` (the common shape in a fresh worktree that has never
-    // run `git add` at all).
-    let output = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args(["status", "--porcelain", "--untracked-files=all"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let porcelain = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stdout = crate::git::git_status(
+        project_root,
+        false,
+        &["--porcelain", "--untracked-files=all"],
+        &[] as &[&std::path::Path],
+    )
+    .ok()?;
+    let porcelain = String::from_utf8_lossy(&stdout).into_owned();
     let touched_norm: std::collections::HashSet<String> = touched
         .iter()
         .map(|p| normalize_touched_rel_path(p))
@@ -7378,12 +7356,10 @@ changes:
 /// `Ok(None)` is reserved for synthetic/legacy entries with no lifecycle
 /// history at all. If the slug has lifecycle commits but no usable `Td-Init`,
 /// verification fails closed and the caller requires `--allow-empty-impl`.
-fn committed_paths_since_td_init(
+pub(crate) fn committed_paths_since_td_init(
     project_root: &std::path::Path,
     slug: &str,
 ) -> Result<Option<BTreeSet<String>>> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let init_commit = match reachable_td_init_from_head(project_root, slug)? {
         TdInitReachability::Found(commit) => commit,
         TdInitReachability::NoSlugHistory => return Ok(None),
@@ -7402,35 +7378,21 @@ fn committed_paths_since_td_init(
         }
     };
     let diff_range = format!("{baseline}..HEAD");
-    let diff = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args(["diff", "--name-only", "--no-renames", &diff_range, "--"])
-        .output()
+    let paths = crate::git::git_diff_name_only(project_root, &["--no-renames", &diff_range, "--"])
         .context("git diff failed while verifying hand-written implementation")?;
-    if !diff.status.success() {
-        anyhow::bail!(
-            "git diff {} failed: {}",
-            diff_range,
-            String::from_utf8_lossy(&diff.stderr).trim()
-        );
-    }
 
     Ok(Some(
-        String::from_utf8_lossy(&diff.stdout)
-            .lines()
-            .filter(|path| !path.trim().is_empty())
-            .map(normalize_touched_rel_path)
+        paths
+            .into_iter()
+            .map(|path| normalize_touched_rel_path(&path))
             .collect(),
     ))
 }
 
-fn committed_paths_after_td_python_source(
+pub(crate) fn committed_paths_after_td_python_source(
     project_root: &std::path::Path,
     slug: &str,
 ) -> Result<BTreeSet<String>> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let source_commit = match reachable_exact_td_baseline_from_head(
         project_root,
         slug,
@@ -7442,23 +7404,12 @@ fn committed_paths_after_td_python_source(
         }
     };
     let diff_range = format!("{source_commit}..HEAD");
-    let diff = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args(["diff", "--name-only", "--no-renames", &diff_range, "--"])
-        .output()
+    let paths = crate::git::git_diff_name_only(project_root, &["--no-renames", &diff_range, "--"])
         .context("git diff failed while verifying Python HANDWRITE implementation")?;
-    if !diff.status.success() {
-        anyhow::bail!(
-            "git diff {} failed: {}",
-            diff_range,
-            String::from_utf8_lossy(&diff.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&diff.stdout)
-        .lines()
-        .filter(|path| !path.trim().is_empty())
-        .map(normalize_touched_rel_path)
+
+    Ok(paths
+        .into_iter()
+        .map(|path| normalize_touched_rel_path(&path))
         .collect())
 }
 
@@ -7664,8 +7615,6 @@ fn land_td_lifecycle_branch(
     crate::branch_switch::switch_or_create_branch(project_root, &target, &target)
         .map_err(|e| anyhow::anyhow!("checking out landing target '{}': {}", target, e))?;
 
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let already_merged = crate::git::git_merge_base_is_ancestor(project_root, &td_branch, &target)
         .context("git merge-base --is-ancestor")?;
     if already_merged {
@@ -7682,19 +7631,8 @@ fn land_td_lifecycle_branch(
          Work-Item: {}",
         td_branch, target, slug, slug,
     );
-    let merge = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args(["merge", "--no-ff", "-m", &msg, &td_branch])
-        .output()
-        .context("git merge --no-ff")?;
-    if !merge.status.success() {
-        anyhow::bail!(
-            "merge conflict landing '{}' into '{}': {}",
-            td_branch,
-            target,
-            String::from_utf8_lossy(&merge.stderr).trim()
-        );
+    if let Err(err) = crate::git::git_merge(project_root, &["--no-ff", "-m", &msg, &td_branch]) {
+        anyhow::bail!("merge conflict landing '{td_branch}' into '{target}': {err}");
     }
 
     crate::branch_switch::delete_local_branch(project_root, &td_branch)?;

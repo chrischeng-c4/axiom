@@ -529,51 +529,32 @@ fn issue_path_arg(backend: &LocalBackend, issue: &crate::issues::Issue) -> Strin
 /// This is intentionally stricter than the lifecycle dirty-path helpers: a
 /// tracked modification, staged addition, rename destination, or unrelated
 /// sibling must never enter TD skeleton recovery.
-fn checkout_has_only_exact_untracked_path(
+pub(crate) fn checkout_has_only_exact_untracked_path(
     project_root: &std::path::Path,
     path: &str,
 ) -> Result<bool> {
-    let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
     let normalized = normalize_checkout_rel_path(path);
     if normalized.is_empty() || std::path::Path::new(&normalized).is_absolute() {
         return Ok(false);
     }
     let expected = format!("?? {normalized}\0").into_bytes();
 
-    let status = |pathspec: Option<&str>| -> Result<std::process::Output> {
-        let mut command = std::process::Command::new(&git);
-        command
-            .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
-            .current_dir(project_root);
+    let status = |pathspec: Option<&str>| -> Result<Vec<u8>> {
+        let mut args = vec!["--porcelain=v1", "-z", "--untracked-files=all"];
         if let Some(pathspec) = pathspec {
-            command.arg("--").arg(pathspec);
+            args.push("--");
+            args.push(pathspec);
         }
-        command
-            .output()
-            .with_context(|| format!("running git status in {}", project_root.display()))
+        crate::git::git_status(project_root, false, &args, &[] as &[&std::path::Path])
     };
 
-    let targeted = status(Some(&normalized))?;
-    if !targeted.status.success() {
-        anyhow::bail!(
-            "git status failed in {}: {}",
-            project_root.display(),
-            String::from_utf8_lossy(&targeted.stderr).trim()
-        );
-    }
-    if targeted.stdout != expected {
+    let targeted_stdout = status(Some(&normalized))?;
+    if targeted_stdout != expected {
         return Ok(false);
     }
 
-    let whole_tree = status(None)?;
-    if !whole_tree.status.success() {
-        anyhow::bail!(
-            "git status failed in {}: {}",
-            project_root.display(),
-            String::from_utf8_lossy(&whole_tree.stderr).trim()
-        );
-    }
-    Ok(whole_tree.stdout == expected)
+    let whole_tree_stdout = status(None)?;
+    Ok(whole_tree_stdout == expected)
 }
 
 fn normalize_checkout_rel_path(path: &str) -> String {
@@ -843,25 +824,13 @@ pub(crate) async fn bootstrap_td_issue(
 /// hard-errors instead of falling back (see #1403).
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub(crate) fn discover_worktree_spec(worktree_abs: &std::path::Path) -> Option<String> {
-    let git_bin = crate::git::find_git_bin()?;
-    let out = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree_abs)
-        .args([
-            "diff",
-            "--name-only",
-            "--diff-filter=AM",
-            "main...HEAD",
-            "--",
-            ".aw/tech-design",
-        ])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let candidates: Vec<String> = String::from_utf8_lossy(&out.stdout)
-        .lines()
+    let lines = crate::git::git_diff_name_only(
+        worktree_abs,
+        &["--diff-filter=AM", "main...HEAD", "--", ".aw/tech-design"],
+    )
+    .ok()?;
+    let candidates: Vec<String> = lines
+        .into_iter()
         .filter(|l| {
             let bn = std::path::Path::new(l).file_name().and_then(|s| s.to_str());
             l.ends_with(".md")

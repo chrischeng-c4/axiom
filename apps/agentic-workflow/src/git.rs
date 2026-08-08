@@ -490,12 +490,99 @@ pub fn git_show(project_root: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Run `git reset` with args in `project_root`.
+pub fn git_reset(project_root: &Path, args: &[&str]) -> Result<()> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .arg("reset")
+        .args(args)
+        .output()
+        .context("git reset failed")?;
+    if !output.status.success() {
+        return Err(format_git_error("git reset", output.status, &output.stderr));
+    }
+    Ok(())
+}
+
+/// Run `git merge` with args in `project_root`.
+pub fn git_merge(project_root: &Path, args: &[&str]) -> Result<()> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .arg("merge")
+        .args(args)
+        .output()
+        .context("git merge failed")?;
+    if !output.status.success() {
+        return Err(format_git_error("git merge", output.status, &output.stderr));
+    }
+    Ok(())
+}
+
+/// Run `git diff --name-only` with args in `project_root`.
+pub fn git_diff_name_only(project_root: &Path, args: &[&str]) -> Result<Vec<String>> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .arg("diff")
+        .arg("--name-only")
+        .args(args)
+        .output()
+        .context("git diff --name-only failed")?;
+    if !output.status.success() {
+        return Err(format_git_error(
+            "git diff --name-only",
+            output.status,
+            &output.stderr,
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
+/// Run `git status` with args in `project_root` and return raw stdout bytes.
+pub fn git_status<P: AsRef<Path>>(
+    project_root: &Path,
+    literal_pathspecs: bool,
+    args: &[&str],
+    pathspecs: &[P],
+) -> Result<Vec<u8>> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let mut command = std::process::Command::new(git_bin);
+    if literal_pathspecs {
+        command.arg("--literal-pathspecs");
+    }
+    command.arg("-C").arg(project_root).arg("status").args(args);
+    if !pathspecs.is_empty() {
+        command.arg("--");
+        for path in pathspecs {
+            command.arg(path.as_ref());
+        }
+    }
+    let output = command.output().context("git status failed")?;
+    if !output.status.success() {
+        return Err(format_git_error(
+            "git status",
+            output.status,
+            &output.stderr,
+        ));
+    }
+    Ok(output.stdout)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn init_git_repo(root: &Path) -> bool {
+    pub(super) fn init_git_repo(root: &Path) -> bool {
         let Some(git) = find_git_bin() else {
             return false;
         };
@@ -609,30 +696,68 @@ mod lifecycle_commit_boundary {
         line
     }
 
+    fn is_git_command(line_idx: usize, lines: &[&str]) -> bool {
+        let line = lines[line_idx];
+        let end_idx = (line_idx + 5).min(lines.len());
+        let block = lines[line_idx..end_idx].join("\n");
+        let cmd_start = match block.find("Command::new") {
+            Some(idx) => idx + "Command::new".len(),
+            None => match block.find("Command :: new") {
+                Some(idx) => idx + "Command :: new".len(),
+                None => return false,
+            },
+        };
+        let after_cmd = &block[cmd_start..];
+        let arg_content = match after_cmd.find('(') {
+            Some(open) => {
+                let inner = &after_cmd[open + 1..];
+                match inner.find(')') {
+                    Some(close) => inner[..close].trim(),
+                    None => inner.trim(),
+                }
+            }
+            None => "",
+        };
+
+        let cleaned_arg = arg_content
+            .trim_start_matches('&')
+            .trim_start_matches("mut ")
+            .trim();
+
+        if cleaned_arg.to_lowercase().contains("git") {
+            return true;
+        }
+
+        if arg_content.contains("find_git_bin") {
+            return true;
+        }
+
+        let binding = cleaned_arg.split('.').next().unwrap_or(cleaned_arg).trim();
+
+        if !binding.is_empty() && binding.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            let start_back = if line_idx > 50 { line_idx - 50 } else { 0 };
+            for prev_idx in (start_back..line_idx).rev() {
+                let prev_line = lines[prev_idx];
+                if prev_line.contains(binding) && prev_line.contains("find_git_bin") {
+                    return true;
+                }
+                if prev_line.trim_start().starts_with("fn ")
+                    || prev_line.trim_start().starts_with("pub fn")
+                    || prev_line.trim_start().starts_with("pub(crate) fn")
+                {
+                    break;
+                }
+            }
+        }
+
+        false
+    }
+
     fn scan_source_for_git_add_or_commit(rel_file: &str, content: &str) -> Vec<String> {
         let lines: Vec<&str> = content.lines().collect();
         let mut violations = Vec::new();
         let mut test_depth = 0;
         let mut pending_cfg_test = false;
-
-        let forbidden_subcommands = [
-            "\"add\"",
-            "'add'",
-            "\"commit\"",
-            "'commit'",
-            "\"log\"",
-            "'log'",
-            "\"rev-list\"",
-            "'rev-list'",
-            "\"rev-parse\"",
-            "'rev-parse'",
-            "\"merge-base\"",
-            "'merge-base'",
-            "\"cat-file\"",
-            "'cat-file'",
-            "\"show\"",
-            "'show'",
-        ];
 
         for (line_idx, line) in lines.iter().enumerate() {
             let line_num = line_idx + 1;
@@ -667,12 +792,9 @@ mod lifecycle_commit_boundary {
             }
 
             if line.contains("Command::new") || line.contains("Command :: new") {
-                let end_idx = (line_idx + 15).min(lines.len());
-                let block = lines[line_idx..end_idx].join("\n");
-                let has_forbidden = forbidden_subcommands.iter().any(|cmd| block.contains(cmd));
-                if has_forbidden {
+                if is_git_command(line_idx, &lines) {
                     violations.push(format!(
-                        "{}:{}: Direct Git process spawn with add/commit/history probe found: {}",
+                        "{}:{}: Direct Git process spawn found: {}",
                         rel_file,
                         line_num,
                         line.trim()
@@ -908,28 +1030,6 @@ pub fn prod_fn() {
             violations[0].contains("src/cli/cb.rs:3:"),
             "got: {}",
             violations[0]
-        );
-    }
-
-    #[test]
-    fn scan_ignores_git_status_or_diff_in_production_fn() {
-        let fixture = r#"
-pub fn prod_status() {
-    let output = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .output();
-}
-
-pub fn prod_diff() {
-    let output = std::process::Command::new("git")
-        .args(["diff", "--name-only"])
-        .output();
-}
-"#;
-        let violations = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
-        assert!(
-            violations.is_empty(),
-            "expected 0 violations for status/diff, got: {violations:?}"
         );
     }
 
@@ -1236,6 +1336,325 @@ pub fn prod_diff() {
         assert!(
             err_sh.contains("exit code 128"),
             "expected exit code 128 error, got: {err_sh}"
+        );
+    }
+
+    #[test]
+    fn measurement_1_cb_status_and_td_diff_reported() {
+        let fixture_cb = r#"
+pub fn prod_cb() {
+    let git = crate::git::find_git_bin().unwrap();
+    let _ = std::process::Command::new(git).args(["status"]).output();
+}
+"#;
+        let v_cb = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture_cb);
+        assert_eq!(v_cb.len(), 1, "expected 1 violation for status in cb.rs");
+        assert!(v_cb[0].contains("src/cli/cb.rs:4:"), "got: {}", v_cb[0]);
+
+        let fixture_td = r#"
+pub fn prod_td() {
+    let git = crate::git::find_git_bin().unwrap();
+    let _ = std::process::Command::new(git).args(["diff"]).output();
+}
+"#;
+        let v_td = scan_source_for_git_add_or_commit("src/cli/td.rs", fixture_td);
+        assert_eq!(v_td.len(), 1, "expected 1 violation for diff in td.rs");
+        assert!(v_td[0].contains("src/cli/td.rs:4:"), "got: {}", v_td[0]);
+    }
+
+    #[test]
+    fn measurement_2_git_spawn_with_reset_reported() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let git = crate::git::find_git_bin().unwrap();
+    let _ = std::process::Command::new(git).args(["reset", "HEAD~1"]).output();
+}
+"#;
+        let v = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(v.len(), 1, "expected 1 violation for reset");
+        assert!(v[0].contains("src/cli/cb.rs:4:"), "got: {}", v[0]);
+    }
+
+    #[test]
+    fn measurement_3_git_spawn_with_merge_reported() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let git = crate::git::find_git_bin().unwrap();
+    let _ = std::process::Command::new(git).args(["merge", "--no-ff", "branch"]).output();
+}
+"#;
+        let v = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(v.len(), 1, "expected 1 violation for merge");
+        assert!(v[0].contains("src/cli/cb.rs:4:"), "got: {}", v[0]);
+    }
+
+    #[test]
+    fn measurement_4_git_spawn_with_stash_reported() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let git = crate::git::find_git_bin().unwrap();
+    let _ = std::process::Command::new(git).args(["stash"]).output();
+}
+"#;
+        let v = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(v.len(), 1, "expected 1 violation for stash");
+        assert!(v[0].contains("src/cli/cb.rs:4:"), "got: {}", v[0]);
+    }
+
+    #[test]
+    fn measurement_5_git_spawn_with_non_git_binding_name_and_no_subcommand_literal_reported() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let bin = crate::git::find_git_bin().unwrap();
+    let _ = std::process::Command::new(bin).output();
+}
+"#;
+        let v = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert_eq!(v.len(), 1, "expected 1 violation for non-git binding name");
+        assert!(v[0].contains("src/cli/cb.rs:4:"), "got: {}", v[0]);
+    }
+
+    #[test]
+    fn measurement_6_non_git_process_spawns_not_reported() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let _ = std::process::Command::new("sh").arg("-c").arg("echo hi").output();
+    let rustfmt = crate::git::find_rustfmt_bin().unwrap();
+    let _ = std::process::Command::new(&rustfmt).arg("--edition").output();
+    let tool_path = crate::git::find_cargo_bin().unwrap();
+    let _ = std::process::Command::new(&tool_path).arg("check").output();
+}
+"#;
+        let v = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert!(
+            v.is_empty(),
+            "expected 0 violations for non-git spawns, got: {v:?}"
+        );
+    }
+
+    #[test]
+    fn measurement_7_test_module_git_reset_not_reported() {
+        let fixture = r#"
+#[cfg(test)]
+mod tests {
+    fn test_reset() {
+        let git = crate::git::find_git_bin().unwrap();
+        let _ = std::process::Command::new(git).args(["reset", "HEAD~1"]).output();
+    }
+}
+"#;
+        let v = scan_source_for_git_add_or_commit("src/cli/cb.rs", fixture);
+        assert!(
+            v.is_empty(),
+            "expected 0 violations in test module, got: {v:?}"
+        );
+    }
+
+    #[test]
+    fn measurement_8_status_porcelain_z_preserves_non_utf8_path_bytes() {
+        let temp = TempDir::new().unwrap();
+        if !super::tests::init_git_repo(temp.path()) {
+            return;
+        }
+        let git_bin = find_git_bin().unwrap();
+
+        let mut hash_child = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(temp.path())
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            let stdin = hash_child.stdin.as_mut().unwrap();
+            stdin.write_all(b"test content").unwrap();
+        }
+        let hash_out = hash_child.wait_with_output().unwrap();
+        let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_string();
+
+        #[cfg(unix)]
+        use std::os::unix::ffi::OsStrExt;
+
+        #[cfg(unix)]
+        let non_utf8_name = std::ffi::OsStr::from_bytes(b"invalid_\xff_path.txt");
+        #[cfg(not(unix))]
+        let non_utf8_name = std::ffi::OsStr::new("invalid_path.txt");
+
+        let mut update_cmd = std::process::Command::new(&git_bin);
+        update_cmd
+            .arg("-C")
+            .arg(temp.path())
+            .args(["update-index", "--add", "--cacheinfo", "100644", &blob_sha])
+            .arg(non_utf8_name);
+        let update_out = update_cmd.output().unwrap();
+        assert!(
+            update_out.status.success(),
+            "git update-index failed: {}",
+            String::from_utf8_lossy(&update_out.stderr)
+        );
+
+        let routed_bytes = git_status(
+            temp.path(),
+            false,
+            &["--porcelain=v1", "-z", "--untracked-files=all"],
+            &[] as &[&Path],
+        )
+        .unwrap();
+
+        let direct_output = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(temp.path())
+            .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+            .output()
+            .unwrap();
+
+        assert_eq!(
+            routed_bytes, direct_output.stdout,
+            "routed status bytes must match direct Git stdout byte-for-byte"
+        );
+        #[cfg(unix)]
+        assert!(
+            routed_bytes.windows(14).any(|w| w == b"invalid_\xff_path"),
+            "non-UTF-8 path bytes must be preserved in stdout"
+        );
+    }
+
+    #[test]
+    fn measurement_defect_1_git_status_pathspec_non_utf8() {
+        let temp = TempDir::new().unwrap();
+        if !super::tests::init_git_repo(temp.path()) {
+            return;
+        }
+        let git_bin = find_git_bin().unwrap();
+
+        let mut hash_child = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(temp.path())
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            let stdin = hash_child.stdin.as_mut().unwrap();
+            stdin.write_all(b"test content").unwrap();
+        }
+        let hash_out = hash_child.wait_with_output().unwrap();
+        let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_string();
+
+        #[cfg(unix)]
+        use std::os::unix::ffi::OsStrExt;
+
+        #[cfg(unix)]
+        let non_utf8_name = std::ffi::OsStr::from_bytes(b"invalid_\xff_path.txt");
+        #[cfg(not(unix))]
+        let non_utf8_name = std::ffi::OsStr::new("invalid_path.txt");
+
+        let non_utf8_path = std::path::Path::new(non_utf8_name);
+
+        let mut update_cmd = std::process::Command::new(&git_bin);
+        update_cmd
+            .arg("-C")
+            .arg(temp.path())
+            .args(["update-index", "--add", "--cacheinfo", "100644", &blob_sha])
+            .arg(non_utf8_name);
+        let update_out = update_cmd.output().unwrap();
+        assert!(
+            update_out.status.success(),
+            "git update-index failed: {}",
+            String::from_utf8_lossy(&update_out.stderr)
+        );
+
+        let routed_bytes = git_status(
+            temp.path(),
+            true,
+            &["--porcelain=v1", "-z", "--untracked-files=all"],
+            &[non_utf8_path],
+        )
+        .unwrap();
+
+        let direct_output = std::process::Command::new(&git_bin)
+            .arg("--literal-pathspecs")
+            .arg("-C")
+            .arg(temp.path())
+            .args([
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--",
+            ])
+            .arg(non_utf8_name)
+            .output()
+            .unwrap();
+
+        assert_eq!(
+            routed_bytes, direct_output.stdout,
+            "routed status bytes must match direct Git stdout byte-for-byte"
+        );
+        assert!(
+            !routed_bytes.is_empty(),
+            "routed status stdout must not be empty"
+        );
+        assert!(
+            !direct_output.stdout.is_empty(),
+            "direct git status stdout must not be empty"
+        );
+    }
+
+    #[test]
+    fn measurement_9_routed_call_sites_on_git_failure() {
+        let non_repo = TempDir::new().unwrap();
+
+        assert!(
+            crate::cli::td::checkout_has_only_exact_untracked_path(non_repo.path(), "file.txt")
+                .is_err(),
+            "td.rs:544 must return Err on git failure"
+        );
+
+        assert!(
+            crate::cli::cb::committed_paths_since_td_init(non_repo.path(), "slug").is_err(),
+            "cb.rs:7405 must return Err on git failure"
+        );
+
+        assert!(
+            crate::cli::cb::committed_paths_after_td_python_source(non_repo.path(), "slug")
+                .is_err(),
+            "cb.rs:7445 must return Err on git failure"
+        );
+
+        assert!(
+            git_status(
+                non_repo.path(),
+                true,
+                &["--porcelain=v1", "-z", "--untracked-files=all",],
+                &[Path::new("lock")],
+            )
+            .is_err(),
+            "td_lock.rs:376 primitive call must return Err on git failure"
+        );
+
+        assert!(
+            crate::cli::td::discover_worktree_spec(non_repo.path()).is_none(),
+            "td.rs:847 must return None on git failure"
+        );
+
+        assert!(
+            crate::cli::cb::dirty_touched_scope_gate_message(
+                non_repo.path(),
+                "slug",
+                &["path.rs".to_string()]
+            )
+            .is_none(),
+            "cb.rs:6870 must return None on git failure"
+        );
+
+        assert!(
+            crate::cli::cb_fill::branch_changed_files(non_repo.path(), "main").is_empty(),
+            "cb_fill.rs:1363 must return empty set on git failure"
         );
     }
 }

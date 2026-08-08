@@ -1331,7 +1331,7 @@ fn resolve_base_branch() -> String {
 // prior behaviour there.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
-fn resolve_diff_base_ref(_git_bin: &Path, worktree: &Path, base_branch: &str) -> String {
+fn resolve_diff_base_ref(worktree: &Path, base_branch: &str) -> String {
     let remote_ref = format!("origin/{base_branch}");
     let remote_resolves = crate::git::git_rev_parse(
         worktree,
@@ -1355,25 +1355,13 @@ fn resolve_diff_base_ref(_git_bin: &Path, worktree: &Path, base_branch: &str) ->
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
 pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<String> {
-    let git_bin = match crate::git::find_git_bin() {
-        Some(g) => g,
-        None => return HashSet::new(),
+    let diff_base = resolve_diff_base_ref(worktree, base_branch);
+    let range = format!("{diff_base}...HEAD");
+    let lines = match crate::git::git_diff_name_only(worktree, &[&range]) {
+        Ok(l) => l,
+        Err(_) => return HashSet::new(),
     };
-    let diff_base = resolve_diff_base_ref(&git_bin, worktree, base_branch);
-    let out = match std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args(["diff", "--name-only", &format!("{diff_base}...HEAD")])
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return HashSet::new(),
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.trim().to_string())
-        .collect()
+    lines.into_iter().collect()
 }
 
 // Resolve the WI's touched file set: the union of the branch diff against
