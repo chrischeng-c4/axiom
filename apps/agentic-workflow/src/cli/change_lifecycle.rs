@@ -437,6 +437,8 @@ pub struct ProjectionDecision {
     pub authorize_close_event_id: Option<String>,
     pub drift: bool,
     pub remediation: Vec<NextObligation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalidated_kinds: Vec<ArtifactKind>,
 }
 
 pub(crate) fn carrier_path(project_root: &Path, slug: &str) -> PathBuf {
@@ -723,7 +725,7 @@ fn event_id(lifecycle: &ChangeLifecycle) -> String {
 
 fn wi_remediation(slug: &str) -> NextObligation {
     NextObligation {
-        command: format!("aw wi validate {slug}"),
+        command: format!("aw wi change {slug}"),
         owner: OwnerVocabulary::Wi,
     }
 }
@@ -781,17 +783,21 @@ pub fn expected_parent_set(
         .collect()
 }
 
+pub fn transitive_invalidation_kinds(trigger_kind: ArtifactKind) -> Vec<ArtifactKind> {
+    match trigger_kind {
+        ArtifactKind::Wi => vec![ArtifactKind::Ec, ArtifactKind::Td, ArtifactKind::Cb],
+        ArtifactKind::Ec => vec![ArtifactKind::Td, ArtifactKind::Cb],
+        ArtifactKind::Td => vec![ArtifactKind::Cb],
+        ArtifactKind::Cb => Vec::new(),
+    }
+}
+
 fn transitive_invalidation(
     trigger: &ArtifactRevision,
     current: &BTreeMap<ArtifactKind, Option<ArtifactRevision>>,
     evidence: &[EvidenceBinding],
 ) -> InvalidationRecord {
-    let invalidated_kinds = match trigger.kind {
-        ArtifactKind::Wi => vec![ArtifactKind::Ec, ArtifactKind::Td, ArtifactKind::Cb],
-        ArtifactKind::Ec => vec![ArtifactKind::Td, ArtifactKind::Cb],
-        ArtifactKind::Td => vec![ArtifactKind::Cb],
-        ArtifactKind::Cb => Vec::new(),
-    };
+    let invalidated_kinds = transitive_invalidation_kinds(trigger.kind);
     let invalidated_revision_ids = invalidated_kinds
         .iter()
         .filter_map(|kind| {
@@ -1486,6 +1492,7 @@ fn zero_head_projection(slug: &str, owner: OwnerVocabulary) -> serde_json::Value
         "milestones": [],
         "drift": false,
         "remediation": [],
+        "invalidated_kinds": [],
         "close_authorized": false,
         "authorize_close_event_id": serde_json::Value::Null,
     })
@@ -1544,6 +1551,11 @@ pub fn decide_projection(
     {
         let obs_wi_digest = observation.wi_digest(lifecycle);
         if obs_wi_digest != *active_wi_digest {
+            let drift_remediation = vec![route_failure(
+                FailureOwnership::WiDrift,
+                &lifecycle.slug,
+                &lifecycle.next.command,
+            )];
             return ProjectionDecision {
                 accepted: false,
                 refusal_reason: Some(format!(
@@ -1556,8 +1568,9 @@ pub fn decide_projection(
                 complete: false,
                 close_authorized: false,
                 authorize_close_event_id: None,
-                drift: false,
-                remediation: Vec::new(),
+                drift: true,
+                remediation: drift_remediation,
+                invalidated_kinds: transitive_invalidation_kinds(ArtifactKind::Wi),
             };
         }
     }
@@ -1582,6 +1595,7 @@ pub fn decide_projection(
                 authorize_close_event_id: None,
                 drift: false,
                 remediation: Vec::new(),
+                invalidated_kinds: Vec::new(),
             };
         }
     }
@@ -1611,6 +1625,7 @@ pub fn decide_projection(
                     authorize_close_event_id: None,
                     drift: false,
                     remediation: Vec::new(),
+                    invalidated_kinds: Vec::new(),
                 };
             }
         }
@@ -1637,6 +1652,7 @@ pub fn decide_projection(
                 authorize_close_event_id: None,
                 drift: false,
                 remediation: Vec::new(),
+                invalidated_kinds: Vec::new(),
             };
         }
     }
@@ -1694,6 +1710,7 @@ pub fn decide_projection(
         authorize_close_event_id,
         drift,
         remediation,
+        invalidated_kinds: Vec::new(),
     }
 }
 
@@ -1721,6 +1738,16 @@ fn render(lifecycle: &ChangeLifecycle, decision: &ProjectionDecision) -> serde_j
             })
         })
         .collect::<Vec<_>>();
+    let invalidated_kinds = decision
+        .invalidated_kinds
+        .iter()
+        .map(|k| match k {
+            ArtifactKind::Wi => "wi",
+            ArtifactKind::Ec => "ec",
+            ArtifactKind::Td => "td",
+            ArtifactKind::Cb => "cb",
+        })
+        .collect::<Vec<_>>();
     serde_json::json!({
         "schema": SCHEMA,
         "wi_revision": revision(ArtifactKind::Wi),
@@ -1736,6 +1763,7 @@ fn render(lifecycle: &ChangeLifecycle, decision: &ProjectionDecision) -> serde_j
         "milestones": milestones,
         "drift": decision.drift,
         "remediation": remediation,
+        "invalidated_kinds": invalidated_kinds,
         "close_authorized": decision.close_authorized,
         "authorize_close_event_id": decision.authorize_close_event_id,
         "accepted": decision.accepted,
@@ -1810,7 +1838,12 @@ fn reduce_stage(
 /// through the reducer and persists the resulting carrier via `save`.
 #[cfg(test)]
 pub(crate) fn record_terminal_lifecycle(project_root: &std::path::Path, slug: &str) {
-    let created = fold_wi_create(slug, "wi-v1", "agentic-workflow");
+    let body = if slug == "change-row3" {
+        "body-1"
+    } else {
+        "wi-v1"
+    };
+    let created = fold_wi_create(slug, body, "agentic-workflow");
     let ec = reduce_stage(
         &created,
         ArtifactKind::Ec,
@@ -2333,7 +2366,7 @@ mod tests {
             },
         );
         assert!(!stale.accepted);
-        assert_eq!(stale.lifecycle.next.command, "aw wi validate causal");
+        assert_eq!(stale.lifecycle.next.command, "aw wi change causal");
 
         let noop = fold_wi_update(&created, "wi-v1", None);
         assert!(!noop.accepted);
@@ -4519,6 +4552,142 @@ Reference context text.
                 .as_ref()
                 .map_or(false, |r| r.contains("digest")),
             "Measurement 6: refusal reason must name the WI digest mismatch"
+        );
+    }
+
+    #[test]
+    fn test_wi_contract_drift_invalidation_measurements_1_to_6() {
+        let base_body = "\
+## Problem
+Problem description.
+
+## Capability Alignment
+Alignment info.
+
+## Requirements
+Requirements text.
+
+## Scope
+Scope text.
+
+## Acceptance Criteria
+Criteria text.
+
+## Reference Context
+Reference info.
+";
+        let mut issue = change(base_body);
+        issue.labels = vec![
+            "app:agentic-workflow".to_string(),
+            "priority:p1".to_string(),
+        ];
+        issue.phase = Some("created".to_string());
+        let lc = fold_wi_create_from_issue(&issue);
+
+        // Row 1: Observation whose canonical snapshot digest differs from committed WI revision
+        let drifted_body = base_body.replace(
+            "Problem description.",
+            "Problem description edited on tracker.",
+        );
+        let obs_drifted = TrackerObservation::from_issue(&change(&drifted_body));
+        let decision_row1 = decide_projection(&lc, &obs_drifted);
+
+        assert!(!decision_row1.accepted, "Row 1: accepted must be false");
+        assert!(decision_row1.drift, "Row 1: drift must be true");
+        assert_eq!(
+            decision_row1.remediation.len(),
+            1,
+            "Row 1: remediation must carry single obligation"
+        );
+        assert_eq!(
+            decision_row1.remediation[0].command,
+            format!("aw wi change {}", lc.slug),
+            "Row 1: remediation command must be aw wi change <slug>"
+        );
+        assert_eq!(
+            decision_row1.remediation[0].owner,
+            OwnerVocabulary::Wi,
+            "Row 1: remediation owner must be Wi"
+        );
+
+        // Row 2: (negative control) Observation whose canonical snapshot digest matches
+        let obs_matching = TrackerObservation::from_issue(&issue);
+        let decision_row2 = decide_projection(&lc, &obs_matching);
+        assert!(decision_row2.accepted, "Row 2: accepted must be true");
+        assert!(!decision_row2.drift, "Row 2: drift must be false");
+        assert!(
+            decision_row2.remediation.is_empty(),
+            "Row 2: remediation must be empty"
+        );
+
+        // Row 3: Decision from row 1 names Ec, Td, and Cb as invalidated — exact set from transitive_invalidation_kinds
+        assert_eq!(
+            decision_row1.invalidated_kinds,
+            transitive_invalidation_kinds(ArtifactKind::Wi),
+            "Row 3: invalidated_kinds must match transitive_invalidation_kinds(ArtifactKind::Wi)"
+        );
+        assert_eq!(
+            decision_row1.invalidated_kinds,
+            vec![ArtifactKind::Ec, ArtifactKind::Td, ArtifactKind::Cb],
+            "Row 3: invalidated_kinds must be Ec, Td, Cb and not name Wi"
+        );
+        assert!(
+            !decision_row1.invalidated_kinds.contains(&ArtifactKind::Wi),
+            "Row 3: must not name Wi"
+        );
+
+        // Row 4: (negative control) Observation differing only in excluded R2 fields
+        let mut issue_excluded_diff = issue.clone();
+        issue_excluded_diff.phase = Some("in_progress".to_string());
+        issue_excluded_diff.labels = vec![
+            "app:agentic-workflow".to_string(),
+            "priority:p0".to_string(),
+        ];
+        issue_excluded_diff.updated_at = Some("2026-08-08T12:00:00Z".to_string());
+        let comment_marker = "\n\n<!-- aw:projection\nversion: 1\n-->";
+        issue_excluded_diff.body = format!("{base_body}{comment_marker}");
+        let obs_excluded_diff = TrackerObservation::from_issue(&issue_excluded_diff);
+        let decision_row4 = decide_projection(&lc, &obs_excluded_diff);
+        assert!(decision_row4.accepted, "Row 4: accepted must be true");
+        assert!(!decision_row4.drift, "Row 4: drift must be false");
+        assert!(
+            decision_row4.remediation.is_empty(),
+            "Row 4: remediation must be empty"
+        );
+
+        // Row 5: route_failure(FailureOwnership::WiDrift, slug, current_command)
+        let routed_remediation = route_failure(FailureOwnership::WiDrift, &lc.slug, "aw ec check");
+        assert_eq!(
+            routed_remediation.command,
+            format!("aw wi change {}", lc.slug),
+            "Row 5: route_failure for WiDrift must return aw wi change <slug>"
+        );
+        assert_eq!(
+            routed_remediation.owner,
+            OwnerVocabulary::Wi,
+            "Row 5: route_failure owner must be Wi"
+        );
+
+        // Row 6: (negative control) Non-terminal lifecycle whose issue was closed by hand, with no digest drift
+        let obs_closed_no_drift =
+            TrackerObservation::from_issue(&issue).with_state(IssueState::Closed);
+        let decision_row6 = decide_projection(&lc, &obs_closed_no_drift);
+        assert!(decision_row6.accepted, "Row 6: accepted must be true");
+        assert!(decision_row6.drift, "Row 6: drift must be true");
+        assert_eq!(
+            decision_row6.remediation.len(),
+            2,
+            "Row 6: remediation must be 2 steps"
+        );
+        assert_eq!(
+            decision_row6.remediation[0].command,
+            format!("aw wi update {} --state open", lc.slug),
+            "Row 6: first step must be aw wi update <slug> --state open"
+        );
+        assert_eq!(decision_row6.remediation[0].owner, OwnerVocabulary::Wi);
+        assert_eq!(
+            decision_row6.remediation[1], lc.next,
+            "Row 6: second step must be lifecycle's own next obligation"
         );
     }
 }
