@@ -688,9 +688,22 @@ mod tests {
 }
 
 #[cfg(test)]
-mod lifecycle_commit_boundary {
+pub(crate) mod lifecycle_commit_boundary {
     use super::*;
     use tempfile::TempDir;
+
+    pub(crate) const LIFECYCLE_LEAF_FILES: &[&str] = &[
+        "cli/issues.rs",                // the WI leaf; there is no cli/wi.rs
+        "cli/ec.rs",                    // the EC leaf
+        "cli/ec_verdict.rs",            // EC verdict authoring, matches the leaf naming convention
+        "cli/td.rs",                    // the TD leaf
+        "cli/td_lock.rs",               // TD lock lifecycle
+        "cli/td_migrate.rs", // carries a routed lifecycle call, per the routed-call-site table
+        "cli/td_check_section_type.rs", // TD section checking, matches the leaf naming convention
+        "cli/cb.rs",         // the CB leaf
+        "cli/cb_fill.rs",    // CB fill lifecycle
+        "cli/change_lifecycle.rs", // drives the change lifecycle across leaves
+    ];
 
     fn count_line_braces(line: &str) -> (usize, usize) {
         let mut opens = 0;
@@ -859,6 +872,14 @@ mod lifecycle_commit_boundary {
                     ));
                 }
             }
+            if code_line.contains("git2::") {
+                violations.push(format!(
+                    "{}:{}: Direct git2 usage found: {}",
+                    rel_file,
+                    line_num,
+                    line.trim()
+                ));
+            }
         }
 
         violations
@@ -866,22 +887,14 @@ mod lifecycle_commit_boundary {
 
     #[test]
     fn no_direct_git_add_or_commit_in_lifecycle_modules() {
-        let lifecycle_files = [
-            "src/cli/issues.rs",
-            "src/cli/ec.rs",
-            "src/cli/td.rs",
-            "src/cli/cb.rs",
-            "src/cli/cb_fill.rs",
-            "src/cli/td_lock.rs",
-            "src/cli/change_lifecycle.rs",
-        ];
-
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
             .unwrap_or_else(|_| "apps/agentic-workflow".to_string());
+        let src_dir = std::path::Path::new(&manifest_dir).join("src");
         let mut violations = Vec::new();
 
-        for rel_file in lifecycle_files {
-            let full_path = std::path::Path::new(&manifest_dir).join(rel_file);
+        for leaf in LIFECYCLE_LEAF_FILES {
+            let full_path = src_dir.join(leaf);
+            let rel_file = format!("src/{leaf}");
             let content = match std::fs::read_to_string(&full_path) {
                 Ok(c) => c,
                 Err(e) => {
@@ -890,7 +903,7 @@ mod lifecycle_commit_boundary {
                 }
             };
 
-            violations.extend(scan_source_for_git_add_or_commit(rel_file, &content));
+            violations.extend(scan_source_for_git_add_or_commit(&rel_file, &content));
         }
 
         assert!(
@@ -1735,6 +1748,165 @@ mod tests {
         assert!(
             crate::cli::cb_fill::branch_changed_files(non_repo.path(), "main").is_empty(),
             "cb_fill.rs:1363 must return empty set on git failure"
+        );
+    }
+
+    #[test]
+    fn test_lifecycle_leaf_files_constant_pinned_entries() {
+        let expected = [
+            "cli/issues.rs",
+            "cli/ec.rs",
+            "cli/ec_verdict.rs",
+            "cli/td.rs",
+            "cli/td_lock.rs",
+            "cli/td_migrate.rs",
+            "cli/td_check_section_type.rs",
+            "cli/cb.rs",
+            "cli/cb_fill.rs",
+            "cli/change_lifecycle.rs",
+        ];
+        assert_eq!(
+            LIFECYCLE_LEAF_FILES,
+            &expected[..],
+            "LIFECYCLE_LEAF_FILES constant does not match expected literal list"
+        );
+    }
+
+    #[test]
+    fn test_lifecycle_leaf_files_completeness_and_freshness() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .unwrap_or_else(|_| "apps/agentic-workflow".to_string());
+        let src_dir = std::path::Path::new(&manifest_dir).join("src");
+
+        assert!(
+            !LIFECYCLE_LEAF_FILES.is_empty(),
+            "LIFECYCLE_LEAF_FILES must not be empty"
+        );
+        for leaf in LIFECYCLE_LEAF_FILES {
+            let full_path = src_dir.join(leaf);
+            assert!(
+                full_path.exists(),
+                "Stale entry in LIFECYCLE_LEAF_FILES naming file that does not exist on disk: {}",
+                leaf
+            );
+        }
+
+        let cli_dir = src_dir.join("cli");
+        let entries = std::fs::read_dir(&cli_dir)
+            .unwrap_or_else(|e| panic!("Failed to read directory {}: {}", cli_dir.display(), e));
+
+        for entry in entries {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
+                let stem = path.file_stem().unwrap().to_str().unwrap();
+                let is_leaf_stem = stem == "wi"
+                    || stem == "ec"
+                    || stem == "td"
+                    || stem == "cb"
+                    || stem.starts_with("wi_")
+                    || stem.starts_with("ec_")
+                    || stem.starts_with("td_")
+                    || stem.starts_with("cb_");
+                if is_leaf_stem {
+                    let rel_path = format!("cli/{}.rs", stem);
+                    assert!(
+                        LIFECYCLE_LEAF_FILES.contains(&rel_path.as_str()),
+                        "Leaf file {} matching naming convention is missing from LIFECYCLE_LEAF_FILES constant",
+                        rel_path
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_spawn_census_control_production_spawn() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("status");
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/offender.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation for direct git spawn in production, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("src/cli/offender.rs:3:"),
+            "expected violation at line 3, got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn test_spawn_census_control_cfg_test_mod() {
+        let fixture = r#"
+#[cfg(test)]
+mod tests {
+    fn test_fn() {
+        let mut cmd = std::process::Command::new("git");
+        cmd.arg("status");
+    }
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/test_file.rs", fixture);
+        assert!(
+            violations.is_empty(),
+            "expected 0 violations for spawn in #[cfg(test)] mod, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn test_spawn_census_control_cfg_test_fn() {
+        let fixture = r#"
+#[cfg(test)]
+fn test_fn() {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("status");
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/test_file.rs", fixture);
+        assert!(
+            violations.is_empty(),
+            "expected 0 violations for spawn in item-level #[cfg(test)] fn, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn test_spawn_census_control_production_git2() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let repo = git2::Repository::discover(".");
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/offender.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation for direct git2 usage in production, got: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("src/cli/offender.rs:3:"),
+            "expected violation at line 3, got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn test_spawn_census_control_comment_git2() {
+        let fixture = r#"
+pub fn prod_fn() {
+    // We do not use git2::Repository here
+    let x = 1;
+}
+"#;
+        let violations = scan_source_for_git_add_or_commit("src/cli/test_file.rs", fixture);
+        assert!(
+            violations.is_empty(),
+            "expected 0 violations for git2 in comment, got: {violations:?}"
         );
     }
 }

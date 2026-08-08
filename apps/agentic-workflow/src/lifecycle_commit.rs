@@ -435,6 +435,14 @@ mod tests {
             ("cli/td_migrate.rs", LifecycleLeaf::Td, 1),
         ];
 
+        for (rel_path, _, _) in leaf_allowlist {
+            assert!(
+                crate::git::lifecycle_commit_boundary::LIFECYCLE_LEAF_FILES.contains(&rel_path),
+                "Routed leaf file {} absent from LIFECYCLE_LEAF_FILES constant",
+                rel_path
+            );
+        }
+
         let leaf_operations = [
             "commit_scoped_path_set",
             "stage_path_set",
