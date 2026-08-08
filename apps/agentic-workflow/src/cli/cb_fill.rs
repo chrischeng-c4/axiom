@@ -1510,39 +1510,14 @@ fn stage_and_commit_cb_fill(
     issue_path: &str,
     source_paths: &[String],
 ) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-
+    let mut paths_to_stage = Vec::new();
     if should_stage_lifecycle_path(worktree, issue_path) {
-        let add = std::process::Command::new(&git_bin)
-            .arg("-C")
-            .arg(worktree)
-            .args(["add", "--", issue_path])
-            .output()
-            .context("git add terminal Cb-Fill issue path")?;
-        if !add.status.success() {
-            anyhow::bail!(
-                "git add '{}' failed: {}",
-                issue_path,
-                String::from_utf8_lossy(&add.stderr).trim()
-            );
-        }
+        paths_to_stage.push(issue_path);
     }
     for source_path in source_paths {
-        let add = std::process::Command::new(&git_bin)
-            .arg("-C")
-            .arg(worktree)
-            .args(["add", "--", source_path.as_str()])
-            .output()
-            .context("git add final Cb-Fill source path")?;
-        if !add.status.success() {
-            anyhow::bail!(
-                "git add '{}' failed: {}",
-                source_path,
-                String::from_utf8_lossy(&add.stderr).trim()
-            );
-        }
+        paths_to_stage.push(source_path.as_str());
     }
+    crate::git::stage_paths(worktree, &paths_to_stage, false)?;
 
     let msg = format!(
         "cb({slug}) \u{2014} markers filled\n\n\
@@ -1550,19 +1525,7 @@ fn stage_and_commit_cb_fill(
          Work-Item: {slug}\n\
          Lifecycle-Stage: Cb-Fill",
     );
-    let out = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args(["commit", "--allow-empty", "-m", &msg])
-        .output()
-        .context("git commit")?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "{}",
-            String::from_utf8_lossy(&out.stderr).trim().to_string()
-        );
-    }
-    Ok(())
+    crate::git::commit_staged(worktree, &msg, true)
 }
 
 fn stage_and_commit_cb_marker(
@@ -1573,26 +1536,14 @@ fn stage_and_commit_cb_marker(
     marker_id: &str,
     next_marker_id: &str,
 ) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let mut paths_to_stage = Vec::new();
     for path in [source_path, rel_issue] {
-        if !should_stage_lifecycle_path(worktree, path) {
-            continue;
-        }
-        let add = std::process::Command::new(&git_bin)
-            .arg("-C")
-            .arg(worktree)
-            .args(["add", path])
-            .output()
-            .context("git add")?;
-        if !add.status.success() {
-            anyhow::bail!(
-                "git add '{}' failed: {}",
-                path,
-                String::from_utf8_lossy(&add.stderr).trim()
-            );
+        if should_stage_lifecycle_path(worktree, path) {
+            paths_to_stage.push(path);
         }
     }
+    crate::git::stage_paths(worktree, &paths_to_stage, false)?;
+
     let msg = format!(
         "cb({slug}) \u{2014} marker filled: {marker_id}\n\n\
          Work-Item: {slug}\n\
@@ -1602,19 +1553,7 @@ fn stage_and_commit_cb_marker(
          CB-Marker: {marker_id}\n\
          Next-Command: aw cb fill {slug} --apply --marker {next_marker_id}",
     );
-    let out = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args(["commit", "-m", &msg])
-        .output()
-        .context("git commit")?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "{}",
-            String::from_utf8_lossy(&out.stderr).trim().to_string()
-        );
-    }
-    Ok(())
+    crate::git::commit_staged(worktree, &msg, false)
 }
 
 fn stage_and_commit_cb_queue_start(
@@ -1623,22 +1562,8 @@ fn stage_and_commit_cb_queue_start(
     rel_issue: &str,
     first_marker_id: &str,
 ) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     if should_stage_lifecycle_path(worktree, rel_issue) {
-        let add = std::process::Command::new(&git_bin)
-            .arg("-C")
-            .arg(worktree)
-            .args(["add", rel_issue])
-            .output()
-            .context("git add")?;
-        if !add.status.success() {
-            anyhow::bail!(
-                "git add '{}' failed: {}",
-                rel_issue,
-                String::from_utf8_lossy(&add.stderr).trim()
-            );
-        }
+        crate::git::stage_paths(worktree, &[rel_issue], false)?;
     }
     let msg = format!(
         "cb({slug}) \u{2014} fill queue started\n\n\
@@ -1648,19 +1573,7 @@ fn stage_and_commit_cb_queue_start(
          Lifecycle-Pass: fill\n\
          Next-Command: aw cb fill {slug} --apply --marker {first_marker_id}",
     );
-    let out = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args(["commit", "--allow-empty", "-m", &msg])
-        .output()
-        .context("git commit")?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "{}",
-            String::from_utf8_lossy(&out.stderr).trim().to_string()
-        );
-    }
-    Ok(())
+    crate::git::commit_staged(worktree, &msg, true)
 }
 
 fn emit_error(slug: &str, message: &str) -> Result<()> {
@@ -2566,6 +2479,267 @@ pub fn before() {}\n\
             resolve_marker_gate_scope(tmp.path(), &[]),
             vec![foreign.to_string()],
             "without concrete TD Changes, marker reconciliation must retain the branch-diff fallback"
+        );
+    }
+
+    fn init_cb_fill_test_repo(root: &Path) {
+        let git = crate::git::find_git_bin().expect("git binary on PATH");
+        for args in [
+            ["init", "-q", "-b", "main"].as_slice(),
+            ["config", "user.email", "test@example.com"].as_slice(),
+            ["config", "user.name", "Test"].as_slice(),
+            ["commit", "--allow-empty", "-qm", "init"].as_slice(),
+        ] {
+            let output = std::process::Command::new(&git)
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn test_stage_and_commit_cb_fill_fidelity_and_empty_behavior() {
+        let Some(git) = crate::git::find_git_bin() else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_cb_fill_test_repo(root);
+
+        // Case 1: with staged / untracked files
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/filled.rs"), "pub fn f() {}\n").unwrap();
+        std::fs::write(root.join("issue.json"), "{\"slug\": \"2179\"}\n").unwrap();
+
+        let source_paths = vec!["src/filled.rs".to_string()];
+        stage_and_commit_cb_fill(root, "2179", "issue.json", &source_paths).unwrap();
+
+        // Assert message and trailers
+        let log_out = std::process::Command::new(&git)
+            .args(["log", "-1", "--format=%B"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let msg = String::from_utf8_lossy(&log_out.stdout);
+        assert!(
+            msg.contains("cb(2179) \u{2014} markers filled"),
+            "msg: {msg}"
+        );
+        assert!(msg.contains("Lifecycle-Slug: 2179"), "msg: {msg}");
+        assert!(msg.contains("Work-Item: 2179"), "msg: {msg}");
+        assert!(msg.contains("Lifecycle-Stage: Cb-Fill"), "msg: {msg}");
+
+        // Assert committed path set out of Git
+        let show_out = std::process::Command::new(&git)
+            .args(["show", "--format=", "--name-only", "HEAD"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let show_text = String::from_utf8_lossy(&show_out.stdout);
+        let paths: HashSet<&str> = show_text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert!(paths.contains("issue.json"), "paths: {paths:?}");
+        assert!(paths.contains("src/filled.rs"), "paths: {paths:?}");
+
+        // Case 2: empty staged diff (nothing to stage) -> produces empty commit (allow_empty: true)
+        let commit_count_before = std::process::Command::new(&git)
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let count_before: usize = String::from_utf8_lossy(&commit_count_before.stdout)
+            .trim()
+            .parse()
+            .unwrap();
+
+        stage_and_commit_cb_fill(root, "2179", "issue.json", &source_paths).unwrap();
+
+        let commit_count_after = std::process::Command::new(&git)
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let count_after: usize = String::from_utf8_lossy(&commit_count_after.stdout)
+            .trim()
+            .parse()
+            .unwrap();
+
+        assert_eq!(
+            count_after,
+            count_before + 1,
+            "empty diff must produce a commit"
+        );
+    }
+
+    #[test]
+    fn test_stage_and_commit_cb_marker_fidelity_and_empty_behavior() {
+        let Some(git) = crate::git::find_git_bin() else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_cb_fill_test_repo(root);
+
+        // Case 1: with changed files
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/part.rs"), "pub fn part() {}\n").unwrap();
+        std::fs::write(root.join("issue.json"), "{\"slug\": \"2179\"}\n").unwrap();
+
+        stage_and_commit_cb_marker(
+            root,
+            "2179",
+            "issue.json",
+            "src/part.rs",
+            "marker-1",
+            "marker-2",
+        )
+        .unwrap();
+
+        // Assert message and trailers
+        let log_out = std::process::Command::new(&git)
+            .args(["log", "-1", "--format=%B"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let msg = String::from_utf8_lossy(&log_out.stdout);
+        assert!(
+            msg.contains("cb(2179) \u{2014} marker filled: marker-1"),
+            "msg: {msg}"
+        );
+        assert!(msg.contains("Work-Item: 2179"), "msg: {msg}");
+        assert!(
+            msg.contains("Lifecycle-Stage: Cb-Fill-Section"),
+            "msg: {msg}"
+        );
+        assert!(
+            msg.contains("Lifecycle-Phase: cb_fill_in_progress"),
+            "msg: {msg}"
+        );
+        assert!(msg.contains("Lifecycle-Pass: fill"), "msg: {msg}");
+        assert!(msg.contains("CB-Marker: marker-1"), "msg: {msg}");
+        assert!(
+            msg.contains("Next-Command: aw cb fill 2179 --apply --marker marker-2"),
+            "msg: {msg}"
+        );
+
+        // Assert committed path set out of Git
+        let show_out = std::process::Command::new(&git)
+            .args(["show", "--format=", "--name-only", "HEAD"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let show_text = String::from_utf8_lossy(&show_out.stdout);
+        let paths: HashSet<&str> = show_text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert!(paths.contains("issue.json"), "paths: {paths:?}");
+        assert!(paths.contains("src/part.rs"), "paths: {paths:?}");
+
+        // Case 2: calling stage_and_commit_cb_marker when nothing is staged (allow_empty is false)
+        let res = stage_and_commit_cb_marker(
+            root,
+            "2179",
+            "issue.json",
+            "src/part.rs",
+            "marker-2",
+            "marker-3",
+        );
+        assert!(
+            res.is_err(),
+            "stage_and_commit_cb_marker with empty staged diff must fail when allow_empty is false"
+        );
+    }
+
+    #[test]
+    fn test_stage_and_commit_cb_queue_start_fidelity_and_empty_behavior() {
+        let Some(git) = crate::git::find_git_bin() else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_cb_fill_test_repo(root);
+
+        // Case 1: with changed issue file
+        std::fs::write(root.join("issue.json"), "{\"slug\": \"2179\"}\n").unwrap();
+
+        stage_and_commit_cb_queue_start(root, "2179", "issue.json", "first-marker").unwrap();
+
+        // Assert message and trailers
+        let log_out = std::process::Command::new(&git)
+            .args(["log", "-1", "--format=%B"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let msg = String::from_utf8_lossy(&log_out.stdout);
+        assert!(
+            msg.contains("cb(2179) \u{2014} fill queue started"),
+            "msg: {msg}"
+        );
+        assert!(msg.contains("Work-Item: 2179"), "msg: {msg}");
+        assert!(msg.contains("Lifecycle-Stage: Cb-Fill-Start"), "msg: {msg}");
+        assert!(
+            msg.contains("Lifecycle-Phase: cb_fill_in_progress"),
+            "msg: {msg}"
+        );
+        assert!(msg.contains("Lifecycle-Pass: fill"), "msg: {msg}");
+        assert!(
+            msg.contains("Next-Command: aw cb fill 2179 --apply --marker first-marker"),
+            "msg: {msg}"
+        );
+
+        // Assert committed path set out of Git
+        let show_out = std::process::Command::new(&git)
+            .args(["show", "--format=", "--name-only", "HEAD"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let show_text = String::from_utf8_lossy(&show_out.stdout);
+        let paths: HashSet<&str> = show_text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert!(paths.contains("issue.json"), "paths: {paths:?}");
+
+        // Case 2: empty staged diff -> produces empty commit (allow_empty: true)
+        let count_before: usize = String::from_utf8_lossy(
+            &std::process::Command::new(&git)
+                .args(["rev-list", "--count", "HEAD"])
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .parse()
+        .unwrap();
+
+        stage_and_commit_cb_queue_start(root, "2179", "issue.json", "first-marker").unwrap();
+
+        let count_after: usize = String::from_utf8_lossy(
+            &std::process::Command::new(&git)
+                .args(["rev-list", "--count", "HEAD"])
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .parse()
+        .unwrap();
+
+        assert_eq!(
+            count_after,
+            count_before + 1,
+            "empty diff must produce a commit"
         );
     }
 }

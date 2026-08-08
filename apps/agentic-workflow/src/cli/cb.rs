@@ -73,18 +73,12 @@ pub async fn run(args: CbArgs) -> Result<()> {
             }
         }
         CbCommand::Materialize(args) => {
-            super::workflow_guard::guard_issue_mutation(
-                &project_root,
-                Some(("td", &args.slug)),
-            )
-            .await?;
+            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &args.slug)))
+                .await?;
         }
         CbCommand::Publish(args) => {
-            super::workflow_guard::guard_issue_mutation(
-                &project_root,
-                Some(("td", &args.slug)),
-            )
-            .await?;
+            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &args.slug)))
+                .await?;
         }
         CbCommand::GenSource(args) => {
             if !args.dry_run {
@@ -169,7 +163,11 @@ fn resolve_git_dir(project_root: &std::path::Path) -> Result<std::path::PathBuf>
                 let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !path_str.is_empty() {
                     let p = std::path::PathBuf::from(&path_str);
-                    let resolved = if p.is_absolute() { p } else { project_root.join(p) };
+                    let resolved = if p.is_absolute() {
+                        p
+                    } else {
+                        project_root.join(p)
+                    };
                     if resolved.exists() {
                         return Ok(resolved);
                     }
@@ -247,7 +245,8 @@ fn calculate_candidate_digest(project_root: &std::path::Path, paths: &[String]) 
 }
 
 fn rollback_git_commit(project_root: &std::path::Path) -> Result<()> {
-    let git_bin = crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found"))?;
+    let git_bin =
+        crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found"))?;
     let out = std::process::Command::new(git_bin)
         .arg("-C")
         .arg(project_root)
@@ -255,7 +254,10 @@ fn rollback_git_commit(project_root: &std::path::Path) -> Result<()> {
         .output()
         .context("git reset HEAD~1 failed")?;
     if !out.status.success() {
-        anyhow::bail!("rollback git commit failed: {}", String::from_utf8_lossy(&out.stderr));
+        anyhow::bail!(
+            "rollback git commit failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     Ok(())
 }
@@ -287,7 +289,9 @@ pub async fn run_materialize(args: CbMaterializeArgs) -> Result<()> {
 
     let spec_path_str = if let Some(ref explicit) = args.spec_path {
         explicit.to_string()
-    } else if let Ok(p) = crate::cli::td::resolve_issue_td_generation_spec_path(&project_root, &issue, slug) {
+    } else if let Ok(p) =
+        crate::cli::td::resolve_issue_td_generation_spec_path(&project_root, &issue, slug)
+    {
         p
     } else if let Some(discovered) = crate::cli::td::discover_worktree_spec(&project_root) {
         discovered
@@ -344,7 +348,9 @@ pub async fn run_materialize(args: CbMaterializeArgs) -> Result<()> {
     }
 
     // Check TD Lock (R3)
-    if let Ok(td_lock) = super::td_lock::check_project_td_lock_for_spec_at_root(&project_root, &spec_abs) {
+    if let Ok(td_lock) =
+        super::td_lock::check_project_td_lock_for_spec_at_root(&project_root, &spec_abs)
+    {
         if !td_lock.clean {
             let env = serde_json::json!({
                 "action": "refused",
@@ -387,7 +393,11 @@ pub async fn run_materialize(args: CbMaterializeArgs) -> Result<()> {
                     let rel = file.path.to_string_lossy().replace('\\', "/");
                     if !rel.is_empty() && !rel.starts_with('/') && !rel.contains("..") {
                         let full = project_root.join(&rel);
-                        if full.is_file() && std::fs::metadata(&full).map(|m| m.len() > 0).unwrap_or(false) {
+                        if full.is_file()
+                            && std::fs::metadata(&full)
+                                .map(|m| m.len() > 0)
+                                .unwrap_or(false)
+                        {
                             candidate_paths.push(rel);
                         }
                     }
@@ -517,7 +527,8 @@ pub async fn run_publish(args: CbPublishArgs) -> Result<()> {
         }
     };
 
-    let dirty_paths = crate::git::dirty_paths(&project_root, &[std::path::PathBuf::from(".")], true)?;
+    let dirty_paths =
+        crate::git::dirty_paths(&project_root, &[std::path::PathBuf::from(".")], true)?;
     let filtered_dirty: Vec<String> = dirty_paths
         .into_iter()
         .filter(|p| !p.starts_with(".git") && !p.starts_with(".aw") && !p.contains("aw-candidate-"))
@@ -567,7 +578,8 @@ pub async fn run_publish(args: CbPublishArgs) -> Result<()> {
     );
 
     // 1. Commit Git
-    let committed = crate::git::commit_scoped_paths(&project_root, &paths_to_commit, &commit_message)?;
+    let committed =
+        crate::git::commit_scoped_paths(&project_root, &paths_to_commit, &commit_message)?;
     if !committed {
         let env = serde_json::json!({
             "action": "refused",
@@ -607,7 +619,10 @@ pub async fn run_publish(args: CbPublishArgs) -> Result<()> {
 
     let patch = IssuePatch {
         phase: Some(crate::issues::types::td_phase::CB_GENNED.to_string()),
-        add_labels: vec![format!("phase:{}", crate::issues::types::td_phase::CB_GENNED)],
+        add_labels: vec![format!(
+            "phase:{}",
+            crate::issues::types::td_phase::CB_GENNED
+        )],
         remove_labels,
         ..Default::default()
     };
@@ -8411,8 +8426,6 @@ fn commit_cb_claim_trailer(
     if artifact_paths.is_empty() {
         anyhow::bail!("Cb-Claim --commit has no generated artifact paths");
     }
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let mut relative_paths = Vec::with_capacity(artifact_paths.len());
     for path in artifact_paths {
         if !path
@@ -8433,20 +8446,9 @@ fn commit_cb_claim_trailer(
         })?;
         relative_paths.push(relative.to_path_buf());
     }
-    let add = std::process::Command::new(&git_bin)
-        .arg("--literal-pathspecs")
-        .arg("-C")
-        .arg(checkout_root)
-        .args(["add", "--"])
-        .args(&relative_paths)
-        .output()
-        .context("git add generated Cb-Claim artifacts")?;
-    if !add.status.success() {
-        anyhow::bail!(
-            "git add generated Cb-Claim artifacts failed: {}",
-            String::from_utf8_lossy(&add.stderr).trim()
-        );
-    }
+
+    crate::git::stage_paths(checkout_root, &relative_paths, true)?;
+
     let mut msg = format!(
         "cb({slug}) \u{2014} adopted code at {code_path}\n\n\
          Lifecycle-Slug: {slug}\n\
@@ -8458,20 +8460,7 @@ fn commit_cb_claim_trailer(
     if let Some(issue) = claim_issue {
         msg.push_str(&format!("\nClaim-Issue: {}", issue.trailer_value()));
     }
-    let commit = std::process::Command::new(&git_bin)
-        .arg("--literal-pathspecs")
-        .arg("-C")
-        .arg(checkout_root)
-        .args(["commit", "--only", "-m", &msg, "--"])
-        .args(&relative_paths)
-        .output()
-        .context("git commit generated Cb-Claim artifacts")?;
-    if !commit.status.success() {
-        anyhow::bail!(
-            "git commit failed: {}",
-            String::from_utf8_lossy(&commit.stderr).trim()
-        );
-    }
-    Ok(())
+
+    crate::git::commit_only_paths(checkout_root, &relative_paths, &msg, true)
 }
 // CODEGEN-END

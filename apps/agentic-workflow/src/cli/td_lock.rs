@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::Command;
 
 const TD_LOCK_VERSION: u8 = 2;
 const TD_IR_KIND: &str = "td";
@@ -357,34 +357,10 @@ fn commit_td_lock_update(
             target.lock_path_display
         );
     }
-    let git = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
 
-    let add = Command::new(&git)
-        .arg("--literal-pathspecs")
-        .arg("-C")
-        .arg(project_root)
-        .arg("add")
-        .arg("--")
-        .arg(&lock_path)
-        .output()
-        .context("git add generated TD lock")?;
-    if !add.status.success() {
-        anyhow::bail!(
-            "git add generated TD lock failed: {}",
-            String::from_utf8_lossy(&add.stderr).trim()
-        );
-    }
+    crate::git::stage_paths(project_root, &[lock_path], true)?;
 
-    let staged = Command::new(&git)
-        .arg("--literal-pathspecs")
-        .arg("-C")
-        .arg(project_root)
-        .args(["diff", "--cached", "--quiet", "--"])
-        .arg(&lock_path)
-        .status()
-        .context("git diff --cached generated TD lock")?;
-    if !git_diff_has_changes(staged, "git diff --cached generated TD lock")? {
+    if !crate::git::has_staged_changes_for_paths(project_root, &[lock_path], true)? {
         return Ok(false);
     }
 
@@ -392,24 +368,12 @@ fn commit_td_lock_update(
         "td-lock({}) — update TD IR snapshot\n\nTD-Lock-Project: {}\nTD-Lock-Path: {}",
         target.project, target.project, target.lock_path_display
     );
-    let commit = Command::new(&git)
-        .arg("--literal-pathspecs")
-        .arg("-C")
-        .arg(project_root)
-        .args(["commit", "--only", "-m"])
-        .arg(message)
-        .arg("--")
-        .arg(&lock_path)
-        .output()
-        .context("git commit generated TD lock")?;
-    if !commit.status.success() {
-        anyhow::bail!(
-            "git commit generated TD lock failed: {}",
-            String::from_utf8_lossy(&commit.stderr).trim()
-        );
-    }
+    crate::git::commit_only_paths(project_root, &[lock_path], &message, true)?;
 
-    let lock_status = Command::new(git)
+    let git = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+
+    let lock_status = Command::new(&git)
         .arg("--literal-pathspecs")
         .arg("-C")
         .arg(project_root)
@@ -510,15 +474,6 @@ fn preflight_repo_relative_td_lock_path(project_root: &Path, lock_path: &Path) -
         }
     }
     Ok(relative.to_path_buf())
-}
-
-fn git_diff_has_changes(status: ExitStatus, operation: &str) -> Result<bool> {
-    match status.code() {
-        Some(0) => Ok(false),
-        Some(1) => Ok(true),
-        Some(code) => anyhow::bail!("{operation} failed with exit code {code}"),
-        None => anyhow::bail!("{operation} terminated without an exit code"),
-    }
 }
 
 pub(crate) fn check_project_td_lock_at_root(

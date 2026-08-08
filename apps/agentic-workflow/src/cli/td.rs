@@ -928,57 +928,22 @@ pub(crate) fn commit_lifecycle_message(
     message: &str,
     allow_empty: LifecycleCommitEmpty,
 ) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    stage_lifecycle_paths(worktree_path, paths)?;
 
-    stage_lifecycle_paths(worktree_path, &git_bin, paths)?;
-
-    let mut command = std::process::Command::new(&git_bin);
-    command.arg("-C").arg(worktree_path).arg("commit");
-    let allow_empty = match allow_empty {
+    let allow = match allow_empty {
         LifecycleCommitEmpty::Always => true,
-        LifecycleCommitEmpty::IfNothingStaged => !has_staged_changes(worktree_path, &git_bin)?,
+        LifecycleCommitEmpty::IfNothingStaged => !crate::git::has_staged_changes(worktree_path)?,
     };
-    if allow_empty {
-        command.arg("--allow-empty");
-    }
-    let commit = command
-        .args(["-m", message])
-        .output()
-        .context("git commit failed")?;
-    if !commit.status.success() {
-        anyhow::bail!(
-            "git commit failed: {}",
-            String::from_utf8_lossy(&commit.stderr).trim()
-        );
-    }
-    Ok(())
+    crate::git::commit_staged(worktree_path, message, allow)
 }
 
-pub(crate) fn stage_lifecycle_paths(
-    worktree_path: &std::path::Path,
-    git_bin: &std::path::Path,
-    paths: &[&str],
-) -> Result<()> {
-    for p in paths {
-        if !should_stage_lifecycle_path(worktree_path, p) {
-            continue;
-        }
-        let add = std::process::Command::new(git_bin)
-            .arg("-C")
-            .arg(worktree_path)
-            .args(["add", p])
-            .output()
-            .context("git add failed")?;
-        if !add.status.success() {
-            anyhow::bail!(
-                "git add '{}' failed: {}",
-                p,
-                String::from_utf8_lossy(&add.stderr).trim()
-            );
-        }
-    }
-    Ok(())
+pub(crate) fn stage_lifecycle_paths(worktree_path: &std::path::Path, paths: &[&str]) -> Result<()> {
+    let valid_paths: Vec<std::path::PathBuf> = paths
+        .iter()
+        .filter(|p| should_stage_lifecycle_path(worktree_path, p))
+        .map(std::path::PathBuf::from)
+        .collect();
+    crate::git::stage_paths(worktree_path, &valid_paths, false)
 }
 
 fn should_stage_lifecycle_path(worktree_path: &std::path::Path, path: &str) -> bool {
@@ -992,16 +957,6 @@ fn should_stage_lifecycle_path(worktree_path: &std::path::Path, path: &str) -> b
         normalize_checkout_rel_path(path)
     };
     normalized != ".aw/issues" && !normalized.starts_with(".aw/issues/")
-}
-
-fn has_staged_changes(worktree_path: &std::path::Path, git_bin: &std::path::Path) -> Result<bool> {
-    let output = std::process::Command::new(git_bin)
-        .arg("-C")
-        .arg(worktree_path)
-        .args(["diff", "--cached", "--quiet", "--exit-code"])
-        .output()
-        .context("git diff --cached failed")?;
-    Ok(!output.status.success())
 }
 
 // ── Spec validation helpers ──────────────────────────────────────────
@@ -6648,6 +6603,89 @@ mod tests {
     }
 
     #[test]
+    fn commit_lifecycle_message_empty_variant_always_produces_commit_when_staged_diff_is_empty() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        init_git_repo(dir.path());
+
+        let count_before: usize = git_stdout(dir.path(), &["rev-list", "--count", "HEAD"])
+            .trim()
+            .parse()
+            .unwrap();
+
+        commit_lifecycle_message(
+            dir.path(),
+            &[],
+            "lifecycle always empty test",
+            LifecycleCommitEmpty::Always,
+        )
+        .unwrap();
+
+        let count_after: usize = git_stdout(dir.path(), &["rev-list", "--count", "HEAD"])
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            count_after,
+            count_before + 1,
+            "Always must produce a commit when staged diff is empty"
+        );
+        let log = git_stdout(dir.path(), &["log", "-1", "--format=%B"]);
+        assert!(log.contains("lifecycle always empty test"));
+    }
+
+    #[test]
+    fn commit_lifecycle_message_empty_variant_if_nothing_staged_produces_commit_only_when_nothing_staged(
+    ) {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        init_git_repo(dir.path());
+
+        // 1. Nothing staged -> produces commit
+        let count_before: usize = git_stdout(dir.path(), &["rev-list", "--count", "HEAD"])
+            .trim()
+            .parse()
+            .unwrap();
+
+        commit_lifecycle_message(
+            dir.path(),
+            &[],
+            "lifecycle if nothing staged test",
+            LifecycleCommitEmpty::IfNothingStaged,
+        )
+        .unwrap();
+
+        let count_after: usize = git_stdout(dir.path(), &["rev-list", "--count", "HEAD"])
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            count_after,
+            count_before + 1,
+            "IfNothingStaged must produce a commit when nothing is staged"
+        );
+        let log = git_stdout(dir.path(), &["log", "-1", "--format=%B"]);
+        assert!(log.contains("lifecycle if nothing staged test"));
+
+        // 2. With staged changes -> stages valid path and commits it
+        std::fs::write(dir.path().join("dirty.txt"), "change\n").unwrap();
+        commit_lifecycle_message(
+            dir.path(),
+            &["dirty.txt"],
+            "lifecycle with path test",
+            LifecycleCommitEmpty::IfNothingStaged,
+        )
+        .unwrap();
+
+        let show = git_stdout(dir.path(), &["show", "--format=", "--name-only", "HEAD"]);
+        assert!(show.contains("dirty.txt"));
+    }
+
+    #[test]
     fn python_td_check_baseline_is_exact_idempotent_and_path_scoped() {
         if !git_available() {
             return;
@@ -9659,10 +9697,7 @@ pub(crate) fn commit_lifecycle_with_extra(
     paths: &[&str],
     extra_trailers: &[(&str, &str)],
 ) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-
-    stage_lifecycle_paths(worktree_path, &git_bin, paths)?;
+    stage_lifecycle_paths(worktree_path, paths)?;
 
     let mut msg = format!(
         "td({slug}) \u{2014} {detail}\n\n\
@@ -9674,22 +9709,8 @@ pub(crate) fn commit_lifecycle_with_extra(
         msg.push_str(&format!("\n{}: {}", k, v));
     }
 
-    let mut command = std::process::Command::new(&git_bin);
-    command.arg("-C").arg(worktree_path).arg("commit");
-    if !has_staged_changes(worktree_path, &git_bin)? {
-        command.arg("--allow-empty");
-    }
-    let commit = command
-        .args(["-m", &msg])
-        .output()
-        .context("git commit failed")?;
-    if !commit.status.success() {
-        anyhow::bail!(
-            "git commit failed: {}",
-            String::from_utf8_lossy(&commit.stderr).trim()
-        );
-    }
-    Ok(())
+    let allow = !crate::git::has_staged_changes(worktree_path)?;
+    crate::git::commit_staged(worktree_path, &msg, allow)
 }
 
 // ── td promote ────────────────────────────────────────────────────────
