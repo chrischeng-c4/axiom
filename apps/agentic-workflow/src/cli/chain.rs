@@ -914,6 +914,30 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: true,
         sunset_criterion: "",
     },
+    VerbLifecycle {
+        path: "wi.change",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.test",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.review",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.commit",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
     // -- issue (support: CLI-convention trio's issue verb) ---------------
     VerbLifecycle {
         path: "issue.search",
@@ -1885,6 +1909,10 @@ mod tests {
             "capability.set-surface",
             "capability.set-ec-dimension",
             "capability.set-wi-ref",
+            "wi.change",
+            "wi.test",
+            "wi.review",
+            "wi.commit",
         ];
         for path in mutating {
             assert_eq!(
@@ -1925,6 +1953,61 @@ mod tests {
                 "{path} must be classified mutates_lifecycle: false"
             );
         }
+    }
+
+    #[test]
+    fn change_wi_contract_lifecycle_leaves_are_registered_and_classified() {
+        let paths: std::collections::BTreeSet<String> = leaf_verb_paths().into_iter().collect();
+        for leaf in ["wi.change", "wi.test", "wi.review", "wi.commit"] {
+            assert!(
+                paths.contains(leaf),
+                "leaf_verb_paths() must contain `{leaf}`"
+            );
+            assert_eq!(
+                verb_mutates_lifecycle(leaf),
+                Some(true),
+                "{leaf} must be classified mutates_lifecycle: true"
+            );
+        }
+        let pre_existing_wi_paths = [
+            "wi.draft.init",
+            "wi.draft.fill",
+            "wi.draft.validate",
+            "wi.list",
+            "wi.graph",
+            "wi.show",
+            "wi.run",
+            "wi.create",
+            "wi.update",
+            "wi.close",
+            "wi.spike.resolve",
+            "wi.spike.expire",
+            "wi.triage",
+            "wi.find",
+            "wi.plan",
+            "wi.plan-review",
+            "wi.plan-answer",
+            "wi.plan-apply",
+            "wi.epicize",
+            "wi.atomize",
+            "wi.prioritize",
+            "wi.enrich",
+            "wi.validate",
+            "wi.fill-section",
+        ];
+        for path in pre_existing_wi_paths {
+            assert!(
+                paths.contains(path),
+                "pre-existing wi verb `{path}` must remain registered"
+            );
+        }
+        let wi_paths: Vec<_> = paths.iter().filter(|p| p.starts_with("wi.")).collect();
+        assert_eq!(
+            wi_paths.len(),
+            28,
+            "expected 28 wi.* paths (24 existing + 4 new), got {}",
+            wi_paths.len()
+        );
     }
 
     #[test]

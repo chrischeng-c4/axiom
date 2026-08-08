@@ -83,6 +83,14 @@ pub enum IssuesCommand {
     Validate(ValidateArgs),
     /// Fill work-item sections via structured round-trip.
     FillSection(FillSectionArgs),
+    /// Drive R3 of #3363: change-WI snapshot, digest, and drift verification.
+    Change(ChangeArgs),
+    /// Drive R4 of #3363: change-WI test execution and evidence persistence.
+    Test(TestArgs),
+    /// Drive R5 of #3363: change-WI review evidence collection and verification.
+    Review(ReviewArgs),
+    /// Drive R6 of #3363: change-WI commit authority and landing verification.
+    Commit(CommitArgs),
 }
 #[derive(Debug, Args)]
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
@@ -784,6 +792,30 @@ pub struct FillSectionArgs {
     pub model: Option<String>,
 }
 
+#[derive(Debug, Args)]
+pub struct ChangeArgs {
+    /// Work-item slug.
+    pub slug: String,
+}
+
+#[derive(Debug, Args)]
+pub struct TestArgs {
+    /// Work-item slug.
+    pub slug: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewArgs {
+    /// Work-item slug.
+    pub slug: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CommitArgs {
+    /// Work-item slug.
+    pub slug: String,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
 pub enum BackendKind {
@@ -1232,6 +1264,93 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Enrich(a) => run_enrich(a).await,
         IssuesCommand::Validate(a) => run_validate(a).await,
         IssuesCommand::FillSection(a) => run_fill_section(a).await,
+        IssuesCommand::Change(a) => run_change(a).await,
+        IssuesCommand::Test(a) => run_test(a).await,
+        IssuesCommand::Review(a) => run_review(a).await,
+        IssuesCommand::Commit(a) => run_commit(a).await,
+    }
+}
+
+/// Ensure a work-item id/slug is non-empty for the change-WI contract lifecycle.
+pub fn ensure_change_id(id: &str) -> Result<()> {
+    if id.trim().is_empty() {
+        anyhow::bail!("work-item id cannot be empty");
+    }
+    Ok(())
+}
+
+/// Ensure a work-item has immutable type `change` for the change-WI contract lifecycle.
+/// Refuses any other type (including `spike`, `report`, legacy aliases, and `epic`),
+/// returning a typed refusal naming the work-item's actual type.
+pub fn ensure_change_issue(issue: &Issue, verb: &str) -> Result<()> {
+    let id = if !issue.slug.is_empty() {
+        &issue.slug
+    } else if let Some(id) = &issue.id {
+        id.as_str()
+    } else {
+        "unknown"
+    };
+    ensure_change_id(id)?;
+    if !matches!(issue.issue_type, IssueType::Change) {
+        let actual_type = match issue.issue_type {
+            IssueType::Epic => "epic",
+            IssueType::Change => "change",
+            IssueType::Spike => "spike",
+            IssueType::Report => "report",
+            IssueType::Bug => "bug",
+            IssueType::Enhancement => "enhancement",
+            IssueType::Refactor => "refactor",
+            IssueType::Test => "test",
+        };
+        let verb_str = if verb.starts_with("aw wi ") {
+            verb.to_string()
+        } else {
+            format!("aw wi {verb}")
+        };
+        anyhow::bail!(
+            "work-item `{id}` has immutable type `{actual_type}`; `{verb_str}` accepts only type:change"
+        );
+    }
+    Ok(())
+}
+
+async fn run_change(args: ChangeArgs) -> Result<()> {
+    ensure_change_id(&args.slug)?;
+    let issue = load_issue_for_change_lifecycle(&args.slug).await?;
+    ensure_change_issue(&issue, "change")?;
+    anyhow::bail!("stage `change` is not implemented yet (requires #3363 R3)");
+}
+
+async fn run_test(args: TestArgs) -> Result<()> {
+    ensure_change_id(&args.slug)?;
+    let issue = load_issue_for_change_lifecycle(&args.slug).await?;
+    ensure_change_issue(&issue, "test")?;
+    anyhow::bail!("stage `test` is not implemented yet (requires #3363 R4)");
+}
+
+async fn run_review(args: ReviewArgs) -> Result<()> {
+    ensure_change_id(&args.slug)?;
+    let issue = load_issue_for_change_lifecycle(&args.slug).await?;
+    ensure_change_issue(&issue, "review")?;
+    anyhow::bail!("stage `review` is not implemented yet (requires #3363 R5)");
+}
+
+async fn run_commit(args: CommitArgs) -> Result<()> {
+    ensure_change_id(&args.slug)?;
+    let issue = load_issue_for_change_lifecycle(&args.slug).await?;
+    ensure_change_issue(&issue, "commit")?;
+    anyhow::bail!("stage `commit` is not implemented yet (requires #3363 R6)");
+}
+
+async fn load_issue_for_change_lifecycle(slug: &str) -> Result<Issue> {
+    ensure_change_id(slug)?;
+    let project_root = crate::find_project_root()?;
+    let (kind, repo, host) = resolve_backend(None, &project_root)?;
+    let backend = make_backend(&kind, &project_root, repo, host)?;
+    let issue = backend.get(slug).await?;
+    match issue {
+        Some(i) => Ok(i),
+        None => anyhow::bail!("work-item `{slug}` was not found"),
     }
 }
 
@@ -11697,6 +11816,210 @@ label = "app:agentic-workflow"
         assert_eq!(PriorityFilter::P1.as_label_suffix(), "p1");
         assert_eq!(PriorityFilter::P2.as_label_suffix(), "p2");
         assert_eq!(PriorityFilter::P3.as_label_suffix(), "p3");
+    }
+
+    #[test]
+    fn change_wi_contract_lifecycle_identity_gate_accepts_change_and_refuses_others() {
+        let mut change_issue = Issue {
+            issue_type: IssueType::Change,
+            title: "Test Change".to_string(),
+            state: IssueState::Open,
+            id: None,
+            github_id: None,
+            gitlab_id: None,
+            url: None,
+            author: None,
+            labels: vec!["type:change".to_string()],
+            created_at: None,
+            updated_at: None,
+            slug: "3363-change".to_string(),
+            body: "".to_string(),
+            related: vec![],
+            implements: vec![],
+            phase: None,
+            branch: None,
+            target_branch: None,
+            git_workflow: None,
+            change_id: None,
+            iteration: None,
+            current_task_id: None,
+            impl_spec_phase: None,
+            task_revisions: None,
+            revision_counts: None,
+            last_action: None,
+            session_id: None,
+            validation_errors: vec![],
+            review_count: None,
+            flagged_sections: None,
+            fill_retry_count: None,
+            ship_status: None,
+            ship_commit: None,
+            regen_verified_at: None,
+        };
+
+        // Measurement 6: IssueType::Change is accepted by identity gate for all 4 leaves
+        for leaf in ["change", "test", "review", "commit"] {
+            assert!(
+                ensure_change_issue(&change_issue, leaf).is_ok(),
+                "identity gate must accept IssueType::Change for {leaf}"
+            );
+        }
+
+        // Measurement 5: IssueType::Spike and IssueType::Report are refused, naming actual type
+        change_issue.issue_type = IssueType::Spike;
+        change_issue.slug = "3363-spike".to_string();
+        for leaf in ["change", "test", "review", "commit"] {
+            let err = ensure_change_issue(&change_issue, leaf).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("work-item `3363-spike` has immutable type `spike`"),
+                "expected refusal for spike, got: {msg}"
+            );
+            assert!(
+                msg.contains("accepts only type:change"),
+                "expected refusal mentioning type:change, got: {msg}"
+            );
+        }
+
+        change_issue.issue_type = IssueType::Report;
+        change_issue.slug = "3363-report".to_string();
+        for leaf in ["change", "test", "review", "commit"] {
+            let err = ensure_change_issue(&change_issue, leaf).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("work-item `3363-report` has immutable type `report`"),
+                "expected refusal for report, got: {msg}"
+            );
+            assert!(
+                msg.contains("accepts only type:change"),
+                "expected refusal mentioning type:change, got: {msg}"
+            );
+        }
+
+        // Refuses legacy aliases and epics as well
+        change_issue.issue_type = IssueType::Bug;
+        change_issue.slug = "3363-bug".to_string();
+        let err = ensure_change_issue(&change_issue, "change").unwrap_err();
+        assert!(err.to_string().contains("has immutable type `bug`"));
+
+        change_issue.issue_type = IssueType::Epic;
+        change_issue.slug = "3363-epic".to_string();
+        let err = ensure_change_issue(&change_issue, "change").unwrap_err();
+        assert!(err.to_string().contains("has immutable type `epic`"));
+    }
+
+    #[test]
+    fn change_wi_contract_lifecycle_id_gate_refuses_empty_or_whitespace() {
+        assert!(ensure_change_id("").is_err());
+        assert!(ensure_change_id("   ").is_err());
+        let err = ensure_change_id("").unwrap_err();
+        assert_eq!(err.to_string(), "work-item id cannot be empty");
+        assert!(ensure_change_id("3363-slug").is_ok());
+    }
+
+    // Measurement 2 & 3: Clap parsing for change, test, review, commit leaves
+    #[test]
+    fn change_wi_leaves_require_positional_work_item_id() {
+        use crate::cli::standardize::TraceabilityCli;
+        use clap::CommandFactory;
+
+        for verb in ["change", "test", "review", "commit"] {
+            // Measurement 2: no positional -> parsing fails naming missing argument slug/id
+            let res = TraceabilityCli::command().try_get_matches_from(["aw", "wi", verb]);
+            assert!(
+                res.is_err(),
+                "bare `aw wi {verb}` with no id must fail parsing"
+            );
+            let err_str = res.unwrap_err().to_string();
+            assert!(
+                err_str.contains("slug") || err_str.contains("SLUG") || err_str.contains("work-item"),
+                "parsing error for bare `aw wi {verb}` must name missing id argument, got: {err_str}"
+            );
+
+            // Measurement 3: with positional -> parsing succeeds with token unchanged
+            let token = "3363-r1-slug";
+            let matches = TraceabilityCli::command()
+                .try_get_matches_from(["aw", "wi", verb, token])
+                .unwrap_or_else(|e| panic!("failed to parse `aw wi {verb} {token}`: {e}"));
+            let (_, sub_matches) = matches.subcommand().expect("subcommand wi");
+            let (leaf_name, leaf_matches) = sub_matches.subcommand().expect("leaf subcommand");
+            assert_eq!(leaf_name, verb);
+            let slug = leaf_matches
+                .get_one::<String>("slug")
+                .expect("slug argument");
+            assert_eq!(slug, token);
+        }
+    }
+
+    // Measurement 7: aw wi spike, triage, show, list, graph still parse and reach existing commands
+    #[test]
+    fn existing_wi_leaves_keep_behavior_and_acceptance() {
+        use crate::cli::standardize::TraceabilityCli;
+        use clap::CommandFactory;
+
+        let matches = TraceabilityCli::command()
+            .try_get_matches_from([
+                "aw",
+                "wi",
+                "spike",
+                "resolve",
+                "3363-spike",
+                "--decision",
+                "test",
+                "--no-action",
+            ])
+            .unwrap();
+        let (_, sub) = matches.subcommand().unwrap();
+        let (leaf, leaf_sub) = sub.subcommand().unwrap();
+        assert_eq!(leaf, "spike");
+        let (spike_sub, leaf_matches) = leaf_sub.subcommand().unwrap();
+        assert_eq!(spike_sub, "resolve");
+        assert_eq!(
+            leaf_matches.get_one::<String>("id").map(String::as_str),
+            Some("3363-spike")
+        );
+
+        let matches = TraceabilityCli::command()
+            .try_get_matches_from(["aw", "wi", "triage", "3363-report", "--verdict", "accepted"])
+            .unwrap();
+        let (_, sub) = matches.subcommand().unwrap();
+        let (leaf, leaf_matches) = sub.subcommand().unwrap();
+        assert_eq!(leaf, "triage");
+        assert_eq!(
+            leaf_matches.get_one::<String>("id").map(String::as_str),
+            Some("3363-report")
+        );
+
+        let matches = TraceabilityCli::command()
+            .try_get_matches_from(["aw", "wi", "show", "3363"])
+            .unwrap();
+        let (_, sub) = matches.subcommand().unwrap();
+        let (leaf, leaf_matches) = sub.subcommand().unwrap();
+        assert_eq!(leaf, "show");
+        assert_eq!(
+            leaf_matches.get_one::<String>("id").map(String::as_str),
+            Some("3363")
+        );
+
+        let matches = TraceabilityCli::command()
+            .try_get_matches_from(["aw", "wi", "list"])
+            .unwrap();
+        let (_, sub) = matches.subcommand().unwrap();
+        let (leaf, _) = sub.subcommand().unwrap();
+        assert_eq!(leaf, "list");
+
+        let matches = TraceabilityCli::command()
+            .try_get_matches_from(["aw", "wi", "graph", "--project", "test"])
+            .unwrap();
+        let (_, sub) = matches.subcommand().unwrap();
+        let (leaf, leaf_matches) = sub.subcommand().unwrap();
+        assert_eq!(leaf, "graph");
+        assert_eq!(
+            leaf_matches
+                .get_one::<String>("project")
+                .map(String::as_str),
+            Some("test")
+        );
     }
 }
 // CODEGEN-END
