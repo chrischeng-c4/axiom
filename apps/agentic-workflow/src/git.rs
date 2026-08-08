@@ -81,7 +81,14 @@ pub fn is_git_repo(project_root: &Path) -> bool {
 
 /// Refuse to mix lifecycle commits with already-staged user changes.
 /// @spec apps/agentic-workflow/tech-design/core/logic/git.md#source
-pub fn ensure_no_staged_changes(project_root: &Path) -> Result<()> {
+pub fn ensure_no_staged_changes(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
+    project_root: &Path,
+) -> Result<()> {
+    ensure_no_staged_changes_impl(project_root)
+}
+
+fn ensure_no_staged_changes_impl(project_root: &Path) -> Result<()> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -119,7 +126,7 @@ pub fn commit_scoped_paths(
     if paths.is_empty() || !is_git_repo(project_root) {
         return Ok(false);
     }
-    ensure_no_staged_changes(project_root)?;
+    ensure_no_staged_changes_impl(project_root)?;
     let rel_paths = repo_relative_paths(project_root, paths)?;
     if rel_paths.is_empty() {
         return Ok(false);
@@ -174,6 +181,7 @@ pub fn commit_scoped_paths(
 /// Return dirty paths under the supplied repo-relative or absolute scopes.
 /// @spec apps/agentic-workflow/tech-design/core/logic/git.md#source
 pub fn dirty_paths(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
     project_root: &Path,
     scopes: &[PathBuf],
     include_untracked: bool,
@@ -258,7 +266,10 @@ fn git_diff_has_changes(status: std::process::ExitStatus, operation: &str) -> Re
 }
 
 /// Check if `project_root` has any staged changes.
-pub fn has_staged_changes(project_root: &Path) -> Result<bool> {
+pub fn has_staged_changes(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
+    project_root: &Path,
+) -> Result<bool> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let status = std::process::Command::new(git_bin)
         .arg("-C")
@@ -271,6 +282,7 @@ pub fn has_staged_changes(project_root: &Path) -> Result<bool> {
 
 /// Check if specified `paths` in `project_root` have staged changes.
 pub fn has_staged_changes_for_paths<P: AsRef<Path>>(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
     project_root: &Path,
     paths: &[P],
     literal_pathspecs: bool,
@@ -593,6 +605,7 @@ pub fn git_diff_name_only(
 
 /// Run `git status` with args in `project_root` and return raw stdout bytes.
 pub fn git_status<P: AsRef<Path>>(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
     project_root: &Path,
     literal_pathspecs: bool,
     args: &[&str],
@@ -656,7 +669,8 @@ mod tests {
         }
         let review = dir.path().join("ec-review.json");
         std::fs::write(&review, "{}\n").unwrap();
-        ensure_no_staged_changes(dir.path()).unwrap();
+        let wcap = crate::lifecycle_commit::LifecycleWorktreeCapability::for_test();
+        ensure_no_staged_changes(&wcap, dir.path()).unwrap();
 
         let git = find_git_bin().unwrap();
         let staged = std::process::Command::new(git)
@@ -665,7 +679,7 @@ mod tests {
             .output()
             .unwrap();
         assert!(staged.status.success());
-        let error = ensure_no_staged_changes(dir.path())
+        let error = ensure_no_staged_changes(&wcap, dir.path())
             .unwrap_err()
             .to_string();
         assert!(error.contains("ec-review.json"), "{error}");
@@ -1094,21 +1108,26 @@ pub fn prod_fn() {
         std::fs::write(&file1, "hello\n").unwrap();
 
         let cap = crate::lifecycle_commit::LifecycleCommitCapability::for_test();
+        let wcap = crate::lifecycle_commit::LifecycleWorktreeCapability::for_test();
         stage_paths(&cap, repo, &[Path::new("test.txt")], false).unwrap();
-        assert!(has_staged_changes(repo).unwrap());
+        assert!(has_staged_changes(&wcap, repo).unwrap());
 
         commit_staged(&cap, repo, "commit test", false).unwrap();
-        assert!(!has_staged_changes(repo).unwrap());
+        assert!(!has_staged_changes(&wcap, repo).unwrap());
 
         commit_staged(&cap, repo, "empty test", true).unwrap();
 
         let file2 = repo.join("scoped.txt");
         std::fs::write(&file2, "world\n").unwrap();
         stage_paths(&cap, repo, &[Path::new("scoped.txt")], true).unwrap();
-        assert!(has_staged_changes_for_paths(repo, &[Path::new("scoped.txt")], true).unwrap());
+        assert!(
+            has_staged_changes_for_paths(&wcap, repo, &[Path::new("scoped.txt")], true).unwrap()
+        );
 
         commit_only_paths(&cap, repo, &[Path::new("scoped.txt")], "scoped test", true).unwrap();
-        assert!(!has_staged_changes_for_paths(repo, &[Path::new("scoped.txt")], true).unwrap());
+        assert!(
+            !has_staged_changes_for_paths(&wcap, repo, &[Path::new("scoped.txt")], true).unwrap()
+        );
     }
 
     #[test]
@@ -1116,13 +1135,14 @@ pub fn prod_fn() {
         let dir = TempDir::new().unwrap();
         let non_repo = dir.path();
 
-        let err1 = has_staged_changes(non_repo).unwrap_err().to_string();
+        let wcap = crate::lifecycle_commit::LifecycleWorktreeCapability::for_test();
+        let err1 = has_staged_changes(&wcap, non_repo).unwrap_err().to_string();
         assert!(
             err1.contains("git diff --cached failed with exit code"),
             "expected non-0/1 exit code error text, got: {err1}"
         );
 
-        let err2 = has_staged_changes_for_paths(non_repo, &[Path::new("test.txt")], true)
+        let err2 = has_staged_changes_for_paths(&wcap, non_repo, &[Path::new("test.txt")], true)
             .unwrap_err()
             .to_string();
         assert!(
@@ -1549,7 +1569,9 @@ mod tests {
             String::from_utf8_lossy(&update_out.stderr)
         );
 
+        let wcap = crate::lifecycle_commit::LifecycleWorktreeCapability::for_test();
         let routed_bytes = git_status(
+            &wcap,
             temp.path(),
             false,
             &["--porcelain=v1", "-z", "--untracked-files=all"],
@@ -1622,7 +1644,9 @@ mod tests {
             String::from_utf8_lossy(&update_out.stderr)
         );
 
+        let wcap = crate::lifecycle_commit::LifecycleWorktreeCapability::for_test();
         let routed_bytes = git_status(
+            &wcap,
             temp.path(),
             true,
             &["--porcelain=v1", "-z", "--untracked-files=all"],
@@ -1680,8 +1704,10 @@ mod tests {
             "cb.rs:7445 must return Err on git failure"
         );
 
+        let wcap = crate::lifecycle_commit::LifecycleWorktreeCapability::for_test();
         assert!(
             git_status(
+                &wcap,
                 non_repo.path(),
                 true,
                 &["--porcelain=v1", "-z", "--untracked-files=all",],

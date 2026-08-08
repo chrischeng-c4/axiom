@@ -414,9 +414,10 @@ fn ensure_inplace_td_lifecycle_ready(project_root: &std::path::Path) -> Result<S
         crate::branch_switch::ensure_branch_clean(project_root)
             .map_err(|e| anyhow::anyhow!("td branch activation requires a clean tree: {e}"))?;
     } else {
-        crate::git::ensure_no_staged_changes(project_root).map_err(|e| {
-            anyhow::anyhow!("in-place td verb cannot include pre-existing staged paths: {e}")
-        })?;
+        crate::lifecycle_commit::ensure_no_staged_changes(LifecycleLeaf::Td, project_root)
+            .map_err(|e| {
+                anyhow::anyhow!("in-place td verb cannot include pre-existing staged paths: {e:#}")
+            })?;
     }
     Ok(current)
 }
@@ -546,7 +547,13 @@ pub(crate) fn checkout_has_only_exact_untracked_path(
             args.push("--");
             args.push(pathspec);
         }
-        crate::git::git_status(project_root, false, &args, &[] as &[&std::path::Path])
+        crate::lifecycle_commit::git_status(
+            LifecycleLeaf::Td,
+            project_root,
+            false,
+            &args,
+            &[] as &[&std::path::Path],
+        )
     };
 
     let targeted_stdout = status(Some(&normalized))?;
@@ -903,7 +910,9 @@ pub(crate) fn commit_lifecycle_message(
 
     let allow = match allow_empty {
         LifecycleCommitEmpty::Always => true,
-        LifecycleCommitEmpty::IfNothingStaged => !crate::git::has_staged_changes(worktree_path)?,
+        LifecycleCommitEmpty::IfNothingStaged => {
+            !crate::lifecycle_commit::has_staged_changes(LifecycleLeaf::Td, worktree_path)?
+        }
     };
     crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Td, worktree_path, message, allow)
 }
@@ -3949,7 +3958,7 @@ fn ensure_python_td_source_baseline(
     if lifecycle_stage_for_slug_exists(project_root, wi, lifecycle_trailer::TD_PYTHON_SOURCE)? {
         return Ok(());
     }
-    crate::git::ensure_no_staged_changes(project_root)?;
+    crate::lifecycle_commit::ensure_no_staged_changes(LifecycleLeaf::Td, project_root)?;
     let td_root_arg = td_root.to_string_lossy().into_owned();
     commit_lifecycle_with_extra(
         project_root,
@@ -9659,7 +9668,7 @@ pub(crate) fn commit_lifecycle_with_extra(
         msg.push_str(&format!("\n{}: {}", k, v));
     }
 
-    let allow = !crate::git::has_staged_changes(worktree_path)?;
+    let allow = !crate::lifecycle_commit::has_staged_changes(LifecycleLeaf::Td, worktree_path)?;
     crate::lifecycle_commit::commit_staged_changes(LifecycleLeaf::Td, worktree_path, &msg, allow)
 }
 

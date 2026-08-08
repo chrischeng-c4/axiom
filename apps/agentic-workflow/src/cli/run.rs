@@ -3560,7 +3560,12 @@ fn project_repo_side_dirty_paths_at(
     project: &str,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let scopes = project_repo_side_scopes(project_root, project)?;
-    let dirty_paths = crate::git::dirty_paths(project_root, &scopes, true)?;
+    let dirty_paths = crate::git::dirty_paths(
+        &crate::lifecycle_commit::LifecycleWorktreeCapability::for_test(),
+        project_root,
+        &scopes,
+        true,
+    )?;
     Ok((dirty_paths, scope_strings(project_root, &scopes)))
 }
 

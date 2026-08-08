@@ -361,7 +361,12 @@ fn commit_td_lock_update(
 
     crate::lifecycle_commit::stage_path_set(LifecycleLeaf::Td, project_root, &[lock_path], true)?;
 
-    if !crate::git::has_staged_changes_for_paths(project_root, &[lock_path], true)? {
+    if !crate::lifecycle_commit::has_staged_changes_for_paths(
+        LifecycleLeaf::Td,
+        project_root,
+        &[lock_path],
+        true,
+    )? {
         return Ok(false);
     }
 
@@ -377,7 +382,8 @@ fn commit_td_lock_update(
         true,
     )?;
 
-    let lock_stdout = crate::git::git_status(
+    let lock_stdout = crate::lifecycle_commit::git_status(
+        LifecycleLeaf::Td,
         project_root,
         true,
         &["--porcelain=v1", "-z", "--untracked-files=all"],

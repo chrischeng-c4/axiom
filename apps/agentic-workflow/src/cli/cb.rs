@@ -349,7 +349,12 @@ pub async fn run_materialize(args: CbMaterializeArgs) -> Result<()> {
     }
 
     // Preflight clean worktree (R3): candidate materialization requires clean worktree
-    let dirty = crate::git::dirty_paths(&project_root, &[std::path::PathBuf::from(".")], true)?;
+    let dirty = crate::lifecycle_commit::dirty_paths(
+        LifecycleLeaf::Cb,
+        &project_root,
+        &[std::path::PathBuf::from(".")],
+        true,
+    )?;
     if !dirty.is_empty() {
         let env = serde_json::json!({
             "action": "refused",
@@ -508,8 +513,12 @@ pub async fn run_publish(args: CbPublishArgs) -> Result<()> {
         }
     };
 
-    let dirty_paths =
-        crate::git::dirty_paths(&project_root, &[std::path::PathBuf::from(".")], true)?;
+    let dirty_paths = crate::lifecycle_commit::dirty_paths(
+        LifecycleLeaf::Cb,
+        &project_root,
+        &[std::path::PathBuf::from(".")],
+        true,
+    )?;
     let filtered_dirty: Vec<String> = dirty_paths
         .into_iter()
         .filter(|p| !p.starts_with(".git") && !p.starts_with(".aw") && !p.contains("aw-candidate-"))
@@ -1096,7 +1105,7 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
         // Refuse before the emitter mutates the native target. The lifecycle
         // commit below is deliberately path-scoped and must never absorb a
         // caller's pre-existing index.
-        crate::git::ensure_no_staged_changes(&root)?;
+        crate::lifecycle_commit::ensure_no_staged_changes(LifecycleLeaf::Cb, &root)?;
         Some(root)
     } else {
         None
@@ -1161,7 +1170,7 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
             // ownership history. The index is rechecked immediately before
             // the empty lifecycle commit, so there is no unrelated content
             // for the otherwise-unscoped git commit to absorb.
-            crate::git::ensure_no_staged_changes(project_root)?;
+            crate::lifecycle_commit::ensure_no_staged_changes(LifecycleLeaf::Cb, project_root)?;
             crate::cli::td::commit_lifecycle_with_extra(
                 project_root,
                 wi,
@@ -6870,7 +6879,8 @@ pub(crate) fn dirty_touched_scope_gate_message(
     if touched.is_empty() {
         return None;
     }
-    let stdout = crate::git::git_status(
+    let stdout = crate::lifecycle_commit::git_status(
+        LifecycleLeaf::Cb,
         project_root,
         false,
         &["--porcelain", "--untracked-files=all"],

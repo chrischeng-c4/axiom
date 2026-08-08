@@ -71,6 +71,28 @@ impl LifecycleHistoryCapability {
     }
 }
 
+/// Unforgeable capability token required by `crate::git` working-tree probes.
+///
+/// Code outside `crate::lifecycle_commit` cannot construct this type because
+/// its single field is private and no public constructor or `Default` / `Clone`
+/// implementation exists.
+pub struct LifecycleWorktreeCapability {
+    _private: (),
+}
+
+impl LifecycleWorktreeCapability {
+    /// Internal constructor accessible only within `crate::lifecycle_commit`.
+    fn get() -> Self {
+        Self { _private: () }
+    }
+
+    /// Test-only constructor available when compiled under `#[cfg(test)]`.
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self { _private: () }
+    }
+}
+
 /// Stage exactly `paths`, create `message` as a lifecycle commit, and no-op
 /// when those paths have no staged diff.
 pub fn commit_scoped_path_set(
@@ -202,6 +224,57 @@ pub fn git_diff_name_only(
 ) -> Result<Vec<String>> {
     let cap = LifecycleHistoryCapability::get();
     crate::git::git_diff_name_only(&cap, project_root, args)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Ensure no staged changes exist in `project_root`.
+pub fn ensure_no_staged_changes(leaf: LifecycleLeaf, project_root: &Path) -> Result<()> {
+    let cap = LifecycleWorktreeCapability::get();
+    crate::git::ensure_no_staged_changes(&cap, project_root)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Return dirty paths under `scopes` in `project_root`.
+pub fn dirty_paths(
+    leaf: LifecycleLeaf,
+    project_root: &Path,
+    scopes: &[PathBuf],
+    include_untracked: bool,
+) -> Result<Vec<String>> {
+    let cap = LifecycleWorktreeCapability::get();
+    crate::git::dirty_paths(&cap, project_root, scopes, include_untracked)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Check if `project_root` has any staged changes.
+pub fn has_staged_changes(leaf: LifecycleLeaf, project_root: &Path) -> Result<bool> {
+    let cap = LifecycleWorktreeCapability::get();
+    crate::git::has_staged_changes(&cap, project_root)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Check if specified `paths` in `project_root` have staged changes.
+pub fn has_staged_changes_for_paths<P: AsRef<Path>>(
+    leaf: LifecycleLeaf,
+    project_root: &Path,
+    paths: &[P],
+    literal_pathspecs: bool,
+) -> Result<bool> {
+    let cap = LifecycleWorktreeCapability::get();
+    crate::git::has_staged_changes_for_paths(&cap, project_root, paths, literal_pathspecs)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Run `git status` with args in `project_root` and return raw stdout bytes.
+pub fn git_status<P: AsRef<Path>>(
+    leaf: LifecycleLeaf,
+    project_root: &Path,
+    literal_pathspecs: bool,
+    args: &[&str],
+    pathspecs: &[P],
+) -> Result<Vec<u8>> {
+    let cap = LifecycleWorktreeCapability::get();
+    crate::git::git_status(&cap, project_root, literal_pathspecs, args, pathspecs)
         .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
 }
 
@@ -338,7 +411,9 @@ mod tests {
         );
 
         // Verify second file is still dirty and uncommitted
-        let dirty = crate::git::dirty_paths(repo, &[std::path::PathBuf::from(".")], false).unwrap();
+        let wcap = LifecycleWorktreeCapability::for_test();
+        let dirty =
+            crate::git::dirty_paths(&wcap, repo, &[std::path::PathBuf::from(".")], false).unwrap();
         assert_eq!(
             dirty,
             vec!["file2.txt"],
@@ -771,6 +846,11 @@ mod tests {
             "git_show",
             "git_cat_file_blob",
             "git_diff_name_only",
+            "ensure_no_staged_changes",
+            "dirty_paths",
+            "has_staged_changes",
+            "has_staged_changes_for_paths",
+            "git_status",
         ];
 
         if rel_path == "git.rs" || rel_path == "lifecycle_commit.rs" {
@@ -843,12 +923,14 @@ mod tests {
 
         let mut violations = Vec::new();
         let mut routed_history_calls = 0;
+        let mut routed_worktree_calls = 0;
 
         fn walk_dir(
             dir: &Path,
             src_dir: &Path,
             violations: &mut Vec<String>,
             routed_history_calls: &mut usize,
+            routed_worktree_calls: &mut usize,
         ) {
             let mut entries: Vec<_> = std::fs::read_dir(dir)
                 .unwrap()
@@ -859,7 +941,13 @@ mod tests {
             for entry in entries {
                 let path = entry.path();
                 if path.is_dir() {
-                    walk_dir(&path, src_dir, violations, routed_history_calls);
+                    walk_dir(
+                        &path,
+                        src_dir,
+                        violations,
+                        routed_history_calls,
+                        routed_worktree_calls,
+                    );
                 } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
                     let rel_path = path
                         .strip_prefix(src_dir)
@@ -886,6 +974,17 @@ mod tests {
                             let routed_pattern = format!("crate::lifecycle_commit::{probe}");
                             *routed_history_calls += content.matches(&routed_pattern).count();
                         }
+                        let worktree_probes = [
+                            "ensure_no_staged_changes",
+                            "dirty_paths",
+                            "has_staged_changes",
+                            "has_staged_changes_for_paths",
+                            "git_status",
+                        ];
+                        for probe in worktree_probes {
+                            let routed_pattern = format!("crate::lifecycle_commit::{probe}");
+                            *routed_worktree_calls += content.matches(&routed_pattern).count();
+                        }
                     }
                 }
             }
@@ -896,6 +995,7 @@ mod tests {
             &src_dir,
             &mut violations,
             &mut routed_history_calls,
+            &mut routed_worktree_calls,
         );
 
         assert!(
@@ -907,6 +1007,11 @@ mod tests {
         assert!(
             routed_history_calls > 0,
             "Expected non-zero routed history calls in production code, found {routed_history_calls}"
+        );
+
+        assert!(
+            routed_worktree_calls > 0,
+            "Expected non-zero routed worktree calls in production code, found {routed_worktree_calls}"
         );
     }
 
@@ -1018,6 +1123,149 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_worktree_probe_negative_control_production_call() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let _ = crate::git::git_status(project_root, &scopes);
+}
+"#;
+        let violations = scan_source_for_direct_git_history_probes("src/cli/offender.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation for direct git_status call in production"
+        );
+        assert!(
+            violations[0].contains("src/cli/offender.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn test_worktree_probe_negative_control_cfg_test_call() {
+        let fixture = r#"
+#[cfg(test)]
+mod tests {
+    fn test_mod_fn() {
+        let _ = crate::git::dirty_paths(cap, project_root, &scopes, true);
+    }
+}
+
+#[cfg(test)]
+fn test_item_fn() {
+    let _ = crate::git::dirty_paths(cap, project_root, &scopes, true);
+}
+"#;
+        let violations = scan_source_for_direct_git_history_probes("src/cli/test_file.rs", fixture);
+        assert!(
+            violations.is_empty(),
+            "expected 0 violations for dirty_paths in #[cfg(test)] mod and item-level fn, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn test_direct_git_history_probes_negative_control_all_eleven_production_calls() {
+        let expected_probes = [
+            "git_log",
+            "git_rev_parse",
+            "git_rev_list",
+            "git_show",
+            "git_cat_file_blob",
+            "git_diff_name_only",
+            "ensure_no_staged_changes",
+            "dirty_paths",
+            "has_staged_changes",
+            "has_staged_changes_for_paths",
+            "git_status",
+        ];
+        let fixture = r#"
+pub fn prod_fn() {
+    let _ = crate::git::git_log(project_root, &["HEAD"]);
+    let _ = crate::git::git_rev_parse(project_root, &["HEAD"]);
+    let _ = crate::git::git_rev_list(project_root, &["HEAD"]);
+    let _ = crate::git::git_show(project_root, &["HEAD"]);
+    let _ = crate::git::git_cat_file_blob(project_root, "oid");
+    let _ = crate::git::git_diff_name_only(project_root, &["HEAD~1", "HEAD"]);
+    let _ = crate::git::ensure_no_staged_changes(project_root);
+    let _ = crate::git::dirty_paths(project_root, &scopes, true);
+    let _ = crate::git::has_staged_changes(project_root);
+    let _ = crate::git::has_staged_changes_for_paths(project_root, &paths, true);
+    let _ = crate::git::git_status(project_root, true, &args, &pathspecs);
+}
+"#;
+        let violations = scan_source_for_direct_git_history_probes("src/cli/offender.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            11,
+            "expected 11 violations for direct calls to all 11 probe names in production, got: {violations:?}"
+        );
+        let violations_text = violations.join("\n");
+        for probe in expected_probes {
+            assert!(
+                violations_text.contains(probe),
+                "violations output should contain probe name {probe}, got:\n{violations_text}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_direct_git_history_probes_negative_control_all_eleven_cfg_test_calls() {
+        let expected_probes = [
+            "git_log",
+            "git_rev_parse",
+            "git_rev_list",
+            "git_show",
+            "git_cat_file_blob",
+            "git_diff_name_only",
+            "ensure_no_staged_changes",
+            "dirty_paths",
+            "has_staged_changes",
+            "has_staged_changes_for_paths",
+            "git_status",
+        ];
+        let fixture = r#"
+#[cfg(test)]
+mod tests {
+    fn test_mod_fn() {
+        let _ = crate::git::git_log(project_root, &["HEAD"]);
+        let _ = crate::git::git_rev_parse(project_root, &["HEAD"]);
+        let _ = crate::git::git_rev_list(project_root, &["HEAD"]);
+        let _ = crate::git::git_show(project_root, &["HEAD"]);
+        let _ = crate::git::git_cat_file_blob(project_root, "oid");
+        let _ = crate::git::git_diff_name_only(project_root, &["HEAD~1", "HEAD"]);
+        let _ = crate::git::ensure_no_staged_changes(project_root);
+        let _ = crate::git::dirty_paths(project_root, &scopes, true);
+        let _ = crate::git::has_staged_changes(project_root);
+        let _ = crate::git::has_staged_changes_for_paths(project_root, &paths, true);
+        let _ = crate::git::git_status(project_root, true, &args, &pathspecs);
+    }
+}
+
+#[cfg(test)]
+fn test_item_fn() {
+    let _ = crate::git::git_log(project_root, &["HEAD"]);
+    let _ = crate::git::git_rev_parse(project_root, &["HEAD"]);
+    let _ = crate::git::git_rev_list(project_root, &["HEAD"]);
+    let _ = crate::git::git_show(project_root, &["HEAD"]);
+    let _ = crate::git::git_cat_file_blob(project_root, "oid");
+    let _ = crate::git::git_diff_name_only(project_root, &["HEAD~1", "HEAD"]);
+    let _ = crate::git::ensure_no_staged_changes(project_root);
+    let _ = crate::git::dirty_paths(project_root, &scopes, true);
+    let _ = crate::git::has_staged_changes(project_root);
+    let _ = crate::git::has_staged_changes_for_paths(project_root, &paths, true);
+    let _ = crate::git::git_status(project_root, true, &args, &pathspecs);
+}
+"#;
+        let violations = scan_source_for_direct_git_history_probes("src/cli/test_file.rs", fixture);
+        assert!(
+            violations.is_empty(),
+            "expected 0 violations for all 11 probes in #[cfg(test)] mod and item-level fn, got: {violations:?}"
+        );
+        assert_eq!(expected_probes.len(), 11);
+    }
+
     fn find_pub_fn_param_list(content: &str, probe: &str) -> Option<String> {
         let mut search_idx = 0;
         while let Some(pos) = content[search_idx..].find("pub fn") {
@@ -1086,9 +1334,7 @@ mod tests {
         None
     }
 
-    fn param_list_has_capability(param_list: &str) -> bool {
-        let target_type = "&crate::lifecycle_commit::LifecycleHistoryCapability";
-
+    fn param_list_has_capability(param_list: &str, target_type: &str) -> bool {
         let clean_param_list: String = param_list
             .lines()
             .map(|line| {
@@ -1153,28 +1399,69 @@ mod tests {
     }
 
     fn scan_source_for_history_probe_capabilities(content: &str) -> Vec<String> {
-        let probes = [
-            "git_log",
-            "git_rev_parse",
-            "git_rev_list",
-            "git_show",
-            "git_cat_file_blob",
-            "git_diff_name_only",
+        let history_probes = [
+            (
+                "git_log",
+                "&crate::lifecycle_commit::LifecycleHistoryCapability",
+            ),
+            (
+                "git_rev_parse",
+                "&crate::lifecycle_commit::LifecycleHistoryCapability",
+            ),
+            (
+                "git_rev_list",
+                "&crate::lifecycle_commit::LifecycleHistoryCapability",
+            ),
+            (
+                "git_show",
+                "&crate::lifecycle_commit::LifecycleHistoryCapability",
+            ),
+            (
+                "git_cat_file_blob",
+                "&crate::lifecycle_commit::LifecycleHistoryCapability",
+            ),
+            (
+                "git_diff_name_only",
+                "&crate::lifecycle_commit::LifecycleHistoryCapability",
+            ),
+        ];
+
+        let worktree_probes = [
+            (
+                "ensure_no_staged_changes",
+                "&crate::lifecycle_commit::LifecycleWorktreeCapability",
+            ),
+            (
+                "dirty_paths",
+                "&crate::lifecycle_commit::LifecycleWorktreeCapability",
+            ),
+            (
+                "has_staged_changes",
+                "&crate::lifecycle_commit::LifecycleWorktreeCapability",
+            ),
+            (
+                "has_staged_changes_for_paths",
+                "&crate::lifecycle_commit::LifecycleWorktreeCapability",
+            ),
+            (
+                "git_status",
+                "&crate::lifecycle_commit::LifecycleWorktreeCapability",
+            ),
         ];
 
         let mut violations = Vec::new();
 
-        for probe in probes {
+        for (probe, target_type) in history_probes.iter().chain(worktree_probes.iter()) {
             if let Some(param_list) = find_pub_fn_param_list(content, probe) {
-                let has_cap_param = param_list_has_capability(&param_list);
+                let has_cap_param = param_list_has_capability(&param_list, target_type);
                 if !has_cap_param {
                     violations.push(format!(
-                        "History probe {probe} in git.rs does not declare a parameter of type &crate::lifecycle_commit::LifecycleHistoryCapability"
+                        "Probe {probe} in git.rs does not declare a parameter of type {target_type}"
                     ));
                 }
             } else {
                 violations.push(format!(
-                    "History probe {probe} declaration not found as pub fn in git.rs"
+                    "Probe {probe} declaration not found as pub fn in git.rs"
                 ));
             }
         }
@@ -1193,7 +1480,7 @@ mod tests {
         let violations = scan_source_for_history_probe_capabilities(&content);
         assert!(
             violations.is_empty(),
-            "History probe capability parameter violations in git.rs:\n{}",
+            "Probe capability parameter violations in git.rs:\n{}",
             violations.join("\n")
         );
     }
@@ -1233,6 +1520,14 @@ pub fn git_diff_name_only(
 ) -> Result<Vec<String>> {
     Ok(Vec::new())
 }
+pub fn ensure_no_staged_changes(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
+    project_root: &Path,
+) -> Result<()> { Ok(()) }
+pub fn dirty_paths(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, scopes: &[PathBuf], include_untracked: bool) -> Result<Vec<String>> { Ok(Vec::new()) }
+pub fn has_staged_changes(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<bool> { Ok(true) }
+pub fn has_staged_changes_for_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<bool> { Ok(true) }
+pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, literal_pathspecs: bool, args: &[&str], pathspecs: &[P]) -> Result<Vec<u8>> { Ok(Vec::new()) }
 "#;
         let violations = scan_source_for_history_probe_capabilities(fixture);
         assert_eq!(
@@ -1245,6 +1540,76 @@ pub fn git_diff_name_only(
             "violation should name the probe git_log, got: {}",
             violations[0]
         );
+    }
+
+    #[test]
+    fn test_history_probe_capability_scanner_negative_control_all_eleven_missing_parameters() {
+        let expected_probes = [
+            "git_log",
+            "git_rev_parse",
+            "git_rev_list",
+            "git_show",
+            "git_cat_file_blob",
+            "git_diff_name_only",
+            "ensure_no_staged_changes",
+            "dirty_paths",
+            "has_staged_changes",
+            "has_staged_changes_for_paths",
+            "git_status",
+        ];
+        let fixture = r#"
+pub fn git_log(
+    project_root: &Path,
+    args: &[&str],
+) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_rev_parse(
+    project_root: &Path,
+) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_rev_list(
+    project_root: &Path,
+) -> Result<Vec<String>> {
+    Ok(Vec::new())
+}
+pub fn git_show(
+    project_root: &Path,
+) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_cat_file_blob(
+    project_root: &Path,
+) -> Result<Vec<u8>> {
+    Ok(Vec::new())
+}
+pub fn git_diff_name_only(
+    project_root: &Path,
+) -> Result<Vec<String>> {
+    Ok(Vec::new())
+}
+pub fn ensure_no_staged_changes(
+    project_root: &Path,
+) -> Result<()> { Ok(()) }
+pub fn dirty_paths(project_root: &Path, scopes: &[PathBuf], include_untracked: bool) -> Result<Vec<String>> { Ok(Vec::new()) }
+pub fn has_staged_changes(project_root: &Path) -> Result<bool> { Ok(true) }
+pub fn has_staged_changes_for_paths<P: AsRef<Path>>(project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<bool> { Ok(true) }
+pub fn git_status<P: AsRef<Path>>(project_root: &Path, literal_pathspecs: bool, args: &[&str], pathspecs: &[P]) -> Result<Vec<u8>> { Ok(Vec::new()) }
+"#;
+        let violations = scan_source_for_history_probe_capabilities(fixture);
+        assert_eq!(
+            violations.len(),
+            11,
+            "expected 11 violations when all 11 probe capability parameters are missing, got: {violations:?}"
+        );
+        let violations_text = violations.join("\n");
+        for probe in expected_probes {
+            assert!(
+                violations_text.contains(probe),
+                "violations output should contain probe name {probe}, got:\n{violations_text}"
+            );
+        }
     }
 
     #[test]
@@ -1272,11 +1637,86 @@ pub fn git_cat_file_blob(_cap: &crate::lifecycle_commit::LifecycleHistoryCapabil
 pub fn git_diff_name_only(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability) -> Result<Vec<String>> {
     Ok(Vec::new())
 }
+pub fn ensure_no_staged_changes(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
+    project_root: &Path,
+) -> Result<()> { Ok(()) }
+pub fn dirty_paths(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, scopes: &[PathBuf], include_untracked: bool) -> Result<Vec<String>> { Ok(Vec::new()) }
+pub fn has_staged_changes(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<bool> { Ok(true) }
+pub fn has_staged_changes_for_paths<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<bool> { Ok(true) }
+pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, literal_pathspecs: bool, args: &[&str], pathspecs: &[P]) -> Result<Vec<u8>> { Ok(Vec::new()) }
 "#;
         let violations = scan_source_for_history_probe_capabilities(fixture);
         assert!(
             violations.is_empty(),
             "expected 0 violations for renamed parameter or reflowed signature, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn test_routed_worktree_probe_has_staged_changes() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+
+        let git_bin = crate::git::find_git_bin()
+            .expect("git binary must be available for worktree probe test");
+
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test"],
+        ] {
+            let out = std::process::Command::new(&git_bin)
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .expect("git setup command failed");
+            assert!(out.status.success(), "git {:?} failed", args);
+        }
+
+        let file1 = repo.join("test_file.txt");
+        std::fs::write(&file1, "staged content\n").unwrap();
+
+        let out = std::process::Command::new(&git_bin)
+            .args(["add", "."])
+            .current_dir(repo)
+            .output()
+            .expect("git add failed");
+        assert!(out.status.success());
+
+        let staged = has_staged_changes(LifecycleLeaf::Cb, repo)
+            .expect("routed has_staged_changes probe should succeed");
+        assert!(
+            staged,
+            "routed has_staged_changes should return true when changes are staged"
+        );
+
+        let out = std::process::Command::new(&git_bin)
+            .args(["reset"])
+            .current_dir(repo)
+            .output()
+            .expect("git reset failed");
+        assert!(out.status.success());
+
+        let staged_after_reset = has_staged_changes(LifecycleLeaf::Cb, repo)
+            .expect("routed has_staged_changes probe should succeed");
+        assert!(
+            !staged_after_reset,
+            "routed has_staged_changes should return false after git reset"
+        );
+    }
+
+    #[test]
+    fn test_routed_worktree_probes_leaf_error_context() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let non_repo = temp.path();
+
+        let err = ensure_no_staged_changes(LifecycleLeaf::Wi, non_repo)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("lifecycle leaf wi"),
+            "error message should contain leaf context: {err}"
         );
     }
 }
