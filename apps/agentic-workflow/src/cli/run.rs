@@ -25,7 +25,6 @@ use crate::issues::{
     verify_published_planning_transaction, Issue, IssueFilter, IssueState, IssueType,
     PlanningTransactionManifest, ProjectPlan, ReadyGraphSelection, WorkItemGraph,
 };
-use crate::lifecycle_commit::LifecycleLeaf;
 use crate::models::artifact_quality::{
     infer_artifact_kind_from_hint, ArtifactKind, ArtifactQualityProfile,
 };
@@ -3632,12 +3631,7 @@ fn commit_project_persistence_if_approved(
                 "aw goal capability({project}) lifecycle persistence\n\nProject: {project}\nLifecycle-Stage: Project-Persistence\nDirty-Paths: {}\n",
                 dirty_paths.join(", ")
             );
-            crate::lifecycle_commit::commit_scoped_path_set(
-                LifecycleLeaf::Unrouted,
-                project_root,
-                &paths,
-                &message,
-            )?;
+            crate::lifecycle_commit::commit_project_persistence(project_root, &paths, &message)?;
             let _ = fs::remove_file(&path);
             return Ok(true);
         }

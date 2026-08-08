@@ -14,7 +14,6 @@ pub enum LifecycleLeaf {
     Ec,
     Td,
     Cb,
-    Unrouted,
 }
 
 impl LifecycleLeaf {
@@ -24,7 +23,6 @@ impl LifecycleLeaf {
             Self::Ec => "ec",
             Self::Td => "td",
             Self::Cb => "cb",
-            Self::Unrouted => "unrouted",
         }
     }
 }
@@ -120,6 +118,17 @@ pub fn merge_branch_no_ff(
         .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
 }
 
+/// Stage exactly `paths` for project persistence, create `message`, and no-op
+/// when those paths have no staged diff.
+pub fn commit_project_persistence(
+    project_root: &Path,
+    paths: &[PathBuf],
+    message: &str,
+) -> Result<bool> {
+    let cap = LifecycleCommitCapability::get();
+    crate::git::commit_scoped_paths(&cap, project_root, paths, message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,23 +136,27 @@ mod tests {
 
     #[test]
     fn test_lifecycle_leaf_as_str() {
-        assert_eq!(LifecycleLeaf::Wi.as_str(), "wi");
-        assert_eq!(LifecycleLeaf::Ec.as_str(), "ec");
-        assert_eq!(LifecycleLeaf::Td.as_str(), "td");
-        assert_eq!(LifecycleLeaf::Cb.as_str(), "cb");
-        assert_eq!(LifecycleLeaf::Unrouted.as_str(), "unrouted");
-
-        let strings = [
-            LifecycleLeaf::Wi.as_str(),
-            LifecycleLeaf::Ec.as_str(),
-            LifecycleLeaf::Td.as_str(),
-            LifecycleLeaf::Cb.as_str(),
-            LifecycleLeaf::Unrouted.as_str(),
+        let variants = [
+            LifecycleLeaf::Wi,
+            LifecycleLeaf::Ec,
+            LifecycleLeaf::Td,
+            LifecycleLeaf::Cb,
         ];
+        let strings: Vec<&'static str> = variants
+            .iter()
+            .map(|leaf| match leaf {
+                LifecycleLeaf::Wi => leaf.as_str(),
+                LifecycleLeaf::Ec => leaf.as_str(),
+                LifecycleLeaf::Td => leaf.as_str(),
+                LifecycleLeaf::Cb => leaf.as_str(),
+            })
+            .collect();
+        assert_eq!(strings, ["wi", "ec", "td", "cb"]);
+
         let set: std::collections::HashSet<_> = strings.iter().copied().collect();
         assert_eq!(
             set.len(),
-            5,
+            4,
             "LifecycleLeaf as_str values must be pairwise distinct"
         );
     }
@@ -171,21 +184,105 @@ mod tests {
     }
 
     #[test]
+    fn test_commit_project_persistence_scoped_path() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+
+        let git_bin = crate::git::find_git_bin()
+            .expect("git binary must be available for project persistence test");
+
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test"],
+        ] {
+            let out = std::process::Command::new(&git_bin)
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .expect("git setup command failed");
+            assert!(out.status.success(), "git {:?} failed", args);
+        }
+
+        let file1 = repo.join("file1.txt");
+        let file2 = repo.join("file2.txt");
+
+        std::fs::write(&file1, "initial 1\n").unwrap();
+        std::fs::write(&file2, "initial 2\n").unwrap();
+
+        for args in [
+            vec!["add", "."],
+            vec!["commit", "-m", "initial commit", "-q"],
+        ] {
+            let out = std::process::Command::new(&git_bin)
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .expect("git initial commit command failed");
+            assert!(out.status.success(), "git {:?} failed", args);
+        }
+
+        // Make both files dirty
+        std::fs::write(&file1, "modified 1\n").unwrap();
+        std::fs::write(&file2, "modified 2\n").unwrap();
+
+        let msg = "test project persistence commit message";
+        let committed = commit_project_persistence(repo, &[file1.clone()], msg)
+            .expect("commit_project_persistence should succeed");
+
+        assert!(
+            committed,
+            "commit_project_persistence should return true for modified path"
+        );
+
+        // Verify exactly 1 new commit
+        let rev_list = crate::git::git_rev_list(repo, &["HEAD"]).unwrap();
+        assert_eq!(
+            rev_list.len(),
+            2,
+            "Expected exactly 2 commits (initial + 1 new)"
+        );
+
+        // Verify HEAD commit message is msg
+        let head_msg = crate::git::git_log(repo, &["-1", "--format=%B"]).unwrap();
+        assert_eq!(
+            head_msg.trim(),
+            msg,
+            "HEAD commit message should match passed message"
+        );
+
+        // Verify tree touches only the declared path (file1.txt)
+        let diff_paths = crate::git::git_diff_name_only(repo, &["HEAD~1", "HEAD"]).unwrap();
+        assert_eq!(
+            diff_paths,
+            vec!["file1.txt"],
+            "Commit tree should touch only file1.txt"
+        );
+
+        // Verify second file is still dirty and uncommitted
+        let dirty = crate::git::dirty_paths(repo, &[std::path::PathBuf::from(".")], false).unwrap();
+        assert_eq!(
+            dirty,
+            vec!["file2.txt"],
+            "file2.txt should remain dirty and uncommitted"
+        );
+    }
+
+    #[test]
     fn test_routed_call_site_counts() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
             .unwrap_or_else(|_| "apps/agentic-workflow".to_string());
         let src_dir = Path::new(&manifest_dir).join("src");
 
-        let allowlist = [
+        let leaf_allowlist = [
             ("cli/cb.rs", LifecycleLeaf::Cb, 8),
             ("cli/cb_fill.rs", LifecycleLeaf::Cb, 6),
             ("cli/td.rs", LifecycleLeaf::Td, 3),
             ("cli/td_lock.rs", LifecycleLeaf::Td, 2),
-            ("cli/run.rs", LifecycleLeaf::Unrouted, 1),
             ("cli/td_migrate.rs", LifecycleLeaf::Td, 1),
         ];
 
-        let operations = [
+        let leaf_operations = [
             "commit_scoped_path_set",
             "stage_path_set",
             "commit_staged_changes",
@@ -194,20 +291,27 @@ mod tests {
             "merge_branch_no_ff",
         ];
 
+        let non_lifecycle_route = "commit_project_persistence";
+
         let mut violations = Vec::new();
-        let mut total_found = 0;
+        let mut leaf_total_found = 0;
         let mut visited_allowlist_files = std::collections::HashSet::new();
-        let mut unrouted_sites = Vec::new();
+        let mut unrouted_token_count = 0;
+        let mut cb_token_count = 0;
+        let mut non_lifecycle_calls = Vec::new();
 
         fn walk_dir(
             dir: &Path,
             src_dir: &Path,
-            allowlist: &[(&str, LifecycleLeaf, usize)],
-            operations: &[&str],
+            leaf_allowlist: &[(&str, LifecycleLeaf, usize)],
+            leaf_operations: &[&str],
+            non_lifecycle_route: &str,
             violations: &mut Vec<String>,
-            total_found: &mut usize,
+            leaf_total_found: &mut usize,
             visited_allowlist_files: &mut std::collections::HashSet<String>,
-            unrouted_sites: &mut Vec<String>,
+            unrouted_token_count: &mut usize,
+            cb_token_count: &mut usize,
+            non_lifecycle_calls: &mut Vec<String>,
         ) {
             let mut entries: Vec<_> = std::fs::read_dir(dir)
                 .unwrap()
@@ -221,15 +325,58 @@ mod tests {
                     walk_dir(
                         &path,
                         src_dir,
-                        allowlist,
-                        operations,
+                        leaf_allowlist,
+                        leaf_operations,
+                        non_lifecycle_route,
                         violations,
-                        total_found,
+                        leaf_total_found,
                         visited_allowlist_files,
-                        unrouted_sites,
+                        unrouted_token_count,
+                        cb_token_count,
+                        non_lifecycle_calls,
                     );
                 } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
+                    let content = std::fs::read_to_string(&path)
+                        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+
+                    // The census matches the qualified path only (LifecycleLeaf followed by :: and Unrouted);
+                    // bare word occurrences of Unrouted in prose are out of scope on purpose,
+                    // and `concat!` is what stops the assertion from counting itself.
+                    let target_unrouted1 = concat!("LifecycleLeaf", "::", "Unrouted");
+                    let target_unrouted2 = concat!("LifecycleLeaf", " :: ", "Unrouted");
+                    let target_cb1 = concat!("LifecycleLeaf", "::", "Cb");
+                    let target_cb2 = concat!("LifecycleLeaf", " :: ", "Cb");
+
+                    let unrouted_count = content.matches(target_unrouted1).count()
+                        + content.matches(target_unrouted2).count();
+                    let cb_count =
+                        content.matches(target_cb1).count() + content.matches(target_cb2).count();
+                    *unrouted_token_count += unrouted_count;
+                    *cb_token_count += cb_count;
+
                     if path == src_dir.join("lifecycle_commit.rs") {
+                        let fn_decl = format!("fn {non_lifecycle_route}");
+                        if let Some(pos) = content.find(&fn_decl) {
+                            let after_fn = &content[pos..];
+                            if let Some(open_paren) = after_fn.find('(') {
+                                let after_open = &after_fn[open_paren + 1..];
+                                if let Some(close_paren) = after_open.find(')') {
+                                    let param_list = &after_open[..close_paren];
+                                    if param_list.contains("LifecycleLeaf") {
+                                        violations.push(format!(
+                                            "Non-lifecycle route {} declaration contains LifecycleLeaf in parameter list: ({})",
+                                            non_lifecycle_route,
+                                            param_list.trim()
+                                        ));
+                                    }
+                                }
+                            }
+                        } else {
+                            violations.push(format!(
+                                "Declaration of non-lifecycle route {} not found in lifecycle_commit.rs",
+                                non_lifecycle_route
+                            ));
+                        }
                         continue;
                     }
                     let rel_path = path
@@ -238,17 +385,14 @@ mod tests {
                         .to_string_lossy()
                         .replace('\\', "/");
 
-                    let content = std::fs::read_to_string(&path)
-                        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
-
-                    let expected_entry = allowlist.iter().find(|(m, _, _)| *m == rel_path);
+                    let expected_entry = leaf_allowlist.iter().find(|(m, _, _)| *m == rel_path);
 
                     if expected_entry.is_some() {
                         visited_allowlist_files.insert(rel_path.clone());
                     }
 
                     let lines: Vec<&str> = content.lines().collect();
-                    let mut file_count = 0;
+                    let mut file_leaf_count = 0;
 
                     for (line_idx, line) in lines.iter().enumerate() {
                         let code_line = if let Some((code, _)) = line.split_once("//") {
@@ -256,10 +400,28 @@ mod tests {
                         } else {
                             line
                         };
+
+                        let non_lifecycle_match =
+                            format!("lifecycle_commit::{non_lifecycle_route}");
+                        if code_line.contains(&non_lifecycle_match) {
+                            let call_ref =
+                                format!("{}:{}: {}", rel_path, line_idx + 1, line.trim());
+                            non_lifecycle_calls.push(call_ref);
+                            if rel_path != "cli/run.rs" {
+                                violations.push(format!(
+                                    "{}:{}: Non-lifecycle route {} called outside allowed file cli/run.rs: {}",
+                                    rel_path,
+                                    line_idx + 1,
+                                    non_lifecycle_route,
+                                    line.trim()
+                                ));
+                            }
+                        }
+
                         if code_line.contains("crate::lifecycle_commit::") {
-                            for op in operations {
+                            for op in leaf_operations {
                                 if code_line.contains(&format!("crate::lifecycle_commit::{op}")) {
-                                    file_count += 1;
+                                    file_leaf_count += 1;
 
                                     let mut span = String::new();
                                     let mut found_terminator = false;
@@ -306,7 +468,6 @@ mod tests {
                                         (LifecycleLeaf::Ec, "LifecycleLeaf::Ec"),
                                         (LifecycleLeaf::Td, "LifecycleLeaf::Td"),
                                         (LifecycleLeaf::Cb, "LifecycleLeaf::Cb"),
-                                        (LifecycleLeaf::Unrouted, "LifecycleLeaf::Unrouted"),
                                     ];
 
                                     let mut found_leaves = Vec::new();
@@ -340,14 +501,6 @@ mod tests {
                                     };
 
                                     if let Some(found_leaf) = found_leaf {
-                                        if found_leaf == LifecycleLeaf::Unrouted {
-                                            unrouted_sites.push(format!(
-                                                "{}:{}",
-                                                rel_path,
-                                                line_idx + 1
-                                            ));
-                                        }
-
                                         if let Some((_, expected_leaf, _)) = expected_entry {
                                             if found_leaf != *expected_leaf {
                                                 violations.push(format!(
@@ -382,13 +535,13 @@ mod tests {
                         }
                     }
 
-                    *total_found += file_count;
+                    *leaf_total_found += file_leaf_count;
 
                     if let Some((_, _, exp)) = expected_entry {
-                        if file_count != *exp {
+                        if file_leaf_count != *exp {
                             violations.push(format!(
                                 "Module {} expected {} routed call sites, found {}",
-                                rel_path, exp, file_count
+                                rel_path, exp, file_leaf_count
                             ));
                         }
                     }
@@ -399,15 +552,18 @@ mod tests {
         walk_dir(
             &src_dir,
             &src_dir,
-            &allowlist,
-            &operations,
+            &leaf_allowlist,
+            &leaf_operations,
+            non_lifecycle_route,
             &mut violations,
-            &mut total_found,
+            &mut leaf_total_found,
             &mut visited_allowlist_files,
-            &mut unrouted_sites,
+            &mut unrouted_token_count,
+            &mut cb_token_count,
+            &mut non_lifecycle_calls,
         );
 
-        for (rel_path, _, expected_count) in allowlist {
+        for (rel_path, _, expected_count) in leaf_allowlist {
             if !visited_allowlist_files.contains(rel_path) {
                 violations.push(format!(
                     "Module {} expected {} routed call sites, found 0",
@@ -416,18 +572,39 @@ mod tests {
             }
         }
 
-        if unrouted_sites.len() != 1 {
-            let unrouted_list = if unrouted_sites.is_empty() {
+        if non_lifecycle_calls.len() != 1 {
+            let calls_str = if non_lifecycle_calls.is_empty() {
                 "none".to_string()
             } else {
-                unrouted_sites.join(", ")
+                non_lifecycle_calls.join(", ")
             };
             violations.push(format!(
-                "Expected exactly 1 LifecycleLeaf::Unrouted call site in crate source tree (count may only decrease), found {}: [{}]",
-                unrouted_sites.len(),
-                unrouted_list
+                "Expected exactly 1 call site of {} in crate source tree, found {}: [{}]",
+                non_lifecycle_route,
+                non_lifecycle_calls.len(),
+                calls_str
             ));
         }
+
+        assert_eq!(
+            unrouted_token_count,
+            0,
+            "{}",
+            concat!(
+                "Expected 0 occurrences of LifecycleLeaf",
+                "::",
+                "Unrouted token in src/"
+            )
+        );
+        assert!(
+            cb_token_count > 0,
+            "{}",
+            concat!(
+                "Expected non-zero occurrences of LifecycleLeaf",
+                "::",
+                "Cb token in src/"
+            )
+        );
 
         assert!(
             violations.is_empty(),
@@ -435,7 +612,10 @@ mod tests {
             violations.join("\n")
         );
 
-        assert_eq!(total_found, 21, "Expected exactly 21 total routed sites");
+        assert_eq!(
+            leaf_total_found, 20,
+            "Expected exactly 20 total leaf-taking routed sites"
+        );
     }
 
     #[test]
