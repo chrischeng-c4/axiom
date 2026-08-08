@@ -383,7 +383,11 @@ fn format_git_error(op: &str, status: std::process::ExitStatus, stderr: &[u8]) -
 }
 
 /// Run `git log` with args in `project_root`.
-pub fn git_log(project_root: &Path, args: &[&str]) -> Result<String> {
+pub fn git_log(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<String> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -399,7 +403,11 @@ pub fn git_log(project_root: &Path, args: &[&str]) -> Result<String> {
 }
 
 /// Run `git rev-parse` with args in `project_root`.
-pub fn git_rev_parse(project_root: &Path, args: &[&str]) -> Result<String> {
+pub fn git_rev_parse(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<String> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -419,7 +427,11 @@ pub fn git_rev_parse(project_root: &Path, args: &[&str]) -> Result<String> {
 }
 
 /// Run `git rev-list` with args in `project_root`.
-pub fn git_rev_list(project_root: &Path, args: &[&str]) -> Result<Vec<String>> {
+pub fn git_rev_list(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<Vec<String>> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -468,7 +480,11 @@ pub fn git_merge_base_is_ancestor(
 }
 
 /// Run `git cat-file blob <object>` in `project_root`.
-pub fn git_cat_file_blob(project_root: &Path, object: &str) -> Result<Vec<u8>> {
+pub fn git_cat_file_blob(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+    project_root: &Path,
+    object: &str,
+) -> Result<Vec<u8>> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -487,7 +503,11 @@ pub fn git_cat_file_blob(project_root: &Path, object: &str) -> Result<Vec<u8>> {
 }
 
 /// Run `git show` with args in `project_root`.
-pub fn git_show(project_root: &Path, args: &[&str]) -> Result<String> {
+pub fn git_show(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<String> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -543,7 +563,11 @@ pub fn git_merge(
 }
 
 /// Run `git diff --name-only` with args in `project_root`.
-pub fn git_diff_name_only(project_root: &Path, args: &[&str]) -> Result<Vec<String>> {
+pub fn git_diff_name_only(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<Vec<String>> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     let output = std::process::Command::new(git_bin)
         .arg("-C")
@@ -1182,8 +1206,10 @@ pub fn prod_fn() {
             .unwrap();
         assert!(commit3.status.success());
 
+        let hcap = crate::lifecycle_commit::LifecycleHistoryCapability::for_test();
+
         // 1. git_log - present & absent
-        let log_p = git_log(repo, &["-1", "--format=%B"]).unwrap();
+        let log_p = git_log(&hcap, repo, &["-1", "--format=%B"]).unwrap();
         let indep_log_p = std::process::Command::new(&git_bin)
             .args(["log", "-1", "--format=%B"])
             .current_dir(repo)
@@ -1194,7 +1220,7 @@ pub fn prod_fn() {
             String::from_utf8_lossy(&indep_log_p.stdout).trim()
         );
 
-        let log_a = git_log(repo, &["--grep", "nonexistent_grep_string_999"]).unwrap();
+        let log_a = git_log(&hcap, repo, &["--grep", "nonexistent_grep_string_999"]).unwrap();
         let indep_log_a = std::process::Command::new(&git_bin)
             .args(["log", "--grep", "nonexistent_grep_string_999"])
             .current_dir(repo)
@@ -1206,7 +1232,7 @@ pub fn prod_fn() {
         );
 
         // 2. git_rev_parse - present & absent
-        let rev_p = git_rev_parse(repo, &["HEAD"]).unwrap();
+        let rev_p = git_rev_parse(&hcap, repo, &["HEAD"]).unwrap();
         let indep_rev_p = std::process::Command::new(&git_bin)
             .args(["rev-parse", "HEAD"])
             .current_dir(repo)
@@ -1214,10 +1240,10 @@ pub fn prod_fn() {
             .unwrap();
         assert_eq!(rev_p, String::from_utf8_lossy(&indep_rev_p.stdout).trim());
 
-        assert!(git_rev_parse(repo, &["--verify", "-q", "refs/heads/nonexistent"]).is_err());
+        assert!(git_rev_parse(&hcap, repo, &["--verify", "-q", "refs/heads/nonexistent"]).is_err());
 
         // 3. git_rev_list - present & absent
-        let list_p = git_rev_list(repo, &["HEAD"]).unwrap();
+        let list_p = git_rev_list(&hcap, repo, &["HEAD"]).unwrap();
         let indep_list_p = std::process::Command::new(&git_bin)
             .args(["rev-list", "HEAD"])
             .current_dir(repo)
@@ -1264,7 +1290,7 @@ pub fn prod_fn() {
 
         assert_eq!(list_p, vec![c3_str, c2_str, c1_str]);
 
-        assert!(git_rev_list(repo, &["nonexistent_ref_xyz"]).is_err());
+        assert!(git_rev_list(&hcap, repo, &["nonexistent_ref_xyz"]).is_err());
 
         // 4. git_merge_base_is_ancestor - present & absent
         // feature is at initial commit, HEAD is at third commit
@@ -1291,7 +1317,7 @@ pub fn prod_fn() {
         assert!(!not_anc);
 
         // 5. git_cat_file_blob - present & absent
-        let cat_p = git_cat_file_blob(repo, "HEAD:sample.txt").unwrap();
+        let cat_p = git_cat_file_blob(&hcap, repo, "HEAD:sample.txt").unwrap();
         let indep_cat_p = std::process::Command::new(&git_bin)
             .args(["cat-file", "blob", "HEAD:sample.txt"])
             .current_dir(repo)
@@ -1300,10 +1326,10 @@ pub fn prod_fn() {
         assert_eq!(cat_p, indep_cat_p.stdout);
         assert_eq!(String::from_utf8_lossy(&cat_p), "content v3\n");
 
-        assert!(git_cat_file_blob(repo, "HEAD:nonexistent.txt").is_err());
+        assert!(git_cat_file_blob(&hcap, repo, "HEAD:nonexistent.txt").is_err());
 
         // 6. git_show - present & absent
-        let show_p = git_show(repo, &["HEAD:sample.txt"]).unwrap();
+        let show_p = git_show(&hcap, repo, &["HEAD:sample.txt"]).unwrap();
         let indep_show_p = std::process::Command::new(&git_bin)
             .args(["show", "HEAD:sample.txt"])
             .current_dir(repo)
@@ -1311,27 +1337,32 @@ pub fn prod_fn() {
             .unwrap();
         assert_eq!(show_p, String::from_utf8_lossy(&indep_show_p.stdout));
 
-        assert!(git_show(repo, &["HEAD:nonexistent.txt"]).is_err());
+        assert!(git_show(&hcap, repo, &["HEAD:nonexistent.txt"]).is_err());
     }
 
     #[test]
     fn test_history_primitives_non_repo_failure() {
         let dir = TempDir::new().unwrap();
         let non_repo = dir.path();
+        let hcap = crate::lifecycle_commit::LifecycleHistoryCapability::for_test();
 
-        let err_log = git_log(non_repo, &["HEAD"]).unwrap_err().to_string();
+        let err_log = git_log(&hcap, non_repo, &["HEAD"]).unwrap_err().to_string();
         assert!(
             err_log.contains("exit code 128"),
             "expected exit code 128 error, got: {err_log}"
         );
 
-        let err_rp = git_rev_parse(non_repo, &["HEAD"]).unwrap_err().to_string();
+        let err_rp = git_rev_parse(&hcap, non_repo, &["HEAD"])
+            .unwrap_err()
+            .to_string();
         assert!(
             err_rp.contains("exit code 128"),
             "expected exit code 128 error, got: {err_rp}"
         );
 
-        let err_rl = git_rev_list(non_repo, &["HEAD"]).unwrap_err().to_string();
+        let err_rl = git_rev_list(&hcap, non_repo, &["HEAD"])
+            .unwrap_err()
+            .to_string();
         assert!(
             err_rl.contains("exit code 128"),
             "expected exit code 128 error, got: {err_rl}"
@@ -1345,7 +1376,7 @@ pub fn prod_fn() {
             "expected exit code 128 error, got: {err_mb}"
         );
 
-        let err_cf = git_cat_file_blob(non_repo, "HEAD:file")
+        let err_cf = git_cat_file_blob(&hcap, non_repo, "HEAD:file")
             .unwrap_err()
             .to_string();
         assert!(
@@ -1353,7 +1384,9 @@ pub fn prod_fn() {
             "expected exit code 128 error, got: {err_cf}"
         );
 
-        let err_sh = git_show(non_repo, &["HEAD"]).unwrap_err().to_string();
+        let err_sh = git_show(&hcap, non_repo, &["HEAD"])
+            .unwrap_err()
+            .to_string();
         assert!(
             err_sh.contains("exit code 128"),
             "expected exit code 128 error, got: {err_sh}"

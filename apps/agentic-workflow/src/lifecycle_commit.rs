@@ -49,6 +49,28 @@ impl LifecycleCommitCapability {
     }
 }
 
+/// Unforgeable capability token required by `crate::git` history probes.
+///
+/// Code outside `crate::lifecycle_commit` cannot construct this type because
+/// its single field is private and no public constructor or `Default` / `Clone`
+/// implementation exists.
+pub struct LifecycleHistoryCapability {
+    _private: (),
+}
+
+impl LifecycleHistoryCapability {
+    /// Internal constructor accessible only within `crate::lifecycle_commit`.
+    fn get() -> Self {
+        Self { _private: () }
+    }
+
+    /// Test-only constructor available when compiled under `#[cfg(test)]`.
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self { _private: () }
+    }
+}
+
 /// Stage exactly `paths`, create `message` as a lifecycle commit, and no-op
 /// when those paths have no staged diff.
 pub fn commit_scoped_path_set(
@@ -127,6 +149,60 @@ pub fn commit_project_persistence(
 ) -> Result<bool> {
     let cap = LifecycleCommitCapability::get();
     crate::git::commit_scoped_paths(&cap, project_root, paths, message)
+}
+
+/// Run `git log` with args in `project_root`.
+pub fn git_log(leaf: LifecycleLeaf, project_root: &Path, args: &[&str]) -> Result<String> {
+    let cap = LifecycleHistoryCapability::get();
+    crate::git::git_log(&cap, project_root, args)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Run `git rev-parse` with args in `project_root`.
+pub fn git_rev_parse(leaf: LifecycleLeaf, project_root: &Path, args: &[&str]) -> Result<String> {
+    let cap = LifecycleHistoryCapability::get();
+    crate::git::git_rev_parse(&cap, project_root, args)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Run `git rev-list` with args in `project_root`.
+pub fn git_rev_list(
+    leaf: LifecycleLeaf,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<Vec<String>> {
+    let cap = LifecycleHistoryCapability::get();
+    crate::git::git_rev_list(&cap, project_root, args)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Run `git show` with args in `project_root`.
+pub fn git_show(leaf: LifecycleLeaf, project_root: &Path, args: &[&str]) -> Result<String> {
+    let cap = LifecycleHistoryCapability::get();
+    crate::git::git_show(&cap, project_root, args)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Run `git cat-file blob <object>` in `project_root`.
+pub fn git_cat_file_blob(
+    leaf: LifecycleLeaf,
+    project_root: &Path,
+    object: &str,
+) -> Result<Vec<u8>> {
+    let cap = LifecycleHistoryCapability::get();
+    crate::git::git_cat_file_blob(&cap, project_root, object)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Run `git diff --name-only` with args in `project_root`.
+pub fn git_diff_name_only(
+    leaf: LifecycleLeaf,
+    project_root: &Path,
+    args: &[&str],
+) -> Result<Vec<String>> {
+    let cap = LifecycleHistoryCapability::get();
+    crate::git::git_diff_name_only(&cap, project_root, args)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
 }
 
 #[cfg(test)]
@@ -235,8 +311,10 @@ mod tests {
             "commit_project_persistence should return true for modified path"
         );
 
+        let hcap = LifecycleHistoryCapability::for_test();
+
         // Verify exactly 1 new commit
-        let rev_list = crate::git::git_rev_list(repo, &["HEAD"]).unwrap();
+        let rev_list = crate::git::git_rev_list(&hcap, repo, &["HEAD"]).unwrap();
         assert_eq!(
             rev_list.len(),
             2,
@@ -244,7 +322,7 @@ mod tests {
         );
 
         // Verify HEAD commit message is msg
-        let head_msg = crate::git::git_log(repo, &["-1", "--format=%B"]).unwrap();
+        let head_msg = crate::git::git_log(&hcap, repo, &["-1", "--format=%B"]).unwrap();
         assert_eq!(
             head_msg.trim(),
             msg,
@@ -252,7 +330,7 @@ mod tests {
         );
 
         // Verify tree touches only the declared path (file1.txt)
-        let diff_paths = crate::git::git_diff_name_only(repo, &["HEAD~1", "HEAD"]).unwrap();
+        let diff_paths = crate::git::git_diff_name_only(&hcap, repo, &["HEAD~1", "HEAD"]).unwrap();
         assert_eq!(
             diff_paths,
             vec!["file1.txt"],
@@ -682,6 +760,523 @@ mod tests {
             violations.is_empty(),
             "Found direct calls to git primitives outside lifecycle_commit.rs:\n{}",
             violations.join("\n")
+        );
+    }
+
+    fn scan_source_for_direct_git_history_probes(rel_path: &str, content: &str) -> Vec<String> {
+        let probes = [
+            "git_log",
+            "git_rev_parse",
+            "git_rev_list",
+            "git_show",
+            "git_cat_file_blob",
+            "git_diff_name_only",
+        ];
+
+        if rel_path == "git.rs" || rel_path == "lifecycle_commit.rs" {
+            return Vec::new();
+        }
+
+        let mut violations = Vec::new();
+        let mut in_cfg_test_depth: usize = 0;
+        let mut pending_cfg_test = false;
+
+        for (line_idx, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            let code_line = if let Some((code, _)) = line.split_once("//") {
+                code
+            } else {
+                line
+            };
+            let code_trimmed = code_line.trim();
+
+            if code_trimmed.starts_with("#[cfg(test)]") {
+                pending_cfg_test = true;
+            }
+
+            if in_cfg_test_depth > 0 || pending_cfg_test {
+                let open_braces = code_line.chars().filter(|&c| c == '{').count();
+                let close_braces = code_line.chars().filter(|&c| c == '}').count();
+
+                if pending_cfg_test {
+                    if open_braces > 0 {
+                        in_cfg_test_depth = open_braces.saturating_sub(close_braces);
+                        pending_cfg_test = false;
+                    } else if code_trimmed.ends_with(';') {
+                        pending_cfg_test = false;
+                    }
+                } else {
+                    in_cfg_test_depth =
+                        (in_cfg_test_depth + open_braces).saturating_sub(close_braces);
+                }
+                continue;
+            }
+
+            for probe in probes {
+                let match_fn = format!("crate::git::{probe}(");
+                let match_fn2 = format!("git::{probe}(");
+                let match_generic = format!("crate::git::{probe}<");
+                let match_generic2 = format!("git::{probe}<");
+                if code_line.contains(&match_fn)
+                    || code_line.contains(&match_fn2)
+                    || code_line.contains(&match_generic)
+                    || code_line.contains(&match_generic2)
+                {
+                    violations.push(format!(
+                        "{}:{}: Direct call to history probe {probe}: {}",
+                        rel_path,
+                        line_idx + 1,
+                        trimmed
+                    ));
+                }
+            }
+        }
+
+        violations
+    }
+
+    #[test]
+    fn test_no_direct_git_history_probes_outside_lifecycle_commit() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .unwrap_or_else(|_| "apps/agentic-workflow".to_string());
+        let src_dir = Path::new(&manifest_dir).join("src");
+
+        let mut violations = Vec::new();
+        let mut routed_history_calls = 0;
+
+        fn walk_dir(
+            dir: &Path,
+            src_dir: &Path,
+            violations: &mut Vec<String>,
+            routed_history_calls: &mut usize,
+        ) {
+            let mut entries: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.path());
+
+            for entry in entries {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk_dir(&path, src_dir, violations, routed_history_calls);
+                } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
+                    let rel_path = path
+                        .strip_prefix(src_dir)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    let content = std::fs::read_to_string(&path)
+                        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+
+                    let file_violations =
+                        scan_source_for_direct_git_history_probes(&rel_path, &content);
+                    violations.extend(file_violations);
+
+                    if rel_path != "git.rs" && rel_path != "lifecycle_commit.rs" {
+                        let history_probes = [
+                            "git_log",
+                            "git_rev_parse",
+                            "git_rev_list",
+                            "git_show",
+                            "git_cat_file_blob",
+                            "git_diff_name_only",
+                        ];
+                        for probe in history_probes {
+                            let routed_pattern = format!("crate::lifecycle_commit::{probe}");
+                            *routed_history_calls += content.matches(&routed_pattern).count();
+                        }
+                    }
+                }
+            }
+        }
+
+        walk_dir(
+            &src_dir,
+            &src_dir,
+            &mut violations,
+            &mut routed_history_calls,
+        );
+
+        assert!(
+            violations.is_empty(),
+            "Found direct calls to git history probes outside lifecycle_commit.rs / git.rs:\n{}",
+            violations.join("\n")
+        );
+
+        assert!(
+            routed_history_calls > 0,
+            "Expected non-zero routed history calls in production code, found {routed_history_calls}"
+        );
+    }
+
+    #[test]
+    fn test_routed_history_probe_diff_name_only() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+
+        let git_bin = crate::git::find_git_bin()
+            .expect("git binary must be available for history probe test");
+
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test"],
+        ] {
+            let out = std::process::Command::new(&git_bin)
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .expect("git setup command failed");
+            assert!(out.status.success(), "git {:?} failed", args);
+        }
+
+        let file1 = repo.join("test_file.txt");
+        std::fs::write(&file1, "initial content\n").unwrap();
+
+        for args in [vec!["add", "."], vec!["commit", "-m", "first commit", "-q"]] {
+            let out = std::process::Command::new(&git_bin)
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .expect("git initial commit failed");
+            assert!(out.status.success(), "git {:?} failed", args);
+        }
+
+        std::fs::write(&file1, "modified content\n").unwrap();
+
+        for args in [
+            vec!["add", "."],
+            vec!["commit", "-m", "second commit", "-q"],
+        ] {
+            let out = std::process::Command::new(&git_bin)
+                .args(&args)
+                .current_dir(repo)
+                .output()
+                .expect("git second commit failed");
+            assert!(out.status.success(), "git {:?} failed", args);
+        }
+
+        let diff_paths = git_diff_name_only(LifecycleLeaf::Cb, repo, &["HEAD~1", "HEAD"])
+            .expect("routed git_diff_name_only probe should succeed");
+
+        assert_eq!(
+            diff_paths,
+            vec!["test_file.txt"],
+            "Routed diff probe should return exactly the changed path from git diff output"
+        );
+    }
+
+    #[test]
+    fn test_routed_history_probes_leaf_error_context() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let non_repo = temp.path();
+
+        let err = git_log(LifecycleLeaf::Wi, non_repo, &["HEAD"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("lifecycle leaf wi"),
+            "error message should contain leaf context: {err}"
+        );
+    }
+
+    #[test]
+    fn test_history_probe_negative_control_production_call() {
+        let fixture = r#"
+pub fn prod_fn() {
+    let _ = crate::git::git_log(project_root, &["HEAD"]);
+}
+"#;
+        let violations = scan_source_for_direct_git_history_probes("src/cli/offender.rs", fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation for direct git_log call in production"
+        );
+        assert!(
+            violations[0].contains("src/cli/offender.rs:3:"),
+            "got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn test_history_probe_negative_control_cfg_test_call() {
+        let fixture = r#"
+#[cfg(test)]
+mod tests {
+    fn test_fn() {
+        let _ = crate::git::git_rev_parse(project_root, &["HEAD"]);
+    }
+}
+"#;
+        let violations = scan_source_for_direct_git_history_probes("src/cli/test_file.rs", fixture);
+        assert!(
+            violations.is_empty(),
+            "expected 0 violations for git_rev_parse in #[cfg(test)], got: {violations:?}"
+        );
+    }
+
+    fn find_pub_fn_param_list(content: &str, probe: &str) -> Option<String> {
+        let mut search_idx = 0;
+        while let Some(pos) = content[search_idx..].find("pub fn") {
+            let absolute_pos = search_idx + pos;
+            search_idx = absolute_pos + 6;
+
+            let rest = &content[search_idx..];
+            let trimmed_rest = rest.trim_start();
+            if !trimmed_rest.starts_with(probe) {
+                continue;
+            }
+
+            let after_probe = &trimmed_rest[probe.len()..];
+            let after_probe_trimmed = after_probe.trim_start();
+
+            if !after_probe_trimmed.starts_with('(') && !after_probe_trimmed.starts_with('<') {
+                continue;
+            }
+
+            let mut chars_indices = after_probe_trimmed.char_indices();
+            let mut paren_start_pos = None;
+            let mut angle_depth = 0;
+
+            while let Some((idx, ch)) = chars_indices.next() {
+                match ch {
+                    '<' => angle_depth += 1,
+                    '>' => {
+                        if angle_depth > 0 {
+                            angle_depth -= 1;
+                        }
+                    }
+                    '(' if angle_depth == 0 => {
+                        paren_start_pos = Some(idx);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            let Some(start_idx) = paren_start_pos else {
+                continue;
+            };
+
+            let mut paren_depth = 0;
+            let mut end_idx = None;
+
+            for (idx, ch) in after_probe_trimmed[start_idx..].char_indices() {
+                match ch {
+                    '(' => paren_depth += 1,
+                    ')' => {
+                        paren_depth -= 1;
+                        if paren_depth == 0 {
+                            end_idx = Some(start_idx + idx);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(end_pos) = end_idx {
+                return Some(after_probe_trimmed[start_idx + 1..end_pos].to_string());
+            }
+        }
+
+        None
+    }
+
+    fn param_list_has_capability(param_list: &str) -> bool {
+        let target_type = "&crate::lifecycle_commit::LifecycleHistoryCapability";
+
+        let clean_param_list: String = param_list
+            .lines()
+            .map(|line| {
+                if let Some((code, _)) = line.split_once("//") {
+                    code
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut current_param = String::new();
+        let mut p_depth = 0;
+        let mut a_depth = 0;
+        let mut params = Vec::new();
+
+        for ch in clean_param_list.chars() {
+            match ch {
+                '(' => {
+                    p_depth += 1;
+                    current_param.push(ch);
+                }
+                ')' => {
+                    if p_depth > 0 {
+                        p_depth -= 1;
+                    }
+                    current_param.push(ch);
+                }
+                '<' => {
+                    a_depth += 1;
+                    current_param.push(ch);
+                }
+                '>' => {
+                    if a_depth > 0 {
+                        a_depth -= 1;
+                    }
+                    current_param.push(ch);
+                }
+                ',' if p_depth == 0 && a_depth == 0 => {
+                    params.push(std::mem::take(&mut current_param));
+                }
+                _ => {
+                    current_param.push(ch);
+                }
+            }
+        }
+        if !current_param.trim().is_empty() {
+            params.push(current_param);
+        }
+
+        for param in params {
+            if let Some((_pat, type_part)) = param.split_once(':') {
+                let normalized_type: String = type_part.split_whitespace().collect();
+                if normalized_type == target_type {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn scan_source_for_history_probe_capabilities(content: &str) -> Vec<String> {
+        let probes = [
+            "git_log",
+            "git_rev_parse",
+            "git_rev_list",
+            "git_show",
+            "git_cat_file_blob",
+            "git_diff_name_only",
+        ];
+
+        let mut violations = Vec::new();
+
+        for probe in probes {
+            if let Some(param_list) = find_pub_fn_param_list(content, probe) {
+                let has_cap_param = param_list_has_capability(&param_list);
+                if !has_cap_param {
+                    violations.push(format!(
+                        "History probe {probe} in git.rs does not declare a parameter of type &crate::lifecycle_commit::LifecycleHistoryCapability"
+                    ));
+                }
+            } else {
+                violations.push(format!(
+                    "History probe {probe} declaration not found as pub fn in git.rs"
+                ));
+            }
+        }
+
+        violations
+    }
+
+    #[test]
+    fn test_history_probes_declare_capability_parameter() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .unwrap_or_else(|_| "apps/agentic-workflow".to_string());
+        let git_rs_path = Path::new(&manifest_dir).join("src").join("git.rs");
+        let content = std::fs::read_to_string(&git_rs_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", git_rs_path.display(), e));
+
+        let violations = scan_source_for_history_probe_capabilities(&content);
+        assert!(
+            violations.is_empty(),
+            "History probe capability parameter violations in git.rs:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
+    fn test_history_probe_capability_scanner_negative_control_missing_parameter() {
+        let fixture = r#"
+pub fn git_log(
+    project_root: &Path,
+    args: &[&str],
+) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_rev_parse(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+    project_root: &Path,
+) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_rev_list(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+) -> Result<Vec<String>> {
+    Ok(Vec::new())
+}
+pub fn git_show(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_cat_file_blob(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+) -> Result<Vec<u8>> {
+    Ok(Vec::new())
+}
+pub fn git_diff_name_only(
+    _cap: &crate::lifecycle_commit::LifecycleHistoryCapability,
+) -> Result<Vec<String>> {
+    Ok(Vec::new())
+}
+"#;
+        let violations = scan_source_for_history_probe_capabilities(fixture);
+        assert_eq!(
+            violations.len(),
+            1,
+            "expected 1 violation when git_log capability parameter is missing"
+        );
+        assert!(
+            violations[0].contains("git_log"),
+            "violation should name the probe git_log, got: {}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn test_history_probe_capability_scanner_reflow_and_rename() {
+        let fixture = r#"
+pub fn git_log(
+    custom_cap_name:
+        &crate::lifecycle_commit::LifecycleHistoryCapability,
+    project_root: &Path,
+) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_rev_parse(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_rev_list(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability) -> Result<Vec<String>> {
+    Ok(Vec::new())
+}
+pub fn git_show(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability) -> Result<String> {
+    Ok(String::new())
+}
+pub fn git_cat_file_blob(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability) -> Result<Vec<u8>> {
+    Ok(Vec::new())
+}
+pub fn git_diff_name_only(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability) -> Result<Vec<String>> {
+    Ok(Vec::new())
+}
+"#;
+        let violations = scan_source_for_history_probe_capabilities(fixture);
+        assert!(
+            violations.is_empty(),
+            "expected 0 violations for renamed parameter or reflowed signature, got: {violations:?}"
         );
     }
 }

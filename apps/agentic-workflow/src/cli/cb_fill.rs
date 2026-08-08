@@ -1334,7 +1334,8 @@ fn resolve_base_branch() -> String {
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
 fn resolve_diff_base_ref(worktree: &Path, base_branch: &str) -> String {
     let remote_ref = format!("origin/{base_branch}");
-    let remote_resolves = crate::git::git_rev_parse(
+    let remote_resolves = crate::lifecycle_commit::git_rev_parse(
+        LifecycleLeaf::Cb,
         worktree,
         &["--verify", "-q", &format!("refs/remotes/{remote_ref}")],
     )
@@ -1358,10 +1359,11 @@ fn resolve_diff_base_ref(worktree: &Path, base_branch: &str) -> String {
 pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<String> {
     let diff_base = resolve_diff_base_ref(worktree, base_branch);
     let range = format!("{diff_base}...HEAD");
-    let lines = match crate::git::git_diff_name_only(worktree, &[&range]) {
-        Ok(l) => l,
-        Err(_) => return HashSet::new(),
-    };
+    let lines =
+        match crate::lifecycle_commit::git_diff_name_only(LifecycleLeaf::Cb, worktree, &[&range]) {
+            Ok(l) => l,
+            Err(_) => return HashSet::new(),
+        };
     lines.into_iter().collect()
 }
 

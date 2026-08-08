@@ -825,7 +825,8 @@ pub(crate) async fn bootstrap_td_issue(
 /// hard-errors instead of falling back (see #1403).
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub(crate) fn discover_worktree_spec(worktree_abs: &std::path::Path) -> Option<String> {
-    let lines = crate::git::git_diff_name_only(
+    let lines = crate::lifecycle_commit::git_diff_name_only(
+        LifecycleLeaf::Td,
         worktree_abs,
         &["--diff-filter=AM", "main...HEAD", "--", ".aw/tech-design"],
     )
@@ -3972,7 +3973,8 @@ pub(crate) fn lifecycle_stage_for_slug_exists(
     use crate::issues::types::lifecycle_trailer;
 
     let slug_line = format!("Lifecycle-Slug: {slug}");
-    let output_stdout = crate::git::git_log(
+    let output_stdout = crate::lifecycle_commit::git_log(
+        LifecycleLeaf::Td,
         project_root,
         &[
             "--format=%B%x1e",
@@ -5582,7 +5584,11 @@ async fn prepare_td_generation_before_lifecycle(
         && crate::branch_switch::branch_exists_local(project_root, &target_branch).unwrap_or(false)
     {
         let object = format!("refs/heads/{target_branch}:{spec_path}");
-        let blob_bytes = match crate::git::git_cat_file_blob(project_root, &object) {
+        let blob_bytes = match crate::lifecycle_commit::git_cat_file_blob(
+            LifecycleLeaf::Td,
+            project_root,
+            &object,
+        ) {
             Ok(bytes) => bytes,
             Err(err) => {
                 anyhow::bail!(
@@ -9622,7 +9628,8 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
 fn branch_has_trailer(repo: &std::path::Path, branch: &str, stage: &str) -> Option<bool> {
     use crate::issues::types::lifecycle_trailer;
 
-    let body = crate::git::git_log(repo, &["--format=%B", branch]).ok()?;
+    let body =
+        crate::lifecycle_commit::git_log(LifecycleLeaf::Td, repo, &["--format=%B", branch]).ok()?;
     let expect_canonical = lifecycle_trailer::normalize(stage);
     Some(lifecycle_trailer::body_has_stage_trailer(
         &body,

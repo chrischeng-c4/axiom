@@ -153,7 +153,9 @@ fn resolve_git_dir(project_root: &std::path::Path) -> Result<std::path::PathBuf>
             }
         }
     }
-    if let Ok(path_str) = crate::git::git_rev_parse(project_root, &["--git-dir"]) {
+    if let Ok(path_str) =
+        crate::lifecycle_commit::git_rev_parse(LifecycleLeaf::Cb, project_root, &["--git-dir"])
+    {
         if !path_str.is_empty() {
             let p = std::path::PathBuf::from(&path_str);
             let resolved = if p.is_absolute() {
@@ -7115,7 +7117,8 @@ fn reachable_exact_td_baseline_from_head(
     use crate::issues::types::lifecycle_trailer;
 
     let slug_line = format!("Lifecycle-Slug: {slug}");
-    let stdout = crate::git::git_log(
+    let stdout = crate::lifecycle_commit::git_log(
+        LifecycleLeaf::Cb,
         project_root,
         &[
             "--format=%H%x00%B%x1e",
@@ -7392,15 +7395,21 @@ pub(crate) fn committed_paths_since_td_init(
     };
 
     let rev_spec = format!("{init_commit}^");
-    let baseline = match crate::git::git_rev_parse(project_root, &[&rev_spec]) {
-        Ok(res) => res,
-        Err(err) => {
-            anyhow::bail!("cannot resolve parent of TD baseline commit {init_commit}: {err}");
-        }
-    };
+    let baseline =
+        match crate::lifecycle_commit::git_rev_parse(LifecycleLeaf::Cb, project_root, &[&rev_spec])
+        {
+            Ok(res) => res,
+            Err(err) => {
+                anyhow::bail!("cannot resolve parent of TD baseline commit {init_commit}: {err}");
+            }
+        };
     let diff_range = format!("{baseline}..HEAD");
-    let paths = crate::git::git_diff_name_only(project_root, &["--no-renames", &diff_range, "--"])
-        .context("git diff failed while verifying hand-written implementation")?;
+    let paths = crate::lifecycle_commit::git_diff_name_only(
+        LifecycleLeaf::Cb,
+        project_root,
+        &["--no-renames", &diff_range, "--"],
+    )
+    .context("git diff failed while verifying hand-written implementation")?;
 
     Ok(Some(
         paths
@@ -7425,8 +7434,12 @@ pub(crate) fn committed_paths_after_td_python_source(
         }
     };
     let diff_range = format!("{source_commit}..HEAD");
-    let paths = crate::git::git_diff_name_only(project_root, &["--no-renames", &diff_range, "--"])
-        .context("git diff failed while verifying Python HANDWRITE implementation")?;
+    let paths = crate::lifecycle_commit::git_diff_name_only(
+        LifecycleLeaf::Cb,
+        project_root,
+        &["--no-renames", &diff_range, "--"],
+    )
+    .context("git diff failed while verifying Python HANDWRITE implementation")?;
 
     Ok(paths
         .into_iter()
@@ -7684,7 +7697,8 @@ fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) ->
     use crate::issues::types::lifecycle_trailer;
 
     let slug_line = format!("Lifecycle-Slug: {}", slug);
-    let stdout = match crate::git::git_log(
+    let stdout = match crate::lifecycle_commit::git_log(
+        LifecycleLeaf::Cb,
         project_root,
         &[
             "--format=%B%x1e",
@@ -7717,7 +7731,8 @@ fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) ->
 /// read-only and side-effect-free, unlike `td::bootstrap_td_issue`.
 fn slug_has_lifecycle_history(project_root: &std::path::Path, slug: &str) -> Result<bool> {
     let slug_line = format!("Lifecycle-Slug: {}", slug);
-    let stdout = match crate::git::git_log(
+    let stdout = match crate::lifecycle_commit::git_log(
+        LifecycleLeaf::Cb,
         project_root,
         &[
             "--format=%B%x1e",
