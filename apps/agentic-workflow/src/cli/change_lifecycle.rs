@@ -1787,6 +1787,17 @@ pub fn projection_for_issue(project_root: &Path, issue: &Issue) -> serde_json::V
     }
 }
 
+/// Sync leaf execution for `aw wi change <id>`.
+///
+/// Creates the WI-bound lifecycle when there is no durable carrier, or resumes
+/// the existing one without advancing it, reporting drift rather than folding it away.
+pub fn run_change_leaf(project_root: &Path, issue: &Issue) -> Result<serde_json::Value> {
+    if load(project_root, &issue.slug)?.is_none() {
+        record_create(project_root, issue)?;
+    }
+    Ok(projection_for_issue(project_root, issue))
+}
+
 #[cfg(test)]
 fn candidate_tuple(lifecycle: &ChangeLifecycle, candidate: &ArtifactRevision) -> ActiveDigestTuple {
     let mut tuple = lifecycle.active_digest_tuple();
@@ -4689,5 +4700,195 @@ Reference info.
             decision_row6.remediation[1], lc.next,
             "Row 6: second step must be lifecycle's own next obligation"
         );
+    }
+
+    #[test]
+    fn test_wi_contract_change_leaf_measurements_1_to_5() {
+        let root = tempfile::tempdir().unwrap();
+        let base_body = "\
+## Problem
+Problem description.
+
+## Capability Alignment
+Alignment info.
+
+## Requirements
+Requirements text.
+
+## Scope
+Scope text.
+
+## Acceptance Criteria
+Criteria text.
+
+## Reference Context
+Reference info.
+";
+        let issue = change(base_body);
+        let slug = issue.slug.clone();
+
+        // Measurement 1: a type:change issue whose slug has no durable carrier under the project root
+        let carrier_file = carrier_path(root.path(), &slug);
+        assert!(
+            !carrier_file.exists(),
+            "carrier must not exist before first call"
+        );
+
+        let proj1 =
+            run_change_leaf(root.path(), &issue).expect("run_change_leaf must succeed on row 1");
+        assert!(carrier_file.exists(), "carrier must be created on row 1");
+
+        let carrier1 = load(root.path(), &slug)
+            .unwrap()
+            .expect("carrier must be loadable after row 1");
+        assert_eq!(carrier1.epoch, 1, "carrier epoch must be 1 on row 1");
+        assert_eq!(
+            carrier1.events.len(),
+            1,
+            "carrier events must hold exactly one WiCreate"
+        );
+        assert_eq!(
+            carrier1.events[0].kind,
+            LifecycleEventKind::WiCreate,
+            "event must be WiCreate"
+        );
+
+        assert!(
+            !proj1["wi_revision"].is_null(),
+            "rendered projection must have non-null wi_revision on row 1"
+        );
+        assert_eq!(proj1["ledger"]["epoch"], 1);
+        assert_eq!(
+            proj1["ledger"]["head_event_id"],
+            serde_json::json!(carrier1.head_event_id)
+        );
+
+        let head1 = carrier1.head_event_id.clone();
+        let bytes1 = std::fs::read(&carrier_file).unwrap();
+
+        // Measurement 2: the same issue and carrier, called a second time with tracker text untouched
+        let proj2 =
+            run_change_leaf(root.path(), &issue).expect("run_change_leaf must succeed on row 2");
+        let carrier2 = load(root.path(), &slug)
+            .unwrap()
+            .expect("carrier must be loadable on row 2");
+        let bytes2 = std::fs::read(&carrier_file).unwrap();
+
+        assert_eq!(
+            carrier2.head_event_id, head1,
+            "head_event_id must be identical on row 2"
+        );
+        assert_eq!(carrier2.epoch, 1, "epoch must be identical on row 2");
+        assert_eq!(
+            carrier2.events.len(),
+            1,
+            "event count must be identical on row 2"
+        );
+        assert_eq!(
+            bytes1, bytes2,
+            "carrier file bytes must be untouched on row 2"
+        );
+        assert_eq!(
+            proj1, proj2,
+            "emitted projection must equal row 1 projection"
+        );
+        assert_eq!(
+            proj2,
+            projection_for_issue(root.path(), &issue),
+            "emitted projection must equal projection_for_issue"
+        );
+
+        // Measurement 3: a carrier whose committed WI contract has drifted from tracker body
+        let drifted_body = base_body.replace(
+            "Problem description.",
+            "Problem description edited on tracker.",
+        );
+        let drifted_issue = change(&drifted_body);
+        let proj3 = run_change_leaf(root.path(), &drifted_issue)
+            .expect("run_change_leaf must succeed on row 3");
+        let carrier3 = load(root.path(), &slug)
+            .unwrap()
+            .expect("carrier must be loadable on row 3");
+        let bytes3 = std::fs::read(&carrier_file).unwrap();
+
+        assert_eq!(
+            bytes2, bytes3,
+            "carrier file bytes must be untouched on row 3"
+        );
+        assert_eq!(carrier3.epoch, 1, "epoch must remain 1 on row 3");
+        assert_eq!(
+            carrier3.events.len(),
+            1,
+            "event count must remain 1 on row 3"
+        );
+        assert_eq!(
+            proj3["drift"],
+            serde_json::json!(true),
+            "projection must report drift: true"
+        );
+        assert_eq!(
+            proj3["remediation"].as_array().unwrap().len(),
+            1,
+            "remediation must have 1 element"
+        );
+        assert_eq!(
+            proj3["remediation"][0]["command"],
+            serde_json::json!(format!("aw wi change {slug}")),
+            "remediation command must be aw wi change <slug>"
+        );
+        assert_eq!(
+            proj3["remediation"][0]["owner"],
+            serde_json::json!("wi"),
+            "remediation owner must be wi"
+        );
+        assert_eq!(
+            proj3,
+            projection_for_issue(root.path(), &drifted_issue),
+            "emitted projection must equal projection_for_issue for drifted issue"
+        );
+
+        // Measurement 4: the set of paths under project root created or modified in rows 1 through 3
+        fn collect_files(dir: &Path) -> Vec<PathBuf> {
+            let mut files = Vec::new();
+            if dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            files.extend(collect_files(&path));
+                        } else {
+                            files.push(path);
+                        }
+                    }
+                }
+            }
+            files.sort();
+            files
+        }
+
+        let carrier_file = carrier_path(root.path(), &slug);
+        let project_files = collect_files(root.path());
+        assert!(
+            project_files.is_empty(),
+            "no files created directly under project root (git/refs/index/tracker untouched)"
+        );
+
+        let runtime_files = collect_files(&crate::shared::workspace::workspace_runtime_path(
+            root.path(),
+        ));
+        assert_eq!(
+            runtime_files,
+            vec![carrier_file.clone()],
+            "exactly carrier_path and nothing else created under workspace runtime root"
+        );
+
+        // Measurement 5: non-change types do not get carriers created
+        let mut spike_issue = change("spike body");
+        spike_issue.issue_type = IssueType::Spike;
+        spike_issue.slug = "3363-spike".to_string();
+
+        let proj_spike = run_change_leaf(root.path(), &spike_issue).unwrap();
+        assert!(proj_spike["wi_revision"].is_null());
+        assert!(!carrier_path(root.path(), &spike_issue.slug).exists());
     }
 }

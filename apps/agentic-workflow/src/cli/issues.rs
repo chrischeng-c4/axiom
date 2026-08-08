@@ -1318,7 +1318,10 @@ async fn run_change(args: ChangeArgs) -> Result<()> {
     ensure_change_id(&args.slug)?;
     let issue = load_issue_for_change_lifecycle(&args.slug).await?;
     ensure_change_issue(&issue, "change")?;
-    anyhow::bail!("stage `change` is not implemented yet (requires #3363 R3)");
+    let project_root = crate::find_project_root()?;
+    let projection = crate::cli::change_lifecycle::run_change_leaf(&project_root, &issue)?;
+    println!("{}", serde_json::to_string_pretty(&projection)?);
+    Ok(())
 }
 
 async fn run_test(args: TestArgs) -> Result<()> {
