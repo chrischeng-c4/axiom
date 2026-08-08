@@ -28,7 +28,7 @@ it misleads, which are under *What not to do*.
 
 ```
 worktree → grant → doctor → scaffold → (fill, capture) → lint → snapshot → dispatch
-        → verify → review → prove ×2 → sweep → accept | revise | discard
+        → verify → review → adjudicate → prove ×2 → sweep → accept | revise | discard
 ```
 
 ```bash
@@ -38,21 +38,22 @@ python3 .claude/skills/agy-dispatch/scripts/make_profile.py \
     --scope libs/thing --issue 1234 --design-input libs/thing/CAPABILITIES.md \
     --write libs/thing/src/a.py:40 --out /abs/profile.json   # --run-id + --intent if one-shot
 
-python3 $S worktree profile.json KEY     # derive the worker's checkout, cut from HEAD
-python3 $S grant    profile.json         # install the Project permission set
-python3 $S doctor   profile.json         # read-only preflight; must print dispatch_ready
-python3 $S scaffold profile.json KEY     # both documents, as blank forms
-python3 $S capture  profile.json KEY CMD # run CMD; its output is the only quotable transcript
-python3 $S lint     profile.json KEY     # structure of both documents
-python3 $S snapshot profile.json KEY     # freeze contract, tree, permissions
-python3 $S dispatch profile.json KEY     # long; use Bash run_in_background
-python3 $S status   profile.json         # which failure a run hit, if one did
-python3 $S verify   profile.json KEY     # 1 = VOID (evidence untrustworthy), 2 = findings
-python3 $S review   profile.json KEY     # the diff, for you to adjudicate
-python3 $S prove    profile.json KEY mutant|candidate
-python3 $S sweep    profile.json KEY SCRIPT
-python3 $S accept   profile.json KEY     # commits on the worker's branch, prints a cherry-pick
-python3 $S discard  profile.json KEY     # always, even after a failure
+python3 $S worktree   profile.json KEY     # derive the worker's checkout, cut from HEAD
+python3 $S grant      profile.json         # install the Project permission set
+python3 $S doctor     profile.json         # read-only preflight; must print dispatch_ready
+python3 $S scaffold   profile.json KEY     # both documents, as blank forms
+python3 $S capture    profile.json KEY CMD # run CMD; its output is the only quotable transcript
+python3 $S lint       profile.json KEY     # structure of both documents
+python3 $S snapshot   profile.json KEY     # freeze contract, tree, permissions
+python3 $S dispatch   profile.json KEY     # long; use Bash run_in_background
+python3 $S status     profile.json         # which failure a run hit, if one did
+python3 $S verify     profile.json KEY     # 1 = VOID (evidence untrustworthy), 2 = findings
+python3 $S review     profile.json KEY     # the diff, for you to adjudicate
+python3 $S adjudicate profile.json KEY admit|reject FINDING # record decision on a scope finding
+python3 $S prove      profile.json KEY mutant|candidate
+python3 $S sweep      profile.json KEY SCRIPT
+python3 $S accept     profile.json KEY     # commits on the worker's branch, prints a cherry-pick
+python3 $S discard    profile.json KEY     # always, even after a failure
 ```
 
 `grant`, `doctor`, and `status` take the profile alone; the rest also take the

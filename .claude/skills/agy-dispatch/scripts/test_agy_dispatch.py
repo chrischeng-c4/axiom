@@ -7,6 +7,7 @@ import io
 import json
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -2980,6 +2981,337 @@ class ScaffoldTest(unittest.TestCase):
         (self.state / "oracles").mkdir(parents=True)
         (self.state / "oracles" / "r1.md").write_text(CONFORMANT_ORACLE)
         self.assertEqual(agy_dispatch.round_findings(profile, "r1"), [])
+
+
+class AdjudicateScopeFindingTest(unittest.TestCase):
+    """Scope finding adjudication lifecycle tests (measurements 1-9)."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(dir="/tmp")
+        self.root = Path(self.temporary.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=self.repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=self.repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=self.repo, check=True)
+
+        self.design_file = self.repo / "design.md"
+        self.design_file.write_text("frozen design input content\n")
+
+        self.protected1 = self.repo / "src" / "protected1.py"
+        self.protected1.parent.mkdir(parents=True, exist_ok=True)
+        self.protected1.write_text("protected1 base content\n")
+
+        self.protected2 = self.repo / "src" / "protected2.py"
+        self.protected2.write_text("protected2 base content\n")
+
+        self.writable = self.repo / "src" / "writable.py"
+        self.writable.write_text("writable base content\n")
+
+        subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=self.repo, check=True)
+
+        self.project_dir = self.root / "projects"
+        self.project_dir.mkdir()
+        self.project_id = "test-project"
+        (self.project_dir / f"{self.project_id}.json").write_text(
+            json.dumps(
+                {
+                    "id": self.project_id,
+                    "name": self.project_id,
+                    "projectResources": {
+                        "resources": [{"gitFolder": {"folderUri": self.repo.resolve().as_uri()}}]
+                    },
+                    "permissionGrants": {
+                        "permissionGrants": {
+                            "allow": ["command(*)"],
+                            "deny": [],
+                            "ask": [],
+                        }
+                    },
+                }
+            )
+        )
+
+        agy_dispatch.PROJECT_DIR = self.project_dir
+        agy_dispatch.SETTINGS = self.root / "settings.json"
+        agy_dispatch.GLOBAL = self.root / "config.json"
+        agy_dispatch.SETTINGS.write_text(json.dumps({"permissions": {"allow": [], "deny": [], "ask": []}}))
+        agy_dispatch.GLOBAL.write_text(
+            json.dumps({"userSettings": {"globalPermissionGrants": {"allow": [], "deny": [], "ask": []}}})
+        )
+
+        self.gate_cmd = "grep -q 'good edit' src/writable.py"
+
+        self.state_dir = self.root / "state"
+        self.profile_dict = {
+            "root": str(self.repo),
+            "repo": "owner/repo",
+            "agy_project_id": self.project_id,
+            "state_dir": str(self.state_dir),
+            "mode": "bounded-write",
+            "task_contract": {
+                "kind": "implementation",
+                "session_policy": "one-shot",
+                "run_id": "r1",
+                "intent": "Test adjudication",
+                "gate_command": self.gate_cmd,
+                "design_inputs": [{"path": "design.md", "sha256": agy_dispatch.sha256(self.design_file)}],
+            },
+            "project_permissions": {
+                "allow": ["command(*)"],
+                "deny": [],
+                "ask": [],
+                "require_empty_global": True,
+            },
+            "task_commands": {
+                "allow": [self.gate_cmd],
+                "deny": [],
+            },
+            "protected_artifacts": [
+                {"path": "src/protected1.py", "sha256": agy_dispatch.sha256(self.protected1)},
+                {"path": "src/protected2.py", "sha256": agy_dispatch.sha256(self.protected2)},
+            ],
+            "snapshot_paths": ["src"],
+            "allowed_repo_writes": ["src/writable.py"],
+            "path_change_budgets": {},
+            "controller_root": str(self.repo),
+        }
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def setup_round(self, task_key: str) -> tuple[dict, Path]:
+        p_dict = dict(self.profile_dict)
+        p_dict["task_contract"] = dict(self.profile_dict["task_contract"])
+        p_dict["task_contract"]["run_id"] = task_key
+        p_dict["state_dir"] = str(self.root / f"state-{task_key}")
+        p_path = self.root / f"profile-{task_key}.json"
+        p_path.write_text(json.dumps(p_dict, indent=2))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.worktree(str(p_path), task_key)
+        profile = agy_dispatch.load_profile(str(p_path), validate_design=False)
+
+        oracle = Path(profile["state_dir"]) / "oracles" / f"{task_key}.md"
+        injection = Path(profile["state_dir"]) / "injections" / f"{task_key}.md"
+        oracle.parent.mkdir(parents=True, exist_ok=True)
+        injection.parent.mkdir(parents=True, exist_ok=True)
+        oracle.write_text(
+            f"## Claim\n\nclaim\n\n## Measurements\n\n| # | input | expected observation | why |\n|---|---|---|---|\n| 1 | x | y | z |\n| 2 | x (negative control) | FAIL | z |\n\n## Gate\n\n```\n{self.gate_cmd}\n```\n\n## Fabrication tells\n\n- tell\n"
+        )
+        injection.write_text(
+            f"## Task\n\ntest task\n\n## Current behavior\n\n```\nwritable base content\n```\n\n## Required change\n\n- change\n\n## Shape to follow\n\n`src/writable.py`\n\n## Reference\n\n| path | why |\n|---|---|\n| `src/writable.py` | context |\n\n## Out of scope\n\n- none\n\n## Definition of done\n\n`src/writable.py`\n\n```\n{self.gate_cmd}\n```\n"
+        )
+        profile["inject_prompt_file"] = str(injection)
+        p_path.write_text(json.dumps(profile, indent=2))
+        profile = agy_dispatch.load_profile(str(p_path), validate_design=False)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.snapshot(profile, task_key)
+        return profile, p_path
+
+    def run_proofs(self, profile: dict, task_key: str, worker_root: Path) -> None:
+        """Helper to run valid mutant and candidate proofs for a round."""
+        good_text = (worker_root / "src" / "writable.py").read_text()
+
+        # Mutant: revert product edit
+        (worker_root / "src" / "writable.py").write_text("writable base content\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.prove(profile, task_key, "mutant")
+
+        # Candidate: restore product edit
+        (worker_root / "src" / "writable.py").write_text(good_text)
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.prove(profile, task_key, "candidate")
+
+    def test_measurement_1_verify_reports_protected_artifact_finding_and_exits_2(
+        self,
+    ) -> None:
+        """Row 1: verify reports protected artifact scope finding and exits 2."""
+        profile, _ = self.setup_round("m1")
+        worker_root = Path(profile["root"])
+        (worker_root / "src" / "protected1.py").write_text("modified by worker\n")
+
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.verify(profile, "m1")
+        self.assertEqual(caught.exception.code, agy_dispatch.EXIT_FINDINGS)
+
+    def test_measurement_2_and_3_adjudicated_finding_unblocks_accept_prove_sweep(
+        self,
+    ) -> None:
+        """Rows 2 & 3: adjudicating a finding allows accept, prove, and sweep."""
+        profile, _ = self.setup_round("m23")
+        worker_root = Path(profile["root"])
+        (worker_root / "src" / "protected1.py").write_text("worker edit protected1\n")
+        (worker_root / "src" / "writable.py").write_text("good edit\n")
+
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.verify(profile, "m23")
+        self.assertEqual(caught.exception.code, agy_dispatch.EXIT_FINDINGS)
+
+        # Adjudicate finding
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(
+                profile, "m23", "admit", "protected artifact changed: src/protected1.py"
+            )
+
+        # verify should now pass cleanly
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.verify(profile, "m23")
+
+        # Prove mutant & candidate
+        self.run_proofs(profile, "m23", worker_root)
+
+        # sweep
+        sweep_script = self.root / "sweep.py"
+        sweep_script.write_text("import sys\nsys.exit(0)\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.sweep(profile, "m23", str(sweep_script))
+
+        # accept
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.accept(profile, "m23")
+
+        head_commit = agy_dispatch.git_output(worker_root, "log", "-1", "--name-only")
+        self.assertIn("accepted worker candidate", head_commit)
+        self.assertIn("src/protected1.py", head_commit)
+        self.assertIn("src/writable.py", head_commit)
+
+    def test_measurement_4_second_unadjudicated_artifact_blocks_verbs(self) -> None:
+        """Row 4: second unadjudicated artifact still blocks prove, sweep, accept."""
+        profile, p_path = self.setup_round("m4")
+        worker_root = Path(profile["root"])
+        (worker_root / "src" / "protected1.py").write_text("same edit\n")
+        (worker_root / "src" / "protected2.py").write_text("same edit\n")
+
+        # Adjudicate protected1 only
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(profile, "m4", "admit", "src/protected1.py")
+
+        # load_profile with validate_design=True should refuse naming protected2
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.load_profile(str(p_path), validate_design=True, task_key="m4")
+        self.assertIn("protected2.py", str(caught.exception))
+        self.assertNotIn("protected1.py", str(caught.exception))
+
+    def test_measurement_4_byte_identical_unadjudicated_artifact_blocks_verbs(self) -> None:
+        """Row 4: byte-identical unadjudicated artifact still blocks prove, sweep, accept."""
+        profile, p_path = self.setup_round("m4_byte_identical")
+        worker_root = Path(profile["root"])
+        (worker_root / "src" / "protected1.py").write_text("byte identical edit\n")
+        (worker_root / "src" / "protected2.py").write_text("byte identical edit\n")
+
+        # Adjudicate protected1 only
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(
+                profile, "m4_byte_identical", "admit", "src/protected1.py"
+            )
+
+        # load_profile with validate_design=True should refuse naming protected2
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.load_profile(
+                str(p_path), validate_design=True, task_key="m4_byte_identical"
+            )
+        self.assertIn("protected2.py", str(caught.exception))
+        self.assertNotIn("protected1.py", str(caught.exception))
+
+    def test_measurement_5_adjudicated_artifact_changed_again_refuses(self) -> None:
+        """Row 5: artifact changed again after decision is refused."""
+        profile, p_path = self.setup_round("m5")
+        worker_root = Path(profile["root"])
+        (worker_root / "src" / "protected1.py").write_text("first edit\n")
+
+        # Adjudicate first edit
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(profile, "m5", "admit", "src/protected1.py")
+
+        # Change artifact again
+        (worker_root / "src" / "protected1.py").write_text("second edit\n")
+
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.load_profile(str(p_path), validate_design=True, task_key="m5")
+        self.assertIn("protected1.py", str(caught.exception))
+
+    def test_measurement_6_adjudication_on_nonexistent_finding_refused(self) -> None:
+        """Row 6: adjudication recorded on round with no such finding is refused."""
+        profile, _ = self.setup_round("m6")
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.adjudicate(profile, "m6", "admit", "src/protected1.py")
+        self.assertIn("no such finding exists", str(caught.exception))
+
+    def test_measurement_7_rejected_decision_restores_artifact(self) -> None:
+        """Row 7: decision reject restores artifact to frozen snapshot content."""
+        profile, _ = self.setup_round("m7")
+        worker_root = Path(profile["root"])
+        (worker_root / "src" / "protected1.py").write_text("bad edit\n")
+        (worker_root / "src" / "writable.py").write_text("good edit\n")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(profile, "m7", "reject", "src/protected1.py")
+
+        # Check content is restored
+        self.assertEqual(
+            (worker_root / "src" / "protected1.py").read_text(),
+            "protected1 base content\n",
+        )
+
+        # Prove and accept
+        self.run_proofs(profile, "m7", worker_root)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.accept(profile, "m7")
+
+        head_commit = agy_dispatch.git_output(worker_root, "log", "-1", "--name-only")
+        self.assertIn("src/writable.py", head_commit)
+        self.assertNotIn("src/protected1.py", head_commit)
+
+    def test_measurement_8_admitted_decision_carried_in_commit(self) -> None:
+        """Row 8: decision admit carries artifact in accepted commit."""
+        profile, _ = self.setup_round("m8")
+        worker_root = Path(profile["root"])
+        (worker_root / "src" / "protected1.py").write_text("admitted edit\n")
+        (worker_root / "src" / "writable.py").write_text("good edit\n")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(profile, "m8", "admit", "src/protected1.py")
+
+        self.run_proofs(profile, "m8", worker_root)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.accept(profile, "m8")
+
+        head_commit = agy_dispatch.git_output(worker_root, "log", "-1", "--name-only")
+        self.assertIn("src/protected1.py", head_commit)
+
+    def test_measurement_9_verify_rerun_removes_decided_finding(self) -> None:
+        """Row 9: verify re-run removes decided finding while keeping others unchanged."""
+        profile, _ = self.setup_round("m9")
+        worker_root = Path(profile["root"])
+        (worker_root / "src" / "protected1.py").write_text("edit 1\n")
+        (worker_root / "src" / "protected2.py").write_text("edit 2\n")
+
+        # Initial verify output
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit):
+                agy_dispatch.verify(profile, "m9")
+        out1 = buf.getvalue()
+        target_line_p1 = [line for line in out1.splitlines() if "protected artifact changed:" in line and "protected1.py" in line][0]
+        target_line_p2 = [line for line in out1.splitlines() if "protected artifact changed:" in line and "protected2.py" in line][0]
+
+        # Adjudicate protected1
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(profile, "m9", "admit", "src/protected1.py")
+
+        # Re-run verify
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            with self.assertRaises(SystemExit):
+                agy_dispatch.verify(profile, "m9")
+        out2 = buf2.getvalue()
+        self.assertNotIn(target_line_p1, out2)
+        self.assertIn(target_line_p2, out2)
 
 
 if __name__ == "__main__":

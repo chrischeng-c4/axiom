@@ -164,7 +164,11 @@ def validate_task_key(profile: dict, task_key: str) -> None:
 
 
 def load_profile(
-    path: str, *, validate_design: bool = True, require_injection: bool | None = None
+    path: str,
+    *,
+    validate_design: bool = True,
+    require_injection: bool | None = None,
+    task_key: str | None = None,
 ) -> dict:
     if require_injection is None:
         require_injection = validate_design
@@ -337,8 +341,14 @@ def load_profile(
         if validate_design:
             if not artifact.is_file():
                 raise SystemExit(f"protected artifact is missing: {artifact}")
-            if sha256(artifact) != entry["sha256"]:
-                raise SystemExit(f"protected artifact hash mismatch: {artifact}")
+            actual = sha256(artifact)
+            if actual != entry["sha256"]:
+                if task_key and has_valid_adjudication(
+                    state_dir, task_key, str(artifact), actual
+                ):
+                    pass
+                else:
+                    raise SystemExit(f"protected artifact hash mismatch: {artifact}")
 
     # Every verb that runs at or before authoring time — `doctor` preflights the
     # round, `scaffold` is what creates the injection, `lint` grades it — sees a
@@ -2473,6 +2483,163 @@ def park_original(
     )
 
 
+def decisions_path(state_dir: Path, task_key: str) -> Path:
+    return state_dir / "decisions" / f"{task_key}.json"
+
+
+def load_decisions(state_dir: Path, task_key: str) -> list[dict]:
+    path = decisions_path(state_dir, task_key)
+    if not path.is_file():
+        return []
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def has_valid_adjudication(
+    state_dir: Path,
+    task_key: str,
+    artifact_path_str: str,
+    current_hash: str | None,
+) -> bool:
+    decisions = load_decisions(state_dir, task_key)
+    if not decisions or current_hash is None:
+        return False
+
+    target_path = Path(artifact_path_str).resolve()
+
+    for dec in decisions:
+        if not isinstance(dec, dict) or "path" not in dec:
+            continue
+        try:
+            dec_path = Path(dec["path"]).resolve()
+        except Exception:
+            continue
+        if dec_path == target_path:
+            if dec.get("action") in ("admit", "reject") and dec.get("sha256") == current_hash:
+                return True
+    return False
+
+
+def adjudicate(
+    profile: dict,
+    task_key: str,
+    action: str,
+    finding_input: str,
+) -> None:
+    validate_task_key(profile, task_key)
+    if action not in ("admit", "reject"):
+        raise SystemExit("action must be admit or reject")
+
+    root = Path(profile["root"])
+    state_dir = Path(profile["state_dir"])
+
+    matched_entry = None
+    matched_artifact = None
+    matched_actual = None
+
+    for entry in profile["protected_artifacts"]:
+        artifact = Path(entry["path"])
+        actual = sha256(artifact) if artifact.is_file() else None
+        if actual != entry["sha256"]:
+            finding_str = f"protected artifact changed: {entry['path']}"
+            rel_str = (
+                str(artifact.relative_to(root))
+                if resolved_under(artifact, root)
+                else entry["path"]
+            )
+            candidates = {
+                finding_str,
+                entry["path"],
+                str(artifact),
+                rel_str,
+                f"protected artifact changed: {rel_str}",
+                f"protected artifact changed: {str(artifact)}",
+            }
+            if (
+                finding_input in candidates
+                or (
+                    Path(finding_input).is_absolute()
+                    and Path(finding_input).resolve() == artifact.resolve()
+                )
+                or (root / finding_input).resolve() == artifact.resolve()
+            ):
+                matched_entry = entry
+                matched_artifact = artifact
+                matched_actual = actual
+                break
+
+    if matched_entry is None or matched_artifact is None or matched_actual is None:
+        raise SystemExit(
+            f"refused: no such finding exists in round {task_key}: {finding_input}"
+        )
+
+    decisions = load_decisions(state_dir, task_key)
+    decisions = [
+        d
+        for d in decisions
+        if isinstance(d, dict)
+        and Path(d.get("path", "")).resolve() != matched_artifact.resolve()
+    ]
+
+    if action == "admit":
+        record = {
+            "finding": f"protected artifact changed: {matched_entry['path']}",
+            "path": str(matched_artifact),
+            "action": "admit",
+            "sha256": matched_actual,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        decisions.append(record)
+        d_path = decisions_path(state_dir, task_key)
+        d_path.parent.mkdir(parents=True, exist_ok=True)
+        d_path.write_text(json.dumps(decisions, indent=2) + "\n")
+        print(
+            f"adjudicated {task_key}: admitted {matched_entry['path']} "
+            f"(sha256 {matched_actual[:12]})"
+        )
+    elif action == "reject":
+        snapshot_data = load_snapshot(profile, task_key)
+        protected_contents = snapshot_data.get("protected_contents_base64", {})
+        encoded = (
+            protected_contents.get(matched_entry["path"])
+            or protected_contents.get(str(matched_artifact))
+        )
+        if encoded is None:
+            try:
+                rel = str(matched_artifact.relative_to(root))
+                encoded = protected_contents.get(rel)
+            except ValueError:
+                pass
+        if encoded is not None:
+            park_original(state_dir, str(matched_artifact), encoded)
+            parked = recovery_path(state_dir, str(matched_artifact))
+            if parked.is_file():
+                matched_artifact.write_bytes(parked.read_bytes())
+        elif matched_artifact.is_file():
+            matched_artifact.unlink()
+
+        restored_hash = (
+            sha256(matched_artifact) if matched_artifact.is_file() else None
+        )
+        record = {
+            "finding": f"protected artifact changed: {matched_entry['path']}",
+            "path": str(matched_artifact),
+            "action": "reject",
+            "sha256": restored_hash or matched_entry["sha256"],
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        decisions.append(record)
+        d_path = decisions_path(state_dir, task_key)
+        d_path.parent.mkdir(parents=True, exist_ok=True)
+        d_path.write_text(json.dumps(decisions, indent=2) + "\n")
+        print(
+            f"adjudicated {task_key}: rejected {matched_entry['path']}; "
+            "restored to snapshot content"
+        )
+
+
 def git_output(root: Path, *args: str) -> str:
     result = subprocess.run(
         [*GIT, "-C", str(root), *args],
@@ -2808,9 +2975,19 @@ def scope_findings(
     and charging the revision for it fires the finding on correct work.
     """
     findings = []
-    root = Path(profile["root"])
+    root = Path(profile["root"]).resolve()
     allowed = set(profile["allowed_repo_writes"])
-    outside = [path for path in touched if path not in allowed]
+    protected_rel = set()
+    for entry in profile.get("protected_artifacts", []):
+        p = Path(entry["path"])
+        if not p.is_absolute():
+            p = (root / p).resolve()
+        try:
+            protected_rel.add(str(p.relative_to(root)))
+        except ValueError:
+            protected_rel.add(entry["path"])
+
+    outside = [path for path in touched if path not in allowed and path not in protected_rel]
     if outside:
         findings.append(
             f"wrote {len(outside)} path(s) outside allowed_repo_writes: "
@@ -2834,6 +3011,10 @@ def scope_findings(
         artifact = Path(entry["path"])
         actual = sha256(artifact) if artifact.is_file() else None
         if actual != entry["sha256"]:
+            if task_key and has_valid_adjudication(
+                Path(profile["state_dir"]), task_key, str(artifact), actual
+            ):
+                continue
             findings.append(f"protected artifact changed: {entry['path']}")
     head = git_output(root, "rev-parse", "HEAD").strip()
     if head != worktree_spec(profile)["base_sha"]:
@@ -3514,6 +3695,8 @@ def verify(profile: dict, task_key: str) -> None:
     for path, expected in snapshot_data["protected_artifacts"].items():
         actual = sha256(Path(path))
         if actual != expected:
+            if has_valid_adjudication(state, task_key, path, actual):
+                continue
             hint = park_original(state, path, protected.get(path))
             raise SystemExit(
                 f"VOID: protected artifact changed: {path}\n  {hint}"
@@ -3568,6 +3751,7 @@ TASK_KEY_VERBS = (
     "snapshot",
     "verify",
     "review",
+    "adjudicate",
     "accept",
     "discard",
     "denied",
@@ -3593,6 +3777,7 @@ def main() -> None:
         "snapshot",
         "verify",
         "review",
+        "adjudicate",
         "accept",
         "discard",
         "status",
@@ -3645,6 +3830,16 @@ def main() -> None:
                 help="mutation sweep the controller wrote; its text is stored "
                 "with its result so the published claim can be re-run",
             )
+        if verb == "adjudicate":
+            item.add_argument(
+                "action",
+                choices=("admit", "reject"),
+                help="admit write into candidate or reject and restore artifact",
+            )
+            item.add_argument(
+                "finding",
+                help="scope finding or protected artifact path to adjudicate",
+            )
     args = parser.parse_args()
 
     if args.verb in RAW_PROFILE_VERBS:
@@ -3655,6 +3850,8 @@ def main() -> None:
             ),
         }[args.verb]()
         return
+
+    task_key = getattr(args, "task_key", None)
 
     profile = load_profile(
         args.profile,
@@ -3670,6 +3867,7 @@ def main() -> None:
             "scaffold",
             "lint",
             "capture",
+            "adjudicate",
         ),
         # `doctor` preflights the round before `scaffold` writes the injection.
         require_injection=args.verb
@@ -3683,7 +3881,9 @@ def main() -> None:
             "scaffold",
             "lint",
             "capture",
+            "adjudicate",
         ),
+        task_key=task_key,
     )
     {
         "grant": lambda: grant(profile),
@@ -3704,6 +3904,9 @@ def main() -> None:
         "abandon": lambda: abandon(profile, args.task_key),
         "verify": lambda: verify(profile, args.task_key),
         "review": lambda: review(profile, args.task_key),
+        "adjudicate": lambda: adjudicate(
+            profile, args.task_key, args.action, args.finding
+        ),
         "accept": lambda: accept(profile, args.task_key),
         "status": lambda: status(profile),
         "denied": lambda: denied(profile, args.task_key),
