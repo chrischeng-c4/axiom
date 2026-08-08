@@ -808,6 +808,10 @@ pub struct TestArgs {
 pub struct ReviewArgs {
     /// Work-item slug.
     pub slug: String,
+
+    /// Agent- or human-backed review evidence payload file path.
+    #[arg(long = "evidence-file")]
+    pub evidence_file: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -1348,7 +1352,11 @@ async fn run_review(args: ReviewArgs) -> Result<()> {
     ensure_change_id(&args.slug)?;
     let issue = load_issue_for_change_lifecycle(&args.slug).await?;
     ensure_change_issue(&issue, "review")?;
-    anyhow::bail!("stage `review` is not implemented yet (requires #3363 R5)");
+    let project_root = crate::find_project_root()?;
+    let projection =
+        crate::cli::change_lifecycle::run_review_leaf(&project_root, &issue, &args.evidence_file)?;
+    println!("{}", serde_json::to_string_pretty(&projection)?);
+    Ok(())
 }
 
 async fn run_commit(args: CommitArgs) -> Result<()> {
@@ -11954,8 +11962,13 @@ label = "app:agentic-workflow"
 
             // Measurement 3: with positional -> parsing succeeds with token unchanged
             let token = "3363-r1-slug";
+            let cli_args = if verb == "review" {
+                vec!["aw", "wi", verb, token, "--evidence-file", "evidence.json"]
+            } else {
+                vec!["aw", "wi", verb, token]
+            };
             let matches = TraceabilityCli::command()
-                .try_get_matches_from(["aw", "wi", verb, token])
+                .try_get_matches_from(cli_args)
                 .unwrap_or_else(|e| panic!("failed to parse `aw wi {verb} {token}`: {e}"));
             let (_, sub_matches) = matches.subcommand().expect("subcommand wi");
             let (leaf_name, leaf_matches) = sub_matches.subcommand().expect("leaf subcommand");

@@ -730,6 +730,43 @@ fn wi_remediation(slug: &str) -> NextObligation {
     }
 }
 
+pub fn derive_evidence_next_obligation(
+    slug: &str,
+    evidence: &[EvidenceBinding],
+    active_tuple: &ActiveDigestTuple,
+    fallback: &NextObligation,
+) -> NextObligation {
+    if evidence
+        .iter()
+        .any(|b| b.verifier == "wi-review" && b.passed && b.bound_tuple.matches(active_tuple))
+    {
+        NextObligation {
+            command: format!("aw wi commit {slug}"),
+            owner: OwnerVocabulary::Wi,
+        }
+    } else if evidence
+        .iter()
+        .any(|b| b.verifier == "wi-review" && !b.passed && b.bound_tuple.matches(active_tuple))
+    {
+        wi_remediation(slug)
+    } else if evidence
+        .iter()
+        .any(|b| b.verifier == "wi-test" && b.passed && b.bound_tuple.matches(active_tuple))
+    {
+        NextObligation {
+            command: format!("aw wi review {slug}"),
+            owner: OwnerVocabulary::Wi,
+        }
+    } else if evidence
+        .iter()
+        .any(|b| b.verifier == "wi-test" && !b.passed && b.bound_tuple.matches(active_tuple))
+    {
+        wi_remediation(slug)
+    } else {
+        fallback.clone()
+    }
+}
+
 /// Pure ownership routing for rejected or blocked stage evidence.
 pub fn route_failure(
     failure: FailureOwnership,
@@ -1308,24 +1345,12 @@ fn valid_persisted_lifecycle(lifecycle: &ChangeLifecycle, requested_slug: &str) 
         }
         replayed = result.lifecycle;
     }
-    let expected_next = if lifecycle.evidence.iter().any(|b| {
-        b.verifier == "wi-test"
-            && b.passed
-            && b.bound_tuple.matches(&replayed.active_digest_tuple())
-    }) {
-        NextObligation {
-            command: format!("aw wi review {}", requested_slug),
-            owner: OwnerVocabulary::Wi,
-        }
-    } else if lifecycle.evidence.iter().any(|b| {
-        b.verifier == "wi-test"
-            && !b.passed
-            && b.bound_tuple.matches(&replayed.active_digest_tuple())
-    }) {
-        wi_remediation(requested_slug)
-    } else {
-        replayed.next.clone()
-    };
+    let expected_next = derive_evidence_next_obligation(
+        requested_slug,
+        &lifecycle.evidence,
+        &replayed.active_digest_tuple(),
+        &replayed.next,
+    );
 
     replayed.epoch == lifecycle.epoch
         && replayed.head_event_id == lifecycle.head_event_id
@@ -1864,14 +1889,109 @@ pub fn run_test_leaf(
     lifecycle.evidence.retain(|b| b.verifier != "wi-test");
     lifecycle.evidence.push(binding);
 
-    lifecycle.next = if outcome.passed {
-        NextObligation {
-            command: format!("aw wi review {}", lifecycle.slug),
-            owner: OwnerVocabulary::Wi,
-        }
-    } else {
-        wi_remediation(&lifecycle.slug)
+    lifecycle.next = derive_evidence_next_obligation(
+        &lifecycle.slug,
+        &lifecycle.evidence,
+        &lifecycle.active_digest_tuple(),
+        &lifecycle.next,
+    );
+
+    save(project_root, &lifecycle)?;
+
+    Ok(projection_for_issue(project_root, issue))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WiReviewPayload {
+    #[serde(default)]
+    pub reviewer_kind: Option<String>,
+    #[serde(default)]
+    pub decision: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+/// Sync leaf execution for `aw wi review <id> --evidence-file <path>`.
+///
+/// Reads a semantic review payload from `--evidence-file`, validates that a green `wi-test`
+/// evidence binding exists on the active digest tuple, records the verdict as a `wi-review`
+/// EvidenceBinding without advancing the lifecycle, and updates next.command to
+/// `aw wi commit <slug>` for `accepted` or `aw wi change <slug>` for `needs_revision`.
+pub fn run_review_leaf(
+    project_root: &Path,
+    issue: &Issue,
+    evidence_file: &Path,
+) -> Result<serde_json::Value> {
+    if load(project_root, &issue.slug)?.is_none() {
+        record_create(project_root, issue)?;
+    }
+    let mut lifecycle = load(project_root, &issue.slug)?
+        .context("failed to load causal lifecycle carrier after creation")?;
+
+    let active_tuple = lifecycle.active_digest_tuple();
+
+    let test_binding = match lifecycle.evidence.iter().find(|b| b.verifier == "wi-test") {
+        None => anyhow::bail!("stage `review` refused: missing `wi-test` evidence binding"),
+        Some(b) => b,
     };
+
+    if !test_binding.passed {
+        anyhow::bail!("stage `review` refused: `wi-test` evidence binding is failing");
+    }
+
+    if !test_binding.bound_tuple.matches(&active_tuple) {
+        anyhow::bail!("stage `review` refused: `wi-test` evidence binding is stale");
+    }
+
+    let content = std::fs::read_to_string(evidence_file).with_context(|| {
+        format!(
+            "failed to read evidence payload from {}",
+            evidence_file.display()
+        )
+    })?;
+
+    let payload: WiReviewPayload = serde_json::from_str(&content).with_context(|| {
+        format!(
+            "failed to parse review payload from {}",
+            evidence_file.display()
+        )
+    })?;
+
+    let _reviewer_kind = match payload.reviewer_kind.as_deref() {
+        Some(kind) if kind == "human" || kind == "agent" => kind,
+        Some(other) => {
+            anyhow::bail!("unknown reviewer_kind `{other}`: expected `human` or `agent`")
+        }
+        None => anyhow::bail!("review payload missing required field `reviewer_kind`"),
+    };
+
+    let decision = match payload.decision.as_deref() {
+        Some(dec) if dec == "accepted" || dec == "needs_revision" => dec,
+        Some(other) => {
+            anyhow::bail!("unknown decision `{other}`: expected `accepted` or `needs_revision`")
+        }
+        None => anyhow::bail!("review payload missing required field `decision`"),
+    };
+
+    let passed = decision == "accepted";
+    let summary = payload.summary.unwrap_or_default();
+
+    let binding = EvidenceBinding {
+        verifier: "wi-review".to_string(),
+        bound_tuple: test_binding.bound_tuple.clone(),
+        passed,
+        summary,
+    };
+
+    lifecycle.evidence.retain(|b| b.verifier != "wi-review");
+    lifecycle.evidence.push(binding);
+
+    lifecycle.next = derive_evidence_next_obligation(
+        &lifecycle.slug,
+        &lifecycle.evidence,
+        &lifecycle.active_digest_tuple(),
+        &lifecycle.next,
+    );
 
     save(project_root, &lifecycle)?;
 
@@ -5759,5 +5879,337 @@ Progress Evidence: Evidence.
 
         assert!(!carrier_path(root.path(), &spike_issue.slug).exists());
         assert!(!carrier_path(root.path(), &report_issue.slug).exists());
+    }
+
+    #[test]
+    fn wi_contract_review_digest_measurement_1_accepted_payload() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change(complete_change_body());
+        let slug = issue.slug.clone();
+
+        record_create(root.path(), &issue).unwrap();
+        run_test_leaf(root.path(), &issue, &[issue.clone()]).unwrap();
+
+        let evidence_path = root.path().join("evidence.json");
+        std::fs::write(
+            &evidence_path,
+            r#"{"reviewer_kind":"agent","decision":"accepted","summary":"LGTM"}"#,
+        )
+        .unwrap();
+
+        let proj = run_review_leaf(root.path(), &issue, &evidence_path).unwrap();
+        let carrier = load(root.path(), &slug).unwrap().unwrap();
+
+        assert_eq!(carrier.evidence.len(), 2);
+        let review_binding = carrier
+            .evidence
+            .iter()
+            .find(|b| b.verifier == "wi-review")
+            .unwrap();
+        assert!(review_binding.passed);
+        assert_eq!(review_binding.summary, "LGTM");
+        assert_eq!(review_binding.bound_tuple, carrier.active_digest_tuple());
+        let test_binding = carrier
+            .evidence
+            .iter()
+            .find(|b| b.verifier == "wi-test")
+            .unwrap();
+        assert_eq!(review_binding.bound_tuple, test_binding.bound_tuple);
+
+        assert_eq!(proj["next"]["command"], format!("aw wi commit {slug}"));
+    }
+
+    #[test]
+    fn wi_contract_review_digest_measurement_2_refusals_missing_failing_stale_test() {
+        let issue = change(complete_change_body());
+        let slug = issue.slug.clone();
+
+        // 2a: Missing wi-test binding
+        let root_missing = tempfile::tempdir().unwrap();
+        let evidence_path_a = root_missing.path().join("evidence.json");
+        std::fs::write(
+            &evidence_path_a,
+            r#"{"reviewer_kind":"agent","decision":"accepted","summary":"LGTM"}"#,
+        )
+        .unwrap();
+
+        record_create(root_missing.path(), &issue).unwrap();
+        let err_missing =
+            run_review_leaf(root_missing.path(), &issue, &evidence_path_a).unwrap_err();
+        assert!(err_missing.to_string().contains("missing"));
+        assert!(err_missing.to_string().contains("wi-test"));
+        let carrier_missing = load(root_missing.path(), &slug).unwrap().unwrap();
+        assert!(carrier_missing
+            .evidence
+            .iter()
+            .all(|b| b.verifier != "wi-review"));
+
+        // 2b: Failing wi-test binding
+        let root_failing = tempfile::tempdir().unwrap();
+        let evidence_path_b = root_failing.path().join("evidence.json");
+        std::fs::write(
+            &evidence_path_b,
+            r#"{"reviewer_kind":"agent","decision":"accepted","summary":"LGTM"}"#,
+        )
+        .unwrap();
+
+        let bad_reqs_body = "\
+## Problem
+Problem statement.
+
+## Scope
+### In Scope
+- Scope.
+";
+        let bad_issue = change(bad_reqs_body);
+        let bad_slug = bad_issue.slug.clone();
+        record_create(root_failing.path(), &bad_issue).unwrap();
+        run_test_leaf(root_failing.path(), &bad_issue, &[bad_issue.clone()]).unwrap();
+        let err_failing =
+            run_review_leaf(root_failing.path(), &bad_issue, &evidence_path_b).unwrap_err();
+        assert!(err_failing.to_string().contains("failing"));
+        assert!(err_failing.to_string().contains("wi-test"));
+        let carrier_failing = load(root_failing.path(), &bad_slug).unwrap().unwrap();
+        assert!(carrier_failing
+            .evidence
+            .iter()
+            .all(|b| b.verifier != "wi-review"));
+
+        // 2c: Stale wi-test binding (bound_tuple does not match current active tuple)
+        let root_stale = tempfile::tempdir().unwrap();
+        let evidence_path_c = root_stale.path().join("evidence.json");
+        std::fs::write(
+            &evidence_path_c,
+            r#"{"reviewer_kind":"agent","decision":"accepted","summary":"LGTM"}"#,
+        )
+        .unwrap();
+
+        record_create(root_stale.path(), &issue).unwrap();
+        run_test_leaf(root_stale.path(), &issue, &[issue.clone()]).unwrap();
+        let carrier_with_test = load(root_stale.path(), &slug).unwrap().unwrap();
+        let stale_test_binding = carrier_with_test.evidence[0].clone(); // has old tuple
+
+        let edited_body = complete_change_body().replace(
+            "Problem statement describing the change.",
+            "Edited problem statement prose.",
+        );
+        let edited_issue = change(&edited_body);
+        record_update(root_stale.path(), &issue, &edited_issue).unwrap();
+
+        let mut carrier_after_update = load(root_stale.path(), &slug).unwrap().unwrap();
+        carrier_after_update.evidence.push(stale_test_binding); // insert stale test binding
+        save(root_stale.path(), &carrier_after_update).unwrap();
+
+        let err_stale =
+            run_review_leaf(root_stale.path(), &edited_issue, &evidence_path_c).unwrap_err();
+        assert!(err_stale.to_string().contains("stale"));
+        assert!(err_stale.to_string().contains("wi-test"));
+        let carrier_stale = load(root_stale.path(), &slug).unwrap().unwrap();
+        assert!(carrier_stale
+            .evidence
+            .iter()
+            .all(|b| b.verifier != "wi-review"));
+    }
+
+    #[test]
+    fn wi_contract_review_digest_measurement_3_needs_revision_payload() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change(complete_change_body());
+        let slug = issue.slug.clone();
+
+        record_create(root.path(), &issue).unwrap();
+        run_test_leaf(root.path(), &issue, &[issue.clone()]).unwrap();
+
+        let evidence_path = root.path().join("evidence.json");
+        std::fs::write(
+            &evidence_path,
+            r#"{"reviewer_kind":"agent","decision":"needs_revision","summary":"Fix section"}"#,
+        )
+        .unwrap();
+
+        let proj = run_review_leaf(root.path(), &issue, &evidence_path).unwrap();
+
+        assert!(!proj["wi_revision"].is_null());
+        assert_eq!(
+            proj["next"]["command"],
+            serde_json::json!(format!("aw wi change {slug}"))
+        );
+        assert_eq!(proj["next"]["owner"], serde_json::json!("wi"));
+        assert_ne!(
+            proj["next"]["command"],
+            serde_json::json!(format!("aw wi commit {slug}"))
+        );
+
+        let review_b = proj["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["verifier"] == "wi-review")
+            .unwrap();
+        assert_eq!(review_b["passed"], false);
+
+        let reloaded = load(root.path(), &slug).unwrap().unwrap();
+        assert!(valid_persisted_lifecycle(&reloaded, &slug));
+    }
+
+    #[test]
+    fn wi_contract_review_digest_measurement_4_accepted_payload_carrier_invariance() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change(complete_change_body());
+        let slug = issue.slug.clone();
+
+        record_create(root.path(), &issue).unwrap();
+        run_test_leaf(root.path(), &issue, &[issue.clone()]).unwrap();
+
+        let carrier_before = load(root.path(), &slug).unwrap().unwrap();
+        let rev_before = carrier_before.active_revisions[&ArtifactKind::Wi].clone();
+        let head_before = carrier_before.head_event_id.clone();
+        let epoch_before = carrier_before.epoch;
+        let terminal_before = carrier_before.terminal;
+
+        let evidence_path = root.path().join("evidence.json");
+        std::fs::write(
+            &evidence_path,
+            r#"{"reviewer_kind":"agent","decision":"accepted","summary":"LGTM"}"#,
+        )
+        .unwrap();
+
+        let proj = run_review_leaf(root.path(), &issue, &evidence_path).unwrap();
+
+        assert_eq!(
+            proj["next"]["command"],
+            serde_json::json!(format!("aw wi commit {slug}"))
+        );
+
+        let carrier_after = load(root.path(), &slug).unwrap().unwrap();
+        let rev_after = carrier_after.active_revisions[&ArtifactKind::Wi].clone();
+        let head_after = carrier_after.head_event_id.clone();
+        let epoch_after = carrier_after.epoch;
+        let terminal_after = carrier_after.terminal;
+
+        assert_eq!(rev_before, rev_after);
+        assert_eq!(head_before, head_after);
+        assert_eq!(epoch_before, epoch_after);
+        assert_eq!(terminal_before, terminal_after);
+
+        assert!(valid_persisted_lifecycle(&carrier_after, &slug));
+    }
+
+    #[test]
+    fn wi_contract_review_digest_measurement_5_invalid_payload_field_refusals() {
+        let root = tempfile::tempdir().unwrap();
+        let issue = change(complete_change_body());
+        let slug = issue.slug.clone();
+
+        record_create(root.path(), &issue).unwrap();
+        run_test_leaf(root.path(), &issue, &[issue.clone()]).unwrap();
+
+        // 5a: missing reviewer_kind
+        let path_no_rk = root.path().join("no_rk.json");
+        std::fs::write(&path_no_rk, r#"{"decision":"accepted"}"#).unwrap();
+        let err_no_rk = run_review_leaf(root.path(), &issue, &path_no_rk).unwrap_err();
+        assert!(err_no_rk.to_string().contains("reviewer_kind"));
+
+        // 5b: unknown reviewer_kind
+        let path_bad_rk = root.path().join("bad_rk.json");
+        std::fs::write(
+            &path_bad_rk,
+            r#"{"reviewer_kind":"robot","decision":"accepted"}"#,
+        )
+        .unwrap();
+        let err_bad_rk = run_review_leaf(root.path(), &issue, &path_bad_rk).unwrap_err();
+        assert!(err_bad_rk.to_string().contains("reviewer_kind"));
+
+        // 5c: unknown decision
+        let path_bad_dec = root.path().join("bad_dec.json");
+        std::fs::write(
+            &path_bad_dec,
+            r#"{"reviewer_kind":"human","decision":"approved"}"#,
+        )
+        .unwrap();
+        let err_bad_dec = run_review_leaf(root.path(), &issue, &path_bad_dec).unwrap_err();
+        assert!(err_bad_dec.to_string().contains("decision"));
+
+        let carrier = load(root.path(), &slug).unwrap().unwrap();
+        assert!(carrier.evidence.iter().all(|b| b.verifier != "wi-review"));
+    }
+
+    #[test]
+    fn wi_contract_review_digest_measurement_6_problem_prose_change_evicts_review_and_test() {
+        let root = tempfile::tempdir().unwrap();
+        let before_issue = change(complete_change_body());
+        let slug = before_issue.slug.clone();
+
+        record_create(root.path(), &before_issue).unwrap();
+        run_test_leaf(root.path(), &before_issue, &[before_issue.clone()]).unwrap();
+
+        let evidence_path = root.path().join("evidence.json");
+        std::fs::write(
+            &evidence_path,
+            r#"{"reviewer_kind":"agent","decision":"accepted","summary":"LGTM"}"#,
+        )
+        .unwrap();
+
+        run_review_leaf(root.path(), &before_issue, &evidence_path).unwrap();
+
+        let carrier_before = load(root.path(), &slug).unwrap().unwrap();
+        assert_eq!(carrier_before.evidence.len(), 2);
+
+        let edited_body = complete_change_body().replace(
+            "Problem statement describing the change.",
+            "Edited problem statement prose.",
+        );
+        let edited_issue = change(&edited_body);
+
+        let proj_drift = projection_for_issue(root.path(), &edited_issue);
+        assert!(proj_drift["drift"].as_bool().unwrap());
+        assert_eq!(
+            proj_drift["remediation"][0]["command"],
+            serde_json::json!(format!("aw wi change {slug}"))
+        );
+
+        record_update(root.path(), &before_issue, &edited_issue).unwrap();
+
+        let carrier_after = load(root.path(), &slug).unwrap().unwrap();
+        assert!(carrier_after.evidence.is_empty());
+        assert_eq!(carrier_after.invalidations.len(), 1);
+        let evicted = &carrier_after.invalidations[0].evicted_evidence_verifiers;
+        assert!(evicted.contains(&"wi-review".to_string()));
+        assert!(evicted.contains(&"wi-test".to_string()));
+    }
+
+    #[test]
+    fn wi_contract_review_digest_measurement_7_marker_block_churn_preserves_review() {
+        let root = tempfile::tempdir().unwrap();
+        let before_issue = change(complete_change_body());
+        let slug = before_issue.slug.clone();
+
+        record_create(root.path(), &before_issue).unwrap();
+        run_test_leaf(root.path(), &before_issue, &[before_issue.clone()]).unwrap();
+
+        let evidence_path = root.path().join("evidence.json");
+        std::fs::write(
+            &evidence_path,
+            r#"{"reviewer_kind":"agent","decision":"accepted","summary":"LGTM"}"#,
+        )
+        .unwrap();
+
+        run_review_leaf(root.path(), &before_issue, &evidence_path).unwrap();
+
+        let churned_body = format!(
+            "{}\n\n<!-- aw:loop-state\nversion: 1\n-->\n",
+            complete_change_body()
+        );
+        let churned_issue = change(&churned_body);
+
+        record_update(root.path(), &before_issue, &churned_issue).unwrap();
+
+        let carrier_after = load(root.path(), &slug).unwrap().unwrap();
+        let review_binding = carrier_after
+            .evidence
+            .iter()
+            .find(|b| b.verifier == "wi-review")
+            .expect("wi-review binding must be present");
+        assert!(review_binding.passed);
     }
 }
