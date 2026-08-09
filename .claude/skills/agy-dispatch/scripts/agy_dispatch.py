@@ -1073,6 +1073,20 @@ def snapshot(profile: dict, task_key: str) -> Path:
         entry["path"]: base64.b64encode(Path(entry["path"]).read_bytes()).decode()
         for entry in profile["protected_artifacts"]
     }
+    # Recorded for the same reason the protected ones are: a design input is a
+    # path frozen at bytes the worker must not change, and on a revision those
+    # bytes are the candidate it carried, not HEAD. Without them the round
+    # baseline is missing exactly the paths a narrowing revision moved out of
+    # `allowed_repo_writes`.
+    design_contents = {}
+    for entry in profile["task_contract"].get("design_inputs", []):
+        design = Path(entry["path"])
+        if not design.is_absolute():
+            design = root / design
+        if design.is_file():
+            design_contents[entry["path"]] = base64.b64encode(
+                design.read_bytes()
+            ).decode()
     writable_contents = {}
     for relative in profile["allowed_repo_writes"]:
         path = root / relative
@@ -1089,6 +1103,7 @@ def snapshot(profile: dict, task_key: str) -> Path:
         "manifest": manifest(root, profile["snapshot_paths"]),
         "protected_artifacts": artifact_hashes,
         "protected_contents_base64": protected_contents,
+        "design_input_contents_base64": design_contents,
         "writable_contents": writable_contents,
         "dispatch_contract": dispatch_contract(profile),
         "round_documents": round_document_digests(profile, task_key),
@@ -3687,6 +3702,24 @@ def worktree_spec(profile: dict) -> dict:
     return spec
 
 
+def repo_relative(root: Path, path: str) -> str:
+    """One path as `git diff --name-only` would name it, or unchanged.
+
+    The snapshot's maps disagree on this by construction: `writable_contents`
+    is keyed by the repo-relative strings the profile declares, while the
+    protected and design-input maps are keyed by the absolute paths
+    `load_profile` normalizes to. Anything comparing them against a git path
+    has to pick one, and git's is the only one every producer can reach.
+    """
+    p = Path(path)
+    if not p.is_absolute():
+        p = (root / p).resolve()
+    try:
+        return str(p.relative_to(root))
+    except ValueError:
+        return path
+
+
 def round_baseline(profile: dict, task_key: str) -> dict[str, str | None]:
     """Pre-round content of every path the snapshot recorded, by repo path.
 
@@ -3696,16 +3729,27 @@ def round_baseline(profile: dict, task_key: str) -> dict[str, str | None]:
     charges this worker for its predecessor's diff. The snapshot is the tree as
     it stood when this round was dispatched, which is what "what did this worker
     change" means for both cases. `None` marks a path absent before the round.
+
+    "Every path" has to mean every path, not every *writable* path. A revision
+    that narrows its write set is the normal case -- a revision adding a test
+    should not be allowed to edit the files it asserts about -- so the paths it
+    carried leave `allowed_repo_writes` and are frozen as design inputs or
+    protected artifacts instead. Those are exactly the paths whose bytes then
+    sit in the tree, outside the declared set, looking like the thing a scope
+    finding exists to catch.
     """
     try:
         snap = load_snapshot(profile, task_key)
     except SystemExit:
         return {}
+    root = Path(profile["root"]).resolve()
     baseline: dict[str, str | None] = dict(snap.get("writable_contents") or {})
-    for relative, encoded in (snap.get("protected_contents_base64") or {}).items():
-        baseline.setdefault(
-            relative, base64.b64decode(encoded).decode(errors="surrogateescape")
-        )
+    for key in ("protected_contents_base64", "design_input_contents_base64"):
+        for path, encoded in (snap.get(key) or {}).items():
+            baseline.setdefault(
+                repo_relative(root, path),
+                base64.b64decode(encoded).decode(errors="surrogateescape"),
+            )
     return baseline
 
 
@@ -3797,15 +3841,10 @@ def scope_findings(
     findings = []
     root = Path(profile["root"]).resolve()
     allowed = set(profile["allowed_repo_writes"])
-    protected_rel = set()
-    for entry in profile.get("protected_artifacts", []):
-        p = Path(entry["path"])
-        if not p.is_absolute():
-            p = (root / p).resolve()
-        try:
-            protected_rel.add(str(p.relative_to(root)))
-        except ValueError:
-            protected_rel.add(entry["path"])
+    protected_rel = {
+        repo_relative(root, entry["path"])
+        for entry in profile.get("protected_artifacts", [])
+    }
 
     outside = [path for path in touched if path not in allowed and path not in protected_rel]
     if outside:

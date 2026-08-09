@@ -2949,6 +2949,113 @@ class DerivedWorktreeTest(unittest.TestCase):
             findings,
         )
 
+    def test_a_narrowed_revision_does_not_report_what_it_carried(self) -> None:
+        """Narrowing the write set on a revision is the normal case.
+
+        A revision that only adds a test should not be allowed to edit the
+        files it is asserting about, so the carried paths leave
+        `allowed_repo_writes` and are frozen at their carried digests instead.
+        The bytes are then in the tree and outside the declared set, which is
+        the exact shape of a real out-of-scope write.
+        """
+        (self.controller / "HELPER.md").write_text("helper\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "helper")
+        self.isolate_permission_files()
+
+        profile, delta = self.revisable_round(
+            allowed_repo_writes=["README.md", "HELPER.md"]
+        )
+        worker = Path(profile["worktree"]["path"])
+        (worker / "HELPER.md").write_text("helper\nfirst revision\n")
+
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        # The narrowing as the reported round did it: the carried path leaves
+        # the write set and is frozen as a design input at the bytes it was
+        # carried with. `design_inputs` is the set `load_profile` hash-checks,
+        # so drift there refuses the profile outright rather than reporting.
+        revised["allowed_repo_writes"] = ["README.md"]
+        revised["task_contract"]["design_inputs"] = [
+            *revised["task_contract"]["design_inputs"],
+            {
+                "path": "HELPER.md",
+                "sha256": agy_dispatch.sha256(worker / "HELPER.md"),
+            },
+        ]
+        (self.root / "state" / "rounds" / "round-2.profile.json").write_text(
+            json.dumps(revised, indent=2) + "\n"
+        )
+        agy_dispatch.snapshot(revised, "round-2")
+
+        findings = self.revision_findings(revised)
+        self.assertFalse(
+            any("outside allowed_repo_writes" in item for item in findings), findings
+        )
+        # ...and a real write to the same path is still a finding.
+        (worker / "HELPER.md").write_text("helper\nthis round wrote here\n")
+        after = self.revision_findings(revised)
+        self.assertTrue(
+            any("outside allowed_repo_writes: HELPER.md" in item for item in after),
+            after,
+        )
+
+    def test_a_carried_protected_path_is_not_attributed_to_this_worker(self) -> None:
+        """The protected half of the baseline, keyed the way it is really keyed.
+
+        `load_profile` absolutizes `protected_artifacts`, so the snapshot records
+        their content under absolute paths while `writable_contents` is keyed
+        repo-relative. Merging both maps as if repo-relative leaves the protected
+        half matching nothing, which is invisible at `scope_findings` -- it
+        suppresses protected paths by name anyway -- and visible here, where
+        `review` asks which paths this worker wrote.
+        """
+        (self.controller / "HELPER.md").write_text("helper\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "helper")
+        self.isolate_permission_files()
+
+        profile, delta = self.revisable_round(
+            allowed_repo_writes=["README.md", "HELPER.md"]
+        )
+        worker = Path(profile["worktree"]["path"])
+        (worker / "HELPER.md").write_text("helper\nfirst revision\n")
+
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        revised["allowed_repo_writes"] = ["README.md"]
+        # Absolute, because that is what the profile carries by the time any
+        # verb reads it -- writing it relative here would test a shape that
+        # never reaches a snapshot.
+        revised["protected_artifacts"] = [
+            *revised["protected_artifacts"],
+            {
+                "path": str(worker / "HELPER.md"),
+                "sha256": agy_dispatch.sha256(worker / "HELPER.md"),
+            },
+        ]
+        (self.root / "state" / "rounds" / "round-2.profile.json").write_text(
+            json.dumps(revised, indent=2) + "\n"
+        )
+        agy_dispatch.snapshot(revised, "round-2")
+
+        self.assertNotIn(
+            "HELPER.md", agy_dispatch.worker_touched_paths(revised, "round-2")
+        )
+        # ...and this worker writing it is still this worker's write.
+        (worker / "HELPER.md").write_text("helper\nthis round wrote here\n")
+        self.assertIn(
+            "HELPER.md", agy_dispatch.worker_touched_paths(revised, "round-2")
+        )
+
     def test_lines_a_round_removed_count_against_its_budget(self) -> None:
         """Otherwise the cheapest way under a budget is to delete the file.
 
