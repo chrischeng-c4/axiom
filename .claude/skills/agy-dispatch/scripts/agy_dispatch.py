@@ -1494,14 +1494,31 @@ def audit_task_commands(
             unauthorized.append(item)
 
     if forbidden or unauthorized:
-        details = {
-            "forbidden": forbidden,
-            "unauthorized": unauthorized,
-        }
-        raise SystemExit(
-            "VOID: AGY ran shell commands nothing authorized: "
-            + json.dumps(details, sort_keys=True)
-        )
+        # A deny-listed line is fatal whether it ran or was refused, but those
+        # are not the same act and the sentence has to say which one happened.
+        # The rows carry `denied`, so a message reading "ran" above a row reading
+        # `"denied": true` is the controller contradicting its own evidence in
+        # the one place a human reads before deciding what the tree now holds.
+        ran_forbidden = [item for item in forbidden if not item["denied"]]
+        refused_forbidden = [item for item in forbidden if item["denied"]]
+        parts = []
+        if ran_forbidden:
+            parts.append(
+                "ran command(s) this round's `task_commands.deny` forbids: "
+                + json.dumps(ran_forbidden, sort_keys=True)
+            )
+        if refused_forbidden:
+            parts.append(
+                "asked for command(s) this round's `task_commands.deny` "
+                "forbids, and the permission layer refused them: "
+                + json.dumps(refused_forbidden, sort_keys=True)
+            )
+        if unauthorized:
+            parts.append(
+                "ran command(s) nothing authorized: "
+                + json.dumps(unauthorized, sort_keys=True)
+            )
+        raise SystemExit("VOID: AGY " + "; ".join(parts))
 
     findings = [
         f"AGY asked for `{item['command']}` at step {item['step']}, which the "
