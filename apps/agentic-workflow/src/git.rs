@@ -313,6 +313,34 @@ pub fn has_staged_changes_for_paths<P: AsRef<Path>>(
     git_diff_has_changes(status, "git diff --cached")
 }
 
+/// Enumerate staged paths in `project_root`.
+pub fn staged_paths(
+    _cap: &crate::lifecycle_commit::LifecycleWorktreeCapability,
+    project_root: &Path,
+) -> Result<Vec<PathBuf>> {
+    let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["diff", "--cached", "--name-only"])
+        .output()
+        .context("git diff --cached failed")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git diff --cached failed in {}: {}",
+            project_root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let paths = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    Ok(paths)
+}
+
 /// Commit already staged changes with `message`. If `allow_empty` is true, pass `--allow-empty`.
 pub fn commit_staged(
     _cap: &crate::lifecycle_commit::LifecycleCommitCapability,

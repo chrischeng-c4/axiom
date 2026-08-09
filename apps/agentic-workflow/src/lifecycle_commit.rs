@@ -158,7 +158,10 @@ mod capability {
             for actual in &actual_vec {
                 let norm_actual = normalize_path_for_cmp(project_root, actual);
                 let in_declared = prep.declared_paths.iter().any(|decl| {
-                    decl == actual || normalize_path_for_cmp(project_root, decl) == norm_actual
+                    let norm_decl = normalize_path_for_cmp(project_root, decl);
+                    decl == actual
+                        || norm_actual == norm_decl
+                        || norm_actual.starts_with(&norm_decl)
                 });
                 if !in_declared {
                     anyhow::bail!(
@@ -300,7 +303,9 @@ pub fn commit_staged_changes(
             leaf
         );
     }
-    let cap = prep.authorize(project_root, prep.declared_paths())?;
+    let wcap = LifecycleWorktreeCapability::get();
+    let staged = crate::git::staged_paths(&wcap, project_root)?;
+    let cap = prep.authorize(project_root, &staged)?;
     crate::git::commit_staged(&cap, project_root, message, allow_empty)
         .with_context(|| format!("lifecycle leaf {}", cap.origin().as_str()))
 }
@@ -465,6 +470,13 @@ pub fn has_staged_changes_for_paths<P: AsRef<Path>>(
 ) -> Result<bool> {
     let cap = LifecycleWorktreeCapability::get();
     crate::git::has_staged_changes_for_paths(&cap, project_root, paths, literal_pathspecs)
+        .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
+}
+
+/// Enumerate staged paths in `project_root`.
+pub fn staged_paths(leaf: LifecycleLeaf, project_root: &Path) -> Result<Vec<PathBuf>> {
+    let cap = LifecycleWorktreeCapability::get();
+    crate::git::staged_paths(&cap, project_root)
         .with_context(|| format!("lifecycle leaf {}", leaf.as_str()))
 }
 
@@ -1081,6 +1093,7 @@ mod tests {
             "dirty_paths",
             "has_staged_changes",
             "has_staged_changes_for_paths",
+            "staged_paths",
             "git_status",
         ];
 
@@ -1948,6 +1961,10 @@ fn test_item_fn() {
                 "&crate::lifecycle_commit::LifecycleWorktreeCapability",
             ),
             (
+                "staged_paths",
+                "&crate::lifecycle_commit::LifecycleWorktreeCapability",
+            ),
+            (
                 "git_status",
                 "&crate::lifecycle_commit::LifecycleWorktreeCapability",
             ),
@@ -2107,6 +2124,7 @@ pub fn git_merge_base_is_ancestor(
 ) -> Result<bool> { Ok(true) }
 pub fn git_reset(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
 pub fn git_merge(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
+pub fn staged_paths(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<Vec<PathBuf>> { Ok(Vec::new()) }
 pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, literal_pathspecs: bool, args: &[&str], pathspecs: &[P]) -> Result<Vec<u8>> { Ok(Vec::new()) }
 "#;
         let violations = scan_source_for_history_probe_capabilities(fixture);
@@ -2137,6 +2155,7 @@ pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorkt
             "dirty_paths",
             "has_staged_changes",
             "has_staged_changes_for_paths",
+            "staged_paths",
             "git_status",
         ];
         let fixture = r#"
@@ -2191,13 +2210,14 @@ pub fn ensure_no_staged_changes(
 pub fn dirty_paths(project_root: &Path, scopes: &[PathBuf], include_untracked: bool) -> Result<Vec<String>> { Ok(Vec::new()) }
 pub fn has_staged_changes(project_root: &Path) -> Result<bool> { Ok(true) }
 pub fn has_staged_changes_for_paths<P: AsRef<Path>>(project_root: &Path, paths: &[P], literal_pathspecs: bool) -> Result<bool> { Ok(true) }
+pub fn staged_paths(project_root: &Path) -> Result<Vec<PathBuf>> { Ok(Vec::new()) }
 pub fn git_status<P: AsRef<Path>>(project_root: &Path, literal_pathspecs: bool, args: &[&str], pathspecs: &[P]) -> Result<Vec<u8>> { Ok(Vec::new()) }
 "#;
         let violations = scan_source_for_history_probe_capabilities(fixture);
         assert_eq!(
             violations.len(),
-            13,
-            "expected 13 violations when all 13 probe capability parameters are missing, got: {violations:?}"
+            14,
+            "expected 14 violations when all 14 probe capability parameters are missing, got: {violations:?}"
         );
         let violations_text = violations.join("\n");
         for probe in expected_probes {
@@ -2247,6 +2267,7 @@ pub fn git_diff_name_only(_cap: &crate::lifecycle_commit::LifecycleHistoryCapabi
 pub fn git_merge_base_is_ancestor(_cap: &crate::lifecycle_commit::LifecycleHistoryCapability, project_root: &Path, ancestor: &str, descendant: &str) -> Result<bool> { Ok(true) }
 pub fn git_reset(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
 pub fn git_merge(_cap: &crate::lifecycle_commit::LifecycleCommitCapability, project_root: &Path, args: &[&str]) -> Result<()> { Ok(()) }
+pub fn staged_paths(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path) -> Result<Vec<PathBuf>> { Ok(Vec::new()) }
 pub fn git_status<P: AsRef<Path>>(_cap: &crate::lifecycle_commit::LifecycleWorktreeCapability, project_root: &Path, literal_pathspecs: bool, args: &[&str], pathspecs: &[P]) -> Result<Vec<u8>> { Ok(Vec::new()) }
 "#;
         let violations = scan_source_for_history_probe_capabilities(fixture);
@@ -2700,6 +2721,144 @@ mod lifecycle_commit_receipt {
             1,
             "mod capability must offer exactly 1 production function returning LifecycleCommitCapability (authorize_prepared_commit), found: {:?}",
             capability_returning_fns
+        );
+    }
+
+    #[test]
+    fn test_commit_staged_changes_unrelated_staged_path_refused_index_intact() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let git_bin = crate::git::find_git_bin().unwrap();
+        let head_before = git_rev_parse(LifecycleLeaf::Td, repo, &["HEAD"]).unwrap();
+
+        let a_path = repo.join("a.txt");
+        let b_path = repo.join("b.txt");
+        std::fs::write(&a_path, "content a").unwrap();
+        std::fs::write(&b_path, "content b").unwrap();
+
+        let add_out = std::process::Command::new(&git_bin)
+            .args(["add", "a.txt", "b.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(add_out.status.success());
+
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, repo, &[a_path]);
+        let res = commit_staged_changes(LifecycleLeaf::Td, &prep, repo, "commit a.txt", false);
+
+        assert!(
+            res.is_err(),
+            "commit_staged_changes must fail when index holds undeclared path b.txt"
+        );
+        let err_msg = res.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("b.txt"),
+            "Error message must name undeclared path b.txt: {}",
+            err_msg
+        );
+
+        let head_after = git_rev_parse(LifecycleLeaf::Td, repo, &["HEAD"]).unwrap();
+        assert_eq!(
+            head_before, head_after,
+            "HEAD must remain unchanged after refused commit_staged_changes"
+        );
+
+        let diff_cached = std::process::Command::new(&git_bin)
+            .args(["diff", "--cached", "--name-only"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        let staged_output = String::from_utf8_lossy(&diff_cached.stdout);
+        let staged_lines: Vec<&str> = staged_output.lines().map(str::trim).collect();
+        assert!(
+            staged_lines.contains(&"a.txt") && staged_lines.contains(&"b.txt"),
+            "Both a.txt and b.txt must remain staged after refusal, got: {:?}",
+            staged_lines
+        );
+    }
+
+    #[test]
+    fn test_commit_staged_changes_declared_set_staged_committed() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let git_bin = crate::git::find_git_bin().unwrap();
+        let a_path = repo.join("a.txt");
+        std::fs::write(&a_path, "content a").unwrap();
+
+        let add_out = std::process::Command::new(&git_bin)
+            .args(["add", "a.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(add_out.status.success());
+
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, repo, &[a_path]);
+        let res = commit_staged_changes(LifecycleLeaf::Td, &prep, repo, "commit a.txt", false);
+        assert!(
+            res.is_ok(),
+            "commit_staged_changes should succeed when index matches declared set"
+        );
+
+        let hcap = LifecycleHistoryCapability::for_test();
+        let rev_list = crate::git::git_rev_list(&hcap, repo, &["HEAD"]).unwrap();
+        assert_eq!(
+            rev_list.len(),
+            2,
+            "HEAD should advance by exactly one commit"
+        );
+
+        let show_paths = crate::git::git_diff_name_only(&hcap, repo, &["HEAD~1", "HEAD"]).unwrap();
+        assert_eq!(
+            show_paths,
+            vec!["a.txt"],
+            "git show should list a.txt alone"
+        );
+    }
+
+    #[test]
+    fn test_commit_staged_changes_absolute_declared_path_accepted() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = temp.path();
+        init_git_repo(repo);
+        initial_commit(repo);
+
+        let git_bin = crate::git::find_git_bin().unwrap();
+        let a_path_abs = repo.join("a.txt");
+        std::fs::write(&a_path_abs, "content a").unwrap();
+
+        let add_out = std::process::Command::new(&git_bin)
+            .args(["add", "a.txt"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(add_out.status.success());
+
+        let prep = PreparedCommit::prepare(LifecycleLeaf::Td, repo, &[a_path_abs]);
+        let res = commit_staged_changes(LifecycleLeaf::Td, &prep, repo, "commit a.txt", false);
+        assert!(
+            res.is_ok(),
+            "commit_staged_changes should accept absolute declared path matching relative staged path"
+        );
+
+        let hcap = LifecycleHistoryCapability::for_test();
+        let rev_list = crate::git::git_rev_list(&hcap, repo, &["HEAD"]).unwrap();
+        assert_eq!(
+            rev_list.len(),
+            2,
+            "HEAD should advance by exactly one commit"
+        );
+
+        let show_paths = crate::git::git_diff_name_only(&hcap, repo, &["HEAD~1", "HEAD"]).unwrap();
+        assert_eq!(
+            show_paths,
+            vec!["a.txt"],
+            "git show should list a.txt alone"
         );
     }
 }
