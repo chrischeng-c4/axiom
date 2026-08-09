@@ -56,6 +56,37 @@ def run(argv: list[str]) -> tuple[int, str, str]:
     return done.returncode, done.stdout, done.stderr
 
 
+def predates_ghan_flip(aw: str, project: str) -> bool:
+    """Ask the binary what it scaffolds for a change with no body.
+
+    A binary from before the GHAN flip merges any body into the legacy
+    six-section template, and the only symptom the caller sees is that the
+    stored body is not the one it handed in -- which reads as the normalizer
+    editing the round's work rather than as the wrong binary being on `PATH`.
+    The default body is the same decision made in the open: post-flip it is a
+    blank GHAN form, pre-flip it opens with `## Problem`.
+    """
+    code, out, _ = run(
+        [aw, "wi", "draft", "init",
+         "--title", "ghan flip probe",
+         "--type", "change",
+         "--project", project,
+         "--json"]
+    )
+    if code != 0:
+        return False
+    try:
+        draft = Path(json.loads(out)["path"])
+    except (json.JSONDecodeError, KeyError, OSError):
+        return False
+    try:
+        body = FRONTMATTER.sub("", draft.read_text())
+    except OSError:
+        return False
+    headings = [line for line in body.splitlines() if line.startswith("## ")]
+    return "## Goal" not in headings
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Validate a proposed work-item body as a local draft."
@@ -108,10 +139,20 @@ def main() -> int:
 
     stored = FRONTMATTER.sub("", Path(draft).read_text()).strip()
     if stored != body.strip():
+        if predates_ghan_flip(args.aw, args.project):
+            print(
+                f"FAIL  `{args.aw}` predates the GHAN flip: it still answers a "
+                "change with the legacy six-section template, so it merged this "
+                "body into that scaffold. Rebuild and reinstall it, or pass "
+                "`--aw <path>`; the round was not judged."
+            )
+            return 1
         print(
             "FAIL  `draft init` did not store the body verbatim, so what was "
             "judged is not what would be published"
         )
+        print(f"       stored {len(stored.splitlines())} line(s) for a body of "
+              f"{len(body.strip().splitlines())}; draft at {draft}")
         return 1
 
     code, out, err = run([args.aw, "wi", "draft", "validate", draft, "--json"])

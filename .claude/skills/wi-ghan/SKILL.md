@@ -87,9 +87,12 @@ What the gate cannot see, and what you check at `review`:
 - **The negative control's sha256.** Any 64 hex characters are accepted. Confirm
   it is the current digest of the file it claims to restore.
 
-The gate needs an `aw` on `PATH` that post-dates the GHAN flip. If it reports
-`section '## Problem' missing or empty` on a body that plainly has all four GHAN
-sections, the binary is stale — pass `--aw <path-to-built-aw>` or reinstall.
+The gate needs an `aw` on `PATH` that post-dates the GHAN flip, and it says so
+itself: a binary that still answers a change with the legacy six-section
+template is refused by name — `predates the GHAN flip … the round was not
+judged` — rather than reported as the body failing. Rebuild and reinstall, or
+pass `--aw <path-to-built-aw>`. A `cargo install` of `aw` takes about ten
+minutes; a gate run started while one is in flight judges the old binary.
 
 ## What not to do
 
