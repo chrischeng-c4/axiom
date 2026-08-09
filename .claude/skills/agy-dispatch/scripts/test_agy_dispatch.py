@@ -3631,6 +3631,52 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertFalse(record["compiled"])
         self.assertIn("says nothing about behaviour", out.getvalue())
 
+    def compound_gate(self) -> dict:
+        """The ordinary gate shape: build, and only if that worked, test."""
+        contract = self.contract_with_design_input()
+        contract["gate_command"] = (
+            "python3 -c \"print('built')\" && python3 -c \"print('tested')\""
+        )
+        return contract
+
+    def test_prove_runs_a_compound_gate_as_one_command_line(self) -> None:
+        """A gate is a command line, not an argv.
+
+        Split into tokens, `&&` is handed to the first command as an argument;
+        it refuses, the second half never runs, and the refusal says nothing
+        about compilation -- so the proof records a red that looks behavioural
+        and is not. Every round in a repository whose gate is compound recorded
+        that pair.
+        """
+        profile = self.derive(self.profile_path(task_contract=self.compound_gate()))
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.prove(profile, "round-1", "candidate")
+        record = json.loads(
+            agy_dispatch.proof_path(profile, "round-1", "candidate").read_text()
+        )
+        tail = "\n".join(record["output_tail"])
+        self.assertEqual(record["exit_code"], 0)
+        self.assertIn("built", tail)
+        self.assertIn("tested", tail, "the half after `&&` never ran")
+
+    def test_prove_does_not_call_a_gate_the_shell_never_found_compiled(self) -> None:
+        """127 is the shell saying the gate does not exist.
+
+        That belongs with the build failures: no behaviour was observed, so a
+        red carrying it must not be counted as the gate noticing anything.
+        """
+        contract = self.contract_with_design_input()
+        contract["gate_command"] = "agy-dispatch-gate-that-does-not-exist"
+        profile = self.derive(self.profile_path(task_contract=contract))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            agy_dispatch.prove(profile, "round-1", "mutant")
+        record = json.loads(
+            agy_dispatch.proof_path(profile, "round-1", "mutant").read_text()
+        )
+        self.assertEqual(record["exit_code"], 127)
+        self.assertFalse(record["compiled"])
+        self.assertIn("says nothing about behaviour", out.getvalue())
+
     def cli(self, *argv: str) -> str:
         """Drive the real entry point, because the relaxation lives in it.
 

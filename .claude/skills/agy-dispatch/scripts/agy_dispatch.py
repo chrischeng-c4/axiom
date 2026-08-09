@@ -4304,9 +4304,17 @@ def prove(profile: dict, task_key: str, label: str) -> None:
     root = Path(profile["root"])
     print(f"gate  : {command}")
     print(f"tree  : {root}")
+    # Through a shell, because a gate is a command line and not an argv. A gate
+    # that says "build, and if that worked, test" is the ordinary shape here,
+    # and splitting it into tokens hands `&&` to the build as an argument: the
+    # build refuses it, nothing is ever tested, and the refusal carries no
+    # "could not compile", so `compiled` below comes out true precisely because
+    # nothing compiled. Every proof recorded that way is a red that says
+    # nothing about behaviour while claiming to say something.
     result = subprocess.run(
-        shlex.split(command),
+        command,
         cwd=root,
+        shell=True,
         text=True,
         capture_output=True,
     )
@@ -4316,8 +4324,11 @@ def prove(profile: dict, task_key: str, label: str) -> None:
         "task_key": task_key,
         "label": label,
         "command": command,
+        # 127 is the shell saying it never found the gate. That red belongs with
+        # the build failures, not with the failed assertions, for the same
+        # reason: no behaviour was observed.
         "exit_code": result.returncode,
-        "compiled": "could not compile" not in output,
+        "compiled": result.returncode != 127 and "could not compile" not in output,
         "tree_digest": candidate_tree_digest(profile),
         # The other half of the tree. A mutant whose falsifier lives outside the
         # write scope moves nothing `tree_digest` covers, so without this the
