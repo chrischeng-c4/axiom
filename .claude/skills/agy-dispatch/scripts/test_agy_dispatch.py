@@ -4470,6 +4470,88 @@ class InjectionContractTest(unittest.TestCase):
         )
         self.assert_single_finding(text, "reads as numbered steps")
 
+    def test_prose_wrapped_before_a_number_is_not_a_recipe(self) -> None:
+        """The reported false positive: a paragraph, not a list.
+
+        Wrapping at column 79 puts a number at the head of a continuation line
+        whenever a sentence breaks before one ending a clause. The rule then
+        fired on a section holding no list at all, which teaches the author to
+        reflow text and to skim the list the finding arrives in.
+        """
+        text = CONFORMANT_INJECTION.replace(
+            "`strip_aw_marker_blocks` already knows the marker vocabulary; "
+            "match it rather\nthan introducing a second notion of what AW owns.",
+            "`strip_aw_marker_blocks` already knows the marker vocabulary, at "
+            "`src/thing.rs`\nlines 12, 40, and\n2860. Match it rather than "
+            "introducing a second notion of what AW owns.",
+        )
+        self.assertEqual(self.findings(text), [])
+
+    def test_a_recipe_introduced_by_prose_is_still_reported(self) -> None:
+        """A list interrupting a paragraph is a list; CommonMark says so too.
+
+        The narrow reading of the fix -- "require a blank line above" -- would
+        let the recipe back in under one line of preamble, which is how a
+        section actually grows into one.
+        """
+        text = CONFORMANT_INJECTION.replace(
+            "Two bodies differing only inside an AW-owned marker block must "
+            "produce the\nsame stored contract digest.",
+            "Do this:\n1. Strip the marker blocks.\n2. Hash what is left.",
+        )
+        self.assert_single_finding(text, "reads as numbered steps")
+
+    def test_a_loose_recipe_with_wrapped_steps_is_still_reported(self) -> None:
+        """Blank and indented lines carry the run; only prose ends it.
+
+        Otherwise a two-step recipe escapes by being written the way markdown
+        renders best -- one blank line between items, continuations indented.
+        """
+        text = CONFORMANT_INJECTION.replace(
+            "Two bodies differing only inside an AW-owned marker block must "
+            "produce the\nsame stored contract digest.",
+            "1. Strip the marker blocks, leaving the body otherwise\n"
+            "   untouched.\n\n2. Hash what is left.",
+        )
+        self.assert_single_finding(text, "reads as numbered steps")
+
+    def test_one_item_is_not_an_order_to_type_it_in(self) -> None:
+        """A list of one, and a wrapped number later in the same section.
+
+        Both halves matter. One numbered line has no order to it, which is the
+        whole of what the rule objects to. And the wrapped number after it is
+        only separated from that item by prose -- so a rule that let the run
+        survive a prose line would read the two as a two-step recipe spanning
+        half the section.
+        """
+        text = CONFORMANT_INJECTION.replace(
+            "Two bodies differing only inside an AW-owned marker block must "
+            "produce the\nsame stored contract digest.",
+            "Exactly one thing must become true:\n\n"
+            "1. Two bodies differing only inside a marker block produce the "
+            "same digest.\n\n"
+            "The rendered digest is a separate concern, as is the whitespace "
+            "case at line\n2860. Neither changes here.",
+        )
+        self.assertEqual(self.findings(text), [])
+
+    def test_consecutively_wrapped_numbers_are_not_a_recipe(self) -> None:
+        """The one paragraph a run alone cannot tell from a list.
+
+        Two sentences wrapping before a number in a row put two numbered lines
+        adjacent with no prose between them, which is exactly the shape the run
+        counts. What separates them from a recipe is that neither opens at one.
+        """
+        text = CONFORMANT_INJECTION.replace(
+            "Two bodies differing only inside an AW-owned marker block must "
+            "produce the\nsame stored contract digest.",
+            "Two bodies differing only inside a marker block must agree, as at "
+            "line\n1564. The same holds for bodies differing only in trailing "
+            "whitespace at\n2860. Both are the stored digest, not the rendered "
+            "one.",
+        )
+        self.assertEqual(self.findings(text), [])
+
     def test_shape_naming_no_existing_symbol_is_reported(self) -> None:
         text = CONFORMANT_INJECTION.replace(
             "`strip_aw_marker_blocks` already knows the marker vocabulary; match "

@@ -1896,9 +1896,42 @@ INJECTION_SECTIONS = (
 # answer, and a round whose answer is already written has nothing left to
 # dispatch.
 FENCE_BEARING_SECTIONS = ("Current behavior", "Definition of done")
-NUMBERED_STEP = re.compile(r"^[ \t]*\d+[.)][ \t]+\S", re.MULTILINE)
+NUMBERED_STEP = re.compile(r"^[ \t]*(\d+)[.)][ \t]+\S")
 # Enough to name a convention and say to follow it; not enough to describe one.
 SHAPE_LINE_BUDGET = 4
+
+
+def reads_as_numbered_steps(body: str) -> bool:
+    """Two or more numbered lines, opening at one, with no prose between them.
+
+    One is not a recipe, and prose wrapped at column 79 produces exactly one
+    whenever a sentence breaks before a number ending a clause -- `... at lines
+    175, 1564, 4023, and\\n2860. Five sites` is a paragraph, not a list. So the
+    run is what is counted, and an unindented line that is not itself numbered
+    ends it. Blank and indented lines carry the run instead, which keeps a loose
+    list and a wrapped step from reading as two lists of one; prose introducing
+    a list is still caught, because resetting to zero leaves the list that
+    follows free to reach two on its own.
+
+    A run opens only on `1`, because two *consecutively* wrapped numbers are the
+    one paragraph the run alone cannot tell from a list, and an ordered recipe
+    is numbered from one. The cost is a recipe that starts at some other number,
+    which is not how one gets written.
+    """
+    run = 0
+    for line in body.splitlines():
+        step = NUMBERED_STEP.match(line)
+        if step:
+            if run == 0 and step.group(1) != "1":
+                continue
+            run += 1
+            if run >= 2:
+                return True
+        elif line.strip() and not line[:1].isspace():
+            run = 0
+    return False
+
+
 ORACLE_HEADING = re.compile(r"^##[ \t]+(.+?)[ \t]*$", re.MULTILINE)
 ORACLE_FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
 INFO_FENCE = re.compile(r"^```([^\n]*)\n(.*?)^```", re.MULTILINE | re.DOTALL)
@@ -2325,7 +2358,7 @@ def injection_findings(
             )
 
     for name in ("Required change", "Shape to follow"):
-        if name in sections and NUMBERED_STEP.search(sections[name]):
+        if name in sections and reads_as_numbered_steps(sections[name]):
             findings.append(
                 f"`## {name}` reads as numbered steps: say what must become "
                 "true, not the order to type it in"
