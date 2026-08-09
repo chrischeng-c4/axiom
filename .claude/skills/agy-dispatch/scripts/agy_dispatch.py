@@ -4745,6 +4745,61 @@ def uncommitted_candidate(worktree: Path) -> list[str]:
     return sorted(line for line in out.stdout.splitlines() if line.strip())
 
 
+def unreferenced_commits(controller_root: str, branch: str) -> list[str]:
+    """Commits on the worker branch the controller holds in no form at all.
+
+    The question `branch -D` does not ask. `accept` commits on the worker branch
+    and only *prints* a cherry-pick line; nothing enforces it was run. So the
+    documented round order minus one manual step leaves the accepted commit
+    referenced by the reflog alone, and by nothing once that expires.
+
+    Two questions, because reachability alone is the wrong one: cherry-picking
+    rewrites the committer timestamp, so the integrated commit is a different
+    object, and a guard asking only "does another ref reach this sha" would
+    refuse every round that did exactly what `accept` told it to. The second is
+    `git cherry`'s -- does an equivalent patch already sit on the other side --
+    asked against `HEAD` because that is where `accept`'s cherry-pick line lands.
+
+    Oldest first, so the list doubles as the cherry-pick argument order.
+    """
+    ref = f"refs/heads/{branch}"
+    listed = subprocess.run(
+        [*GIT, "-C", controller_root, "for-each-ref", "--format=%(refname)"],
+        capture_output=True,
+        text=True,
+    )
+    if listed.returncode != 0:
+        return []
+    others = [name for name in listed.stdout.split() if name != ref]
+    out = subprocess.run(
+        [*GIT, "-C", controller_root, "log", "--format=%H %s", "--reverse", ref,
+         "--not", *others],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        return []
+    unreachable = [line for line in out.stdout.splitlines() if line.strip()]
+    if not unreachable:
+        return []
+    # `git cherry` lists only what `HEAD` does not already reach, and marks `-`
+    # what it carries under a different sha. Both exclusions are wanted: the
+    # first covers a detached controller HEAD, which `for-each-ref` never named.
+    cherry = subprocess.run(
+        [*GIT, "-C", controller_root, "cherry", "HEAD", ref],
+        capture_output=True,
+        text=True,
+    )
+    if cherry.returncode != 0:
+        return unreachable
+    absent = {
+        line.split(" ", 1)[1].strip()
+        for line in cherry.stdout.splitlines()
+        if line.startswith("+")
+    }
+    return [line for line in unreachable if line.split(" ", 1)[0] in absent]
+
+
 def discard(
     profile_path: str,
     task_key: str,
@@ -4784,6 +4839,28 @@ def discard(
                 f"`discard PROFILE {task_key} --drop-uncommitted`"
             )
 
+    # Work in a commit no ref reaches, which the check above cannot see: a clean
+    # worktree is exactly what `accept` leaves behind. No opt-in flag of its own
+    # -- `--keep-branch` already keeps the commits, and a flag that destroyed
+    # them would be a second way to lose an accepted candidate.
+    branch = spec.get("branch", "")
+    if branch.startswith(DERIVED_BRANCH_PREFIX) and not keep_branch:
+        stranded = unreferenced_commits(controller_root, branch)
+        if stranded:
+            listed = "\n".join(f"  {line}" for line in stranded)
+            shas = " ".join(line.split(" ", 1)[0] for line in stranded)
+            raise SystemExit(
+                f"refusing to discard: {controller_root} holds {len(stranded)} "
+                f"commit(s) on {branch} in no form -- no ref reaches them and "
+                "HEAD carries no equivalent patch\n"
+                f"{listed}\n"
+                "deleting the branch leaves them in the reflog only -- `accept` "
+                "prints a cherry-pick line and nothing enforces that it was run\n"
+                f"integrate them with `git -C {controller_root} cherry-pick "
+                f"{shas}` and discard again, or keep them where they are with "
+                f"`discard PROFILE {task_key} --keep-branch`"
+            )
+
     project_id = raw.get("agy_project_id")
     home_root = spec.get("project_home_root") or controller_root
     if worktree_path and Path(home_root).resolve() == Path(worktree_path).resolve():
@@ -4813,7 +4890,6 @@ def discard(
             for rule in withdrawn:
                 print(f"    - {rule}")
 
-    branch = spec.get("branch", "")
     path = spec.get("path")
     if path and Path(path).exists():
         destroyed = uncommitted_candidate(Path(path))

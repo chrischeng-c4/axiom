@@ -2332,20 +2332,127 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertIn("candidate.py", output)
         self.assertEqual(self.project_binding(), self.controller.resolve())
 
-    def test_a_committed_candidate_discards_without_an_opt_in(self) -> None:
-        """Throwing away a round whose work is safe is what `discard` is for.
-
-        A guard that fired on every round would be routed around within a day.
-        """
-        path, worker = self.dirty_round()
+    def commit_candidate(self, worker: Path) -> str:
+        """Commit the worker's tree on its own branch, as `accept` does."""
         subprocess.run(["git", "-C", str(worker), "add", "-A"], check=True)
         subprocess.run(
             ["git", "-C", str(worker), "commit", "-q", "-m", "candidate"],
             check=True,
         )
+        return subprocess.run(
+            ["git", "-C", str(worker), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def branch_exists(self, branch: str) -> bool:
+        return subprocess.run(
+            ["git", "-C", str(self.controller), "rev-parse", "--verify",
+             "--quiet", f"refs/heads/{branch}"],
+            capture_output=True,
+        ).returncode == 0
+
+    def test_a_committed_candidate_discards_without_an_opt_in(self) -> None:
+        """Throwing away a round whose work is safe is what `discard` is for.
+
+        A guard that fired on every round would be routed around within a day.
+        Safe here means integrated: a commit the controller reaches survives the
+        branch deletion, which is the whole point of the cherry-pick line.
+        """
+        path, worker = self.dirty_round()
+        sha = self.commit_candidate(worker)
+        subprocess.run(
+            ["git", "-C", str(self.controller), "cherry-pick", sha],
+            capture_output=True, check=True,
+        )
         with contextlib.redirect_stdout(io.StringIO()):
             agy_dispatch.discard(str(path), "round-1")
         self.assertFalse(worker.exists())
+        self.assertFalse(self.branch_exists("agy/round-1"))
+
+    def test_discard_refuses_while_a_commit_reaches_no_other_ref(self) -> None:
+        """`accept` commits and prints a cherry-pick line; nothing runs it.
+
+        So the documented round order minus one manual step reaches `discard`
+        with the accepted commit referenced by the worker branch alone, and
+        `branch -D` does not ask whether anything else holds it.
+        """
+        path, worker = self.dirty_round()
+        sha = self.commit_candidate(worker)
+        with self.assertRaises(SystemExit) as caught:
+            with contextlib.redirect_stdout(io.StringIO()):
+                agy_dispatch.discard(str(path), "round-1")
+        message = str(caught.exception)
+        self.assertIn(sha, message)
+        # And what each one was. A list of hashes alone sends the controller to
+        # git before they can tell an accepted candidate from a stray commit.
+        self.assertIn("candidate", message)
+        self.assertIn("cherry-pick", message)
+        self.assertIn("--keep-branch", message)
+        # Refused before anything moved, as the uncommitted guard beside it does.
+        self.assertTrue(self.branch_exists("agy/round-1"))
+        self.assertEqual(self.project_binding(), worker.resolve())
+
+    def test_a_cherry_picked_commit_is_not_stranded_under_a_new_sha(
+        self,
+    ) -> None:
+        """The documented integration produces a different object.
+
+        `cherry-pick` rewrites the committer timestamp, and `-x` the message
+        too, so asking only whether some ref reaches this sha would refuse every
+        round that did exactly what `accept` told it to -- and a guard that
+        fires after the recovery it names is one nobody runs twice.
+        """
+        path, worker = self.dirty_round()
+        sha = self.commit_candidate(worker)
+        subprocess.run(
+            ["git", "-C", str(self.controller), "cherry-pick", "-x", sha],
+            capture_output=True, check=True,
+        )
+        landed = subprocess.run(
+            ["git", "-C", str(self.controller), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertNotEqual(landed, sha)
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.discard(str(path), "round-1")
+        self.assertFalse(self.branch_exists("agy/round-1"))
+
+    def test_a_commit_another_branch_holds_is_not_stranded(self) -> None:
+        """Integration is not always onto HEAD.
+
+        A controller who parked the commit on a branch of their own has not lost
+        it, and the reachability half of the question is what sees that.
+        """
+        path, worker = self.dirty_round()
+        sha = self.commit_candidate(worker)
+        subprocess.run(
+            ["git", "-C", str(self.controller), "branch", "parked", sha],
+            check=True,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.discard(str(path), "round-1")
+        self.assertFalse(self.branch_exists("agy/round-1"))
+        self.assertTrue(self.branch_exists("parked"))
+
+    def test_keep_branch_is_the_only_way_past_an_unreferenced_commit(
+        self,
+    ) -> None:
+        """No opt-in of its own, on purpose.
+
+        A `--drop-commits` twin would be a second way to lose an accepted
+        candidate, and the flag that keeps them already exists.
+        """
+        path, worker = self.dirty_round()
+        sha = self.commit_candidate(worker)
+        output = self.cli("discard", str(path), "round-1", "--keep-branch")
+        self.assertIn("kept branch agy/round-1", output)
+        self.assertFalse(worker.exists())
+        self.assertTrue(self.branch_exists("agy/round-1"))
+        reached = subprocess.run(
+            ["git", "-C", str(self.controller), "rev-parse", "agy/round-1"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(reached, sha)
 
     def test_round_local_grants_are_withdrawn_on_discard(self) -> None:
         path = self.profile_path()
