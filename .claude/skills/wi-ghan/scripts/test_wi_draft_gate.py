@@ -143,5 +143,76 @@ class WIDraftGateTest(unittest.TestCase):
         self.assertIn("PASS", out)
 
 
+class DraftGateStructureOnlyTests(unittest.TestCase):
+    def test_structure_only_leaves_row_commands_unrun(self) -> None:
+        marker_path = (
+            Path(tempfile.gettempdir())
+            / f"wi_draft_gate_test_marker_{Path(__file__).stat().st_ino}.tmp"
+        )
+        if marker_path.exists():
+            marker_path.unlink()
+
+        marker_cmd = f"python3 -c \"import pathlib; pathlib.Path({str(marker_path)!r}).touch()\""
+        body = make_body(
+            "Structure Only Body",
+            [f"| 1 | `{marker_cmd}` | exits 1 | exits 0 | test marker |"],
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write(body)
+            f.flush()
+            body_path = Path(f.name)
+
+        try:
+            buf = io.StringIO()
+            with patch(
+                "sys.argv",
+                [
+                    "wi_draft_gate.py",
+                    str(body_path),
+                    "--project",
+                    "agentic-workflow",
+                    "--structure-only",
+                ],
+            ):
+                with contextlib.redirect_stdout(buf):
+                    rc = wi_draft_gate.main()
+            out = buf.getvalue()
+            self.assertEqual(
+                rc, 0, f"expected PASS exit code 0, got {rc}. Output:\n{out}"
+            )
+            self.assertIn("PASS", out)
+            self.assertFalse(
+                marker_path.exists(),
+                f"marker file {marker_path} was created, meaning command was run in --structure-only mode!",
+            )
+        finally:
+            body_path.unlink(missing_ok=True)
+            if marker_path.exists():
+                marker_path.unlink()
+
+    def test_default_mode_still_refuses_an_all_green_table(self) -> None:
+        ref_body = (
+            Path(__file__).resolve().parents[1]
+            / "references"
+            / "all-green-body.md"
+        )
+        self.assertTrue(
+            ref_body.is_file(), f"reference body not found at {ref_body}"
+        )
+        buf = io.StringIO()
+        with patch(
+            "sys.argv",
+            ["wi_draft_gate.py", str(ref_body), "--project", "agentic-workflow"],
+        ):
+            with contextlib.redirect_stdout(buf):
+                rc = wi_draft_gate.main()
+        out = buf.getvalue()
+        self.assertEqual(
+            rc, 1, f"expected refused exit code 1, got {rc}. Output:\n{out}"
+        )
+        self.assertIn("FAIL", out)
+        self.assertIn("already succeed", out)
+
+
 if __name__ == "__main__":
     unittest.main()

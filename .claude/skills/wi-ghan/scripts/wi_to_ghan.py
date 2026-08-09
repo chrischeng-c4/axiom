@@ -50,6 +50,11 @@ GHAN_HEADINGS = ("## Goal", "## How", "## Acceptance", "## Never")
 PATH_TOKEN = re.compile(r"`([A-Za-z0-9_./-]+/[A-Za-z0-9_./-]+)`")
 
 
+def round_gate(target: str, project: str) -> str:
+    """The command string that serves as a rewrite round's gate."""
+    return f"python3 {GATE_SCRIPT} {target} --project {project} --structure-only"
+
+
 def gh(argv: list[str], repo: str | None) -> str:
     full = ["gh", *argv]
     if repo:
@@ -302,9 +307,7 @@ def main() -> int:
     title = item["title"].strip()
 
     target = f"{DRAFT_DIR}/{args.issue}.md"
-    gate = (
-        f"python3 {GATE_SCRIPT} {target} --project {project}"
-    )
+    gate = round_gate(target, project)
 
     for required in (GHAN_RULE, GHAN_VALIDATOR, GATE_SCRIPT, f"{DRAFT_DIR}/.gitkeep"):
         if not (root / required).exists():

@@ -159,6 +159,12 @@ def main() -> int:
         help="the binary to judge with; the default is whatever is installed, "
         "which is the one `aw wi create` will apply to this body later",
     )
+    ap.add_argument(
+        "--structure-only",
+        action="store_true",
+        help="judge only the document structure and GHAN rules; do not execute "
+        "or measure the acceptance table's commands against the checkout",
+    )
     args = ap.parse_args()
 
     path = Path(args.body_file)
@@ -258,30 +264,31 @@ def main() -> int:
             print(f"  - {message}")
         return 1
 
-    repo_root = Path(__file__).resolve().parents[4]
-    measured_rows: list[tuple[str, int, str]] = []
-    for row in rows:
-        cmd = extract_command(row)
-        if not cmd:
-            continue
-        done = subprocess.run(
-            cmd, shell=True, cwd=repo_root, capture_output=True, text=True
-        )
-        out_err = (done.stdout + done.stderr).strip()
-        measured_rows.append((cmd, done.returncode, out_err))
+    if not args.structure_only:
+        repo_root = Path(__file__).resolve().parents[4]
+        measured_rows: list[tuple[str, int, str]] = []
+        for row in rows:
+            cmd = extract_command(row)
+            if not cmd:
+                continue
+            done = subprocess.run(
+                cmd, shell=True, cwd=repo_root, capture_output=True, text=True
+            )
+            out_err = (done.stdout + done.stderr).strip()
+            measured_rows.append((cmd, done.returncode, out_err))
 
-    if measured_rows and all(rc == 0 for _, rc, _ in measured_rows):
-        print(
-            f"FAIL  {path}: all {len(measured_rows)} acceptance row(s) already succeed against the checkout; "
-            "a work item's gate baseline must be measured red before the change"
-        )
-        for cmd, rc, out_err in measured_rows:
-            print(f"  - command: {cmd}")
-            print(f"    exit: {rc}")
-            if out_err:
-                for line in out_err.splitlines():
-                    print(f"    {line}")
-        return 1
+        if measured_rows and all(rc == 0 for _, rc, _ in measured_rows):
+            print(
+                f"FAIL  {path}: all {len(measured_rows)} acceptance row(s) already succeed against the checkout; "
+                "a work item's gate baseline must be measured red before the change"
+            )
+            for cmd, rc, out_err in measured_rows:
+                print(f"  - command: {cmd}")
+                print(f"    exit: {rc}")
+                if out_err:
+                    for line in out_err.splitlines():
+                        print(f"    {line}")
+            return 1
 
     print(f"PASS  {path}")
     print(f"title : {title}")
