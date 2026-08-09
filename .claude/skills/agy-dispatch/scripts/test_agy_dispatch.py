@@ -1911,6 +1911,94 @@ class DerivedWorktreeTest(unittest.TestCase):
             paths.append(json.loads(emitted.read_text())["inject_prompt_file"])
         self.assertNotEqual(*paths)
 
+    def test_a_generated_profile_declares_the_surface_it_will_run_under(
+        self,
+    ) -> None:
+        """The declared surface has to equal the effective one, not a subset.
+
+        `doctor` blocks on inherited `allow` rules the profile does not declare,
+        and it is right to: they widen the worker past what the round says it
+        authorized, so `verify` would measure the round against a surface it did
+        not run under. The Project's `deny` rules were already carried for the
+        mirror-image reason; this is the other half (#3431).
+
+        Transcribing them by hand is what produced the gap. The list lives on the
+        machine, so a copy in the profile goes stale the first time the machine
+        is edited, and the omission is a strict narrowing -- which reads exactly
+        like a deliberate one.
+        """
+        self.settings.write_text(
+            json.dumps(
+                {
+                    "permissions": {
+                        "allow": ["command(rg)", "command(uv)"],
+                        "deny": [],
+                        "ask": [],
+                    }
+                }
+            )
+        )
+        derived = self.make_profile_derived()
+        self.assertEqual(derived.returncode, 0, derived.stderr)
+        profile = json.loads(self.derived_out().read_text())
+
+        allow = profile["project_permissions"]["allow"]
+        self.assertIn("command(rg)", allow)
+        self.assertIn("command(uv)", allow)
+        self.assertIn("command(cargo test -p target --lib some_gate)", allow)
+
+        report = agy_dispatch.project_policy_report(profile)
+        self.assertFalse(
+            [b for b in report["blockers"] if "inherited global rules" in b],
+            report["blockers"],
+        )
+
+    def test_a_shell_less_round_does_not_claim_to_be_one_while_authorized(
+        self,
+    ) -> None:
+        """`no_shell` is an exemption, so it cannot be emitted on reflex.
+
+        It turns off the refusal that a round must authorize its own gate. A
+        gate-less round on a machine whose global surface already allows
+        thirteen commands is not shell-less -- the worker can run all thirteen --
+        and saying so would hand back the escape hatch #3479 closed.
+        """
+        self.settings.write_text(
+            json.dumps(
+                {
+                    "permissions": {
+                        "allow": ["command(rg)"],
+                        "deny": [],
+                        "ask": [],
+                    }
+                }
+            )
+        )
+        # Measure-only and gate-less, which is the only shape that reaches the
+        # branch: `make_profile.py` refuses a bounded-write round with no gate.
+        self.seed_generated_round()
+        self.git("remote", "add", "origin", "git@github.com:owner/repo.git")
+        derived = subprocess.run(
+            [
+                sys.executable,
+                str(MAKE_PROFILE),
+                "--scope", "src",
+                "--run-id", "measure-1",
+                "--intent", "measure without running anything",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(self.controller),
+        )
+        self.assertEqual(derived.returncode, 0, derived.stderr)
+        emitted = (
+            Path("/tmp/agy-dispatch/project-a") / "rounds"
+            / "measure-1.profile.json"
+        )
+        self.addCleanup(emitted.unlink, missing_ok=True)
+        permissions = json.loads(emitted.read_text())["project_permissions"]
+        self.assertNotIn("no_shell", permissions)
+
     def test_make_profile_derives_the_repository_root_not_the_directory(
         self,
     ) -> None:

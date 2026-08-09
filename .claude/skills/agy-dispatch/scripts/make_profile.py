@@ -164,6 +164,23 @@ def project_protective_rules(project_id: str) -> dict[str, list[str]]:
     return {kind: list(surface[kind]) for kind in agy_dispatch.PROTECTIVE_KINDS}
 
 
+def inherited_global_allow() -> list[str]:
+    """The `allow` rules already in force on this machine, whoever the round is.
+
+    `doctor` blocks a profile whose declared surface is narrower than the
+    inherited one, and it is right to: an inherited `allow` widens the worker
+    past what the round says it authorized, so the round would be measured
+    against a surface that is not the one it ran under.
+
+    The Project's `deny` rules were already carried for the mirror-image reason.
+    Carrying `allow` too is what makes the declared surface equal the effective
+    one. Derived rather than transcribed, because a transcription is a list that
+    drifts silently: the surface it describes is edited on the machine, not in
+    the profile.
+    """
+    return list(dispatcher().global_permission_surface()["allow"])
+
+
 def git_line(cwd: Path, *args: str) -> str | None:
     result = subprocess.run(
         ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=False
@@ -430,8 +447,9 @@ def main() -> int:
     # side of the same defect was #3479; it announced itself within one round,
     # because a worker that can run nothing stops. This side announces nothing.
     inherited = project_protective_rules(project_id)
+    inherited_allow = inherited_global_allow()
     project_permissions: dict[str, object] = {
-        "allow": [],
+        "allow": list(inherited_allow),
         "deny": inherited["deny"],
         "ask": inherited["ask"],
     }
@@ -455,10 +473,16 @@ def main() -> int:
         contract["gate_command"] = gate
         task_commands["allow"].append(gate)
         project_permissions["allow"].append(f"command({gate})")
-    elif not args.allow_shell:
+    elif not args.allow_shell and not project_permissions["allow"]:
         # A round that measures without running anything is legitimate; it just
         # has to say so, so that an unfilled profile stays distinguishable from
         # a deliberately silent one.
+        #
+        # Conditional on the surface actually being empty, because the inherited
+        # rules can make it not be. `no_shell` beside a non-empty `allow` is a
+        # profile that says the worker runs nothing while authorizing it to run
+        # thirteen things, and it is read as an exemption: it turns off the
+        # refusal that a round must authorize its own gate.
         project_permissions["no_shell"] = True
 
     profile: dict[str, object] = {
@@ -523,6 +547,11 @@ def main() -> int:
         "inherited guards:    "
         f"{len(inherited['deny'])} deny, {len(inherited['ask'])} ask "
         "(carried from the Project so `grant` does not revoke them)"
+    )
+    print(
+        "inherited allow:     "
+        f"{len(inherited_allow)} (carried from the global surface so the "
+        "declared surface equals the effective one)"
     )
     print(f"writable paths:      {len(writes)} ({len(missing)} not yet on disk)")
     if budgets:
