@@ -412,6 +412,101 @@ class DispatchControllerTest(unittest.TestCase):
         self.assertIn("src/a.py", output)
         self.assertIn("declared write target(s) are also frozen", output)
 
+    def authored_round(self) -> tuple[dict, Path, Path]:
+        """A round whose permission surface is ready and whose authoring is not.
+
+        The gate is `pwd` rather than the conformant oracle's cargo line so that
+        the round stays a *permission*-clean one: a gate the Project surface has
+        no rule for is a blocker, and a blocker would exit `doctor` before it
+        ever reached the question these rows ask.
+        """
+        profile = self.one_shot_profile(self.repo_a, "project-a")
+        profile["task_contract"]["gate_command"] = "pwd"
+        oracle = Path(profile["state_dir"]) / "oracles" / "adhoc-1.md"
+        oracle.parent.mkdir(parents=True)
+        snapshot = Path(profile["state_dir"]) / "snapshots" / "adhoc-1.json"
+        return profile, oracle, snapshot
+
+    def run_doctor(self, profile: dict) -> dict:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return agy_dispatch.doctor(profile)
+
+    def test_doctor_does_not_call_a_round_ready_before_its_snapshot_exists(
+        self,
+    ) -> None:
+        """`dispatch` refuses without a snapshot, so `dispatch_ready` must too.
+
+        The failure this replaces was silent and expensive: nothing is
+        misconfigured, so the report printed `true`, and the round was authored
+        and dispatched against a preflight that had said go.
+        """
+        profile, oracle, _ = self.authored_round()
+        oracle.write_text(
+            CONFORMANT_ORACLE.replace("cargo test -p target --lib some_gate", "pwd")
+        )
+        report = self.run_doctor(profile)
+        self.assertFalse(report["dispatch_ready"], report)
+        self.assertEqual(
+            report["pending_steps"],
+            ["no pre-dispatch snapshot: run `snapshot PROFILE adhoc-1`"],
+        )
+        # Not a blocker, and not an exit. A blocker is a misconfiguration the
+        # controller must go and fix with `/permissions`; this is the flow
+        # working, at exactly the step `doctor` is documented to run before.
+        self.assertEqual(report["blockers"], [])
+
+    def test_doctor_names_every_authoring_step_the_round_has_not_reached(
+        self,
+    ) -> None:
+        """All three of `dispatch`'s authoring preconditions, each with its verb.
+
+        A report that named only the last one reached would send the controller
+        back once per step.
+        """
+        profile, oracle, snapshot = self.authored_round()
+        self.assertEqual(
+            self.run_doctor(profile)["pending_steps"],
+            [
+                "no oracle yet: run `scaffold PROFILE adhoc-1` and fill both "
+                "documents",
+                "no pre-dispatch snapshot: run `snapshot PROFILE adhoc-1`",
+            ],
+        )
+        oracle.write_text("## Claim\n\n<!-- fill: what this round claims -->\n")
+        snapshot.parent.mkdir(parents=True)
+        snapshot.write_text("{}")
+        pending = self.run_doctor(profile)["pending_steps"]
+        self.assertEqual(len(pending), 1, pending)
+        self.assertIn("run `lint PROFILE adhoc-1`", pending[0])
+
+    def test_doctor_calls_the_round_ready_once_every_step_is_done(self) -> None:
+        """The negative control: readiness still becomes true, and by doing them.
+
+        Without this row the whole change is satisfied by a `dispatch_ready`
+        that is simply always false.
+        """
+        profile, oracle, snapshot = self.authored_round()
+        oracle.write_text(
+            CONFORMANT_ORACLE.replace("cargo test -p target --lib some_gate", "pwd")
+        )
+        snapshot.parent.mkdir(parents=True)
+        snapshot.write_text("{}")
+        report = self.run_doctor(profile)
+        self.assertEqual(report["pending_steps"], [])
+        self.assertTrue(report["dispatch_ready"], report)
+
+    def test_a_missing_snapshot_names_the_verb_that_creates_it(self) -> None:
+        """The refusal is read by a controller who does not have the source open.
+
+        `snapshot` takes the same two positional arguments as whatever refused,
+        so the recovery is one line -- but only if the message says so.
+        """
+        profile, _, _ = self.authored_round()
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.load_snapshot(profile, "adhoc-1")
+        message = str(caught.exception)
+        self.assertIn("snapshot PROFILE adhoc-1", message)
+
     def test_global_permissions_block_project_isolation(self) -> None:
         self.settings.write_text(
             json.dumps(

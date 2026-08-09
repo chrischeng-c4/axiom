@@ -41,7 +41,7 @@ python3 .claude/skills/agy-dispatch/scripts/make_profile.py \
 
 python3 $S worktree   profile.json KEY     # derive the worker's checkout, cut from HEAD
 python3 $S grant      profile.json         # install the Project permission set
-python3 $S doctor     profile.json         # read-only preflight; must print dispatch_ready
+python3 $S doctor     profile.json         # preflight; 2 on a blocker, and the round's own unfinished steps
 python3 $S scaffold   profile.json KEY     # both documents, as blank forms
 python3 $S capture    profile.json KEY CMD # run CMD; its output is the only quotable transcript
 python3 $S lint       profile.json KEY     # structure of both documents

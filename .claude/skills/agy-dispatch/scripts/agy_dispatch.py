@@ -862,10 +862,58 @@ def project_policy_report(profile: dict) -> dict:
     }
 
 
+def pending_dispatch_steps(profile: dict, task_key: str) -> list[str]:
+    """What `dispatch` refuses without, that the round has simply not done yet.
+
+    Deliberately not blockers, and deliberately not in `project_policy_report`.
+    A blocker is something configured wrong, fixed with `/permissions`, and
+    `doctor` exits 2 on one. These are steps of the round's own authoring, and
+    `doctor` is documented to run before all three of them -- so reporting them
+    as blockers would make it exit 2 at exactly the point in the flow it exists
+    to serve. Worse, `snapshot` itself goes through the same readiness report:
+    the verb that creates the snapshot would refuse to run for want of one.
+
+    Where they do belong is `dispatch_ready`, which claims something specific
+    and is read as permission to spend the round -- that running `dispatch` now
+    would work. Each entry names the verb that clears it.
+    """
+    pending = []
+    if not oracle_path(profile, task_key).exists():
+        pending.append(
+            f"no oracle yet: run `scaffold PROFILE {task_key}` and fill both "
+            "documents"
+        )
+    else:
+        findings = round_findings(profile, task_key)
+        if findings:
+            pending.append(
+                f"{len(findings)} round-document finding(s), which `dispatch` "
+                f"refuses on: run `lint PROFILE {task_key}`"
+            )
+    if not snapshot_path(profile, task_key).is_file():
+        pending.append(
+            f"no pre-dispatch snapshot: run `snapshot PROFILE {task_key}`"
+        )
+    return pending
+
+
 def doctor(profile: dict) -> dict:
+    """Preflight: what is configured wrong, and what has not been done yet.
+
+    `dispatch_ready` is read as permission to dispatch, so it has to answer the
+    question its name asks -- would `dispatch` work now -- and not the narrower
+    one the permission surface can answer by itself. It used to answer the
+    narrow one and print `true` for a round `dispatch` refused outright.
+    """
     report = project_policy_report(profile)
+    report["pending_steps"] = pending_dispatch_steps(
+        profile, validate_task_identity(profile)
+    )
+    report["dispatch_ready"] = not report["blockers"] and not report["pending_steps"]
     print(json.dumps(report, indent=2))
-    if not report["dispatch_ready"]:
+    # On the blockers alone. A pending step is the flow working as designed, and
+    # a non-zero exit there reads as a fault the controller must go and fix.
+    if report["blockers"]:
         raise SystemExit(2)
     return report
 
@@ -1749,10 +1797,23 @@ def denied(profile: dict, task_key: str) -> None:
         print(f"step {idx}: {command}")
 
 
+def snapshot_path(profile: dict, task_key: str) -> Path:
+    return Path(profile["state_dir"]) / "snapshots" / f"{task_key}.json"
+
+
 def load_snapshot(profile: dict, task_key: str) -> dict:
-    path = Path(profile["state_dir"]) / "snapshots" / f"{task_key}.json"
+    path = snapshot_path(profile, task_key)
     if not path.is_file():
-        raise SystemExit("missing pre-dispatch snapshot")
+        # Names the verb, not only the absence. `snapshot` takes the same two
+        # positional arguments as whatever refused, and a message that says
+        # only what is missing leaves the controller reading source to find
+        # out what produces it.
+        raise SystemExit(
+            f"missing pre-dispatch snapshot at {path}\n"
+            f"run `snapshot PROFILE {task_key}` first: it freezes the "
+            "contract, the tree, and the permission surface this round is "
+            "judged against"
+        )
     return json.loads(path.read_text())
 
 
