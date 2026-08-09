@@ -2391,9 +2391,9 @@ class DerivedWorktreeTest(unittest.TestCase):
         (state / "injections").mkdir(parents=True, exist_ok=True)
         (state / "oracles" / "round-1.md").write_text("## Claim\n\nthe judge\n")
         (state / "injections" / "round-1.md").write_text("## Task\n\nthe first ask\n")
+        overrides.setdefault("path_change_budgets", {"README.md": 40})
         path = self.profile_path(
             inject_prompt_file=str(state / "injections" / "round-1.md"),
-            path_change_budgets={"README.md": 40},
             **overrides,
         )
         profile = self.derive(path)
@@ -2891,6 +2891,141 @@ class DerivedWorktreeTest(unittest.TestCase):
             ["HELPER.md", "README.md"],
         )
         self.assertEqual(agy_dispatch.git_output(worker, "status", "--porcelain"), "")
+
+    def overrun_round(self) -> tuple[dict, dict, Path]:
+        """A round sent back while one of its paths is over budget.
+
+        The overrun is the reason the round is coming back, so the revision that
+        answers it starts with the finding still open and the candidate that
+        earned it still in the tree.
+        """
+        profile, delta = self.revisable_round(
+            path_change_budgets={"README.md": 2}
+        )
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text(
+            "base\n" + "".join(f"line {n}\n" for n in range(6))
+        )
+        first = agy_dispatch.scope_findings(
+            profile, agy_dispatch.worker_touched_paths(profile, "round-1"), "round-1"
+        )
+        self.assertTrue(
+            any("exceeds the 2-line budget" in item for item in first), first
+        )
+
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        agy_dispatch.snapshot(revised, "round-2")
+        return profile, revised, worker
+
+    def revision_findings(self, revised: dict) -> list[str]:
+        return agy_dispatch.scope_findings(
+            revised,
+            agy_dispatch.worker_touched_paths(revised, "round-2"),
+            "round-2",
+        )
+
+    def test_a_revision_does_not_re_baseline_an_open_overrun(self) -> None:
+        """A budget is a total, so a revision cannot spend it a second time.
+
+        `revise` carries the ceiling and used to re-baseline what it applied to,
+        which returns the whole allowance on every revision. A round can be
+        revised any number of times, so the round's real diff is unbounded while
+        every `verify` after the first reads clean.
+        """
+        _, revised, _ = self.overrun_round()
+
+        # This revision wrote nothing at all, which is what makes the finding
+        # invisible: its own delta for the path is zero.
+        self.assertEqual(agy_dispatch.worker_touched_paths(revised, "round-2"), [])
+        findings = self.revision_findings(revised)
+        self.assertTrue(
+            any("README.md: 6 changed lines exceeds the 2-line budget" in item
+                for item in findings),
+            findings,
+        )
+
+    def test_lines_a_round_removed_count_against_its_budget(self) -> None:
+        """Otherwise the cheapest way under a budget is to delete the file.
+
+        A budget bounds how much of the tree a round moves, and a deletion
+        moves it exactly as far as an insertion does. Found by a surviving
+        mutant: `added + removed` was never distinguished from `added`.
+        """
+        (self.controller / "LONG.md").write_text(
+            "".join(f"line {n}\n" for n in range(8))
+        )
+        self.git("add", "-A")
+        self.git("commit", "-qm", "long")
+        self.isolate_permission_files()
+        profile = self.derive(
+            self.profile_path(
+                allowed_repo_writes=["LONG.md"],
+                path_change_budgets={"LONG.md": 2},
+            )
+        )
+        worker = Path(profile["worktree"]["path"])
+        (worker / "LONG.md").write_text("line 0\n")
+
+        findings = agy_dispatch.scope_findings(
+            profile, agy_dispatch.worker_touched_paths(profile)
+        )
+        self.assertTrue(
+            any("LONG.md: 7 changed lines exceeds the 2-line budget" in item
+                for item in findings),
+            findings,
+        )
+
+    def test_a_file_the_predecessor_created_still_counts_against_its_budget(
+        self,
+    ) -> None:
+        """The case the removed branch was written for, decided the other way.
+
+        An untracked file the previous revision created is invisible to
+        `git diff base`, so its whole length is the round's diff for that path.
+        The old comment called billing it a bug, but it was answering "which
+        worker wrote this" with a budget, which is a question about the round.
+        Attribution stays where it belongs: `worker_touched_paths` still leaves
+        the path out of what this revision wrote.
+        """
+        profile, delta = self.revisable_round(
+            allowed_repo_writes=["README.md", "NEW.md"],
+            path_change_budgets={"NEW.md": 2},
+        )
+        worker = Path(profile["worktree"]["path"])
+        (worker / "NEW.md").write_text("".join(f"line {n}\n" for n in range(5)))
+
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+        revised = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )
+        agy_dispatch.snapshot(revised, "round-2")
+
+        self.assertNotIn(
+            "NEW.md", agy_dispatch.worker_touched_paths(revised, "round-2")
+        )
+        findings = self.revision_findings(revised)
+        self.assertTrue(
+            any("NEW.md: 5 changed lines exceeds the 2-line budget" in item
+                for item in findings),
+            findings,
+        )
+
+    def test_a_revision_that_gets_back_under_budget_stops_reporting(self) -> None:
+        """The finding is withdrawn by the work, never by the re-baselining."""
+        _, revised, worker = self.overrun_round()
+        (worker / "README.md").write_text("base\nline 0\n")
+
+        findings = self.revision_findings(revised)
+        self.assertFalse(
+            any("budget" in item for item in findings), findings
+        )
 
     def test_review_still_asks_what_this_revision_wrote(self) -> None:
         """Scope is a per-revision question even though acceptance is not.

@@ -3739,13 +3739,13 @@ def worker_touched_paths(profile: dict, task_key: str | None = None) -> list[str
 def budget_overrun(relative: str, delta: int, budget: int | str) -> str:
     """The one sentence a budget overrun is ever written as.
 
-    Two paths measure this -- `scope_findings` from the round baseline, the
-    in-place branch of `verify` from the snapshot -- and they will not always
-    agree on `delta`, because they compare against different befores. What they
-    must agree on is the shape of the sentence, because that sentence is the
-    ledger key: a decision recorded from one path has to be findable from the
-    other, and a decision recorded at one delta must stop matching when the
-    worker writes more.
+    Two paths measure this -- `scope_findings` from the round's base commit,
+    the in-place branch of `verify` from the snapshot -- and they will not
+    always agree on `delta`, because an in-place round has no base commit to
+    diff against. What they must agree on is the shape of the sentence, because
+    that sentence is the ledger key: a decision recorded from one path has to
+    be findable from the other, and a decision recorded at one delta must stop
+    matching when the worker writes more.
     """
     return f"{relative}: {delta} changed lines exceeds the {budget}-line budget"
 
@@ -3785,12 +3785,14 @@ def scope_findings(
     worker's tree is its own, so writing outside the declared set costs the
     controller a read, never a lost round.
 
-    The two halves ask different questions and are measured differently.
+    The parts ask different questions and are measured differently.
     "Wrote outside the declared set" is about this worker, so it reads the
     per-revision `touched` its caller passed. "Declared but did not write" is
     about the candidate: `revise` carries uncommitted work forward, so a path
     written in an earlier revision is in the tree and absent from `touched`,
-    and charging the revision for it fires the finding on correct work.
+    and charging the revision for it fires the finding on correct work. A
+    budget overrun is about the round -- see `changed_line_count`, which is the
+    one measurement here that spans every revision.
     """
     findings = []
     root = Path(profile["root"]).resolve()
@@ -3819,7 +3821,7 @@ def scope_findings(
             + ", ".join(unwritten)
         )
     for relative, budget in (profile.get("path_change_budgets") or {}).items():
-        delta = changed_line_count(profile, relative, task_key)
+        delta = changed_line_count(profile, relative)
         if delta > int(budget):
             findings.append(budget_overrun(relative, delta, budget))
     for entry in profile["protected_artifacts"]:
@@ -3840,20 +3842,24 @@ def scope_findings(
     return findings
 
 
-def changed_line_count(profile: dict, relative: str, task_key: str | None = None) -> int:
+def changed_line_count(profile: dict, relative: str) -> int:
+    """The round's whole diff for one path, across every revision of it.
+
+    Measured from `base_sha` and never from the round baseline, which is the
+    one measurement in this file that must not be per-revision. A budget is a
+    total: re-baselining it on each revision hands back the full allowance, so
+    an overrun nobody withdrew stops being reported, and a revision that
+    *removes* the excess is charged for the removal and reported instead. Both
+    were live -- the first hid a 33-line diff under a 25-line budget on #3468
+    R1b, and the second is what a round doing exactly what it was sent back to
+    do would have been told.
+
+    The attribution the round baseline exists for is a different question, and
+    `worker_touched_paths` still answers it: which paths *this* worker wrote,
+    so `review` can separate them from the ones it carried. Who wrote a line
+    and how many lines the round has spent are not the same measurement.
+    """
     root = Path(profile["root"])
-    baseline = round_baseline(profile, task_key) if task_key else {}
-    if relative in baseline:
-        # Same reason as `worker_touched_paths`: on a revision the git baseline
-        # is the commit before the *previous* round, so an untracked file the
-        # predecessor created bills its whole length to this worker.
-        before = (baseline[relative] or "").splitlines()
-        after = (current_text(root, relative) or "").splitlines()
-        return sum(
-            1
-            for line in difflib.unified_diff(before, after, n=0, lineterm="")
-            if line[:1] in "+-" and line[:3] not in ("+++", "---")
-        )
     base = worktree_spec(profile)["base_sha"]
     numstat = git_output(root, "diff", "--numstat", base, "--", relative)
     for line in numstat.splitlines():
