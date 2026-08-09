@@ -241,6 +241,13 @@ def main() -> int:
         "by default so a hand-edited document survives a re-projection; pass it "
         "when the renderer changed and the edits were not yours",
     )
+    ap.add_argument(
+        "--run",
+        action="store_true",
+        help="take every step up to `snapshot`, stopping at the first that "
+        "fails. `dispatch` is left to the caller: it is long, and its result "
+        "is the thing that has to be judged",
+    )
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
@@ -360,19 +367,58 @@ def main() -> int:
         print(f"wrote  {path}")
 
     scripts = ".claude/skills/codex-dispatch/scripts"
+    driver = f"python3 {scripts}/codex_dispatch.py"
+    capture_command = (
+        f"gh issue view {args.issue} --repo {repo} --json body --jq .body"
+    )
+    setup = [
+        ["worktree", out, args.issue],
+        ["rules", out],
+        ["doctor", out],
+        ["capture", out, args.issue, capture_command],
+        ["lint", out, args.issue],
+        ["snapshot", out, args.issue],
+    ]
+    dispatch_line = f"{driver} dispatch {out} {args.issue}"
+
+    if args.run:
+        # Everything up to `snapshot` is deterministic and takes seconds.
+        # `dispatch` is neither: it spends a model's time and is the step whose
+        # result has to be judged, so it stays an explicit act the caller
+        # schedules -- backgrounded, one round at a time -- rather than
+        # something this script starts on its way past.
+        for step in setup:
+            print(f"--- {step[0]}")
+            done = subprocess.run(
+                [sys.executable, f"{scripts}/codex_dispatch.py", *step],
+                capture_output=True,
+                text=True,
+            )
+            sys.stdout.write(done.stdout)
+            if done.returncode != 0:
+                sys.stderr.write(done.stderr)
+                raise SystemExit(
+                    f"{step[0]} exited {done.returncode}; the round is not "
+                    "ready to dispatch"
+                )
+        print(f"\nready. dispatch is long -- run it in the background:\n  {dispatch_line}")
+        return 0
+
     print(
         f"""
 next, in order:
 
   P={out}
-  python3 {scripts}/codex_dispatch.py worktree $P {args.issue}
-  python3 {scripts}/codex_dispatch.py rules    $P
-  python3 {scripts}/codex_dispatch.py doctor   $P
-  python3 {scripts}/codex_dispatch.py capture  $P {args.issue} \\
-      'gh issue view {args.issue} --repo {repo} --json body --jq .body'
-  python3 {scripts}/codex_dispatch.py lint     $P {args.issue}
-  python3 {scripts}/codex_dispatch.py snapshot $P {args.issue}
-  python3 {scripts}/codex_dispatch.py dispatch $P {args.issue}
+  {driver} worktree $P {args.issue}
+  {driver} rules    $P
+  {driver} doctor   $P
+  {driver} capture  $P {args.issue} \\
+      '{capture_command}'
+  {driver} lint     $P {args.issue}
+  {driver} snapshot $P {args.issue}
+  {driver} dispatch $P {args.issue}
+
+or pass `--run` to take every step up to `snapshot` in one call.
 
 the `capture` step is not optional: lint accepts a quoted line only when it is
 in a cited file or in a recorded capture, and the tracker body is in neither
