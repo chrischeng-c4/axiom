@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -3284,6 +3285,110 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertNotEqual(record["exit_code"], 0)
         self.assertFalse(record["compiled"])
         self.assertIn("says nothing about behaviour", out.getvalue())
+
+    def cli(self, *argv: str) -> str:
+        """Drive the real entry point, because the relaxation lives in it.
+
+        `prove` receives a profile that was already loaded, so a test calling it
+        directly can never see the check this is about -- `load_profile` is
+        where the freeze is refused, and the verb-and-label it is refused for is
+        only known at the command line.
+        """
+        out = io.StringIO()
+        argv = ("agy_dispatch.py",) + argv
+        with contextlib.redirect_stdout(out):
+            with unittest.mock.patch.object(sys, "argv", list(argv)):
+                agy_dispatch.main()
+        return out.getvalue()
+
+    def guarded_round(self) -> tuple[Path, dict, Path]:
+        """A round whose only real falsifier lives where it may not write.
+
+        The reported shape: the worker adds an assertion about a file it is
+        forbidden to edit, so the file is frozen and the write set is the
+        assertion alone. Breaking the assertion means breaking the frozen file.
+        """
+        contract = self.contract_with_design_input()
+        contract["gate_command"] = (
+            "bash -c 'grep -q accepted README.md && grep -q frozen keep.md'"
+        )
+        path = self.profile_path(task_contract=contract)
+        profile = self.derive(path)
+        worker = Path(profile["worktree"]["path"])
+        (worker / "README.md").write_text("base\naccepted\n")
+        return path, profile, worker
+
+    def test_only_prove_mutant_runs_against_an_unfrozen_tree(self) -> None:
+        """The predicate, stated once, because everything else reads it."""
+        self.assertFalse(agy_dispatch.validates_freeze("prove", "mutant"))
+        self.assertTrue(agy_dispatch.validates_freeze("prove", "candidate"))
+        self.assertTrue(agy_dispatch.validates_freeze("accept", None))
+        self.assertTrue(agy_dispatch.validates_freeze("sweep", None))
+        # Not a blanket exemption for the verb, and not one for the label.
+        self.assertTrue(agy_dispatch.validates_freeze("snapshot", "mutant"))
+
+    def test_prove_mutant_records_a_falsifier_the_round_may_not_write(self) -> None:
+        """#3484/#3489: the controller plants the break, after the worker is gone.
+
+        A round whose claim is about a frozen file has its falsifier out there
+        and nowhere else. Refused, the round records whatever weaker mutant fits
+        inside the write scope, and its durable artifact then understates what
+        was measured.
+        """
+        path, profile, worker = self.guarded_round()
+        (worker / "keep.md").write_text("thawed\n")
+
+        out = self.cli("prove", str(path), "round-1", "mutant")
+
+        record = json.loads(
+            agy_dispatch.proof_path(profile, "round-1", "mutant").read_text()
+        )
+        self.assertNotEqual(record["exit_code"], 0)
+        # R2: the proof names what was perturbed, so a reader can tell a planted
+        # mutant from a worker that edited a frozen file.
+        self.assertEqual([entry["path"] for entry in record["perturbed"]], ["keep.md"])
+        self.assertIn("keep.md", out)
+        self.assertIn("differ from this round's freeze", out)
+
+    def test_prove_candidate_still_refuses_a_perturbed_freeze(self) -> None:
+        """The half that decides. Relaxing the mutant only works because this
+        one does not move: the pair cannot be completed until the controller's
+        perturbation is restored."""
+        path, _, worker = self.guarded_round()
+        (worker / "keep.md").write_text("thawed\n")
+        with self.assertRaises(SystemExit) as caught:
+            self.cli("prove", str(path), "round-1", "candidate")
+        self.assertIn("keep.md", str(caught.exception))
+
+    def test_a_pair_that_moved_only_the_frozen_half_is_a_real_pair(self) -> None:
+        """`candidate_tree_digest` covers `allowed_repo_writes` and nothing else,
+        so this pair is byte-identical in everything it looked at."""
+        path, profile, worker = self.guarded_round()
+        (worker / "keep.md").write_text("thawed\n")
+        self.cli("prove", str(path), "round-1", "mutant")
+        (worker / "keep.md").write_text("frozen\n")
+        self.cli("prove", str(path), "round-1", "candidate")
+
+        mutant, candidate = (
+            json.loads(agy_dispatch.proof_path(profile, "round-1", label).read_text())
+            for label in ("mutant", "candidate")
+        )
+        self.assertEqual(mutant["tree_digest"], candidate["tree_digest"])
+        findings = agy_dispatch.proof_findings(profile, "round-1")
+        self.assertEqual(findings, [], findings)
+
+    def test_accept_still_refuses_while_a_frozen_path_is_perturbed(self) -> None:
+        """A recorded pair is not a licence to commit a tree that drifted."""
+        path, profile, worker = self.guarded_round()
+        (worker / "keep.md").write_text("thawed\n")
+        self.cli("prove", str(path), "round-1", "mutant")
+        (worker / "keep.md").write_text("frozen\n")
+        self.cli("prove", str(path), "round-1", "candidate")
+
+        (worker / "keep.md").write_text("perturbed again\n")
+        with self.assertRaises(SystemExit) as caught:
+            self.cli("accept", str(path), "round-1")
+        self.assertIn("keep.md", str(caught.exception))
 
     def test_accept_says_a_compile_error_mutant_measured_no_behaviour(self) -> None:
         """A round that introduces a new symbol can only answer the revert with

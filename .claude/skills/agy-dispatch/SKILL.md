@@ -92,6 +92,7 @@ Never on the report. The worker's report is a claim *about* the diff.
 | `verify` | were the rules kept — not whether the change is right |
 | `review` | you read the diff against the oracle, row by row |
 | `prove` ×2 | restore the product to baseline keeping the worker's tests → gate must go red; restore the candidate → green. **`prove` reverts nothing; that is yours** |
+| | the `mutant` half may break a frozen file — a round asserting *about* a design input has its only real falsifier there, and the proof records which paths it perturbed. The `candidate` half refuses until you restore them, and so do `verify` and `accept` |
 | `sweep` | one single-defect mutant per rule the oracle claims |
 
 A gate nobody has seen fail proves nothing — a test written against the

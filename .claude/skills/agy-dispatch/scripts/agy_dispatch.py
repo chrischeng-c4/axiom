@@ -3981,6 +3981,112 @@ def candidate_tree_digest(profile: dict) -> str:
     )
 
 
+# Verbs that run before the freeze means anything: `scaffold` and `lint` are how
+# the round gets authored, and the rest read a tree they are not deciding on.
+UNFROZEN_VERBS = (
+    "verify",
+    "status",
+    "denied",
+    "review",
+    "grant",
+    "scaffold",
+    "lint",
+    "capture",
+    "adjudicate",
+)
+
+
+def validates_freeze(verb: str, label: str | None) -> bool:
+    """Whether this invocation must refuse a tree that drifted from its freeze.
+
+    `prove mutant` is the one invocation that must not. It is the step where the
+    controller deliberately breaks the tree to show the gate notices, and it
+    plants that break itself, after the worker is gone. A round whose claim is
+    about a frozen file -- a signature the worker must not edit, a scanner that
+    reads the rest of the tree -- has its only real falsifier out there, so
+    refusing it leaves the round with nothing to record but a weaker mutant
+    inside the write scope, measuring something adjacent to the claim.
+
+    The strictness is not weakened, only moved off the one step that cannot
+    survive it. `prove candidate` still refuses, which is what forces the
+    perturbation to be restored before the pair can be completed; `verify` and
+    `accept` still refuse, which is what keeps a worker's overreach out of a
+    commit. Nothing that decides anything about the worker's tree runs relaxed.
+    """
+    if verb in UNFROZEN_VERBS:
+        return False
+    return not (verb == "prove" and label == "mutant")
+
+
+def frozen_paths(profile: dict) -> list[tuple[str, str]]:
+    """Every path this round froze, with the digest it was frozen at.
+
+    Two declarations, one meaning. `protected_artifacts` is the complement of
+    the write set; `task_contract.design_inputs` is the subset of it the worker
+    was told to read. `load_profile` refuses drift in either, so anything asking
+    "what is this round not allowed to differ in" has to ask both or it asks
+    half -- which is how the same defect came in twice, as #3484 against the
+    protected list and #3489 against the design inputs.
+    """
+    root = Path(profile["root"])
+    frozen: dict[str, str] = {}
+    for entry in (
+        *profile.get("protected_artifacts", []),
+        *((profile.get("task_contract") or {}).get("design_inputs") or []),
+    ):
+        path = Path(entry["path"])
+        if not path.is_absolute():
+            path = root / path
+        frozen.setdefault(str(path), entry["sha256"])
+    return sorted(frozen.items())
+
+
+def frozen_digest(profile: dict) -> str:
+    """Identify the frozen half of the tree, as `candidate_tree_digest` does the
+    writable half.
+
+    `candidate_tree_digest` hashes `allowed_repo_writes` and nothing else, which
+    is right for naming a candidate and wrong for telling two proof runs apart.
+    A mutant planted outside the write scope leaves it byte-identical, so the
+    pair reads as "nothing was actually reverted between them" -- when living
+    out there was the whole point of that mutant.
+    """
+    root = Path(profile["root"])
+    return json_digest(
+        {
+            repo_relative(root, path): (
+                sha256(Path(path)) if Path(path).is_file() else "<missing>"
+            )
+            for path, _ in frozen_paths(profile)
+        }
+    )
+
+
+def frozen_drift(profile: dict) -> list[dict[str, str | None]]:
+    """Which frozen paths do not currently hold the bytes they were frozen at.
+
+    Recorded on a proof rather than refused, because `prove mutant` is the one
+    invocation whose tree is deliberately not the one that was frozen. The
+    record names the paths; it does not claim to know who wrote them. A reader
+    tells a controller's planted falsifier from a worker's overreach by reading
+    this against `verify`'s scope findings, which is the check that owns that
+    question and still runs strict.
+    """
+    root = Path(profile["root"])
+    drift: list[dict[str, str | None]] = []
+    for path, expected in frozen_paths(profile):
+        actual = sha256(Path(path)) if Path(path).is_file() else None
+        if actual != expected:
+            drift.append(
+                {
+                    "path": repo_relative(root, path),
+                    "expected": expected,
+                    "actual": actual,
+                }
+            )
+    return drift
+
+
 def gate_command(profile: dict) -> str:
     command = profile["task_contract"].get("gate_command")
     if not command:
@@ -4092,6 +4198,11 @@ def prove(profile: dict, task_key: str, label: str) -> None:
         "exit_code": result.returncode,
         "compiled": "could not compile" not in output,
         "tree_digest": candidate_tree_digest(profile),
+        # The other half of the tree. A mutant whose falsifier lives outside the
+        # write scope moves nothing `tree_digest` covers, so without this the
+        # pair cannot be told from a controller who forgot to revert.
+        "frozen_digest": frozen_digest(profile),
+        "perturbed": frozen_drift(profile),
         # Kept beside the tail, not instead of it: a gate that names nothing
         # loses nothing, and a gate that names something stops depending on
         # where in its output it happened to say so.
@@ -4117,6 +4228,20 @@ def prove(profile: dict, task_key: str, label: str) -> None:
     elif result.returncode != 0:
         print("failed: the gate named no test; the record keeps the tail instead")
     print(f"digest: {record['tree_digest'][:12]}")
+    if record["perturbed"]:
+        # Named, not judged. `prove` cannot see who wrote these and does not
+        # guess; the reader compares them against `verify`'s scope findings.
+        print(
+            f"frozen: {len(record['perturbed'])} path(s) differ from this "
+            "round's freeze"
+        )
+        for entry in record["perturbed"][:PROOF_NAMES_SHOWN]:
+            print(f"        {entry['path']}")
+        if len(record["perturbed"]) > PROOF_NAMES_SHOWN:
+            print(
+                f"        ... and {len(record['perturbed']) - PROOF_NAMES_SHOWN} "
+                "more, all in the record"
+            )
     print(f"saved : {path}")
 
 
@@ -4307,7 +4432,14 @@ def proof_findings(profile: dict, task_key: str) -> list[str]:
             f"the gate fails on the candidate (exit "
             f"{records['candidate']['exit_code']})"
         )
-    if records["mutant"]["tree_digest"] == records["candidate"]["tree_digest"]:
+    # Both halves of the tree, because a round is free to put its falsifier in
+    # either. `.get` rather than `[]`: a proof recorded before `frozen_digest`
+    # existed compares as it always did instead of reading as a moved tree.
+    if (
+        records["mutant"]["tree_digest"] == records["candidate"]["tree_digest"]
+        and records["mutant"].get("frozen_digest")
+        == records["candidate"].get("frozen_digest")
+    ):
         findings.append(
             "both proofs ran over an identical tree: nothing was actually "
             "reverted between them"
@@ -4875,20 +5007,7 @@ def main() -> None:
 
     profile = load_profile(
         args.profile,
-        # `scaffold` and `lint` run while the round is still being authored, so
-        # they must not require the design inputs to be frozen yet.
-        validate_design=args.verb
-        not in (
-            "verify",
-            "status",
-            "denied",
-            "review",
-            "grant",
-            "scaffold",
-            "lint",
-            "capture",
-            "adjudicate",
-        ),
+        validate_design=validates_freeze(args.verb, getattr(args, "label", None)),
         # `doctor` preflights the round before `scaffold` writes the injection.
         require_injection=args.verb
         not in (
