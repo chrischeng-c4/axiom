@@ -3724,9 +3724,27 @@ def worktree(profile_path: str, task_key: str) -> None:
 
     baseline = capture_grants_baseline(Path(raw["state_dir"]), project_id)
     home_root = spec.get("project_home_root")
+    if home_root and Path(home_root).resolve() == path:
+        # A profile already carrying this defect's output. Grafting the spent
+        # round's `worktree` block is what SKILL.md prescribes when a write set
+        # has to widen, so a wrong value propagates by the documented route.
+        home_root = None
     previous = repoint_project_root(project_id, path)
     if home_root is None:
-        home_root = str(previous) if previous else str(controller_root)
+        # `previous` is where the project was pointed a moment ago: the
+        # controller checkout on a first run, and this very worktree on a
+        # second. Regenerating a profile mid-round drops the `worktree` block
+        # that would have carried the answer forward, so the second run is the
+        # ordinary case, not the exotic one. A `previous` equal to `path` says
+        # only that this round already ran -- it says nothing about where the
+        # project came from, and recording it makes `discard` restore the
+        # project into the directory it is about to remove.
+        # Both sides are already resolved -- `project_root` resolves what it
+        # reads and `path` was resolved above -- so this compares what it looks
+        # like it compares on a platform where /tmp is a symlink.
+        home_root = str(previous) if previous and previous != path else str(
+            controller_root
+        )
     print(f"AGY project {project_id} now runs in {path}")
     print(f"  (its home root {home_root} is restored by `discard`)")
     if baseline:
@@ -4768,6 +4786,16 @@ def discard(
 
     project_id = raw.get("agy_project_id")
     home_root = spec.get("project_home_root") or controller_root
+    if worktree_path and Path(home_root).resolve() == Path(worktree_path).resolve():
+        # Written by a `worktree` run predating #3445, or hand-edited. Restoring
+        # the project into the directory this call is about to remove leaves the
+        # shared work area bound to nothing, and the next `agy` session opens
+        # there. `controller_root` is the only other answer the profile carries.
+        print(
+            f"note: recorded home root is the worktree itself; restoring to "
+            f"{controller_root}"
+        )
+        home_root = controller_root
     if project_id:
         repoint_project_root(project_id, Path(home_root).resolve())
         print(f"AGY project {project_id} restored to {home_root}")

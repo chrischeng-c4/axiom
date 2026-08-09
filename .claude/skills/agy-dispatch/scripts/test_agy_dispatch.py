@@ -2204,6 +2204,89 @@ class DerivedWorktreeTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             agy_dispatch.load_profile(str(path))
 
+    def test_a_regenerated_profile_still_records_the_controller_as_home(
+        self,
+    ) -> None:
+        """The reported route in, and the only one that reaches the fallback.
+
+        The home root is read from the binding a moment before it moves, which
+        is the controller on a first run and this very worktree on a second. A
+        profile that has been through `worktree` carries the answer in its own
+        block; a regenerated one does not -- and SKILL.md prescribes exactly
+        that regeneration when a round's write set has to widen.
+        """
+        path = self.profile_path()
+        self.derive(path)
+        regenerated = self.profile_path()
+        profile = self.derive(regenerated)
+        self.assertEqual(
+            Path(profile["worktree"]["project_home_root"]).resolve(),
+            self.controller.resolve(),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.discard(str(regenerated), "round-1")
+        self.assertEqual(self.project_binding(), self.controller.resolve())
+
+    def test_a_grafted_home_root_that_is_the_worktree_is_repaired(self) -> None:
+        """Grafting the spent round's `worktree` block is the documented route.
+
+        So a value this defect already wrote propagates the same way, and the
+        block a controller grafts is not one they authored.
+        """
+        path = self.profile_path()
+        profile = self.derive(path)
+        profile["worktree"]["project_home_root"] = profile["worktree"]["path"]
+        path.write_text(json.dumps(profile, indent=2))
+        profile = self.derive(path)
+        self.assertEqual(
+            Path(profile["worktree"]["project_home_root"]).resolve(),
+            self.controller.resolve(),
+        )
+
+    def test_a_project_registered_outside_the_controller_keeps_its_own_home(
+        self,
+    ) -> None:
+        """The negative control: `previous` still wins when it carries something.
+
+        Falling back to `controller_root` unconditionally would be a smaller
+        fix that loses the case the field exists for -- a work area whose AGY
+        project is not registered at the checkout the round derives from.
+        """
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        self.write_project("project-a", elsewhere)
+        path = self.profile_path()
+        profile = self.derive(path)
+        self.assertEqual(
+            Path(profile["worktree"]["project_home_root"]).resolve(),
+            elsewhere.resolve(),
+        )
+        # And a second run keeps it. Repairing every recorded home root rather
+        # than only a self-referential one would read as the same fix and quietly
+        # replace this answer with the controller checkout.
+        profile = self.derive(path)
+        self.assertEqual(
+            Path(profile["worktree"]["project_home_root"]).resolve(),
+            elsewhere.resolve(),
+        )
+
+    def test_discard_refuses_a_home_root_that_is_the_worktree(self) -> None:
+        """Profiles written before this was fixed are still on disk.
+
+        `discard` reads the field back with `or controller_root`, so the
+        correct value is unreachable exactly when the recorded one is wrong.
+        """
+        path = self.profile_path()
+        profile = self.derive(path)
+        worker = Path(profile["worktree"]["path"])
+        profile["worktree"]["project_home_root"] = str(worker)
+        path.write_text(json.dumps(profile, indent=2))
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            agy_dispatch.discard(str(path), "round-1")
+        self.assertEqual(self.project_binding(), self.controller.resolve())
+        self.assertIn("home root is the worktree itself", buffer.getvalue())
+
     def dirty_round(self) -> tuple[Path, Path]:
         """A derived round whose worker checkout holds one uncommitted file.
 
