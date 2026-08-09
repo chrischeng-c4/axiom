@@ -2666,6 +2666,141 @@ def has_valid_adjudication(
     return False
 
 
+def scope_decision(state_dir: Path, task_key: str, finding: str) -> str | None:
+    """The recorded decision on one scope finding, or None if never judged.
+
+    A protected artifact binds its decision to a content hash. A scope finding
+    has no content to hash, but its own text already carries the measurement --
+    `442 changed lines exceeds the 60-line budget` names the number it was
+    judged at. Keying on the whole string therefore binds the decision the same
+    way: one more write changes the delta, changes the string, and the earlier
+    decision stops matching instead of silently covering a bigger overrun.
+    """
+    for dec in load_decisions(state_dir, task_key):
+        if not isinstance(dec, dict) or dec.get("kind") != "scope":
+            continue
+        if dec.get("finding") == finding and dec.get("action") in ("admit", "reject"):
+            return dec["action"]
+    return None
+
+
+def split_scope_findings(
+    profile: dict, task_key: str, findings: list[str]
+) -> tuple[list[str], list[str], list[str]]:
+    """Partition findings into unjudged, admitted, and refused.
+
+    `admit` clears a finding; `reject` records that a human read it and refused
+    it, which is not the same as never having looked. Both are worth keeping:
+    the first is what lets a round proceed, the second is what stops a rejected
+    round from being accepted by a later verb that only counted open findings.
+    """
+    state_dir = Path(profile["state_dir"])
+    open_, admitted, rejected = [], [], []
+    for finding in findings:
+        decision = scope_decision(state_dir, task_key, finding)
+        if decision == "admit":
+            admitted.append(finding)
+        elif decision == "reject":
+            rejected.append(finding)
+        else:
+            open_.append(finding)
+    return open_, admitted, rejected
+
+
+def print_scope_findings(
+    open_: list[str], admitted: list[str], rejected: list[str]
+) -> None:
+    """Report the three states separately, because they mean different things.
+
+    An admitted finding is a judgement already on record. A rejected one is a
+    judgement too, and still blocks -- `reject` on a scope finding has nothing
+    to restore, so the only thing it can mean is that the round must be revised.
+    An open one is the only state where nobody has looked yet, and the hint line
+    names the command that changes that.
+    """
+    if admitted:
+        print(f"\nscope findings admitted ({len(admitted)}), not blocking:")
+        for item in admitted:
+            print(f"  - {item}")
+    blocking = open_ + rejected
+    if not blocking:
+        print("scope findings: none open")
+        return
+    print(f"\nscope findings ({len(blocking)}) blocking `accept`:")
+    for item in open_:
+        print(f"  - {item}")
+    for item in rejected:
+        print(f"  - [rejected, revise or re-admit] {item}")
+    print(
+        '\n  adjudicate <profile> <key> admit|reject "<finding text, verbatim>"'
+    )
+
+
+def round_scope_findings(profile: dict, task_key: str) -> list[str]:
+    """The scope findings this round currently has, whichever mode it runs in."""
+    if profile.get("worktree"):
+        return scope_findings(
+            profile, worker_touched_paths(profile, task_key), task_key
+        )
+    return inplace_budget_findings(profile, load_snapshot(profile, task_key))
+
+
+def adjudicate_scope(
+    profile: dict, task_key: str, action: str, finding_input: str
+) -> None:
+    """Record a decision on one scope finding.
+
+    A protected artifact is adjudicated against its bytes, and `reject` restores
+    them. A scope finding has no bytes to restore: `reject` therefore records
+    that a controller read the finding and refused it, and leaves it blocking,
+    because the only thing that clears a refused overrun is the worker writing
+    less. That is why the two actions are not symmetric here and are in
+    `adjudicate`.
+    """
+    state_dir = Path(profile["state_dir"])
+    current = round_scope_findings(profile, task_key)
+    if finding_input not in current:
+        listing = (
+            "\n  the round's current scope findings are:\n"
+            + "\n".join(f"    - {item}" for item in current)
+            if current
+            else "\n  the round has no scope findings"
+        )
+        raise SystemExit(
+            f"refused: no such finding exists in round {task_key}: "
+            f"{finding_input}{listing}"
+        )
+
+    decisions = [
+        d
+        for d in load_decisions(state_dir, task_key)
+        if not (
+            isinstance(d, dict)
+            and d.get("kind") == "scope"
+            and d.get("finding") == finding_input
+        )
+    ]
+    decisions.append(
+        {
+            "finding": finding_input,
+            "kind": "scope",
+            "action": action,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    d_path = decisions_path(state_dir, task_key)
+    d_path.parent.mkdir(parents=True, exist_ok=True)
+    d_path.write_text(json.dumps(decisions, indent=2) + "\n")
+
+    print(
+        f"adjudicated {task_key}: "
+        f"{'admitted' if action == 'admit' else 'rejected'} scope finding\n"
+        f"  {finding_input}"
+    )
+    if action == "reject":
+        print("  a rejected scope finding still blocks `accept`; revise the round")
+
+
 def adjudicate(
     profile: dict,
     task_key: str,
@@ -2715,9 +2850,11 @@ def adjudicate(
                 break
 
     if matched_entry is None or matched_artifact is None or matched_actual is None:
-        raise SystemExit(
-            f"refused: no such finding exists in round {task_key}: {finding_input}"
-        )
+        # Not a protected artifact. The other kind of finding this round can
+        # raise is a scope finding, which `verify` and `review` both name as
+        # something to adjudicate; until it could be recorded here, that
+        # instruction pointed at a verb that refused every input it was given.
+        return adjudicate_scope(profile, task_key, action, finding_input)
 
     decisions = load_decisions(state_dir, task_key)
     decisions = [
@@ -3174,6 +3311,46 @@ def worker_touched_paths(profile: dict, task_key: str | None = None) -> list[str
     return sorted(touched)
 
 
+def budget_overrun(relative: str, delta: int, budget: int | str) -> str:
+    """The one sentence a budget overrun is ever written as.
+
+    Two paths measure this -- `scope_findings` from the round baseline, the
+    in-place branch of `verify` from the snapshot -- and they will not always
+    agree on `delta`, because they compare against different befores. What they
+    must agree on is the shape of the sentence, because that sentence is the
+    ledger key: a decision recorded from one path has to be findable from the
+    other, and a decision recorded at one delta must stop matching when the
+    worker writes more.
+    """
+    return f"{relative}: {delta} changed lines exceeds the {budget}-line budget"
+
+
+def inplace_budget_findings(profile: dict, snapshot_data: dict) -> list[str]:
+    """Budget overruns measured against the snapshot, for in-place rounds.
+
+    Derived-worktree rounds get this from `scope_findings`; an in-place round
+    has no worktree to diff, so the before is the snapshot's recorded text.
+    """
+    root = Path(profile["root"])
+    findings = []
+    for relative, budget in (profile.get("path_change_budgets") or {}).items():
+        before_text = snapshot_data.get("writable_contents", {}).get(relative)
+        path = root / relative
+        after_text = (
+            path.read_text(errors="surrogateescape") if path.is_file() else None
+        )
+        before_lines = [] if before_text is None else before_text.splitlines()
+        after_lines = [] if after_text is None else after_text.splitlines()
+        delta = sum(
+            1
+            for line in difflib.ndiff(before_lines, after_lines)
+            if line.startswith("+ ") or line.startswith("- ")
+        )
+        if delta > int(budget):
+            findings.append(budget_overrun(relative, delta, budget))
+    return findings
+
+
 def scope_findings(
     profile: dict, touched: list[str], task_key: str | None = None
 ) -> list[str]:
@@ -3219,10 +3396,7 @@ def scope_findings(
     for relative, budget in (profile.get("path_change_budgets") or {}).items():
         delta = changed_line_count(profile, relative, task_key)
         if delta > int(budget):
-            findings.append(
-                f"{relative}: {delta} changed lines exceeds the "
-                f"{budget}-line budget"
-            )
+            findings.append(budget_overrun(relative, delta, budget))
     for entry in profile["protected_artifacts"]:
         artifact = Path(entry["path"])
         actual = sha256(artifact) if artifact.is_file() else None
@@ -3278,7 +3452,10 @@ def review(profile: dict, task_key: str) -> None:
     spec = worktree_spec(profile)
     root = Path(profile["root"])
     touched = worker_touched_paths(profile, task_key)
-    findings = scope_findings(profile, touched, task_key)
+    open_, admitted, rejected = split_scope_findings(
+        profile, task_key, scope_findings(profile, touched, task_key)
+    )
+    findings = open_ + rejected
     allowed = set(profile["allowed_repo_writes"])
     # On a revised round the diff below spans every revision while `touched`
     # names only this one. Naming the difference keeps the header from reading
@@ -3302,12 +3479,7 @@ def review(profile: dict, task_key: str) -> None:
         )
         for path in carried:
             print(f"    {path}")
-    if findings:
-        print(f"\nfindings ({len(findings)}):")
-        for item in findings:
-            print(f"  - {item}")
-    else:
-        print("\nfindings: none")
+    print_scope_findings(open_, admitted, rejected)
 
     print("\n" + git_output(root, "diff", "--stat", spec["base_sha"]).rstrip())
     print("\n" + git_output(root, "diff", spec["base_sha"]).rstrip())
@@ -3696,6 +3868,24 @@ def accept(profile: dict, task_key: str) -> None:
     touched = worker_touched_paths(profile)
     if not touched:
         raise SystemExit("nothing to accept: the worker changed no files")
+    # `verify` reports scope findings and `accept` used to ignore them, so a
+    # round could be accepted and committed while `verify` went on exiting 2
+    # forever, with nothing anywhere recording which of the two a controller
+    # had believed. Refusing here is what makes the earlier report mean
+    # something: clearing it costs one `adjudicate`, and that decision is then
+    # on the record beside the commit.
+    open_, _admitted, rejected = split_scope_findings(
+        profile,
+        task_key,
+        scope_findings(profile, worker_touched_paths(profile, task_key), task_key),
+    )
+    if open_ or rejected:
+        raise SystemExit(
+            "refusing to accept: this round has scope findings nobody has "
+            "admitted:\n"
+            + "\n".join(f"  - {item}" for item in [*open_, *rejected])
+            + '\n  adjudicate <profile> <key> admit "<finding text, verbatim>"'
+        )
     if profile["mode"] == "bounded-write":
         unproven = proof_findings(profile, task_key)
         if unproven:
@@ -3834,12 +4024,13 @@ def verify(profile: dict, task_key: str) -> None:
         # worker did to its own checkout is a diff for the controller to read.
         # A write outside the declared set costs a read, not the round, so it
         # is reported here and adjudicated by `review`.
-        findings = [
-            *scope_findings(
+        open_, admitted, rejected = split_scope_findings(
+            profile,
+            task_key,
+            scope_findings(
                 profile, worker_touched_paths(profile, task_key), task_key
             ),
-            *denial_findings,
-        ]
+        )
         oracle = state / "oracles" / f"{task_key}.md"
         if not oracle.exists():
             raise SystemExit("VOID: oracle disappeared")
@@ -3852,12 +4043,13 @@ def verify(profile: dict, task_key: str) -> None:
             print(f"\ncommand notes ({len(command_notes)}), not blocking:")
             for item in command_notes:
                 print(f"  - {item}")
-        if findings:
-            print(f"\nscope findings ({len(findings)}) for `review` to adjudicate:")
-            for item in findings:
+        if denial_findings:
+            print(f"\ncommand findings ({len(denial_findings)}):")
+            for item in denial_findings:
                 print(f"  - {item}")
+        print_scope_findings(open_, admitted, rejected)
+        if open_ or rejected or denial_findings:
             sys.exit(EXIT_FINDINGS)
-        print("scope findings: none")
         return
 
     if profile["mode"] == "measure-only" and (after != before or changed_files):
@@ -3891,25 +4083,23 @@ def verify(profile: dict, task_key: str) -> None:
                 + "\n".join(f"  {hint}" for hint in hints)
             )
 
-    budgets = profile.get("path_change_budgets", {})
-    for relative, budget in budgets.items():
-        before_text = snapshot_data.get("writable_contents", {}).get(relative)
-        path = root / relative
-        after_text = (
-            path.read_text(errors="surrogateescape") if path.is_file() else None
+    # An in-place overrun is a write into the controller's own checkout, so it
+    # stays fatal -- but adjudicable, exactly like the protected-artifact check
+    # immediately below, which is the other in-place VOID a controller can
+    # knowingly waive. Both read the same ledger; neither can be waived by
+    # accident, because an admitted decision names the delta it was given.
+    overruns = inplace_budget_findings(profile, snapshot_data)
+    unwaived = [
+        item
+        for item in overruns
+        if scope_decision(state, task_key, item) != "admit"
+    ]
+    if unwaived:
+        raise SystemExit(
+            "VOID: diff budget exceeded:\n"
+            + "\n".join(f"  - {item}" for item in unwaived)
+            + '\n  waive with: adjudicate <profile> <key> admit "<finding>"'
         )
-        before_lines = [] if before_text is None else before_text.splitlines()
-        after_lines = [] if after_text is None else after_text.splitlines()
-        delta = sum(
-            1
-            for line in difflib.ndiff(before_lines, after_lines)
-            if line.startswith("+ ") or line.startswith("- ")
-        )
-        if delta > int(budget):
-            raise SystemExit(
-                f"VOID: diff budget exceeded for {relative}: "
-                f"{delta} changed lines > {budget}"
-            )
 
     protected = snapshot_data.get("protected_contents_base64", {})
     for path, expected in snapshot_data["protected_artifacts"].items():
@@ -4058,11 +4248,13 @@ def main() -> None:
             item.add_argument(
                 "action",
                 choices=("admit", "reject"),
-                help="admit write into candidate or reject and restore artifact",
+                help="admit the write into the candidate, or reject it: a "
+                "protected artifact is restored, a scope finding keeps blocking",
             )
             item.add_argument(
                 "finding",
-                help="scope finding or protected artifact path to adjudicate",
+                help="protected artifact path, or a scope finding copied "
+                "verbatim from `verify`/`review`",
             )
     args = parser.parse_args()
 
