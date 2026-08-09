@@ -34,9 +34,10 @@ worktree → grant → doctor → scaffold → (fill, capture) → lint → snap
 ```bash
 S=.claude/skills/agy-dispatch/scripts/agy_dispatch.py
 python3 .claude/skills/agy-dispatch/scripts/make_profile.py \
-    --root /abs/controller-checkout --repo owner/name --project-id <id> \
     --scope libs/thing --issue 1234 --design-input libs/thing/CAPABILITIES.md \
-    --write libs/thing/src/a.py:40 --out /abs/profile.json   # --run-id + --intent if one-shot
+    --write libs/thing/src/a.py:40 --gate "uv run pytest libs/thing"
+    # --run-id + --intent instead of --issue if one-shot
+    # prints the profile path; --root --repo --project-id --out --inject override
 
 python3 $S worktree   profile.json KEY     # derive the worker's checkout, cut from HEAD
 python3 $S grant      profile.json         # install the Project permission set

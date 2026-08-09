@@ -1731,13 +1731,23 @@ class DerivedWorktreeTest(unittest.TestCase):
         )
         self.assertNotIn("command(cargo publish)", self.project_grants()["allow"])
 
-    def make_profile(self, *extra: str) -> subprocess.CompletedProcess[str]:
+    def seed_generated_round(self) -> None:
+        """The tree a generated profile is generated against.
+
+        Idempotent, because the two invocations are compared against each other
+        inside one test and `git commit` with nothing staged is an error.
+        """
+        if (self.controller / "design.md").exists():
+            return
         (self.controller / "design.md").write_text("frozen design\n")
         source = self.controller / "src"
         source.mkdir(exist_ok=True)
         (source / "a.py").write_text("x = 1\n")
         self.git("add", "-A")
         self.git("commit", "-qm", "design")
+
+    def make_profile(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        self.seed_generated_round()
         return subprocess.run(
             [
                 sys.executable,
@@ -1756,6 +1766,158 @@ class DerivedWorktreeTest(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+    def make_profile_derived(
+        self,
+        *extra: str,
+        origin: str = "git@github.com:owner/repo.git",
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """The same round, naming only what describes it.
+
+        Run from inside the checkout with no `--root`, `--repo`, `--project-id`
+        or `--out`, which is the invocation #3432 asks for.
+        """
+        self.seed_generated_round()
+        if origin and not self.git("remote").strip():
+            self.git("remote", "add", "origin", origin)
+        return subprocess.run(
+            [
+                sys.executable,
+                str(MAKE_PROFILE),
+                "--scope", "src",
+                "--run-id", "generated-1",
+                "--intent", "bounded change",
+                "--design-input", "design.md",
+                "--write", "src/a.py",
+                "--gate", "cargo test -p target --lib some_gate",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(cwd or self.controller),
+        )
+
+    def test_make_profile_derives_every_input_the_repository_already_knows(
+        self,
+    ) -> None:
+        """Twelve flags produced a profile five of them described.
+
+        The four dropped here are not conveniences equally: `--out` and
+        `--inject` fail loudly when mistyped, at `worktree` and at `lint`, but
+        `--project-id` names a real Project whatever the typo, passes every
+        check, and runs the round against the wrong work area. The assertion is
+        equality with the fully-flagged profile rather than a spot check on each
+        field, because a derivation that is right about four inputs and wrong
+        about the fifth is the failure being removed (#3432).
+        """
+        derived = self.make_profile_derived()
+        self.assertEqual(derived.returncode, 0, derived.stderr)
+        emitted = json.loads(self.derived_out().read_text())
+
+        self.assertEqual(
+            emitted["controller_root"], str(self.controller.resolve())
+        )
+        self.assertEqual(emitted["repo"], "owner/repo")
+        self.assertEqual(emitted["agy_project_id"], "project-a")
+        self.assertEqual(emitted["state_dir"], "/tmp/agy-dispatch/project-a")
+
+        flagged = self.make_profile("--gate", "cargo test -p target --lib some_gate")
+        self.assertEqual(flagged.returncode, 0, flagged.stderr)
+        self.assertEqual(
+            emitted, json.loads((self.root / "generated.json").read_text())
+        )
+
+    def derived_out(self) -> Path:
+        """Where a profile lands when `--out` is not given.
+
+        `revise` already writes its successor to
+        `{state_dir}/rounds/{key}.profile.json`, so this is the default that
+        makes a generated profile and a derived one the same kind of file.
+        """
+        path = (
+            Path("/tmp/agy-dispatch/project-a")
+            / "rounds"
+            / "generated-1.profile.json"
+        )
+        self.addCleanup(path.unlink, missing_ok=True)
+        self.assertTrue(path.exists(), path)
+        return path
+
+    def test_make_profile_derives_repo_from_an_https_origin_too(self) -> None:
+        """git writes the remote in two spellings and the round does not choose
+        which one the checkout was cloned with."""
+        derived = self.make_profile_derived(
+            origin="https://github.com/owner/repo.git"
+        )
+        self.assertEqual(derived.returncode, 0, derived.stderr)
+        self.assertEqual(
+            json.loads(self.derived_out().read_text())["repo"], "owner/repo"
+        )
+
+    def test_make_profile_derives_the_repository_root_not_the_directory(
+        self,
+    ) -> None:
+        """The invocation is `--scope libs/service-auth` from wherever the
+        controller happens to be standing.
+
+        `Path.cwd()` passes every test run from the top of the checkout and is
+        wrong for every other one: the profile would freeze the complement of a
+        subdirectory, and `worktree` would derive the round's checkout from a
+        path that is not a repository.
+        """
+        derived = self.make_profile_derived(cwd=self.controller / "src")
+        self.assertEqual(derived.returncode, 0, derived.stderr)
+        self.assertEqual(
+            json.loads(self.derived_out().read_text())["controller_root"],
+            str(self.controller.resolve()),
+        )
+
+    def test_make_profile_refuses_to_pick_between_two_projects_on_one_root(
+        self,
+    ) -> None:
+        """Choosing the first match silently is worse than the typo it replaces.
+
+        Two Projects bound to one root is what a round pile-up looks like, and
+        picking either one runs this round under a permission surface some other
+        round installed.
+        """
+        self.write_project("project-b", self.controller)
+        derived = self.make_profile_derived()
+        self.assertEqual(derived.returncode, 2, derived.stdout)
+        self.assertIn("project-a", derived.stderr)
+        self.assertIn("project-b", derived.stderr)
+
+    def test_make_profile_refuses_rather_than_guessing_a_repo(self) -> None:
+        """A derivation that has nothing to read has to say so.
+
+        Falling back to a placeholder would put a plausible `owner/name` in the
+        profile, and the round would only find out at the point something tries
+        to reach the tracker.
+        """
+        derived = self.make_profile_derived(origin="")
+        self.assertEqual(derived.returncode, 2, derived.stdout)
+        self.assertIn("origin", derived.stderr)
+
+    def test_make_profile_reads_an_unmatched_project_as_an_undiscarded_round(
+        self,
+    ) -> None:
+        """The lookup comes back empty in one situation, and the message has to
+        name it.
+
+        `worktree` rebinds the Project to the round's checkout, so a round that
+        was never discarded leaves the binding pointing at a worktree instead of
+        the controller root. Reported as "pass --project-id" that reads as a
+        missing flag, and the controller supplies the id by hand -- which is how
+        a second round gets dispatched into the first round's tree.
+        """
+        stale = self.root / "some-other-round"
+        stale.mkdir()
+        self.write_project("project-a", stale)
+        derived = self.make_profile_derived()
+        self.assertEqual(derived.returncode, 2, derived.stdout)
+        self.assertIn("never discarded", derived.stderr)
+        self.assertIn("--project-id", derived.stderr)
 
     def test_make_profile_output_is_grantable_without_hand_editing(self) -> None:
         """The empty surface came from the generator, not from a user, so the

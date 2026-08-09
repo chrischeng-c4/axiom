@@ -14,15 +14,28 @@ greenfield round is expressed the same way as an edit round.
 Usage
 -----
     python3 make_profile.py \
-        --root /abs/path/to/repo \
-        --repo owner/name \
-        --project-id <registered-agy-project-id> \
         --scope libs/service-auth \
         --issue 3368 \
-        --inject /abs/path/to/delta-round.md \
         --design-input libs/service-auth/CAPABILITIES.md \
         --write libs/service-auth/external-contracts/tests/unit/test_runner_protocol.py:2 \
-        --out /abs/path/to/profile.json
+        --gate "uv run pytest libs/service-auth"
+
+Five inputs describe the round -- the scope, the ticket, the design inputs, the
+write set, and the gate. Everything else is derived, and each flag stays
+available to override:
+
+    --root         the repository containing the current directory
+    --repo         owner/name from `origin`
+    --project-id   the one AGY Project registered for --root
+    --out          {state_dir}/rounds/{task_key}.profile.json
+    --inject       {state_dir}/injections/{task_key}.md, resolved by the
+                   dispatcher when the profile does not name one
+
+A typed input is not free. A mistyped `--out` writes a profile the dispatch
+verbs cannot find; a mistyped `--inject` fails at lint rather than at authoring
+time. `--project-id` is the one that cannot fail loudly at all: a wrong id names
+a real Project, passes every check, and runs the round against the wrong work
+area.
 
 `--write PATH[:BUDGET]` appends an exact `allowed_repo_writes` entry and, when
 BUDGET is given, a `path_change_budgets` ceiling on added+removed lines for that
@@ -123,23 +136,102 @@ def head_digests(root: Path, scope: str) -> dict[str, str]:
     return digests
 
 
-def project_protective_rules(project_id: str) -> dict[str, list[str]]:
-    """The Project's live `deny` and `ask` rules, read through the dispatcher.
+def dispatcher():
+    """The sibling script, imported once.
 
-    Imported rather than reimplemented: the two scripts have to agree on where
-    a Project document lives and how its grants are shaped, and `grant` refuses
-    a declared surface that drops a guard the recorded baseline held. A second
-    reader that disagreed by one normalization step would turn every generated
-    profile into that refusal.
+    Every derivation below reuses one it already owns. A second implementation
+    of "where does a Project document live" or "which Project is this root" that
+    disagreed by one normalization step would turn every generated profile into
+    a refusal the controller cannot read.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import agy_dispatch
 
+    return agy_dispatch
+
+
+def project_protective_rules(project_id: str) -> dict[str, list[str]]:
+    """The Project's live `deny` and `ask` rules, read through the dispatcher.
+
+    `grant` refuses a declared surface that drops a guard the recorded baseline
+    held, so these have to be read the way `grant` reads them.
+    """
+    agy_dispatch = dispatcher()
     project = json.loads(
         agy_dispatch.project_path_by_id(project_id).read_text()
     )
     surface = agy_dispatch.project_permission_surface(project)
     return {kind: list(surface[kind]) for kind in agy_dispatch.PROTECTIVE_KINDS}
+
+
+def git_line(cwd: Path, *args: str) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=False
+    )
+    if result.returncode:
+        return None
+    return result.stdout.strip() or None
+
+
+def derive_root(explicit: str | None) -> Path | None:
+    """The controller checkout, from cwd when not named.
+
+    A mistyped `--root` freezes the complement of a tree the round never runs
+    on, and every path in the profile is then wrong together, which reads like
+    one large deliberate scope rather than one typo.
+    """
+    if explicit:
+        return Path(explicit).resolve()
+    top = git_line(Path.cwd(), "rev-parse", "--show-toplevel")
+    return Path(top).resolve() if top else None
+
+
+def derive_repo(root: Path, explicit: str | None) -> str | None:
+    """`owner/name` from origin, in either URL spelling git writes."""
+    if explicit:
+        return explicit
+    url = git_line(root, "remote", "get-url", "origin")
+    if not url:
+        return None
+    trimmed = url[:-4] if url.endswith(".git") else url
+    # `git@host:owner/name` and `https://host/owner/name` differ only in the
+    # separator before the owner, and both end in the two segments wanted.
+    parts = trimmed.replace(":", "/").rstrip("/").split("/")
+    if len(parts) < 2:
+        return None
+    return "/".join(parts[-2:])
+
+
+def derive_project_id(root: Path, explicit: str | None) -> tuple[str | None, str]:
+    """The registered Project for this root, or the reason there isn't one.
+
+    This is the input that cannot fail loudly when hand-copied: a wrong id names
+    a real Project, so it passes every check and the round runs against the
+    wrong work area. Deriving it removes the only silent typo in the set.
+
+    The lookup resolves now because `worktree` rebinds the Project to the
+    round's checkout only later. It comes back empty in exactly one situation --
+    a previous round was never discarded, so the binding still points at that
+    round's worktree -- and saying so here is earlier than discovering it in
+    `worktree`.
+    """
+    if explicit:
+        return explicit, ""
+    matches = dispatcher().project_ids_for_root(root)
+    if len(matches) == 1:
+        return matches[0], ""
+    if not matches:
+        return None, (
+            f"no AGY Project is registered for {root}. A previous round that "
+            "was never discarded leaves its Project bound to that round's "
+            "worktree, which looks exactly like this; run `discard` for it, or "
+            "pass --project-id."
+        )
+    return None, (
+        f"{len(matches)} AGY Projects are registered for {root}: "
+        + ", ".join(matches)
+        + ". Pass --project-id to say which."
+    )
 
 
 def parse_write(spec: str) -> tuple[str, int | None]:
@@ -157,12 +249,18 @@ def main() -> int:
     )
     ap.add_argument(
         "--root",
-        required=True,
         help="absolute controller repository root; the round's own worktree is "
-        "derived from it by `agy_dispatch.py worktree`",
+        "derived from it by `agy_dispatch.py worktree`. Defaults to the "
+        "repository containing the current directory",
     )
-    ap.add_argument("--repo", required=True, help="owner/name")
-    ap.add_argument("--project-id", required=True, help="registered AGY project id")
+    ap.add_argument(
+        "--repo", help="owner/name; defaults to origin's owner/name"
+    )
+    ap.add_argument(
+        "--project-id",
+        help="registered AGY project id; defaults to the one Project "
+        "registered for --root",
+    )
     ap.add_argument(
         "--scope",
         required=True,
@@ -204,10 +302,21 @@ def main() -> int:
         help="do not emit the no-shell contract; you must then fill in the "
         "exact task_commands yourself",
     )
-    ap.add_argument("--out", required=True, help="absolute path for the profile")
+    ap.add_argument(
+        "--out",
+        help="absolute path for the profile; defaults to "
+        "{state_dir}/rounds/{task_key}.profile.json",
+    )
     args = ap.parse_args()
 
-    root = Path(args.root).resolve()
+    root = derive_root(args.root)
+    if root is None:
+        print(
+            "error: --root was not given and the current directory is not "
+            "inside a git repository",
+            file=sys.stderr,
+        )
+        return 2
     if not (root / ".git").exists():
         print(f"error: {root} is not a repository root", file=sys.stderr)
         return 2
@@ -218,6 +327,20 @@ def main() -> int:
 
     if args.run_id and not (args.intent or "").strip():
         print("error: --run-id requires --intent", file=sys.stderr)
+        return 2
+
+    repo = derive_repo(root, args.repo)
+    if not repo:
+        print(
+            f"error: --repo was not given and {root} has no `origin` remote to "
+            "read owner/name from",
+            file=sys.stderr,
+        )
+        return 2
+
+    project_id, problem = derive_project_id(root, args.project_id)
+    if project_id is None:
+        print(f"error: {problem}", file=sys.stderr)
         return 2
 
     writes: list[str] = []
@@ -301,7 +424,7 @@ def main() -> int:
     # leaving a bounded-write worker with no denial surface at all. The `allow`
     # side of the same defect was #3479; it announced itself within one round,
     # because a worker that can run nothing stops. This side announces nothing.
-    inherited = project_protective_rules(args.project_id)
+    inherited = project_protective_rules(project_id)
     project_permissions: dict[str, object] = {
         "allow": [],
         "deny": inherited["deny"],
@@ -339,9 +462,9 @@ def main() -> int:
         # checkout. Every other verb reads `root`.
         "controller_root": str(root),
         "root": str(root),
-        "repo": args.repo,
-        "agy_project_id": args.project_id,
-        "state_dir": f"/tmp/agy-dispatch/{args.project_id}",
+        "repo": repo,
+        "agy_project_id": project_id,
+        "state_dir": f"/tmp/agy-dispatch/{project_id}",
         "mode": "bounded-write" if writes else "measure-only",
         "task_contract": contract,
         "model": args.model,
@@ -365,11 +488,19 @@ def main() -> int:
         task_commands["allow"].append("REPLACE-WITH-EXACT-COMMAND-LINE")
         task_commands["allow_prefix"].append("REPLACE-WITH-COMMAND-PREFIX-OR-DELETE")
 
-    out = Path(args.out)
+    task_key = args.issue or args.run_id
+    # `revise` already writes its successor to `{state_dir}/rounds/{key}.profile.json`,
+    # so a generated profile that lands anywhere else is the odd one out, and a
+    # mistyped `--out` writes a profile the dispatch verbs then cannot find.
+    out = (
+        Path(args.out)
+        if args.out
+        else Path(profile["state_dir"]) / "rounds" / f"{task_key}.profile.json"
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(profile, indent=2) + "\n")
 
     missing = [w for w in writes if not (root / w).exists()]
-    task_key = args.issue or args.run_id
     print(f"wrote {out}")
     print(f"mode:                {profile['mode']}")
     print(f"protected artifacts: {len(protected)}")
