@@ -2481,6 +2481,28 @@ INJECTION_SKELETON = """\
 """
 
 
+def blank_round_forms(profile: dict) -> tuple[str, str]:
+    """The blank oracle and injection this profile's contract asks for.
+
+    Shared with `revise`, which hands out the same delta form: a revision is the
+    round most likely to skip a slot, because its author already holds the
+    previous round in their head and writes only what changed.
+    """
+    gate = profile["task_contract"].get("gate_command") or (
+        "<!-- fill: the exact command that must be green -->"
+    )
+    design_inputs = profile["task_contract"].get("design_inputs", [])
+    reference = "\n".join(
+        f"| `{entry['path']}` | <!-- fill --> |" for entry in design_inputs
+    ) or "| `<!-- fill: path -->` | <!-- fill --> |"
+    return (
+        ORACLE_SKELETON.format(gate=gate),
+        INJECTION_SKELETON.format(
+            gate=gate, reference=reference, shape_budget=SHAPE_LINE_BUDGET
+        ),
+    )
+
+
 def scaffold(profile: dict, task_key: str) -> None:
     """Write the blank round form for the controller to fill.
 
@@ -2491,23 +2513,12 @@ def scaffold(profile: dict, task_key: str) -> None:
     remaining `<!-- fill -->` markers are themselves a finding, so a form that
     was never filled cannot be dispatched.
     """
-    gate = profile["task_contract"].get("gate_command") or (
-        "<!-- fill: the exact command that must be green -->"
-    )
-    design_inputs = profile["task_contract"].get("design_inputs", [])
-    reference = "\n".join(
-        f"| `{entry['path']}` | <!-- fill --> |" for entry in design_inputs
-    ) or "| `<!-- fill: path -->` | <!-- fill --> |"
+    oracle_form, injection_form = blank_round_forms(profile)
 
     written, kept = [], []
     for path, body in (
-        (oracle_path(profile, task_key), ORACLE_SKELETON.format(gate=gate)),
-        (
-            injection_path(profile, task_key),
-            INJECTION_SKELETON.format(
-                gate=gate, reference=reference, shape_budget=SHAPE_LINE_BUDGET
-            ),
-        ),
+        (oracle_path(profile, task_key), oracle_form),
+        (injection_path(profile, task_key), injection_form),
     ):
         if path.exists():
             kept.append(path)
@@ -2748,7 +2759,11 @@ def resume(profile: dict, task_key: str) -> None:
 
 
 def revise(
-    profile: dict, raw_path: str, task_key: str, next_key: str, injection: str
+    profile: dict,
+    raw_path: str,
+    task_key: str,
+    next_key: str,
+    injection: str | None = None,
 ) -> None:
     """Mint a new run id for a round that must go back, keeping its checkout.
 
@@ -2780,6 +2795,15 @@ def revise(
     The budget is carried too, and that is the point of carrying it: the
     revision's diff is judged against the same ceiling as the round it
     continues, not given a second one.
+
+    The delta contract is handed out as the same blank form `scaffold` writes,
+    unless one is passed in. `revise` used to copy whatever markdown it was
+    given, which made the revision the one round authored from memory: the
+    author holds the previous round in their head and writes only what changed,
+    so the slot that goes missing is `## Current behavior` -- the slot carrying
+    the check that every quoted line exists in the round's own files. A passed
+    file is held to the section list before it is copied, so the structure is
+    refused here rather than at `lint`, after a snapshot.
     """
     validate_task_key(profile, task_key)
     if next_key == task_key:
@@ -2801,8 +2825,8 @@ def revise(
             "there is no candidate to carry forward and a fresh round costs "
             "nothing to author"
         )
-    source = Path(injection)
-    if not source.is_file():
+    source = Path(injection) if injection else None
+    if source is not None and not source.is_file():
         raise SystemExit(f"revision injection does not exist: {injection}")
 
     state = Path(profile["state_dir"])
@@ -2818,6 +2842,20 @@ def revise(
             f"the round being revised has no oracle at {oracle}, so there is "
             "no sealed claim for the revision to inherit"
         )
+
+    # Last, so a round that cannot be revised at all says so before the delta is
+    # graded: the structural finding is about the document, and it is only worth
+    # printing once there is a round for the document to belong to.
+    delta = blank_round_forms(profile)[1]
+    if source is not None:
+        delta = source.read_text()
+        structural = missing_or_misordered(delta, INJECTION_SECTIONS, "injection")
+        if structural:
+            raise SystemExit(
+                f"refusing to carry {injection} as the delta contract:\n  - "
+                + "\n  - ".join(structural)
+                + "\n\nOmit the argument to be handed the blank form instead."
+            )
 
     revised = json.loads(Path(raw_path).read_text())
     contract = revised["task_contract"]
@@ -2840,7 +2878,7 @@ def revise(
     contract["run_id"] = next_key
     next_injection = state / "injections" / f"{next_key}.md"
     next_injection.parent.mkdir(parents=True, exist_ok=True)
-    next_injection.write_text(source.read_text())
+    next_injection.write_text(delta)
     revised["inject_prompt_file"] = str(next_injection)
     (state / "oracles" / f"{next_key}.md").write_text(oracle.read_text())
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -2852,10 +2890,14 @@ def revise(
             f"descends : issue #{origin}, as a one-shot revision -- the ticket "
             "id is spent, so the round cannot keep it as its identity"
         )
-    print(f"injection: {next_injection}")
+    print(
+        f"injection: {next_injection}"
+        + ("" if injection else " (blank delta form; fill it)")
+    )
     print(f"oracle   : copied unchanged from {task_key}")
     print(f"profile  : {target}")
-    print(f"next     : lint, grant, doctor, snapshot, dispatch -- {next_key}")
+    prefix = "" if injection else "fill the injection, then "
+    print(f"next     : {prefix}lint, grant, doctor, snapshot, dispatch -- {next_key}")
 
 
 def abandon(profile: dict, task_key: str) -> None:
@@ -4733,8 +4775,10 @@ def main() -> None:
             )
             item.add_argument(
                 "injection",
+                nargs="?",
                 help="delta contract naming what was wrong and what must "
-                "become true",
+                "become true; omit to be handed the blank form, as `scaffold` "
+                "hands out the round form",
             )
         if verb == "capture":
             item.add_argument(

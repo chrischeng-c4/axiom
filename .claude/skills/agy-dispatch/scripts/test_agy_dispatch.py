@@ -2361,6 +2361,27 @@ class DerivedWorktreeTest(unittest.TestCase):
             ["round-1.1", "round-1.2"],
         )
 
+    def delta_document(self, task: str = "what was wrong") -> str:
+        """A delta contract carrying every section a round form carries.
+
+        The fixture used to be a lone `## Task`, which is the exact shape a
+        revision written from memory takes -- so it had to become the shape a
+        real correction takes before it could stand in for one.
+        """
+        return (
+            f"## Task\n\n{task}\n\n"
+            "## Current behavior\n\n`README.md:1` still carries only the base "
+            "line:\n\n```\nbase\n```\n\n"
+            "## Required change\n\n- The gate's line must be present in "
+            "`README.md`.\n\n"
+            "## Shape to follow\n\n`README.md` already holds one line per fact; "
+            "append rather than rewrite.\n\n"
+            "## Reference\n\n| path | why the worker must read it |\n|---|---|\n"
+            "| `README.md` | the file the gate reads |\n\n"
+            "## Out of scope\n\n- Anything the first round already landed.\n\n"
+            "## Definition of done\n\n```\ngrep -q accepted README.md\n```\n"
+        )
+
     def revisable_round(
         self, candidate: bool = True, **overrides: object
     ) -> tuple[dict, Path]:
@@ -2381,7 +2402,7 @@ class DerivedWorktreeTest(unittest.TestCase):
                 "base\naccepted\n"
             )
         delta = self.root / "delta.md"
-        delta.write_text("## Task\n\nwhat was wrong\n")
+        delta.write_text(self.delta_document())
         return profile, delta
 
     def revisable_ticketed_round(self) -> tuple[dict, Path]:
@@ -2416,7 +2437,7 @@ class DerivedWorktreeTest(unittest.TestCase):
             "base\naccepted\n"
         )
         delta = self.root / "delta-ticketed.md"
-        delta.write_text("## Task\n\nwhat was wrong\n")
+        delta.write_text(self.delta_document())
         return profile, delta
 
     def revise_ticket(self, profile: dict, task_key: str, next_key: str) -> dict:
@@ -2594,7 +2615,7 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertEqual(revised["path_change_budgets"], {"README.md": 40})
         injection = self.root / "state" / "injections" / "round-2.md"
         self.assertEqual(revised["inject_prompt_file"], str(injection))
-        self.assertEqual(injection.read_text(), "## Task\n\nwhat was wrong\n")
+        self.assertEqual(injection.read_text(), self.delta_document())
         self.assertEqual(
             (self.root / "state" / "oracles" / "round-2.md").read_text(),
             "## Claim\n\nthe judge\n",
@@ -2672,6 +2693,32 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.assertIn("refusing to overwrite an existing round", str(error.exception))
         self.assertEqual(taken.read_text(), "{}\n")
 
+    def test_the_round_is_refused_before_its_document_is_graded(self) -> None:
+        """Both are wrong; only one of them can be acted on.
+
+        A structural finding asks the author to add sections to a delta that
+        has nowhere to go. Grading the document first therefore sends them to
+        fix the thing that is not blocking them, and the real refusal arrives
+        only on the second attempt.
+        """
+        profile, delta = self.revisable_round()
+        delta.write_text("## Task\n\nboth wrong at once\n")
+        taken = self.root / "state" / "rounds" / "round-2.profile.json"
+        taken.parent.mkdir(parents=True, exist_ok=True)
+        taken.write_text("{}\n")
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.revise(
+                profile,
+                str(self.root / "profile.json"),
+                "round-1",
+                "round-2",
+                str(delta),
+            )
+
+        self.assertIn("refusing to overwrite an existing round", str(error.exception))
+        self.assertNotIn("refusing to carry", str(error.exception))
+
     def test_a_revision_inherits_a_sealed_claim_or_refuses(self) -> None:
         profile, delta = self.revisable_round()
         (self.root / "state" / "oracles" / "round-1.md").unlink()
@@ -2700,6 +2747,71 @@ class DerivedWorktreeTest(unittest.TestCase):
             )
 
         self.assertIn("revision injection does not exist", str(error.exception))
+
+    def test_a_revision_with_no_delta_named_is_handed_the_blank_form(self) -> None:
+        """The revision is the round most likely to be authored from memory.
+
+        Its author holds the previous round in their head, so the natural thing
+        to write is a paragraph saying what changed. `scaffold` exists precisely
+        so no other round can be authored that way; before this, `revise` was
+        the one path around it.
+        """
+        profile, _ = self.revisable_round()
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            agy_dispatch.revise(
+                profile, str(self.root / "profile.json"), "round-1", "round-2"
+            )
+
+        injection = self.root / "state" / "injections" / "round-2.md"
+        self.assertEqual(
+            injection.read_text(), agy_dispatch.blank_round_forms(profile)[1]
+        )
+        # A form, not a document: `lint` refuses it while a slot is unfilled, so
+        # the round cannot reach a worker on the strength of having been minted.
+        self.assertIn("<!-- fill", injection.read_text())
+        self.assertEqual(
+            agy_dispatch.missing_or_misordered(
+                injection.read_text(), agy_dispatch.INJECTION_SECTIONS, "injection"
+            ),
+            [],
+        )
+        self.assertIn("(blank delta form; fill it)", out.getvalue())
+        self.assertIn("next     : fill the injection, then lint", out.getvalue())
+
+    def test_a_delta_missing_the_round_form_is_refused_before_a_round_exists(
+        self,
+    ) -> None:
+        """Named here rather than at `lint`, which is two verbs and a snapshot on.
+
+        The section that goes missing is `## Current behavior` -- the one
+        carrying the quoted lines `lint` checks against the checkout -- so a
+        delta without it is not a shorter contract, it is one whose central
+        check has nothing to run against.
+        """
+        profile, delta = self.revisable_round()
+        delta.write_text("## Task\n\nthe candidate wrote the wrong line\n")
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.revise(
+                profile,
+                str(self.root / "profile.json"),
+                "round-1",
+                "round-2",
+                str(delta),
+            )
+
+        message = str(error.exception)
+        self.assertIn("refusing to carry", message)
+        for section in agy_dispatch.INJECTION_SECTIONS[1:]:
+            self.assertIn(f"`## {section}` section", message)
+        self.assertIn("Omit the argument", message)
+        # Refused before the round exists, so there is nothing half-minted to
+        # clean up and no id spent on a contract that cannot be dispatched.
+        self.assertFalse(
+            (self.root / "state" / "rounds" / "round-2.profile.json").exists()
+        )
+        self.assertFalse((self.root / "state" / "injections" / "round-2.md").exists())
 
     def test_a_clean_round_reports_no_findings(self) -> None:
         profile = self.derive(self.profile_path())

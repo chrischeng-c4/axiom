@@ -75,7 +75,9 @@ Three things the scripts will not tell you:
 
 To send a round back: `revise`, ticketed or not. It mints the new id, carries
 the candidate, and copies the oracle unchanged, so the delta says what was
-wrong rather than what to do. A ticketed round comes back as a one-shot
+wrong rather than what to do. Name a delta file and it is held to the same
+seven sections before it is copied; omit the argument and you are handed the
+blank form, as `scaffold` hands out the round form. A ticketed round comes back as a one-shot
 revision — the ticket id is its identity and is spent — with `revision_of`
 keeping the descent in the prompt, the sealed task state, and the `Refs #`
 trailer on the accepted commit. `resume` is the other thing: same injection,
@@ -163,8 +165,10 @@ holds distinctions worth copying into a round's `## Fabrication tells`.
 document fields the generator does not emit.
 
 Two rules live in prose only because they have no slot yet: the profile's
-fields carry no rules (#3440), and the delta contract is dispatched
-unscaffolded and unlinted (#3442).
+fields carry no rules (#3440), and the delta contract carries the round form's
+slots but none of its own — that a revision report is a self-contained
+replacement, that a list edit says `append` or `replace <entry>`, and that a
+delta correcting the controller quotes the line it supersedes (#3442).
 
 Interactive teamwork preview is a separate mode, not a dispatch — run
 `scripts/teamwork_terminal.py` only when the user asks, and never headless.
