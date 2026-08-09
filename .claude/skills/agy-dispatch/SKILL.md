@@ -20,6 +20,17 @@ forms whose every slot carries its own rule as a `<!-- fill -->` comment, and
 `lint` refuses a form still holding one. Read the form when you author; the
 comments are stripped before the worker sees anything.
 
+**Write the work item first and most of both documents is already yours.** A
+`type=change` body in Goal / How / Acceptance / Never carries the round: the
+change points *are* the write allowlist, the acceptance table *is* the
+measurement table, the premises *are* the reference list and the quote under
+`## Current behavior`. `from_wi.py` projects them, and refuses rather than
+half-project. Four slots have no source in a work item and stay forms —
+`## Fabrication tells`, `## Required change`, `## Shape to follow`,
+`## Definition of done`. Those four are the authoring; the rest was
+transcription, which is where a write allowlist quietly stops matching the
+change points it was copied from.
+
 **What each verb refuses is not here either.** Every refusal names its own
 recovery at the moment it fires. Do what it says — except for the three places
 it misleads, which are under *What not to do*.
@@ -27,12 +38,23 @@ it misleads, which are under *What not to do*.
 ## How to do it
 
 ```
-worktree → grant → doctor → scaffold → (fill, capture) → lint → snapshot → dispatch
+from_wi | (make_profile + scaffold) → worktree → grant → doctor → (fill, capture)
+        → lint → snapshot → dispatch
         → verify → review → adjudicate → prove ×2 → sweep → accept | revise | discard
 ```
 
 ```bash
 S=.claude/skills/agy-dispatch/scripts/agy_dispatch.py
+
+# From a `type=change` work item: profile and both documents in one step.
+python3 .claude/skills/agy-dispatch/scripts/from_wi.py 1234
+    # --print-only first, to read what it derived before it writes anything
+    # --body-file to project a body that is not on the tracker yet
+    # --scope overrides the scope derived from the change points
+    # --root defaults to this checkout; commit first, since `worktree` cuts HEAD
+    # never overwrites a document that already exists
+
+# Or by hand, when there is no such work item.
 python3 .claude/skills/agy-dispatch/scripts/make_profile.py \
     --scope libs/thing --issue 1234 --design-input libs/thing/CAPABILITIES.md \
     --write libs/thing/src/a.py:40 --gate "uv run pytest libs/thing"
