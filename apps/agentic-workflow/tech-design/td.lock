@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-08-04T07:13:31.258770+00:00"
-digest = "sha256:4c62f751fa7d6d447514990ed4bffe57e03717825f43a2cbf7a6c912c18bb7e7"
-source_digest = "sha256:4c62f751fa7d6d447514990ed4bffe57e03717825f43a2cbf7a6c912c18bb7e7"
-ir_digest = "sha256:fc6cf924e9d186964b69ca89abc43be7eb1f6161141bfaa06a1ead81daa01a82"
+generated_at = "2026-08-09T16:37:09.992408+00:00"
+digest = "sha256:33db956ed857a8bce49ab94f8f39fbc2e49542d81b4bb70df3c06fdf39306ea8"
+source_digest = "sha256:33db956ed857a8bce49ab94f8f39fbc2e49542d81b4bb70df3c06fdf39306ea8"
+ir_digest = "sha256:40f4a1f9a8f209efb19691e33e078ebb53374e93f5f42a00fd4ad8533fe14784"
 
 [[files]]
 path = "pyproject.toml"
@@ -4044,6 +4044,10 @@ path = "src/agentic_workflow/work_items/prevent_default_health_smoke_from_recurs
 digest = "sha256:d9df512e3da2c9122c55deea5c6f43ebf429d6ee86f21e78f874d3adcab03aea"
 
 [[files]]
+path = "src/agentic_workflow/work_items/provide_reusable_ec_linked_worktree_lifecycle_fixture.py"
+digest = "sha256:641408036cdeb7ad95aad2305b3effa7527379c4d4842436cdb9f09cf49d64f7"
+
+[[files]]
 path = "src/agentic_workflow/work_items/python_ec_cache_safe_discovery.py"
 digest = "sha256:9e6ca6401a0059e7237d6ae7a9c1f85bc0c00174b7be8adc70fea18394b00256"
 
@@ -4066,6 +4070,10 @@ digest = "sha256:fee189bae0f8f817663e03c5897d536913642bf231ac4f09d8b3228113aeeb4
 [[files]]
 path = "src/agentic_workflow/work_items/scoped_capability_verification.py"
 digest = "sha256:31502bb1b1e57269b01c165b9cff0b1e01208a94954184bc19da9c0715de0702"
+
+[[files]]
+path = "src/agentic_workflow/work_items/separate_cb_materialization_from_controller_owned_git.py"
+digest = "sha256:6bef9b150a8ecf185dcdc476f3d8f17d673e608b6d8099148e001f53f8dd6147"
 
 [[files]]
 path = "src/agentic_workflow/work_items/shared_cli_report.py"
