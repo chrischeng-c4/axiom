@@ -303,7 +303,18 @@ def project(body: str, root: Path) -> dict:
     # touch` is the second: frozen and readable is exactly what the author meant
     # by naming it there. Only the entries that are files in this checkout, since
     # a design input has to be readable to be frozen.
-    design_inputs = [path for path, _ in references if path not in writes]
+    # `PATH_TOKEN` matches any dotted identifier in backticks, so a premise
+    # naming a symbol rather than a file -- `importlib.util.spec_from_file_location`
+    # is the one that surfaced this -- projects as a design input that
+    # `make_profile.py` then refuses, stopping the projection on a premise that
+    # was correctly written. Readability is the same test the `### Must not
+    # touch` branch below already applies, for the same reason: a design input
+    # has to be readable to be frozen.
+    design_inputs = [
+        path
+        for path, _ in references
+        if path not in writes and (root / path).is_file()
+    ]
     for item in must_not_touch:
         hit = PATH_TOKEN.search(item) or FILE_LINE.search(item)
         if hit and hit.group(1) not in design_inputs:
