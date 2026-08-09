@@ -931,7 +931,21 @@ pub fn looks_too_large_for_atomic_wi(issue: &Issue) -> bool {
                 .then_some(content)
         })
         .unwrap_or(scope);
-    let text = format!("{}\n{}", issue.title, in_scope).to_ascii_lowercase();
+    // A GHAN body states its bound in `## Goal` and has no `## Scope`. Without
+    // this fallback the check would silently degrade to title-only and wave
+    // through every roadmap-sized GHAN work item.
+    let bounded = if in_scope.trim().is_empty() {
+        body_with_leading_newline
+            .split("\n## ")
+            .find_map(|part| {
+                let (heading, content) = part.split_once('\n')?;
+                heading.trim().eq_ignore_ascii_case("goal").then_some(content)
+            })
+            .unwrap_or_default()
+    } else {
+        in_scope
+    };
+    let text = format!("{}\n{}", issue.title, bounded).to_ascii_lowercase();
     if HARD_PHRASES.iter().any(|phrase| text.contains(phrase)) {
         return true;
     }

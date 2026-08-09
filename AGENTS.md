@@ -123,6 +123,7 @@ Reusable instructions live in `.agents/rules`; this generated index routes Codex
 
 | Rule | Scope | Targets | Enforcement | Source |
 |---|---|---|---|---|
+| `authoring.agent-instruction-ghan` — Agent instructions are Goal / How / Acceptance / Never | always | claude, codex, agy | Advisory | [`.agents/rules/authoring/agent-instruction-ghan.md`](.agents/rules/authoring/agent-instruction-ghan.md) |
 | `authoring.artifact-layout` — Right-sized artifact layout | always | claude, codex, agy | Advisory | [`.agents/rules/authoring/artifact-layout.md`](.agents/rules/authoring/artifact-layout.md) |
 | `operations.persistent-branches` — Persistent work-area branches | always | claude, codex, agy | Guard | [`.agents/rules/operations/persistent-branches.md`](.agents/rules/operations/persistent-branches.md) |
 | `workflow.agentic-workflow` — Agentic Workflow protocol | always | claude, codex, agy | Guard | [`.agents/rules/workflow/agentic-workflow.md`](.agents/rules/workflow/agentic-workflow.md) |

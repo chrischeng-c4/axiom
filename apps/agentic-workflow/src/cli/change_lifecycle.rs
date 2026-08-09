@@ -475,6 +475,10 @@ fn strip_aw_marker_blocks(body: &str) -> String {
     result
 }
 
+// Both authored vocabularies, because the digest must see whichever one the
+// body actually uses. A GHAN body whose sections were absent here would
+// canonicalize to the same digest before and after an edit, and every evidence
+// binding would stay bound to content that had already changed.
 const CANONICAL_WI_SECTIONS: &[&str] = &[
     "## Problem",
     "## Capability Alignment",
@@ -482,6 +486,10 @@ const CANONICAL_WI_SECTIONS: &[&str] = &[
     "## Scope",
     "## Acceptance Criteria",
     "## Reference Context",
+    "## Goal",
+    "## How",
+    "## Acceptance",
+    "## Never",
 ];
 
 fn canonicalize_wi_body(body: &str) -> String {
@@ -2530,6 +2538,40 @@ mod tests {
     use super::*;
     use crate::cli::issues::{ensure_change_id, ensure_change_issue};
     use crate::issues::{IssueState, IssueType};
+
+    // Evidence binds to the canonical digest. A section the canonicalizer drops
+    // is a section an author can rewrite without invalidating the evidence that
+    // was recorded against the old text.
+    #[test]
+    fn ghan_sections_participate_in_the_canonical_digest() {
+        let body = crate::issues::ghan::SAMPLE_GHAN_BODY;
+        let before = canonicalize_wi_body(body);
+        for (section, from, to) in [
+            ("## Goal", "reports section errors", "reports nothing"),
+            ("## How", "route by body shape", "route by title"),
+            ("## Acceptance", "3770 passed / 0 failed", "3771 passed / 0 failed"),
+            ("## Never", "Do not relax an existing assertion", "Do not relax anything"),
+        ] {
+            let edited = canonicalize_wi_body(&body.replace(from, to));
+            assert_ne!(
+                before, edited,
+                "editing {section} left the canonical digest input unchanged"
+            );
+        }
+
+        // The falsifier. When no heading matches, `canonicalize_wi_body` falls
+        // back to the whole stripped body, so the assertions above hold whether
+        // or not the GHAN headings are listed. Only the exclusion direction can
+        // tell the two apart: content outside the authored contract must not
+        // move the digest, and that is true exactly when the four headings are
+        // the canonical set.
+        let with_scratch = format!("{body}\n## Notes\n\nscratch\n");
+        assert_eq!(
+            before,
+            canonicalize_wi_body(&with_scratch),
+            "a non-canonical section moved the digest, so the GHAN headings are not being recognized"
+        );
+    }
 
     #[test]
     fn test_event_id_oracle_rows() {

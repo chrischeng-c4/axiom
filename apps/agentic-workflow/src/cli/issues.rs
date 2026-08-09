@@ -980,6 +980,11 @@ fn normalize_initial_draft_body(issue_type: IssueType, title: &str, raw_body: &s
         return default_structured_issue_body(issue_type, title);
     }
     let base = default_structured_issue_body(issue_type, title);
+    // A GHAN body is already the whole contract. Merging it into the legacy
+    // scaffold would emit a Mixed body that no validator can route.
+    if crate::issues::ghan::body_shape(body) == crate::issues::ghan::WiBodyShape::Ghan {
+        return body.to_string();
+    }
     let merged = if looks_like_structured_attempt(body) {
         merge_all_sections(&base, body)
     } else {
@@ -2170,6 +2175,34 @@ fn validate_draft_issue(
     errors
 }
 
+// Which body vocabulary governs this work item, or why neither can.
+enum GhanRouting {
+    /// Validate with the Goal / How / Acceptance / Never rules.
+    Ghan,
+    /// Validate with the legacy six-section rules.
+    Legacy,
+    /// The body cannot be routed at all; report the reason instead of guessing.
+    Refused(String),
+}
+
+// GHAN and the legacy six sections coexist. Guessing between them would let a
+// half-migrated body satisfy whichever rule set is weaker, so an unroutable
+// body is refused by name.
+fn ghan_routing(issue: &Issue) -> GhanRouting {
+    use crate::issues::ghan::WiBodyShape;
+    match crate::issues::ghan::body_shape(&issue.body) {
+        WiBodyShape::Ghan if issue.issue_type.is_change() => GhanRouting::Ghan,
+        WiBodyShape::Ghan => GhanRouting::Refused(format!(
+            "ghan: Goal / How / Acceptance / Never is the `change` work-item shape; `{}` keeps the six-section body",
+            issue.issue_type.as_str()
+        )),
+        WiBodyShape::Mixed => GhanRouting::Refused(
+            "ghan: body mixes Goal / How / Acceptance / Never with the legacy six sections; keep one vocabulary".to_string(),
+        ),
+        WiBodyShape::Legacy | WiBodyShape::Unstructured => GhanRouting::Legacy,
+    }
+}
+
 // @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-draft-valid-by-construction.md#draft_authoring_contract
 fn validate_publishable_issue_body(issue: &Issue) -> Vec<String> {
     let mut errors = Vec::new();
@@ -2179,6 +2212,11 @@ fn validate_publishable_issue_body(issue: &Issue) -> Vec<String> {
     }
     if issue.issue_type == IssueType::Spike || issue.issue_type == IssueType::Report {
         return validate_type_template_profile(issue);
+    }
+    match ghan_routing(issue) {
+        GhanRouting::Ghan => return crate::issues::ghan::validate_ghan_body(issue),
+        GhanRouting::Refused(error) => return vec![error],
+        GhanRouting::Legacy => {}
     }
     for section in [
         crate::issues::IssueSection::Problem,
@@ -2927,17 +2965,31 @@ fn emit_wi_fill_dispatch(project_root: &Path, created: &Issue, emit_output: bool
 // Used to gate write-time validation so that plain free-form issues
 // continue to work without forcing the new section discipline.
 // @spec structured-issue#R1
+// Named so a test can assert that a GHAN fixture trips none of them; a fixture
+// that quotes one of these in prose satisfies the heuristic by accident and
+// silently stops exercising the shape routing below.
+const LEGACY_STRUCTURE_MARKERS: &[&str] = &[
+    "## Problem",
+    "## Requirements",
+    "## Question",
+    "## Evidence Plan",
+    "## Repro",
+    "## Diagnostics",
+];
+
 fn looks_like_structured_attempt(body: &str) -> bool {
-    [
-        "## Problem",
-        "## Requirements",
-        "## Question",
-        "## Evidence Plan",
-        "## Repro",
-        "## Diagnostics",
-    ]
-    .iter()
-    .any(|heading| body.contains(heading))
+    if LEGACY_STRUCTURE_MARKERS
+        .iter()
+        .any(|heading| body.contains(heading))
+    {
+        return true;
+    }
+    // A GHAN body shares no heading with the legacy set, so without this it
+    // would be rejected as unstructured before any section rule could speak.
+    matches!(
+        crate::issues::ghan::body_shape(body),
+        crate::issues::ghan::WiBodyShape::Ghan | crate::issues::ghan::WiBodyShape::Mixed
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -6720,6 +6772,15 @@ fn validate_planning_alignment(issue: &Issue) -> Vec<String> {
         return Vec::new();
     }
 
+    // A GHAN body carries its capability claim in `## Goal` and its gates in
+    // `## Acceptance`; probing it for the legacy field names would report a
+    // missing section on every correctly authored work item.
+    match ghan_routing(issue) {
+        GhanRouting::Ghan => return crate::issues::ghan::validate_ghan_body(issue),
+        GhanRouting::Refused(error) => return vec![error],
+        GhanRouting::Legacy => {}
+    }
+
     let mut errors = Vec::new();
     if looks_too_large_for_atomic_wi(issue) {
         errors.push(
@@ -10458,6 +10519,92 @@ label = "app:score"
             errors.iter().any(|e| e.contains("Capability Alignment")),
             "expected capability alignment error, got {:?}",
             errors
+        );
+    }
+
+    // The GHAN rules live in `crate::issues::ghan` and are unit-tested there.
+    // These cases exist for the wiring instead: without the shape routing they
+    // go red while every rule test stays green.
+    #[test]
+    fn ghan_body_reaches_the_ghan_validator_instead_of_the_unstructured_error() {
+        // Precondition, not decoration: the fixture originally quoted two legacy
+        // headings inside backticks, which satisfied the substring heuristic and
+        // made this case pass with the shape routing deleted.
+        for marker in LEGACY_STRUCTURE_MARKERS {
+            assert!(
+                !crate::issues::ghan::SAMPLE_GHAN_BODY.contains(marker),
+                "the GHAN fixture mentions `{marker}`, so it reaches the validator through the legacy heuristic and this case proves nothing"
+            );
+        }
+
+        let mut issue = planning_issue(IssueType::Change, "Route GHAN bodies", Some("p3"), 3501);
+        issue.body = crate::issues::ghan::SAMPLE_GHAN_BODY.to_string();
+        assert_eq!(
+            validate_publishable_issue_body(&issue),
+            Vec::<String>::new(),
+            "a well-formed GHAN change body must publish"
+        );
+
+        issue.body = crate::issues::ghan::SAMPLE_GHAN_BODY.replace("### Negative control", "### Notes");
+        let errors = validate_publishable_issue_body(&issue);
+        assert!(
+            errors.iter().any(|e| e.starts_with("ghan:")),
+            "expected a GHAN section error, got {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e == "body must contain structured work-item sections"),
+            "GHAN bodies must never be reported as unstructured: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn mixed_vocabulary_body_is_refused_rather_than_guessed() {
+        let mut issue = planning_issue(IssueType::Change, "Half-migrated body", Some("p3"), 3502);
+        issue.body = format!(
+            "{}\n## Problem\n\nleftover legacy section\n",
+            crate::issues::ghan::SAMPLE_GHAN_BODY
+        );
+        let errors = validate_publishable_issue_body(&issue);
+        assert!(
+            errors.iter().any(|e| e.contains("keep one vocabulary")),
+            "expected a mixed-vocabulary refusal, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn ghan_goal_feeds_the_too_large_gate_when_scope_is_absent() {
+        let mut issue = planning_issue(IssueType::Change, "Improve things", Some("p3"), 3503);
+        // Title alone is bounded; only the Goal is roadmap-sized. A GHAN body
+        // has no `## Scope`, so reading scope-only would wave this through.
+        issue.body = crate::issues::ghan::SAMPLE_GHAN_BODY.replace(
+            "Running `aw wi validate` on a GHAN body reports section errors instead of `body must contain structured work-item sections`.",
+            "Rewrite the entire platform so every project stops reporting the error.",
+        );
+        assert!(
+            looks_too_large_for_atomic_wi(&issue),
+            "a roadmap-sized ## Goal must trip the boundedness gate"
+        );
+        assert!(
+            validate_planning_alignment(&issue)
+                .iter()
+                .any(|e| e.contains("too-large")),
+            "the too-large finding must survive GHAN routing"
+        );
+    }
+
+    #[test]
+    fn draft_normalization_keeps_a_ghan_body_out_of_the_legacy_scaffold() {
+        let normalized = normalize_initial_draft_body(
+            IssueType::Change,
+            "Route GHAN bodies",
+            crate::issues::ghan::SAMPLE_GHAN_BODY,
+        );
+        assert_eq!(
+            crate::issues::ghan::body_shape(&normalized),
+            crate::issues::ghan::WiBodyShape::Ghan,
+            "merging a GHAN draft into the legacy base would produce an unroutable Mixed body: {normalized}"
         );
     }
 

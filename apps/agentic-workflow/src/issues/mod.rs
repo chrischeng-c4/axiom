@@ -28,6 +28,7 @@
 // CODEGEN-BEGIN
 pub mod backend;
 pub mod backends;
+pub mod ghan;
 pub mod graph;
 pub mod labels;
 pub mod next_id;

@@ -199,6 +199,220 @@ headers, the CPython oracle, and the perf-baseline flow.
 
 ---
 
+## Authoring convention: every agent instruction is Goal / How / Acceptance / Never
+
+> A `type=change` work item, a `SKILL.md`, and a dispatch injection are the same
+> artifact wearing three costumes: **an instruction telling an agent to do one
+> thing.** They get one structure — **GHAN** — so an author learns it once and a
+> validator checks it everywhere.
+
+### Why a structure at all
+
+Sections without a machine consumer get filled with boilerplate. This is
+measured, not asserted. Across the 143 open `type=change` work items in this
+repository:
+
+| Section | Filled with a pure title echo |
+|---|---|
+| `## Scope` | 55 |
+| `## Capability Alignment` | 44 |
+| `## Acceptance Criteria` | 43 |
+| `## Requirements` | 39 |
+
+Only 7% carry an executable gate command and 41% carry a `file:line` coordinate.
+
+The cause is upstream of the authors: `default_structured_issue_body`
+(`apps/agentic-workflow/src/cli/issues.rs`) interpolates the title into every
+section it emits — `- AC1: {title} is implemented and verified.` — and the sole
+anti-boilerplate check, `is_real_planning_value`, rejects only seven literals
+(`(fill)`, `(replace-this)`, `tbd`, `todo`, `maybe`, `unclear`, `uncertain`). A
+title echo is accepted by construction.
+
+So the rule that generates GHAN's shape is: **every section MUST name the
+consumer that reads it and the condition under which that consumer refuses it.**
+A section with no refusal condition is decoration and MUST NOT be added.
+
+### The layering GHAN sits in
+
+GHAN is the **authored** layer only. Lifecycle progress — whether EC, TD, and CB
+have been committed, and whether each was verified — is the **machine** layer and
+lives in the `ChangeLifecycle` carrier
+(`apps/agentic-workflow/src/cli/change_lifecycle.rs`, persisted at
+`<workspace runtime>/causal-lifecycle/<slug>.json`), never in authored prose:
+
+- *submitted?* → `active_revisions: BTreeMap<ArtifactKind, Option<ArtifactRevision>>`
+  over `Wi` / `Ec` / `Td` / `Cb`
+- *verified?* → `EvidenceBinding { verifier, bound_tuple, passed, summary }`
+- *verified against which version?* → `bound_tuple.matches(active_tuple)`, where
+  the tuple is `ActiveDigestTuple { wi_digest, ec_digest, td_digest, cb_digest }`
+
+The third one is why evidence is a digest and not a boolean: change the work
+item, `wi_digest` changes, every binding goes stale, and the lifecycle demands a
+re-verify on its own. `ec: true` cannot un-set itself when its premise moves.
+`aw wi review` already enforces this and names which of the three failed:
+
+```
+stage `review` refused: missing `wi-test` evidence binding
+stage `review` refused: `wi-test` evidence binding is failing
+stage `review` refused: `wi-test` evidence binding is stale
+```
+
+The two layers meet at exactly one point: **the gate command named in
+`## Acceptance` is the verifier that produces the `EvidenceBinding`.** Everything
+else is independent — the digest is computed after `strip_aw_marker_blocks`, so
+hidden state blocks in a body never perturb it.
+
+### The four sections
+
+Each is specified as *required content · machine consumer · refusal conditions*.
+
+---
+
+#### `## Goal` — one observable difference
+
+**Required.** Exactly one sentence of the form:
+
+> Under `<trigger>`, `<observation point>` goes from `<current value>` to
+> `<target value>`.
+
+Not "improve X", not "support Y", not "make Z better". If there is no value to
+name on either side, the work is not yet bounded.
+
+**Consumer.** `looks_too_large_for_atomic_wi`
+(`apps/agentic-workflow/src/issues/planner.rs`) reads `title + goal`, and
+`LoopState.goal` (`apps/agentic-workflow/src/cli/loop_state.rs`), whose declared
+meaning is "the capability gap this loop is driving to closure".
+
+**Refused when** there is no observation point; no current value; two independent
+observation points in one sentence; or the text trips the too-large phrase set.
+
+---
+
+#### `## How` — verified premises, then the path
+
+**Required — three blocks, all of them.**
+
+1. **Verified premises.** Each carries a `file:line` and states an *observation*,
+   never an inference. "`issues.rs:2165` pushes an error and early-returns for a
+   non-structured body" qualifies; "this should block it" does not.
+2. **Change points.** A `file:line` list. **This list is simultaneously the write
+   allowlist** — a dispatch profile's `--write`, a guard's permitted paths, an
+   execpolicy allowance.
+3. **Frozen decisions and explicit exclusions.** Branches already decided
+   against, with the reason.
+
+Block 1 exists because an agent that re-derives what you already measured will
+sometimes derive it wrong, and you will not notice. It is the one thing both
+independently-designed dispatch briefs in this ecosystem put first and lint.
+
+**Consumer.** The change-point list feeds `aw guard` write adjudication and every
+dispatch write contract; the section as a whole feeds the canonical work-item
+digest used for lifecycle drift detection.
+
+**Refused when** a file path appears without a line or symbol; the current state
+is described with "should"/"probably"/"appears to"; there are zero premises; or
+the change-point list is empty (that is a `spike`, not a `change`).
+
+---
+
+#### `## Acceptance` — a gate that has been seen to fail
+
+**Required — a table plus a negative control plus a report contract.**
+
+```markdown
+| # | Gate command (verbatim) | Current observation | Target observation | Why it cannot hold by accident |
+|---|---|---|---|---|
+| 1 | `cargo test -p foo --lib` | 412 passed / 0 failed | 414 passed / 0 failed | both new assertions go red under the negative control below |
+
+### Negative control (mandatory — a report without it is rejected)
+
+Apply this exact mutation to `<file>`: <precise enough to be unambiguous —
+which block, from where, to where, which value>. Re-run `<gate>`. **Your new
+test MUST FAIL.** Quote the verbatim failure output including the test name and
+the left/right assertion values. Then restore `<file>` byte-for-byte; it must
+end at sha256 `<hash>`, verified with `shasum -a 256`. Re-run `<gate>` and
+return to the target observation.
+
+### Report back, with measured numbers
+
+- gate pass/fail counts: before, under mutation, after restore
+- the verbatim mutation failure output
+- `shasum -a 256` of `<file>` after restore
+- the exact name of the test that was added
+```
+
+Three things are deliberate:
+
+- **"Why it cannot hold by accident" is a column, not a footnote.** It forces the
+  author to answer *would this already be green?* while writing, which is the
+  only moment the answer is cheap. Without it, a zero-discrimination gate passes
+  review unchallenged.
+- **The negative control belongs to Acceptance, not to the verification
+  procedure.** In a procedure, an executor can report "I ran the gate, it was
+  green". In Acceptance, failing to produce the verbatim red output *is* a failed
+  criterion. A gate nobody has seen fail proves nothing: a test written against
+  the implementation just produced passes by construction.
+- **Counts, not exit codes.** `cargo test` with a filter matching nothing exits
+  `0` and prints `0 passed`. An acceptance criterion that checks the exit code is
+  blind to that entire class of false green.
+
+**When the gate's baseline is not green, the count alone is not a criterion —
+the roster is.** A target of "2 failed" lets an executor break one test and fix
+another and still satisfy it. Name each pre-existing failure verbatim (test path,
+assertion site, left/right values), state that exactly those are tolerated, and
+make any third failure — or any change to those two — a miss. Measuring the
+baseline is what surfaces this; an author who never ran the gate will write
+"0 failed" and hand the executor an unreachable target.
+
+**Consumer.** Row 1's gate command becomes `EvidenceBinding.verifier`; the table
+shape and the three negative-control elements are validated at authoring time.
+
+**Refused when** the table has no rows; any row's gate command is not verbatim
+executable; current and target observations are identical; the negative control
+is missing; or it lacks a mutation description, a must-fail assertion, or a
+restore hash.
+
+---
+
+#### `## Never` — subject line, then two closed lists
+
+**Required.** A first line fixing the addressee, because the same heading has two
+different ones in practice: a dispatch skill's prohibitions address the
+*controller*, a work item's address the *executor*. Unlabelled, the two get mixed
+into one list and neither is enforceable.
+
+> The subject of every restriction below is the agent executing this work item,
+> not the dispatcher.
+
+**Then both lists — neither is optional.**
+
+- **MUST NOT touch.** Name the *near misses* explicitly; a worker that strays
+  strays into the adjacent file, never a random one. All git mutation is
+  forbidden by default — `add`, `commit`, `stash`, `checkout`, `restore`,
+  `branch`, `reset`. Restore files by editing them back, not with git.
+- **MUST NOT do.** The moves that manufacture a false green: editing the test
+  instead of the implementation; weakening an existing assertion; adding
+  `#[ignore]`/`skip`; narrowing a test selector until it matches nothing; editing
+  a `SPEC-MANAGED` block in the `.rs` without its tech-design mirror.
+
+**Consumer.** The touch list is the complement of the guard allowlist — an
+escaped write is a finding. The do list is the source of a dispatch round's
+fabrication tells, checked line by line at acceptance.
+
+**Refused when** the subject line is missing; every entry is generic with nothing
+specific to this work item; or the touch list intersects `## How`'s change
+points.
+
+### Applying GHAN outside work items
+
+A `SKILL.md` and a dispatch injection use the same four sections with one
+adjustment: a skill describes a durable capability rather than a defect, so its
+`## How` carries the operating sequence in place of verified premises about a
+broken current state. When a skill *does* assert current behavior, the `file:line`
+rule applies to it unchanged.
+
+---
+
 ## Service archetype: durable-only, HA, HTTP/2 + OpenAPI, k8s-native
 
 > The ecosystem's long-running network services share one shape. A new service
