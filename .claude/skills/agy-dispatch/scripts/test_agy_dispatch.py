@@ -351,6 +351,38 @@ class DispatchControllerTest(unittest.TestCase):
             report["blockers"],
         )
 
+    def test_loaded_profile_frozen_namesake_in_another_directory_is_fine(
+        self,
+    ) -> None:
+        """The negative control that the two-directory case needs. Resolving
+        both sides is not the only way to make the same-path case fire: comparing
+        basenames does too, and it also blocks every profile that freezes a
+        `mod.rs` while writing a different `mod.rs`, which is most of them. A
+        control keyed on distinct filenames cannot tell the two apart, so this
+        one keeps the filename and moves the directory (#3439)."""
+        profile = self.one_shot_profile(self.repo_a, "project-a")
+        profile["mode"] = "bounded-write"
+        profile["task_contract"]["kind"] = "implementation"
+        profile["task_contract"]["gate_command"] = "pwd"
+        profile["task_contract"]["design_inputs"] = [
+            {"path": "SKILL.md", "sha256": "deadbeef"}
+        ]
+        profile["allowed_repo_writes"] = ["src/cli/a.py"]
+        profile["protected_artifacts"] = [
+            {"path": "src/lib/a.py", "sha256": "deadbeef"}
+        ]
+        profile_path = self.root / "profile-namesake.json"
+        profile_path.write_text(json.dumps(profile))
+        loaded = agy_dispatch.load_profile(
+            str(profile_path), require_injection=False, validate_design=False
+        )
+        report = agy_dispatch.project_policy_report(loaded)
+        self.assertTrue(report["dispatch_ready"], report["blockers"])
+        self.assertFalse(
+            any("a.py" in blocker for blocker in report["blockers"]),
+            report["blockers"],
+        )
+
     def test_doctor_exits_non_zero_and_reports_blocker_for_loaded_profile(
         self,
     ) -> None:
@@ -1310,6 +1342,74 @@ class DerivedWorktreeTest(unittest.TestCase):
         )
         agy_dispatch.snapshot(profile, "round-1")
         return profile, oracle, injection
+
+    def frozen_write_target_round(self) -> dict:
+        """A profile whose one write target is also frozen against writing.
+
+        This is the derived-profile shape #3428 was filed on: the write set was
+        edited for the new round and the frozen complement still describes the
+        one it came from.
+        """
+        self.isolate_permission_files()
+        readme = self.controller / "README.md"
+        return agy_dispatch.load_profile(
+            str(
+                self.profile_path(
+                    task_contract=self.contract_with_design_input(),
+                    protected_artifacts=[
+                        {"path": "README.md", "sha256": agy_dispatch.sha256(readme)}
+                    ],
+                )
+            ),
+            require_injection=False,
+        )
+
+    def test_snapshot_refuses_to_freeze_a_contradictory_profile(self) -> None:
+        """`doctor` refusing is not enough on its own.
+
+        `doctor` is advisory -- a controller reads it and decides. `snapshot` is
+        the verb that writes the contradiction into the round's evidence, after
+        which every later verb compares against a frozen claim that the round
+        was told to violate. #3428's sequence is "doctor passes, snapshot
+        freezes the contradiction, dispatch runs", so each of the three needs
+        its own assertion; a suite that tests only `doctor` stays green while
+        the guard is lifted off the other two.
+        """
+        profile = self.frozen_write_target_round()
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.snapshot(profile, "round-1")
+        message = str(caught.exception)
+        self.assertIn("declared write target(s) are also frozen", message)
+        self.assertIn("README.md", message)
+        self.assertFalse(
+            (Path(profile["state_dir"]) / "snapshots" / "round-1.json").exists(),
+            "refused and wrote the snapshot anyway",
+        )
+
+    def test_dispatch_refuses_to_start_a_contradictory_round(self) -> None:
+        """The other of the two, and the expensive one.
+
+        A worker spawned under this profile burns a run id to reach a finding
+        that was visible in the profile before anything started, so the refusal
+        has to land before the subprocess. The stub makes "reached the spawn" a
+        distinguishable failure instead of a real run.
+        """
+        profile = self.frozen_write_target_round()
+
+        def refuse(*args: object, **kwargs: object) -> None:
+            raise AssertionError("spawned a worker under a contradictory profile")
+
+        previous = agy_dispatch.subprocess.run
+        agy_dispatch.subprocess.run = refuse
+        self.addCleanup(
+            lambda: setattr(agy_dispatch.subprocess, "run", previous)
+        )
+
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.run_agent(profile, "round-1", resume=False)
+        self.assertIn(
+            "declared write target(s) are also frozen", str(caught.exception)
+        )
 
     def test_snapshot_freezes_both_round_documents(self) -> None:
         """The digests have to reach the snapshot file, not just exist as a
