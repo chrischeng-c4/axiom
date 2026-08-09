@@ -28,14 +28,14 @@ available to override:
     --repo         owner/name from `origin`
     --project-id   the one AGY Project registered for --root
     --out          {state_dir}/rounds/{task_key}.profile.json
-    --inject       {state_dir}/injections/{task_key}.md, resolved by the
-                   dispatcher when the profile does not name one
+    --inject       {state_dir}/injections/{task_key}.md, where `scaffold` writes
+                   the round's delta contract
 
-A typed input is not free. A mistyped `--out` writes a profile the dispatch
-verbs cannot find; a mistyped `--inject` fails at lint rather than at authoring
-time. `--project-id` is the one that cannot fail loudly at all: a wrong id names
-a real Project, passes every check, and runs the round against the wrong work
-area.
+A typed input is not free, and the two that hurt are the two that do not fail
+loudly. An omitted `--inject` dispatched the round with no delta contract at
+all, and `lint` reported the injection green because it reads the file rather
+than the wiring. A wrong `--project-id` names a real Project, passes every
+check, and runs the round against the wrong work area.
 
 `--write PATH[:BUDGET]` appends an exact `allowed_repo_writes` entry and, when
 BUDGET is given, a `path_change_budgets` ceiling on added+removed lines for that
@@ -274,7 +274,12 @@ def main() -> int:
         help="frozen one-line intent; required with --run-id, since a one-shot "
         "round has no ticket to carry it",
     )
-    ap.add_argument("--inject", help="absolute path to the round's delta contract")
+    ap.add_argument(
+        "--inject",
+        help="absolute path to the round's delta contract; defaults to "
+        "{state_dir}/injections/{task_key}.md, which is where `scaffold` "
+        "writes it",
+    )
     ap.add_argument(
         "--design-input",
         action="append",
@@ -476,8 +481,18 @@ def main() -> int:
         "allowed_repo_writes": writes,
         "path_change_budgets": budgets,
     }
-    if args.inject:
-        profile["inject_prompt_file"] = args.inject
+    # Left unset, the round dispatches with no delta contract at all. `scaffold`
+    # writes `injections/{task_key}.md` and `injection_path()` resolves that
+    # default, but the prompt assembly reads `inject_prompt_file` directly, so a
+    # profile that does not name one sends the worker the oracle and nothing
+    # else. `scaffold` says so and `lint` does not, because `lint` reads the file
+    # rather than the wiring -- which is how a fully green `lint` came to mean a
+    # round that was never actually briefed.
+    profile["inject_prompt_file"] = args.inject or str(
+        Path(profile["state_dir"])
+        / "injections"
+        / f"{args.issue or args.run_id}.md"
+    )
     if args.allow_shell:
         # Deliberately left for the controller to fill in: an auto-generated
         # allowlist would be a guess. A whole command line goes in `allow`, a

@@ -1855,6 +1855,62 @@ class DerivedWorktreeTest(unittest.TestCase):
             json.loads(self.derived_out().read_text())["repo"], "owner/repo"
         )
 
+    def test_a_generated_profile_briefs_the_worker_it_dispatches(self) -> None:
+        """The omission with no red anywhere.
+
+        `scaffold` writes `injections/{task_key}.md`, and `render_prompt` reads
+        `inject_prompt_file` rather than that convention -- so a profile that did
+        not name one dispatched the worker the oracle and no delta contract.
+        `scaffold` prints a note about it; `lint` reports the injection green,
+        because `lint` reads the file and the wiring is what is broken. Nothing
+        in the round goes red, and the worker is simply never told what to do.
+
+        Asserting the field would be a weaker test than this: the property is
+        that the text reaches the prompt, and the field is only how it gets
+        there today.
+        """
+        derived = self.make_profile_derived()
+        self.assertEqual(derived.returncode, 0, derived.stderr)
+        profile = json.loads(self.derived_out().read_text())
+
+        # `scaffold` writes the injection, so `scaffold` is what decides where it
+        # lives. Naming the file here instead would make any consistent pair of
+        # wrong paths pass.
+        agy_dispatch.scaffold(profile, "generated-1")
+        injection = agy_dispatch.injection_path(profile, "generated-1")
+        self.addCleanup(injection.unlink, missing_ok=True)
+        self.addCleanup(
+            (Path(profile["state_dir"]) / "oracles" / "generated-1.md").unlink,
+            missing_ok=True,
+        )
+        injection.write_text("## Task\n\nthe delta contract\n")
+
+        prompt = agy_dispatch.render_prompt(
+            profile, "generated-1", "oracle", {"number": 0, "state": "OPEN"}
+        )
+        self.assertIn("the delta contract", prompt)
+
+    def test_two_rounds_in_one_state_dir_get_their_own_injection(self) -> None:
+        """Keyed by the task key, for the same reason `revise` keys its own.
+
+        A fixed filename briefs every round correctly in isolation and hands the
+        second round of a `revise` chain the first round's delta contract, which
+        is the failure that looks most like the worker ignoring instructions.
+        """
+        first = self.make_profile_derived()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.make_profile_derived("--run-id", "generated-2")
+        self.assertEqual(second.returncode, 0, second.stderr)
+
+        rounds = Path("/tmp/agy-dispatch/project-a") / "rounds"
+        paths = []
+        for key in ("generated-1", "generated-2"):
+            emitted = rounds / f"{key}.profile.json"
+            self.addCleanup(emitted.unlink, missing_ok=True)
+            self.assertTrue(emitted.exists(), emitted)
+            paths.append(json.loads(emitted.read_text())["inject_prompt_file"])
+        self.assertNotEqual(*paths)
+
     def test_make_profile_derives_the_repository_root_not_the_directory(
         self,
     ) -> None:
