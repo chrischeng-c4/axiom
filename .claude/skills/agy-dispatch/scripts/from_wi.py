@@ -230,7 +230,7 @@ def project(body: str, root: Path) -> dict:
     change_points = list_items(how[CHANGE_POINTS])
     writes: list[str] = []
     for item in change_points:
-        hit = PATH_TOKEN.search(item) or FILE_LINE.search(item)
+        hit = FILE_LINE.search(item) or PATH_TOKEN.search(item)
         if not hit:
             raise Unprojectable(
                 f"change point names no path, so it cannot become a write "
@@ -291,7 +291,7 @@ def project(body: str, root: Path) -> dict:
     # must not degenerate into.
     grouped: dict[str, list[str]] = {}
     for item in premises:
-        hit = PATH_TOKEN.search(item) or FILE_LINE.search(item)
+        hit = FILE_LINE.search(item) or PATH_TOKEN.search(item)
         if hit:
             grouped.setdefault(hit.group(1), []).append(item)
     references = [(path, " ".join(items)) for path, items in grouped.items()]
@@ -316,7 +316,7 @@ def project(body: str, root: Path) -> dict:
         if path not in writes and (root / path).is_file()
     ]
     for item in must_not_touch:
-        hit = PATH_TOKEN.search(item) or FILE_LINE.search(item)
+        hit = FILE_LINE.search(item) or PATH_TOKEN.search(item)
         if hit and hit.group(1) not in design_inputs:
             if (root / hit.group(1)).is_file():
                 design_inputs.append(hit.group(1))
