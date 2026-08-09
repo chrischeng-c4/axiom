@@ -5,6 +5,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -753,7 +754,7 @@ class DispatchControllerTest(unittest.TestCase):
                 (3, "rg -n TODO src"),
             ],
         )
-        audited, findings = agy_dispatch.audit_task_commands(
+        audited, findings, _notes, every = agy_dispatch.audit_task_commands(
             profile,
             "7",
             {
@@ -766,27 +767,48 @@ class DispatchControllerTest(unittest.TestCase):
             ["pwd", "rg -n TODO src"],
         )
         self.assertEqual(findings, [])
+        # The fourth value is every command the round saw, floor included: the
+        # pre-snapshot line is absent here too, so a caller reading it to order
+        # writes against runs sees the same window the audit did.
+        self.assertEqual(
+            [item["command"] for item in every],
+            ["pwd", "rg -n TODO src"],
+        )
 
-    def test_task_command_audit_rejects_broader_project_command(self) -> None:
+    def test_a_command_only_the_project_surface_admits_is_a_note(self) -> None:
+        """This used to void the round, and voiding it was the defect.
+
+        `task_commands` is the controller's vocabulary and `project_permissions`
+        is the worker's actual surface. A command the round's own Project rules
+        allow but its allowlist forgot to name is a gap in the controller's
+        writing-down, not in the worker's conduct, and #3427 reclassified it
+        from fatal to a note for exactly that reason. What must not happen is
+        that it goes unsaid: the note is how the controller learns to close the
+        gap, so this asserts the note names the command and the round lives."""
         profile = self.profile(self.repo_a, "project-a", "8")
         state = Path(profile["state_dir"])
         runs = state / "runs"
         runs.mkdir(parents=True)
         (runs / "8.conversation").write_text("conversation-8\n")
+        # `project_permissions` allows `command(rg)`; `task_commands.allow`
+        # names only `rg -n TODO src`, which this is not.
         self.write_conversation(
             "conversation-8",
             [(1, "rg -n SECRET unrelated")],
         )
-        with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.audit_task_commands(
-                profile,
-                "8",
-                {
-                    "conversation_id": None,
-                    "conversation_step_floor": -1,
-                },
-            )
-        self.assertIn("task-local exact allowlist", str(caught.exception))
+        audited, findings, notes, _every = agy_dispatch.audit_task_commands(
+            profile,
+            "8",
+            {
+                "conversation_id": None,
+                "conversation_step_floor": -1,
+            },
+        )
+        self.assertEqual(audited, [])
+        self.assertEqual(findings, [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("rg -n SECRET unrelated", notes[0])
+        self.assertIn("task_commands", notes[0])
 
     def test_a_denied_command_is_a_finding_not_a_void(self) -> None:
         """The VOID protects the evidence: an unaudited command may have left
@@ -803,7 +825,7 @@ class DispatchControllerTest(unittest.TestCase):
             [(1, "pwd"), (3, "rg -n SECRET unrelated")],
             outcomes=[(2, 3, "pwd"), (4, 7, "rg -n SECRET unrelated")],
         )
-        audited, findings = agy_dispatch.audit_task_commands(
+        audited, findings, _notes, _every = agy_dispatch.audit_task_commands(
             profile,
             "9",
             {"conversation_id": None, "conversation_step_floor": -1},
@@ -833,15 +855,21 @@ class DispatchControllerTest(unittest.TestCase):
     def test_an_unlisted_command_that_ran_still_voids(self) -> None:
         """The other half of the pair. Same request, same allowlist; the only
         difference is that the permission layer let this one through, and that
-        difference is the whole reason the VOID exists."""
+        difference is the whole reason the VOID exists.
+
+        The command is `curl`, not `rg`, because this fixture's
+        `project_permissions` allow `command(rg)` -- so an `rg` line is one the
+        round itself authorized and #3427 correctly demoted to a note. Keeping
+        `rg` here would have made the test assert the demotion it was written to
+        rule out, and for a while it silently did."""
         profile = self.profile(self.repo_a, "project-a", "10")
         runs = Path(profile["state_dir"]) / "runs"
         runs.mkdir(parents=True)
         (runs / "10.conversation").write_text("conversation-10\n")
         self.write_conversation(
             "conversation-10",
-            [(1, "rg -n SECRET unrelated")],
-            outcomes=[(2, 3, "rg -n SECRET unrelated")],
+            [(1, "curl https://example.test")],
+            outcomes=[(2, 3, "curl https://example.test")],
         )
         with self.assertRaises(SystemExit) as caught:
             agy_dispatch.audit_task_commands(
@@ -849,7 +877,8 @@ class DispatchControllerTest(unittest.TestCase):
                 "10",
                 {"conversation_id": None, "conversation_step_floor": -1},
             )
-        self.assertIn("task-local exact allowlist", str(caught.exception))
+        self.assertIn("nothing authorized", str(caught.exception))
+        self.assertIn("curl https://example.test", str(caught.exception))
 
     def test_a_command_with_no_outcome_row_is_read_as_having_run(self) -> None:
         """A process killed mid-command leaves the request recorded and the
@@ -861,7 +890,7 @@ class DispatchControllerTest(unittest.TestCase):
         (runs / "11.conversation").write_text("conversation-11\n")
         self.write_conversation(
             "conversation-11",
-            [(1, "rg -n SECRET unrelated")],
+            [(1, "curl https://example.test")],
         )
         with self.assertRaises(SystemExit) as caught:
             agy_dispatch.audit_task_commands(
@@ -869,7 +898,8 @@ class DispatchControllerTest(unittest.TestCase):
                 "11",
                 {"conversation_id": None, "conversation_step_floor": -1},
             )
-        self.assertIn("task-local exact allowlist", str(caught.exception))
+        self.assertIn("nothing authorized", str(caught.exception))
+        self.assertIn("curl https://example.test", str(caught.exception))
 
     def test_a_later_denial_does_not_excuse_an_earlier_request(self) -> None:
         """The outcome is the row immediately after the request, not the next
@@ -882,8 +912,8 @@ class DispatchControllerTest(unittest.TestCase):
         (runs / "13.conversation").write_text("conversation-13\n")
         self.write_conversation(
             "conversation-13",
-            [(1, "rg -n SECRET unrelated"), (2, "rg -n TOKEN elsewhere")],
-            outcomes=[(3, 7, "rg -n TOKEN elsewhere")],
+            [(1, "curl https://example.test"), (2, "wget https://example.test")],
+            outcomes=[(3, 7, "wget https://example.test")],
         )
         with self.assertRaises(SystemExit) as caught:
             agy_dispatch.audit_task_commands(
@@ -891,8 +921,8 @@ class DispatchControllerTest(unittest.TestCase):
                 "13",
                 {"conversation_id": None, "conversation_step_floor": -1},
             )
-        self.assertIn("rg -n SECRET unrelated", str(caught.exception))
-        self.assertNotIn("rg -n TOKEN elsewhere", str(caught.exception))
+        self.assertIn("curl https://example.test", str(caught.exception))
+        self.assertNotIn("wget https://example.test", str(caught.exception))
 
     def test_a_denied_command_the_profile_forbids_by_name_still_voids(self) -> None:
         """Asking for a command the profile listed as forbidden is a different
@@ -1106,9 +1136,42 @@ class DerivedWorktreeTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(dir="/tmp")
         self.root = Path(self.temporary.name)
-        self.project_dir = self.root / "projects"
-        self.project_dir.mkdir()
+        # A whole fixture AGY installation, in AGY's own layout, reachable by
+        # both routes. The globals serve callers in this process; the
+        # environment variable serves the ones in a child, which is the only
+        # way `make_profile.py` -- a subprocess that imports agy_dispatch --
+        # can be pointed anywhere but the operator's real `~/.gemini` (#3495).
+        self.agy_home = self.root / "agy-home"
+        self.project_dir = self.agy_home / ".gemini" / "config" / "projects"
+        self.conversation_dir = (
+            self.agy_home / ".gemini" / "antigravity-cli" / "conversations"
+        )
+        self.settings = self.agy_home / ".gemini" / "antigravity-cli" / "settings.json"
+        self.global_config = self.agy_home / ".gemini" / "config" / "config.json"
+        self.project_dir.mkdir(parents=True)
+        self.conversation_dir.mkdir(parents=True)
+        self.settings.write_text(
+            json.dumps({"permissions": {"allow": [], "deny": [], "ask": []}})
+        )
+        self.global_config.write_text(
+            json.dumps(
+                {
+                    "userSettings": {
+                        "globalPermissionGrants": {
+                            "allow": [],
+                            "deny": [],
+                            "ask": [],
+                        }
+                    }
+                }
+            )
+        )
+        os.environ["AGY_DISPATCH_HOME"] = str(self.agy_home)
+        self.addCleanup(os.environ.pop, "AGY_DISPATCH_HOME", None)
         agy_dispatch.PROJECT_DIR = self.project_dir
+        agy_dispatch.CONVERSATION_DIR = self.conversation_dir
+        agy_dispatch.SETTINGS = self.settings
+        agy_dispatch.GLOBAL = self.global_config
         self.controller = self.root / "controller"
         self.controller.mkdir()
         self.git("init", "-q", "-b", "main")
@@ -1119,9 +1182,6 @@ class DerivedWorktreeTest(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-qm", "base")
         self.write_project("project-a", self.controller)
-        self.conversation_dir = self.root / "conversations"
-        self.conversation_dir.mkdir()
-        agy_dispatch.CONVERSATION_DIR = self.conversation_dir
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -2332,12 +2392,44 @@ class DerivedWorktreeTest(unittest.TestCase):
         return path
 
     def test_a_recorded_sweep_clears_the_note(self) -> None:
+        """Recording a sweep removes the sweep note and adds none of its own.
+
+        This asserted that `proof_notes` returned nothing at all, which is a
+        claim about every note the function can emit and not about the sweep.
+        222f519c9d added a correct one -- this fixture's gate is
+        `grep -q accepted README.md`, which names no failing test, so its red
+        mutant genuinely cannot be attributed -- and the bare assertion went red
+        for behaviour working as designed. A test that breaks when unrelated
+        correct behaviour is added is a test that gets skimmed, which is what
+        happened to it and to seven others (#3495).
+
+        So it names both halves: the sweep note is gone, and what remains is
+        exactly the one note this fixture is known to earn. That is stricter
+        than filtering for the sweep note, because a new unexplained note still
+        fails it -- it just fails it with the note's own text in the message."""
         profile = self.derive(self.profile_path())
         worker = Path(profile["worktree"]["path"])
         (worker / "README.md").write_text("base\naccepted\n")
         self.record_proofs(profile, worker)
+        before = agy_dispatch.proof_notes(profile, "round-1")
+        self.assertEqual(len([n for n in before if "no mutation sweep" in n]), 1)
         self.record_sweep(profile)
-        self.assertEqual(agy_dispatch.proof_notes(profile, "round-1"), [])
+        after = agy_dispatch.proof_notes(profile, "round-1")
+        self.assertEqual([n for n in after if "mutation sweep" in n], [])
+        # Required, not merely tolerated. Tolerating it left the note 222f519c9d
+        # added with no test at all: a mutation removing it passed the whole
+        # suite, so the one thing separating a kill by this round's rows from an
+        # unrelated flake could have been deleted without anything noticing.
+        self.assertEqual(
+            len([n for n in after if "without the gate naming a failing test" in n]),
+            1,
+            after,
+        )
+        self.assertEqual(
+            [n for n in after if "without the gate naming a failing test" not in n],
+            [],
+            after,
+        )
 
     def test_a_sweep_that_did_not_restore_the_tree_still_earns_a_note(self) -> None:
         """`sweep` refuses an unrestored tree, but it writes the record before

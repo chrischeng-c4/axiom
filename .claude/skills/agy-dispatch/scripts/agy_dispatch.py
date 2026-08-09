@@ -7,6 +7,7 @@ import base64
 import difflib
 import hashlib
 import json
+import os
 import re
 import shlex
 import sqlite3
@@ -17,7 +18,18 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 
-HOME = Path.home()
+# Where AGY keeps its installation. `AGY_DISPATCH_HOME` exists so a test can
+# stand up a whole fixture installation and have every caller find it -- the
+# ones running in this process and the ones running in a child.
+#
+# Assigning the four globals below is the older route and still works, but it
+# reaches only this process. `make_profile.py` runs as a subprocess and imports
+# this module inside it, so a suite that monkeypatched the globals watched the
+# child resolve the operator's real `~/.gemini`, look for a fixture project that
+# could only ever exist in the temporary one, and fail on every machine there is
+# (#3495). An environment variable is inherited across that boundary, which is
+# the only property being asked for here.
+HOME = Path(os.environ.get("AGY_DISPATCH_HOME") or Path.home())
 SETTINGS = HOME / ".gemini" / "antigravity-cli" / "settings.json"
 GLOBAL = HOME / ".gemini" / "config" / "config.json"
 PROJECT_DIR = HOME / ".gemini" / "config" / "projects"
