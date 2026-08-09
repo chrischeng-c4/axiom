@@ -4612,6 +4612,12 @@ class ScaffoldTest(unittest.TestCase):
             "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
             "inject_prompt_file": str(self.state / "injections" / "r1.md"),
             "task_contract": {
+                # A closed identity, because `scaffold` now refuses a key the
+                # contract forbids -- the form it hands out has to be the one
+                # the rest of the round opens.
+                "session_policy": "one-shot",
+                "run_id": "r1",
+                "intent": "exercise the blank form",
                 "gate_command": "cargo test -p target --lib some_gate",
                 "design_inputs": [{"path": "design.md", "sha256": "x"}],
             },
@@ -4648,6 +4654,68 @@ class ScaffoldTest(unittest.TestCase):
             any("unfilled" in item for item in findings),
             f"blank slots were not what blocked it: {findings}",
         )
+
+    def lint(self, task_key: str) -> str:
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                agy_dispatch.lint(self.profile, task_key)
+        except SystemExit as exit_code:
+            # `lint` exits on findings, which is not what these rows are about.
+            if not isinstance(exit_code.code, int):
+                raise
+        return buf.getvalue()
+
+    def test_lint_refuses_a_key_the_contract_identity_forbids(self) -> None:
+        """`lint` is the pre-dispatch gate, so it linted a different pair.
+
+        Observed on the #3448 round: documents authored as
+        `3448-emitted-obligations-must-run.md` against a contract carrying
+        `issue: 3448` linted `findings: none`, and `snapshot` then refused the
+        same key. The documents that passed the gate were not the documents any
+        later verb would open.
+        """
+        self.scaffold()
+        with self.assertRaises(SystemExit) as caught:
+            self.lint("r1-emitted-obligations-must-run")
+        # Both halves of the refusal, spelled out rather than probed for `r1`:
+        # the identity is a substring of the key that was asked for, so a
+        # message that dropped either name would still satisfy a loose `assertIn`.
+        # And an unguarded `lint` also raises -- on the oracle it cannot find --
+        # so `assertRaises` alone does not say the guard is what fired.
+        self.assertIn("task identity r1 does not match", str(caught.exception))
+        self.assertIn(
+            "requested key=r1-emitted-obligations-must-run",
+            str(caught.exception),
+        )
+
+    def test_scaffold_refuses_a_key_no_later_verb_will_open(self) -> None:
+        """One step earlier: `scaffold` is what creates the mis-keyed pair.
+
+        Refusing only at `lint` still hands the controller a form to author at a
+        path this round never opens, and authoring is the expensive part.
+        """
+        with self.assertRaises(SystemExit) as caught:
+            with contextlib.redirect_stdout(io.StringIO()):
+                agy_dispatch.scaffold(self.profile, "r1-with-a-description")
+        self.assertIn("task identity r1 does not match", str(caught.exception))
+        self.assertIn(
+            "requested key=r1-with-a-description", str(caught.exception)
+        )
+        self.assertFalse(
+            (self.state / "oracles" / "r1-with-a-description.md").exists()
+        )
+
+    def test_lint_still_reads_the_documents_under_the_identity(self) -> None:
+        """The negative control: the key the contract fixes still lints.
+
+        A guard that refused every key would take the pre-dispatch gate out of
+        the flow entirely, which is worse than the defect it replaces.
+        """
+        self.scaffold()
+        (self.state / "oracles" / "r1.md").write_text(CONFORMANT_ORACLE)
+        output = self.lint("r1")
+        self.assertIn(str(self.state / "oracles" / "r1.md"), output)
 
     def test_scaffold_never_overwrites_authored_content(self) -> None:
         self.scaffold()

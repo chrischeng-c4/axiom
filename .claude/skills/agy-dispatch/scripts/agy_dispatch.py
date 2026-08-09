@@ -2589,6 +2589,10 @@ def scaffold(profile: dict, task_key: str) -> None:
     remaining `<!-- fill -->` markers are themselves a finding, so a form that
     was never filled cannot be dispatched.
     """
+    # And one step earlier than `lint`: `scaffold` is what *creates* the pair of
+    # files, so a key the identity forbids hands the controller a form to author
+    # at a path no verb of this round will ever open.
+    validate_task_key(profile, task_key)
     oracle_form, injection_form = blank_round_forms(profile)
 
     written, kept = [], []
@@ -2644,6 +2648,11 @@ def round_findings(profile: dict, task_key: str) -> list[str]:
 
 def lint(profile: dict, task_key: str) -> None:
     """Report the round document's structural findings without dispatching."""
+    # Before either path is resolved. `lint` is the pre-dispatch gate -- where a
+    # round is supposed to learn its form is wrong -- and a key no later verb
+    # accepts resolves a *different* pair of files, so the documents that linted
+    # green would not be the documents dispatched.
+    validate_task_key(profile, task_key)
     oracle = oracle_path(profile, task_key)
     findings = round_findings(profile, task_key)
     allowed = profile["task_commands"].get("allow", [])
