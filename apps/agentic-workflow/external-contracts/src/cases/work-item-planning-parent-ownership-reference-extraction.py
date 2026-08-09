@@ -49,14 +49,28 @@ _EPIC_BODY = (
 def _change_body(extra: str = "") -> str:
     extra_block = f"{extra}\n\n" if extra else ""
     return (
-        "## Problem\n\ndemo\n\n" + extra_block +
-        "## Capability Alignment\n\nCapability: x\nCapability Gap: y\n"
-        "Progress Evidence: z\n\n## Requirements\n\n- R1: trace graph projection.\n\n"
-        "## Scope\n\n### In Scope\n- a\n\n### Out of Scope\n- b\n\n"
-        "## Acceptance Criteria\n\n- AC1: c\n\n## Reference Context\n\n### Related Specs\n"
-        "| Spec | Relevance |\n|------|-----------|\n| x.md | high |\n\n"
-        "### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n"
-        "|---------|--------|---------------|\n| x | modify | x.md |\n"
+        "## Goal\n\n"
+        "Demonstrate parent-ownership reference extraction for change work items.\n\n"
+        "## How\n\n"
+        "### Verified premises\n\n"
+        "- apps/agentic-workflow/external-contracts/src/cases/work-item-planning-parent-ownership-reference-extraction.py:49 defines the change body helper.\n\n"
+        "### Change points\n\n"
+        "- apps/agentic-workflow/external-contracts/src/cases/work-item-planning-parent-ownership-reference-extraction.py — update change body helper to GHAN.\n\n"
+        "### Frozen decisions\n\n"
+        + extra_block +
+        "Parent-ownership reference extraction works across body and label prefixes.\n\n"
+        "## Acceptance\n\n"
+        "| # | command | current | target | why it cannot hold by accident |\n"
+        "|---|---------|---------|--------|--------------------------------|\n"
+        "| 1 | `aw wi graph` | unextracted | resolved owning epic | verifies graph projection |\n\n"
+        "### Negative control\n\n"
+        "Under line 49 mutation the gate must go red restoring to sha256 0000000000000000000000000000000000000000000000000000000000000000\n\n"
+        "## Never\n\n"
+        "This addresses the worker implementing this work item, not the controller reviewing it.\n\n"
+        "### Must not touch\n\n"
+        "- apps/agentic-workflow/src/issues/ghan.rs — validator is fixed.\n\n"
+        "### Must not do\n\n"
+        "- Do not alter parent extraction assertions.\n"
     )
 
 

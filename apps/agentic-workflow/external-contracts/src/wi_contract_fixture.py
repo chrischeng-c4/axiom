@@ -743,33 +743,32 @@ class LinkedWorktreeFixture:
         body: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         default_body = (
-            "## Problem\n\nProvide reusable EC linked-worktree lifecycle fixture.\n\n"
-            "## Capability Alignment\n\n"
-            "Capability: td-cb-lifecycle-automation\n"
-            "Capability Gap: The linked-worktree fixture cannot establish a valid, independently executable EC->TD->CB admission state.\n"
-            "Progress Evidence: Linked-worktree fixture setup reaches clean td_created admission with full capability alignment.\n\n"
-            "## Requirements\n\n"
-            "- R1: Reusable fixture creates bare origin, committed base, and linked worker worktree.\n\n"
-            "## Verification Inventory\n\n"
-            "| Requirement | Gate | Oracle | Depends On |\n"
-            "|-------------|------|--------|------------|\n"
-            "| R1 | `aw td create` | Valid change WI and admitted TD created in linked worktree | - |\n"
+            "## Goal\n\n"
+            "Provide reusable EC linked-worktree lifecycle fixture.\n\n"
+            "## How\n\n"
+            "### Verified premises\n\n"
+            "- apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py:745 - R1: Reusable fixture creates bare origin, committed base, and linked worker worktree.\n\n"
+            "### Change points\n\n"
+            "- apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py — author the default change body as GHAN.\n\n"
+            "### Frozen decisions\n\n"
+            "Linked-worktree fixture setup reaches clean td_created admission with full capability alignment.\n\n"
+            "## Acceptance\n\n"
+            "| # | command | current | target | why it cannot hold by accident |\n"
+            "|---|---------|---------|--------|--------------------------------|\n"
+            "| 1 | `aw td create` | missing admitted state | Valid change WI and admitted TD created in linked worktree | validates fixture setup |\n\n"
+            "### Negative control\n\n"
+            "Under line 746 mutation the gate must go red restoring to sha256 23ea20b1513817f0991d6aaaea8f4fb3eaec71181bc63d23db8fb24c457b171c\n\n"
+            "## Never\n\n"
+            "This addresses the worker implementing this work item, not the controller reviewing it.\n\n"
+            "### Must not touch\n\n"
+            "- apps/agentic-workflow/src/issues/ghan.rs — validator rules are immutable for this change.\n\n"
+            "### Must not do\n\n"
+            "- Do not inject legacy capability alignment headers into custom bodies.\n"
         )
         if body is None:
             wi_body = default_body
         else:
             wi_body = body
-            if "## Capability Alignment" not in wi_body:
-                cap_section = (
-                    "\n\n## Capability Alignment\n\n"
-                    "Capability: td-cb-lifecycle-automation\n"
-                    "Capability Gap: The linked-worktree fixture cannot establish a valid, independently executable EC->TD->CB admission state.\n"
-                    "Progress Evidence: Linked-worktree fixture setup reaches clean td_created admission with full capability alignment."
-                )
-                if "## Requirements" in wi_body:
-                    wi_body = wi_body.replace("## Requirements", cap_section.strip() + "\n\n## Requirements")
-                else:
-                    wi_body += cap_section
 
         created = create(
             self.worktree_dir,

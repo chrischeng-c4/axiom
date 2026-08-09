@@ -40,13 +40,27 @@ def verify() -> list[str]:
         assert len(initial_head) == 40
 
         expected_body = (
-            "## Problem\n\nProvide reusable EC linked-worktree lifecycle fixture.\n\n"
-            "## Requirements\n\n"
-            "- R1: Reusable fixture creates bare origin, committed base, and linked worker worktree.\n\n"
-            "## Verification Inventory\n\n"
-            "| Requirement | Gate | Oracle | Depends On |\n"
-            "|-------------|------|--------|------------|\n"
-            "| R1 | `aw td create` | Valid change WI and admitted TD created in linked worktree | - |\n"
+            "## Goal\n\n"
+            "Provide reusable EC linked-worktree lifecycle fixture.\n\n"
+            "## How\n\n"
+            "### Verified premises\n\n"
+            "- apps/agentic-workflow/external-contracts/src/cases/ec-linked-worktree-lifecycle-fixture.py:42 - R1: Reusable fixture creates bare origin, committed base, and linked worker worktree.\n\n"
+            "### Change points\n\n"
+            "- apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py — author fixture change body as GHAN.\n\n"
+            "### Frozen decisions\n\n"
+            "Reuses existing fixture assertions.\n\n"
+            "## Acceptance\n\n"
+            "| # | command | current | target | why it cannot hold by accident |\n"
+            "|---|---------|---------|--------|--------------------------------|\n"
+            "| 1 | `aw td create` | pending | admitted | drives lifecycle |\n\n"
+            "### Negative control\n\n"
+            "Under line 746 mutation the gate must go red restoring to sha256 23ea20b1513817f0991d6aaaea8f4fb3eaec71181bc63d23db8fb24c457b171c\n\n"
+            "## Never\n\n"
+            "This addresses the worker implementing this work item, not the controller reviewing it.\n\n"
+            "### Must not touch\n\n"
+            "- apps/agentic-workflow/src/issues/ghan.rs — validator is fixed.\n\n"
+            "### Must not do\n\n"
+            "- Do not delete assertions.\n"
         )
 
         slug1, snapshot1 = fixture1.setup_change_and_td(
@@ -67,7 +81,7 @@ def verify() -> list[str]:
         # 2a. Assert snapshot body preserves each original semantic body fragment separately
         assert "Provide reusable EC linked-worktree lifecycle fixture." in snapshot1["body"]
         assert "- R1: Reusable fixture creates bare origin, committed base, and linked worker worktree." in snapshot1["body"]
-        assert "## Verification Inventory" in snapshot1["body"]
+        assert "## Never" in snapshot1["body"]
         assert "aw td create" in snapshot1["body"]
 
         # 2b. Determinism assertion: two consecutive reads with no mutation must be equal
@@ -116,7 +130,7 @@ def verify() -> list[str]:
         assert snapshot1["phase"] == "td_created", f"Expected phase td_created, got {snapshot1['phase']!r}"
 
         # 4. Assert absent command fails AFTER fixture admission with exact CLI diagnostic wording only
-        absent_result = fixture1.run_aw("cb", "materialize", expect_success=False)
+        absent_result = fixture1.run_aw("cb", "absent-subcommand", expect_success=False)
         assert absent_result.returncode != 0
         error_msg = f"{absent_result.stdout}\n{absent_result.stderr}".lower()
         assert (
