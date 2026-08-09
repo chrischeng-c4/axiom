@@ -144,6 +144,7 @@ pub(crate) fn validate_ghan_sections(body: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn validate_goal(content: &str) -> Vec<String> {
+    let content = strip_comments(content);
     let mut errors = Vec::new();
     let trimmed = content.trim();
     if trimmed.is_empty() {
@@ -178,9 +179,10 @@ fn validate_goal(content: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn validate_how(content: &str) -> Vec<String> {
+    let content = strip_comments(content);
     let mut errors = Vec::new();
     for required in [HOW_PREMISES, HOW_CHANGE_POINTS, HOW_FROZEN] {
-        if section_at(content, 3, required).is_none() {
+        if section_at(&content, 3, required).is_none() {
             errors.push(format!("ghan: ## How missing `{}` sub-section", required));
         }
     }
@@ -188,7 +190,7 @@ fn validate_how(content: &str) -> Vec<String> {
         return errors;
     }
 
-    let premises = section_at(content, 3, HOW_PREMISES).unwrap_or_default();
+    let premises = section_at(&content, 3, HOW_PREMISES).unwrap_or_default();
     let premise_items = list_items(&premises);
     if premise_items.is_empty() {
         errors.push(format!(
@@ -212,7 +214,7 @@ fn validate_how(content: &str) -> Vec<String> {
         }
     }
 
-    let change_points = section_at(content, 3, HOW_CHANGE_POINTS).unwrap_or_default();
+    let change_points = section_at(&content, 3, HOW_CHANGE_POINTS).unwrap_or_default();
     let change_items = list_items(&change_points);
     if change_items.is_empty() {
         errors.push(format!(
@@ -229,7 +231,7 @@ fn validate_how(content: &str) -> Vec<String> {
         }
     }
 
-    let frozen = section_at(content, 3, HOW_FROZEN).unwrap_or_default();
+    let frozen = section_at(&content, 3, HOW_FROZEN).unwrap_or_default();
     if !frozen.lines().any(is_real_line) {
         errors.push(format!(
             "ghan: `{}` must record the decisions and exclusions already fixed (write `none` explicitly if there are none)",
@@ -244,8 +246,9 @@ fn validate_how(content: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn validate_acceptance(content: &str) -> Vec<String> {
+    let content = strip_comments(content);
     let mut errors = Vec::new();
-    let rows = table_rows(content);
+    let rows = table_rows(&content);
     if rows.is_empty() {
         errors.push("ghan: ## Acceptance needs a gate table with at least one row".to_string());
     }
@@ -281,7 +284,7 @@ fn validate_acceptance(content: &str) -> Vec<String> {
         }
     }
 
-    match section_at(content, 3, ACCEPTANCE_NEGATIVE_CONTROL) {
+    match section_at(&content, 3, ACCEPTANCE_NEGATIVE_CONTROL) {
         None => errors.push(format!(
             "ghan: ## Acceptance missing `{}`; a gate nobody has seen fail proves nothing",
             ACCEPTANCE_NEGATIVE_CONTROL
@@ -309,6 +312,7 @@ fn validate_acceptance(content: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn validate_never(content: &str, how: &str) -> Vec<String> {
+    let content = strip_comments(content);
     let mut errors = Vec::new();
     match content.lines().map(str::trim).find(|line| !line.is_empty()) {
         None => {
@@ -323,7 +327,7 @@ fn validate_never(content: &str, how: &str) -> Vec<String> {
 
     let mut missing_list = false;
     for required in [NEVER_MUST_NOT_TOUCH, NEVER_MUST_NOT_DO] {
-        match section_at(content, 3, required) {
+        match section_at(&content, 3, required) {
             None => {
                 errors.push(format!("ghan: ## Never missing `{}` list", required));
                 missing_list = true;
@@ -344,7 +348,7 @@ fn validate_never(content: &str, how: &str) -> Vec<String> {
         .filter_map(|item| path_ref(item))
         .map(normalize_path)
         .collect();
-    let must_not_touch = section_at(content, 3, NEVER_MUST_NOT_TOUCH).unwrap_or_default();
+    let must_not_touch = section_at(&content, 3, NEVER_MUST_NOT_TOUCH).unwrap_or_default();
     for item in list_items(&must_not_touch) {
         let Some(path) = path_ref(&item) else {
             continue;
@@ -474,6 +478,23 @@ fn list_items(content: &str) -> Vec<String> {
         })
         .filter(|item| !item.is_empty())
         .collect()
+}
+
+/// Drop HTML comment spans `<!-- ... -->` from text.
+pub(crate) fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        if let Some(end) = rest[start..].find("-->") {
+            rest = &rest[start + end + 3..];
+        } else {
+            rest = "";
+            break;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn placeholder_marker(text: &str) -> Option<&'static str> {
@@ -873,5 +894,50 @@ mod tests {
         assert!(path_ref("touch `src/issues/ghan.rs`").is_some());
         assert!(path_ref("touch the validator").is_none());
         assert_eq!(normalize_path("`src/cli/issues.rs:2176`"), "src/cli/issues.rs");
+    }
+
+    #[test]
+    fn html_comments_are_stripped_so_comment_only_slots_fail_validation() {
+        let comment_only_body = r#"## Goal
+
+<!-- Goal must be one observable-difference sentence, not a list. -->
+
+## How
+
+### Verified premises
+
+<!-- Premise needs at least one observed premise with a file:line evidence coordinate. -->
+
+### Change points
+
+<!-- Change point must name at least one write target path. -->
+
+### Frozen decisions
+
+<!-- Must record decisions. -->
+
+## Acceptance
+
+<!-- Table with columns -->
+
+### Negative control
+
+<!-- Negative control -->
+
+## Never
+
+This addresses the worker implementing this work item, not the controller reviewing it.
+
+### Must not touch
+
+<!-- Must not touch -->
+
+### Must not do
+
+<!-- Must not do -->
+"#;
+        let errors = validate_ghan_sections(comment_only_body);
+        assert!(errors.iter().any(|e| e == "ghan: ## Goal is empty"));
+        assert!(errors.iter().any(|e| e.contains("`### Verified premises` needs at least one observed premise")));
     }
 }

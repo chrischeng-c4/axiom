@@ -942,6 +942,19 @@ fn default_structured_issue_body(issue_type: IssueType, title: &str) -> String {
             "## Repro\n\n- Reproduce: {title}\n\n## Diagnostics\n\n- Capture diagnostics for {title}.\n\n## Expected vs Actual\n\nExpected: The reported behavior does not occur.\nActual: {title}\n"
         );
     }
+    if issue_type.is_change() {
+        return "## Goal\n\n<!-- Goal must be one observable-difference sentence, not a list. -->\n\n## How\n\n### Verified premises\n\n<!-- Premise needs at least one observed premise with a file:line evidence coordinate. Must be an observation, not an inference (no hedge words like should/might). -->\n\n### Change points\n\n<!-- Change point must name at least one write target path. -->\n\n### Frozen decisions\n\n<!-- Must record the decisions and exclusions already fixed (write 'none' explicitly if there are none). -->\n\n## Acceptance\n\n<!-- Table with columns: # | command | current | target | why it cannot hold by accident -->\n\n### Negative control\n\n<!-- Describe the mutation and assert failure ('must fail', 'must go red'), and name the sha256 the mutated file restores to. -->\n\n## Never\n\nThis addresses the worker implementing this work item, not the controller reviewing it.\n\n### Must not touch\n\n<!-- List paths that must not be touched. -->\n\n### Must not do\n\n<!-- List actions that must not be taken. -->\n".to_string();
+    }
+    legacy_issue_body_template(title)
+}
+
+fn legacy_issue_body_template(title: &str) -> String {
+    let title = title.trim();
+    let title = if title.is_empty() {
+        "the requested work"
+    } else {
+        title
+    };
     let table_title = markdown_table_cell(title);
     format!(
         "## Problem\n\n{title}\n\n## Capability Alignment\n\nCapability: {title}\nCapability Gap: {title} is not yet delivered.\nProgress Evidence: Completion evidence is recorded on this work item.\n\n## Requirements\n\n- R1: Deliver {title}.\n\n## Scope\n\n### In Scope\n- Deliver the bounded change described by {title}.\n\n### Out of Scope\n- Unrelated work outside this work item.\n\n## Acceptance Criteria\n\n- AC1: {title} is implemented and verified.\n\n## Reference Context\n\n### Related Specs\n| Spec | Relevance |\n|------|-----------|\n| {table_title} | source request |\n\n### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n| wi-draft | update | {table_title} |\n"
@@ -979,12 +992,16 @@ fn normalize_initial_draft_body(issue_type: IssueType, title: &str, raw_body: &s
     if body.trim().is_empty() {
         return default_structured_issue_body(issue_type, title);
     }
-    let base = default_structured_issue_body(issue_type, title);
     // A GHAN body is already the whole contract. Merging it into the legacy
     // scaffold would emit a Mixed body that no validator can route.
     if crate::issues::ghan::body_shape(body) == crate::issues::ghan::WiBodyShape::Ghan {
         return body.to_string();
     }
+    let base = if issue_type == IssueType::Spike || issue_type == IssueType::Report {
+        default_structured_issue_body(issue_type, title)
+    } else {
+        legacy_issue_body_template(title)
+    };
     let merged = if looks_like_structured_attempt(body) {
         merge_all_sections(&base, body)
     } else {
@@ -2167,7 +2184,7 @@ fn validate_draft_issue(
     if let Err(e) = resolve_project_label(project_root, &meta.project) {
         errors.push(e.to_envelope_message());
     }
-    if !looks_like_structured_attempt(&issue.body) {
+    if !issue.issue_type.is_change() && !looks_like_structured_attempt(&issue.body) {
         errors.push("body must contain structured work-item sections".to_string());
         return errors;
     }
@@ -2190,15 +2207,17 @@ enum GhanRouting {
 // body is refused by name.
 fn ghan_routing(issue: &Issue) -> GhanRouting {
     use crate::issues::ghan::WiBodyShape;
+    if issue.issue_type.is_change() {
+        return GhanRouting::Ghan;
+    }
     match crate::issues::ghan::body_shape(&issue.body) {
-        WiBodyShape::Ghan if issue.issue_type.is_change() => GhanRouting::Ghan,
+        WiBodyShape::Mixed => GhanRouting::Refused(
+            "ghan: body mixes Goal / How / Acceptance / Never with the legacy six sections; keep one vocabulary".to_string(),
+        ),
         WiBodyShape::Ghan => GhanRouting::Refused(format!(
             "ghan: Goal / How / Acceptance / Never is the `change` work-item shape; `{}` keeps the six-section body",
             issue.issue_type.as_str()
         )),
-        WiBodyShape::Mixed => GhanRouting::Refused(
-            "ghan: body mixes Goal / How / Acceptance / Never with the legacy six sections; keep one vocabulary".to_string(),
-        ),
         WiBodyShape::Legacy | WiBodyShape::Unstructured => GhanRouting::Legacy,
     }
 }
@@ -2206,7 +2225,7 @@ fn ghan_routing(issue: &Issue) -> GhanRouting {
 // @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-draft-valid-by-construction.md#draft_authoring_contract
 fn validate_publishable_issue_body(issue: &Issue) -> Vec<String> {
     let mut errors = Vec::new();
-    if !looks_like_structured_attempt(&issue.body) {
+    if !issue.issue_type.is_change() && !looks_like_structured_attempt(&issue.body) {
         errors.push("body must contain structured work-item sections".to_string());
         return errors;
     }
@@ -2879,7 +2898,7 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         // Validates the temp-hosted issue file. Rollback removes the file
         // from the temp issue store; the branch stays in place so the user can
         // retry `aw wi create` without cleaning up manually.
-        if (created.issue_type.is_change() || created.issue_type == IssueType::Epic)
+        if created.issue_type == IssueType::Epic
             && looks_like_structured_attempt(&created.body)
         {
             if let Err(verr) = validate_structured_issue(&created.body, created.state) {
@@ -3047,6 +3066,9 @@ fn fill_section_payload_template(issue_type: IssueType, section_arg: &str) -> Re
                 "Actual: (fill)\n",
             )
             .to_string());
+        }
+        if issue_type.is_change() {
+            return Ok(default_structured_issue_body(issue_type, ""));
         }
         let mut template = concat!(
             "## Problem\n\n",
@@ -3458,6 +3480,14 @@ fn validate_wi_fill_payload_scope(
                 "## Acceptance Criteria",
                 "## Verification Inventory",
                 "## Reference Context",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+            _ if issue_type.is_change() => [
+                "## Goal",
+                "## How",
+                "## Acceptance",
+                "## Never",
             ]
             .into_iter()
             .collect::<BTreeSet<_>>(),
@@ -8252,71 +8282,37 @@ fn capability_candidate_wi_body(
         .claim_id
         .as_deref()
         .unwrap_or(candidate.capability_gap.trim());
-    let mut out = format!("# {}\n\n", candidate.title.trim());
-    out.push_str("## Problem\n\n");
-    out.push_str(&format!(
-        "The `{}` capability has a confirmed gap or claim that is not backed by a bounded active work item in the current issue inventory.\n\n",
-        candidate.source_capability_id
-    ));
-    out.push_str("## Capability Alignment\n\n");
-    out.push_str(&format!(
-        "Capability: `{}` ({})\n",
-        candidate.source_capability_id,
-        candidate.source_capability.trim()
-    ));
-    if !candidate.related_capabilities.is_empty() {
-        out.push_str("Related Capability Alignments:\n");
-        for alignment in &candidate.related_capabilities {
-            out.push_str(&format!("- {alignment}\n"));
-        }
-    }
-    out.push_str(&format!("Capability Gap: `{claim_or_gap}`\n"));
-    out.push_str(&format!(
-        "Progress Evidence: {}\n\n",
+    let cap_file = cap_path.display();
+    let gate_cmd = if looks_like_runnable_verification_command(&candidate.first_gate) {
         candidate.first_gate.trim()
-    ));
-    out.push_str("## Requirements\n\n");
-    out.push_str("- R1: Implement the scoped capability behavior and make its declared verification gate pass; linkage or prose alone is not closure.\n");
-    out.push_str("- R2: Keep the capability contract, work item, and TD/CB evidence aligned.\n\n");
-    out.push_str("## Scope\n\n### In Scope\n\n");
-    out.push_str("- Resolve this specific capability gap or claim.\n");
-    out.push_str(
-        "- Add, repair, or link the required verification evidence from the capability map.\n\n",
-    );
-    out.push_str("### Out of Scope\n\n");
-    out.push_str("- Unrelated capability promise changes.\n");
-    out.push_str("- Publishing capability status changes without passing the declared gates.\n\n");
-    out.push_str("## Acceptance Criteria\n\n");
+    } else {
+        "aw capability check"
+    };
+
+    let mut out = String::new();
+    out.push_str("## Goal\n\n");
     out.push_str(&format!(
-        "- AC1: `aw capability check --project {project}` no longer reports this candidate as a planning blocker.\n"
+        "Deliver the `{}` capability gap `{}` on `{project}`.\n\n",
+        candidate.source_capability_id, claim_or_gap
     ));
-    out.push_str("- AC2: The work item links primary TD/CB evidence that defines the implementation edge and the independent observable oracle; a documentation-only artifact is insufficient.\n");
-    out.push_str("- AC3: The declared verification gate exits 0 and produces the Expected Result below. Downgrade or deferral requires a separate explicit capability-contract decision and does not close this WI.\n\n");
-    if looks_like_runnable_verification_command(&candidate.first_gate) {
-        out.push_str("\n### Verification Gate\n\n");
-        out.push_str(&format!("`{}`\n\n", candidate.first_gate.trim()));
-        out.push_str("Expected Result:\n");
-        out.push_str(candidate.expected_result.trim());
-        out.push_str(".\n\n");
-    }
-    out.push_str("## Reference Context\n\n### Related Specs\n\n");
-    out.push_str("| Spec | Relevance |\n|------|-----------|\n");
+    out.push_str("## How\n\n### Verified premises\n\n");
+    out.push_str("<!-- Premise needs at least one observed premise with a file:line evidence coordinate. Must be an observation, not an inference (no hedge words like should/might). -->\n\n");
+    out.push_str("### Change points\n\n");
+    out.push_str("<!-- Change point must name at least one write target path. -->\n\n");
+    out.push_str("### Frozen decisions\n\nnone\n\n");
+    out.push_str("## Acceptance\n\n");
+    out.push_str("| # | command | current | target | why it cannot hold by accident |\n");
+    out.push_str("|---|---------|---------|--------|--------------------------------|\n");
     out.push_str(&format!(
-        "| {} | capability source anchor |\n\n",
-        cap_path.display()
+        "| 1 | `{gate_cmd}` | capability gap `{claim_or_gap}` is open | capability check passes | gate verifies the capability claim |\n\n"
     ));
-    if !candidate.parent_wi_refs.is_empty() {
-        out.push_str("Parent WI: ");
-        out.push_str(&candidate.parent_wi_refs.join(", "));
-        out.push_str("\n\n");
-    }
-    out.push_str("### Spec Plan\n\n");
-    out.push_str("| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n");
+    out.push_str("### Negative control\n\n");
+    out.push_str("<!-- Describe the mutation and assert failure ('must fail', 'must go red'), and name the sha256 the mutated file restores to. -->\n\n");
+    out.push_str("## Never\n\nThis addresses the worker implementing this work item, not the controller reviewing it.\n\n### Must not touch\n\n");
     out.push_str(&format!(
-        "| {} | create | {} |\n",
-        capability_candidate_spec_id(candidate),
-        cap_path.display()
+        "- `{cap_file}` — capability map anchor must not be mutated without approval.\n\n"
     ));
+    out.push_str("### Must not do\n\n- Do not mark capability complete without passing verification gate.\n");
     out
 }
 
@@ -9328,10 +9324,7 @@ label = "app:jet"
             created_at: None,
             updated_at: None,
             slug: "1234".to_string(),
-            body: body_with(
-                "### In Scope\n- real scope item\n\n### Out of Scope\n- explicit exclusion",
-                "### Related Specs\n| Spec | Relevance |\n|------|-----------|\n| foo.md | high |\n\n### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n| foo | create | foo.md |",
-            ),
+            body: crate::issues::ghan::SAMPLE_GHAN_BODY.to_string(),
             related: vec![],
             implements: vec![],
             phase: phase.map(str::to_string),
@@ -9740,12 +9733,11 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("Close capability gap: Package manager"));
         assert!(body.contains("## Candidate WI Drafts"));
         assert!(body.contains("### Candidate 1: Close capability gap: Package manager"));
-        assert!(body.contains("## Capability Alignment"));
-        assert!(body.contains("Capability: `package-manager` (Package manager)"));
-        assert!(body.contains("Capability Gap: `peer dependency roadmap missing`"));
-        assert!(body.contains("## Acceptance Criteria"));
-        assert!(body.contains("aw capability check --project jet"));
-        assert!(body.contains("## Reference Context"));
+        assert!(body.contains("## Goal"));
+        assert!(body.contains("capability gap `peer dependency roadmap missing`"));
+        assert!(body.contains("## Acceptance"));
+        assert!(body.contains("aw capability check"));
+        assert!(body.contains("## Never"));
         assert!(body.contains("## Recommended CLI Sequence"));
         assert!(body.contains("Accepted independent review authorizes publication"));
 
@@ -9803,16 +9795,18 @@ Generator ownership is complete; package-manager roadmap remains open.
             Path::new("apps/defer/CAPABILITIES.md"),
             &candidates[0],
         );
-        assert!(body.contains("Capability: `cli-interface`"));
-        assert!(body.contains("Capability Gap: `defer-cli-convention`"));
-        assert!(body.contains("Parent WI: #766"));
-        assert!(body.contains("### Verification Gate"));
+        assert!(body.contains("## Goal"));
+        assert!(body.contains("capability gap `defer-cli-convention`"));
+        assert!(body.contains("## Acceptance"));
         assert!(body.contains("`cargo test -p defer --test cli_contract`"));
-        assert!(body.contains("Expected Result:"));
-        assert!(body.contains("observes `defer cli convention`"));
-        assert!(body.contains("linkage or prose alone is not closure"));
-        assert!(body.contains("a documentation-only artifact is insufficient"));
-        assert!(body.contains("does not close this WI"));
+        assert!(body.contains("## Never"));
+        let mut issue = planning_issue(IssueType::Change, "Candidate draft test", Some("p1"), 9999);
+        issue.body = body;
+        let errors = validate_publishable_issue_body(&issue);
+        assert!(
+            !errors.iter().any(|e| e.contains("listed as both a change point and must-not-touch")),
+            "generated draft must not list capability map file as both change point and must-not-touch, got {errors:?}"
+        );
     }
 
     #[test]
@@ -10516,8 +10510,11 @@ label = "app:score"
             errors
         );
         assert!(
-            errors.iter().any(|e| e.contains("Capability Alignment")),
-            "expected capability alignment error, got {:?}",
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "expected legacy non-epic body to be refused naming missing GHAN sections, got {:?}",
             errors
         );
     }
@@ -10561,7 +10558,7 @@ label = "app:score"
 
     #[test]
     fn mixed_vocabulary_body_is_refused_rather_than_guessed() {
-        let mut issue = planning_issue(IssueType::Change, "Half-migrated body", Some("p3"), 3502);
+        let mut issue = planning_issue(IssueType::Epic, "Half-migrated body", Some("p3"), 3502);
         issue.body = format!(
             "{}\n## Problem\n\nleftover legacy section\n",
             crate::issues::ghan::SAMPLE_GHAN_BODY
@@ -10570,6 +10567,68 @@ label = "app:score"
         assert!(
             errors.iter().any(|e| e.contains("keep one vocabulary")),
             "expected a mixed-vocabulary refusal, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_six_section_body_on_change_work_item_is_refused() {
+        let mut issue = planning_issue(IssueType::Change, "Fix config parsing", Some("p2"), 3504);
+        issue.body = "## Problem\n\nParser errors hide line number.\n\n## Capability Alignment\n\nCapability: Config\nCapability Gap: gap\nProgress Evidence: evidence\n\n## Requirements\n\n- R1: Fix parser.\n\n## Scope\n\n### In Scope\n- Parser.\n\n### Out of Scope\n- None.\n\n## Acceptance Criteria\n\n- AC1: Parser fixed.\n\n## Reference Context\n\n### Related Specs\n| Spec | Relevance |\n|------|-----------|\n| foo.md | high |\n\n### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n| foo | update | foo.md |\n".to_string();
+
+        let errors = validate_publishable_issue_body(&issue);
+        assert!(
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "legacy six-section change body must be refused naming missing GHAN sections, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn change_body_with_stray_ghan_heading_and_legacy_prose_is_refused_naming_missing_sections() {
+        let mut issue = planning_issue(IssueType::Change, "Stray GHAN heading", Some("p2"), 3506);
+        issue.body = "## Goal\n\nDeliver feature.\n\n## Problem\n\nParser errors.\n\n## Scope\n\n### In Scope\n- fix.\n".to_string();
+
+        let errors = validate_publishable_issue_body(&issue);
+        assert!(
+            errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "change body with stray GHAN heading must be refused naming missing GHAN sections, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn change_body_with_no_recognized_heading_is_refused_naming_missing_sections() {
+        let mut issue = planning_issue(IssueType::Change, "Unstructured prose", Some("p2"), 3507);
+        issue.body = "This is unstructured text with no headings at all.".to_string();
+
+        let errors = validate_publishable_issue_body(&issue);
+        assert!(
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "unstructured change body must be refused naming missing GHAN sections, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn default_change_body_emits_blank_ghan_form_that_fails_validation() {
+        let default_body = default_structured_issue_body(IssueType::Change, "Fix config parsing");
+        assert!(default_body.contains("## Goal"));
+        assert!(default_body.contains("## How"));
+        assert!(default_body.contains("## Acceptance"));
+        assert!(default_body.contains("## Never"));
+        assert!(!default_body.contains("Fix config parsing"));
+
+        let mut issue = planning_issue(IssueType::Change, "Fix config parsing", Some("p2"), 3505);
+        issue.body = default_body;
+        let errors = validate_publishable_issue_body(&issue);
+        assert!(
+            errors.iter().any(|e| e == "ghan: ## Goal is empty"),
+            "unfilled default GHAN form must fail validation, got {errors:?}"
         );
     }
 
@@ -10771,7 +10830,14 @@ label = "app:score"
             )
         );
         let errors = validate_planning_alignment(&issue);
-        assert!(errors.is_empty(), "expected pass, got {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "expected legacy bug body to be refused naming missing GHAN sections, got {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -10786,8 +10852,11 @@ label = "app:score"
         );
         let errors = validate_planning_alignment(&issue);
         assert!(
-            errors.is_empty(),
-            "legacy estimate section should be inert: {:?}",
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "expected legacy bug body to be refused naming missing GHAN sections, got {:?}",
             errors
         );
     }
@@ -11288,13 +11357,45 @@ labels:\n\
             planning_issue(IssueType::Enhancement, "Fix config parsing", Some("p2"), 14);
         issue.state = IssueState::Draft;
         issue.slug = "wi-demo".to_string();
-        issue.body = default_structured_issue_body(IssueType::Change, "Fix config parsing");
+        issue.body = crate::issues::ghan::SAMPLE_GHAN_BODY.to_string();
 
         let errors = validate_draft_issue(tmp.path(), &path, &issue, &meta);
         assert!(
             errors.is_empty(),
             "default draft body should validate: {:?}",
             errors
+        );
+    }
+
+    #[test]
+    fn change_draft_with_unstructured_prose_bypasses_legacy_structured_check_and_reports_missing_ghan_sections() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_config(tmp.path(), CONFIG_WITH_PROJECTS_AND_AGENTS);
+        let path = tmp.path().join("wi-demo.md");
+        let meta = DraftIssueFrontmatter {
+            draft: true,
+            tmp_id: Some("wi-demo".to_string()),
+            project: "agentic-workflow".to_string(),
+        };
+        let mut issue =
+            planning_issue(IssueType::Change, "Unstructured change draft", Some("p2"), 3508);
+        issue.state = IssueState::Draft;
+        issue.slug = "wi-demo".to_string();
+        issue.body = "This is unstructured text with no headings at all.".to_string();
+
+        let errors = validate_draft_issue(tmp.path(), &path, &issue, &meta);
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e == "body must contain structured work-item sections"),
+            "change draft must not be refused with generic structured sections error, got {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "change draft with unstructured prose must report missing GHAN sections, got {errors:?}"
         );
     }
 
@@ -11308,7 +11409,7 @@ labels:\n\
         assert!(value["body"]
             .as_str()
             .unwrap()
-            .contains("## Reference Context"));
+            .contains("## Goal"));
     }
 
     // @spec workitem-loop-state-model-additive-foundation.md R3
@@ -11354,7 +11455,7 @@ path = "."
 tech_design_path = "tech-design"
 "#,
         );
-        let body = test_issue_with_phase(Some("created")).body;
+        let body = crate::issues::ghan::SAMPLE_GHAN_BODY.to_string();
         let lock = crate::cli::shell_env::CWD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -11484,8 +11585,11 @@ tech_design_path = "tech-design"
         issue.body = body;
         let errors = validate_publishable_issue_body(&issue);
         assert!(
-            errors.is_empty(),
-            "normalized draft body should publish cleanly: {:?}",
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "normalized legacy draft body should be refused naming missing GHAN sections: {:?}",
             errors
         );
     }
@@ -11497,17 +11601,18 @@ tech_design_path = "tech-design"
 
         let errors = validate_publishable_issue_body(&issue);
         assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("Reference Context missing '### Related Specs'")),
-            "expected reference context error, got {:?}",
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "legacy body on bug work item must be refused naming missing GHAN sections: {:?}",
             errors
         );
     }
 
     #[test]
     fn merge_all_sections_replaces_alignment_without_estimate_section() {
-        let base = default_structured_issue_body(IssueType::Change, "Fix config parsing");
+        let base = legacy_issue_body_template("Fix config parsing");
         let payload = "## Problem\n\nFix config parsing.\n\n## Capability Alignment\n\nCapability: Config correctness\nCapability Gap: malformed config errors are unclear\nProgress Evidence: parser fixture reports line number\n\n## Requirements\n\n- R1: Report the line number for malformed config.\n\n## Scope\n\n### In Scope\n- Config parser error fixture.\n\n### Out of Scope\n- New config schema format.\n\n## Acceptance Criteria\n\n- AC1: malformed config fixture reports the line number\n\n## Reference Context\n\n### Related Specs\n| Spec | Relevance |\n|------|-----------|\n| foo.md | high |\n\n### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n| foo | create | foo.md |\n";
         let merged = merge_all_sections(&base, payload);
         assert!(merged.contains("Capability: Config correctness"));
@@ -11516,7 +11621,14 @@ tech_design_path = "tech-design"
         let mut issue = planning_issue(IssueType::Bug, "Fix config parsing", Some("p1"), 13);
         issue.body = merged;
         let errors = validate_planning_alignment(&issue);
-        assert!(errors.is_empty(), "expected pass, got {:?}", errors);
+        assert!(
+            errors.iter().any(|e| e == "ghan: missing required ## Goal section")
+                && errors.iter().any(|e| e == "ghan: missing required ## How section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Acceptance section")
+                && errors.iter().any(|e| e == "ghan: missing required ## Never section"),
+            "expected legacy bug body to be refused naming missing GHAN sections, got {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -11541,21 +11653,18 @@ tech_design_path = "tech-design"
     fn fill_section_payload_template_all_scaffolds_required_sections() {
         let template = fill_section_payload_template(IssueType::Change, "all").unwrap();
         for heading in [
-            "## Problem",
-            "## Capability Alignment",
-            "## Requirements",
-            "## Scope",
-            "## Acceptance Criteria",
-            "## Reference Context",
+            "## Goal",
+            "## How",
+            "## Acceptance",
+            "## Never",
         ] {
             assert!(
                 template.contains(heading),
                 "template missing heading {heading}"
             );
         }
-        assert!(template.contains("(fill)"));
-        assert!(template.contains("### Related Specs"));
-        assert!(template.contains("### Spec Plan"));
+        assert!(template.contains("### Verified premises"));
+        assert!(template.contains("### Negative control"));
     }
 
     #[test]
