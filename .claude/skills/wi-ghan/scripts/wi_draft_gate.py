@@ -32,6 +32,56 @@ from pathlib import Path
 UNFILLED = ("<!-- fill", "(fill)", "(replace-this)", "TODO", "TBD")
 FRONTMATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
 
+# A rewrite round is handed exactly one runnable command -- this script -- so
+# it is the only command whose baseline the round can observe, and three rounds
+# out of three (#3387, #3392, #3460) answered `## Acceptance` with it. The
+# resulting table is circular: it asserts that the body validates, which is what
+# the gate running it already established, and says nothing about the change the
+# work item asks for. The injection now forbids it in prose; this is the
+# consumer that refuses it, because prose alone is what already failed.
+SELF_REFERENCE = "wi_draft_gate.py"
+
+
+def change_points(body: str) -> str:
+    """The `### Change points` block, as text, for a containment test.
+
+    A rewrite round may write only `.aw-wi/<n>.md`, so it can never list this
+    script as something it changes. A work item *about* this script can and
+    does -- #3506 is one -- and its acceptance rows name it for the honest
+    reason. That difference is the whole test.
+    """
+    out: list[str] = []
+    inside = False
+    for line in body.splitlines():
+        if line.startswith("#"):
+            inside = line.strip() == "### Change points"
+            continue
+        if inside:
+            out.append(line)
+    return "\n".join(out)
+
+
+def acceptance_rows(body: str) -> list[str]:
+    """The `## Acceptance` table's data rows, header and separator dropped."""
+    rows: list[str] = []
+    inside = False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            inside = line.strip() == "## Acceptance"
+            continue
+        if not inside:
+            continue
+        if line.startswith("### "):
+            break
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not cells or cells[0].lower() in ("#", "") or set(cells[0]) <= set("-: "):
+            continue
+        rows.append(stripped)
+    return rows
+
 
 def split_title(text: str, path: Path) -> tuple[str, str]:
     lines = text.splitlines()
@@ -111,6 +161,30 @@ def main() -> int:
     held = [marker for marker in UNFILLED if marker in text]
     if held:
         print(f"FAIL  {path} still holds an unfilled slot: {', '.join(held)}")
+        return 1
+
+    rows = acceptance_rows(body)
+    owns_gate = SELF_REFERENCE in change_points(body)
+    circular = [] if owns_gate else [row for row in rows if SELF_REFERENCE in row]
+    if circular:
+        print(
+            f"FAIL  {path}: {len(circular)} acceptance row(s) name this gate "
+            "itself, so the table asserts that the body validates rather than "
+            "that the change happened"
+        )
+        for row in circular:
+            print(f"  - {row}")
+        print(
+            "       The row's command belongs to the work item's implementer "
+            "and has to exercise\n"
+            "       the product -- a test, a CLI invocation, an EC case. This "
+            "script is the gate on\n"
+            "       the round that writes the body, and a round cannot be its "
+            "own acceptance."
+        )
+        return 1
+    if not rows:
+        print(f"FAIL  {path}: `## Acceptance` carries no table rows to judge")
         return 1
 
     with tempfile.TemporaryDirectory() as tmp:

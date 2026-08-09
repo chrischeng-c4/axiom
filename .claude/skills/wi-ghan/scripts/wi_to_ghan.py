@@ -160,7 +160,8 @@ in this checkout.
 | 1 | `{gate}` | exits 0 and reports `PASS` | it runs `aw wi draft init` and `aw wi draft validate`, the same GHAN validator `aw wi validate` applies to a published body; a body that merely looks like the shape fails on a per-section rule -- a premise without a `file:line`, an acceptance table without its five columns, a negative control without a sha256 |
 | 2 | every `file:line` under `### Verified premises`, read at that line in this checkout | the line says what the premise says it says | the validator checks that a coordinate is *shaped* like one, never that it resolves; a premise pointing at a line that does not exist, or at one saying something else, passes row 1 and fails here |
 | 3 | the requirements the tracker body states, compared against the rewritten one | each survives, and the rewrite adds none the tracker body does not ask for | row 1 is indifferent to content: a well-formed body about a different change passes it |
-| 4 | remove the `### Negative control` sub-section from `{target}` and rerun row 1 (negative control) | must FAIL, naming the missing sub-section | a gate that stayed green here would be reporting on the file's existence rather than on its contents |
+| 4 | every command named in the rewritten `## Acceptance` table | it exercises the product the work item changes, and none of them is `{GATE_SCRIPT}` | the round is handed that script as its only runnable command, so it is the only baseline the round can measure and the likeliest thing to end up in the table; a body whose table names it passes rows 1 through 3 while asserting only that it is a valid document |
+| 5 | remove the `### Negative control` sub-section from `{target}` and rerun row 1 (negative control) | must FAIL, naming the missing sub-section | a gate that stayed green here would be reporting on the file's existence rather than on its contents |
 
 ## Gate
 
@@ -173,6 +174,8 @@ in this checkout.
 - A `## Goal` that restates the title. The title says what the work is called; the Goal has to name a trigger, an observation point, a current value and a target value, and a Goal that could be written without opening the checkout has none of them.
 - A premise citing `:1`, or a line range. `file_line_ref` refuses a range and accepts `:1`, so `:1` is where an unmeasured coordinate lands.
 - A negative control naming an all-zero sha256, or any digest that is not the current digest of the file it says it restores. The validator accepts any 64-character hex.
+- An acceptance row naming the round's own gate. It is the only command this round is permitted to run, so it is the only baseline the round can observe, which is exactly why it is the wrong answer: the table would say the body validates, which the gate already established, and nothing about the change.
+- A falsifiable observation parked in a sub-section the schema does not have -- `### Required terminal observations` and the like. If the round knows what would show the change happened, that belongs in the acceptance table; an invented H3 is where it goes when the table slot was spent on something else.
 - An acceptance row whose "why it cannot hold by accident" cell restates the target cell. That column exists to say what *other* change would also make the row green.
 - A gate command in `## Acceptance` that no one ran. The row's "current" column is an observation, so a row whose current column describes the target rather than today's output was never measured.
 - Requirements dropped on the way across, especially ones the six-section body kept in `## Scope` or `## Reference Context` rather than in `## Requirements`.
@@ -203,6 +206,8 @@ shape the validator now refuses for a `type=change` work item:
 - Every item under `### Verified premises` carries a `file:line` coordinate read at that line in this checkout, and states what is observable there rather than what it implies.
 - `### Change points` names the paths this work item would write, and `### Must not touch` names none of them.
 - `## Acceptance` carries a table with the columns `#`, command, current, target, and why it cannot hold by accident, and a `### Negative control` naming a mutation, asserting failure, and naming the sha256 the mutated file restores to.
+- Every command in that table is one the work item's *implementer* would run to show the change happened -- a test selector, a CLI invocation, an EC case. `{GATE_SCRIPT}` must not appear in it. That script is the gate on *this* round, which judges whether the body is well formed; the table judges whether the product changed, and a round cannot be its own acceptance. The gate refuses a table that names it.
+- The `current` column is an observation of this checkout, so state one the read-only commands available here can support -- `rg` for a symbol that is absent, `ls` or `cat` for a file that does not exist, `sed -n` for a line that still says the old thing. Every such claim is checkable after this round by rerunning that command, and a `current` cell that could have been copied from the tracker's narrative rather than read here is the one thing this round cannot recover from.
 - Every requirement the tracker body states is present in the rewritten body, and the rewritten body asks for nothing the tracker body does not.
 
 ## Shape to follow
@@ -227,6 +232,11 @@ prose; do not invent a second vocabulary for a section that already has one.
 - Do not state a coordinate, a digest, a count, or a command output you did not read in this checkout. An unmeasured value is the one thing this round cannot recover from, because the gate accepts it.
 
 ## Definition of done
+
+The gate below judges this round -- whether `{target}` is a well-formed \
+work-item body. It is not the work item's acceptance and must not be written \
+into `## Acceptance`; a round that answers the table with its own gate has \
+asserted only that it wrote a valid document.
 
 `{target}` exists and
 
