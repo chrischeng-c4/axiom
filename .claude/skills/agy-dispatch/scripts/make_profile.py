@@ -279,7 +279,16 @@ def main() -> int:
         "deny": [],
         "ask": [],
     }
-    task_commands: dict[str, list[str]] = {"allow": [], "deny": []}
+    # `allow_prefix` is emitted empty rather than omitted. A controller learns
+    # the round's vocabulary by reading a generated profile, and the key it
+    # cannot see is the key it writes a bare verb into `allow` instead of --
+    # where the entry authorizes no real invocation exactly and the permission
+    # layer beside it admits every invocation by prefix.
+    task_commands: dict[str, list[str]] = {
+        "allow": [],
+        "allow_prefix": [],
+        "deny": [],
+    }
 
     # An empty `allow` is what `grant` installs verbatim, so emitting one meant
     # emitting a surface that revokes everything the Project holds and lets
@@ -320,10 +329,13 @@ def main() -> int:
         profile["inject_prompt_file"] = args.inject
     if args.allow_shell:
         # Deliberately left for the controller to fill in: an auto-generated
-        # allowlist would be a guess, and `verify` voids any command that is not
-        # a byte-exact copy of an entry here.
+        # allowlist would be a guess. A whole command line goes in `allow`, a
+        # verb whose arguments are the worker's business goes in `allow_prefix`,
+        # and an entry in the wrong list is the round's own defect: an exact
+        # entry matches no real invocation, a prefix entry matches every one.
         project_permissions["allow"].append("REPLACE-WITH-EXACT-command(...)")
         task_commands["allow"].append("REPLACE-WITH-EXACT-COMMAND-LINE")
+        task_commands["allow_prefix"].append("REPLACE-WITH-COMMAND-PREFIX-OR-DELETE")
 
     out = Path(args.out)
     out.write_text(json.dumps(profile, indent=2) + "\n")

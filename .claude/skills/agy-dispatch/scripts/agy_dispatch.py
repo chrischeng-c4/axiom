@@ -24,6 +24,12 @@ PROJECT_DIR = HOME / ".gemini" / "config" / "projects"
 CONVERSATION_DIR = HOME / ".gemini" / "antigravity-cli" / "conversations"
 TEMP_ROOT = Path("/tmp").resolve()
 PERMISSION_KINDS = ("allow", "deny", "ask")
+# `allow` is one exact command line; `allow_prefix` is an open family, matched
+# the way the permission layer itself matches. A controller means one or the
+# other, and until both were sayable only the first was: a read-only verb such
+# as `git log` went into `allow`, where no real invocation ever equals it and
+# every real invocation is admitted by the prefix rule beside it.
+TASK_COMMAND_KINDS = ("allow", "allow_prefix", "deny")
 TASK_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 # Every git call below reads or writes state directly and none of them needs
@@ -282,17 +288,24 @@ def load_profile(
     task_commands = profile["task_commands"]
     if not isinstance(task_commands, dict):
         raise SystemExit("task_commands must be an object")
-    for kind in ("allow", "deny"):
+    for kind in TASK_COMMAND_KINDS:
         task_commands[kind] = validate_rule_list(
             task_commands.get(kind, []),
             f"task_commands.{kind}",
         )
     overlap = sorted(
-        set(task_commands["allow"]) & set(task_commands["deny"])
+        (set(task_commands["allow"]) | set(task_commands["allow_prefix"]))
+        & set(task_commands["deny"])
     )
     if overlap:
         raise SystemExit(
             "task_commands cannot both allow and deny: " + ", ".join(overlap)
+        )
+    both = sorted(set(task_commands["allow"]) & set(task_commands["allow_prefix"]))
+    if both:
+        raise SystemExit(
+            "task_commands entries must be exact or a prefix family, not both: "
+            + ", ".join(both)
         )
 
     profile["snapshot_paths"] = [
@@ -676,28 +689,56 @@ def project_policy_report(profile: dict) -> dict:
             "writing them is a finding: " + ", ".join(frozen_targets)
         )
 
-    for expected_decision in ("allow", "deny"):
-        for command in profile["task_commands"].get(expected_decision, []):
-            decision, rule = permission_decision(actual, global_surface, command)
-            command_checks.append(
-                {
-                    "command": command,
-                    "expected": expected_decision,
-                    "decision": decision,
-                    "matched_rule": rule,
-                    # Reported, never blocked: whether a command needs to leave
-                    # the sandbox depends on whether it touches the network or
-                    # writes outside the worktree, which the profile cannot
-                    # state. A sandboxed `cargo` is the failure that reads like
-                    # a product defect, so the controller sees this per command.
-                    "unsandboxed": runs_unsandboxed(actual, global_surface, command),
-                }
+    # A prefix family is probed as an expected-allow under its own text, which
+    # is the shortest line the family admits: a surface that refuses that
+    # refuses every member. Leaving `allow_prefix` out of this loop would let a
+    # round declare a family the worker's permission surface never grants and
+    # still report dispatch_ready.
+    task_commands = profile.get("task_commands", {})
+    probes = (
+        [(command, "allow", "allow") for command in task_commands.get("allow", [])]
+        + [
+            (command, "allow", "allow_prefix")
+            for command in task_commands.get("allow_prefix", [])
+        ]
+        + [(command, "deny", "deny") for command in task_commands.get("deny", [])]
+    )
+    for command, expected_decision, kind in probes:
+        decision, rule = permission_decision(actual, global_surface, command)
+        check = {
+            "command": command,
+            "kind": kind,
+            "expected": expected_decision,
+            "decision": decision,
+            "matched_rule": rule,
+            # Reported, never blocked: whether a command needs to leave
+            # the sandbox depends on whether it touches the network or
+            # writes outside the worktree, which the profile cannot
+            # state. A sandboxed `cargo` is the failure that reads like
+            # a product defect, so the controller sees this per command.
+            "unsandboxed": runs_unsandboxed(actual, global_surface, command),
+        }
+        if kind == "allow":
+            # The question `doctor` could not previously ask: not whether the
+            # declared command is allowed, which was never in doubt, but whether
+            # the surface also admits argument forms past it. Probing one token
+            # past the entry answers it. The answer is normally yes -- every
+            # permission rule is a token prefix, so nothing on that layer can
+            # express "this line and no longer one" -- and that is precisely the
+            # fact an author needs at authoring time: an exact entry states the
+            # controller's intent, and the surface will not enforce it. Reported,
+            # never blocked, because blocking on it would block every round.
+            probe = f"{command} agy-dispatch-argument-probe"
+            check["argument_forms_admitted"] = (
+                permission_decision(actual, global_surface, probe)[0] == "allow"
+                and not task_allowlist_admits(profile, probe)
             )
-            if decision != expected_decision:
-                blockers.append(
-                    f"task command expected {expected_decision} but resolves "
-                    f"{decision}: {command}"
-                )
+        command_checks.append(check)
+        if decision != expected_decision:
+            blockers.append(
+                f"task command expected {expected_decision} but resolves "
+                f"{decision}: {command}"
+            )
 
     return {
         "project_id": state["project_id"],
@@ -995,12 +1036,17 @@ def render_prompt(
 ) -> str:
     writes = profile["allowed_repo_writes"] or ["none"]
     allowed = profile["task_commands"].get("allow", [])
+    families = profile["task_commands"].get("allow_prefix", [])
     denied = profile["task_commands"].get("deny", [])
     # A worker with no ticket command and no project allow rule cannot observe
     # anything. Demanding PASS/FAIL per criterion from it manufactures the exact
     # fabrication the controller then has to detect, so the report contract asks
     # for a description of the work instead of a verdict on it.
-    no_shell = not allowed and not profile["project_permissions"].get("allow", [])
+    no_shell = (
+        not allowed
+        and not families
+        and not profile["project_permissions"].get("allow", [])
+    )
     report_contract = (
         NO_SHELL_REPORT_CONTRACT if no_shell else VERDICT_REPORT_CONTRACT
     )
@@ -1039,6 +1085,30 @@ def render_prompt(
         )
         or "- none; this is a read-only evidence task"
     )
+    # A family is only shown when one was declared. Printing an empty heading
+    # would invite the worker to read the absence as permission to invent a
+    # prefix, which is the failure this whole section exists to prevent.
+    family_block = (
+        "Shell command prefixes authorized for this task, each of which may be "
+        "followed\nby further arguments:\n"
+        + "\n".join(f"- {command} ..." for command in families)
+        + "\n\n"
+        if families
+        else ""
+    )
+    copy_rule = (
+        "Every Bash tool call must either copy one exact command line "
+        "byte-for-byte, or\nbegin with one of the authorized prefixes above and "
+        "add only arguments after it.\nA reordered flag, changed quote or escape "
+        "form, appended pipeline, or\nsemantically equivalent helper is a "
+        "different command, and so is anything\nthat starts with no listed "
+        "prefix."
+        if families
+        else "Every Bash tool call must copy one authorized command line "
+        "byte-for-byte. A\nnarrower `sed` range, reordered flag, changed quote "
+        "or escape form, appended\npipeline, or semantically equivalent helper "
+        "is a different command."
+    )
     return f"""{phase} {identity}
 Repository root: {profile['root']}
 GitHub repo: {profile['repo']}
@@ -1068,7 +1138,7 @@ Exact repository write allowlist:
 Exact shell command lines authorized for this task:
 {chr(10).join(f"- {command}" for command in allowed) or "- none"}
 
-Shell command lines explicitly forbidden for this task:
+{family_block}Shell command lines explicitly forbidden for this task:
 {chr(10).join(f"- {command}" for command in denied) or "- none"}
 
 Do not change branches, create worktrees, commit, push, mutate a tracker, or
@@ -1077,9 +1147,7 @@ are permitted only when explicitly listed above. Use absolute paths. If a
 command is unavailable, a path is missing, or the task conflicts with the
 injected contract, stop and report FAIL instead of improvising.
 
-Every Bash tool call must copy one authorized command line byte-for-byte. A
-narrower `sed` range, reordered flag, changed quote or escape form, appended
-pipeline, or semantically equivalent helper is a different command. Use the
+{copy_rule} Use the
 built-in read-file tool for additional source inspection; do not synthesize a
 new shell command.
 
@@ -1208,11 +1276,40 @@ def requested_run_commands(
     ]
 
 
+def task_allowlist_families(profile: dict) -> list[str]:
+    return profile.get("task_commands", {}).get("allow_prefix", [])
+
+
+def task_allowlist_admits(profile: dict, command: str) -> bool:
+    """Does the round's own allowlist name this command line?
+
+    Exact entries are compared as strings, because that is what the controller
+    meant by writing a whole command line. Prefix entries are compared with
+    `command_rule_matches`, the same function that decides whether the command
+    is permitted to run at all -- so a family entry admits here exactly what it
+    admits there, and the two layers cannot drift apart.
+    """
+    if command in profile.get("task_commands", {}).get("allow", []):
+        return True
+    return any(
+        command_rule_matches(f"command({entry})", command)
+        for entry in task_allowlist_families(profile)
+    )
+
+
 def audit_task_commands(
     profile: dict,
     task_key: str,
     snapshot_data: dict,
-) -> list[dict]:
+) -> tuple[list[dict], list[str], list[str]]:
+    """The commands that ran, the ones worth adjudicating, and the ones to note.
+
+    Findings block the round at `review`; notes do not. The split is by which
+    permission surface admitted a command, not by whether the controller wrote
+    it down: an unlisted command the round's own `project_permissions` grant is
+    a vocabulary gap in the profile, while one only an inherited global rule
+    allowed means the worker had a surface the round never declared.
+    """
     current_id = conversation_id_for_task(profile, task_key)
     snapshot_id = snapshot_data.get("conversation_id")
     if snapshot_id and current_id != snapshot_id:
@@ -1221,37 +1318,75 @@ def audit_task_commands(
             f"{snapshot_id} -> {current_id or '<missing>'}"
         )
     if not current_id:
-        return [], []
+        return [], [], []
     commands = requested_run_commands(
         current_id,
         after_step=int(snapshot_data.get("conversation_step_floor", -1)),
     )
-    allowed = set(profile["task_commands"]["allow"])
     denied_commands = set(profile["task_commands"]["deny"])
     forbidden = [item for item in commands if item["command"] in denied_commands]
     unlisted = [
         item
         for item in commands
-        if item["command"] not in allowed and item["command"] not in denied_commands
+        if not task_allowlist_admits(profile, item["command"])
+        and item["command"] not in denied_commands
     ]
     executed = [item for item in unlisted if not item["denied"]]
     refused = [item for item in unlisted if item["denied"]]
-    if forbidden or executed:
+
+    # A command that ran was, by definition, permitted by something. Judging it
+    # solely against the exact allowlist made VOID report the controller's
+    # vocabulary rather than the worker's conduct: an entry the permission layer
+    # reads as a prefix admits argument forms no exact entry can equal, so the
+    # command executes and the whole round dies at the end for it. Ask instead
+    # which surface admitted it, because that is the question integrity turns on.
+    declared = expected_project_surface(profile)
+    empty = {kind: [] for kind in PERMISSION_KINDS}
+    global_surface = global_permission_surface()
+    under_declared, escaped, unauthorized = [], [], []
+    for item in executed:
+        if permission_decision(declared, empty, item["command"])[0] == "allow":
+            under_declared.append(item)
+        elif permission_decision(empty, global_surface, item["command"])[0] == "allow":
+            escaped.append(item)
+        else:
+            unauthorized.append(item)
+
+    if forbidden or unauthorized:
         details = {
             "forbidden": forbidden,
-            "unlisted": executed,
+            "unauthorized": unauthorized,
         }
         raise SystemExit(
-            "VOID: AGY ran shell commands outside the task-local "
-            "exact allowlist: " + json.dumps(details, sort_keys=True)
+            "VOID: AGY ran shell commands nothing authorized: "
+            + json.dumps(details, sort_keys=True)
         )
-    return [item for item in commands if item["command"] in allowed], [
+
+    findings = [
         f"AGY asked for `{item['command']}` at step {item['step']}, which the "
         "task allowlist does not name; the permission layer refused it and "
         "nothing ran. Tighten the prompt, or add the command to the profile "
         "and re-snapshot, before dispatching again."
         for item in refused
+    ] + [
+        f"AGY ran `{item['command']}` at step {item['step']}, which neither "
+        "`task_commands` nor this round's `project_permissions` names. Only a "
+        "permission rule inherited from outside the round let it through, so "
+        "the round's declared surface is not the surface the worker had. "
+        "Adjudicate what it observed before accepting."
+        for item in escaped
     ]
+    notes = [
+        f"AGY ran `{item['command']}` at step {item['step']}: this round's "
+        "`project_permissions` authorize it, but `task_commands` does not name "
+        "it. Add it to `task_commands.allow` if the exact line matters, or to "
+        "`task_commands.allow_prefix` if any argument form is intended."
+        for item in under_declared
+    ]
+    audited = [
+        item for item in commands if task_allowlist_admits(profile, item["command"])
+    ]
+    return audited, findings, notes
 
 
 def denied(profile: dict, task_key: str) -> None:
@@ -1725,14 +1860,17 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
     if "Gate" in sections:
         gate_commands = gate_commands_in(sections["Gate"])
         allowed = profile["task_commands"].get("allow", [])
+        families = profile["task_commands"].get("allow_prefix", [])
         if not gate_commands:
             findings.append(
                 "`## Gate` has no fenced command block: put each gate command "
                 "on its own line inside one ``` fence"
             )
         else:
-            if allowed:
-                undeclared = [c for c in gate_commands if c not in allowed]
+            if allowed or families:
+                undeclared = [
+                    c for c in gate_commands if not task_allowlist_admits(profile, c)
+                ]
                 if undeclared:
                     findings.append(
                         "`## Gate` names command(s) the worker is not "
@@ -2116,6 +2254,7 @@ def lint(profile: dict, task_key: str) -> None:
     oracle = oracle_path(profile, task_key)
     findings = round_findings(profile, task_key)
     allowed = profile["task_commands"].get("allow", [])
+    families = profile["task_commands"].get("allow_prefix", [])
     print(f"oracle   : {oracle}")
     print(f"sections : {', '.join(oracle_sections(oracle.read_text())) or 'none'}")
     injection = profile.get("inject_prompt_file")
@@ -2128,8 +2267,9 @@ def lint(profile: dict, task_key: str) -> None:
     print(
         "gate cross-check: "
         + (
-            f"against {len(allowed)} authorized command(s)"
-            if allowed
+            f"against {len(allowed)} exact command(s) and "
+            f"{len(families)} prefix famil{'y' if len(families) == 1 else 'ies'}"
+            if allowed or families
             else "skipped; this round grants the worker no shell"
         )
     )
@@ -2720,11 +2860,20 @@ def uncovered_task_commands(profile: dict, surface: dict[str, list[str]]) -> lis
     run the only command it is being judged on. Resolving through
     `permission_decision`, the same function `doctor` uses, is deliberate: a
     second coverage rule here would be the same defect one layer down.
+
+    A prefix family is probed by its own text, which is the shortest command
+    line the family admits. A surface that refuses that refuses the whole
+    family; one that admits it may still refuse a longer member, but no
+    surface-level check can enumerate an open family, and reporting the
+    shortest member is the honest half of the answer rather than a guess.
     """
     global_surface = global_permission_surface()
     return [
         command
-        for command in profile["task_commands"].get("allow", [])
+        for command in (
+            *profile["task_commands"].get("allow", []),
+            *profile["task_commands"].get("allow_prefix", []),
+        )
         if permission_decision(surface, global_surface, command)[0] != "allow"
     ]
 
@@ -2754,15 +2903,19 @@ def unauthorized_surface_refusals(profile: dict) -> list[str]:
             'needs no shell must say so with `"no_shell": true`'
         )
     gate = profile.get("task_contract", {}).get("gate_command")
-    allowed = profile.get("task_commands", {}).get("allow", [])
     # A `no_shell` round is exempt because its gate is the controller's own
     # instrument, not the worker's: `prove` runs it here, after the worker is
     # done. `oracle_findings` already skips its gate cross-check for the same
     # reason, and refusing here would make measure-only rounds unrunnable.
-    if gate and not permissions.get("no_shell", False) and gate not in allowed:
+    if (
+        gate
+        and not permissions.get("no_shell", False)
+        and not task_allowlist_admits(profile, gate)
+    ):
         findings.append(
-            "`task_commands.allow` omits the round's own gate command, so the "
-            f"worker cannot run what it is judged by: {gate}"
+            "`task_commands` names the round's own gate command neither exactly "
+            "nor by prefix, so the worker cannot run what it is judged by: "
+            f"{gate}"
         )
     return findings
 
@@ -3648,7 +3801,7 @@ def verify(profile: dict, task_key: str) -> None:
     documents_frozen = assert_round_documents_unchanged(
         profile, task_key, snapshot_data
     )
-    audited_commands, denial_findings = audit_task_commands(
+    audited_commands, denial_findings, command_notes = audit_task_commands(
         profile, task_key, snapshot_data
     )
     documents = (
@@ -3695,6 +3848,10 @@ def verify(profile: dict, task_key: str) -> None:
             f"{len(audited_commands)} task-local shell command(s) match; "
             f"{documents}; oracle sha256={sha256(oracle)}"
         )
+        if command_notes:
+            print(f"\ncommand notes ({len(command_notes)}), not blocking:")
+            for item in command_notes:
+                print(f"  - {item}")
         if findings:
             print(f"\nscope findings ({len(findings)}) for `review` to adjudicate:")
             for item in findings:
@@ -3772,6 +3929,10 @@ def verify(profile: dict, task_key: str) -> None:
         f"{len(audited_commands)} task-local shell command(s) match; "
         f"{documents}; oracle sha256={sha256(oracle)}"
     )
+    if command_notes:
+        print(f"\ncommand notes ({len(command_notes)}), not blocking:")
+        for item in command_notes:
+            print(f"  - {item}")
     if denial_findings:
         print(f"\nfindings ({len(denial_findings)}) for you to adjudicate:")
         for item in denial_findings:
