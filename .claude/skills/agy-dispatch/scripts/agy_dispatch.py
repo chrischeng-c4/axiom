@@ -4708,7 +4708,32 @@ def accept(profile: dict, task_key: str) -> None:
     print(f"  git -C {spec['derived_from']} cherry-pick {sha}")
 
 
-def discard(profile_path: str, task_key: str, *, keep_branch: bool = False) -> None:
+def uncommitted_candidate(worktree: Path) -> list[str]:
+    """Every path in the worker checkout that no commit on its branch holds.
+
+    Porcelain lines rather than bare paths: `?? ` and ` M ` are different
+    losses, and a controller deciding whether to spend `accept` first needs to
+    know which one it is looking at.
+    """
+    if not (worktree / ".git").exists():
+        return []
+    out = subprocess.run(
+        [*GIT, "-C", str(worktree), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        return []
+    return sorted(line for line in out.stdout.splitlines() if line.strip())
+
+
+def discard(
+    profile_path: str,
+    task_key: str,
+    *,
+    keep_branch: bool = False,
+    drop_uncommitted: bool = False,
+) -> None:
     """Return the AGY project home, then remove the round's worktree/branch.
 
     The project binding is restored first so an interrupted cleanup never
@@ -4719,6 +4744,27 @@ def discard(profile_path: str, task_key: str, *, keep_branch: bool = False) -> N
     controller_root = spec.get("derived_from") or raw.get("controller_root")
     if not controller_root:
         raise SystemExit("profile has no derived worktree to discard")
+
+    # Before anything is restored or removed. The refusal has to leave the round
+    # exactly as it found it -- a `discard` that repointed the project and then
+    # stopped would strand the candidate in a checkout the project no longer
+    # opens, which is the failure this check exists to prevent, one step over.
+    worktree_path = spec.get("path")
+    if worktree_path and Path(worktree_path).exists():
+        pending = uncommitted_candidate(Path(worktree_path))
+        if pending and not drop_uncommitted:
+            listed = "\n".join(f"  {line}" for line in pending)
+            raise SystemExit(
+                f"refusing to discard: {len(pending)} path(s) in "
+                f"{worktree_path} are in no commit\n"
+                f"{listed}\n"
+                "this worktree is the only copy of them -- `accept` is the "
+                "only verb that commits, and `revise` carries the candidate "
+                "across run ids uncommitted on purpose\n"
+                f"commit them with `accept PROFILE {task_key}`, carry them "
+                f"with `revise`, or destroy them with "
+                f"`discard PROFILE {task_key} --drop-uncommitted`"
+            )
 
     project_id = raw.get("agy_project_id")
     home_root = spec.get("project_home_root") or controller_root
@@ -4742,11 +4788,19 @@ def discard(profile_path: str, task_key: str, *, keep_branch: bool = False) -> N
     branch = spec.get("branch", "")
     path = spec.get("path")
     if path and Path(path).exists():
+        destroyed = uncommitted_candidate(Path(path))
         subprocess.run(
             [*GIT, "-C", controller_root, "worktree", "remove", "--force", path],
             check=True,
         )
         print(f"removed worktree {path}")
+        # Named on the way out too. The opt-in was given once, possibly before
+        # the last thing the worker wrote; the log is where the loss is read
+        # back from afterwards.
+        if destroyed:
+            print(f"  destroyed {len(destroyed)} uncommitted path(s):")
+            for line in destroyed:
+                print(f"    {line}")
     subprocess.run(
         [*GIT, "-C", controller_root, "worktree", "prune"],
         check=True,
@@ -5005,6 +5059,12 @@ def main() -> None:
                 action="store_true",
                 help="release the worktree but retain the worker branch",
             )
+            item.add_argument(
+                "--drop-uncommitted",
+                action="store_true",
+                help="destroy work no commit holds; without it discard "
+                "refuses and lists what it would have removed",
+            )
         if verb == "revise":
             item.add_argument(
                 "next_key",
@@ -5059,7 +5119,10 @@ def main() -> None:
         {
             "worktree": lambda: worktree(args.profile, args.task_key),
             "discard": lambda: discard(
-                args.profile, args.task_key, keep_branch=args.keep_branch
+                args.profile,
+                args.task_key,
+                keep_branch=args.keep_branch,
+                drop_uncommitted=args.drop_uncommitted,
             ),
         }[args.verb]()
         return

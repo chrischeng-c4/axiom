@@ -54,7 +54,7 @@ python3 $S adjudicate profile.json KEY admit|reject FINDING # record decision on
 python3 $S prove      profile.json KEY mutant|candidate
 python3 $S sweep      profile.json KEY SCRIPT
 python3 $S accept     profile.json KEY     # commits on the worker's branch, prints a cherry-pick
-python3 $S discard    profile.json KEY     # always, even after a failure
+python3 $S discard    profile.json KEY     # always, even after a failure; refuses while work sits in no commit
 ```
 
 `grant`, `doctor`, and `status` take the profile alone; the rest also take the

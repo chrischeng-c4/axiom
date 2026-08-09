@@ -2204,6 +2204,66 @@ class DerivedWorktreeTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             agy_dispatch.load_profile(str(path))
 
+    def dirty_round(self) -> tuple[Path, Path]:
+        """A derived round whose worker checkout holds one uncommitted file.
+
+        This is the ordinary state of a candidate: `accept` is the only verb
+        that commits, so between `dispatch` and `accept` the worktree is the
+        only copy of the work.
+        """
+        path = self.profile_path()
+        profile = self.derive(path)
+        worker = Path(profile["worktree"]["path"])
+        (worker / "candidate.py").write_text("the only copy\n")
+        return path, worker
+
+    def test_discard_refuses_while_the_candidate_is_in_no_commit(self) -> None:
+        """`--force` on `worktree remove` made the loss unconditional and silent.
+
+        On #3351 R6 `accept` committed one of two files and the documented next
+        step was `discard`; nothing in between said the second file was about
+        to go.
+        """
+        path, worker = self.dirty_round()
+        with self.assertRaises(SystemExit) as caught:
+            with contextlib.redirect_stdout(io.StringIO()):
+                agy_dispatch.discard(str(path), "round-1")
+        message = str(caught.exception)
+        self.assertIn("candidate.py", message)
+        self.assertIn("--drop-uncommitted", message)
+        # Refused before anything moved. A discard that repointed the project
+        # and then stopped would strand the candidate in a checkout the project
+        # no longer opens -- this defect, one step over.
+        self.assertTrue((worker / "candidate.py").is_file())
+        self.assertEqual(self.project_binding(), worker.resolve())
+
+    def test_discard_destroys_the_candidate_only_when_told_to(self) -> None:
+        """The negative control: the opt-in still works, and says what it cost.
+
+        Driven through `main` rather than the function, because a guard whose
+        opt-in never reaches it is a guard that cannot be cleared at all.
+        """
+        path, worker = self.dirty_round()
+        output = self.cli("discard", str(path), "round-1", "--drop-uncommitted")
+        self.assertFalse(worker.exists())
+        self.assertIn("candidate.py", output)
+        self.assertEqual(self.project_binding(), self.controller.resolve())
+
+    def test_a_committed_candidate_discards_without_an_opt_in(self) -> None:
+        """Throwing away a round whose work is safe is what `discard` is for.
+
+        A guard that fired on every round would be routed around within a day.
+        """
+        path, worker = self.dirty_round()
+        subprocess.run(["git", "-C", str(worker), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(worker), "commit", "-q", "-m", "candidate"],
+            check=True,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.discard(str(path), "round-1")
+        self.assertFalse(worker.exists())
+
     def test_round_local_grants_are_withdrawn_on_discard(self) -> None:
         path = self.profile_path()
         self.derive(path)
