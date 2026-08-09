@@ -3573,6 +3573,9 @@ def review(profile: dict, task_key: str) -> None:
 
 
 PROOF_LABELS = ("mutant", "candidate")
+# How many failing test names go to the terminal. The record keeps all of them;
+# a mutant that breaks four hundred rows should not bury the lines around it.
+PROOF_NAMES_SHOWN = 10
 
 
 def candidate_tree_digest(profile: dict) -> str:
@@ -3595,6 +3598,71 @@ def gate_command(profile: dict) -> str:
 
 def proof_path(profile: dict, task_key: str, label: str) -> Path:
     return Path(profile["state_dir"]) / "proofs" / f"{task_key}.{label}.json"
+
+
+# The line shapes a red gate uses to name what failed. None of them is selected
+# by looking at the gate command -- `prove` stays ignorant of what the gate runs,
+# so this reads output and only output, and a gate matching none of these keeps
+# the positional tail it always had. Each pattern demands a fixed prefix or a
+# shape prose does not have, because a wrong name is worse than no name: the
+# field exists to say who killed the mutant.
+FAILURE_NAME_PATTERNS = (
+    # libtest: the per-test progress line, then the per-failure stdout header.
+    re.compile(r"^test (?P<name>\S+) \.\.\. FAILED\b"),
+    re.compile(r"^---- (?P<name>\S+) stdout ----$"),
+    # go test
+    re.compile(r"^\s*--- FAIL: (?P<name>\S+)"),
+    # pytest's short summary; the `::` is what keeps prose out of it.
+    re.compile(r"^FAILED (?P<name>\S+::\S+)"),
+    # python unittest, whose locator parenthesis plays the same role.
+    re.compile(r"^(?:FAIL|ERROR): (?P<name>\S+) \("),
+)
+
+
+def failing_test_names(output: str) -> list[str]:
+    """The tests a red gate named, harvested from what it printed.
+
+    A twenty-line tail keeps the wrong twenty lines. For this crate the last
+    twenty are cargo's closing warnings, the `Running unittests` banner,
+    incidental stderr, and `error: test failed`; libtest's `failures:` block
+    scrolled off long before. Measured over the 71 mutant proofs in the live
+    state directory -- 58 of them red and compiling -- not one names a test.
+
+    That makes a mutant killed by the round's own new rows byte-identical to one
+    killed by an unrelated flake, and this gate is known to flake under load. The
+    names are the only thing that separates them, and they have to be taken while
+    the mutation is still applied: once the tree is restored there is nothing left
+    to re-run.
+    """
+    names: list[str] = []
+
+    def add(name: str) -> None:
+        if name and name not in names:
+            names.append(name)
+
+    in_summary = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        # libtest closes with an indented list under a bare `failures:`. It
+        # repeats what the headers above already gave, and is read anyway
+        # because the two forms are lost separately: `--nocapture` drops the
+        # headers, a truncated capture can drop the list.
+        if stripped == "failures:":
+            in_summary = True
+            continue
+        if in_summary:
+            if not stripped:
+                continue
+            if line[:1].isspace() and " " not in stripped:
+                add(stripped)
+                continue
+            in_summary = False
+        for pattern in FAILURE_NAME_PATTERNS:
+            match = pattern.match(line)
+            if match:
+                add(match.group("name"))
+                break
+    return names
 
 
 def prove(profile: dict, task_key: str, label: str) -> None:
@@ -3621,6 +3689,7 @@ def prove(profile: dict, task_key: str, label: str) -> None:
         capture_output=True,
     )
     output = (result.stdout + result.stderr).strip()
+    failing = failing_test_names(output)
     record = {
         "task_key": task_key,
         "label": label,
@@ -3628,6 +3697,10 @@ def prove(profile: dict, task_key: str, label: str) -> None:
         "exit_code": result.returncode,
         "compiled": "could not compile" not in output,
         "tree_digest": candidate_tree_digest(profile),
+        # Kept beside the tail, not instead of it: a gate that names nothing
+        # loses nothing, and a gate that names something stops depending on
+        # where in its output it happened to say so.
+        "failing_tests": failing,
         "output_tail": output.splitlines()[-20:],
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -3637,6 +3710,17 @@ def prove(profile: dict, task_key: str, label: str) -> None:
     print(f"exit  : {result.returncode}")
     if not record["compiled"]:
         print("note  : did not compile; this red says nothing about behaviour")
+    if failing:
+        print(f"failed: {len(failing)} named test(s)")
+        for name in failing[:PROOF_NAMES_SHOWN]:
+            print(f"        {name}")
+        if len(failing) > PROOF_NAMES_SHOWN:
+            print(
+                f"        ... and {len(failing) - PROOF_NAMES_SHOWN} more, "
+                "all in the record"
+            )
+    elif result.returncode != 0:
+        print("failed: the gate named no test; the record keeps the tail instead")
     print(f"digest: {record['tree_digest'][:12]}")
     print(f"saved : {path}")
 
@@ -3860,6 +3944,22 @@ def proof_findings(profile: dict, task_key: str) -> list[str]:
     return findings
 
 
+def mutant_killers(profile: dict, task_key: str) -> list[str]:
+    """The tests the recorded `mutant` proof saw fail, if the gate named any.
+
+    Read back rather than recomputed: the gate ran against a tree that no longer
+    exists by the time anyone accepts, which is the whole reason the names are
+    written down.
+    """
+    path = proof_path(profile, task_key, "mutant")
+    if not path.exists():
+        return []
+    try:
+        return list(json.loads(path.read_text()).get("failing_tests") or [])
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
 def proof_notes(profile: dict, task_key: str) -> list[str]:
     """What the recorded proofs do not establish, short of blocking acceptance.
 
@@ -3883,6 +3983,19 @@ def proof_notes(profile: dict, task_key: str) -> list[str]:
             "the `mutant` proof did not compile, so the gate is shown to need "
             "the new symbol, not to measure its behaviour; discrimination "
             "rests on a sweep whose mutants still compile"
+        )
+    # A red mutant whose gate named nothing records the same bytes whether this
+    # round's own rows killed it or an unrelated flake did, and this gate is
+    # known to flake under load. Restoring the tree destroys the only thing that
+    # could have told them apart, so the ambiguity is said here instead of being
+    # left to look like attribution.
+    elif record["mutant"].get("exit_code") and not record["mutant"].get(
+        "failing_tests"
+    ):
+        notes.append(
+            "the `mutant` proof went red without the gate naming a failing "
+            "test, so the record cannot separate a kill by this round's rows "
+            "from a kill by something unrelated"
         )
     # Presence was the whole test, so a sweep that went wrong counted exactly
     # as much as one that went right: `sweep` refuses an unrestored tree, but
@@ -3969,6 +4082,16 @@ def accept(profile: dict, task_key: str) -> None:
                 "discriminate:\n"
                 + "\n".join(f"  - {item}" for item in unproven)
             )
+        # Named here so the accepted round's evidence carries the attribution
+        # with it. Whether the kill was targeted or coincidental is the reader's
+        # call, and until the names were recorded there was nothing to call it on.
+        killers = mutant_killers(profile, task_key)
+        if killers:
+            print(f"mutant killed by {len(killers)} named test(s):")
+            for name in killers[:PROOF_NAMES_SHOWN]:
+                print(f"  {name}")
+            if len(killers) > PROOF_NAMES_SHOWN:
+                print(f"  ... and {len(killers) - PROOF_NAMES_SHOWN} more")
         for note in proof_notes(profile, task_key):
             print(f"note: {note}")
     subprocess.run(
