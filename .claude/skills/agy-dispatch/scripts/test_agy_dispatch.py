@@ -813,6 +813,23 @@ class DispatchControllerTest(unittest.TestCase):
         self.assertIn("rg -n SECRET unrelated", findings[0])
         self.assertIn("nothing ran", findings[0])
 
+    def test_a_round_with_no_conversation_audits_to_the_same_shape(self) -> None:
+        """Both exits from `audit_task_commands` return the same arity.
+
+        The no-conversation branch is the one a fixture that builds a
+        conversation can never reach, so it went out of step with the other exit
+        and every caller unpacking the result died on a ValueError -- `verify`
+        included, which is the verb that reads it. Callers are the whole point
+        of the return shape, so the shape is what this asserts."""
+        profile = self.profile(self.repo_a, "project-a", "42")
+        result = agy_dispatch.audit_task_commands(
+            profile,
+            "42",
+            {"conversation_id": None, "conversation_step_floor": -1},
+        )
+        self.assertEqual(len(result), 4)
+        self.assertEqual(list(result), [[], [], [], []])
+
     def test_an_unlisted_command_that_ran_still_voids(self) -> None:
         """The other half of the pair. Same request, same allowlist; the only
         difference is that the permission layer let this one through, and that

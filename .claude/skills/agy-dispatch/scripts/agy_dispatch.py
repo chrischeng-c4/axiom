@@ -1442,7 +1442,7 @@ def audit_task_commands(
     profile: dict,
     task_key: str,
     snapshot_data: dict,
-) -> tuple[list[dict], list[str], list[str]]:
+) -> tuple[list[dict], list[str], list[str], list[dict]]:
     """The commands that ran, the ones worth adjudicating, and the ones to note.
 
     Findings block the round at `review`; notes do not. The split is by which
@@ -1459,7 +1459,11 @@ def audit_task_commands(
             f"{snapshot_id} -> {current_id or '<missing>'}"
         )
     if not current_id:
-        return [], [], []
+        # Four, matching the audited/findings/notes/every-command shape below.
+        # This branch is the one a fixture with a conversation never reaches,
+        # which is how it went out of step with the other return in the first
+        # place and took `verify` down with a ValueError for four rounds.
+        return [], [], [], []
     commands = requested_run_commands(
         current_id,
         after_step=int(snapshot_data.get("conversation_step_floor", -1)),
