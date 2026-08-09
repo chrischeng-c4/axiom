@@ -123,6 +123,25 @@ def head_digests(root: Path, scope: str) -> dict[str, str]:
     return digests
 
 
+def project_protective_rules(project_id: str) -> dict[str, list[str]]:
+    """The Project's live `deny` and `ask` rules, read through the dispatcher.
+
+    Imported rather than reimplemented: the two scripts have to agree on where
+    a Project document lives and how its grants are shaped, and `grant` refuses
+    a declared surface that drops a guard the recorded baseline held. A second
+    reader that disagreed by one normalization step would turn every generated
+    profile into that refusal.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import agy_dispatch
+
+    project = json.loads(
+        agy_dispatch.project_path_by_id(project_id).read_text()
+    )
+    surface = agy_dispatch.project_permission_surface(project)
+    return {kind: list(surface[kind]) for kind in agy_dispatch.PROTECTIVE_KINDS}
+
+
 def parse_write(spec: str) -> tuple[str, int | None]:
     """Split `path` or `path:budget`. Windows-style drive letters are not a case
     we support, so a lone trailing colon-integer is unambiguously a budget."""
@@ -274,10 +293,19 @@ def main() -> int:
     # controller flips off each round teaches it to flip past the real finding
     # standing next to it. Add it by hand for a round that genuinely wants an
     # empty global scope.
+    # `deny` and `ask` are inherited from the Project rather than emitted empty.
+    # `grant` installs the declared surface verbatim, so an empty `deny` did not
+    # mean "this round adds nothing" -- it meant "this round revokes every guard
+    # the Project holds", and on the 3358-s1f round it revoked twenty of them
+    # (`command(git commit)`, `command(git push)`, the recursive-delete rule, …)
+    # leaving a bounded-write worker with no denial surface at all. The `allow`
+    # side of the same defect was #3479; it announced itself within one round,
+    # because a worker that can run nothing stops. This side announces nothing.
+    inherited = project_protective_rules(args.project_id)
     project_permissions: dict[str, object] = {
         "allow": [],
-        "deny": [],
-        "ask": [],
+        "deny": inherited["deny"],
+        "ask": inherited["ask"],
     }
     # `allow_prefix` is emitted empty rather than omitted. A controller learns
     # the round's vocabulary by reading a generated profile, and the key it
@@ -345,6 +373,11 @@ def main() -> int:
     print(f"wrote {out}")
     print(f"mode:                {profile['mode']}")
     print(f"protected artifacts: {len(protected)}")
+    print(
+        "inherited guards:    "
+        f"{len(inherited['deny'])} deny, {len(inherited['ask'])} ask "
+        "(carried from the Project so `grant` does not revoke them)"
+    )
     print(f"writable paths:      {len(writes)} ({len(missing)} not yet on disk)")
     if budgets:
         print(f"budgeted paths:      {len(budgets)}")

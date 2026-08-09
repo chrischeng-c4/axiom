@@ -24,6 +24,10 @@ PROJECT_DIR = HOME / ".gemini" / "config" / "projects"
 CONVERSATION_DIR = HOME / ".gemini" / "antigravity-cli" / "conversations"
 TEMP_ROOT = Path("/tmp").resolve()
 PERMISSION_KINDS = ("allow", "deny", "ask")
+# The two kinds whose loss widens the worker. Dropping an `allow` narrows it,
+# which is the safe direction and is already refused elsewhere if it goes too
+# far; dropping a `deny` or an `ask` removes a guard, and nothing noticed.
+PROTECTIVE_KINDS = ("deny", "ask")
 # `allow` is one exact command line; `allow_prefix` is an open family, matched
 # the way the permission layer itself matches. A controller means one or the
 # other, and until both were sayable only the first was: a read-only verb such
@@ -284,6 +288,25 @@ def load_profile(
     if not isinstance(require_empty, bool):
         raise SystemExit("project_permissions.require_empty_global must be boolean")
     project_permissions["require_empty_global"] = require_empty
+
+    # A protective rule the Project holds and this profile omits is dropped by
+    # `grant`, which installs the declared surface verbatim. Dropping one can be
+    # right, so the escape hatch is not a flag: each rule given up is named,
+    # in the `<kind> <rule>` form the refusal prints, so it can be copied across
+    # and so a rule added to the Project later shows up as a new, unnamed loss
+    # rather than disappearing under a blanket permission.
+    revocations = validate_rule_list(
+        project_permissions.get("intentional_revocations", []),
+        "project_permissions.intentional_revocations",
+    )
+    for entry in revocations:
+        kind = entry.split(" ", 1)[0]
+        if kind not in PROTECTIVE_KINDS or " " not in entry:
+            raise SystemExit(
+                "project_permissions.intentional_revocations entries are "
+                f"`<{'|'.join(PROTECTIVE_KINDS)}> <rule>`, not: {entry}"
+            )
+    project_permissions["intentional_revocations"] = revocations
 
     task_commands = profile["task_commands"]
     if not isinstance(task_commands, dict):
@@ -637,6 +660,14 @@ def project_policy_report(profile: dict) -> dict:
     # surface can reach the Project by a route `grant` never saw, and every
     # other check in this report iterates a list those omissions leave empty.
     blockers.extend(unauthorized_surface_refusals(profile))
+    dropped = unnamed_protective_revocations(profile)
+    if dropped:
+        blockers.append(
+            f"the declared surface drops {len(dropped)} guard(s) the Project "
+            "held at the start of this round, unnamed in "
+            "`project_permissions.intentional_revocations`: "
+            + ", ".join(dropped)
+        )
     if global_broadening:
         blockers.append(
             "inherited global rules allow "
@@ -762,6 +793,7 @@ def project_policy_report(profile: dict) -> dict:
         "extra_project_rules": extra,
         "global_rules": global_surface,
         "global_broadening_rules": global_broadening,
+        "unnamed_protective_revocations": dropped,
         "task_command_checks": command_checks,
         "dispatch_ready": not blockers,
         "blockers": blockers,
@@ -2985,6 +3017,38 @@ def restore_grants_baseline(state_dir: Path, project_id: str) -> dict | None:
     }
 
 
+def unnamed_protective_revocations(profile: dict) -> list[str]:
+    """Guards the Project holds that this profile would silently drop.
+
+    `grant` installs the declared surface verbatim, so a generated profile's
+    empty `deny` did not add this round's allow rules to the Project -- it
+    replaced the Project's twenty deny rules with none, which is the inverse of
+    what a bounded-write round is for. #3479 fixed the same shape on the `allow`
+    side, where an empty list left the worker unable to work and so announced
+    itself within one round; an empty `deny` leaves the worker able to do
+    anything and announces nothing.
+
+    Measured against the recorded baseline rather than the live Project, so a
+    second `grant` on an already-narrowed Project still reports what the round
+    started from. Returns the `<kind> <rule>` lines the profile has not named in
+    `intentional_revocations`.
+    """
+    project_id = agy_project_id(profile)
+    state_dir = Path(profile["state_dir"])
+    path = grants_baseline_path(state_dir, project_id)
+    if not path.exists():
+        return []
+    baseline = normalize_permission_surface(json.loads(path.read_text()))
+    declared = expected_project_surface(profile)
+    named = set(profile["project_permissions"].get("intentional_revocations", []))
+    return [
+        entry
+        for kind in PROTECTIVE_KINDS
+        for rule in sorted(set(baseline[kind]) - set(declared[kind]))
+        if (entry := f"{kind} {rule}") not in named
+    ]
+
+
 def uncovered_task_commands(profile: dict, surface: dict[str, list[str]]) -> list[str]:
     """Which `task_commands` a permission surface would still refuse.
 
@@ -3082,6 +3146,17 @@ def grant(profile: dict) -> None:
             "worker unable to work:\n"
             + "\n".join(f"  - {finding}" for finding in refusals)
             + "\n\nThe Project's live grants are unchanged."
+        )
+    dropped = unnamed_protective_revocations(profile)
+    if dropped:
+        raise SystemExit(
+            "refusing to install this surface, because it would revoke guards "
+            "the Project holds and this profile does not name:\n"
+            + "\n".join(f"  - {entry}" for entry in dropped)
+            + "\n\nThe Project's live grants are unchanged. Either add these to "
+            "`project_permissions.deny`/`.ask`, or, if the round means to give "
+            "them up, copy the lines above into "
+            "`project_permissions.intentional_revocations`."
         )
     uncovered = uncovered_task_commands(profile, declared)
     if uncovered:
