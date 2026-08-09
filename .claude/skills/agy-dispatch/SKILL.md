@@ -73,9 +73,13 @@ Three things the scripts will not tell you:
   proves the base is green and leaves a warm `target/`, so the round's budget
   buys reasoning instead of a cold build.
 
-To send a round back: ticketed → new delta at `inject_prompt_file`, re-`snapshot`
-if the contract changed, `resume`. One-shot → `revise`, which mints the new id
-and carries the candidate.
+To send a round back: `revise`, ticketed or not. It mints the new id, carries
+the candidate, and copies the oracle unchanged, so the delta says what was
+wrong rather than what to do. A ticketed round comes back as a one-shot
+revision — the ticket id is its identity and is spent — with `revision_of`
+keeping the descent in the prompt, the sealed task state, and the `Refs #`
+trailer on the accepted commit. `resume` is the other thing: same injection,
+continuation framing, for a round that stopped rather than went wrong.
 
 ## How to verify
 

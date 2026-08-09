@@ -157,6 +157,23 @@ def task_session_policy(profile: dict) -> str:
     return policy
 
 
+def revision_origin(profile: dict) -> str:
+    """The issue a one-shot round descends from, when it descends from one.
+
+    A ticketed round's identity *is* its issue number, and that number is spent
+    the moment a conversation exists against it. So a correction that needs a
+    fresh dispatch rather than a continuation cannot stay ticketed: it takes a
+    run id and becomes one-shot. This field is what keeps the descent on the
+    record afterwards, in the profile, in the prompt, and in the sealed frozen
+    task state -- an intent sentence alone would say it where nothing can
+    refuse it.
+    """
+    task = profile.get("task_contract")
+    if not isinstance(task, dict):
+        raise SystemExit("profile missing task_contract")
+    return str(task.get("revision_of", "") or "").strip()
+
+
 def validate_task_identity(profile: dict) -> str:
     task = profile.get("task_contract")
     if not isinstance(task, dict):
@@ -164,6 +181,7 @@ def validate_task_identity(profile: dict) -> str:
     policy = task_session_policy(profile)
     issue = str(task.get("issue", "")).strip()
     run_id = str(task.get("run_id", "")).strip()
+    origin = revision_origin(profile)
     if policy == "ticketed":
         if not issue:
             raise SystemExit(
@@ -172,6 +190,12 @@ def validate_task_identity(profile: dict) -> str:
         if run_id:
             raise SystemExit(
                 "ticketed task must not set task_contract.run_id"
+            )
+        if origin:
+            raise SystemExit(
+                "ticketed task must not set task_contract.revision_of: a "
+                "contract that both is a ticket and descends from one names "
+                "two rounds, and every later verb would have to guess which"
             )
         expected = issue
     else:
@@ -187,6 +211,13 @@ def validate_task_identity(profile: dict) -> str:
         if not isinstance(intent, str) or not intent.strip():
             raise SystemExit(
                 "one-shot task requires non-empty task_contract.intent"
+            )
+        if origin and not TASK_KEY_PATTERN.fullmatch(origin):
+            # The same rule the identity it was copied from had to satisfy, so
+            # `revise` cannot mint a descent the loader will not take back.
+            raise SystemExit(
+                "task_contract.revision_of must be the task identity the "
+                f"revision descends from, not {origin!r}"
             )
         expected = run_id
     if not TASK_KEY_PATTERN.fullmatch(expected):
@@ -886,12 +917,20 @@ def frozen_task_state(profile: dict, task_key: str) -> dict:
     if task_session_policy(profile) == "ticketed":
         return validate_live_issue(profile, task_key)
     task = profile["task_contract"]
-    return {
+    state = {
         "run_id": task_key,
         "state": "ONE_SHOT",
         "kind": task["kind"],
         "intent": task["intent"].strip(),
     }
+    origin = revision_origin(profile)
+    if origin:
+        # Recorded rather than re-fetched. The revision is judged against the
+        # oracle copied from the round it continues, not against the ticket
+        # text, so reaching the tracker here would add a network dependency to
+        # a path whose whole point is that it has none.
+        state["revision_of"] = origin
+    return state
 
 
 def dispatch_contract(profile: dict) -> dict:
@@ -1130,11 +1169,20 @@ def render_prompt(
             "Execute exactly one bounded one-shot task. This session will not "
             "be resumed."
         )
-    identity = (
-        f"Ticket: #{task_key}."
-        if policy == "ticketed"
-        else f"One-shot run id: {task_key}."
-    )
+    origin = revision_origin(profile)
+    if policy == "ticketed":
+        identity = f"Ticket: #{task_key}."
+    elif origin:
+        # A revision is one-shot only because the ticket number is the ticketed
+        # identity and it is spent. Announcing just the run id would tell the
+        # worker it is on a round with no ticket behind it, which is the one
+        # thing a revision is not.
+        identity = (
+            f"One-shot run id: {task_key}, revising the round dispatched for "
+            f"issue #{origin}."
+        )
+    else:
+        identity = f"One-shot run id: {task_key}."
     state_label = (
         "Controller-validated live ticket snapshot"
         if policy == "ticketed"
@@ -2704,11 +2752,23 @@ def revise(
 ) -> None:
     """Mint a new run id for a round that must go back, keeping its checkout.
 
-    `resume` is for a ticketed round. A one-shot run id is spent the moment a
-    conversation exists, and the refusal says only "create a new run id" -- so
-    the obvious next move is to author a new round and run `worktree`. That
-    throws the candidate away: the worker's work is uncommitted in the very
-    worktree `worktree` would re-create from HEAD, and nothing warns first.
+    A one-shot run id is spent the moment a conversation exists, and the refusal
+    says only "create a new run id" -- so the obvious next move is to author a
+    new round and run `worktree`. That throws the candidate away: the worker's
+    work is uncommitted in the very worktree `worktree` would re-create from
+    HEAD, and nothing warns first.
+
+    A ticketed round is revised the same way, and has to be. `resume` is not the
+    alternative it looks like: it re-renders the *same* injection under a
+    continuation framing, so it can say "finish what you started" and cannot say
+    "that was wrong". Sending a correction therefore needs a fresh dispatch, and
+    a fresh dispatch needs a key that is not spent -- which a ticketed round
+    does not have, because its identity is the issue number itself. So the
+    revision converts to one-shot and records the descent in
+    `task_contract.revision_of`, which is where the ticket stays visible to the
+    worker, to the frozen task state the snapshot seals, and to the reader of
+    the profile. Writing `run_id` beside `issue` instead produced a profile
+    every verb refused to load.
 
     A revision is two changes and no more: a fresh run id, and the delta
     contract that says what was wrong. Everything else is deliberately carried
@@ -2760,7 +2820,24 @@ def revise(
         )
 
     revised = json.loads(Path(raw_path).read_text())
-    revised["task_contract"]["run_id"] = next_key
+    contract = revised["task_contract"]
+    origin = revision_origin(profile)
+    if task_session_policy(profile) == "ticketed":
+        origin = str(contract.pop("issue", "")).strip()
+        contract["session_policy"] = "one-shot"
+    if origin:
+        contract["revision_of"] = origin
+        # Machine-owned, and rewritten on every revision rather than carried,
+        # so the sentence never disagrees with the two fields it is derived
+        # from. An author's own intent is left alone; a round that descends
+        # from no ticket has nothing here to say.
+        contract["intent"] = (
+            f"Revision {next_key} of round {task_key}, which descends from "
+            f"issue #{origin}. The sealed claim is the oracle copied from "
+            f"{task_key}; the delta contract says what was wrong with the "
+            "candidate."
+        )
+    contract["run_id"] = next_key
     next_injection = state / "injections" / f"{next_key}.md"
     next_injection.parent.mkdir(parents=True, exist_ok=True)
     next_injection.write_text(source.read_text())
@@ -2770,6 +2847,11 @@ def revise(
     target.write_text(json.dumps(revised, indent=2) + "\n")
 
     print(f"carried  : {len(touched)} changed path(s) in {profile['root']}")
+    if origin:
+        print(
+            f"descends : issue #{origin}, as a one-shot revision -- the ticket "
+            "id is spent, so the round cannot keep it as its identity"
+        )
     print(f"injection: {next_injection}")
     print(f"oracle   : copied unchanged from {task_key}")
     print(f"profile  : {target}")
@@ -4324,7 +4406,10 @@ def accept(profile: dict, task_key: str) -> None:
         [*GIT, "-C", str(root), "add", "--", *touched],
         check=True,
     )
-    issue = profile["task_contract"].get("issue")
+    # A revision of a ticketed round is one-shot, because the ticket id is its
+    # spent identity -- but the commit is still the ticket's, and this trailer
+    # is the only place the round's descent survives the state directory.
+    issue = profile["task_contract"].get("issue") or revision_origin(profile)
     trailer = f"\n\nRefs #{issue}" if issue else ""
     subprocess.run(
         [

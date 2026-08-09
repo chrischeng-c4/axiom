@@ -2384,6 +2384,189 @@ class DerivedWorktreeTest(unittest.TestCase):
         delta.write_text("## Task\n\nwhat was wrong\n")
         return profile, delta
 
+    def revisable_ticketed_round(self) -> tuple[dict, Path]:
+        """The same round, driven from an issue instead of a run id.
+
+        `ticketed` is the documented default and every round driven from GitHub
+        has it, so this is the common shape rather than a variant.
+        """
+        self.seed_generated_round()
+        state = self.root / "state"
+        (state / "oracles").mkdir(parents=True, exist_ok=True)
+        (state / "injections").mkdir(parents=True, exist_ok=True)
+        (state / "oracles" / "3458.md").write_text("## Claim\n\nthe judge\n")
+        (state / "injections" / "3458.md").write_text("## Task\n\nthe first ask\n")
+        path = self.profile_path(
+            inject_prompt_file=str(state / "injections" / "3458.md"),
+            task_contract={
+                "kind": "implementation",
+                "session_policy": "ticketed",
+                "issue": "3458",
+                "design_inputs": [
+                    {
+                        "path": "design.md",
+                        "sha256": agy_dispatch.sha256(self.controller / "design.md"),
+                    }
+                ],
+                "gate_command": "grep -q accepted README.md",
+            },
+        )
+        profile = self.derive(path, "3458")
+        (Path(profile["worktree"]["path"]) / "README.md").write_text(
+            "base\naccepted\n"
+        )
+        delta = self.root / "delta-ticketed.md"
+        delta.write_text("## Task\n\nwhat was wrong\n")
+        return profile, delta
+
+    def revise_ticket(self, profile: dict, task_key: str, next_key: str) -> dict:
+        raw = (
+            self.root / "profile.json"
+            if task_key == "3458"
+            else self.root / "state" / "rounds" / f"{task_key}.profile.json"
+        )
+        agy_dispatch.revise(
+            profile,
+            str(raw),
+            task_key,
+            next_key,
+            str(self.root / "delta-ticketed.md"),
+        )
+        return agy_dispatch.load_profile(
+            str(self.root / "state" / "rounds" / f"{next_key}.profile.json")
+        )
+
+    def test_revising_a_ticket_yields_a_profile_every_verb_can_load(self) -> None:
+        """The revision used to be refused by the loader that runs on all of them.
+
+        Stamping `run_id` onto a carried ticketed contract produced a task that
+        was both, and `validate_task_identity` refuses exactly that -- so
+        `revise` printed a next-step sequence none of whose steps could run.
+        The ticket id is the ticketed identity and is spent once a conversation
+        exists against it, so a round needing a fresh dispatch cannot keep it.
+        """
+        profile, _ = self.revisable_ticketed_round()
+
+        revised = self.revise_ticket(profile, "3458", "3458-r2")
+
+        agy_dispatch.validate_task_key(revised, "3458-r2")
+        contract = revised["task_contract"]
+        self.assertEqual(contract["session_policy"], "one-shot")
+        self.assertEqual(contract["run_id"], "3458-r2")
+        self.assertNotIn("issue", contract)
+        self.assertEqual(contract["revision_of"], "3458")
+        # Carried exactly as a one-shot revision is: same tree, same claim.
+        self.assertEqual(revised["root"], profile["worktree"]["path"])
+        self.assertEqual(
+            (self.root / "state" / "oracles" / "3458-r2.md").read_text(),
+            "## Claim\n\nthe judge\n",
+        )
+
+    def test_a_revised_ticket_reaches_the_worker_as_a_delta_on_that_ticket(
+        self,
+    ) -> None:
+        """`resume` is not the ticketed alternative it looks like.
+
+        It re-renders the *same* injection under a continuation framing, so it
+        can say "finish what you started" and cannot say "that was wrong". The
+        revision has to carry both the delta and the ticket it descends from.
+        """
+        profile, _ = self.revisable_ticketed_round()
+        revised = self.revise_ticket(profile, "3458", "3458-r2")
+
+        task_state = agy_dispatch.frozen_task_state(revised, "3458-r2")
+        prompt = agy_dispatch.render_prompt(
+            revised, "3458-r2", "the sealed claim", task_state
+        )
+
+        self.assertEqual(task_state["revision_of"], "3458")
+        self.assertIn("revising the round dispatched for issue #3458", prompt)
+        self.assertIn("what was wrong", prompt)
+
+    def test_a_ticketless_revision_is_left_exactly_as_it_was(self) -> None:
+        """The one-shot path already worked, so the conversion must not reach it.
+
+        Its `intent` is the author's, and a machine sentence written over it
+        would lose the only statement of what the round is for.
+        """
+        profile, delta = self.revisable_round()
+
+        agy_dispatch.revise(
+            profile, str(self.root / "profile.json"), "round-1", "round-2", str(delta)
+        )
+
+        contract = json.loads(
+            (self.root / "state" / "rounds" / "round-2.profile.json").read_text()
+        )["task_contract"]
+        self.assertEqual(contract["session_policy"], "one-shot")
+        self.assertNotIn("revision_of", contract)
+        self.assertEqual(contract["intent"], "bounded change")
+
+    def test_a_second_revision_still_names_the_ticket_not_its_parent(self) -> None:
+        """Descent is from the ticket, not from the previous run id.
+
+        Carrying the parent's `revision_of` forward is what keeps r3 pointing at
+        #3458 rather than at r2, which is a run id no tracker knows.
+        """
+        profile, _ = self.revisable_ticketed_round()
+        second = self.revise_ticket(profile, "3458", "3458-r2")
+
+        third = self.revise_ticket(second, "3458-r2", "3458-r3")
+
+        self.assertEqual(third["task_contract"]["revision_of"], "3458")
+        # Rewritten, not carried, so the sentence cannot outlive its own facts.
+        self.assertIn(
+            "Revision 3458-r3 of round 3458-r2",
+            third["task_contract"]["intent"],
+        )
+        self.assertIn("issue #3458", third["task_contract"]["intent"])
+
+    def test_a_contract_cannot_be_a_ticket_and_descend_from_one(self) -> None:
+        """Both fields set names two rounds, and every verb would have to guess."""
+        profile, _ = self.revisable_ticketed_round()
+        profile["task_contract"]["revision_of"] = "3458"
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.validate_task_identity(profile)
+
+        self.assertIn("must not set task_contract.revision_of", str(error.exception))
+
+    def test_a_descent_is_held_to_the_rule_the_identity_it_names_was(self) -> None:
+        """It ends up in a commit trailer, so an unchecked value is a bad `Refs #`."""
+        profile, _ = self.revisable_ticketed_round()
+        contract = profile["task_contract"]
+        del contract["issue"]
+        contract.update(
+            session_policy="one-shot",
+            run_id="3458-r2",
+            intent="carried",
+            revision_of="../elsewhere",
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            agy_dispatch.validate_task_identity(profile)
+
+        self.assertIn("revision_of must be the task identity", str(error.exception))
+
+    def test_the_accepted_commit_of_a_revised_ticket_still_refs_it(self) -> None:
+        """The trailer is the only place the descent outlives the state dir.
+
+        `/tmp/agy-dispatch` is transient by contract; the commit is not.
+        """
+        self.isolate_permission_files()
+        profile, _ = self.revisable_ticketed_round()
+        worker = Path(profile["worktree"]["path"])
+
+        revised = self.revise_ticket(profile, "3458", "3458-r2")
+        agy_dispatch.snapshot(revised, "3458-r2")
+        self.record_proofs(revised, worker, task_key="3458-r2")
+        agy_dispatch.accept(revised, "3458-r2")
+
+        self.assertIn(
+            "Refs #3458",
+            agy_dispatch.git_output(worker, "log", "-1", "--format=%B"),
+        )
+
     def test_a_revision_keeps_the_checkout_and_mints_a_new_run_id(self) -> None:
         """The whole point: the worker's uncommitted candidate survives.
 
