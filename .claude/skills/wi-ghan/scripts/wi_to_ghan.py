@@ -100,13 +100,28 @@ def refuse_unless_rewritable(item: dict, issue: str) -> None:
 def fence(text: str) -> str:
     """Quote a body that may itself contain fences.
 
-    A legacy work item routinely holds a ``` block, so the quote around it has
-    to be longer than anything inside it or the injection's own section ends
-    early and lint reads the remainder as prose.
+    Exactly three backticks, even though a legacy work item routinely holds a
+    fenced block of its own and the nesting therefore reads oddly. Lint pairs
+    quotes with `re.findall(r"```(.*?)```")` and checks every line it finds
+    against the recorded capture, so a wider bar is not a longer quote -- it is
+    no quote at all, and the round is refused for improvising a state it in
+    fact copied verbatim.
+
+    Nesting costs nothing here: whichever way the fences pair up, every line
+    that lands inside a pair came from the tracker body, so every line lint
+    checks is one the capture holds.
+
+    Each line is indented, because a work-item body is made of `## ` headings
+    and the injection is split into sections by exactly those. Left at column
+    zero, the body's own `## Problem` ends `## Current behavior` on its first
+    line -- the section then holds an opening fence and nothing else, and lint
+    says the round quotes nothing while the quote is sitting right there. Both
+    sides strip a line before comparing it, so the indent costs no fidelity.
     """
-    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
-    bar = "`" * max(4, longest + 1)
-    return f"{bar}\n{text.rstrip()}\n{bar}"
+    quoted = "\n".join(
+        f"    {line}" if line.strip() else "" for line in text.rstrip().splitlines()
+    )
+    return f"```\n{quoted}\n```"
 
 
 def render_oracle(issue: str, title: str, gate: str, target: str) -> str:
@@ -219,6 +234,13 @@ def main() -> int:
         action="store_true",
         help="show the profile invocation and both documents without writing anything",
     )
+    ap.add_argument(
+        "--refresh",
+        action="store_true",
+        help="rewrite the oracle and injection even if they already exist. Off "
+        "by default so a hand-edited document survives a re-projection; pass it "
+        "when the renderer changed and the edits were not yours",
+    )
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
@@ -305,19 +327,33 @@ def main() -> int:
         print(injection_text)
         return 0
 
-    made = subprocess.run(argv, capture_output=True, text=True)
-    sys.stdout.write(made.stdout)
-    if made.returncode != 0:
-        sys.stderr.write(made.stderr)
-        raise SystemExit(f"make_profile.py exited {made.returncode}")
+    # Regenerating the profile resets `root` to the controller checkout, which
+    # silently unbinds a worktree the round already derived -- and every verb
+    # after `worktree` then refuses, naming a step that was in fact already
+    # done. So a bound profile is left alone and only its documents are
+    # re-rendered.
+    bound = None
+    if Path(out).exists():
+        existing = json.loads(Path(out).read_text())
+        if existing.get("root") != existing.get("controller_root"):
+            bound = existing
+
+    if bound is None:
+        made = subprocess.run(argv, capture_output=True, text=True)
+        sys.stdout.write(made.stdout)
+        if made.returncode != 0:
+            sys.stderr.write(made.stderr)
+            raise SystemExit(f"make_profile.py exited {made.returncode}")
+    else:
+        print(f"kept   {out} (already bound to {bound['root']}; profile untouched)")
 
     profile = json.loads(Path(out).read_text())
     for path, text in (
         (codex_dispatch.oracle_path(profile, args.issue), oracle_text),
         (codex_dispatch.injection_path(profile, args.issue), injection_text),
     ):
-        if path.exists():
-            print(f"kept   {path} (already authored; projection never overwrites)")
+        if path.exists() and not args.refresh:
+            print(f"kept   {path} (already authored; pass --refresh to overwrite)")
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
