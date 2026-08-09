@@ -67,6 +67,26 @@ def read_work_item(issue: str, repo: str | None) -> dict:
     return item
 
 
+def landed_rounds(root: Path, issue: str) -> list[str]:
+    """Commit subjects showing a dispatch round for `issue` was already accepted.
+
+    The tracker is not the authority on whether work is done: a round can land
+    and leave the issue open, which is how #3447 reached this rewrite with both
+    of its gates already green. Commit subjects are, because `accept` writes
+    them. Read-only, and a miss here costs a warning rather than a refusal --
+    a partially delivered multi-row work item legitimately has landed rounds
+    and still has rows left.
+    """
+    done = subprocess.run(
+        ["git", "-c", "core.fsmonitor=false", "log", "--format=%h %s", "-400"],
+        cwd=root, capture_output=True, text=True,
+    )
+    if done.returncode != 0:
+        return []
+    marker = re.compile(rf"^\S+ (?:agy|codex)\({re.escape(issue)}(?:-[^)]*)?\):")
+    return [line for line in done.stdout.splitlines() if marker.match(line)]
+
+
 def project_of(labels: list[str], override: str | None) -> str:
     if override:
         return override
@@ -290,6 +310,27 @@ def main() -> int:
             if not (root / token.split(":")[0]).exists()
         }
     )
+
+    landed = landed_rounds(root, args.issue)
+    if landed:
+        # An open tracker issue whose work already landed is the one input this
+        # rewrite cannot survive. The premises still resolve -- they are read
+        # from the checkout -- but the `## Acceptance` "current" column is
+        # copied from the tracker's narrative, which describes the world before
+        # the fix. The result is a structurally valid body asserting a baseline
+        # that no longer exists, and no gate in this skill can see it: the shape
+        # is right and the coordinates are real. #3447 is the worked example.
+        print(
+            f"warning: #{args.issue} already has landed work: "
+            + ", ".join(landed)
+        )
+        print(
+            "         Measure this work item's gates before rewriting it. If "
+            "they are already\n"
+            "         green the issue wants closing, not a GHAN body whose "
+            "current-observation\n"
+            "         column would describe a state the checkout left behind."
+        )
 
     out = args.out or f"/tmp/codex-dispatch/{args.issue}-ghan.json"
     argv = [
