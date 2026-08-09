@@ -83,6 +83,15 @@ def acceptance_rows(body: str) -> list[str]:
     return rows
 
 
+def extract_command(row: str) -> str:
+    """Extract raw command string from an acceptance table row."""
+    cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+    if len(cells) < 2:
+        return ""
+    return re.sub(r"^`+|`+$", "", cells[1]).strip()
+
+
+
 def split_title(text: str, path: Path) -> tuple[str, str]:
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -247,6 +256,31 @@ def main() -> int:
         print(f"FAIL  {path}: passed=true with {len(errors)} error(s) reported")
         for message in errors:
             print(f"  - {message}")
+        return 1
+
+    repo_root = Path(__file__).resolve().parents[4]
+    measured_rows: list[tuple[str, int, str]] = []
+    for row in rows:
+        cmd = extract_command(row)
+        if not cmd:
+            continue
+        done = subprocess.run(
+            cmd, shell=True, cwd=repo_root, capture_output=True, text=True
+        )
+        out_err = (done.stdout + done.stderr).strip()
+        measured_rows.append((cmd, done.returncode, out_err))
+
+    if measured_rows and all(rc == 0 for _, rc, _ in measured_rows):
+        print(
+            f"FAIL  {path}: all {len(measured_rows)} acceptance row(s) already succeed against the checkout; "
+            "a work item's gate baseline must be measured red before the change"
+        )
+        for cmd, rc, out_err in measured_rows:
+            print(f"  - command: {cmd}")
+            print(f"    exit: {rc}")
+            if out_err:
+                for line in out_err.splitlines():
+                    print(f"    {line}")
         return 1
 
     print(f"PASS  {path}")
