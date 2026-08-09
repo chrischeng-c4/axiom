@@ -65,6 +65,25 @@ RUN_COMMAND_REQUEST_STEP = 15
 RUN_COMMAND_OUTCOME_STEP = 21
 RUN_COMMAND_DENIED_STATUS = 7
 
+# A file edit is recorded the same way, and step 15 is the request row for both:
+# it is the generic "the worker asked for a tool" step, not a run_command step.
+# The outcome of an edit lands at 5, or at 17 in a small tail of rounds -- 3883
+# and 13 rows respectively across the 477 conversations on this machine.
+#
+# These rows are read for one purpose: to place each write in the same total
+# order as the command runs, so a gate result can be told from the tree it
+# describes. The store carries no timestamp, so `idx` is the only clock there is.
+FILE_WRITE_OUTCOME_STEPS = (5, 17)
+FILE_WRITE_TOOLS = frozenset(
+    {"replace_file_content", "multi_replace_file_content", "write_to_file"}
+)
+# The tool name is a length-delimited protobuf string field at the head of the
+# step payload: the field tag `\x12`, a single length byte, then the name. The
+# length is re-checked against the name because the tag byte alone matches
+# often inside the file content these payloads also carry.
+TOOL_NAME_FIELD = re.compile(rb"\x12([\x03-\x28])([a-z_]{3,40})")
+TOOL_ARGUMENT_DECODER = json.JSONDecoder()
+
 
 def resolved_under(path: Path, root: Path) -> bool:
     """Containment on real paths. `/tmp` is a symlink on macOS, so comparing the
@@ -1308,6 +1327,96 @@ def requested_run_commands(
     ]
 
 
+def step_tool_name(payload: bytes) -> str | None:
+    """Which tool this step is about, read from the payload's own field tag."""
+    for length, name in TOOL_NAME_FIELD.findall(payload or b""):
+        if length[0] == len(name):
+            return name.decode()
+    return None
+
+
+def step_tool_arguments(payload: bytes) -> dict | None:
+    """The tool's arguments, parsed rather than pattern-matched.
+
+    The arguments arrive as one JSON object embedded in the payload with its
+    keys in alphabetical order, so every content-bearing key
+    (`ReplacementChunks`, `ReplacementContent`) is decoded before `TargetFile`
+    and gets first refusal on any pattern looking for one.
+
+    File *content* cannot exploit that: JSON escapes the quotes, so the bytes
+    `"TargetFile":"` never appear inside a string value, and over the 3896 write
+    steps on this machine parsing and a naive regex agree on all 3894 that
+    record a target. A nested *object* is the case that differs -- a chunk
+    carrying a key of the same name is not escaped, and a pattern would take it
+    in preference to the real one. No such row exists here, which is exactly why
+    this reads the structure instead of trusting that to hold.
+    """
+    text = (payload or b"").decode(errors="replace")
+    start = text.find('{"')
+    if start < 0:
+        return None
+    try:
+        arguments, _ = TOOL_ARGUMENT_DECODER.raw_decode(text[start:])
+    except ValueError:
+        return None
+    return arguments if isinstance(arguments, dict) else None
+
+
+def recorded_file_writes(
+    conversation_id: str,
+    *,
+    after_step: int = -1,
+) -> list[dict]:
+    """Every file the worker wrote after the floor, in the order it wrote them.
+
+    A write that the store says did not apply is not a write: status 7 on an
+    outcome row carries the model's failed-edit text -- "Could not successfully
+    apply any edits" -- and 12 of the 3896 rows here are that. Every other
+    status counts, including the 502 that carry status 5 with no error text at
+    all, because this list feeds a refusal and an unexplained status is exactly
+    the case where guessing "nothing happened" turns a real staleness into a
+    green round. `requested_run_commands` resolves its own unknowns the same
+    way and for the same reason.
+
+    `path` is None when the store recorded no target for a write it recorded --
+    two rows here. Those are kept rather than dropped so a caller can say the
+    tree moved without being able to say where, instead of saying nothing.
+    """
+    database = conversation_database(conversation_id)
+    if not database.is_file():
+        raise SystemExit(
+            f"conversation state is missing for {conversation_id}: {database}"
+        )
+    connection = connect_conversation(database)
+    try:
+        rows = connection.execute(
+            "select idx, status, step_payload from steps "
+            "where idx > ? and step_type in ({}) order by idx".format(
+                ",".join("?" * len(FILE_WRITE_OUTCOME_STEPS))
+            ),
+            (after_step, *FILE_WRITE_OUTCOME_STEPS),
+        ).fetchall()
+    finally:
+        connection.close()
+    writes = []
+    for idx, status, payload in rows:
+        tool = step_tool_name(payload or b"")
+        if tool not in FILE_WRITE_TOOLS:
+            continue
+        if int(status) == RUN_COMMAND_DENIED_STATUS:
+            continue
+        arguments = step_tool_arguments(payload or b"") or {}
+        target = arguments.get("TargetFile")
+        writes.append(
+            {
+                "step": int(idx),
+                "tool": tool,
+                "path": target if isinstance(target, str) else None,
+            }
+        )
+    return writes
+
+
 def task_allowlist_families(profile: dict) -> list[str]:
     return profile.get("task_commands", {}).get("allow_prefix", [])
 
@@ -1418,7 +1527,91 @@ def audit_task_commands(
     audited = [
         item for item in commands if task_allowlist_admits(profile, item["command"])
     ]
-    return audited, findings, notes
+    return audited, findings, notes, commands
+
+
+def stale_gate_findings(
+    profile: dict,
+    task_key: str,
+    snapshot_data: dict,
+    commands: list[dict],
+) -> list[str]:
+    """Did the tree move under the gate result the round is reporting?
+
+    A green gate is evidence about the tree it ran against, and nothing says it
+    is evidence about the tree that stands now. The worker can run the gate,
+    read it as done, and keep editing; the round then carries a pass that
+    describes a candidate no longer on disk.
+
+    The digest this would ideally compare cannot be taken: the dispatcher is not
+    running while the worker works, it reads the conversation store afterwards,
+    so there is no moment at which it could have hashed the writable paths as
+    the gate saw them. What the store does have is `idx`, which orders the write
+    rows and the command rows together. "The gate ran, then this path was
+    written" is the same question the digest was for, and it can be asked of
+    rounds already on disk.
+
+    Scope: the contract-writable set, because that is what the round's evidence
+    is about. A post-gate write *outside* that set is already refused, by the
+    scope findings that fire on any undeclared path -- so between the two, no
+    in-tree write by an editing tool goes unremarked. A write performed by a
+    shell command instead of an editing tool is invisible to both.
+    """
+    gate = (profile.get("task_contract") or {}).get("gate_command")
+    if not gate:
+        return []
+    runs = [
+        item for item in commands if item["command"] == gate and not item["denied"]
+    ]
+    if not runs:
+        # The gate never ran. That the round reports a result anyway is a
+        # separate failure with its own issue; this check has nothing to say.
+        return []
+    last_run = runs[-1]
+    conversation_id = conversation_id_for_task(profile, task_key)
+    if not conversation_id:
+        return []
+    writes = recorded_file_writes(
+        conversation_id,
+        after_step=int(snapshot_data.get("conversation_step_floor", -1)),
+    )
+    root = Path(profile["root"]).resolve()
+    writable = set(profile["allowed_repo_writes"])
+    moved: dict[str, int] = {}
+    unnamed: list[int] = []
+    for write in writes:
+        if write["step"] <= last_run["step"]:
+            continue
+        if write["path"] is None:
+            unnamed.append(write["step"])
+            continue
+        try:
+            relative = str(Path(write["path"]).resolve().relative_to(root))
+        except ValueError:
+            continue
+        if relative in writable:
+            moved.setdefault(relative, write["step"])
+    findings = []
+    if moved:
+        where = ", ".join(
+            f"`{path}` at step {step}" for path, step in sorted(moved.items())
+        )
+        findings.append(
+            f"the gate `{gate}` last ran at step {last_run['step']}, and "
+            f"{len(moved)} contract-writable path(s) were written after it: "
+            f"{where}. Whatever that run reported describes a tree that no "
+            "longer exists. Re-run the gate against the candidate as it stands, "
+            "or send the round back."
+        )
+    if unnamed:
+        steps = ", ".join(str(step) for step in unnamed)
+        findings.append(
+            f"the gate `{gate}` last ran at step {last_run['step']}, and "
+            f"{len(unnamed)} later write step(s) ({steps}) record no target "
+            "path, so the store can neither place them inside the "
+            "contract-writable set nor rule them out. Re-run the gate."
+        )
+    return findings
 
 
 def denied(profile: dict, task_key: str) -> None:
@@ -4189,8 +4382,14 @@ def verify(profile: dict, task_key: str) -> None:
     documents_frozen = assert_round_documents_unchanged(
         profile, task_key, snapshot_data
     )
-    audited_commands, denial_findings, command_notes = audit_task_commands(
-        profile, task_key, snapshot_data
+    audited_commands, denial_findings, command_notes, all_commands = (
+        audit_task_commands(profile, task_key, snapshot_data)
+    )
+    # A gate result the tree has moved out from under is reported beside the
+    # permission findings because it fails the round the same way: something the
+    # controller would have to read before believing the candidate.
+    denial_findings = denial_findings + stale_gate_findings(
+        profile, task_key, snapshot_data, all_commands
     )
     documents = (
         "oracle and injection unchanged since snapshot"
