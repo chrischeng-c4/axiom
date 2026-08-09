@@ -119,6 +119,32 @@ class ProjectionTest(unittest.TestCase):
             self.fields["gates"], ["cargo test -p target --lib some_gate"]
         )
 
+    def test_must_not_touch_becomes_the_design_input(self) -> None:
+        """`make_profile.py` refuses a bounded-write round with no design input.
+
+        The obvious source -- references outside the write set -- is routinely
+        empty, because a GHAN body grounds its premises in the files it is about
+        to change. Here both premises name `src/thing.rs`, which is also a
+        change point, so without the must-not-touch fallback this round could
+        not produce a profile at all.
+        """
+        self.assertEqual(self.fields["design_inputs"], ["src/markers.rs"])
+        argv = from_wi.profile_argv(self.fields, "1234", ["src"])
+        self.assertIn("--design-input", argv)
+        self.assertEqual(argv[argv.index("--design-input") + 1], "src/markers.rs")
+
+    def test_a_must_not_touch_entry_that_is_not_a_file_is_not_frozen(self) -> None:
+        """A design input has to be readable to be frozen.
+
+        `### Must not touch` legitimately carries directories and prose limits;
+        handing one to `--design-input` as though it were a file produces a
+        profile whose frozen artifact cannot be hashed.
+        """
+        fields = from_wi.project(
+            BODY.replace("- `src/markers.rs`", "- `src/nowhere.rs`"), self.root
+        )
+        self.assertEqual(fields["design_inputs"], [])
+
     def test_the_expected_observation_is_the_target_not_the_current(self) -> None:
         """Column 3, not column 2.
 

@@ -276,7 +276,8 @@ def project(body: str, root: Path) -> dict:
     for required in (MUST_NOT_TOUCH, MUST_NOT_DO):
         if required not in never:
             raise Unprojectable(f"`## Never` has no `{required}` list")
-    out_of_scope = list_items(never[MUST_NOT_TOUCH]) + list_items(never[MUST_NOT_DO])
+    must_not_touch = list_items(never[MUST_NOT_TOUCH])
+    out_of_scope = must_not_touch + list_items(never[MUST_NOT_DO])
     if not out_of_scope:
         raise Unprojectable(
             f"`{MUST_NOT_TOUCH}` and `{MUST_NOT_DO}` are both empty; a limit "
@@ -295,11 +296,26 @@ def project(body: str, root: Path) -> dict:
             grouped.setdefault(hit.group(1), []).append(item)
     references = [(path, " ".join(items)) for path, items in grouped.items()]
 
+    # A bounded-write round needs at least one frozen thing the worker must read,
+    # and `make_profile.py` refuses without one. References outside the write set
+    # are the first source -- but a GHAN body usually grounds its premises in the
+    # files it is about to change, so that set is routinely empty. `### Must not
+    # touch` is the second: frozen and readable is exactly what the author meant
+    # by naming it there. Only the entries that are files in this checkout, since
+    # a design input has to be readable to be frozen.
+    design_inputs = [path for path, _ in references if path not in writes]
+    for item in must_not_touch:
+        hit = PATH_TOKEN.search(item) or FILE_LINE.search(item)
+        if hit and hit.group(1) not in design_inputs:
+            if (root / hit.group(1)).is_file():
+                design_inputs.append(hit.group(1))
+
     return {
         "goal": goal,
         "premises": premises,
         "quotes": quotes,
         "references": references,
+        "design_inputs": design_inputs,
         "writes": writes,
         "frozen": how[FROZEN].strip(),
         "gates": gates,
@@ -491,9 +507,8 @@ def profile_argv(fields: dict, issue: str, scope: list[str]) -> list[str]:
         argv += ["--scope", path]
     for path in fields["writes"]:
         argv += ["--write", path]
-    for path, _ in fields["references"]:
-        if path not in fields["writes"]:
-            argv += ["--design-input", path]
+    for path in fields["design_inputs"]:
+        argv += ["--design-input", path]
     return argv
 
 
@@ -534,6 +549,15 @@ def main() -> int:
         "change points when omitted",
     )
     ap.add_argument(
+        "--design-input",
+        action="append",
+        default=[],
+        dest="design_input",
+        help="repo-relative file to freeze and hand the worker to read; "
+        "repeatable. Added to the ones derived from the references and from "
+        "`### Must not touch`",
+    )
+    ap.add_argument(
         "--body-file",
         help="read the work item from a file instead of the tracker",
     )
@@ -560,6 +584,17 @@ def main() -> int:
         else read_work_item(args.issue, args.repo)
     )
     fields = project(body, root)
+    for path in args.design_input:
+        if path not in fields["design_inputs"]:
+            fields["design_inputs"].append(path)
+    if not fields["design_inputs"]:
+        raise SystemExit(
+            "no design input: every premise names a file this round also "
+            "writes, and `### Must not touch` names no file in this checkout. "
+            "A bounded-write round needs at least one frozen thing the worker "
+            "must read, so pass `--design-input PATH` -- or name the artifact "
+            "in the work item, where it belongs"
+        )
     scope = args.scope or derived_scope(fields["writes"])
     argv = profile_argv(fields, args.issue, scope)
 
@@ -567,6 +602,7 @@ def main() -> int:
     print(f"  write allowlist : {', '.join(fields['writes'])}")
     print(f"  gate            : {fields['gates'][0]}")
     print(f"  scope           : {', '.join(scope)}")
+    print(f"  design inputs   : {', '.join(fields['design_inputs'])}")
     print(f"  quoted premises : {len(fields['quotes'])} of {len(fields['premises'])}")
     if len(fields["gates"]) > 1:
         print(
