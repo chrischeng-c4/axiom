@@ -1340,9 +1340,13 @@ def unwrapped(command: str) -> str:
     for prefix in SHELL_WRAPPERS:
         if text.startswith(prefix):
             inner = text[len(prefix) :].strip()
-            if len(inner) >= 2 and inner[0] == inner[-1] and inner[0] in "\"'":
-                return inner[1:-1]
-            return inner
+            try:
+                tokens = shlex.split(inner)
+                if tokens:
+                    return " ".join(tokens)
+            except ValueError:
+                pass
+            return inner.lstrip("\"'")
     return text
 
 
