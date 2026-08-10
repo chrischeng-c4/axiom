@@ -4058,8 +4058,8 @@ cargo test -p target --lib some_gate
 
 ## Scope
 
-| Path | Line budget |
-|---|---|
+| Path | Line budget | Line ranges |
+|---|---|---|
 
 ## Fabrication tells
 
@@ -4100,49 +4100,75 @@ class OracleContractTest(unittest.TestCase):
 
     def test_missing_scope_section_is_reported(self) -> None:
         text = CONFORMANT_ORACLE.replace(
-            "## Scope\n\n| Path | Line budget |\n|---|---|\n\n",
+            "## Scope\n\n| Path | Line budget | Line ranges |\n|---|---|---|\n\n",
             "",
         )
         self.assert_single_finding(text, "missing the `## Scope` section")
 
-    def test_scope_mismatch_different_bounds_is_reported(self) -> None:
+    def test_scope_mismatch_is_reported(self) -> None:
         text = CONFORMANT_ORACLE.replace(
-            "| Path | Line budget |\n|---|---|",
-            "| Path | Line budget |\n|---|---|\n| src/writable.py | 50 |",
+            "| Path | Line budget | Line ranges |\n|---|---|---|",
+            "| Path | Line budget | Line ranges |\n|---|---|---|\n| src/writable.py | 50 | any |",
         )
         profile = {
             "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
             "allowed_repo_writes": ["src/writable.py"],
             "path_change_budgets": {"src/writable.py": 100},
+            "path_line_ranges": {"src/writable.py": "any"},
         }
         found = agy_dispatch.oracle_findings(profile, text)
-        self.assertEqual(len(found), 1)
-        self.assertIn("src/writable.py", found[0])
-        self.assertIn("50", found[0])
-        self.assertIn("100", found[0])
+        expected = "`## Scope` write scope mismatch for `src/writable.py`: oracle states 50, profile carries 100"
+        self.assertEqual(found, [expected])
+
+    def test_scope_mismatch_range_only_is_reported(self) -> None:
+        text = CONFORMANT_ORACLE.replace(
+            "| Path | Line budget | Line ranges |\n|---|---|---|",
+            "| Path | Line budget | Line ranges |\n|---|---|---|\n| src/writable.py | 50 | 1-10 |",
+        )
+        profile = {
+            "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
+            "allowed_repo_writes": ["src/writable.py"],
+            "path_change_budgets": {"src/writable.py": 50},
+            "path_line_ranges": {"src/writable.py": "1-20"},
+        }
+        found = agy_dispatch.oracle_findings(profile, text)
+        expected = "`## Scope` write scope mismatch for `src/writable.py`: oracle states 1-10, profile carries 1-20"
+        self.assertEqual(found, [expected])
+
+    def test_scope_mismatch_budget_and_range_is_reported(self) -> None:
+        text = CONFORMANT_ORACLE.replace(
+            "| Path | Line budget | Line ranges |\n|---|---|---|",
+            "| Path | Line budget | Line ranges |\n|---|---|---|\n| src/writable.py | 50 | 1-10 |",
+        )
+        profile = {
+            "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
+            "allowed_repo_writes": ["src/writable.py"],
+            "path_change_budgets": {"src/writable.py": 100},
+            "path_line_ranges": {"src/writable.py": "1-20"},
+        }
+        found = agy_dispatch.oracle_findings(profile, text)
+        expected = "`## Scope` write scope mismatch for `src/writable.py`: oracle states 50 1-10, profile carries 100 1-20"
+        self.assertEqual(found, [expected])
 
     def test_scope_mismatch_path_only_in_oracle_is_reported(self) -> None:
         text = CONFORMANT_ORACLE.replace(
-            "| Path | Line budget |\n|---|---|",
-            "| Path | Line budget |\n|---|---|\n| src/only_in_oracle.py | 50 |",
+            "| Path | Line budget | Line ranges |\n|---|---|---|",
+            "| Path | Line budget | Line ranges |\n|---|---|---|\n| src/only_in_oracle.py | 50 | any |",
         )
         found = agy_dispatch.oracle_findings(self.PROFILE, text)
-        self.assertEqual(len(found), 1)
-        self.assertIn("src/only_in_oracle.py", found[0])
-        self.assertIn("50", found[0])
-        self.assertIn("absent", found[0])
+        expected = "`## Scope` write scope mismatch for `src/only_in_oracle.py`: oracle states 50, profile carries absent"
+        self.assertEqual(found, [expected])
 
     def test_scope_mismatch_path_only_in_profile_is_reported(self) -> None:
         profile = {
             "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
             "allowed_repo_writes": ["src/extra_in_profile.py"],
             "path_change_budgets": {"src/extra_in_profile.py": 30},
+            "path_line_ranges": {"src/extra_in_profile.py": "any"},
         }
         found = agy_dispatch.oracle_findings(profile, CONFORMANT_ORACLE)
-        self.assertEqual(len(found), 1)
-        self.assertIn("src/extra_in_profile.py", found[0])
-        self.assertIn("absent", found[0])
-        self.assertIn("30", found[0])
+        expected = "`## Scope` write scope mismatch for `src/extra_in_profile.py`: oracle states absent, profile carries 30"
+        self.assertEqual(found, [expected])
 
     def test_missing_section_is_reported_once(self) -> None:
         text = CONFORMANT_ORACLE.replace(
@@ -5076,7 +5102,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         oracle.parent.mkdir(parents=True, exist_ok=True)
         injection.parent.mkdir(parents=True, exist_ok=True)
         oracle.write_text(
-            f"## Claim\n\nclaim\n\n## Measurements\n\n| # | input | expected observation | why |\n|---|---|---|---|\n| 1 | x | y | z |\n| 2 | x (negative control) | FAIL | z |\n\n## Gate\n\n```\n{self.gate_cmd}\n```\n\n## Scope\n\n| Path | Line budget |\n|---|---|\n| src/writable.py | none |\n\n## Fabrication tells\n\n- tell\n"
+            f"## Claim\n\nclaim\n\n## Measurements\n\n| # | input | expected observation | why |\n|---|---|---|---|\n| 1 | x | y | z |\n| 2 | x (negative control) | FAIL | z |\n\n## Gate\n\n```\n{self.gate_cmd}\n```\n\n## Scope\n\n| Path | Line budget | Line ranges |\n|---|---|---|\n| src/writable.py | none | any |\n\n## Fabrication tells\n\n- tell\n"
         )
         injection.write_text(
             f"## Task\n\ntest task\n\n## Current behavior\n\n```\nwritable base content\n```\n\n## Required change\n\n- change\n\n## Shape to follow\n\n`src/writable.py`\n\n## Reference\n\n| path | why |\n|---|---|\n| `src/writable.py` | context |\n\n## Out of scope\n\n- none\n\n## Definition of done\n\n`src/writable.py`\n\n```\n{self.gate_cmd}\n```\n"
@@ -5131,7 +5157,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         # Adjudicate finding
         with contextlib.redirect_stdout(io.StringIO()):
             agy_dispatch.adjudicate(
-                profile, "m23", "admit", "protected artifact changed: src/protected1.py"
+                profile, "m23", "admit", "protected artifact changed: src/protected1.py", "reason for admit"
             )
 
         # verify should now pass cleanly
@@ -5165,7 +5191,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
 
         # Adjudicate protected1 only
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m4", "admit", "src/protected1.py")
+            agy_dispatch.adjudicate(profile, "m4", "admit", "src/protected1.py", "reason for admit")
 
         # load_profile with validate_design=True should refuse naming protected2
         with self.assertRaises(SystemExit) as caught:
@@ -5183,7 +5209,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         # Adjudicate protected1 only
         with contextlib.redirect_stdout(io.StringIO()):
             agy_dispatch.adjudicate(
-                profile, "m4_byte_identical", "admit", "src/protected1.py"
+                profile, "m4_byte_identical", "admit", "src/protected1.py", "reason for admit"
             )
 
         # load_profile with validate_design=True should refuse naming protected2
@@ -5202,7 +5228,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
 
         # Adjudicate first edit
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m5", "admit", "src/protected1.py")
+            agy_dispatch.adjudicate(profile, "m5", "admit", "src/protected1.py", "reason for admit")
 
         # Change artifact again
         (worker_root / "src" / "protected1.py").write_text("second edit\n")
@@ -5215,7 +5241,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         """Row 6: adjudication recorded on round with no such finding is refused."""
         profile, _ = self.setup_round("m6")
         with self.assertRaises(SystemExit) as caught:
-            agy_dispatch.adjudicate(profile, "m6", "admit", "src/protected1.py")
+            agy_dispatch.adjudicate(profile, "m6", "admit", "src/protected1.py", "reason for admit")
         self.assertIn("no such finding exists", str(caught.exception))
 
     def test_measurement_7_rejected_decision_restores_artifact(self) -> None:
@@ -5226,7 +5252,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         (worker_root / "src" / "writable.py").write_text("good edit\n")
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m7", "reject", "src/protected1.py")
+            agy_dispatch.adjudicate(profile, "m7", "reject", "src/protected1.py", "reason for reject")
 
         # Check content is restored
         self.assertEqual(
@@ -5252,7 +5278,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         (worker_root / "src" / "writable.py").write_text("good edit\n")
 
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m8", "admit", "src/protected1.py")
+            agy_dispatch.adjudicate(profile, "m8", "admit", "src/protected1.py", "reason for admit")
 
         self.run_proofs(profile, "m8", worker_root)
 
@@ -5280,7 +5306,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
 
         # Adjudicate protected1
         with contextlib.redirect_stdout(io.StringIO()):
-            agy_dispatch.adjudicate(profile, "m9", "admit", "src/protected1.py")
+            agy_dispatch.adjudicate(profile, "m9", "admit", "src/protected1.py", "reason for admit")
 
         # Re-run verify
         buf2 = io.StringIO()
@@ -5290,6 +5316,229 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         out2 = buf2.getvalue()
         self.assertNotIn(target_line_p1, out2)
         self.assertIn(target_line_p2, out2)
+
+
+class SubfileLineRangesTest(unittest.TestCase):
+    """Sub-file line range bound tests (Acceptance criteria 1 & 2)."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(dir="/tmp")
+        self.root = Path(self.temporary.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=self.repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=self.repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=self.repo, check=True)
+
+        self.design_file = self.repo / "design.md"
+        self.design_file.write_text("frozen design input\n")
+
+        self.writable = self.repo / "src" / "writable.py"
+        self.writable.parent.mkdir(parents=True, exist_ok=True)
+        lines = [f"def func_{i}():\n    return {i}\n" for i in range(1, 15)]
+        self.writable.write_text("".join(lines))
+
+        subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=self.repo, check=True)
+
+        self.project_dir = self.root / "projects"
+        self.project_dir.mkdir()
+        self.project_id = "test-project-ranges"
+        (self.project_dir / f"{self.project_id}.json").write_text(
+            json.dumps(
+                {
+                    "id": self.project_id,
+                    "name": self.project_id,
+                    "projectResources": {
+                        "resources": [{"gitFolder": {"folderUri": self.repo.resolve().as_uri()}}]
+                    },
+                    "permissionGrants": {
+                        "permissionGrants": {
+                            "allow": ["command(*)"],
+                            "deny": [],
+                            "ask": [],
+                        }
+                    },
+                }
+            )
+        )
+
+        agy_dispatch.PROJECT_DIR = self.project_dir
+        agy_dispatch.SETTINGS = self.root / "settings.json"
+        agy_dispatch.GLOBAL = self.root / "config.json"
+        agy_dispatch.SETTINGS.write_text(json.dumps({"permissions": {"allow": [], "deny": [], "ask": []}}))
+        agy_dispatch.GLOBAL.write_text(
+            json.dumps({"userSettings": {"globalPermissionGrants": {"allow": [], "deny": [], "ask": []}}})
+        )
+
+        self.gate_cmd = "grep -q 'good edit' src/writable.py"
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def setup_range_round(self, task_key: str, range_spec: str) -> tuple[dict, Path]:
+        state_dir = self.root / f"state-{task_key}"
+        p_dict = {
+            "root": str(self.repo),
+            "repo": "owner/repo",
+            "agy_project_id": self.project_id,
+            "state_dir": str(state_dir),
+            "mode": "bounded-write",
+            "task_contract": {
+                "kind": "implementation",
+                "session_policy": "one-shot",
+                "run_id": task_key,
+                "intent": "Test line ranges",
+                "gate_command": self.gate_cmd,
+                "design_inputs": [{"path": "design.md", "sha256": agy_dispatch.sha256(self.design_file)}],
+            },
+            "project_permissions": {
+                "allow": ["command(*)"],
+                "deny": [],
+                "ask": [],
+                "require_empty_global": True,
+            },
+            "task_commands": {
+                "allow": [self.gate_cmd],
+                "deny": [],
+            },
+            "protected_artifacts": [],
+            "snapshot_paths": ["src"],
+            "allowed_repo_writes": ["src/writable.py"],
+            "path_change_budgets": {},
+            "path_line_ranges": {"src/writable.py": range_spec},
+            "controller_root": str(self.repo),
+        }
+        p_path = self.root / f"profile-{task_key}.json"
+        p_path.write_text(json.dumps(p_dict, indent=2))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.worktree(str(p_path), task_key)
+        profile = agy_dispatch.load_profile(str(p_path), validate_design=False)
+
+        oracle = Path(profile["state_dir"]) / "oracles" / f"{task_key}.md"
+        injection = Path(profile["state_dir"]) / "injections" / f"{task_key}.md"
+        oracle.parent.mkdir(parents=True, exist_ok=True)
+        injection.parent.mkdir(parents=True, exist_ok=True)
+        oracle.write_text(
+            f"## Claim\n\nclaim\n\n## Measurements\n\n| # | input | expected observation | why |\n|---|---|---|---|\n| 1 | x | y | z |\n| 2 | x (negative control) | FAIL | z |\n\n## Gate\n\n```\n{self.gate_cmd}\n```\n\n## Scope\n\n| Path | Line budget | Line ranges |\n|---|---|---|\n| src/writable.py | none | {range_spec} |\n\n## Fabrication tells\n\n- tell\n"
+        )
+        injection.write_text(
+            f"## Task\n\ntest task\n\n## Current behavior\n\n```\ndef func_1():\n```\n\n## Required change\n\n- change\n\n## Shape to follow\n\n`src/writable.py`\n\n## Reference\n\n| path | why |\n|---|---|\n| `src/writable.py` | context |\n\n## Out of scope\n\n- none\n\n## Definition of done\n\n`src/writable.py`\n\n```\n{self.gate_cmd}\n```\n"
+        )
+        profile["inject_prompt_file"] = str(injection)
+        p_path.write_text(json.dumps(profile, indent=2))
+        profile = agy_dispatch.load_profile(str(p_path), validate_design=False)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.snapshot(profile, task_key)
+        return profile, p_path
+
+    def test_in_range_candidate_yields_no_finding(self) -> None:
+        """Candidate whose diff falls entirely inside declared range yields no finding."""
+        profile, _ = self.setup_range_round("r_in_range", "1-10")
+        worker_root = Path(profile["root"])
+        lines = (worker_root / "src" / "writable.py").read_text().splitlines(keepends=True)
+        lines[0] = "def func_1_edited(): # good edit\n"
+        (worker_root / "src" / "writable.py").write_text("".join(lines))
+
+        findings = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_in_range")
+        self.assertEqual(findings, [])
+
+    def test_extra_hunk_outside_range_yields_finding(self) -> None:
+        """The same candidate with one extra hunk outside declared range yields exactly one finding."""
+        profile, _ = self.setup_range_round("r_extra_hunk", "1-10")
+        worker_root = Path(profile["root"])
+        lines = (worker_root / "src" / "writable.py").read_text().splitlines(keepends=True)
+        lines[0] = "def func_1_edited(): # good edit\n"
+        lines[24] = "def func_13_edited():\n"
+        (worker_root / "src" / "writable.py").write_text("".join(lines))
+
+        findings = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_extra_hunk")
+        expected = "src/writable.py: hunk at baseline lines 25 falls outside declared ranges"
+        self.assertEqual(findings, [expected])
+
+    def test_hunk_starting_inside_and_running_past_end_yields_finding(self) -> None:
+        """Hunk starting inside declared range and running past its end yields finding (Negative Control test target)."""
+        profile, _ = self.setup_range_round("r_past_end", "1-10")
+        worker_root = Path(profile["root"])
+        lines = (worker_root / "src" / "writable.py").read_text().splitlines(keepends=True)
+        for i in range(4, 15):
+            lines[i] = f"# edit {i}\n"
+        (worker_root / "src" / "writable.py").write_text("".join(lines))
+
+        findings = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_past_end")
+        expected = "src/writable.py: hunk at baseline lines 5-15 falls outside declared ranges"
+        self.assertEqual(findings, [expected])
+
+    def test_second_out_of_range_hunk_yields_second_finding_while_first_admission_matches(self) -> None:
+        """Second out-of-range hunk yields second finding while admission for first still matches."""
+        profile, _ = self.setup_range_round("r_two_hunks", "1-10")
+        worker_root = Path(profile["root"])
+        lines = (worker_root / "src" / "writable.py").read_text().splitlines(keepends=True)
+        lines[14] = "# edit 15\n"
+        (worker_root / "src" / "writable.py").write_text("".join(lines))
+
+        finding1 = "src/writable.py: hunk at baseline lines 15 falls outside declared ranges"
+        findings1 = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_two_hunks")
+        self.assertEqual(findings1, [finding1])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(profile, "r_two_hunks", "admit", finding1, "admitting line 15 edit")
+
+        lines[24] = "# edit 25\n"
+        (worker_root / "src" / "writable.py").write_text("".join(lines))
+
+        findings2 = agy_dispatch.scope_findings(profile, ["src/writable.py"], "r_two_hunks")
+        self.assertEqual(len(findings2), 2)
+        self.assertIn(finding1, findings2)
+
+        open_, admitted, rejected = agy_dispatch.split_scope_findings(profile, "r_two_hunks", findings2)
+        self.assertEqual(admitted, [finding1])
+        self.assertEqual(len(open_), 1)
+        self.assertNotIn(finding1, open_)
+
+    def test_adjudicate_refuses_empty_reason(self) -> None:
+        """adjudicate refuses an empty or whitespace-only reason."""
+        profile, _ = self.setup_range_round("r_empty_reason", "1-10")
+        worker_root = Path(profile["root"])
+        lines = (worker_root / "src" / "writable.py").read_text().splitlines(keepends=True)
+        lines[20] = "# edit 21\n"
+        (worker_root / "src" / "writable.py").write_text("".join(lines))
+
+        finding = "src/writable.py: hunk at baseline lines 21 falls outside declared ranges"
+        with self.assertRaises(SystemExit) as caught:
+            agy_dispatch.adjudicate(profile, "r_empty_reason", "admit", finding, "   ")
+        self.assertIn("reason", str(caught.exception))
+
+    def test_verify_and_review_print_recorded_reason(self) -> None:
+        """verify and review print recorded reason beside each admitted finding."""
+        profile, _ = self.setup_range_round("r_reason_print", "1-10")
+        worker_root = Path(profile["root"])
+        lines = (worker_root / "src" / "writable.py").read_text().splitlines(keepends=True)
+        lines[0] = "def func_1_edited(): # good edit\n"
+        lines[20] = "# edit 21\n"
+        (worker_root / "src" / "writable.py").write_text("".join(lines))
+
+        finding = "src/writable.py: hunk at baseline lines 21 falls outside declared ranges"
+        reason_text = "admitting line 21 refactor"
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.adjudicate(profile, "r_reason_print", "admit", finding, reason_text)
+
+        buf_verify = io.StringIO()
+        with contextlib.redirect_stdout(buf_verify):
+            agy_dispatch.verify(profile, "r_reason_print")
+        out_verify = buf_verify.getvalue()
+        self.assertIn(finding, out_verify)
+        self.assertIn(reason_text, out_verify)
+
+        buf_review = io.StringIO()
+        with contextlib.redirect_stdout(buf_review):
+            agy_dispatch.review(profile, "r_reason_print")
+        out_review = buf_review.getvalue()
+        self.assertIn(finding, out_review)
+        self.assertIn(reason_text, out_review)
 
 
 if __name__ == "__main__":

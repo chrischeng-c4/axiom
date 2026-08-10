@@ -235,6 +235,56 @@ def validate_task_key(profile: dict, task_key: str) -> None:
         )
 
 
+def parse_line_ranges(range_spec: str) -> list[tuple[int, int, int]] | str:
+    if not isinstance(range_spec, str):
+        raise TypeError("line range must be a string")
+    spec_clean = range_spec.strip()
+    if not spec_clean:
+        raise ValueError("empty range specification")
+    if spec_clean.lower() in ("any", "new"):
+        return spec_clean.lower()
+    ranges = []
+    for item in spec_clean.split(","):
+        item_str = item.strip()
+        if not item_str:
+            raise ValueError("empty range segment")
+        if "~" in item_str:
+            range_part, slack_part = item_str.split("~", 1)
+            if "~" in slack_part:
+                raise ValueError("multiple ~ in range segment")
+            try:
+                slack = int(slack_part.strip())
+            except ValueError:
+                raise ValueError(f"invalid slack value: {slack_part}")
+            if slack < 0:
+                raise ValueError(f"negative slack: {slack}")
+        else:
+            range_part = item_str
+            slack = 0
+
+        range_part = range_part.strip()
+        if "-" in range_part:
+            start_str, end_str = range_part.split("-", 1)
+            if "-" in end_str:
+                raise ValueError(f"invalid range format: {range_part}")
+            try:
+                start = int(start_str.strip())
+                end = int(end_str.strip())
+            except ValueError:
+                raise ValueError(f"invalid range bounds: {range_part}")
+            if end < start:
+                raise ValueError(f"range end {end} precedes start {start}")
+        else:
+            try:
+                start = int(range_part)
+            except ValueError:
+                raise ValueError(f"invalid range number: {range_part}")
+            end = start
+
+        ranges.append((start, end, slack))
+    return ranges
+
+
 def load_profile(
     path: str,
     *,
@@ -411,6 +461,21 @@ def load_profile(
             "path_change_budgets contains non-writable paths: "
             + ", ".join(unknown_budget_paths)
         )
+
+    ranges = profile.get("path_line_ranges", {})
+    if not isinstance(ranges, dict):
+        raise SystemExit("path_line_ranges must be an object")
+    unknown_range_paths = sorted(set(ranges) - set(profile["allowed_repo_writes"]))
+    if unknown_range_paths:
+        raise SystemExit(
+            "path_line_ranges contains non-writable paths: "
+            + ", ".join(unknown_range_paths)
+        )
+    for rel, rspec in ranges.items():
+        try:
+            parse_line_ranges(rspec)
+        except (ValueError, TypeError) as exc:
+            raise SystemExit(f"invalid range for {rel}: {exc}")
 
     protected = profile["protected_artifacts"]
     if not isinstance(protected, list):
@@ -2316,17 +2381,18 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
         else:
             data_rows = scope_rows
 
-        oracle_scope: dict[str, int | None] = {}
+        oracle_scope: dict[str, tuple[int | None, str]] = {}
         scope_error = False
         seen_paths: set[str] = set()
         for row in data_rows:
             cells = [c.strip() for c in row.strip().strip("|").split("|")]
-            if len(cells) != 2:
+            if len(cells) not in (2, 3):
                 findings.append(f"`## Scope` has malformed row: `{row.strip()}`")
                 scope_error = True
                 continue
             path_cell = cells[0].strip().strip("`").strip()
             budget_cell = cells[1].strip().strip("`").strip()
+            range_cell = cells[2].strip().strip("`").strip() if len(cells) == 3 else "any"
             if not path_cell or FILL_MARKER.search(path_cell):
                 findings.append(f"`## Scope` has malformed path in row: `{row.strip()}`")
                 scope_error = True
@@ -2348,13 +2414,23 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
                 scope_error = True
                 continue
 
-            oracle_scope[path_cell] = budget_val
+            try:
+                parse_line_ranges(range_cell)
+            except ValueError as err:
+                findings.append(
+                    f"`## Scope` has unreadable line ranges `{range_cell}` for path `{path_cell}`: {err}"
+                )
+                scope_error = True
+                continue
+
+            oracle_scope[path_cell] = (budget_val, range_cell)
 
         if not scope_error:
             profile_writes = profile.get("allowed_repo_writes") or []
             profile_budgets = profile.get("path_change_budgets") or {}
+            profile_ranges = profile.get("path_line_ranges") or {}
             profile_scope = {
-                path: profile_budgets.get(path)
+                path: (profile_budgets.get(path), profile_ranges.get(path, "any"))
                 for path in profile_writes
             }
             all_paths = sorted(set(oracle_scope.keys()) | set(profile_scope.keys()))
@@ -2362,23 +2438,31 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
                 in_oracle = path in oracle_scope
                 in_profile = path in profile_scope
                 if in_oracle and in_profile:
-                    o_val = oracle_scope[path]
-                    p_val = profile_scope[path]
-                    if o_val != p_val:
-                        o_str = str(o_val) if o_val is not None else "none"
-                        p_str = str(p_val) if p_val is not None else "none"
+                    o_budget, o_range = oracle_scope[path]
+                    p_budget, p_range = profile_scope[path]
+                    if o_budget != p_budget or o_range != p_range:
+                        o_parts = []
+                        p_parts = []
+                        if o_budget != p_budget:
+                            o_parts.append(str(o_budget) if o_budget is not None else "none")
+                            p_parts.append(str(p_budget) if p_budget is not None else "none")
+                        if o_range != p_range:
+                            o_parts.append(o_range)
+                            p_parts.append(p_range)
+                        o_str = " ".join(o_parts)
+                        p_str = " ".join(p_parts)
                         findings.append(
                             f"`## Scope` write scope mismatch for `{path}`: oracle states {o_str}, profile carries {p_str}"
                         )
                 elif in_oracle and not in_profile:
-                    o_val = oracle_scope[path]
-                    o_str = str(o_val) if o_val is not None else "none"
+                    o_budget, o_range = oracle_scope[path]
+                    o_str = str(o_budget) if o_budget is not None else "none"
                     findings.append(
                         f"`## Scope` write scope mismatch for `{path}`: oracle states {o_str}, profile carries absent"
                     )
                 elif not in_oracle and in_profile:
-                    p_val = profile_scope[path]
-                    p_str = str(p_val) if p_val is not None else "none"
+                    p_budget, p_range = profile_scope[path]
+                    p_str = str(p_budget) if p_budget is not None else "none"
                     findings.append(
                         f"`## Scope` write scope mismatch for `{path}`: oracle states absent, profile carries {p_str}"
                     )
@@ -2595,8 +2679,8 @@ ORACLE_SKELETON = """\
 <!-- fill: prefilled from the profile. Write scope and line budgets for
      this round. -->
 
-| Path | Line budget |
-|---|---|
+| Path | Line budget | Line ranges |
+|---|---|---|
 {scope}
 
 ## Fabrication tells
@@ -2694,11 +2778,12 @@ def blank_round_forms(profile: dict) -> tuple[str, str]:
     ) or "| `<!-- fill: path -->` | <!-- fill --> |"
     allowed = profile.get("allowed_repo_writes") or []
     budgets = profile.get("path_change_budgets") or {}
+    ranges = profile.get("path_line_ranges") or {}
     scope_rows = [
-        f"| `{path}` | {budgets[path]} |" if path in budgets else f"| `{path}` | none |"
+        f"| `{path}` | {budgets.get(path, 'none')} | {ranges.get(path, 'any')} |"
         for path in allowed
     ]
-    scope = "\n".join(scope_rows) or "| `<!-- fill: path -->` | <!-- fill: line budget --> |"
+    scope = "\n".join(scope_rows) or "| `<!-- fill: path -->` | <!-- fill: line budget --> | <!-- fill: line ranges --> |"
     return (
         ORACLE_SKELETON.format(gate=gate, scope=scope),
         INJECTION_SKELETON.format(
@@ -3302,8 +3387,21 @@ def split_scope_findings(
     return open_, admitted, rejected
 
 
+def scope_decision_reason(state_dir: Path, task_key: str, finding: str) -> str | None:
+    for dec in load_decisions(state_dir, task_key):
+        if not isinstance(dec, dict) or dec.get("kind") != "scope":
+            continue
+        if dec.get("finding") == finding and dec.get("action") in ("admit", "reject"):
+            return dec.get("reason")
+    return None
+
+
 def print_scope_findings(
-    open_: list[str], admitted: list[str], rejected: list[str]
+    open_: list[str],
+    admitted: list[str],
+    rejected: list[str],
+    profile: dict | None = None,
+    task_key: str | None = None,
 ) -> None:
     """Report the three states separately, because they mean different things.
 
@@ -3316,7 +3414,13 @@ def print_scope_findings(
     if admitted:
         print(f"\nscope findings admitted ({len(admitted)}), not blocking:")
         for item in admitted:
-            print(f"  - {item}")
+            reason = None
+            if profile and task_key:
+                reason = scope_decision_reason(Path(profile["state_dir"]), task_key, item)
+            if reason:
+                print(f"  - {item} (reason: {reason})")
+            else:
+                print(f"  - {item}")
     blocking = open_ + rejected
     if not blocking:
         print("scope findings: none open")
@@ -3325,9 +3429,15 @@ def print_scope_findings(
     for item in open_:
         print(f"  - {item}")
     for item in rejected:
-        print(f"  - [rejected, revise or re-admit] {item}")
+        reason = None
+        if profile and task_key:
+            reason = scope_decision_reason(Path(profile["state_dir"]), task_key, item)
+        if reason:
+            print(f"  - [rejected, revise or re-admit] {item} (reason: {reason})")
+        else:
+            print(f"  - [rejected, revise or re-admit] {item}")
     print(
-        '\n  adjudicate <profile> <key> admit|reject "<finding text, verbatim>"'
+        '\n  adjudicate <profile> <key> admit|reject "<finding text, verbatim>" "<reason>"'
     )
 
 
@@ -3341,7 +3451,7 @@ def round_scope_findings(profile: dict, task_key: str) -> list[str]:
 
 
 def adjudicate_scope(
-    profile: dict, task_key: str, action: str, finding_input: str
+    profile: dict, task_key: str, action: str, finding_input: str, reason: str
 ) -> None:
     """Record a decision on one scope finding.
 
@@ -3352,6 +3462,8 @@ def adjudicate_scope(
     less. That is why the two actions are not symmetric here and are in
     `adjudicate`.
     """
+    if not reason or not reason.strip():
+        raise SystemExit("refused: adjudicate requires a non-empty reason")
     state_dir = Path(profile["state_dir"])
     current = round_scope_findings(profile, task_key)
     if finding_input not in current:
@@ -3380,6 +3492,7 @@ def adjudicate_scope(
             "finding": finding_input,
             "kind": "scope",
             "action": action,
+            "reason": reason.strip(),
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -3401,10 +3514,13 @@ def adjudicate(
     task_key: str,
     action: str,
     finding_input: str,
+    reason: str,
 ) -> None:
     validate_task_key(profile, task_key)
     if action not in ("admit", "reject"):
         raise SystemExit("action must be admit or reject")
+    if not reason or not reason.strip():
+        raise SystemExit("refused: adjudicate requires a non-empty reason")
 
     root = Path(profile["root"])
     state_dir = Path(profile["state_dir"])
@@ -3449,7 +3565,7 @@ def adjudicate(
         # raise is a scope finding, which `verify` and `review` both name as
         # something to adjudicate; until it could be recorded here, that
         # instruction pointed at a verb that refused every input it was given.
-        return adjudicate_scope(profile, task_key, action, finding_input)
+        return adjudicate_scope(profile, task_key, action, finding_input, reason)
 
     decisions = load_decisions(state_dir, task_key)
     decisions = [
@@ -3465,6 +3581,7 @@ def adjudicate(
             "path": str(matched_artifact),
             "action": "admit",
             "sha256": matched_actual,
+            "reason": reason.strip(),
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         }
         decisions.append(record)
@@ -4010,6 +4127,13 @@ def budget_overrun(relative: str, delta: int, budget: int | str) -> str:
     return f"{relative}: {delta} changed lines exceeds the {budget}-line budget"
 
 
+def hunk_out_of_range(relative: str, span: tuple[int, int]) -> str:
+    """Sentence builder for an out-of-range hunk."""
+    start, end = span
+    span_str = f"{start}-{end}" if start != end else f"{start}"
+    return f"{relative}: hunk at baseline lines {span_str} falls outside declared ranges"
+
+
 def inplace_budget_findings(profile: dict, snapshot_data: dict) -> list[str]:
     """Budget overruns measured against the snapshot, for in-place rounds.
 
@@ -4079,6 +4203,20 @@ def scope_findings(
         delta = changed_line_count(profile, relative)
         if delta > int(budget):
             findings.append(budget_overrun(relative, delta, budget))
+    for relative, rspec in (profile.get("path_line_ranges") or {}).items():
+        if relative not in allowed:
+            continue
+        parsed = parse_line_ranges(rspec)
+        if parsed in ("any", "new"):
+            continue
+        hunk_spans = diff_hunk_spans(profile, relative)
+        for h_start, h_end in hunk_spans:
+            in_range = any(
+                h_start >= (r_start - r_slack) and h_end <= (r_end + r_slack)
+                for (r_start, r_end, r_slack) in parsed
+            )
+            if not in_range:
+                findings.append(hunk_out_of_range(relative, (h_start, h_end)))
     for entry in profile["protected_artifacts"]:
         artifact = Path(entry["path"])
         actual = sha256(artifact) if artifact.is_file() else None
@@ -4128,6 +4266,25 @@ def changed_line_count(profile: dict, relative: str) -> int:
     return 0
 
 
+def diff_hunk_spans(profile: dict, relative: str) -> list[tuple[int, int]]:
+    """The old-side baseline spans of git diff -U0 <base_sha> -- <relative>."""
+    root = Path(profile["root"])
+    base = worktree_spec(profile)["base_sha"]
+    diff_text = git_output(root, "diff", "-U0", base, "--", relative)
+    spans = []
+    for line in diff_text.splitlines():
+        if line.startswith("@@ "):
+            m = re.match(r"^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@", line)
+            if m:
+                old = int(m.group(1))
+                count = int(m.group(2)) if m.group(2) is not None else 1
+                if count > 0:
+                    spans.append((old, old + count - 1))
+                else:
+                    spans.append((old, old))
+    return spans
+
+
 def review(profile: dict, task_key: str) -> None:
     """Print the candidate diff and its scope classification.
 
@@ -4165,7 +4322,7 @@ def review(profile: dict, task_key: str) -> None:
         )
         for path in carried:
             print(f"    {path}")
-    print_scope_findings(open_, admitted, rejected)
+    print_scope_findings(open_, admitted, rejected, profile, task_key)
 
     print("\n" + git_output(root, "diff", "--stat", spec["base_sha"]).rstrip())
     print("\n" + git_output(root, "diff", spec["base_sha"]).rstrip())
@@ -4826,7 +4983,7 @@ def accept(profile: dict, task_key: str) -> None:
             "refusing to accept: this round has scope findings nobody has "
             "admitted:\n"
             + "\n".join(f"  - {item}" for item in [*open_, *rejected])
-            + '\n  adjudicate <profile> <key> admit "<finding text, verbatim>"'
+            + '\n  adjudicate <profile> <key> admit "<finding text, verbatim>" "<reason>"'
         )
     if profile["mode"] == "bounded-write":
         unproven = proof_findings(profile, task_key)
@@ -5148,7 +5305,7 @@ def verify(profile: dict, task_key: str) -> None:
             print(f"\ncommand findings ({len(denial_findings)}):")
             for item in denial_findings:
                 print(f"  - {item}")
-        print_scope_findings(open_, admitted, rejected)
+        print_scope_findings(open_, admitted, rejected, profile, task_key)
         if open_ or rejected or denial_findings:
             sys.exit(EXIT_FINDINGS)
         return
@@ -5199,7 +5356,7 @@ def verify(profile: dict, task_key: str) -> None:
         raise SystemExit(
             "VOID: diff budget exceeded:\n"
             + "\n".join(f"  - {item}" for item in unwaived)
-            + '\n  waive with: adjudicate <profile> <key> admit "<finding>"'
+            + '\n  waive with: adjudicate <profile> <key> admit "<finding>" "<reason>"'
         )
 
     protected = snapshot_data.get("protected_contents_base64", {})
@@ -5365,6 +5522,10 @@ def main() -> None:
                 help="protected artifact path, or a scope finding copied "
                 "verbatim from `verify`/`review`",
             )
+            item.add_argument(
+                "reason",
+                help="stated reason for admitting or rejecting this finding",
+            )
     args = parser.parse_args()
 
     if args.verb in RAW_PROFILE_VERBS:
@@ -5420,7 +5581,7 @@ def main() -> None:
         "verify": lambda: verify(profile, args.task_key),
         "review": lambda: review(profile, args.task_key),
         "adjudicate": lambda: adjudicate(
-            profile, args.task_key, args.action, args.finding
+            profile, args.task_key, args.action, args.finding, args.reason
         ),
         "accept": lambda: accept(profile, args.task_key),
         "status": lambda: status(profile),

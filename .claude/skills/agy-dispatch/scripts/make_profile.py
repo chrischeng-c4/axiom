@@ -251,13 +251,28 @@ def derive_project_id(root: Path, explicit: str | None) -> tuple[str | None, str
     )
 
 
-def parse_write(spec: str) -> tuple[str, int | None]:
-    """Split `path` or `path:budget`. Windows-style drive letters are not a case
-    we support, so a lone trailing colon-integer is unambiguously a budget."""
-    head, sep, tail = spec.rpartition(":")
-    if sep and tail.isdigit():
-        return head, int(tail)
-    return spec, None
+def parse_write(spec: str) -> tuple[str, int | None, str | None]:
+    """Split `path`, `path:budget`, or `path:budget:ranges`. Windows-style drive
+    letters are not a case we support, so colon-separated trailing fields are
+    unambiguously budget and ranges."""
+    parts = spec.split(":")
+    if len(parts) == 1:
+        return parts[0], None, None
+    elif len(parts) == 2:
+        path, b_str = parts
+        if b_str.isdigit():
+            return path, int(b_str), None
+        elif b_str.lower() in ("none", ""):
+            return path, None, None
+        else:
+            return path, None, b_str
+    else:
+        path = parts[0]
+        b_str = parts[1]
+        r_str = ":".join(parts[2:])
+        budget = int(b_str) if b_str.isdigit() else None
+        ranges = r_str if r_str else None
+        return path, budget, ranges
 
 
 def main() -> int:
@@ -367,8 +382,9 @@ def main() -> int:
 
     writes: list[str] = []
     budgets: dict[str, int] = {}
+    ranges: dict[str, str] = {}
     for spec in args.write:
-        path, budget = parse_write(spec)
+        path, budget, rspec = parse_write(spec)
         if any(ch in path for ch in "*?["):
             print(
                 f"error: --write takes exact paths, not globs: {path}", file=sys.stderr
@@ -377,6 +393,13 @@ def main() -> int:
         writes.append(path)
         if budget is not None:
             budgets[path] = budget
+        if rspec is not None:
+            ranges[path] = rspec
+        else:
+            if not (root / path).exists():
+                ranges[path] = "new"
+            else:
+                ranges[path] = "any"
 
     if writes and not args.design_input:
         print(
@@ -504,6 +527,7 @@ def main() -> int:
         "snapshot_paths": list(args.scope),
         "allowed_repo_writes": writes,
         "path_change_budgets": budgets,
+        "path_line_ranges": ranges,
     }
     # Left unset, the round dispatches with no delta contract at all. `scaffold`
     # writes `injections/{task_key}.md` and `injection_path()` resolves that
