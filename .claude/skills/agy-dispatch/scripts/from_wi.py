@@ -351,6 +351,12 @@ ORACLE = """\
 {gate}
 ```
 
+## Scope
+
+| Path | Line budget |
+|---|---|
+{scope}
+
 ## Fabrication tells
 
 <!-- fill: what a passing report would look like if the worker faked it. Not
@@ -444,10 +450,15 @@ def render_oracle(fields: dict) -> str:
         f"| {len(rows) + 1} | the mutation below (negative control) | "
         f"must FAIL | {control} |"
     )
+    writes = fields.get("writes") or []
+    scope = "\n".join(
+        f"| `{path}` | none |" for path in writes
+    ) or "| `<!-- fill: path -->` | <!-- fill: line budget --> |"
     return ORACLE.format(
         claim=fields["goal"],
         measurements="\n".join([header, divider, *rows]),
         gate=fields["gates"][0],
+        scope=scope,
     )
 
 

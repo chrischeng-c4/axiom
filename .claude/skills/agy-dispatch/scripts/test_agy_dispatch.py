@@ -2803,6 +2803,41 @@ class DerivedWorktreeTest(unittest.TestCase):
             str(self.root / "state" / "rounds" / f"{next_key}.profile.json")
         )
 
+    def test_revision_refuses_when_copied_oracle_disagrees_with_loosened_profile_budget(
+        self,
+    ) -> None:
+        """A revision carrying a copied oracle refuses dispatch if the profile's budget is loosened."""
+        profile, delta = self.revisable_ticketed_round()
+        (self.root / "state" / "oracles" / "3458.md").write_text(
+            "## Claim\n\nthe judge\n\n"
+            "## Measurements\n\n| # | input | expected observation |\n|---|---|---|\n"
+            "| 1 | baseline | ok |\n| 2 | test (negative control) | FAIL |\n\n"
+            "## Gate\n\n```\ngrep -q accepted README.md\n```\n\n"
+            "## Scope\n\n| Path | Line budget |\n|---|---|\n| README.md | 40 |\n\n"
+            "## Fabrication tells\n\n- tell\n"
+        )
+        raw = self.root / "profile.json"
+        agy_dispatch.revise(
+            profile,
+            str(raw),
+            "3458",
+            "3458-r2",
+            str(delta),
+        )
+        revised_profile_path = self.root / "state" / "rounds" / "3458-r2.profile.json"
+        revised_profile = agy_dispatch.load_profile(str(revised_profile_path))
+        revised_profile["path_change_budgets"] = {"README.md": 100}
+        revised_profile_path.write_text(json.dumps(revised_profile, indent=2))
+        loaded = agy_dispatch.load_profile(str(revised_profile_path))
+        with contextlib.redirect_stdout(io.StringIO()):
+            agy_dispatch.snapshot(loaded, "3458-r2")
+            with self.assertRaises(SystemExit) as cm:
+                agy_dispatch.dispatch(loaded, "3458-r2")
+        msg = str(cm.exception)
+        self.assertIn("README.md", msg)
+        self.assertIn("40", msg)
+        self.assertIn("100", msg)
+
     def test_revising_a_ticket_yields_a_profile_every_verb_can_load(self) -> None:
         """The revision used to be refused by the loader that runs on all of them.
 
@@ -4021,6 +4056,11 @@ Writing an AW-owned marker block does not move the WI contract digest.
 cargo test -p target --lib some_gate
 ```
 
+## Scope
+
+| Path | Line budget |
+|---|---|
+
 ## Fabrication tells
 
 - A helper that is defined but never called from the reducer.
@@ -4051,6 +4091,58 @@ class OracleContractTest(unittest.TestCase):
 
     def test_conformant_oracle_has_no_findings(self) -> None:
         self.assertEqual(self.findings(CONFORMANT_ORACLE), [])
+
+    def test_oracle_sections_tuple_has_scope_at_index_3(self) -> None:
+        self.assertEqual(
+            agy_dispatch.ORACLE_SECTIONS,
+            ("Claim", "Measurements", "Gate", "Scope", "Fabrication tells"),
+        )
+
+    def test_missing_scope_section_is_reported(self) -> None:
+        text = CONFORMANT_ORACLE.replace(
+            "## Scope\n\n| Path | Line budget |\n|---|---|\n\n",
+            "",
+        )
+        self.assert_single_finding(text, "missing the `## Scope` section")
+
+    def test_scope_mismatch_different_bounds_is_reported(self) -> None:
+        text = CONFORMANT_ORACLE.replace(
+            "| Path | Line budget |\n|---|---|",
+            "| Path | Line budget |\n|---|---|\n| src/writable.py | 50 |",
+        )
+        profile = {
+            "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
+            "allowed_repo_writes": ["src/writable.py"],
+            "path_change_budgets": {"src/writable.py": 100},
+        }
+        found = agy_dispatch.oracle_findings(profile, text)
+        self.assertEqual(len(found), 1)
+        self.assertIn("src/writable.py", found[0])
+        self.assertIn("50", found[0])
+        self.assertIn("100", found[0])
+
+    def test_scope_mismatch_path_only_in_oracle_is_reported(self) -> None:
+        text = CONFORMANT_ORACLE.replace(
+            "| Path | Line budget |\n|---|---|",
+            "| Path | Line budget |\n|---|---|\n| src/only_in_oracle.py | 50 |",
+        )
+        found = agy_dispatch.oracle_findings(self.PROFILE, text)
+        self.assertEqual(len(found), 1)
+        self.assertIn("src/only_in_oracle.py", found[0])
+        self.assertIn("50", found[0])
+        self.assertIn("absent", found[0])
+
+    def test_scope_mismatch_path_only_in_profile_is_reported(self) -> None:
+        profile = {
+            "task_commands": {"allow": ["cargo test -p target --lib some_gate"]},
+            "allowed_repo_writes": ["src/extra_in_profile.py"],
+            "path_change_budgets": {"src/extra_in_profile.py": 30},
+        }
+        found = agy_dispatch.oracle_findings(profile, CONFORMANT_ORACLE)
+        self.assertEqual(len(found), 1)
+        self.assertIn("src/extra_in_profile.py", found[0])
+        self.assertIn("absent", found[0])
+        self.assertIn("30", found[0])
 
     def test_missing_section_is_reported_once(self) -> None:
         text = CONFORMANT_ORACLE.replace(
@@ -4132,6 +4224,7 @@ class OracleContractTest(unittest.TestCase):
             "## Gate\n\n```\ncargo test -p target --lib some_gate\n```\n\n"
             "## Measurements\n\n| # | in | out |\n|---|---|---|\n"
             "| 1 | a | b |\n| 2 | c (negative control) | d |\n\n"
+            "## Scope\n\n| Path | Line budget |\n|---|---|\n\n"
             "## Fabrication tells\n\n- tell\n"
         )
         self.assert_single_finding(text, "out of order")
@@ -4983,7 +5076,7 @@ class AdjudicateScopeFindingTest(unittest.TestCase):
         oracle.parent.mkdir(parents=True, exist_ok=True)
         injection.parent.mkdir(parents=True, exist_ok=True)
         oracle.write_text(
-            f"## Claim\n\nclaim\n\n## Measurements\n\n| # | input | expected observation | why |\n|---|---|---|---|\n| 1 | x | y | z |\n| 2 | x (negative control) | FAIL | z |\n\n## Gate\n\n```\n{self.gate_cmd}\n```\n\n## Fabrication tells\n\n- tell\n"
+            f"## Claim\n\nclaim\n\n## Measurements\n\n| # | input | expected observation | why |\n|---|---|---|---|\n| 1 | x | y | z |\n| 2 | x (negative control) | FAIL | z |\n\n## Gate\n\n```\n{self.gate_cmd}\n```\n\n## Scope\n\n| Path | Line budget |\n|---|---|\n| src/writable.py | none |\n\n## Fabrication tells\n\n- tell\n"
         )
         injection.write_text(
             f"## Task\n\ntest task\n\n## Current behavior\n\n```\nwritable base content\n```\n\n## Required change\n\n- change\n\n## Shape to follow\n\n`src/writable.py`\n\n## Reference\n\n| path | why |\n|---|---|\n| `src/writable.py` | context |\n\n## Out of scope\n\n- none\n\n## Definition of done\n\n`src/writable.py`\n\n```\n{self.gate_cmd}\n```\n"

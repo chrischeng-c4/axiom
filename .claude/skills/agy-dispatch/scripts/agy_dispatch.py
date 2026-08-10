@@ -1881,7 +1881,7 @@ def validate_conversation_action(
     return conversation_id
 
 
-ORACLE_SECTIONS = ("Claim", "Measurements", "Gate", "Fabrication tells")
+ORACLE_SECTIONS = ("Claim", "Measurements", "Gate", "Scope", "Fabrication tells")
 INJECTION_SECTIONS = (
     "Task",
     "Current behavior",
@@ -2304,6 +2304,85 @@ def oracle_findings(profile: dict, text: str) -> list[str]:
                     "the controller checks by hand."
                 )
 
+    if "Scope" in sections:
+        scope_text = sections["Scope"]
+        scope_rows = [
+            row
+            for row in TABLE_ROW.findall(scope_text)
+            if not TABLE_DIVIDER.match(row)
+        ]
+        if scope_rows and "path" in scope_rows[0].lower():
+            data_rows = scope_rows[1:]
+        else:
+            data_rows = scope_rows
+
+        oracle_scope: dict[str, int | None] = {}
+        scope_error = False
+        seen_paths: set[str] = set()
+        for row in data_rows:
+            cells = [c.strip() for c in row.strip().strip("|").split("|")]
+            if len(cells) != 2:
+                findings.append(f"`## Scope` has malformed row: `{row.strip()}`")
+                scope_error = True
+                continue
+            path_cell = cells[0].strip().strip("`").strip()
+            budget_cell = cells[1].strip().strip("`").strip()
+            if not path_cell or FILL_MARKER.search(path_cell):
+                findings.append(f"`## Scope` has malformed path in row: `{row.strip()}`")
+                scope_error = True
+                continue
+            if path_cell in seen_paths:
+                findings.append(f"`## Scope` lists path `{path_cell}` multiple times")
+                scope_error = True
+                continue
+            seen_paths.add(path_cell)
+
+            if budget_cell.lower() == "none":
+                budget_val = None
+            elif budget_cell.isdigit():
+                budget_val = int(budget_cell)
+            else:
+                findings.append(
+                    f"`## Scope` has unreadable line budget `{cells[1].strip()}` for path `{path_cell}`"
+                )
+                scope_error = True
+                continue
+
+            oracle_scope[path_cell] = budget_val
+
+        if not scope_error:
+            profile_writes = profile.get("allowed_repo_writes") or []
+            profile_budgets = profile.get("path_change_budgets") or {}
+            profile_scope = {
+                path: profile_budgets.get(path)
+                for path in profile_writes
+            }
+            all_paths = sorted(set(oracle_scope.keys()) | set(profile_scope.keys()))
+            for path in all_paths:
+                in_oracle = path in oracle_scope
+                in_profile = path in profile_scope
+                if in_oracle and in_profile:
+                    o_val = oracle_scope[path]
+                    p_val = profile_scope[path]
+                    if o_val != p_val:
+                        o_str = str(o_val) if o_val is not None else "none"
+                        p_str = str(p_val) if p_val is not None else "none"
+                        findings.append(
+                            f"`## Scope` write scope mismatch for `{path}`: oracle states {o_str}, profile carries {p_str}"
+                        )
+                elif in_oracle and not in_profile:
+                    o_val = oracle_scope[path]
+                    o_str = str(o_val) if o_val is not None else "none"
+                    findings.append(
+                        f"`## Scope` write scope mismatch for `{path}`: oracle states {o_str}, profile carries absent"
+                    )
+                elif not in_oracle and in_profile:
+                    p_val = profile_scope[path]
+                    p_str = str(p_val) if p_val is not None else "none"
+                    findings.append(
+                        f"`## Scope` write scope mismatch for `{path}`: oracle states absent, profile carries {p_str}"
+                    )
+
     if "Fabrication tells" in sections and not LIST_ITEM.search(
         sections["Fabrication tells"]
     ):
@@ -2511,6 +2590,15 @@ ORACLE_SKELETON = """\
 {gate}
 ```
 
+## Scope
+
+<!-- fill: prefilled from the profile. Write scope and line budgets for
+     this round. -->
+
+| Path | Line budget |
+|---|---|
+{scope}
+
 ## Fabrication tells
 
 <!-- fill: what a passing report would look like if the worker faked it. Not
@@ -2604,8 +2692,15 @@ def blank_round_forms(profile: dict) -> tuple[str, str]:
     reference = "\n".join(
         f"| `{entry['path']}` | <!-- fill --> |" for entry in design_inputs
     ) or "| `<!-- fill: path -->` | <!-- fill --> |"
+    allowed = profile.get("allowed_repo_writes") or []
+    budgets = profile.get("path_change_budgets") or {}
+    scope_rows = [
+        f"| `{path}` | {budgets[path]} |" if path in budgets else f"| `{path}` | none |"
+        for path in allowed
+    ]
+    scope = "\n".join(scope_rows) or "| `<!-- fill: path -->` | <!-- fill: line budget --> |"
     return (
-        ORACLE_SKELETON.format(gate=gate),
+        ORACLE_SKELETON.format(gate=gate, scope=scope),
         INJECTION_SKELETON.format(
             gate=gate, reference=reference, shape_budget=SHAPE_LINE_BUDGET
         ),
