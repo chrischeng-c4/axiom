@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import contextlib
+
 import importlib.util
 import io
 import json
@@ -5541,5 +5543,118 @@ class SubfileLineRangesTest(unittest.TestCase):
         self.assertIn(reason_text, out_review)
 
 
+class CoreExtractionTest(unittest.TestCase):
+    MOVED_FUNCTIONS = (
+        "task_session_policy",
+        "revision_origin",
+        "validate_task_identity",
+        "validate_task_key",
+        "split_rule_tokens",
+        "rule_matches",
+        "command_rule_matches",
+        "task_allowlist_families",
+        "task_allowlist_admits",
+        "parse_line_ranges",
+        "extract_exec_report",
+        "reads_as_numbered_steps",
+        "oracle_sections",
+        "missing_or_misordered",
+        "gate_commands_in",
+        "unjudged_gate_commands",
+        "unquoted_current_behavior_lines",
+        "referenced_paths",
+        "transcript_body",
+        "transcript_findings",
+        "document_findings",
+        "marks_a_negative_control",
+        "oracle_findings",
+        "injection_findings",
+        "injection_path",
+        "oracle_path",
+        "blank_round_forms",
+        "scaffold",
+        "round_findings",
+        "lint",
+        "capture_path",
+        "load_captures",
+    )
+
+    def test_no_moved_function_defined_in_adapter(self) -> None:
+        adapter_path = Path(agy_dispatch.__file__).resolve()
+        tree = ast.parse(adapter_path.read_text())
+        top_level_defs = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for name in self.MOVED_FUNCTIONS:
+            self.assertNotIn(
+                name,
+                top_level_defs,
+                f"Moved function {name} is still defined as a top-level FunctionDef in agy_dispatch.py",
+            )
+
+    def test_moved_functions_defined_exactly_once_in_core(self) -> None:
+        core_dir = Path(__file__).resolve().parents[3] / "dispatch" / "core"
+
+        counts: dict[str, int] = {name: 0 for name in self.MOVED_FUNCTIONS}
+        for py_file in core_dir.glob("*.py"):
+            tree = ast.parse(py_file.read_text())
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name in counts:
+                        counts[node.name] += 1
+        for name in self.MOVED_FUNCTIONS:
+            self.assertEqual(
+                counts[name],
+                1,
+                f"Function {name} is defined {counts[name]} times under dispatch.core (expected 1)",
+            )
+
+    def test_reexported_attributes_resolve_on_adapter(self) -> None:
+        all_expected = self.MOVED_FUNCTIONS + (
+            "EXIT_FINDINGS",
+            "INJECTION_SECTIONS",
+            "TASK_KEY_PATTERN",
+        )
+        for name in all_expected:
+            self.assertTrue(
+                hasattr(agy_dispatch, name),
+                f"Attribute {name} not found on agy_dispatch module",
+            )
+
+    def test_adapter_reexports_are_identical_objects_from_core(self) -> None:
+        import dispatch.core.cli
+        import dispatch.core.documents
+        import dispatch.core.identity
+        import dispatch.core.rules
+        import dispatch.core.scope
+
+        core_modules = (
+            dispatch.core.cli,
+            dispatch.core.documents,
+            dispatch.core.identity,
+            dispatch.core.rules,
+            dispatch.core.scope,
+        )
+        for name in self.MOVED_FUNCTIONS:
+            adapter_obj = getattr(agy_dispatch, name)
+            core_obj = None
+            for mod in core_modules:
+                if hasattr(mod, name):
+                    core_obj = getattr(mod, name)
+                    break
+            self.assertIsNotNone(
+                core_obj,
+                f"Function {name} not found in any dispatch.core module",
+            )
+            self.assertIs(
+                adapter_obj,
+                core_obj,
+                f"agy_dispatch.{name} is not identical to core attribute",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
+
