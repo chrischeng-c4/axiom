@@ -143,43 +143,6 @@ const SERVING_TLS_VOLUME: &str = "lumen-serving-tls";
 /// The three keys the serving Secret must carry — same shape as the peer
 /// Secret, different subject.
 pub const SERVING_TLS_KEYS: [&str; 3] = ["tls.crt", "tls.key", "ca.crt"];
-/// The key holding the PEM anchor in the published client trust-bundle
-/// ConfigMap (#3113 R4).
-pub const CLIENT_TRUST_BUNDLE_KEY: &str = "ca.crt";
-
-/// Name of the private-key-free ConfigMap an in-cluster caller mounts to verify
-/// this instance's serving leaf (#3113 R4).
-///
-/// Derived from the instance name rather than configured: a caller that can
-/// name the Service can name its trust anchor, with nothing to look up and
-/// nothing to keep in sync.
-pub fn client_trust_bundle_name(lumen: &Lumen) -> String {
-    format!("{}-client-ca", instance(lumen))
-}
-
-/// The published anchor itself (#3113 R4): the CA that signed this instance's
-/// serving leaf, republished out of `spec.servingTlsSecret` into a ConfigMap
-/// that carries no private key.
-///
-/// Not part of [`render`]'s unconditional child list, because the PEM is not
-/// something a renderer can know — it lives in a Secret, and reading it is I/O.
-/// The reconcile hook reads it and appends this object, so it is applied,
-/// owned, and garbage-collected exactly like every other child rather than
-/// through a second write path with its own ownership rules.
-///
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
-pub fn client_trust_bundle(lumen: &Lumen, ca_pem: &str) -> Value {
-    let name = instance(lumen);
-    let ns = namespace(lumen);
-    let cx = ctx(lumen, &name, &ns);
-    json!({
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": cx.meta(&client_trust_bundle_name(lumen), COMPONENT),
-        "data": { CLIENT_TRUST_BUNDLE_KEY: ca_pem },
-    })
-}
-
 /// The Kubernetes Service DNS names the serving leaf answers to (#3113 R2).
 ///
 /// Both forms, because both are real: in-cluster callers resolve the short

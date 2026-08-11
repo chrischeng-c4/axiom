@@ -157,9 +157,8 @@ pub struct LumenSpec {
     /// active — there is no plaintext fallback to notice too late. Omit it
     /// only for local/kind development, where the port stays h2c.
     ///
-    /// Callers verify this leaf against `ca.crt`, which the operator republishes
-    /// as a private-key-free ConfigMap (see
-    /// [`LumenStatus::client_trust_bundle`]).
+    /// Callers verify this leaf against the public CA distributed separately by
+    /// the deployment administrator or external certificate platform.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub serving_tls_secret: Option<String>,
 
@@ -734,31 +733,6 @@ pub struct LumenStatus {
     /// [`super::reconcile`]'s no-I/O `status_patch` contract.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conditions: Vec<service_k8s::Condition>,
-    /// Where an in-cluster caller mounts the private CA that signs this
-    /// instance's serving leaf (#3113 R4).
-    ///
-    /// A ConfigMap, not the serving Secret: the Secret carries `tls.key`, and
-    /// a client that had to read it to obtain `ca.crt` would hold the server's
-    /// private key in order to verify the server. The operator republishes the
-    /// anchor into an owner-scoped, private-key-free object so a caller's
-    /// RBAC needs `get` on one ConfigMap and nothing else.
-    ///
-    /// Absent until a serving certificate is active — a reference that appears
-    /// before the material does would send callers to mount an empty volume.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_trust_bundle: Option<ClientTrustBundleRef>,
-}
-
-/// The published location of the client-facing trust anchor
-/// ([`LumenStatus::client_trust_bundle`], #3113 R4).
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
-pub struct ClientTrustBundleRef {
-    /// Name of the ConfigMap, in the instance's own namespace.
-    pub config_map: String,
-    /// Key within it holding the PEM bundle.
-    pub key: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
