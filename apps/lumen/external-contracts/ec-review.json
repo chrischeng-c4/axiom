@@ -1,20 +1,20 @@
 {
   "version": 1,
   "project": "lumen",
-  "source_digest": "sha256:75f1e2d8e728a43776a2a02157894c0ee9142ff3cfef86d9e8538736f0fa12a1",
-  "decision": "accepted",
-  "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer/lumen_2879_ec_semantic_review",
-  "reviewed_at": "2026-08-01T05:19:09.311457+00:00",
-  "summary": "The corrective #2879 EC revision preserves the accepted two-hop KSA/RBAC, source-built GKE provenance, cleanup, evidence-integrity, and independent redaction contracts while restoring ordinary direct harness compatibility. The source preflight requires both the exact executable audit-and-destroy function and an exact strict pair guard: neither auditor variable bypasses the optional EC callback, exactly one fails, and both invoke the reviewed auditor before immediately deleting and clearing SECRET_DIR. Comment-only, half-configured, unguarded standalone invocation, and unsafe work between audit and destruction are rejected. The inspected harness keeps credential material in SECRET_DIR, so this boundary remains materially sufficient rather than a regex-only false green. `applicability = cb` is semantically required because the callback and production source-built service must exist before this case can verify them. The missing production callback remains a specific post-code obligation and causes the EC runner to fail before starting GKE.",
+  "source_digest": "sha256:8bf380116741c02e6c67af2d4b49f4574c60c701eeea9c92c2f0d045c5b74f64",
+  "decision": "pending",
+  "reviewer_kind": "",
+  "reviewed_by": "",
+  "reviewed_at": "",
+  "summary": "Candidate #2879 EC revision awaits independent semantic review. It has distinct TD/CB behavior/security cases, protocol-location-bound TD checks, controller-bound archive bytes plus strict GCS checksum and RFC8032 Ed25519 canonical/subgroup-checked DSSE/Cloud Build/image/deployed-CR provenance, controller-challenged exactly-two issuer acquisition, closed exact TokenRequest/HTTP/TokenReview/SAR/RBAC correlation, exact-schema direct-Google, wrong-audience, and anonymous rejection without authenticated Kubernetes/Lumen subjects, UID-bound unbound and revocation deletions, controller-Ed25519-authenticated execution transcript for exact existing sibling ServiceAccount UID/TokenRequest forbidden evidence and extracted CLI bytes, complete credential path/class/issuer/audience/observation byte destruction within five seconds with FD-only controller canary input, terminal encoded-form full-corpus redaction, and exactly-one-per-class native kubectl table/NotFound or gcloud/storage raw cleanup transcripts. It remains intentionally unaccepted. The current TD and GKE producer remain expected-red because they do not emit these evidence shapes. The CB cases retain applicability=cb as required by the issue, but the current AW manifest validator accepts only td for behavior/security and post-gen for stability/efficiency; this protocol incompatibility is explicit and unresolved.",
   "checklist": {
-    "capability_claim_coverage": true,
-    "required_dimensions": true,
-    "assertions_specific": true,
-    "oracle_independent": true,
-    "loopholes_checked": true,
-    "false_green_risk_checked": true
+    "capability_claim_coverage": false,
+    "required_dimensions": false,
+    "assertions_specific": false,
+    "oracle_independent": false,
+    "loopholes_checked": false,
+    "false_green_risk_checked": false
   },
   "findings": [],
-  "target_path": "apps/lumen/external-contracts/src/runner.py"
+  "target_path": "apps/lumen/external-contracts/pyproject.toml"
 }

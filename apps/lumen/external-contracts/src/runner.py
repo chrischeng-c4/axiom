@@ -1,12 +1,17 @@
+"""Protocol runner for the #2879 Python external contract.
+
+``--list`` is purely descriptive.  Case execution reads supplied TD or retained
+GKE evidence and writes an EC result; it never invokes a cloud or harness
+command.  A controller runs the real GKE harness separately, then binds this
+runner to its generated run id, source revision, and freshness boundary.
+"""
+
 from __future__ import annotations
 
-import hashlib
+from datetime import datetime
 import importlib.util
 import json
 import os
-import re
-import secrets
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -14,30 +19,10 @@ from typing import Any, Callable
 
 RESULT_SCHEMA = "aw.python-artifact.result.v1"
 PROTOCOL = "aw.python-artifact.v1"
-CASE_ID = "gke-ksa-rbac-authorization"
-EVIDENCE_NAME = "gke-ksa-rbac-authorization.json"
-RUNS_DIR = "gke-runs"
-AUTH_AUDIT_NAME = "lumen-auth-redaction-audit.json"
-REDACTION_LIFECYCLE_FUNCTION = "lumen_auth_redaction_audit_and_destroy"
-REDACTION_LIFECYCLE = re.compile(
-    r"(?ms)^lumen_auth_redaction_audit_and_destroy\(\) \{\n"
-    r"\s+\"\$\{LUMEN_AUTH_REDACTION_AUDITOR:\?[^}]+\}\" \\\n"
-    r"\s+--evidence-root \"\$EVIDENCE_DIR\" \\\n"
-    r"\s+--credential-dir \"\$SECRET_DIR\" \\\n"
-    r"\s+--output \"\$\{LUMEN_AUTH_REDACTION_AUDIT_PATH:\?[^}]+\}\"\n"
-    r"\s+rm -rf \"\$SECRET_DIR\"\n"
-    r"\s+SECRET_DIR=\"\"\n"
-    r"\}$"
-)
-REDACTION_LIFECYCLE_GUARD = re.compile(
-    r"(?ms)^if \[\[ -n \"\$\{LUMEN_AUTH_REDACTION_AUDITOR:-\}\" \|\| -n \"\$\{LUMEN_AUTH_REDACTION_AUDIT_PATH:-\}\" \]\]; then\n"
-    r"\s+\[\[ -n \"\$\{LUMEN_AUTH_REDACTION_AUDITOR:-\}\" && -n \"\$\{LUMEN_AUTH_REDACTION_AUDIT_PATH:-\}\" \]\] \|\| \{\n"
-    r"\s+echo \"LUMEN_AUTH_REDACTION_AUDITOR and LUMEN_AUTH_REDACTION_AUDIT_PATH must be set together\" >&2\n"
-    r"\s+exit 1\n"
-    r"\s+\}\n"
-    r"\s+lumen_auth_redaction_audit_and_destroy\n"
-    r"fi$"
-)
+TD_CASE_IDS = ("gke-ksa-rbac-td-behavior", "gke-ksa-rbac-td-security")
+CB_CASE_IDS = ("gke-ksa-rbac-cb-behavior", "gke-ksa-rbac-cb-security")
+CASE_IDS = TD_CASE_IDS + CB_CASE_IDS
+CASE_EVIDENCE_PATHS = {case_id: f"evidence/{case_id}.json" for case_id in CASE_IDS}
 
 
 def _required_env(name: str) -> str:
@@ -47,262 +32,178 @@ def _required_env(name: str) -> str:
     return value
 
 
-def _load_case() -> Callable[..., None]:
-    case_path = Path(__file__).with_name("ec-2879.py")
-    spec = importlib.util.spec_from_file_location("lumen_ec_2879", case_path)
+def _load_case() -> Any:
+    path = Path(__file__).with_name("ec-2879.py")
+    spec = importlib.util.spec_from_file_location("lumen_ec_2879", path)
     if spec is None or spec.loader is None:
-        raise RuntimeError("could not load the #2879 external-contract case")
+        raise RuntimeError("could not load the #2879 external-contract module")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    verifier = getattr(module, "verify_retained_gke_evidence", None)
-    if not callable(verifier):
-        raise RuntimeError("#2879 external-contract case exports no retained-evidence verifier")
-    return verifier
+    return module
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
-
-
-def _current_checkout(repo_root: Path) -> str:
-    dirty = subprocess.run(
-        ["git", "-C", str(repo_root), "status", "--porcelain=v1"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if dirty.stdout:
-        raise ValueError("GKE oracle requires a clean checkout for source provenance")
-    revision = subprocess.run(
-        ["git", "-C", str(repo_root), "rev-parse", "--short=12", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    if not revision:
-        raise ValueError("could not determine the reviewed checkout revision")
-    return revision
-
-
-def _has_ordered_harness_redaction_lifecycle(source: str) -> bool:
-    lifecycle = REDACTION_LIFECYCLE.search(source)
-    guard = REDACTION_LIFECYCLE_GUARD.search(source)
-    if lifecycle is None or guard is None:
-        return False
-    without_blocks = (
-        source[: lifecycle.start()]
-        + source[lifecycle.end() : guard.start()]
-        + source[guard.end() :]
-    )
-    return re.search(
-        rf"(?m)^\s*{REDACTION_LIFECYCLE_FUNCTION}\s*$", without_blocks
-    ) is None
-
-
-def _require_harness_redaction_seam(script: Path) -> None:
-    if not _has_ordered_harness_redaction_lifecycle(script.read_text(encoding="utf-8")):
-        raise ValueError(
-            "acceptance/gcp/scripts/verify-lumen-auth.sh lacks the required ordered "
-            f"{REDACTION_LIFECYCLE_FUNCTION} lifecycle and strict opt-in pair guard"
-        )
-
-
-def _fresh_run_id() -> str:
-    return f"ec2879{secrets.token_hex(6)}"
-
-
-def _run_harness(script: Path, repo_root: Path, environment: dict[str, str]) -> None:
-    completed = subprocess.run(
-        [str(script)],
-        cwd=repo_root,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        raise ValueError(f"fresh GKE acceptance harness failed with exit {completed.returncode}")
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as error:
-        raise ValueError(f"missing fresh GKE artifact {path.name}") from error
-    except json.JSONDecodeError as error:
-        raise ValueError(f"invalid fresh GKE artifact {path.name}") from error
-    if not isinstance(value, dict):
-        raise ValueError(f"fresh GKE artifact {path.name} is not a JSON object")
-    return value
-
-
-def _verify_provenance(run_dir: Path, run_id: str, expected_sha: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    run = _read_json(run_dir / "run.json")
-    if run.get("run_id") != run_id:
-        raise ValueError("GKE run provenance does not carry the runner-generated run id")
-    if run.get("git_sha") != expected_sha or run.get("git_dirty") is not False:
-        raise ValueError("GKE run provenance does not match the current clean checkout")
-    if not isinstance(run.get("started_at"), str) or not run["started_at"]:
-        raise ValueError("GKE run provenance has no start time")
-    if run.get("image_provenance") != "cloud-build":
-        raise ValueError("GKE oracle requires a Lumen image built from the reviewed checkout")
-    images = _read_json(run_dir / "images.json")
-    image = images.get("lumen")
-    if not isinstance(image, str) or "@sha256:" not in image:
-        raise ValueError("GKE run did not retain an immutable Lumen image digest")
-    return run, images
-
-
-def _cloud_build_environment(
-    project_id: str,
-    run_id: str,
-    run_dir: Path,
-    audit_path: Path,
-) -> dict[str, str]:
-    environment = {
-        **os.environ,
-        "PROJECT_ID": project_id,
-        "RUN_ID": run_id,
-        "EVIDENCE_DIR": str(run_dir),
-        "LUMEN_AUTH_REDACTION_AUDITOR": str(Path(__file__).with_name("redaction_auditor.py")),
-        "LUMEN_AUTH_REDACTION_AUDIT_PATH": str(audit_path),
-        "ACCEPTANCE_APPS": "lumen auth",
-    }
-    for override in (
-        "LUMEN_IMAGE",
-        "SIFT_IMAGE",
-        "TAPE_IMAGE",
-        "LUMEN_PRIOR_ACCEPTANCE",
-        "LUMEN_CLI",
-        "SIFT_CLI",
-        "TAPE_CLI",
-    ):
-        environment.pop(override, None)
-    return environment
-
-
-def _digest(path: Path) -> str:
-    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+def _parse_not_before(value: str) -> datetime:
+    module = _load_case()
+    return module._parse_timestamp(value, "controller freshness boundary")
 
 
 def _write_evidence(
     evidence_dir: Path,
+    case_id: str,
     status: str,
     source_digest: str,
     dependency_lock_digest: str,
     detail: str,
-    run_dir: Path | None,
-    provenance: tuple[dict[str, Any], dict[str, Any]] | None = None,
 ) -> str:
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    result_path = evidence_dir / EVIDENCE_NAME
-    result: dict[str, Any] = {
-        "schema": "axiom.lumen.ec.gke-ksa-rbac.v1",
-        "case": CASE_ID,
+    relative = CASE_EVIDENCE_PATHS[case_id]
+    result = {
+        "schema": "axiom.lumen.ec.2879.case-result.v1",
+        "case_id": case_id,
         "status": status,
         "source_digest": source_digest,
         "dependency_lock_digest": dependency_lock_digest,
         "detail": detail,
+        "evidence_paths": [relative],
     }
-    if run_dir is not None:
-        auth = run_dir / "lumen-auth-acceptance.json"
-        cleanup = run_dir / "cleanup.json"
-        audit = run_dir / "kubernetes" / "auth" / AUTH_AUDIT_NAME
-        if auth.is_file():
-            result["auth_summary_digest"] = _digest(auth)
-        if cleanup.is_file():
-            result["cleanup_digest"] = _digest(cleanup)
-        if audit.is_file():
-            result["redaction_audit_digest"] = _digest(audit)
-        if provenance is not None:
-            run, images = provenance
-            result["run_id"] = run["run_id"]
-            result["git_sha"] = run["git_sha"]
-            result["lumen_image"] = images["lumen"]
-    result_path.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
-    return f"evidence/{EVIDENCE_NAME}"
+    (evidence_dir / Path(relative).name).write_text(
+        json.dumps(result, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return relative
 
 
-def _emit(status: str, source_digest: str, dependency_lock_digest: str, evidence: str) -> None:
-    print(
-        json.dumps(
+def _emit(
+    status: str,
+    source_digest: str | None,
+    dependency_lock_digest: str | None,
+    cases: list[dict[str, str]],
+) -> None:
+    result: dict[str, Any] = {
+        "schema_version": RESULT_SCHEMA,
+        "status": status,
+        "cases": cases,
+        "evidence": [case["evidence_path"] for case in cases if "evidence_path" in case],
+    }
+    if source_digest is not None:
+        result["source_digest"] = source_digest
+    if dependency_lock_digest is not None:
+        result["dependency_lock_digest"] = dependency_lock_digest
+    print(json.dumps(result, sort_keys=True))
+
+
+def _list_cases() -> None:
+    _emit(
+        "listed",
+        None,
+        None,
+        [
             {
-                "schema_version": RESULT_SCHEMA,
-                "status": status,
-                "source_digest": source_digest,
-                "dependency_lock_digest": dependency_lock_digest,
-                "evidence": [evidence],
-            },
-            sort_keys=True,
-        )
+                "id": case_id,
+                "applicability": "td" if case_id in TD_CASE_IDS else "cb",
+                "evidence_path": CASE_EVIDENCE_PATHS[case_id],
+            }
+            for case_id in CASE_IDS
+        ],
     )
 
 
-def run_case(
-    source_digest: str,
-    dependency_lock_digest: str,
-    evidence_dir: Path,
-    project_id: str,
-    run_harness: Callable[[Path, Path, dict[str, str]], None] = _run_harness,
-    checkout: Callable[[Path], str] = _current_checkout,
-) -> str:
-    repo_root = _repo_root()
-    script = repo_root / "acceptance" / "gcp" / "scripts" / "run.sh"
-    auth_script = repo_root / "acceptance" / "gcp" / "scripts" / "verify-lumen-auth.sh"
-    _require_harness_redaction_seam(auth_script)
-    revision = checkout(repo_root)
-    run_id = _fresh_run_id()
-    run_dir = evidence_dir / RUNS_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=False)
-    audit_path = run_dir / "kubernetes" / "auth" / AUTH_AUDIT_NAME
-    environment = _cloud_build_environment(project_id, run_id, run_dir, audit_path)
-    run_harness(script, repo_root, environment)
-    provenance = _verify_provenance(run_dir, run_id, revision)
-    _load_case()(run_dir, audit_path)
+def _repo_root() -> Path:
+    """Resolve the TD root from this protocol-owned artifact location only.
+
+    There is deliberately no environment override: an arbitrary checkout could
+    otherwise make production TD verification inspect attacker-selected source.
+    Tests place a copied artifact in a synthetic repository layout instead.
+    """
+    return Path(__file__).resolve().parents[4]
+
+
+def run_case(case_id: str, source_digest: str, dependency_lock_digest: str, evidence_dir: Path) -> str:
+    module = _load_case()
+    if case_id == "gke-ksa-rbac-td-behavior":
+        module.verify_td_behavior_source(
+            _repo_root(),
+            _required_env("LUMEN_EC_EXPECTED_TD_SOURCE_DIGEST"),
+        )
+    elif case_id == "gke-ksa-rbac-td-security":
+        module.verify_td_security_source(
+            _repo_root(),
+            _required_env("LUMEN_EC_EXPECTED_TD_SOURCE_DIGEST"),
+        )
+    elif case_id == "gke-ksa-rbac-cb-behavior":
+        module.verify_cb_behavior_evidence(
+            Path(_required_env("LUMEN_EC_RETAINED_BUNDLE")),
+            _required_env("LUMEN_EC_EXPECTED_RUN_ID"),
+            _required_env("LUMEN_EC_EXPECTED_GIT_SHA"),
+            _parse_not_before(_required_env("LUMEN_EC_NOT_BEFORE")),
+            _required_env("LUMEN_EC_EXPECTED_SOURCE_ARCHIVE_COMMITMENT"),
+            _required_env("LUMEN_EC_EXPECTED_GCP_PROJECT"),
+            _required_env("LUMEN_EC_EXPECTED_REDACTION_COMMITMENT"),
+            _required_env("LUMEN_EC_EXPECTED_GOOGLE_USER_PRINCIPAL"),
+            _required_env("LUMEN_EC_EXPECTED_GOOGLE_SERVICE_ACCOUNT_PRINCIPAL"),
+            _required_env("LUMEN_EC_EXPECTED_ISSUER_CHALLENGE"),
+            _required_env("LUMEN_EC_EXPECTED_ATTESTATION_DSSE_DIGEST"),
+            _required_env("LUMEN_EC_TRUSTED_CLOUDBUILD_ED25519_PUBLIC_KEY"),
+        )
+    elif case_id == "gke-ksa-rbac-cb-security":
+        module.verify_cb_security_evidence(
+            Path(_required_env("LUMEN_EC_RETAINED_BUNDLE")),
+            _required_env("LUMEN_EC_EXPECTED_RUN_ID"),
+            _required_env("LUMEN_EC_EXPECTED_GIT_SHA"),
+            _parse_not_before(_required_env("LUMEN_EC_NOT_BEFORE")),
+            _required_env("LUMEN_EC_EXPECTED_SOURCE_ARCHIVE_COMMITMENT"),
+            _required_env("LUMEN_EC_EXPECTED_GCP_PROJECT"),
+            _required_env("LUMEN_EC_EXPECTED_REDACTION_COMMITMENT"),
+            _required_env("LUMEN_EC_EXPECTED_GOOGLE_USER_PRINCIPAL"),
+            _required_env("LUMEN_EC_EXPECTED_GOOGLE_SERVICE_ACCOUNT_PRINCIPAL"),
+            _required_env("LUMEN_EC_EXPECTED_ISSUER_CHALLENGE"),
+            _required_env("LUMEN_EC_EXPECTED_CLI_BINARY_DIGEST"),
+            _required_env("LUMEN_EC_EXPECTED_ATTESTATION_DSSE_DIGEST"),
+            _required_env("LUMEN_EC_TRUSTED_CLOUDBUILD_ED25519_PUBLIC_KEY"),
+            _required_env("LUMEN_EC_TRUSTED_CONTROLLER_ED25519_PUBLIC_KEY"),
+        )
+    else:
+        raise ValueError(f"unknown external-contract command {case_id!r}")
     return _write_evidence(
         evidence_dir,
+        case_id,
         "passed",
         source_digest,
         dependency_lock_digest,
-        "fresh GKE evidence satisfied the two-hop KSA/RBAC contract",
-        run_dir,
-        provenance,
+        "EC-owned literal oracle accepted the supplied evidence",
     )
 
 
 def main() -> None:
-    source_digest = _required_env("AW_PYTHON_ARTIFACT_SOURCE_DIGEST")
-    dependency_lock_digest = _required_env("AW_PYTHON_ARTIFACT_DEPENDENCY_LOCK_DIGEST")
-    evidence_dir = Path(_required_env("AW_PYTHON_ARTIFACT_EVIDENCE_DIR"))
     command = sys.argv[1] if len(sys.argv) == 2 else ""
-    project_id = os.environ.get("PROJECT_ID")
-
+    if command == "--list":
+        _list_cases()
+        return
+    source_digest = os.environ.get("AW_PYTHON_ARTIFACT_SOURCE_DIGEST")
+    dependency_lock_digest = os.environ.get("AW_PYTHON_ARTIFACT_DEPENDENCY_LOCK_DIGEST")
+    evidence_dir_value = os.environ.get("AW_PYTHON_ARTIFACT_EVIDENCE_DIR")
     try:
         if os.environ.get("AW_PYTHON_ARTIFACT_PROTOCOL") != PROTOCOL:
             raise ValueError("AW_PYTHON_ARTIFACT_PROTOCOL is missing or unsupported")
-        if command != CASE_ID:
+        if command not in CASE_IDS:
             raise ValueError(f"unknown external-contract command {command!r}")
-        if not project_id:
-            raise ValueError("missing required environment variable PROJECT_ID")
-        evidence = run_case(
-            source_digest,
-            dependency_lock_digest,
-            evidence_dir,
-            project_id,
-        )
+        if not source_digest or not dependency_lock_digest or not evidence_dir_value:
+            raise ValueError("artifact source, dependency-lock, and evidence environment is required")
+        evidence = run_case(command, source_digest, dependency_lock_digest, Path(evidence_dir_value))
     except Exception as error:
-        evidence = _write_evidence(
-            evidence_dir,
-            "failed",
-            source_digest,
-            dependency_lock_digest,
-            str(error),
-            None,
-        )
-        _emit("failed", source_digest, dependency_lock_digest, evidence)
+        if source_digest and dependency_lock_digest and evidence_dir_value and command in CASE_IDS:
+            evidence = _write_evidence(
+                Path(evidence_dir_value),
+                command,
+                "failed",
+                source_digest,
+                dependency_lock_digest,
+                str(error),
+            )
+            _emit("failed", source_digest, dependency_lock_digest, [{"id": command, "evidence_path": evidence}])
+        else:
+            _emit("failed", source_digest, dependency_lock_digest, [{"id": command, "detail": str(error)}])
         raise SystemExit(1)
-
-    _emit("passed", source_digest, dependency_lock_digest, evidence)
+    _emit("passed", source_digest, dependency_lock_digest, [{"id": command, "evidence_path": evidence}])
 
 
 if __name__ == "__main__":
