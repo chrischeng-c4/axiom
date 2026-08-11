@@ -17,6 +17,52 @@ agent can navigate cheaply and act on correctly:
 
 ---
 
+## Contents
+
+- [Authoring principle: right-sized files, semantic paths, explicit names](#authoring-principle-right-sized-files-semantic-paths-explicit-names)
+  - [The three rules](#the-three-rules)
+  - [Balanced splitting](#balanced-splitting)
+  - [Granularity scales with tooling](#granularity-scales-with-tooling)
+  - [Path grammar (a pattern, not a mandate)](#path-grammar-a-pattern-not-a-mandate)
+  - [Organize by domain, not by tooling](#organize-by-domain-not-by-tooling)
+  - [Where it applies (scope)](#where-it-applies-scope)
+  - [Example: decomposing a monolith into a navigable tree](#example-decomposing-a-monolith-into-a-navigable-tree)
+- [Authoring convention: every agent instruction is Goal / How / Acceptance / Never](#authoring-convention-every-agent-instruction-is-goal-how-acceptance-never)
+  - [Why a structure at all](#why-a-structure-at-all)
+  - [The layering GHAN sits in](#the-layering-ghan-sits-in)
+  - [The four sections](#the-four-sections)
+  - [Negative control (mandatory — a report without it is rejected)](#negative-control-mandatory-a-report-without-it-is-rejected)
+  - [Report back, with measured numbers](#report-back-with-measured-numbers)
+  - [Applying GHAN outside work items](#applying-ghan-outside-work-items)
+- [Service archetype: durable-only, HA, HTTP/2 + OpenAPI, k8s-native](#service-archetype-durable-only-ha-http2-openapi-k8s-native)
+  - [Service workload profiles — common, StatefulSet, Deployment](#service-workload-profiles-common-statefulset-deployment)
+  - [Control plane and data plane responsibilities](#control-plane-and-data-plane-responsibilities)
+- [Shared libraries: naming, the kit, and the shape they produce](#shared-libraries-naming-the-kit-and-the-shape-they-produce)
+  - [Shared-library naming grammar](#shared-library-naming-grammar)
+  - [The shared service kit — compose these libs, do not hand-roll](#the-shared-service-kit-compose-these-libs-do-not-hand-roll)
+  - [Service source layout — the same kit produces the same shape](#service-source-layout-the-same-kit-produces-the-same-shape)
+- [Service contracts: transport, spec, endpoints, auth, HA](#service-contracts-transport-spec-endpoints-auth-ha)
+  - [Transport — h2c + OpenAPI on one port](#transport-h2c-openapi-on-one-port)
+  - [OpenAPI client codegen — typed clients from the spec](#openapi-client-codegen-typed-clients-from-the-spec)
+  - [Standard endpoints — one operational surface, one contract three ways](#standard-endpoints-one-operational-surface-one-contract-three-ways)
+  - [Service auth — one Bearer-token contract](#service-auth-one-bearer-token-contract)
+  - [HA — `raft-core`, sharded and strongly consistent](#ha-raft-core-sharded-and-strongly-consistent)
+- [Deployment: artifacts, tenancy, and the control/data split](#deployment-artifacts-tenancy-and-the-controldata-split)
+  - [Deploy artifacts — image, cluster API, operator, instance](#deploy-artifacts-image-cluster-api-operator-instance)
+  - [Deploy tenancy — dedicated first, shared only when justified](#deploy-tenancy-dedicated-first-shared-only-when-justified)
+- [Operations baseline — notice the breach, watch the watcher, answer "converged?"](#operations-baseline-notice-the-breach-watch-the-watcher-answer-converged)
+- [Conformance: what proves a service actually complies](#conformance-what-proves-a-service-actually-complies)
+  - [Architecture/profile conformance checklist](#architectureprofile-conformance-checklist)
+  - [EC gates — `vat`-driven, evidence under `external-contracts/`](#ec-gates-vat-driven-evidence-under-external-contracts)
+  - [Service dogfood rules — keep the whole surface honest](#service-dogfood-rules-keep-the-whole-surface-honest)
+- [CLI convention: every CLI ships `llm`, `upgrade`, `issue`](#cli-convention-every-cli-ships-llm-upgrade-issue)
+- [CLI convention: stdout tells the agent the next step](#cli-convention-stdout-tells-the-agent-the-next-step)
+- [DX convention: every service and CLI ships a Developer & Agent Experience capability](#dx-convention-every-service-and-cli-ships-a-developer-agent-experience-capability)
+- [Meta-doc content contract](#meta-doc-content-contract)
+- [Project build and release contract](#project-build-and-release-contract)
+  - [Debug builds](#debug-builds)
+  - [Release builds](#release-builds)
+
 ## Authoring principle: right-sized files, semantic paths, explicit names
 
 This principle is **medium-agnostic** — it is about *navigability*, not any
@@ -151,7 +197,7 @@ legible structure, not a mandate to shred cohesive code into wrapper files.
 
 ---
 
-## Example: decomposing a monolith into a navigable tree
+### Example: decomposing a monolith into a navigable tree
 
 > One worked instantiation of the principle above — **not** the definition.
 
@@ -162,7 +208,7 @@ concrete: `<bucket>/<subject>/<dimension>/<case>`, where `dimension` is the
 *concern* for tests (surface · behavior · errors · bench · real_world ·
 security).
 
-### Before → after
+#### Before → after
 
 **Before** — one file, eight unrelated behaviors mixed together:
 
@@ -186,7 +232,7 @@ need, and no coverage is lost. Note `isleap_rule.py` keeps its several input
 years *together* as one table (cohesion), rather than one-file-per-input (which
 would be over-splitting).
 
-### Keep tooling and per-tree conventions with the tree
+#### Keep tooling and per-tree conventions with the tree
 
 The mechanics that make a tree fully tooled — its layout spec, the
 `generate → fill → lint` loop, the file template, and tree-local authoring
@@ -486,6 +532,109 @@ no signal when a project drifts from it.
 | `stateful_storage` | `stateful-service-workload` | [Service workload profiles — common, StatefulSet, Deployment](#service-workload-profiles-common-statefulset-deployment) | Service owns durable application state, so it selects the StatefulSet profile: stable identity, PVC/storage durability, peer topology, backup/restore, and an explicit workload-kind migration handoff. |
 | `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for the common service baseline; expands to transport, deploy artifacts, operational endpoints, EC gates, and CLI conventions. Without stateful_storage the primary workload is a Deployment; stateful_storage selects the StatefulSet profile. |
 
+### Service workload profiles — common, StatefulSet, Deployment
+
+Every service composes one common baseline and exactly one primary workload
+profile. This is a service/instance ownership decision, not a replica-count
+shortcut: ancillary Jobs and CronJobs do not change the primary profile.
+
+#### Common
+
+All profiles share server/runtime composition, standard health/readiness/
+metrics surfaces, authentication and TLS policy, graceful shutdown/drain,
+image plus layered k8s artifacts, operator reconciliation, labels/selectors,
+owner references, ServiceAccount, ordinary client Service, and applicable
+PDB/HPA helpers. Product-specific state machines, downstream quotas, schemas,
+and routing policy remain in the service.
+
+#### StatefulSet-specific
+
+Declare `stateful_storage` when Pods own durable application state or require
+stable identity/topology. This selects the StatefulSet profile and adds the
+`stateful-service-workload` baseline: durable acknowledgement, PVC-backed
+storage, headless Service, downward-API ordinal/peer discovery, Raft/replication
+when HA is required, backup/restore, and stateful scale/upgrade rules.
+
+#### Deployment-specific
+
+A `service` without `stateful_storage` selects the Deployment profile. Pods own
+no durable application state or stable identity: use an ordinary Deployment and
+ClusterIP Service, readiness plus preStop drain, and rollout/disruption/HPA
+policy. Do not add PVC, headless Service, Raft, peer DNS, or ClientIP session
+affinity. If Pods consume a bounded remote dependency, scale and rolling surge
+must respect that external capacity; pgpool's PostgreSQL connection budget is
+the reference case.
+
+Primary workload kind is not a live renderer toggle. The shared reconciler
+applies current children but does not garbage-collect an old child of another
+kind, so Deployment↔StatefulSet changes require an explicit migration handoff
+that removes or transfers traffic from the stale workload before the new one
+becomes authoritative.
+
+A service is not "done" until it satisfies every row:
+
+| Dimension | Requirement | Reference / gotcha |
+|-----------|-------------|--------------------|
+| **Shape** | Workspace member that is **both `lib` and `bin`** — embeddable as a crate, runnable as a server. Metadata via `version/edition/authors/license = .workspace`. | every service `Cargo.toml` |
+| **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Compose **`libs/service-http`** and **`libs/transport-h2c`** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
+| **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | Prefer **`libs/service-http`** standard probe/admin route helpers. `lumen` is the reference for the full surface. The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
+| **Observability / trace context** | Every request is traced and correlatable with zero extra infrastructure: the shared trace layer **accepts W3C version-00 `traceparent`** (strictly validated — invalid input is treated as absent) and **generates a fresh local root context when none arrives**; every request span carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`, and those fields flow into the structured stdout schema (`axiom.service.log.v1`) that the sift collector ingests, so cross-service log correlation works even without a trace exporter. The `otlp` feature upgrades the same context to full OpenTelemetry export. Per-op request counters/latency are served on `/metrics`. | Compose **`libs/service-http`** `trace_layer()` (`CorrelatingMakeSpan` + `request_trace_context`) — never a hand-rolled span/correlation layer. Planned at the same seam: response `Server-Timing` (#2490) and outbound `traceparent` injection for service-to-service clients. A capability a service gets from this shell belongs in that service's Observability capability row — undocumented shared behavior is undiscoverable behavior. |
+| **Auth** | Every service uses the same bearer-token shape: server env `<SVC>_AUTH=off|required` plus `<SVC>_TOKEN_REGISTRY_FILE=/var/run/secrets/<svc>/token-registry.json`; clients use `<SVC>_URL` + `<SVC>_TOKEN` and send `Authorization: Bearer <token>`. | Compose **`libs/service-auth`** for middleware and **`libs/claim-token`** for signed-token verification when needed. In k8s/cloud, the registry file is mounted from a Kubernetes Secret, CSI Secret Store, or cloud Secret Manager sync. Do not add one-off auth headers, per-service token env names, or inline server token lists as the production path. |
+| **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
+| **Durability / ack boundary** | **Mandatory for the StatefulSet profile:** an accepted mutation to service-owned state is durable before success. A Deployment-profile proxy may own no durable mutation at all; durability remains with its downstream system. | Stateful services compose **`libs/storage-durable`** plus a service-owned durable log/state store and `raft-core`/`raft-runtime` when replicated. Deployment proxies document downstream durability and prove drain/reconnect behavior instead of inventing local persistence. |
+| **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-runtime`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-runtime`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
+| **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. A production instance must configure a scheduled object-storage snapshot job; manual/local snapshots are break-glass or local-dev paths, not the service-archetype baseline. | `raft-runtime` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to `file://`, `s3://`, or `gs://` destinations (the GCS adapter is unconditional in `service-backup`, authenticates via workload-identity ADC in-cluster, and is GKE-proven); the operator schedules, wires secrets/IAM, reports status, and never serializes service data itself. |
+| **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
+| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; exactly one primary workload profile. StatefulSet identity/peers come from the downward API; Deployment Pods use ordinary identity plus drain-aware rollout. | Use **`libs/service-k8s`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
+| **Operations** | Alert rules with runbooks, control-plane self-observability, `status.conditions[]`, network isolation, and verifiable release artifacts. A service that emits signal but cannot notice its own breach is not production-ready. | see *Operations baseline* below. Instrumentation (the Observability row) is the raw signal; this is what makes the signal act. |
+| **Authoring ladder** | `aw.toml` names the project; changes are authored one phase at a time through `e2e` → `unit` → `logic`, red first. | see the write-order table in `CLAUDE.md`. Any `tech-design/` tree and any `SPEC-MANAGED` / `HANDWRITE` marker still in source is residue — the producer that owned them is deleted, and the `.rs` is the authoring surface. |
+| **EC gates** | Evidence-contract gates wired below. | see *EC gates* under *Conformance* below. |
+| **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
+
+### Control plane and data plane responsibilities
+
+*(policy-only — judgment, not trait-enforced; the split is a repository service
+archetype rule until `libs/service-k8s` can validate it mechanically.)*
+
+Every Kubernetes-native service composes a shared **control plane** and a
+per-instance **data plane**. The control plane is the CRD, Operator, reconcile
+loop, status, finalizers, and lifecycle resources. Its common mechanics belong
+in `libs/service-k8s`; each service supplies only its domain schema, policy,
+and operator defaults. The Operator normally runs in `<svc>-system`.
+
+The data plane is the workload rendered for one service instance and the
+resources that carry its traffic and durable state. For a StatefulSet-profile
+service, that includes the StatefulSet, client/headless Services, PVCs, PDBs,
+and applicable backup or maintenance workloads. It belongs in the instance's
+app or service-owned namespace; do not require a fixed shared data-plane
+namespace. A service's data-plane behavior remains domain-specific, but the
+control-plane/data-plane split is a service-archetype contract, not a
+service-specific capability.
+
+When a reconcile's rendered shape stops including a resource it rendered
+previously — a conditional HPA, a per-mode Service, or any other
+conditionally-rendered child — the service operator must explicitly delete
+that child. The shared `libs/service-k8s` reconcile loop renders desired state;
+it does not garbage-collect a resource that an earlier render produced and
+the current render no longer wants. The deletion must be idempotent, scoped
+to the names/labels the operator itself stamps (never a foreign or
+unrelated resource), and logged.
+
+A mounted PVC is not durability. Rendering a `PersistentVolumeClaim`
+template only makes storage available; the operator's rendered defaults
+must also activate the service's own durable-persistence path (data-dir /
+persistence env or equivalent) so the service actually writes to that
+storage. The deploy baseline for a stateful service includes a
+pod-delete-and-recreate proof that data written before the deletion is
+still present after the pod is recreated.
+
+## Shared libraries: naming, the kit, and the shape they produce
+
+Three rules that compound. The naming grammar tells you what a library
+owns before you open it; the kit tells you which libraries you are
+required to compose; the source layout tells you what a service looks
+like once it has. Skip any one and the other two stop being checkable.
+
 ### Shared-library naming grammar
 
 *(policy-only — a repository authoring policy, not a project capability trait.
@@ -585,107 +734,90 @@ maintenance CronJobs are library contracts. Do not duplicate that YAML/JSON
 construction in `lumen`, `keep`, `relay`, or `loom`; extend `libs/service-k8s`
 when the helper is incomplete.
 
-### Architecture/profile conformance checklist
+### Service source layout — the same kit produces the same shape
 
-*(policy-only, and unenforced — read the paragraph below before using this
-table as a gate.)*
+*(policy-only — judgment today; nothing mechanically checks this layout.)*
 
-A project's reference profile shape (kind/surface, workload, state ownership,
-replication, serving role) implies the conformance findings catalogued below:
-shared-service-kit adoption gaps, profile-shape negative assertions, and
-observability/Raft telemetry gaps.
+Adopting the same kit is only half the convergence. Two services that compose
+identical libraries should also be **navigable identically** — an agent that has
+read one service's `src/` should be able to predict the next one's without
+opening a file. Today they cannot: the HTTP shell is called `server` in `tape`,
+`defer`, and `relay`, `http` in `keep`, `service` in `beam`, and `api` in
+`lumen`; the OpenAPI module is `spec` in some and `openapi` in others, and
+`tape` carries both.
 
-**Nothing runs this catalogue.** It was `aw review --project <project>`, spliced
-in from two live rule registries and drift-tested against them; the command, the
-registries, and the drift test are all deleted. What is left is a hand-applied
-checklist — useful when reviewing a service against the archetype, and worth
-nothing as evidence. A rule below that a project violates produces no finding,
-no exit code, and no signal of any kind. Do not cite one as a gate in a
-`## Acceptance` table.
+**The rule.** `apps/<svc>/src/` holds exactly three kinds of thing: the
+**entry point**, the **external contract**, and the **domain state machine**.
+Everything else is thin wiring over a `libs/` crate. Wiring that has grown
+*body* is the signal that the shared lib is missing a hook — extend the lib,
+do not let the app keep the logic.
 
-| Rule ID | Family | Fires when |
+#### Top level
+
+```text
+required  aw.toml  Cargo.toml  build.rs  build.sh  install.sh
+          README.md  CAPABILITIES.md  CONTRIBUTING.md  llms.txt
+          Dockerfile  Dockerfile.release  Dockerfile.test  compose.yaml
+          src/  tests/  k8s/  clients/  docs/  scripts/  observability/
+          tech-design/  external-contracts/
+          vat.toml  guard-<scope>-security.toml  meter-<scope>-<dimension>.toml
+optional  benches/  examples/  proptest-regressions/  rig*.toml
+```
+
+#### `src/` slots
+
+| Slot | Owns | Shape comes from | Size |
+|------|------|------------------|------|
+| `bin/<svc>.rs` | the CLI verb tree — `serve`, `spec`, `dockerfile`, `k8s`, `backup`, plus `cli-std`'s `llm`/`upgrade`/`issue`. **Carries no logic.** | `cli-std`, `service-k8s` | thin |
+| `lib.rs` | module declarations and re-exports | — | thin |
+| `config.rs` | domain-specific settings only; the rest composes `service_http::ServiceConfig` | `service-http` | thin |
+| `api/` | axum handlers; every error goes out as `service_http::{ErrorEnvelope, ApiErr}` | `service-http` | domain |
+| `spec.rs` | the **single** `utoipa::OpenApi` aggregate plus `spec gen` → `openapi_codegen::generate` | `openapi-codegen` | thin |
+| `types.rs` | external DTOs | — | domain |
+| `dx.rs` | the DX capability (see *DX convention* below) | — | thin |
+| `raft_sm.rs` | the `raft_runtime::RaftStateMachine` impl — **apply / snapshot / restore only** | `raft-runtime` | domain |
+| `operator/{mod,crd,render,reconcile}.rs` | CRD types + CEL rules, domain defaults, the `ManagedService` impl | `service-k8s` | thin |
+| `<domain>/` | state machines, storage semantics, scheduling policy — **the one place body belongs**, named in product vocabulary | itself | domain |
+
+#### Modules that must not exist
+
+A service that re-implements a kit responsibility is a defect, not a variation.
+Each row names what the app is allowed to keep after the move.
+
+| If `src/` contains | It belongs in | Keep only |
 |---|---|---|
-| `shared-kit:server-tcp` | `shared-kit` | served-surface bind/listen setup |
-| `shared-kit:server-lifecycle` | `shared-kit` | retry/backoff and health-check plumbing |
-| `shared-kit:service-observability` | `shared-kit` | structured logging/metrics setup |
-| `shared-kit:raft` | `shared-kit` | raft consensus/leader-ingest plumbing |
-| `negative-assertion:pgpool:statefulset-shape` | `negative-assertion` | Deployment/ExternalState profile carries StatefulSet/PVC/headless-service manifest content or a raft dependency |
-| `negative-assertion:tape:raft-or-primary-replica-signal` | `negative-assertion` | StatefulSet/ReplicatedLog profile carries raft-dependency or primary/replica-role source markers |
-| `negative-assertion:relay-defer:passive-replica-signal` | `negative-assertion` | StatefulSet/RaftConsensus profile carries a primary_replicas trait or primary/replica-role source markers |
-| `negative-assertion:lumen:raft-leader-ingest-signal` | `negative-assertion` | StatefulSet/PrimaryReplica profile carries a raft dependency plus leader-ingest source markers |
-| `obs:structured-logging-metrics-adoption` | `obs` | service surface has not adopted libs/service-observability for structured logging/metrics/correlation |
-| `obs:w3c-context-propagation-adoption` | `obs` | service surface has not adopted libs/service-http or libs/transport-h2c for W3C trace-context (traceparent) propagation |
-| `raft:proposal-routing-telemetry-gap` | `raft` | raft leader-ingest surface has no proposal-routing telemetry (local-vs-forwarded proposal counts, forward duration, or forwarded bytes) |
-| `raft:leader-route-and-replication-lag-telemetry-gap` | `raft` | raft leader-ingest surface has no leader-route or replication-lag telemetry (leader-route retries/changes, commit/applied lag, or peer RPC visibility) |
-| `raft:high-cardinality-label-antipattern` | `raft` | a metric-emission site carries a high-cardinality label key (queue/topic/message_id/message) in the same file as a raft telemetry metric |
-| `raft:trace-context-continuity-gap` | `raft` | raft leader-ingest surface has no trace-context continuity evidence (traceparent/trace_id/span_id propagation or tracing::instrument/info_span! spans) across the forwarded-proposal path |
-| `raft:follower-local-mutation-outside-consensus` | `raft` | a follower/replica-role marker co-occurs with an explicit consensus-bypass marker in the same file -- a follower appears to mutate local state outside raft consensus |
-| `raft:loss-of-leader-fail-open-bypass` | `raft` | an explicit fail-open marker allows accepting writes without a confirmed leader / bypassing the quorum check on loss-of-leader |
+| `raft.rs` — peer transport, apply loop, snapshot/compaction, topology, peer DNS | `raft-runtime` | `raft_sm.rs` |
+| `tls.rs` / `peer_tls.rs` — PEM loading, rustls builders | `peer-tls` | the env-prefix constant |
+| `metrics.rs` — registry, text encoder, the `/metrics` handler | `metrics-prometheus` + `service-http` | domain metric *declarations* |
+| `auth.rs` — bearer extraction, middleware, registry-file loading | `service-auth::role_map` | the domain `Role` mapping and resource decisions |
+| `backup.rs` — sinks, upload, retention | `service-backup` | producing consistent snapshot bytes |
+| hand-rolled fsync / atomic rename / CRC framing | `storage-durable` | the domain codec |
+| a hand-rolled h2c client, or any `bind`/`listen` | `transport-h2c` / `server-http` | — |
+| a hand-rolled `llm` / `upgrade` / `issue` | `cli-std` | topic registration |
+| a `build.rs` that computes git sha / build time itself | `build-stamp` | the one `stamp("<PREFIX>")` call |
+| operator code emitting StatefulSet/Service/PDB/CronJob/NetworkPolicy JSON | `service-k8s::render` | domain default values |
 
-The split this catalogue sat in is worth keeping even without the commands that
-implemented it: **readiness, gates, and production-blocker status** are one
-question, and **architecture/profile shape** is another. They never substitute
-for each other, so a project that satisfies its gates has said nothing about
-whether it matches the archetype.
+#### Canonical names
 
-### Service workload profiles — common, StatefulSet, Deployment
+Three names are settled here because the drift above is otherwise unresolvable:
 
-Every service composes one common baseline and exactly one primary workload
-profile. This is a service/instance ownership decision, not a replica-count
-shortcut: ancillary Jobs and CronJobs do not change the primary profile.
+- **The HTTP surface is `api/`.** Not `server` — `libs/server-http` is the
+  listener owner and an app no longer binds anything, so the name misdescribes
+  the layer. Not `http` — a bare protocol is not a responsibility, per the
+  naming grammar above.
+- **The OpenAPI module is `spec.rs`**, matching the `<cli> spec gen` verb it
+  serves. There is exactly one; a second hand-rolled contract module alongside
+  a generated one is drift by construction.
+- **`dx.rs` is present in every service**, not only the two that happen to
+  ship it.
 
-#### Common
+## Service contracts: transport, spec, endpoints, auth, HA
 
-All profiles share server/runtime composition, standard health/readiness/
-metrics surfaces, authentication and TLS policy, graceful shutdown/drain,
-image plus layered k8s artifacts, operator reconciliation, labels/selectors,
-owner references, ServiceAccount, ordinary client Service, and applicable
-PDB/HPA helpers. Product-specific state machines, downstream quotas, schemas,
-and routing policy remain in the service.
-
-#### StatefulSet-specific
-
-Declare `stateful_storage` when Pods own durable application state or require
-stable identity/topology. This selects the StatefulSet profile and adds the
-`stateful-service-workload` baseline: durable acknowledgement, PVC-backed
-storage, headless Service, downward-API ordinal/peer discovery, Raft/replication
-when HA is required, backup/restore, and stateful scale/upgrade rules.
-
-#### Deployment-specific
-
-A `service` without `stateful_storage` selects the Deployment profile. Pods own
-no durable application state or stable identity: use an ordinary Deployment and
-ClusterIP Service, readiness plus preStop drain, and rollout/disruption/HPA
-policy. Do not add PVC, headless Service, Raft, peer DNS, or ClientIP session
-affinity. If Pods consume a bounded remote dependency, scale and rolling surge
-must respect that external capacity; pgpool's PostgreSQL connection budget is
-the reference case.
-
-Primary workload kind is not a live renderer toggle. The shared reconciler
-applies current children but does not garbage-collect an old child of another
-kind, so Deployment↔StatefulSet changes require an explicit migration handoff
-that removes or transfers traffic from the stale workload before the new one
-becomes authoritative.
-
-A service is not "done" until it satisfies every row:
-
-| Dimension | Requirement | Reference / gotcha |
-|-----------|-------------|--------------------|
-| **Shape** | Workspace member that is **both `lib` and `bin`** — embeddable as a crate, runnable as a server. Metadata via `version/edition/authors/license = .workspace`. | every service `Cargo.toml` |
-| **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Compose **`libs/service-http`** and **`libs/transport-h2c`** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
-| **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | Prefer **`libs/service-http`** standard probe/admin route helpers. `lumen` is the reference for the full surface. The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
-| **Observability / trace context** | Every request is traced and correlatable with zero extra infrastructure: the shared trace layer **accepts W3C version-00 `traceparent`** (strictly validated — invalid input is treated as absent) and **generates a fresh local root context when none arrives**; every request span carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`, and those fields flow into the structured stdout schema (`axiom.service.log.v1`) that the sift collector ingests, so cross-service log correlation works even without a trace exporter. The `otlp` feature upgrades the same context to full OpenTelemetry export. Per-op request counters/latency are served on `/metrics`. | Compose **`libs/service-http`** `trace_layer()` (`CorrelatingMakeSpan` + `request_trace_context`) — never a hand-rolled span/correlation layer. Planned at the same seam: response `Server-Timing` (#2490) and outbound `traceparent` injection for service-to-service clients. A capability a service gets from this shell belongs in that service's Observability capability row — undocumented shared behavior is undiscoverable behavior. |
-| **Auth** | Every service uses the same bearer-token shape: server env `<SVC>_AUTH=off|required` plus `<SVC>_TOKEN_REGISTRY_FILE=/var/run/secrets/<svc>/token-registry.json`; clients use `<SVC>_URL` + `<SVC>_TOKEN` and send `Authorization: Bearer <token>`. | Compose **`libs/service-auth`** for middleware and **`libs/claim-token`** for signed-token verification when needed. In k8s/cloud, the registry file is mounted from a Kubernetes Secret, CSI Secret Store, or cloud Secret Manager sync. Do not add one-off auth headers, per-service token env names, or inline server token lists as the production path. |
-| **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
-| **Durability / ack boundary** | **Mandatory for the StatefulSet profile:** an accepted mutation to service-owned state is durable before success. A Deployment-profile proxy may own no durable mutation at all; durability remains with its downstream system. | Stateful services compose **`libs/storage-durable`** plus a service-owned durable log/state store and `raft-core`/`raft-runtime` when replicated. Deployment proxies document downstream durability and prove drain/reconnect behavior instead of inventing local persistence. |
-| **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-runtime`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-runtime`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
-| **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. A production instance must configure a scheduled object-storage snapshot job; manual/local snapshots are break-glass or local-dev paths, not the service-archetype baseline. | `raft-runtime` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to `file://`, `s3://`, or `gs://` destinations (the GCS adapter is unconditional in `service-backup`, authenticates via workload-identity ADC in-cluster, and is GKE-proven); the operator schedules, wires secrets/IAM, reports status, and never serializes service data itself. |
-| **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
-| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; exactly one primary workload profile. StatefulSet identity/peers come from the downward API; Deployment Pods use ordinary identity plus drain-aware rollout. | Use **`libs/service-k8s`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
-| **Operations** | Alert rules with runbooks, control-plane self-observability, `status.conditions[]`, network isolation, and verifiable release artifacts. A service that emits signal but cannot notice its own breach is not production-ready. | see *Operations baseline* below. Instrumentation (the Observability row) is the raw signal; this is what makes the signal act. |
-| **Authoring ladder** | `aw.toml` names the project; changes are authored one phase at a time through `e2e` → `unit` → `logic`, red first. | see the write-order table in `CLAUDE.md`. Any `tech-design/` tree and any `SPEC-MANAGED` / `HANDWRITE` marker still in source is residue — the producer that owned them is deleted, and the `.rs` is the authoring surface. |
-| **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
-| **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
+What a service promises to everything outside it — the wire it speaks,
+the document that describes it, the operational surface every adopter can
+assume, the identity check on every request, and the consistency model
+behind them. These are contracts, not implementation choices; a service
+that varies here is a service integrators cannot write one client for.
 
 ### Transport — h2c + OpenAPI on one port
 
@@ -720,194 +852,6 @@ with no external codegen step. Reference: `lumen spec gen` (feeds the binary's
 own `openapi_json()` into `openapi_codegen::generate`). Do **not** add a
 second codegen path — extend the shared crate (a new emitter / capability) so
 every service benefits.
-
-### Deploy artifacts — image, cluster API, operator, instance
-
-Image construction is not a Kubernetes subcommand. Every k8s-native service CLI
-ships:
-
-```
-<cli> dockerfile render --variant source|release [--version <tag>] [--out <path-or-dir>]
-```
-
-`source` renders the workspace-build Dockerfile used by dev/CI; `release`
-renders the small production image that fetches a published `<project>@<version>`
-binary. The same image artifact feeds compose, kind, and real registries.
-
-Kubernetes output is split by lifecycle layer:
-
-```
-<cli> k8s crd render [--out <path>]
-<cli> k8s operator render [--namespace <ns>] [--out <path-or-dir>]
-<cli> k8s operator run
-<cli> k8s instance render --profile dev|staging|prod|template [--out <path-or-dir>]
-```
-
-`crd` owns the cluster-scoped API. `operator` owns the control plane, normally in
-an independent namespace such as `<svc>-system`; `operator run` is the controller
-process/container entrypoint. `instance` renders the app-namespace custom
-resource that an application team applies next to the app it integrates with.
-
-**Every manifest checked in under `k8s/` must be `include_str!`-gated against
-its renderer.** A test that renders into a temp dir, or asserts against the
-library function the renderer calls, proves the *renderer* — it never reads the
-file a `kubectl apply -k` user actually applies, so that file can silently rot
-for releases. `lumen` shipped exactly that: `k8s/operator/crd.yaml` had drifted
-to carry no `x-kubernetes-validations` at all, meaning a new CEL rule passed its
-own unit test while the applied CRD still accepted what the rule forbade. The
-gate is one test comparing `include_str!("../k8s/…")` byte-for-byte to the
-render function — sound because `cli_std::artifact::write_or_print` writes the
-body verbatim, so `--out` reproduces the renderer's output exactly.
-
-### Control plane and data plane responsibilities
-
-*(policy-only — judgment, not trait-enforced; the split is a repository service
-archetype rule until `libs/service-k8s` can validate it mechanically.)*
-
-Every Kubernetes-native service composes a shared **control plane** and a
-per-instance **data plane**. The control plane is the CRD, Operator, reconcile
-loop, status, finalizers, and lifecycle resources. Its common mechanics belong
-in `libs/service-k8s`; each service supplies only its domain schema, policy,
-and operator defaults. The Operator normally runs in `<svc>-system`.
-
-The data plane is the workload rendered for one service instance and the
-resources that carry its traffic and durable state. For a StatefulSet-profile
-service, that includes the StatefulSet, client/headless Services, PVCs, PDBs,
-and applicable backup or maintenance workloads. It belongs in the instance's
-app or service-owned namespace; do not require a fixed shared data-plane
-namespace. A service's data-plane behavior remains domain-specific, but the
-control-plane/data-plane split is a service-archetype contract, not a
-service-specific capability.
-
-When a reconcile's rendered shape stops including a resource it rendered
-previously — a conditional HPA, a per-mode Service, or any other
-conditionally-rendered child — the service operator must explicitly delete
-that child. The shared `libs/service-k8s` reconcile loop renders desired state;
-it does not garbage-collect a resource that an earlier render produced and
-the current render no longer wants. The deletion must be idempotent, scoped
-to the names/labels the operator itself stamps (never a foreign or
-unrelated resource), and logged.
-
-A mounted PVC is not durability. Rendering a `PersistentVolumeClaim`
-template only makes storage available; the operator's rendered defaults
-must also activate the service's own durable-persistence path (data-dir /
-persistence env or equivalent) so the service actually writes to that
-storage. The deploy baseline for a stateful service includes a
-pod-delete-and-recreate proof that data written before the deletion is
-still present after the pod is recreated.
-
-### Deploy tenancy — dedicated first, shared only when justified
-
-*(policy-only — judgment, not trait-enforced)*
-
-The service archetype is **dedicated-first**. A service must be able to run as
-its own data plane — one service instance, one app namespace or service-owned
-namespace, one primary workload selected by profile, and, for stateful
-services, one storage/backup surface,
-and one operational SLO envelope. This dedicated/standalone mode is mandatory
-because it is the simplest reliable production shape: ownership, upgrades,
-backups, failure blast radius, and delete/finalizer behavior are all local to the
-service instance.
-
-Shared multi-tenant backends are a separate platform capability, not the default.
-They are appropriate only when the product explicitly needs many small tenants to
-share a physical data plane and the platform is ready to own the extra control
-loops. A shared mode requires placement, metering, quota/rate-limit enforcement,
-tenant identity, backend capacity accounting, promotion/demotion policy,
-migration, endpoint/secret rotation, backup partitioning, and finalizer semantics.
-Those moving parts materially increase operational complexity, and most service
-deployments do not need them.
-
-When a shared mode exists, keep the API resource paths service-domain scoped, not
-Kubernetes-namespace scoped. Namespace is deployment and service-discovery
-context; it belongs in DNS, RBAC, CR metadata, and status endpoints, not in HTTP
-paths. For example a tenant may reach
-`http://lumen.lumen-shared.svc/collections/users/index`, while the HTTP route
-remains `POST /collections/{collection_id}/index`.
-
-Use this default decision rule:
-
-| Mode | Default? | Use when |
-|------|----------|----------|
-| **Dedicated / standalone** | Yes | Most production services, high isolation, simple ownership, clear backup/restore and SLO boundaries. |
-| **Shared backend** | No | A platform team explicitly owns placement, metering, quotas, migration, endpoint switching, and tenant lifecycle. |
-| **Promote to dedicated** | Optional | A shared tenant exceeds sustained usage, SLO, storage, or isolation thresholds and migration is controlled by policy. |
-
-### Service dogfood rules — keep the whole surface honest
-
-*(policy-only — judgment, not trait-enforced)*
-
-Recent service hardening work exposed a repeated failure mode: one slice moves to
-the new archetype while build scripts, CRDs, k8s overlays, tests, or EC gates
-still point at the old backend. Treat the following as contract, not cleanup
-advice:
-
-- **One active data plane.** A service may keep legacy compatibility code only
-  when it is explicitly labelled legacy and still tested. The production build,
-  Dockerfiles, release workflow, `build.sh`, k8s manifests, operator render
-  path, examples, README/HA docs, perf modes, and EC gates must all name the
-  same active data plane. Retired backends must not remain in active gates.
-- **Shared capability before service-local code.** Cross-service mechanics
-  belong in `libs/*`, not inside one project's `src/`: h2c transport, probe and
-  metrics routes, auth extraction and role maps, raft hosting, backup
-  destination/policy runners, operator rendering, build stamping, CLI
-  conventions, and generated client codegen. A service may own product-specific
-  state transitions and API shape, but if two services need the same mechanism,
-  the mechanism is a library capability with service adopters.
-- **State-owning production is durable-only.** The StatefulSet profile does not
-  have a volatile production mode. Accepted service-owned writes must survive
-  process restart and pod reschedule, and replicated services keep raft/log
-  replay on the write path. Deployment-profile proxies may be stateless, but
-  must identify their downstream durability boundary and prove drain/reconnect
-  behavior instead of claiming local persistence.
-- **Direct install is not the HA story.** Kustomize `base` / overlays should be a
-  small direct install for kind and smoke tests. Stateful production HA goes
-  through the operator CR path that renders StatefulSet topology and the
-  downward-API env consumed by `raft-host`; Deployment-profile availability
-  goes through replica, disruption, rollout, drain, and external-capacity
-  policy instead.
-- **Operator owns lifecycle, not bytes.** The operator creates RBAC,
-  ServiceAccounts, Services, StatefulSets/Deployments, PDBs, CronJobs, Secrets,
-  status, and finalizers. It does not serialize service data. Snapshot bytes are
-  produced by the service state machine/admin surface; `raft-host` installs
-  snapshots and compacts logs; `libs/service-backup` runners upload/prune them.
-- **Scheduled object snapshots are baseline.** A production stateful service CR
-  must render or reference a periodic backup job that writes consistent
-  snapshots to object storage. Local filesystem sinks are for development,
-  migration handoffs, or explicit break-glass recovery; they do not satisfy the
-  production service archetype. The backup path is independent of live replica
-  sync: raft/log replication keeps peers current, object snapshots provide cold
-  disaster recovery and empty-PVC/bootstrap seeds.
-- **Namespace is deployment context.** The service instance CR lives with the app
-  namespace unless a platform team intentionally separates app and backend
-  lifecycle. Operator/control-plane resources normally live in `<svc>-system`.
-  HTTP paths stay service-domain scoped; do not add Kubernetes namespace names to
-  public routes.
-- **CRDs must be Kubernetes OpenAPI compatible.** Generated CRDs are not done
-  until `kustomize build` and CRD render pass. Normalize schema details that
-  Kubernetes rejects, such as `format: uint32` / `format: uint64`; express
-  unsigned integer intent as `type: integer` plus `minimum: 0`.
-- **Rustls provider is binary startup work.** Any binary that links rustls-backed
-  clients, including operator mode or raft/online CLI paths, installs the
-  process-level crypto provider before parsing commands or starting async work.
-- **Kind gates exercise the current service, not retired dependencies.** A
-  service dogfood script must not build or deploy a retired external component
-  just because old manifests still mention it. If the current kind gate is
-  intentionally single-node, say so and keep replay/HA claims in separate gates.
-- **Peer-service benchmarks are calibration, not every-run work.** Once
-  Postgres/OpenSearch or similar competitor baselines are captured, regular
-  production gates should run the service-only regression path against retained
-  floors. Rerun peers only for explicit recalibration or new comparison rows.
-- **Tune for volume, not toy traffic.** The service archetype standardizes on
-  HTTP/2 because the product target is sustained high QPS and large working
-  sets over multiplexed connections. Low-QPS / single-client loopback rows are
-  smoke tests and regression diagnostics: they expose fixed overhead and broken
-  fast paths, but they are not the win condition. Do not contort a service to
-  beat a competitor on tiny cheap requests if doing so weakens the high-volume
-  path. Release-relevant performance claims should center throughput, tail
-  latency, RSS/footprint, recovery behavior, and peer comparison at enough
-  concurrency and corpus size for HTTP/2 pooling, sharding, mmap, batching, or
-  raft/log amortization to matter.
 
 ### Standard endpoints — one operational surface, one contract three ways
 
@@ -1037,7 +981,87 @@ splits, compute capacity grows through CPU-driven replica/HPA scaling, and
 neither axis has a human gate. HPA owns compute scaling only — it never
 changes shard ownership or storage topology.
 
-### Operations baseline — notice the breach, watch the watcher, answer "converged?"
+## Deployment: artifacts, tenancy, and the control/data split
+
+How the thing reaches a cluster, who it shares that cluster with, and
+which decisions belong to the operator rather than the pod.
+
+### Deploy artifacts — image, cluster API, operator, instance
+
+Image construction is not a Kubernetes subcommand. Every k8s-native service CLI
+ships:
+
+```
+<cli> dockerfile render --variant source|release [--version <tag>] [--out <path-or-dir>]
+```
+
+`source` renders the workspace-build Dockerfile used by dev/CI; `release`
+renders the small production image that fetches a published `<project>@<version>`
+binary. The same image artifact feeds compose, kind, and real registries.
+
+Kubernetes output is split by lifecycle layer:
+
+```
+<cli> k8s crd render [--out <path>]
+<cli> k8s operator render [--namespace <ns>] [--out <path-or-dir>]
+<cli> k8s operator run
+<cli> k8s instance render --profile dev|staging|prod|template [--out <path-or-dir>]
+```
+
+`crd` owns the cluster-scoped API. `operator` owns the control plane, normally in
+an independent namespace such as `<svc>-system`; `operator run` is the controller
+process/container entrypoint. `instance` renders the app-namespace custom
+resource that an application team applies next to the app it integrates with.
+
+**Every manifest checked in under `k8s/` must be `include_str!`-gated against
+its renderer.** A test that renders into a temp dir, or asserts against the
+library function the renderer calls, proves the *renderer* — it never reads the
+file a `kubectl apply -k` user actually applies, so that file can silently rot
+for releases. `lumen` shipped exactly that: `k8s/operator/crd.yaml` had drifted
+to carry no `x-kubernetes-validations` at all, meaning a new CEL rule passed its
+own unit test while the applied CRD still accepted what the rule forbade. The
+gate is one test comparing `include_str!("../k8s/…")` byte-for-byte to the
+render function — sound because `cli_std::artifact::write_or_print` writes the
+body verbatim, so `--out` reproduces the renderer's output exactly.
+
+### Deploy tenancy — dedicated first, shared only when justified
+
+*(policy-only — judgment, not trait-enforced)*
+
+The service archetype is **dedicated-first**. A service must be able to run as
+its own data plane — one service instance, one app namespace or service-owned
+namespace, one primary workload selected by profile, and, for stateful
+services, one storage/backup surface,
+and one operational SLO envelope. This dedicated/standalone mode is mandatory
+because it is the simplest reliable production shape: ownership, upgrades,
+backups, failure blast radius, and delete/finalizer behavior are all local to the
+service instance.
+
+Shared multi-tenant backends are a separate platform capability, not the default.
+They are appropriate only when the product explicitly needs many small tenants to
+share a physical data plane and the platform is ready to own the extra control
+loops. A shared mode requires placement, metering, quota/rate-limit enforcement,
+tenant identity, backend capacity accounting, promotion/demotion policy,
+migration, endpoint/secret rotation, backup partitioning, and finalizer semantics.
+Those moving parts materially increase operational complexity, and most service
+deployments do not need them.
+
+When a shared mode exists, keep the API resource paths service-domain scoped, not
+Kubernetes-namespace scoped. Namespace is deployment and service-discovery
+context; it belongs in DNS, RBAC, CR metadata, and status endpoints, not in HTTP
+paths. For example a tenant may reach
+`http://lumen.lumen-shared.svc/collections/users/index`, while the HTTP route
+remains `POST /collections/{collection_id}/index`.
+
+Use this default decision rule:
+
+| Mode | Default? | Use when |
+|------|----------|----------|
+| **Dedicated / standalone** | Yes | Most production services, high isolation, simple ownership, clear backup/restore and SLO boundaries. |
+| **Shared backend** | No | A platform team explicitly owns placement, metering, quotas, migration, endpoint switching, and tenant lifecycle. |
+| **Promote to dedicated** | Optional | A shared tenant exceeds sustained usage, SLO, storage, or isolation thresholds and migration is controlled by policy. |
+
+## Operations baseline — notice the breach, watch the watcher, answer "converged?"
 
 *(policy-only — judgment, not trait-enforced; promote to a capability trait once
 `libs/service-k8s` can render and validate these mechanically.)*
@@ -1107,6 +1131,55 @@ hides every other service's failure.
 | **Both scaling axes stay autonomous** | See *HA* above: storage grows by disk-driven shard split, compute by CPU-driven replica scaling, neither gated on a human. | **A CRD field that still advertises autoscaling bounds while the renderer has stopped emitting the autoscaler is a defect in both directions** — either wire the replacement policy or remove the field. An inert knob whose doc comment promises elasticity is worse than an honest absence. |
 | **Release artifacts are verifiable** | Published container images carry a **cosign signature, an SBOM, and build provenance**; the release workflow produces them and the deploy handoff names the verification command. | A sha256 on the release tarball proves the tarball — it says nothing about the image a cluster actually pulls. Without attestation, no admission policy can enforce "only run images we built". |
 
+## Conformance: what proves a service actually complies
+
+Every rule above is a claim until something fails on it. Two mechanisms
+do the failing: EC gates for evidence-backed behavior, and the dogfood
+rules for the surfaces a test suite never exercises. Architecture and
+profile shape is the third question, and nothing runs it any more — the
+catalogue below is a hand-applied checklist, not a gate.
+
+### Architecture/profile conformance checklist
+
+*(policy-only, and unenforced — read the paragraph below before using this
+table as a gate.)*
+
+A project's reference profile shape (kind/surface, workload, state ownership,
+replication, serving role) implies the conformance findings catalogued below:
+shared-service-kit adoption gaps, profile-shape negative assertions, and
+observability/Raft telemetry gaps.
+
+**Nothing runs this catalogue.** It was `aw review --project <project>`, spliced
+in from two live rule registries and drift-tested against them; the command, the
+registries, and the drift test are all deleted. What is left is a hand-applied
+checklist — useful when reviewing a service against the archetype, and worth
+nothing as evidence. A rule below that a project violates produces no finding,
+no exit code, and no signal of any kind. Do not cite one as a gate in a
+`## Acceptance` table.
+| Rule ID | Family | Fires when |
+|---|---|---|
+| `shared-kit:server-tcp` | `shared-kit` | served-surface bind/listen setup |
+| `shared-kit:server-lifecycle` | `shared-kit` | retry/backoff and health-check plumbing |
+| `shared-kit:service-observability` | `shared-kit` | structured logging/metrics setup |
+| `shared-kit:raft` | `shared-kit` | raft consensus/leader-ingest plumbing |
+| `negative-assertion:pgpool:statefulset-shape` | `negative-assertion` | Deployment/ExternalState profile carries StatefulSet/PVC/headless-service manifest content or a raft dependency |
+| `negative-assertion:tape:raft-or-primary-replica-signal` | `negative-assertion` | StatefulSet/ReplicatedLog profile carries raft-dependency or primary/replica-role source markers |
+| `negative-assertion:relay-defer:passive-replica-signal` | `negative-assertion` | StatefulSet/RaftConsensus profile carries a primary_replicas trait or primary/replica-role source markers |
+| `negative-assertion:lumen:raft-leader-ingest-signal` | `negative-assertion` | StatefulSet/PrimaryReplica profile carries a raft dependency plus leader-ingest source markers |
+| `obs:structured-logging-metrics-adoption` | `obs` | service surface has not adopted libs/service-observability for structured logging/metrics/correlation |
+| `obs:w3c-context-propagation-adoption` | `obs` | service surface has not adopted libs/service-http or libs/transport-h2c for W3C trace-context (traceparent) propagation |
+| `raft:proposal-routing-telemetry-gap` | `raft` | raft leader-ingest surface has no proposal-routing telemetry (local-vs-forwarded proposal counts, forward duration, or forwarded bytes) |
+| `raft:leader-route-and-replication-lag-telemetry-gap` | `raft` | raft leader-ingest surface has no leader-route or replication-lag telemetry (leader-route retries/changes, commit/applied lag, or peer RPC visibility) |
+| `raft:high-cardinality-label-antipattern` | `raft` | a metric-emission site carries a high-cardinality label key (queue/topic/message_id/message) in the same file as a raft telemetry metric |
+| `raft:trace-context-continuity-gap` | `raft` | raft leader-ingest surface has no trace-context continuity evidence (traceparent/trace_id/span_id propagation or tracing::instrument/info_span! spans) across the forwarded-proposal path |
+| `raft:follower-local-mutation-outside-consensus` | `raft` | a follower/replica-role marker co-occurs with an explicit consensus-bypass marker in the same file -- a follower appears to mutate local state outside raft consensus |
+| `raft:loss-of-leader-fail-open-bypass` | `raft` | an explicit fail-open marker allows accepting writes without a confirmed leader / bypassing the quorum check on loss-of-leader |
+The split this catalogue sat in is worth keeping even without the commands that
+implemented it: **readiness, gates, and production-blocker status** are one
+question, and **architecture/profile shape** is another. They never substitute
+for each other, so a project that satisfies its gates has said nothing about
+whether it matches the archetype.
+
 ### EC gates — `vat`-driven, evidence under `external-contracts/`
 
 Every service carries a fixed set of **evidence-contract (EC) gate files**, each
@@ -1137,6 +1210,82 @@ app-level Rust tree and do not delegate one to `cargo test`. Rules observable
 only inside the Rust implementation are colocated tests under their semantic
 `src/**` owner, authored by the `unit` phase before the implementation exists.
 `CLAUDE.md` owns that ladder; this section owns only the gate files.
+
+### Service dogfood rules — keep the whole surface honest
+
+*(policy-only — judgment, not trait-enforced)*
+
+Recent service hardening work exposed a repeated failure mode: one slice moves to
+the new archetype while build scripts, CRDs, k8s overlays, tests, or EC gates
+still point at the old backend. Treat the following as contract, not cleanup
+advice:
+
+- **One active data plane.** A service may keep legacy compatibility code only
+  when it is explicitly labelled legacy and still tested. The production build,
+  Dockerfiles, release workflow, `build.sh`, k8s manifests, operator render
+  path, examples, README/HA docs, perf modes, and EC gates must all name the
+  same active data plane. Retired backends must not remain in active gates.
+- **Shared capability before service-local code.** Cross-service mechanics
+  belong in `libs/*`, not inside one project's `src/`: h2c transport, probe and
+  metrics routes, auth extraction and role maps, raft hosting, backup
+  destination/policy runners, operator rendering, build stamping, CLI
+  conventions, and generated client codegen. A service may own product-specific
+  state transitions and API shape, but if two services need the same mechanism,
+  the mechanism is a library capability with service adopters.
+- **State-owning production is durable-only.** The StatefulSet profile does not
+  have a volatile production mode. Accepted service-owned writes must survive
+  process restart and pod reschedule, and replicated services keep raft/log
+  replay on the write path. Deployment-profile proxies may be stateless, but
+  must identify their downstream durability boundary and prove drain/reconnect
+  behavior instead of claiming local persistence.
+- **Direct install is not the HA story.** Kustomize `base` / overlays should be a
+  small direct install for kind and smoke tests. Stateful production HA goes
+  through the operator CR path that renders StatefulSet topology and the
+  downward-API env consumed by `raft-host`; Deployment-profile availability
+  goes through replica, disruption, rollout, drain, and external-capacity
+  policy instead.
+- **Operator owns lifecycle, not bytes.** The operator creates RBAC,
+  ServiceAccounts, Services, StatefulSets/Deployments, PDBs, CronJobs, Secrets,
+  status, and finalizers. It does not serialize service data. Snapshot bytes are
+  produced by the service state machine/admin surface; `raft-host` installs
+  snapshots and compacts logs; `libs/service-backup` runners upload/prune them.
+- **Scheduled object snapshots are baseline.** A production stateful service CR
+  must render or reference a periodic backup job that writes consistent
+  snapshots to object storage. Local filesystem sinks are for development,
+  migration handoffs, or explicit break-glass recovery; they do not satisfy the
+  production service archetype. The backup path is independent of live replica
+  sync: raft/log replication keeps peers current, object snapshots provide cold
+  disaster recovery and empty-PVC/bootstrap seeds.
+- **Namespace is deployment context.** The service instance CR lives with the app
+  namespace unless a platform team intentionally separates app and backend
+  lifecycle. Operator/control-plane resources normally live in `<svc>-system`.
+  HTTP paths stay service-domain scoped; do not add Kubernetes namespace names to
+  public routes.
+- **CRDs must be Kubernetes OpenAPI compatible.** Generated CRDs are not done
+  until `kustomize build` and CRD render pass. Normalize schema details that
+  Kubernetes rejects, such as `format: uint32` / `format: uint64`; express
+  unsigned integer intent as `type: integer` plus `minimum: 0`.
+- **Rustls provider is binary startup work.** Any binary that links rustls-backed
+  clients, including operator mode or raft/online CLI paths, installs the
+  process-level crypto provider before parsing commands or starting async work.
+- **Kind gates exercise the current service, not retired dependencies.** A
+  service dogfood script must not build or deploy a retired external component
+  just because old manifests still mention it. If the current kind gate is
+  intentionally single-node, say so and keep replay/HA claims in separate gates.
+- **Peer-service benchmarks are calibration, not every-run work.** Once
+  Postgres/OpenSearch or similar competitor baselines are captured, regular
+  production gates should run the service-only regression path against retained
+  floors. Rerun peers only for explicit recalibration or new comparison rows.
+- **Tune for volume, not toy traffic.** The service archetype standardizes on
+  HTTP/2 because the product target is sustained high QPS and large working
+  sets over multiplexed connections. Low-QPS / single-client loopback rows are
+  smoke tests and regression diagnostics: they expose fixed overhead and broken
+  fast paths, but they are not the win condition. Do not contort a service to
+  beat a competitor on tiny cheap requests if doing so weakens the high-volume
+  path. Release-relevant performance claims should center throughput, tail
+  latency, RSS/footprint, recovery behavior, and peer comparison at enough
+  concurrency and corpus size for HTTP/2 pooling, sharding, mmap, batching, or
+  raft/log amortization to matter.
 
 ## CLI convention: every CLI ships `llm`, `upgrade`, `issue`
 
@@ -1236,8 +1385,9 @@ builds. Reference adopters: `apps/jet` and `apps/lumen`.
   domain `report` verbs (`jet report` = HTML **test** reports) untouched.
 
 A fourth verb, **`connect`**, is a convention for **k8s-native service CLIs**
-specifically (not every CLI — see "Service CLI convention" below for the
-`kubernetes_native` project baseline): `<cli> connect --namespace <ns>
+specifically (not every CLI — see *Deploy artifacts — image, cluster API,
+operator, instance* above for the `kubernetes_native` project baseline):
+`<cli> connect --namespace <ns>
 (--service <svc> | --cr <cr-name>) [--secret <secret>] -- <cmd>...` spawns a
 `kubectl port-forward` for the duration of a wrapped command and tears it down
 (kill + wait) on exit regardless of the wrapped command's status, resolving a
