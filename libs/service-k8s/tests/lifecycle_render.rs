@@ -1,8 +1,7 @@
 use serde_json::json;
 use service_k8s::crd::normalize_unsigned_integer_formats;
 use service_k8s::lifecycle::{
-    LifecyclePolicy, LifecyclePolicyError, ProbeTiming, TerminationBudget, HEALTH_ENDPOINT_PATH,
-    READY_ENDPOINT_PATH,
+    LifecyclePolicy, LifecyclePolicyError, ProbeTiming, TerminationBudget,
 };
 use service_k8s::render::common::ServicePodTemplate;
 use service_k8s::render::guaranteed_resources;
@@ -199,14 +198,14 @@ fn probe_derivation_measurements() {
     let grace = rendered["spec"]["terminationGracePeriodSeconds"].as_u64();
 
     println!(
-        "Rendered container: {}",
+        "Row 1 Rendered container: {}",
         serde_json::to_string_pretty(container).unwrap()
     );
 
-    // Path assertions
-    assert_eq!(liveness["httpGet"]["path"], HEALTH_ENDPOINT_PATH);
-    assert_eq!(readiness["httpGet"]["path"], READY_ENDPOINT_PATH);
-    assert_eq!(startup["httpGet"]["path"], READY_ENDPOINT_PATH);
+    // Path assertions: string literals spelled out at assertion site (Row 1 requirement)
+    assert_eq!(liveness["httpGet"]["path"], "/healthz");
+    assert_eq!(readiness["httpGet"]["path"], "/readyz");
+    assert_eq!(startup["httpGet"]["path"], "/readyz");
 
     // Port and timing assertions
     for probe in [liveness, readiness, startup] {
@@ -219,7 +218,33 @@ fn probe_derivation_measurements() {
     // Pod grace assertion
     assert_eq!(grace, Some(60));
 
-    // Measurement 2: success_threshold 2 -> startup & liveness are 1, readiness is 2
+    // Measurement 2 (Round 3 Row 2): render at probe port 8443 while pod template containerPort is 9080
+    let pod2_template = test_pod_template(&cx);
+    assert_eq!(pod2_template.ports[0]["containerPort"], 9080);
+    let rendered2 = pod2_template
+        .with_termination_budget(&m1_budget, 8443)
+        .render();
+    let container2 = &rendered2["spec"]["containers"][0];
+
+    println!(
+        "Row 2 Rendered container (port 8443): {}",
+        serde_json::to_string_pretty(container2).unwrap()
+    );
+
+    // Ensure template containerPort remains 9080
+    assert_eq!(container2["ports"][0]["containerPort"], 9080);
+
+    // All three probes must target 8443 and none target 9080
+    for probe in [
+        &container2["livenessProbe"],
+        &container2["readinessProbe"],
+        &container2["startupProbe"],
+    ] {
+        assert_eq!(probe["httpGet"]["port"], 8443);
+        assert_ne!(probe["httpGet"]["port"], 9080);
+    }
+
+    // Success threshold check: success_threshold 2 -> startup & liveness are 1, readiness is 2
     let m2_policy = LifecyclePolicy {
         total_grace_period_seconds: 60,
         runtime_deadline_seconds: 45,
@@ -233,15 +258,15 @@ fn probe_derivation_measurements() {
         },
     };
     let m2_budget = m2_policy.validate().expect("policy 2 must validate");
-    let pod2 = test_pod_template(&cx)
+    let pod2_threshold = test_pod_template(&cx)
         .with_termination_budget(&m2_budget, 9080)
         .render();
-    let c2 = &pod2["spec"]["containers"][0];
-    assert_eq!(c2["livenessProbe"]["successThreshold"], 1);
-    assert_eq!(c2["startupProbe"]["successThreshold"], 1);
-    assert_eq!(c2["readinessProbe"]["successThreshold"], 2);
+    let c2_thresh = &pod2_threshold["spec"]["containers"][0];
+    assert_eq!(c2_thresh["livenessProbe"]["successThreshold"], 1);
+    assert_eq!(c2_thresh["startupProbe"]["successThreshold"], 1);
+    assert_eq!(c2_thresh["readinessProbe"]["successThreshold"], 2);
 
-    // Measurement 3: none of the three rendered probes contains initialDelaySeconds
+    // Initial delay check: none of the three rendered probes contains initialDelaySeconds
     for probe in [
         &container["livenessProbe"],
         &container["readinessProbe"],
@@ -253,8 +278,125 @@ fn probe_derivation_measurements() {
         );
     }
 
-    // Measurement 4: probe timing period 0 / timeout 0 / failure 0 / success 0 -> validation fails with distinct reason
-    let m4_policy = LifecyclePolicy {
+    // Measurement 3 (Round 3 Row 3): period 1 / timeout 0 / failure 3 / success 1 -> fails carrying timeout 0
+    let m3_timing_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        probe_timing: ProbeTiming {
+            period_seconds: 1,
+            timeout_seconds: 0,
+            failure_threshold: 3,
+            success_threshold: 1,
+        },
+    };
+    let m3_timing_err = m3_timing_policy
+        .validate()
+        .expect_err("timeout 0 must fail validation");
+    let m3_timing_expected = LifecyclePolicyError::InvalidProbeTiming {
+        period_seconds: 1,
+        timeout_seconds: 0,
+        failure_threshold: 3,
+        success_threshold: 1,
+    };
+    assert_eq!(m3_timing_err, m3_timing_expected);
+    if let LifecyclePolicyError::InvalidProbeTiming {
+        period_seconds,
+        timeout_seconds,
+        failure_threshold,
+        success_threshold,
+    } = m3_timing_err
+    {
+        assert_eq!(period_seconds, 1);
+        assert_eq!(timeout_seconds, 0);
+        assert_eq!(failure_threshold, 3);
+        assert_eq!(success_threshold, 1);
+    } else {
+        panic!("expected InvalidProbeTiming");
+    }
+    println!("Row 3 probe timing error (timeout 0): {}", m3_timing_err);
+
+    // Measurement 4 (Round 3 Row 4): period 1 / timeout 1 / failure 0 / success 1 -> fails carrying failure 0
+    let m4_timing_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        probe_timing: ProbeTiming {
+            period_seconds: 1,
+            timeout_seconds: 1,
+            failure_threshold: 0,
+            success_threshold: 1,
+        },
+    };
+    let m4_timing_err = m4_timing_policy
+        .validate()
+        .expect_err("failure 0 must fail validation");
+    let m4_timing_expected = LifecyclePolicyError::InvalidProbeTiming {
+        period_seconds: 1,
+        timeout_seconds: 1,
+        failure_threshold: 0,
+        success_threshold: 1,
+    };
+    assert_eq!(m4_timing_err, m4_timing_expected);
+    if let LifecyclePolicyError::InvalidProbeTiming {
+        period_seconds,
+        timeout_seconds,
+        failure_threshold,
+        success_threshold,
+    } = m4_timing_err
+    {
+        assert_eq!(period_seconds, 1);
+        assert_eq!(timeout_seconds, 1);
+        assert_eq!(failure_threshold, 0);
+        assert_eq!(success_threshold, 1);
+    } else {
+        panic!("expected InvalidProbeTiming");
+    }
+    println!("Row 4 probe timing error (failure 0): {}", m4_timing_err);
+
+    // Measurement 5 (Round 3 Row 5): period 1 / timeout 1 / failure 3 / success 0 -> fails carrying success 0
+    let m5_timing_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        probe_timing: ProbeTiming {
+            period_seconds: 1,
+            timeout_seconds: 1,
+            failure_threshold: 3,
+            success_threshold: 0,
+        },
+    };
+    let m5_timing_err = m5_timing_policy
+        .validate()
+        .expect_err("success 0 must fail validation");
+    let m5_timing_expected = LifecyclePolicyError::InvalidProbeTiming {
+        period_seconds: 1,
+        timeout_seconds: 1,
+        failure_threshold: 3,
+        success_threshold: 0,
+    };
+    assert_eq!(m5_timing_err, m5_timing_expected);
+    if let LifecyclePolicyError::InvalidProbeTiming {
+        period_seconds,
+        timeout_seconds,
+        failure_threshold,
+        success_threshold,
+    } = m5_timing_err
+    {
+        assert_eq!(period_seconds, 1);
+        assert_eq!(timeout_seconds, 1);
+        assert_eq!(failure_threshold, 3);
+        assert_eq!(success_threshold, 0);
+    } else {
+        panic!("expected InvalidProbeTiming");
+    }
+    println!("Row 5 probe timing error (success 0): {}", m5_timing_err);
+
+    // Zero-all timing test: period 0 / timeout 0 / failure 0 / success 0
+    let m4_zero_policy = LifecyclePolicy {
         total_grace_period_seconds: 60,
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
@@ -266,19 +408,18 @@ fn probe_derivation_measurements() {
             success_threshold: 0,
         },
     };
-    let m4_err = m4_policy
+    let m4_zero_err = m4_zero_policy
         .validate()
         .expect_err("zero probe timing must fail");
-    let m4_expected = LifecyclePolicyError::InvalidProbeTiming {
+    let m4_zero_expected = LifecyclePolicyError::InvalidProbeTiming {
         period_seconds: 0,
         timeout_seconds: 0,
         failure_threshold: 0,
         success_threshold: 0,
     };
-    assert_eq!(m4_err, m4_expected);
-    println!("Row 4 probe timing error reason: {}", m4_err);
+    assert_eq!(m4_zero_err, m4_zero_expected);
 
-    // Ensure m4_err is distinct from zero total grace, budget-exceeds-total, runtime-below-min-hook, overflow
+    // Ensure m4_zero_err is distinct from other policy error types
     let zero_grace_err = LifecyclePolicyError::ZeroTotalGrace;
     let overflow_err = LifecyclePolicyError::Overflow;
     let budget_exceeds_err = LifecyclePolicyError::BudgetExceedsTotal {
@@ -291,29 +432,65 @@ fn probe_derivation_measurements() {
         min_hook_duration_seconds: 5,
     };
 
-    assert_ne!(m4_err, zero_grace_err);
-    assert_ne!(m4_err, overflow_err);
-    assert_ne!(m4_err, budget_exceeds_err);
-    assert_ne!(m4_err, min_hook_err);
+    assert_ne!(m4_zero_err, zero_grace_err);
+    assert_ne!(m4_zero_err, overflow_err);
+    assert_ne!(m4_zero_err, budget_exceeds_err);
+    assert_ne!(m4_zero_err, min_hook_err);
 
-    assert_ne!(m4_err.to_string(), zero_grace_err.to_string());
-    assert_ne!(m4_err.to_string(), overflow_err.to_string());
-    assert_ne!(m4_err.to_string(), budget_exceeds_err.to_string());
-    assert_ne!(m4_err.to_string(), min_hook_err.to_string());
+    assert_ne!(m4_zero_err.to_string(), zero_grace_err.to_string());
+    assert_ne!(m4_zero_err.to_string(), overflow_err.to_string());
+    assert_ne!(m4_zero_err.to_string(), budget_exceeds_err.to_string());
+    assert_ne!(m4_zero_err.to_string(), min_hook_err.to_string());
 
-    // Measurement 5: total 60 / runtime 50 / reserve 10 / min hook 5 (runtime + reserve == total) -> succeeds
-    let m5_policy = LifecyclePolicy {
+    // Measurement 6 (Round 3 Row 6): period 1 / timeout 1 / failure 1 / success 1 -> succeeds at K8s minimum
+    let m6_min_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        probe_timing: ProbeTiming {
+            period_seconds: 1,
+            timeout_seconds: 1,
+            failure_threshold: 1,
+            success_threshold: 1,
+        },
+    };
+    let m6_min_budget = m6_min_policy
+        .validate()
+        .expect("minimum probe timing 1 must validate");
+    let pod6 = test_pod_template(&cx)
+        .with_termination_budget(&m6_min_budget, 9080)
+        .render();
+    let container6 = &pod6["spec"]["containers"][0];
+
+    println!(
+        "Row 6 Rendered container (minimum timing 1): {}",
+        serde_json::to_string_pretty(container6).unwrap()
+    );
+
+    for probe in [
+        &container6["livenessProbe"],
+        &container6["readinessProbe"],
+        &container6["startupProbe"],
+    ] {
+        assert_eq!(probe["periodSeconds"], 1);
+        assert_eq!(probe["timeoutSeconds"], 1);
+        assert_eq!(probe["failureThreshold"], 1);
+    }
+
+    // Boundary total check: total 60 / runtime 50 / reserve 10 / min hook 5 (runtime + reserve == total) -> succeeds
+    let m5_boundary_policy = LifecyclePolicy {
         total_grace_period_seconds: 60,
         runtime_deadline_seconds: 50,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
         probe_timing: ProbeTiming::default(),
     };
-    let m5_budget = m5_policy
+    let m5_boundary_budget = m5_boundary_policy
         .validate()
         .expect("runtime + reserve == total must succeed on boundary");
-    assert_eq!(m5_budget.runtime_deadline_seconds(), 50);
-    assert_eq!(m5_budget.sigkill_reserve_seconds(), 10);
+    assert_eq!(m5_boundary_budget.runtime_deadline_seconds(), 50);
+    assert_eq!(m5_boundary_budget.sigkill_reserve_seconds(), 10);
 }
 
 #[test]
