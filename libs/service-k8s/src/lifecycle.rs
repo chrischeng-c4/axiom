@@ -14,6 +14,11 @@ pub const HEALTH_ENDPOINT_PATH: &str = "/healthz";
 /// Standard HTTP path for readiness and startup probes.
 pub const READY_ENDPOINT_PATH: &str = "/readyz";
 
+/// Standard environment variable name for the in-process runtime shutdown deadline (seconds).
+pub const ENV_SERVICE_RUNTIME_DEADLINE_SECONDS: &str = "SERVICE_RUNTIME_DEADLINE_SECONDS";
+/// Standard environment variable name for the trailing SIGKILL safety reserve (seconds).
+pub const ENV_SERVICE_SIGKILL_RESERVE_SECONDS: &str = "SERVICE_SIGKILL_RESERVE_SECONDS";
+
 /// Configured timing for Kubernetes container probes.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
