@@ -7,7 +7,9 @@
 
 use serde_json::{json, Value};
 
-use crate::lifecycle::TerminationBudget;
+use crate::lifecycle::{
+    TerminationBudget, ENV_SERVICE_RUNTIME_DEADLINE_SECONDS, ENV_SERVICE_SIGKILL_RESERVE_SECONDS,
+};
 
 pub use super::{
     client_service, client_service_with_ports, cron_job, guaranteed_resources,
@@ -44,12 +46,55 @@ pub struct ServicePodTemplate<'a> {
 }
 
 impl ServicePodTemplate<'_> {
-    /// Apply probes and termination grace period derived from a validated [`TerminationBudget`].
+    /// Apply probes, environment variables, and termination grace period derived from a validated [`TerminationBudget`].
     pub fn with_termination_budget(mut self, budget: &TerminationBudget, probe_port: u16) -> Self {
         self.liveness_probe = Some(budget.render_liveness_probe(probe_port));
         self.readiness_probe = Some(budget.render_readiness_probe(probe_port));
         self.startup_probe = Some(budget.render_startup_probe(probe_port));
         self.termination_grace_period_seconds = Some(budget.total_grace_period_seconds());
+
+        let deadline_val = budget.runtime_deadline_seconds().to_string();
+        let reserve_val = budget.sigkill_reserve_seconds().to_string();
+
+        let mut deadline_found = false;
+        let mut reserve_found = false;
+
+        let mut new_env = Vec::with_capacity(self.env.len() + 2);
+        for item in self.env {
+            let name = item.get("name").and_then(|n| n.as_str());
+            if name == Some(ENV_SERVICE_RUNTIME_DEADLINE_SECONDS) {
+                if !deadline_found {
+                    deadline_found = true;
+                    let mut updated = item.clone();
+                    updated["value"] = json!(deadline_val);
+                    new_env.push(updated);
+                }
+            } else if name == Some(ENV_SERVICE_SIGKILL_RESERVE_SECONDS) {
+                if !reserve_found {
+                    reserve_found = true;
+                    let mut updated = item.clone();
+                    updated["value"] = json!(reserve_val);
+                    new_env.push(updated);
+                }
+            } else {
+                new_env.push(item);
+            }
+        }
+
+        if !deadline_found {
+            new_env.push(json!({
+                "name": ENV_SERVICE_RUNTIME_DEADLINE_SECONDS,
+                "value": deadline_val,
+            }));
+        }
+        if !reserve_found {
+            new_env.push(json!({
+                "name": ENV_SERVICE_SIGKILL_RESERVE_SECONDS,
+                "value": reserve_val,
+            }));
+        }
+
+        self.env = new_env;
         self
     }
 

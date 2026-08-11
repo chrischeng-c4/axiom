@@ -517,3 +517,172 @@ fn crd_schema_derivation_is_crd_safe() {
         "uint32 format should be stripped"
     );
 }
+
+#[test]
+fn runtime_inputs_measurements() {
+    let cx = test_cx();
+
+    // Measurement 1: total 60, runtime 45, reserve 10, min hook 5, empty caller env
+    let m1_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        probe_timing: ProbeTiming::default(),
+    };
+    let m1_budget = m1_policy.validate().expect("m1 policy must validate");
+    let pod1 = test_pod_template(&cx)
+        .with_termination_budget(&m1_budget, 9080)
+        .render();
+    let container1 = &pod1["spec"]["containers"][0];
+    let env1 = container1["env"].as_array().expect("env array");
+
+    println!(
+        "Row 1 env: {}",
+        serde_json::to_string_pretty(env1).unwrap()
+    );
+
+    let deadline_entries: Vec<_> = env1
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .collect();
+    let reserve_entries: Vec<_> = env1
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_SIGKILL_RESERVE_SECONDS")
+        .collect();
+
+    assert_eq!(deadline_entries.len(), 1);
+    assert_eq!(deadline_entries[0]["value"], "45");
+
+    assert_eq!(reserve_entries.len(), 1);
+    assert_eq!(reserve_entries[0]["value"], "10");
+
+    // Measurement 2: template env already declares SERVICE_RUNTIME_DEADLINE_SECONDS with "999"
+    let mut pod2_template = test_pod_template(&cx);
+    pod2_template.env = vec![json!({
+        "name": "SERVICE_RUNTIME_DEADLINE_SECONDS",
+        "value": "999"
+    })];
+    let pod2 = pod2_template
+        .with_termination_budget(&m1_budget, 9080)
+        .render();
+    let container2 = &pod2["spec"]["containers"][0];
+    let env2 = container2["env"].as_array().expect("env array");
+    let container2_str = serde_json::to_string(&container2).unwrap();
+
+    println!(
+        "Row 2 env: {}",
+        serde_json::to_string_pretty(env2).unwrap()
+    );
+
+    let deadline_entries2: Vec<_> = env2
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .collect();
+    assert_eq!(deadline_entries2.len(), 1);
+    assert_eq!(deadline_entries2[0]["value"], "45");
+    assert!(!container2_str.contains("999"));
+
+    // Measurement 3: caller env declares LUMEN_HOST, LUMEN_WAL, LUMEN_PERSISTENCE
+    let mut pod3_template = test_pod_template(&cx);
+    pod3_template.env = vec![
+        json!({ "name": "LUMEN_HOST", "value": "0.0.0.0" }),
+        json!({ "name": "LUMEN_WAL", "value": "auto" }),
+        json!({ "name": "LUMEN_PERSISTENCE", "value": "segment" }),
+    ];
+    let pod3 = pod3_template
+        .with_termination_budget(&m1_budget, 9080)
+        .render();
+    let container3 = &pod3["spec"]["containers"][0];
+    let env3 = container3["env"].as_array().expect("env array");
+
+    println!(
+        "Row 3 env: {}",
+        serde_json::to_string_pretty(env3).unwrap()
+    );
+
+    assert_eq!(env3.len(), 5);
+    assert_eq!(env3[0]["name"], "LUMEN_HOST");
+    assert_eq!(env3[0]["value"], "0.0.0.0");
+    assert_eq!(env3[1]["name"], "LUMEN_WAL");
+    assert_eq!(env3[1]["value"], "auto");
+    assert_eq!(env3[2]["name"], "LUMEN_PERSISTENCE");
+    assert_eq!(env3[2]["value"], "segment");
+    assert_eq!(env3[3]["name"], "SERVICE_RUNTIME_DEADLINE_SECONDS");
+    assert_eq!(env3[3]["value"], "45");
+    assert_eq!(env3[4]["name"], "SERVICE_SIGKILL_RESERVE_SECONDS");
+    assert_eq!(env3[4]["value"], "10");
+
+    // Measurement 4: second budget total 120 / runtime 90 / reserve 25 / min hook 5
+    let m4_policy = LifecyclePolicy {
+        total_grace_period_seconds: 120,
+        runtime_deadline_seconds: 90,
+        sigkill_reserve_seconds: 25,
+        min_hook_duration_seconds: 5,
+        probe_timing: ProbeTiming::default(),
+    };
+    let m4_budget = m4_policy.validate().expect("m4 policy must validate");
+    let pod4 = test_pod_template(&cx)
+        .with_termination_budget(&m4_budget, 9080)
+        .render();
+    let container4 = &pod4["spec"]["containers"][0];
+    let env4 = container4["env"].as_array().expect("env array");
+
+    println!(
+        "Row 4 env: {}",
+        serde_json::to_string_pretty(env4).unwrap()
+    );
+
+    let deadline_entries4: Vec<_> = env4
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .collect();
+    let reserve_entries4: Vec<_> = env4
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_SIGKILL_RESERVE_SECONDS")
+        .collect();
+
+    assert_eq!(deadline_entries4.len(), 1);
+    assert_eq!(deadline_entries4[0]["value"], "90");
+
+    assert_eq!(reserve_entries4.len(), 1);
+    assert_eq!(reserve_entries4[0]["value"], "25");
+
+    // Measurement 5: Row 1 JSON types (env values are JSON strings, pod grace is JSON number)
+    let pod_grace = &pod1["spec"]["terminationGracePeriodSeconds"];
+    assert!(env1[0]["value"].is_string());
+    assert!(!env1[0]["value"].is_number());
+    assert!(env1[1]["value"].is_string());
+    assert!(!env1[1]["value"].is_number());
+
+    assert!(pod_grace.is_number());
+    assert!(!pod_grace.is_string());
+    assert_eq!(pod_grace.as_u64(), Some(60));
+
+    // Measurement 6: total 60 / runtime 45 / reserve 0 / min hook 5 (reserve 0 is present with "0")
+    let m6_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 0,
+        min_hook_duration_seconds: 5,
+        probe_timing: ProbeTiming::default(),
+    };
+    let m6_budget = m6_policy.validate().expect("m6 policy must validate");
+    let pod6 = test_pod_template(&cx)
+        .with_termination_budget(&m6_budget, 9080)
+        .render();
+    let container6 = &pod6["spec"]["containers"][0];
+    let env6 = container6["env"].as_array().expect("env array");
+
+    println!(
+        "Row 6 env: {}",
+        serde_json::to_string_pretty(env6).unwrap()
+    );
+
+    let reserve_entries6: Vec<_> = env6
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_SIGKILL_RESERVE_SECONDS")
+        .collect();
+    assert_eq!(reserve_entries6.len(), 1);
+    assert_eq!(reserve_entries6[0]["value"], "0");
+}
