@@ -7,6 +7,8 @@
 
 use serde_json::{json, Value};
 
+use crate::lifecycle::TerminationBudget;
+
 pub use super::{
     client_service, client_service_with_ports, cron_job, guaranteed_resources,
     horizontal_pod_autoscaler, owner_ref, pdb, requested_resources, service_account, CronJob,
@@ -42,6 +44,15 @@ pub struct ServicePodTemplate<'a> {
 }
 
 impl ServicePodTemplate<'_> {
+    /// Apply probes and termination grace period derived from a validated [`TerminationBudget`].
+    pub fn with_termination_budget(mut self, budget: &TerminationBudget, probe_port: u16) -> Self {
+        self.liveness_probe = Some(budget.render_liveness_probe(probe_port));
+        self.readiness_probe = Some(budget.render_readiness_probe(probe_port));
+        self.startup_probe = Some(budget.render_startup_probe(probe_port));
+        self.termination_grace_period_seconds = Some(budget.total_grace_period_seconds());
+        self
+    }
+
     /// Render the `spec.template` value shared by workload controllers.
     pub fn render(self) -> Value {
         let mut container = json!({

@@ -9,6 +9,11 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Standard HTTP path for liveness probes.
+pub const HEALTH_ENDPOINT_PATH: &str = "/healthz";
+/// Standard HTTP path for readiness and startup probes.
+pub const READY_ENDPOINT_PATH: &str = "/readyz";
+
 /// Configured timing for Kubernetes container probes.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +67,7 @@ impl Default for LifecyclePolicy {
 /// - `runtime_deadline_seconds + sigkill_reserve_seconds <= total_grace_period_seconds`
 /// - `runtime_deadline_seconds >= min_hook_duration_seconds`
 /// - Addition does not overflow `u64`
+/// - Probe timing fields (period, timeout, failure, success) are all >= 1
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminationBudget {
     total_grace_period_seconds: u64,
@@ -101,6 +107,48 @@ impl TerminationBudget {
             probe_timing: self.probe_timing,
         }
     }
+
+    /// Render the liveness probe (`GET /healthz`) targeting `port`.
+    pub fn render_liveness_probe(&self, port: u16) -> serde_json::Value {
+        serde_json::json!({
+            "httpGet": {
+                "path": HEALTH_ENDPOINT_PATH,
+                "port": port,
+            },
+            "periodSeconds": self.probe_timing.period_seconds,
+            "timeoutSeconds": self.probe_timing.timeout_seconds,
+            "failureThreshold": self.probe_timing.failure_threshold,
+            "successThreshold": 1,
+        })
+    }
+
+    /// Render the readiness probe (`GET /readyz`) targeting `port`.
+    pub fn render_readiness_probe(&self, port: u16) -> serde_json::Value {
+        serde_json::json!({
+            "httpGet": {
+                "path": READY_ENDPOINT_PATH,
+                "port": port,
+            },
+            "periodSeconds": self.probe_timing.period_seconds,
+            "timeoutSeconds": self.probe_timing.timeout_seconds,
+            "failureThreshold": self.probe_timing.failure_threshold,
+            "successThreshold": self.probe_timing.success_threshold,
+        })
+    }
+
+    /// Render the startup probe (`GET /readyz`) targeting `port`.
+    pub fn render_startup_probe(&self, port: u16) -> serde_json::Value {
+        serde_json::json!({
+            "httpGet": {
+                "path": READY_ENDPOINT_PATH,
+                "port": port,
+            },
+            "periodSeconds": self.probe_timing.period_seconds,
+            "timeoutSeconds": self.probe_timing.timeout_seconds,
+            "failureThreshold": self.probe_timing.failure_threshold,
+            "successThreshold": 1,
+        })
+    }
 }
 
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
@@ -124,6 +172,15 @@ pub enum LifecyclePolicyError {
     },
     #[error("budget calculation overflowed seconds field width")]
     Overflow,
+    #[error(
+        "probe timing fields must be at least 1 (period={period_seconds}s, timeout={timeout_seconds}s, failure={failure_threshold}, success={success_threshold})"
+    )]
+    InvalidProbeTiming {
+        period_seconds: u32,
+        timeout_seconds: u32,
+        failure_threshold: u32,
+        success_threshold: u32,
+    },
 }
 
 impl LifecyclePolicy {
@@ -149,6 +206,19 @@ impl LifecyclePolicy {
             return Err(LifecyclePolicyError::RuntimeBelowMinimumHook {
                 runtime_deadline_seconds: self.runtime_deadline_seconds,
                 min_hook_duration_seconds: self.min_hook_duration_seconds,
+            });
+        }
+
+        if self.probe_timing.period_seconds == 0
+            || self.probe_timing.timeout_seconds == 0
+            || self.probe_timing.failure_threshold == 0
+            || self.probe_timing.success_threshold == 0
+        {
+            return Err(LifecyclePolicyError::InvalidProbeTiming {
+                period_seconds: self.probe_timing.period_seconds,
+                timeout_seconds: self.probe_timing.timeout_seconds,
+                failure_threshold: self.probe_timing.failure_threshold,
+                success_threshold: self.probe_timing.success_threshold,
             });
         }
 
