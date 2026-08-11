@@ -18,6 +18,7 @@ pub mod certificate;
 pub mod controller;
 pub mod crd;
 pub mod lease;
+pub mod lifecycle;
 pub mod llm;
 pub mod metrics;
 pub mod render;
@@ -30,6 +31,7 @@ pub use certificate::{
 };
 pub use controller::{run, Error};
 pub use lease::Election;
+pub use lifecycle::{LifecyclePolicy, LifecyclePolicyError, ProbeTiming, TerminationBudget};
 pub use metrics::ControllerMetrics;
 pub use service::{
     ClusterSpec, Condition, ConditionFact, ConditionStatus, ManagedService, ReadinessTarget,
