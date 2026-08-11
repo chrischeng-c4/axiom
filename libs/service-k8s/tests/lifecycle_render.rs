@@ -537,10 +537,7 @@ fn runtime_inputs_measurements() {
     let container1 = &pod1["spec"]["containers"][0];
     let env1 = container1["env"].as_array().expect("env array");
 
-    println!(
-        "Row 1 env: {}",
-        serde_json::to_string_pretty(env1).unwrap()
-    );
+    println!("Row 1 env: {}", serde_json::to_string_pretty(env1).unwrap());
 
     let deadline_entries: Vec<_> = env1
         .iter()
@@ -570,10 +567,7 @@ fn runtime_inputs_measurements() {
     let env2 = container2["env"].as_array().expect("env array");
     let container2_str = serde_json::to_string(&container2).unwrap();
 
-    println!(
-        "Row 2 env: {}",
-        serde_json::to_string_pretty(env2).unwrap()
-    );
+    println!("Row 2 env: {}", serde_json::to_string_pretty(env2).unwrap());
 
     let deadline_entries2: Vec<_> = env2
         .iter()
@@ -596,10 +590,7 @@ fn runtime_inputs_measurements() {
     let container3 = &pod3["spec"]["containers"][0];
     let env3 = container3["env"].as_array().expect("env array");
 
-    println!(
-        "Row 3 env: {}",
-        serde_json::to_string_pretty(env3).unwrap()
-    );
+    println!("Row 3 env: {}", serde_json::to_string_pretty(env3).unwrap());
 
     assert_eq!(env3.len(), 5);
     assert_eq!(env3[0]["name"], "LUMEN_HOST");
@@ -628,10 +619,7 @@ fn runtime_inputs_measurements() {
     let container4 = &pod4["spec"]["containers"][0];
     let env4 = container4["env"].as_array().expect("env array");
 
-    println!(
-        "Row 4 env: {}",
-        serde_json::to_string_pretty(env4).unwrap()
-    );
+    println!("Row 4 env: {}", serde_json::to_string_pretty(env4).unwrap());
 
     let deadline_entries4: Vec<_> = env4
         .iter()
@@ -674,10 +662,7 @@ fn runtime_inputs_measurements() {
     let container6 = &pod6["spec"]["containers"][0];
     let env6 = container6["env"].as_array().expect("env array");
 
-    println!(
-        "Row 6 env: {}",
-        serde_json::to_string_pretty(env6).unwrap()
-    );
+    println!("Row 6 env: {}", serde_json::to_string_pretty(env6).unwrap());
 
     let reserve_entries6: Vec<_> = env6
         .iter()
