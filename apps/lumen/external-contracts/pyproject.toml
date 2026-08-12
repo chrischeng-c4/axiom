@@ -165,10 +165,6 @@ command = "capability-2324-behavior"
 evidence_paths = ["evidence/capability-2324-behavior.json"]
 
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2324 pure design modules (lumen/capability_ownership.py) have not landed, so the behavior verifier fails closed on import."
-expected = "The behavior verifier remains a known failure until the design exposes the entry points #2324 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
-
 [[tool.aw.python-ec.cases]]
 id = "capability-2324-security"
 artifact_id = "artifact:lumen/capability-contracts-and-shared-ownership"
@@ -182,10 +178,6 @@ oracle = "The verifier drives explicit hostile pure-model inputs at ownership va
 target = "rust"
 command = "capability-2324-security"
 evidence_paths = ["evidence/capability-2324-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2324 pure design modules (lumen/capability_ownership.py) have not landed, so the security verifier fails closed on import."
-expected = "The security verifier remains a known failure until the design exposes the entry points #2324 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
 
 [[tool.aw.python-ec.cases]]
 id = "verification-2328-behavior"
