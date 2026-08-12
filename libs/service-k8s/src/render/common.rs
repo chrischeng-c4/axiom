@@ -46,67 +46,90 @@ pub struct ServicePodTemplate<'a> {
     pub topology_spread_constraints: Vec<Value>,
 }
 
+/// Helper to apply a validated [`TerminationBudget`] to pod/container fields.
+pub fn apply_termination_budget(
+    budget: &TerminationBudget,
+    probe_port: u16,
+    env: &mut Vec<Value>,
+    liveness_probe: &mut Option<Value>,
+    readiness_probe: &mut Option<Value>,
+    startup_probe: &mut Option<Value>,
+    termination_grace_period_seconds: &mut Option<u64>,
+    lifecycle: &mut Option<Value>,
+) {
+    *liveness_probe = Some(budget.render_liveness_probe(probe_port));
+    *readiness_probe = Some(budget.render_readiness_probe(probe_port));
+    *startup_probe = Some(budget.render_startup_probe(probe_port));
+    *termination_grace_period_seconds = Some(budget.total_grace_period_seconds());
+
+    if budget.prestop_cost_seconds().is_some() {
+        *lifecycle = Some(json!({
+            "preStop": {
+                "httpGet": {
+                    "path": DRAIN_ENDPOINT_PATH,
+                    "port": probe_port,
+                }
+            }
+        }));
+    }
+
+    let deadline_val = budget.runtime_deadline_seconds().to_string();
+    let reserve_val = budget.sigkill_reserve_seconds().to_string();
+
+    let mut deadline_found = false;
+    let mut reserve_found = false;
+
+    let mut new_env = Vec::with_capacity(env.len() + 2);
+    for item in env.drain(..) {
+        let name = item.get("name").and_then(|n| n.as_str());
+        if name == Some(ENV_SERVICE_RUNTIME_DEADLINE_SECONDS) {
+            if !deadline_found {
+                deadline_found = true;
+                let mut updated = item.clone();
+                updated["value"] = json!(deadline_val);
+                new_env.push(updated);
+            }
+        } else if name == Some(ENV_SERVICE_SIGKILL_RESERVE_SECONDS) {
+            if !reserve_found {
+                reserve_found = true;
+                let mut updated = item.clone();
+                updated["value"] = json!(reserve_val);
+                new_env.push(updated);
+            }
+        } else {
+            new_env.push(item);
+        }
+    }
+
+    if !deadline_found {
+        new_env.push(json!({
+            "name": ENV_SERVICE_RUNTIME_DEADLINE_SECONDS,
+            "value": deadline_val,
+        }));
+    }
+    if !reserve_found {
+        new_env.push(json!({
+            "name": ENV_SERVICE_SIGKILL_RESERVE_SECONDS,
+            "value": reserve_val,
+        }));
+    }
+
+    *env = new_env;
+}
+
 impl ServicePodTemplate<'_> {
     /// Apply probes, preStop lifecycle hook, environment variables, and termination grace period derived from a validated [`TerminationBudget`].
     pub fn with_termination_budget(mut self, budget: &TerminationBudget, probe_port: u16) -> Self {
-        self.liveness_probe = Some(budget.render_liveness_probe(probe_port));
-        self.readiness_probe = Some(budget.render_readiness_probe(probe_port));
-        self.startup_probe = Some(budget.render_startup_probe(probe_port));
-        self.termination_grace_period_seconds = Some(budget.total_grace_period_seconds());
-
-        if budget.prestop_cost_seconds().is_some() {
-            self.lifecycle = Some(json!({
-                "preStop": {
-                    "httpGet": {
-                        "path": DRAIN_ENDPOINT_PATH,
-                        "port": probe_port,
-                    }
-                }
-            }));
-        }
-
-        let deadline_val = budget.runtime_deadline_seconds().to_string();
-        let reserve_val = budget.sigkill_reserve_seconds().to_string();
-
-        let mut deadline_found = false;
-        let mut reserve_found = false;
-
-        let mut new_env = Vec::with_capacity(self.env.len() + 2);
-        for item in self.env {
-            let name = item.get("name").and_then(|n| n.as_str());
-            if name == Some(ENV_SERVICE_RUNTIME_DEADLINE_SECONDS) {
-                if !deadline_found {
-                    deadline_found = true;
-                    let mut updated = item.clone();
-                    updated["value"] = json!(deadline_val);
-                    new_env.push(updated);
-                }
-            } else if name == Some(ENV_SERVICE_SIGKILL_RESERVE_SECONDS) {
-                if !reserve_found {
-                    reserve_found = true;
-                    let mut updated = item.clone();
-                    updated["value"] = json!(reserve_val);
-                    new_env.push(updated);
-                }
-            } else {
-                new_env.push(item);
-            }
-        }
-
-        if !deadline_found {
-            new_env.push(json!({
-                "name": ENV_SERVICE_RUNTIME_DEADLINE_SECONDS,
-                "value": deadline_val,
-            }));
-        }
-        if !reserve_found {
-            new_env.push(json!({
-                "name": ENV_SERVICE_SIGKILL_RESERVE_SECONDS,
-                "value": reserve_val,
-            }));
-        }
-
-        self.env = new_env;
+        apply_termination_budget(
+            budget,
+            probe_port,
+            &mut self.env,
+            &mut self.liveness_probe,
+            &mut self.readiness_probe,
+            &mut self.startup_probe,
+            &mut self.termination_grace_period_seconds,
+            &mut self.lifecycle,
+        );
         self
     }
 

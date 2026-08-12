@@ -639,6 +639,7 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
             "httpGet": { "path": "/healthz", "port": "http", "scheme": probe_scheme },
             "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
         })),
+        lifecycle: None,
         volumes,
         volume_mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
