@@ -19,6 +19,7 @@ class Reason(str, Enum):
     UNKNOWN_FAILURE_OWNER = "unknown_failure_owner"
     SHARED_NON_DOMAIN_FAILURE = "shared_non_domain_failure"
     MISSING_BOUNDED_ISSUE = "missing_bounded_issue"
+    INVALID_BOUNDED_ISSUE = "invalid_bounded_issue"
 
 
 @dataclass(frozen=True)
@@ -284,10 +285,24 @@ def decide_terminal_result(failure_owners: Any, issue: Any) -> str | OwnershipVe
             field_path="issue",
         )
 
-    if isinstance(issue, int):
-        issue_str = f"#{issue}"
-    else:
-        s = str(issue).strip()
-        issue_str = s if s.startswith("#") else f"#{s}"
+    issue_num: int | None = None
+    if isinstance(issue, int) and not isinstance(issue, bool):
+        if issue > 0:
+            issue_num = issue
+    elif isinstance(issue, str):
+        s = issue.strip()
+        if s.startswith("#"):
+            digits = s[1:].strip()
+            if digits.isdigit() and int(digits) > 0:
+                issue_num = int(digits)
+        elif s.isdigit() and int(s) > 0:
+            issue_num = int(s)
 
-    return f"tracked_skip({issue_str})"
+    if issue_num is None:
+        return OwnershipVerdict(
+            reason=Reason.INVALID_BOUNDED_ISSUE,
+            field_path="issue",
+        )
+
+    return f"tracked_skip(#{issue_num})"
+
