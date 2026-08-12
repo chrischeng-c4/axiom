@@ -46,20 +46,14 @@ pub struct ServicePodTemplate<'a> {
     pub topology_spread_constraints: Vec<Value>,
 }
 
-/// Helper to apply a validated [`TerminationBudget`] to pod/container fields.
-pub fn apply_termination_budget(
+/// Helper to apply a validated [`TerminationBudget`]'s termination contract (grace period, preStop hook, and runtime env entries) without mutating probes.
+pub fn apply_termination_contract(
     budget: &TerminationBudget,
     probe_port: u16,
     env: &mut Vec<Value>,
-    liveness_probe: &mut Option<Value>,
-    readiness_probe: &mut Option<Value>,
-    startup_probe: &mut Option<Value>,
     termination_grace_period_seconds: &mut Option<u64>,
     lifecycle: &mut Option<Value>,
 ) {
-    *liveness_probe = Some(budget.render_liveness_probe(probe_port));
-    *readiness_probe = Some(budget.render_readiness_probe(probe_port));
-    *startup_probe = Some(budget.render_startup_probe(probe_port));
     *termination_grace_period_seconds = Some(budget.total_grace_period_seconds());
 
     if budget.prestop_cost_seconds().is_some() {
@@ -117,6 +111,29 @@ pub fn apply_termination_budget(
     *env = new_env;
 }
 
+/// Helper to apply a validated [`TerminationBudget`] to pod/container fields.
+pub fn apply_termination_budget(
+    budget: &TerminationBudget,
+    probe_port: u16,
+    env: &mut Vec<Value>,
+    liveness_probe: &mut Option<Value>,
+    readiness_probe: &mut Option<Value>,
+    startup_probe: &mut Option<Value>,
+    termination_grace_period_seconds: &mut Option<u64>,
+    lifecycle: &mut Option<Value>,
+) {
+    *liveness_probe = Some(budget.render_liveness_probe(probe_port));
+    *readiness_probe = Some(budget.render_readiness_probe(probe_port));
+    *startup_probe = Some(budget.render_startup_probe(probe_port));
+    apply_termination_contract(
+        budget,
+        probe_port,
+        env,
+        termination_grace_period_seconds,
+        lifecycle,
+    );
+}
+
 impl ServicePodTemplate<'_> {
     /// Apply probes, preStop lifecycle hook, environment variables, and termination grace period derived from a validated [`TerminationBudget`].
     pub fn with_termination_budget(mut self, budget: &TerminationBudget, probe_port: u16) -> Self {
@@ -127,6 +144,22 @@ impl ServicePodTemplate<'_> {
             &mut self.liveness_probe,
             &mut self.readiness_probe,
             &mut self.startup_probe,
+            &mut self.termination_grace_period_seconds,
+            &mut self.lifecycle,
+        );
+        self
+    }
+
+    /// Apply termination grace period, preStop lifecycle hook, and environment variables derived from a validated [`TerminationBudget`], without mutating probes.
+    pub fn with_termination_contract(
+        mut self,
+        budget: &TerminationBudget,
+        probe_port: u16,
+    ) -> Self {
+        apply_termination_contract(
+            budget,
+            probe_port,
+            &mut self.env,
             &mut self.termination_grace_period_seconds,
             &mut self.lifecycle,
         );

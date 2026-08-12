@@ -14,7 +14,7 @@
 use serde_json::{json, Value};
 
 use crate::lifecycle::TerminationBudget;
-use crate::render::common::apply_termination_budget;
+use crate::render::common::{apply_termination_budget, apply_termination_contract};
 use crate::stateful::{resource_request_or_default, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST};
 
 // The downward-API env keys a sharded-HA StatefulSet injects. These MUST match
@@ -33,11 +33,11 @@ pub const ENV_VOTER_COUNT: &str = "VOTER_COUNT";
 pub mod common;
 /// Stateless `apps/v1` Deployment composition.
 pub mod deployment;
+/// Audience-bound, short-lived ServiceAccount tokens mounted as a file (#2877).
+pub mod projected_token;
 /// Cluster-scoped RBAC children — bindings that cannot carry an owner
 /// reference and must not accept a group subject (#2876).
 pub mod rbac;
-/// Audience-bound, short-lived ServiceAccount tokens mounted as a file (#2877).
-pub mod projected_token;
 
 /// Per-service render identity, threaded through the helpers.
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
@@ -552,6 +552,22 @@ impl ServiceStatefulSet<'_> {
             &mut self.liveness_probe,
             &mut self.readiness_probe,
             &mut self.startup_probe,
+            &mut self.termination_grace_period_seconds,
+            &mut self.lifecycle,
+        );
+        self
+    }
+
+    /// Apply termination grace period, preStop lifecycle hook, and environment variables derived from a validated [`TerminationBudget`], without mutating probes.
+    pub fn with_termination_contract(
+        mut self,
+        budget: &TerminationBudget,
+        probe_port: u16,
+    ) -> Self {
+        apply_termination_contract(
+            budget,
+            probe_port,
+            &mut self.env,
             &mut self.termination_grace_period_seconds,
             &mut self.lifecycle,
         );
