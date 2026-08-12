@@ -129,7 +129,7 @@ def verify_deletion_3097_security() -> dict:
     # 12. R5 -- not-found for an unknown key is never idempotent success.
     progress = ArtifactProgress.for_inventory(_closed())
     unknown_key = apply_artifact_result(progress, ArtifactRecord(uid="uid-unknown", role="backup", generation=17, manifest_key="backups/other"), ArtifactDeleteResult.NOT_FOUND)
-    obs11 = unknown_key.reason.value if isinstance(unknown_key, DeletionBlocked) else "deleted"
+    obs12 = unknown_key.reason.value if isinstance(unknown_key, DeletionBlocked) else "deleted"
     exp12 = DELETION_3097_SECURITY_MATRIX[11][1]
     checks.append({"name": DELETION_3097_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
 
