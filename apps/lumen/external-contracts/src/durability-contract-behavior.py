@@ -28,7 +28,7 @@ from lumen.topology.durability_spec import (
 )
 from lumen.topology.durability_verdict import AdmittedDurability, Rejection
 
-MINIMUM_CHECKS = 12
+MINIMUM_CHECKS = 14
 
 DURABILITY_CONTRACT_BEHAVIOR_MATRIX = (
     ("production_one_voter_uses_raft", "raft"),
@@ -40,7 +40,9 @@ DURABILITY_CONTRACT_BEHAVIOR_MATRIX = (
     ("admin_mutations_use_durable_raft_commit_apply", "durable_raft_commit_apply"),
     ("production_raft_profile_is_admitted", "admitted"),
     ("learner_extension_preserves_group_name", "lumen-orders-0"),
+    ("learner_extension_preserves_durable_format", True),
     ("voter_extension_preserves_durable_format", "raft-runtime-v1"),
+    ("voter_extension_preserves_group_name", True),
     ("persistence_failure_returns_durability_unavailable", "durability-unavailable"),
     ("persistence_failure_marks_status_degraded", "degraded"),
 )
@@ -114,23 +116,33 @@ def verify_durability_contract_behavior() -> dict:
     exp9 = DURABILITY_CONTRACT_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": DURABILITY_CONTRACT_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
-    # 10. R5 -- voter growth likewise keeps the original on-disk format.
-    voter_extension = decide_membership_extension(group, MembershipTarget(learners=(), voters=3))
-    obs10 = voter_extension.durable_format if isinstance(voter_extension, AdmittedDurability) else _outcome(voter_extension)
+    # 10. R5 -- learner growth also retains the existing on-disk format.
+    obs10 = learner_extension.durable_format == group.durable_format if isinstance(learner_extension, AdmittedDurability) else False
     exp10 = DURABILITY_CONTRACT_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": DURABILITY_CONTRACT_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
-    failure = map_persistence_failure(PersistenceFailure(kind="io_error", detail="EIO"))
-
-    # 11. R7 -- a typed persistence error becomes a structured unavailable result.
-    obs11 = failure.write_result
+    # 11. R5 -- voter growth likewise keeps the original on-disk format.
+    voter_extension = decide_membership_extension(group, MembershipTarget(learners=(), voters=3))
+    obs11 = voter_extension.durable_format if isinstance(voter_extension, AdmittedDurability) else _outcome(voter_extension)
     exp11 = DURABILITY_CONTRACT_BEHAVIOR_MATRIX[10][1]
     checks.append({"name": DURABILITY_CONTRACT_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
-    # 12. R7 -- independently, status is degraded rather than ready.
-    obs12 = failure.status
+    # 12. R5 -- voter growth also retains the existing named group.
+    obs12 = voter_extension.group_name == group.group_name if isinstance(voter_extension, AdmittedDurability) else False
     exp12 = DURABILITY_CONTRACT_BEHAVIOR_MATRIX[11][1]
     checks.append({"name": DURABILITY_CONTRACT_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    failure = map_persistence_failure(PersistenceFailure(kind="io_error", detail="EIO"))
+
+    # 13. R7 -- a typed persistence error becomes a structured unavailable result.
+    obs13 = failure.write_result
+    exp13 = DURABILITY_CONTRACT_BEHAVIOR_MATRIX[12][1]
+    checks.append({"name": DURABILITY_CONTRACT_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+
+    # 14. R7 -- independently, status is degraded rather than ready.
+    obs14 = failure.status
+    exp14 = DURABILITY_CONTRACT_BEHAVIOR_MATRIX[13][1]
+    checks.append({"name": DURABILITY_CONTRACT_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
     return {
         "case_id": "durability-contract-behavior",

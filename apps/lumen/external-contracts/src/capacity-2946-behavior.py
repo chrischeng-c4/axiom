@@ -17,13 +17,13 @@ from lumen.capacity.spec import CapacitySpec, CapacityStorage
 from lumen.capacity.status import CapacityState, apply_capacity_reapplication, project_capacity_status
 from lumen.capacity.verdict import Rejection
 
-MINIMUM_CHECKS = 24
+MINIMUM_CHECKS = 26
 
 CAPACITY_2946_BEHAVIOR_MATRIX = (
     ("default_initial_machine_type_is_e2_standard_2", "e2-standard-2"),
     ("explicit_default_machine_type_is_admitted", "admitted"),
-    ("unchanged_reapplication_keeps_current_machine_type", "e2-standard-2"),
-    ("unchanged_reapplication_keeps_target_machine_type", "e2-standard-2"),
+    ("unchanged_reapplication_keeps_current_machine_type", "n2-standard-4"),
+    ("unchanged_reapplication_keeps_target_machine_type", "n2-standard-8"),
     ("unchanged_reapplication_keeps_transition_generation", 17),
     ("unchanged_reapplication_keeps_phase", "Stable"),
     ("allowed_machine_type_resolves_to_a_nonempty_selector", True),
@@ -37,13 +37,15 @@ CAPACITY_2946_BEHAVIOR_MATRIX = (
     ("larger_data_pvc_is_admitted_for_growth", "admitted"),
     ("configured_cooldown_is_exposed_by_transition_decision", 300),
     ("blocked_status_keeps_old_healthy_member_authoritative", True),
-    ("blocked_status_retains_current_machine_type", "e2-standard-2"),
-    ("blocked_status_retains_target_machine_type", "e2-standard-2"),
+    ("blocked_status_retains_current_machine_type", "n2-standard-4"),
+    ("blocked_status_retains_target_machine_type", "n2-standard-8"),
     ("public_spec_has_exactly_one_machine_type_field", 1),
     ("derived_cpu_request_is_below_advertised_allocatable", True),
     ("derived_memory_request_is_below_advertised_allocatable", True),
     ("equal_machine_type_placements_share_one_selector", True),
     ("transition_decision_exposes_configured_node_cap", 3),
+    ("alternate_configured_cooldown_is_exposed_by_transition_decision", 47),
+    ("alternate_transition_decision_exposes_configured_node_cap", 5),
 )
 
 
@@ -66,7 +68,7 @@ def verify_capacity_2946_behavior() -> dict:
     exp2 = CAPACITY_2946_BEHAVIOR_MATRIX[1][1]
     checks.append({"name": CAPACITY_2946_BEHAVIOR_MATRIX[1][0], "expected": exp2, "observed": obs2, "passed": obs2 == exp2})
 
-    previous = CapacityState(current_machine_type="e2-standard-2", target_machine_type="e2-standard-2", transition_generation=17, phase="Stable")
+    previous = CapacityState(current_machine_type="n2-standard-4", target_machine_type="n2-standard-8", transition_generation=17, phase="Stable")
     reapplied = apply_capacity_reapplication(previous, CapacitySpec(initial_machine_type="e2-standard-2"))
 
     # 3. R2 -- no-op reapplication cannot replace operator-owned current state.
@@ -196,5 +198,18 @@ def verify_capacity_2946_behavior() -> dict:
     obs24 = transition.node_cap if not isinstance(transition, Rejection) else -1
     exp24 = CAPACITY_2946_BEHAVIOR_MATRIX[23][1]
     checks.append({"name": CAPACITY_2946_BEHAVIOR_MATRIX[23][0], "expected": exp24, "observed": obs24, "passed": obs24 == exp24})
+
+    alternate_policy = CapacityPolicy(allowed_transitions=("scale_out",), node_cap=5, read_replica_cap=2, shard_cap=4, cooldown_seconds=47)
+    alternate_transition = decide_transition("e2-standard-2", "e2-standard-2", alternate_policy, catalog_maximum=7)
+
+    # 25. R8 -- a different configured cooldown must be surfaced verbatim.
+    obs25 = alternate_transition.cooldown_seconds if not isinstance(alternate_transition, Rejection) else -1
+    exp25 = CAPACITY_2946_BEHAVIOR_MATRIX[24][1]
+    checks.append({"name": CAPACITY_2946_BEHAVIOR_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
+
+    # 26. R8 -- a separately admitted policy controls the decision cap.
+    obs26 = alternate_transition.node_cap if not isinstance(alternate_transition, Rejection) else -1
+    exp26 = CAPACITY_2946_BEHAVIOR_MATRIX[25][1]
+    checks.append({"name": CAPACITY_2946_BEHAVIOR_MATRIX[25][0], "expected": exp26, "observed": obs26, "passed": obs26 == exp26})
 
     return {"case_id": "capacity-2946-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

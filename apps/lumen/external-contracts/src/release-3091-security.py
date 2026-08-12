@@ -22,7 +22,7 @@ from lumen.release.status import ReleaseStatus
 from lumen.release.transition import decide_rollback
 from lumen.release.verdict import Rejection
 
-MINIMUM_CHECKS = 24
+MINIMUM_CHECKS = 25
 
 RELEASE_3091_SECURITY_MATRIX = (
     ("no_common_member_format_is_rejected", "no_common_write_format"),
@@ -49,6 +49,7 @@ RELEASE_3091_SECURITY_MATRIX = (
     ("finalized_state_rejects_n_minus_one_member", "n_minus_one_downgrade_rejected"),
     ("n_minus_one_rejection_names_candidate_release", "candidate_release"),
     ("destructive_or_unversioned_evolution_is_rejected", "destructive_or_unversioned_evolution"),
+    ("unverified_backup_set_is_rejected", "backup_set_unverified"),
 )
 
 
@@ -74,7 +75,8 @@ def _spec(*, digest: str = "sha256:n-release", finalize_generation: int | None =
 def _status(
     *, reported_digest: str = "sha256:n-release", converged: bool = True,
     operation_free: bool = True, member_reports: bool = True, authorized: bool = True,
-    soak: bool = True, backup_complete: bool = True, backup_epoch: int = 1,
+    soak: bool = True, backup_complete: bool = True, backup_verified: bool = True,
+    backup_epoch: int = 1,
     generation: int = 11, finalized: bool = False,
 ) -> ReleaseStatus:
     return ReleaseStatus(
@@ -84,7 +86,7 @@ def _status(
         reported_digest=reported_digest, compatibility_authorized=authorized,
         healthy_traffic_soak=soak,
         backup_set=BackupSetAttestation(
-            backup_id="backup-n-old-epoch", complete=backup_complete, verified=True,
+            backup_id="backup-n-old-epoch", complete=backup_complete, verified=backup_verified,
             topology_release="N", write_epoch=backup_epoch, forward_recovery_point=True,
         ),
     )
@@ -156,6 +158,11 @@ def verify_release_3091_security() -> dict:
     backup_neighbour = decide_finalize(spec, ready, descriptor)
     obs19 = _outcome(backup_neighbour); exp19 = RELEASE_3091_SECURITY_MATRIX[18][1]
     checks.append({"name": RELEASE_3091_SECURITY_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
+
+    # R7 -- a complete old-epoch BackupSet must also carry verified attestation.
+    unverified = decide_finalize(spec, _status(backup_verified=False), descriptor)
+    obs25 = _outcome(unverified); exp25 = RELEASE_3091_SECURITY_MATRIX[24][1]
+    checks.append({"name": RELEASE_3091_SECURITY_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
 
     # 20-23. R8/R9 -- point-of-no-return forbids both rollback and N-1 admission with guidance.
     finalized = _status(finalized=True, generation=12)

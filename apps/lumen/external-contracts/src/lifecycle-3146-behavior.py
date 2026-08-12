@@ -19,7 +19,7 @@ from lumen.lifecycle.spec import HookOutcome, LifecycleFacts, LifecyclePolicy, L
 from lumen.lifecycle.status import project_lifecycle_status
 from lumen.lifecycle.verdict import Rejection
 
-MINIMUM_CHECKS = 19
+MINIMUM_CHECKS = 28
 
 LIFECYCLE_3146_BEHAVIOR_MATRIX = (
     ("authorized_quiesce_enters_draining", "Draining"),
@@ -41,6 +41,15 @@ LIFECYCLE_3146_BEHAVIOR_MATRIX = (
     ("status_projects_stable_phase", "Drained"),
     ("status_projects_stable_generation", 8),
     ("status_projects_terminal_drained_report", "Drained=True"),
+    ("incompatible_configuration_blocks_readiness", "not_ready"),
+    ("incompatible_format_blocks_readiness", "not_ready"),
+    ("missing_auth_material_blocks_readiness", "not_ready"),
+    ("missing_tls_material_blocks_readiness", "not_ready"),
+    ("uninitialized_catalog_routing_blocks_readiness", "not_ready"),
+    ("unadmitted_raft_member_blocks_readiness", "not_ready"),
+    ("fatal_local_failure_is_unhealthy", "unhealthy"),
+    ("status_projects_stable_reason", "authorized_quiesce"),
+    ("status_projects_per_hook_outcomes", (("close_write_proposal_admission", "finished"), ("flush_tracing_and_metrics", "finished"))),
 )
 
 
@@ -117,6 +126,33 @@ def verify_lifecycle_3146_behavior() -> dict:
     exp9 = LIFECYCLE_3146_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
+    # 20-25. R2 -- every other local startup/admission fact independently
+    # blocks readiness while the process can remain health-positive in recovery.
+    incompatible_configuration = decide_probe_state(_ready_facts(configuration_compatible=False))
+    obs20 = incompatible_configuration.readiness
+    exp20 = LIFECYCLE_3146_BEHAVIOR_MATRIX[19][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
+    incompatible_format = decide_probe_state(_ready_facts(formats_compatible=False))
+    obs21 = incompatible_format.readiness
+    exp21 = LIFECYCLE_3146_BEHAVIOR_MATRIX[20][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
+    missing_auth = decide_probe_state(_ready_facts(auth_material_ready=False))
+    obs22 = missing_auth.readiness
+    exp22 = LIFECYCLE_3146_BEHAVIOR_MATRIX[21][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
+    missing_tls = decide_probe_state(_ready_facts(tls_material_ready=False))
+    obs23 = missing_tls.readiness
+    exp23 = LIFECYCLE_3146_BEHAVIOR_MATRIX[22][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
+    uninitialized_catalog_routing = decide_probe_state(_ready_facts(catalog_routing_initialized=False))
+    obs24 = uninitialized_catalog_routing.readiness
+    exp24 = LIFECYCLE_3146_BEHAVIOR_MATRIX[23][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[23][0], "expected": exp24, "observed": obs24, "passed": obs24 == exp24})
+    unadmitted_raft_member = decide_probe_state(_ready_facts(raft_member_admitted=False))
+    obs25 = unadmitted_raft_member.readiness
+    exp25 = LIFECYCLE_3146_BEHAVIOR_MATRIX[24][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
+
     dependency_loss = decide_probe_state(_ready_facts(leader_available=False, quorum_available=False, cloud_available=False))
     # 10. R3 -- temporary global dependency loss is not a fatal local failure.
     obs10 = dependency_loss.health
@@ -131,6 +167,12 @@ def verify_lifecycle_3146_behavior() -> dict:
     obs12 = read_only.mutation_outcome
     exp12 = LIFECYCLE_3146_BEHAVIOR_MATRIX[11][1]
     checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    fatal_local_failure = decide_probe_state(_ready_facts(fatal_local_failure=True))
+    # 26. R3 -- a fatal local invariant or supervisor failure is unhealthy.
+    obs26 = fatal_local_failure.health
+    exp26 = LIFECYCLE_3146_BEHAVIOR_MATRIX[25][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[25][0], "expected": exp26, "observed": obs26, "passed": obs26 == exp26})
 
     # 13. R5 -- domain effects stay in the one immutable order used by draining.
     plan = ordered_hook_plan("Draining")
@@ -152,7 +194,10 @@ def verify_lifecycle_3146_behavior() -> dict:
 
     status = project_lifecycle_status(
         LifecycleState(phase="Drained", generation=8, reason="authorized_quiesce", readiness="not_ready"),
-        (HookOutcome(name="flush_tracing_and_metrics", outcome="finished"),),
+        (
+            HookOutcome(name="close_write_proposal_admission", outcome="finished"),
+            HookOutcome(name="flush_tracing_and_metrics", outcome="finished"),
+        ),
     )
     # 17-19. R7 -- the finalizer receives stable terminal evidence, not a flag.
     obs17 = status.phase
@@ -164,5 +209,14 @@ def verify_lifecycle_3146_behavior() -> dict:
     obs19 = status.terminal_condition
     exp19 = LIFECYCLE_3146_BEHAVIOR_MATRIX[18][1]
     checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
+
+    # 27-28. R7 -- the terminal projection preserves its cause and each
+    # distinguishable hook outcome for operator and finalizer consumers.
+    obs27 = status.reason
+    exp27 = LIFECYCLE_3146_BEHAVIOR_MATRIX[26][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[26][0], "expected": exp27, "observed": obs27, "passed": obs27 == exp27})
+    obs28 = tuple((outcome.name, outcome.outcome) for outcome in status.hook_outcomes)
+    exp28 = LIFECYCLE_3146_BEHAVIOR_MATRIX[27][1]
+    checks.append({"name": LIFECYCLE_3146_BEHAVIOR_MATRIX[27][0], "expected": exp28, "observed": obs28, "passed": obs28 == exp28})
 
     return {"case_id": "lifecycle-3146-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

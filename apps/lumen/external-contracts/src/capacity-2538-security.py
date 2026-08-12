@@ -14,11 +14,12 @@ from lumen.capacity.admission import decide_capacity_guidance
 from lumen.capacity.spec import CapacitySpec, MachineFamily, StorageClass, StorageFormat
 from lumen.capacity.verdict import AdmittedGuidance, Rejection
 
-MINIMUM_CHECKS = 13
+MINIMUM_CHECKS = 16
 
 CAPACITY_2538_SECURITY_MATRIX = (
     ("price_data_is_refused_by_reason", "price_data_not_allowed"),
     ("price_data_refusal_names_the_record_schema", "declared_record_schema_fields"),
+    ("regional_billing_data_is_refused_by_reason", "price_data_not_allowed"),
     ("price_free_neighbor_is_admitted", "admitted"),
     ("automatic_storage_migration_is_refused_by_reason", "automatic_storage_class_migration_unsupported"),
     ("automatic_storage_migration_refusal_names_the_request", "requested_automatic_storage_class_migration"),
@@ -27,6 +28,8 @@ CAPACITY_2538_SECURITY_MATRIX = (
     ("legacy_whole_state_json_cannot_contain_recommendations", (None, None)),
     ("missing_completed_format_evidence_is_refused_by_reason", "missing_storage_evidence_prerequisite"),
     ("missing_completed_format_evidence_names_its_attestation", "bounded_steady_state_write_amplification_attested"),
+    ("unattested_storage_format_is_refused_by_reason", "missing_storage_evidence_prerequisite"),
+    ("unattested_storage_format_cannot_contain_recommendations", (None, None)),
     ("unearned_n2_is_refused_by_reason", "n2_evidence_not_qualified"),
     ("unearned_n2_refusal_names_machine_request", "requested_machine_family"),
     ("qualifying_n2_neighbor_is_admitted", "N2"),
@@ -68,7 +71,7 @@ def _complete_spec(**overrides: object) -> CapacitySpec:
 def verify_capacity_2538_security() -> dict:
     checks = []
 
-    # 1-3. R4 — price fields are forbidden by a named schema refusal, while a
+    # 1-4. R4 — price fields are forbidden by a named schema refusal, while a
     #        neighbouring otherwise-identical price-free request is admitted.
     price_data = decide_capacity_guidance(
         _complete_spec(declared_record_schema_fields=frozenset({"throughput", "hourly_price"}))
@@ -81,59 +84,79 @@ def verify_capacity_2538_security() -> dict:
     exp2 = CAPACITY_2538_SECURITY_MATRIX[1][1]
     checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[1][0], "expected": exp2, "observed": obs2, "passed": obs2 == exp2})
 
-    price_free = decide_capacity_guidance(_complete_spec())
-    obs3 = price_free.kind.value if isinstance(price_free, AdmittedGuidance) else price_free.reason.value
+    regional_billing_data = decide_capacity_guidance(
+        _complete_spec(declared_record_schema_fields=frozenset({"throughput", "regional_billing"}))
+    )
+    obs3 = regional_billing_data.reason.value if isinstance(regional_billing_data, Rejection) else "admitted"
     exp3 = CAPACITY_2538_SECURITY_MATRIX[2][1]
     checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[2][0], "expected": exp3, "observed": obs3, "passed": obs3 == exp3})
 
-    # 4-5. R5 — an explicit migration request is never silently accepted.
-    migration = decide_capacity_guidance(_complete_spec(requested_automatic_storage_class_migration=True))
-    obs4 = migration.reason.value if isinstance(migration, Rejection) else "admitted"
+    price_free = decide_capacity_guidance(_complete_spec())
+    obs4 = price_free.kind.value if isinstance(price_free, AdmittedGuidance) else price_free.reason.value
     exp4 = CAPACITY_2538_SECURITY_MATRIX[3][1]
     checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[3][0], "expected": exp4, "observed": obs4, "passed": obs4 == exp4})
 
-    obs5 = migration.field_path if isinstance(migration, Rejection) else ""
+    # 5-6. R5 — an explicit migration request is never silently accepted.
+    migration = decide_capacity_guidance(_complete_spec(requested_automatic_storage_class_migration=True))
+    obs4 = migration.reason.value if isinstance(migration, Rejection) else "admitted"
     exp5 = CAPACITY_2538_SECURITY_MATRIX[4][1]
-    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[4][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[4][0], "expected": exp5, "observed": obs4, "passed": obs4 == exp5})
 
-    # 6-8. R7 — the old whole-state JSON store is a named refusal and can
+    obs5 = migration.field_path if isinstance(migration, Rejection) else ""
+    exp6 = CAPACITY_2538_SECURITY_MATRIX[5][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[5][0], "expected": exp6, "observed": obs5, "passed": obs5 == exp6})
+
+    # 7-9. R7 — the old whole-state JSON store is a named refusal and can
     #        never overclaim a threshold or machine recommendation.
     legacy = decide_capacity_guidance(_complete_spec(storage_format=StorageFormat.LEGACY_WHOLE_STATE_JSON))
     obs6 = legacy.reason.value if isinstance(legacy, Rejection) else "admitted"
-    exp6 = CAPACITY_2538_SECURITY_MATRIX[5][1]
-    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
+    exp7 = CAPACITY_2538_SECURITY_MATRIX[6][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[6][0], "expected": exp7, "observed": obs6, "passed": obs6 == exp7})
 
     obs7 = legacy.field_path if isinstance(legacy, Rejection) else ""
-    exp7 = CAPACITY_2538_SECURITY_MATRIX[6][1]
-    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
+    exp8 = CAPACITY_2538_SECURITY_MATRIX[7][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[7][0], "expected": exp8, "observed": obs7, "passed": obs7 == exp8})
 
     obs8 = (legacy.threshold, legacy.machine_recommendation) if isinstance(legacy, Rejection) else ("admitted", "admitted")
-    exp8 = CAPACITY_2538_SECURITY_MATRIX[7][1]
-    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
+    exp9 = CAPACITY_2538_SECURITY_MATRIX[8][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[8][0], "expected": exp9, "observed": obs8, "passed": obs8 == exp9})
 
-    # 9-10. R7/AC5 — missing bounded-write-amplification evidence is distinct
+    # 10-13. R7/AC5 — missing bounded-write-amplification evidence is distinct
     #         from a legacy format and identifies the missing prerequisite.
     missing_evidence = decide_capacity_guidance(
         _complete_spec(bounded_steady_state_write_amplification_attested=False)
     )
     obs9 = missing_evidence.reason.value if isinstance(missing_evidence, Rejection) else "admitted"
-    exp9 = CAPACITY_2538_SECURITY_MATRIX[8][1]
-    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
+    exp10 = CAPACITY_2538_SECURITY_MATRIX[9][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[9][0], "expected": exp10, "observed": obs9, "passed": obs9 == exp10})
 
     obs10 = missing_evidence.field_path if isinstance(missing_evidence, Rejection) else ""
-    exp10 = CAPACITY_2538_SECURITY_MATRIX[9][1]
-    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
-
-    # 11-13. AC3 — requesting N2 without earned evidence is rejected by name
-    #          and field, while the qualifying neighbouring request is allowed.
-    unearned_n2 = decide_capacity_guidance(_complete_spec(requested_machine_family=MachineFamily.N2))
-    obs11 = unearned_n2.reason.value if isinstance(unearned_n2, Rejection) else "admitted"
     exp11 = CAPACITY_2538_SECURITY_MATRIX[10][1]
-    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs10, "passed": obs10 == exp11})
 
-    obs12 = unearned_n2.field_path if isinstance(unearned_n2, Rejection) else ""
+    unattested_storage_format = decide_capacity_guidance(_complete_spec(storage_format_attested=False))
+    obs12 = unattested_storage_format.reason.value if isinstance(unattested_storage_format, Rejection) else "admitted"
     exp12 = CAPACITY_2538_SECURITY_MATRIX[11][1]
     checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    obs13 = (
+        (unattested_storage_format.threshold, unattested_storage_format.machine_recommendation)
+        if isinstance(unattested_storage_format, Rejection)
+        else ("admitted", "admitted")
+    )
+    exp13 = CAPACITY_2538_SECURITY_MATRIX[12][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+
+    # 14-16. AC3 — requesting N2 without earned evidence is rejected by name
+    #          and field, while the qualifying neighbouring request is allowed.
+    unearned_n2 = decide_capacity_guidance(_complete_spec(requested_machine_family=MachineFamily.N2))
+    obs14 = unearned_n2.reason.value if isinstance(unearned_n2, Rejection) else "admitted"
+    exp14 = CAPACITY_2538_SECURITY_MATRIX[13][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    obs15 = unearned_n2.field_path if isinstance(unearned_n2, Rejection) else ""
+    exp15 = CAPACITY_2538_SECURITY_MATRIX[14][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     earned_n2 = decide_capacity_guidance(
         _complete_spec(
@@ -142,13 +165,13 @@ def verify_capacity_2538_security() -> dict:
             requested_machine_family=MachineFamily.N2,
         )
     )
-    obs13 = earned_n2.machine_family.value if isinstance(earned_n2, AdmittedGuidance) else "rejected"
-    exp13 = CAPACITY_2538_SECURITY_MATRIX[12][1]
-    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+    obs16 = earned_n2.machine_family.value if isinstance(earned_n2, AdmittedGuidance) else "rejected"
+    exp16 = CAPACITY_2538_SECURITY_MATRIX[15][1]
+    checks.append({"name": CAPACITY_2538_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
 
     return {
         "case_id": "capacity-2538-security",
         "minimum_checks": MINIMUM_CHECKS,
         "checks": checks,
-        "passed": all(c["passed"] for c in checks) and len(checks) >= MINIMUM_CHECKS,
+        "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS,
     }

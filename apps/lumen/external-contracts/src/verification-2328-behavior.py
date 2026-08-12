@@ -14,7 +14,7 @@ from lumen.verification.classification import classify_failure, split_failure
 from lumen.verification.result import decide_terminal_result
 from lumen.verification.verdict import Failure, Ownership, Rejection, VerificationRecord
 
-MINIMUM_CHECKS = 9
+MINIMUM_CHECKS = 10
 
 VERIFICATION_2328_BEHAVIOR_MATRIX = (
     ("complete_reusable_gate_record_is_passed", "passed"),
@@ -26,6 +26,7 @@ VERIFICATION_2328_BEHAVIOR_MATRIX = (
     ("mixed_shared_slice_requires_a_rerun", "rerun_required"),
     ("mixed_app_domain_slice_is_issue_backed", "#2329"),
     ("mixed_app_domain_slice_can_be_tracked_skip", "tracked_skip(#2329)"),
+    ("mixed_app_domain_slice_has_bounded_issue_skip_disposition", "tracked_skip(#2329)"),
 )
 
 
@@ -121,6 +122,11 @@ def verify_verification_2328_behavior() -> dict:
     obs9 = f"{tracked_skip.terminal.value}({tracked_skip.issue_ref})" if not isinstance(tracked_skip, Rejection) else _outcome(tracked_skip)
     exp9 = VERIFICATION_2328_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": VERIFICATION_2328_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
+
+    # 10. R4 -- the split itself records the bounded app-domain skip disposition.
+    obs10 = split.app_domain_slice.disposition if not isinstance(split, Rejection) else _outcome(split)
+    exp10 = VERIFICATION_2328_BEHAVIOR_MATRIX[9][1]
+    checks.append({"name": VERIFICATION_2328_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
     return {
         "case_id": "verification-2328-behavior",

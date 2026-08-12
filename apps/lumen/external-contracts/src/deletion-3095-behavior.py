@@ -30,7 +30,7 @@ from lumen.deletion.spec import (
 from lumen.deletion.status import project
 from lumen.deletion.verdict import Rejection
 
-MINIMUM_CHECKS = 13
+MINIMUM_CHECKS = 14
 
 DELETION_3095_BEHAVIOR_MATRIX = (
     ("data_lifecycle_finalizer_has_the_required_identifier", "lumen.dev/data-lifecycle"),
@@ -42,6 +42,7 @@ DELETION_3095_BEHAVIOR_MATRIX = (
     ("closed_uid_inventory_retains_authoritative_pvcs", ("data-0", "data-1")),
     ("closed_uid_inventory_retains_complete_backup_sets", ("backup-7",)),
     ("resume_selects_one_idempotent_next_action", "remove_non_data_children"),
+    ("resume_after_routing_withdrawal_suspends_jobs_before_draining", "suspend_new_backup_and_maintenance_jobs"),
     ("status_projects_deletion_pending_condition", "DeletionPending"),
     ("status_projects_active_operation_disposition", "rollback_before_cleanup"),
     ("status_projects_retained_inventory_summary", "2 PVCs, 1 BackupSet"),
@@ -139,27 +140,44 @@ def verify_deletion_3095_behavior() -> dict:
     exp9 = DELETION_3095_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": DELETION_3095_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
-    status = project(retain, reversible, inventory)
+    routing_withdrawn_resume = decide_resume(
+        ResumeFacts(
+            persisted_phase="routing_withdrawn",
+            public_routing_present=False,
+            backup_jobs_suspended=False,
+            maintenance_jobs_suspended=False,
+            serving_members_drained=False,
+            non_data_children_present=True,
+        )
+    )
 
-    # 10. R7 -- status makes the deletion condition actionable.
-    obs10 = status.condition
+    # 10. R6 -- after persisted routing withdrawal, observed unsuspended jobs
+    # must be resumed at job suspension before any member drain or cleanup.
+    obs10 = routing_withdrawn_resume.next_action if not isinstance(routing_withdrawn_resume, Rejection) else "rejected"
     exp10 = DELETION_3095_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": DELETION_3095_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
-    # 11. R7 -- status makes the active-operation disposition actionable.
-    obs11 = status.active_operation_disposition
+    status = project(retain, reversible, inventory)
+
+    # 11. R7 -- status makes the deletion condition actionable.
+    obs11 = status.condition
     exp11 = DELETION_3095_BEHAVIOR_MATRIX[10][1]
     checks.append({"name": DELETION_3095_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
-    # 12. R7 -- status makes the retained inventory summary actionable.
-    obs12 = status.retained_inventory_summary
+    # 12. R7 -- status makes the active-operation disposition actionable.
+    obs12 = status.active_operation_disposition
     exp12 = DELETION_3095_BEHAVIOR_MATRIX[11][1]
     checks.append({"name": DELETION_3095_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
 
-    # 13. R7 -- status makes the next action actionable.
-    obs13 = status.next_action
+    # 13. R7 -- status makes the retained inventory summary actionable.
+    obs13 = status.retained_inventory_summary
     exp13 = DELETION_3095_BEHAVIOR_MATRIX[12][1]
     checks.append({"name": DELETION_3095_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+
+    # 14. R7 -- status makes the next action actionable.
+    obs14 = status.next_action
+    exp14 = DELETION_3095_BEHAVIOR_MATRIX[13][1]
+    checks.append({"name": DELETION_3095_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
     return {
         "case_id": "deletion-3095-behavior",

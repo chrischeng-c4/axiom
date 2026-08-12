@@ -17,18 +17,20 @@ from lumen.container_kustomize.result import decide_terminal_result
 from lumen.container_kustomize.spec import BoundedIssue, FailureOwner
 from lumen.container_kustomize.verdict import Rejection
 
-MINIMUM_CHECKS = 9
+MINIMUM_CHECKS = 11
 
 CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX = (
     ("shared_failure_requires_shared_repair", "shared_repair_required"),
     ("non_domain_failure_requires_shared_repair", "shared_repair_required"),
     ("app_domain_failure_with_bounded_issue_is_tracked_skip", "tracked_skip"),
-    ("app_domain_tracked_skip_carries_the_bounded_issue", 2343),
+    ("app_domain_tracked_skip_carries_the_bounded_issue", 2344),
     ("mixed_failure_repairs_and_reruns_the_shared_slice", "repair_and_rerun"),
     ("mixed_failure_tracks_the_domain_slice_separately", "tracked_skip"),
+    ("mixed_failure_domain_slice_carries_the_bounded_issue", 2343),
     ("successful_final_gate_passes", "passed"),
+    ("failed_final_gate_without_failure_owner_stays_open", "open"),
     ("app_domain_terminal_result_is_tracked_skip", "tracked_skip"),
-    ("terminal_tracked_skip_carries_the_bounded_issue", 2343),
+    ("terminal_tracked_skip_carries_the_bounded_issue", 2344),
 )
 
 
@@ -43,6 +45,7 @@ def _terminal_state(decision) -> str:
 def verify_container_kustomize_2343_behavior() -> dict:
     checks = []
     bounded_issue = BoundedIssue(number=2343)
+    neighbouring_bounded_issue = BoundedIssue(number=2344)
 
     shared = decide_failure_outcome(FailureOwner.SHARED, bounded_issue)
 
@@ -58,7 +61,7 @@ def verify_container_kustomize_2343_behavior() -> dict:
     exp2 = CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[1][1]
     checks.append({"name": CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[1][0], "expected": exp2, "observed": obs2, "passed": obs2 == exp2})
 
-    domain = decide_failure_outcome(FailureOwner.APP_DOMAIN, bounded_issue)
+    domain = decide_failure_outcome(FailureOwner.APP_DOMAIN, neighbouring_bounded_issue)
 
     # 3. R3 -- a bounded app-domain failure has the one permitted skip action.
     obs3 = _action(domain)
@@ -82,24 +85,36 @@ def verify_container_kustomize_2343_behavior() -> dict:
     exp6 = CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[5][1]
     checks.append({"name": CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
 
-    passed = decide_terminal_result(FailureOwner.NONE, None, True)
-
-    # 7. AC3 -- a successful final gate is the only pass outcome.
-    obs7 = _terminal_state(passed)
+    # 7. R4 -- the separately skipped domain half retains its bounded issue.
+    obs7 = mixed.domain.issue_number if not isinstance(mixed, Rejection) else -1
     exp7 = CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[6][1]
     checks.append({"name": CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
 
-    terminal_skip = decide_terminal_result(FailureOwner.APP_DOMAIN, bounded_issue, False)
+    passed = decide_terminal_result(FailureOwner.NONE, None, True)
 
-    # 8. AC3 -- a bounded app-domain failure may end as tracked_skip.
-    obs8 = _terminal_state(terminal_skip)
+    # 8. AC3 -- a successful final gate is the only pass outcome.
+    obs8 = _terminal_state(passed)
     exp8 = CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[7][1]
     checks.append({"name": CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
-    # 9. AC3 -- its terminal record retains the validated issue number.
-    obs9 = terminal_skip.issue_number if not isinstance(terminal_skip, Rejection) else -1
+    final_gate_failed = decide_terminal_result(FailureOwner.NONE, None, False)
+
+    # 9. AC3 -- without a successful final gate, even no failure owner stays open.
+    obs9 = _terminal_state(final_gate_failed)
     exp9 = CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
+
+    terminal_skip = decide_terminal_result(FailureOwner.APP_DOMAIN, neighbouring_bounded_issue, False)
+
+    # 10. AC3 -- a bounded app-domain failure may end as tracked_skip.
+    obs10 = _terminal_state(terminal_skip)
+    exp10 = CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[9][1]
+    checks.append({"name": CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
+
+    # 11. AC3 -- its terminal record retains the supplied validated issue number.
+    obs11 = terminal_skip.issue_number if not isinstance(terminal_skip, Rejection) else -1
+    exp11 = CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[10][1]
+    checks.append({"name": CONTAINER_KUSTOMIZE_2343_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
     return {
         "case_id": "container-kustomize-2343-behavior",

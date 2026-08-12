@@ -111,8 +111,9 @@ def verify_data_artifacts_3094_security() -> dict:
     exp13 = DATA_ARTIFACTS_3094_SECURITY_MATRIX[12][1]
     checks.append({"name": DATA_ARTIFACTS_3094_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
 
-    # 14. R7/AC4 -- a same-namespace artifact from an older CR incarnation is not inventory.
-    inventory = project_inventory(_identity(), (ArtifactFacts(name="raft-0", identity=_identity(), backup_complete=None, failed_target=False), ArtifactFacts(name="raft-old", identity=_identity(uid="uid-orders-v1"), backup_complete=None, failed_target=False)))
+    # 14. R7/AC4 -- a same-namespace artifact from an older CR incarnation or
+    # the same UID with a conflicting member identity is not inventory.
+    inventory = project_inventory(_identity(), (ArtifactFacts(name="raft-0", identity=_identity(), backup_complete=None, failed_target=False), ArtifactFacts(name="raft-old", identity=_identity(uid="uid-orders-v1"), backup_complete=None, failed_target=False), ArtifactFacts(name="raft-other-member", identity=DataArtifactIdentity(namespace="payments", instance_name="orders", cr_uid="uid-orders-v2", role="raft", member_identity="shard-0-member-2", topology_generation=17, authority_class="authoritative_voter"), backup_complete=None, failed_target=False)))
     obs14 = tuple(row.name for row in inventory)
     exp14 = DATA_ARTIFACTS_3094_SECURITY_MATRIX[13][1]
     checks.append({"name": DATA_ARTIFACTS_3094_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})

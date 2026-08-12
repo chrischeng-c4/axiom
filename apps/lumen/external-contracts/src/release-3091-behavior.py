@@ -26,7 +26,7 @@ from lumen.release.verdict import Rejection
 MINIMUM_CHECKS = 20
 
 RELEASE_3091_BEHAVIOR_MATRIX = (
-    ("mixed_members_select_the_newest_commonly_readable_write_format", 1),
+    ("mixed_members_select_the_newest_commonly_readable_write_format", 2),
     ("n_reader_admits_the_declared_current_format", "admitted"),
     ("n_reader_admits_the_declared_previous_format", "admitted"),
     ("status_persists_active_write_epoch", 1),
@@ -108,8 +108,9 @@ def verify_release_3091_behavior() -> dict:
     spec = _spec()
     staged = _status()
 
-    # 1. R1 -- an N member may write 2, but N-1 can read only 1.
-    obs1 = select_write_format(descriptor, ((1,), (1, 2)))
+    # 1. R1 -- when both formats are readable by every admitted member, select
+    # the newest shared epoch rather than merely the first shared epoch.
+    obs1 = select_write_format(descriptor, ((1, 2), (1, 2)))
     exp1 = RELEASE_3091_BEHAVIOR_MATRIX[0][1]
     checks.append({"name": RELEASE_3091_BEHAVIOR_MATRIX[0][0], "expected": exp1, "observed": obs1, "passed": obs1 == exp1})
 

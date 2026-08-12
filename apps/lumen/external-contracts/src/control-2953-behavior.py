@@ -25,7 +25,7 @@ from lumen.topology.control_plane_spec import (
 )
 from lumen.topology.control_plane_verdict import TargetPolicyVerdict
 
-MINIMUM_CHECKS = 12
+MINIMUM_CHECKS = 14
 
 CONTROL_2953_BEHAVIOR_MATRIX = (
     ("complete_calibration_selects_the_initial_direct_machine", "n2-standard-4"),
@@ -40,6 +40,8 @@ CONTROL_2953_BEHAVIOR_MATRIX = (
     ("memory_pressure_selects_the_highmem_step", "n2-highmem-4"),
     ("fully_post_convergence_headroom_allows_the_slow_downgrade", "DOWNGRADE"),
     ("eligible_downgrade_reports_the_standard_target", "e2-standard-2"),
+    ("cpu_backlog_pressure_returns_upgrade_action", "UPGRADE"),
+    ("memory_pressure_returns_upgrade_action", "UPGRADE"),
 )
 
 
@@ -140,5 +142,14 @@ def verify_control_2953_behavior() -> dict:
     obs12 = downgrade.target_machine
     exp12 = CONTROL_2953_BEHAVIOR_MATRIX[11][1]
     checks.append({"name": CONTROL_2953_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    # 13-14. R5/AC4 — a named target is not enough: each pressure path must
+    # take the literal upgrade action as well.
+    obs13 = cpu.action
+    exp13 = CONTROL_2953_BEHAVIOR_MATRIX[12][1]
+    checks.append({"name": CONTROL_2953_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+    obs14 = memory.action
+    exp14 = CONTROL_2953_BEHAVIOR_MATRIX[13][1]
+    checks.append({"name": CONTROL_2953_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
     return {"case_id": "control-2953-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

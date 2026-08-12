@@ -18,7 +18,7 @@ from lumen.topology.catalog_spec import BootstrapSeed, CatalogSpec, EligibleMemb
 from lumen.topology.catalog_state import CatalogState
 from lumen.topology.catalog_verdict import AdmittedCatalogPlan, Rejection
 
-MINIMUM_CHECKS = 18
+MINIMUM_CHECKS = 20
 
 CATALOG_2939_BEHAVIOR_MATRIX = (
     ("non_ha_catalog_has_one_voter", 1),
@@ -39,6 +39,8 @@ CATALOG_2939_BEHAVIOR_MATRIX = (
     ("matching_seed_is_admitted_with_its_location", "admitted"),
     ("last_converged_cache_is_retained_without_a_newer_value", 7),
     ("cache_advances_to_a_newer_catalog_generation", 8),
+    ("non_ha_catalog_declares_its_fault_tolerance_limitation", "non-HA single-voter mode has no fault tolerance"),
+    ("matching_seed_returns_its_admitted_identity_and_location", ("lumen-a", "seed-a", "host-a", "zone-a", 8)),
 )
 
 
@@ -157,5 +159,22 @@ def verify_catalog_2939_behavior() -> dict:
     obs18 = advanced.current_generation if not isinstance(advanced, Rejection) else _outcome(advanced)
     exp18 = CATALOG_2939_BEHAVIOR_MATRIX[17][1]
     checks.append({"name": CATALOG_2939_BEHAVIOR_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+
+    # 19. AC3 -- the admitted single-voter plan exposes its non-HA limitation.
+    obs19 = non_ha.limitation if isinstance(non_ha, AdmittedCatalogPlan) else None
+    exp19 = CATALOG_2939_BEHAVIOR_MATRIX[18][1]
+    checks.append({"name": CATALOG_2939_BEHAVIOR_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
+
+    # 20. R4 -- admission returns the independent seed identity and location.
+    admitted_seed = decide_bootstrap(seed, "lumen-a", 7)
+    obs20 = (
+        admitted_seed.seed.instance_id,
+        admitted_seed.seed.seed_id,
+        admitted_seed.seed.hostname,
+        admitted_seed.seed.zone,
+        admitted_seed.seed.generation,
+    ) if not isinstance(admitted_seed, Rejection) else ()
+    exp20 = CATALOG_2939_BEHAVIOR_MATRIX[19][1]
+    checks.append({"name": CATALOG_2939_BEHAVIOR_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
 
     return {"case_id": "catalog-2939-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

@@ -32,7 +32,7 @@ from lumen.topology.upgrade_spec import (
 from lumen.topology.upgrade_status import UpgradeStatus, is_converged
 from lumen.topology.upgrade_verdict import AdmittedUpgrade, ReclamationPlan
 
-MINIMUM_CHECKS = 13
+MINIMUM_CHECKS = 15
 
 UPGRADE_3089_BEHAVIOR_MATRIX = (
     ("provision_advances_to_learner", "Learner"),
@@ -43,6 +43,8 @@ UPGRADE_3089_BEHAVIOR_MATRIX = (
     ("membership_promotion_makes_target_the_next_authority", "target_voter"),
     ("stable_route_switch_follows_membership_commit", True),
     ("stable_route_switch_drains_before_old_removal", "Drain"),
+    ("drain_advances_to_cleanup", "Cleanup"),
+    ("cleanup_is_terminal_and_idempotent", "Cleanup"),
     ("pre_cutover_failure_rolls_back_to_old_authority", "RollbackToOldAuthority"),
     ("post_cutover_failure_completes_forward", "CompleteForward"),
     ("old_authoritative_pvc_is_retained_through_verification", ("pvc-old",)),
@@ -144,23 +146,39 @@ def verify_upgrade_3089_behavior() -> dict:
     exp8 = UPGRADE_3089_BEHAVIOR_MATRIX[7][1]
     checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
-    # 9. R6 -- a failed target before cutover restores old authority.
-    before_cutover = decide_recovery(
-        RecoveryRequest(persisted_phase=UpgradePhase.CATCH_UP, cutover_complete=False, target_failed=True)
+    # 9. R1/R5 -- the drained old process proceeds only to Cleanup.
+    drained = decide_upgrade_transition(
+        UpgradeTransitionRequest(phase=UpgradePhase.DRAIN, evidence=ready)
     )
-    obs9 = before_cutover.action.value
+    obs9 = _phase(drained)
     exp9 = UPGRADE_3089_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
-    # 10. R6 -- a failed target after cutover resumes completion rather than rollback.
-    after_cutover = decide_recovery(
-        RecoveryRequest(persisted_phase=UpgradePhase.DRAIN, cutover_complete=True, target_failed=True)
+    # 10. R1/R8 -- retrying terminal Cleanup cannot re-enter the handoff.
+    cleaned_up = decide_upgrade_transition(
+        UpgradeTransitionRequest(phase=UpgradePhase.CLEANUP, evidence=ready)
     )
-    obs10 = after_cutover.action.value
+    obs10 = _phase(cleaned_up)
     exp10 = UPGRADE_3089_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
-    # 11. R7 -- verification precedes disposal of the old authoritative PVC.
+    # 11. R6 -- a failed target before cutover restores old authority.
+    before_cutover = decide_recovery(
+        RecoveryRequest(persisted_phase=UpgradePhase.CATCH_UP, cutover_complete=False, target_failed=True)
+    )
+    obs11 = before_cutover.action.value
+    exp11 = UPGRADE_3089_BEHAVIOR_MATRIX[10][1]
+    checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
+
+    # 12. R6 -- a failed target after cutover resumes completion rather than rollback.
+    after_cutover = decide_recovery(
+        RecoveryRequest(persisted_phase=UpgradePhase.DRAIN, cutover_complete=True, target_failed=True)
+    )
+    obs12 = after_cutover.action.value
+    exp12 = UPGRADE_3089_BEHAVIOR_MATRIX[11][1]
+    checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    # 13. R7 -- verification precedes disposal of the old authoritative PVC.
     reclamation = reclaimable_resources(
         resources=(
             TemporaryResource(name="pvc-old", role="authoritative", generation=7),
@@ -169,11 +187,11 @@ def verify_upgrade_3089_behavior() -> dict:
         post_cutover_verified=False,
         authoritative_generation=7,
     )
-    obs11 = reclamation.retained_resources if isinstance(reclamation, ReclamationPlan) else ()
-    exp11 = UPGRADE_3089_BEHAVIOR_MATRIX[10][1]
-    checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
+    obs13 = reclamation.retained_resources if isinstance(reclamation, ReclamationPlan) else ()
+    exp13 = UPGRADE_3089_BEHAVIOR_MATRIX[12][1]
+    checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
 
-    # 12. R7 -- only the explicitly non-authoritative earlier-generation learner is reclaimable.
+    # 14. R7 -- only the explicitly non-authoritative earlier-generation learner is reclaimable.
     verified_reclamation = reclaimable_resources(
         resources=(
             TemporaryResource(name="pvc-old", role="authoritative", generation=7),
@@ -182,16 +200,16 @@ def verify_upgrade_3089_behavior() -> dict:
         post_cutover_verified=True,
         authoritative_generation=7,
     )
-    obs12 = verified_reclamation.reclaimable_resources if isinstance(verified_reclamation, ReclamationPlan) else ()
-    exp12 = UPGRADE_3089_BEHAVIOR_MATRIX[11][1]
-    checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+    obs14 = verified_reclamation.reclaimable_resources if isinstance(verified_reclamation, ReclamationPlan) else ()
+    exp14 = UPGRADE_3089_BEHAVIOR_MATRIX[13][1]
+    checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
-    # 13. R8 -- one voter, one stable generation, no learner or orphan is exact convergence.
-    obs13 = is_converged(
+    # 15. R8 -- one voter, one stable generation, no learner or orphan is exact convergence.
+    obs15 = is_converged(
         UpgradeStatus(voters=1, stable_workload_generations=1, learners=0, unowned_temporary_resources=0)
     )
-    exp13 = UPGRADE_3089_BEHAVIOR_MATRIX[12][1]
-    checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+    exp15 = UPGRADE_3089_BEHAVIOR_MATRIX[14][1]
+    checks.append({"name": UPGRADE_3089_BEHAVIOR_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     return {
         "case_id": "upgrade-3089-behavior",

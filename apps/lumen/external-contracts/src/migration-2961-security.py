@@ -18,7 +18,7 @@ from lumen.topology.migration_admission import (
 )
 from lumen.topology.verdict import Rejection
 
-MINIMUM_CHECKS = 15
+MINIMUM_CHECKS = 17
 
 MIGRATION_2961_SECURITY_MATRIX = (
     ("undurable_final_fence_is_refused", "checkpoint_not_durable"),
@@ -36,6 +36,8 @@ MIGRATION_2961_SECURITY_MATRIX = (
     ("authoritative_cleanup_refusal_names_source", "source_is_authoritative"),
     ("verified_related_non_authoritative_cleanup_is_admitted", "admitted"),
     ("cleanup_admission_retains_no_authoritative_source_claim", "retain"),
+    ("undurable_catalog_cutover_transition_is_refused", "checkpoint_not_durable"),
+    ("unequal_tail_catalog_cutover_transition_is_refused", "target_not_at_acknowledged_watermark"),
 )
 
 
@@ -244,6 +246,20 @@ def verify_migration_2961_security() -> dict:
     obs15 = cleanup_ready.source_retention.value if not isinstance(cleanup_ready, Rejection) else _outcome(cleanup_ready)
     exp15 = MIGRATION_2961_SECURITY_MATRIX[14][1]
     checks.append({"name": MIGRATION_2961_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
+
+    no_checkpoint_cutover = decide_next_phase(checkpoint_missing, MigrationPhase.CATALOG_CUTOVER)
+
+    # 16. R3 -- phase advancement cannot skip checkpoint durability to cut over.
+    obs16 = _outcome(no_checkpoint_cutover)
+    exp16 = MIGRATION_2961_SECURITY_MATRIX[15][1]
+    checks.append({"name": MIGRATION_2961_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
+
+    behind_tail_cutover = decide_next_phase(tail_behind, MigrationPhase.CATALOG_CUTOVER)
+
+    # 17. R3 -- phase advancement cannot skip the acknowledged-tail watermark.
+    obs17 = _outcome(behind_tail_cutover)
+    exp17 = MIGRATION_2961_SECURITY_MATRIX[16][1]
+    checks.append({"name": MIGRATION_2961_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
 
     return {
         "case_id": "migration-2961-security",

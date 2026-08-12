@@ -27,7 +27,7 @@ from lumen.competitor_verification.spec import (
 )
 from lumen.competitor_verification.verdict import Rejection
 
-MINIMUM_CHECKS = 14
+MINIMUM_CHECKS = 15
 
 COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX = (
     ("complete_evidence_spec_is_admitted", "admitted"),
@@ -35,6 +35,7 @@ COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX = (
     ("admitted_evidence_retains_declared_comparable_workload", "search-10000-queries"),
     ("admitted_evidence_retains_required_metric_and_cost_vocabulary", ("throughput", "latency", "cpu", "memory", "lifecycle_overhead", "cost")),
     ("admitted_evidence_retains_explicit_intentional_delta", "no_feature_copying"),
+    ("missing_intentional_delta_is_rejected", "intentional_deltas_required"),
     ("admitted_evidence_retains_app_domain_delta_route", "issue_backed"),
     ("shared_failure_requires_repair_and_rerun", "repair_and_rerun"),
     ("non_domain_failure_requires_repair_and_rerun", "repair_and_rerun"),
@@ -111,56 +112,62 @@ def verify_competitor_verification_2376_behavior() -> dict:
     exp5 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[4][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[4][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
 
-    # 6. AC2 -- a material app-domain delta has an explicit route.
-    obs6 = admitted_evidence.spec.app_domain_delta_route if not isinstance(admitted_evidence, Rejection) else "rejected"
+    missing_intentional_delta = decide_evidence_spec(_complete_evidence(intentional_deltas=()))
+    # 6. R2/AC2 -- intentional differences must be declared explicitly.
+    obs6 = _outcome(missing_intentional_delta)
     exp6 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[5][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
 
-    shared = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.SHARED, issue=_bounded_issue()))
-    # 7. R3 -- shared ownership cannot be recorded as an app-domain skip.
-    obs7 = shared.action if not isinstance(shared, Rejection) else shared.reason.value
+    # 7. AC2 -- a material app-domain delta has an explicit route.
+    obs7 = admitted_evidence.spec.app_domain_delta_route if not isinstance(admitted_evidence, Rejection) else "rejected"
     exp7 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[6][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
 
-    non_domain = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.NON_DOMAIN, issue=_bounded_issue()))
-    # 8. R3 -- non-domain ownership is equally repair-and-rerun work.
-    obs8 = non_domain.action if not isinstance(non_domain, Rejection) else non_domain.reason.value
+    shared = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.SHARED, issue=_bounded_issue()))
+    # 8. R3 -- shared ownership cannot be recorded as an app-domain skip.
+    obs8 = shared.action if not isinstance(shared, Rejection) else shared.reason.value
     exp8 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[7][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
-    app_domain = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.APP_DOMAIN_ONLY, issue=_bounded_issue()))
-    # 9. R3 -- only a validated, bounded app-domain failure has the skip path.
-    obs9 = app_domain.action if not isinstance(app_domain, Rejection) else app_domain.reason.value
+    non_domain = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.NON_DOMAIN, issue=_bounded_issue()))
+    # 9. R3 -- non-domain ownership is equally repair-and-rerun work.
+    obs9 = non_domain.action if not isinstance(non_domain, Rejection) else non_domain.reason.value
     exp9 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
-    # 10. R3 -- that disposition retains the exact issue backing it.
-    obs10 = app_domain.issue_ref if not isinstance(app_domain, Rejection) else "rejected"
+    app_domain = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.APP_DOMAIN_ONLY, issue=_bounded_issue()))
+    # 10. R3 -- only a validated, bounded app-domain failure has the skip path.
+    obs10 = app_domain.action if not isinstance(app_domain, Rejection) else app_domain.reason.value
     exp10 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
-    mixed = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.MIXED, issue=_bounded_issue()))
-    # 11. R4 -- a mixed record produces a repairable shared slice now.
-    obs11 = mixed.shared.action if not isinstance(mixed, Rejection) else mixed.reason.value
+    # 11. R3 -- that disposition retains the exact issue backing it.
+    obs11 = app_domain.issue_ref if not isinstance(app_domain, Rejection) else "rejected"
     exp11 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[10][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
-    # 12. R4 -- it separately carries the bounded app-domain slice as a skip.
-    obs12 = mixed.app_domain.action if not isinstance(mixed, Rejection) else mixed.reason.value
+    mixed = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.MIXED, issue=_bounded_issue()))
+    # 12. R4 -- a mixed record produces a repairable shared slice now.
+    obs12 = mixed.shared.action if not isinstance(mixed, Rejection) else mixed.reason.value
     exp12 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[11][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
 
-    passed = decide_terminal_result(TerminalResultRequest(journey_completed=True, ownership=FailureOwnership.NONE, issue=None))
-    # 13. AC3 -- a completed successful journey is the only passed terminal.
-    obs13 = passed.terminal if not isinstance(passed, Rejection) else passed.reason.value
+    # 13. R4 -- it separately carries the bounded app-domain slice as a skip.
+    obs13 = mixed.app_domain.action if not isinstance(mixed, Rejection) else mixed.reason.value
     exp13 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[12][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
 
-    tracked = decide_terminal_result(TerminalResultRequest(journey_completed=False, ownership=FailureOwnership.APP_DOMAIN_ONLY, issue=_bounded_issue()))
-    # 14. AC3 -- an app-only terminal result is the closed issue-qualified form.
-    obs14 = f"{tracked.terminal}({tracked.issue_ref})" if not isinstance(tracked, Rejection) else tracked.reason.value
+    passed = decide_terminal_result(TerminalResultRequest(journey_completed=True, ownership=FailureOwnership.NONE, issue=None))
+    # 14. AC3 -- a completed successful journey is the only passed terminal.
+    obs14 = passed.terminal if not isinstance(passed, Rejection) else passed.reason.value
     exp14 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[13][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    tracked = decide_terminal_result(TerminalResultRequest(journey_completed=False, ownership=FailureOwnership.APP_DOMAIN_ONLY, issue=_bounded_issue()))
+    # 15. AC3 -- an app-only terminal result is the closed issue-qualified form.
+    obs15 = f"{tracked.terminal}({tracked.issue_ref})" if not isinstance(tracked, Rejection) else tracked.reason.value
+    exp15 = COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[14][1]
+    checks.append({"name": COMPETITOR_VERIFICATION_2376_BEHAVIOR_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     return {
         "case_id": "competitor-verification-2376-behavior",

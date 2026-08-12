@@ -15,7 +15,7 @@ from lumen.peer_identity.spec import PeerIdentitySpec, PeerMaterialState, PeerPr
 from lumen.peer_identity.status import decide_peer_identity_status
 from lumen.peer_identity.verdict import Rejection
 
-MINIMUM_CHECKS = 14
+MINIMUM_CHECKS = 15
 
 PEER_IDENTITY_2890_SECURITY_MATRIX = (
     ("replicated_production_without_secret_is_rejected", "peer_tls_secret_required"),
@@ -32,6 +32,10 @@ PEER_IDENTITY_2890_SECURITY_MATRIX = (
     ("unreadable_material_names_peer_tls_secret_field", "peer_tls_secret"),
     ("unreadable_material_message_names_the_secret", "lumen-peer-tls"),
     ("complete_material_neighbour_reports_peer_identity_ready", "True"),
+    (
+        "all_failing_material_states_use_peer_identity_ready_condition",
+        ("PeerIdentityReady", "PeerIdentityReady", "PeerIdentityReady"),
+    ),
 )
 
 
@@ -137,6 +141,15 @@ def verify_peer_identity_2890_security() -> dict:
     obs14 = complete.condition.status
     exp14 = PEER_IDENTITY_2890_SECURITY_MATRIX[13][1]
     checks.append({"name": PEER_IDENTITY_2890_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    # 15. R4 -- every fail-closed material state publishes the named condition.
+    obs15 = (
+        absent.condition.type,
+        incomplete.condition.type,
+        unreadable.condition.type,
+    )
+    exp15 = PEER_IDENTITY_2890_SECURITY_MATRIX[14][1]
+    checks.append({"name": PEER_IDENTITY_2890_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     return {
         "case_id": "peer-identity-2890-security",

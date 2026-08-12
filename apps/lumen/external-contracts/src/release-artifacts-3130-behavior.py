@@ -25,7 +25,7 @@ from lumen.release_artifacts.spec import (
 )
 from lumen.release_artifacts.verdict import Rejection
 
-MINIMUM_CHECKS = 8
+MINIMUM_CHECKS = 9
 
 RELEASE_ARTIFACTS_3130_BEHAVIOR_MATRIX = (
     ("canonical_ghcr_digest_reference_is_admitted", "admitted"),
@@ -35,6 +35,11 @@ RELEASE_ARTIFACTS_3130_BEHAVIOR_MATRIX = (
     ("verification_plan_names_the_expected_repository", "chrischeng-c4/axiom"),
     ("verification_plan_names_the_expected_release_workflow", ".github/workflows/lumen-release.yml"),
     ("verification_plan_contains_digest_pinned_cosign_and_github_commands", ("cosign", "github-attestation", "github-sbom")),
+    ("every_rendered_verification_command_uses_the_admitted_digest", (
+        "ghcr.io/chrischeng-c4/lumen@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ghcr.io/chrischeng-c4/lumen@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ghcr.io/chrischeng-c4/lumen@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )),
     ("digest_bound_handoff_with_required_identity_is_admitted", "admitted"),
 )
 
@@ -116,11 +121,17 @@ def verify_release_artifacts_3130_behavior() -> dict:
         )
     )
 
-    # 8. AC3 -- a nearby fully specified digest handoff is admitted, proving
-    #    that fail-closed validation is not a blanket rejection of handoffs.
-    obs8 = _outcome(handoff)
+    # 8. R6/AC3 -- the plan subject alone cannot make its rendered commands
+    #    digest-bound: each copyable command must carry the admitted subject.
+    obs8 = tuple(command.subject for command in plan.commands)
     exp8 = RELEASE_ARTIFACTS_3130_BEHAVIOR_MATRIX[7][1]
     checks.append({"name": RELEASE_ARTIFACTS_3130_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
+
+    # 9. AC3 -- a nearby fully specified digest handoff is admitted, proving
+    #    that fail-closed validation is not a blanket rejection of handoffs.
+    obs9 = _outcome(handoff)
+    exp9 = RELEASE_ARTIFACTS_3130_BEHAVIOR_MATRIX[8][1]
+    checks.append({"name": RELEASE_ARTIFACTS_3130_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
     return {
         "case_id": "release-artifacts-3130-behavior",

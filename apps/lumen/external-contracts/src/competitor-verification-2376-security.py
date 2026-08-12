@@ -26,7 +26,7 @@ from lumen.competitor_verification.spec import (
 )
 from lumen.competitor_verification.verdict import Rejection
 
-MINIMUM_CHECKS = 30
+MINIMUM_CHECKS = 34
 
 COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX = (
     ("metrics_before_semantic_proof_is_rejected", "semantic_proof_must_precede_metrics"),
@@ -59,6 +59,10 @@ COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX = (
     ("terminal_reproduction_refusal_names_issue_reproduction", "issue.exact_reproduction"),
     ("terminal_app_skip_with_unvalidated_issue_is_rejected", "validated_issue_required"),
     ("terminal_validation_refusal_names_issue_validated", "issue.validated"),
+    ("missing_required_evidence_fields_is_rejected", "required_evidence_fields_required"),
+    ("required_evidence_fields_refusal_names_its_declaration", "required_evidence_fields"),
+    ("app_domain_disposition_with_unvalidated_issue_is_rejected", "validated_issue_required"),
+    ("disposition_validation_refusal_names_issue_validated", "issue.validated"),
 )
 
 
@@ -245,6 +249,26 @@ def verify_competitor_verification_2376_security() -> dict:
     obs30 = terminal_unvalidated.field_path if isinstance(terminal_unvalidated, Rejection) else ""
     exp30 = COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[29][1]
     checks.append({"name": COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[29][0], "expected": exp30, "observed": obs30, "passed": obs30 == exp30})
+
+    missing_required_evidence_fields = decide_evidence_spec(_complete_evidence(required_evidence_fields=()))
+    # 31. R2 -- an evidence specification must name its required evidence.
+    obs31 = _reason(missing_required_evidence_fields)
+    exp31 = COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[30][1]
+    checks.append({"name": COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[30][0], "expected": exp31, "observed": obs31, "passed": obs31 == exp31})
+    # 32. R2 -- the refusal identifies the missing evidence declaration.
+    obs32 = missing_required_evidence_fields.field_path if isinstance(missing_required_evidence_fields, Rejection) else ""
+    exp32 = COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[31][1]
+    checks.append({"name": COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[31][0], "expected": exp32, "observed": obs32, "passed": obs32 == exp32})
+
+    disposition_unvalidated = decide_failure_disposition(FailureDispositionRequest(ownership=FailureOwnership.APP_DOMAIN_ONLY, issue=_issue(validated=False)))
+    # 33. R3 -- disposition cannot create a tracked skip from an unvalidated issue.
+    obs33 = _reason(disposition_unvalidated)
+    exp33 = COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[32][1]
+    checks.append({"name": COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[32][0], "expected": exp33, "observed": obs33, "passed": obs33 == exp33})
+    # 34. R3 -- the disposition refusal names the validation predicate.
+    obs34 = disposition_unvalidated.field_path if isinstance(disposition_unvalidated, Rejection) else ""
+    exp34 = COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[33][1]
+    checks.append({"name": COMPETITOR_VERIFICATION_2376_SECURITY_MATRIX[33][0], "expected": exp34, "observed": obs34, "passed": obs34 == exp34})
 
     return {
         "case_id": "competitor-verification-2376-security",

@@ -33,7 +33,7 @@ from lumen.routing.spec import (
 )
 from lumen.routing.verdict import Rejection
 
-MINIMUM_CHECKS = 17
+MINIMUM_CHECKS = 21
 
 ROUTING_2943_BEHAVIOR_MATRIX = (
     ("index_route_uses_current_catalog_generation", 41),
@@ -45,12 +45,16 @@ ROUTING_2943_BEHAVIOR_MATRIX = (
     ("admin_route_uses_current_catalog_generation", 41),
     ("keyed_index_routes_to_owning_shard", "shard-b"),
     ("global_schema_mutation_creates_generation_bound_durable_intent", "reconcile"),
+    ("global_schema_intent_uses_current_catalog_generation", 41),
     ("all_matching_acknowledgements_make_global_mutation_visible", "visible"),
     ("leader_consistent_read_forwards_to_leader", "pod-leader"),
     ("write_forwards_to_leader", "pod-leader"),
     ("any_read_may_select_eligible_non_voter", "pod-read-replica"),
     ("each_declared_data_pod_is_an_admitted_coordinator", "admitted"),
+    ("pod_b_is_an_admitted_coordinator", "admitted"),
+    ("pod_c_is_an_admitted_coordinator", "admitted"),
     ("first_stale_map_response_refreshes_and_retries", "refresh_and_retry"),
+    ("refresh_retry_retains_mutation_identity", "m-index"),
     ("forwarding_retains_verified_caller_identity", "ksa:tenant-a:writer"),
     ("forwarding_retains_request_and_trace_context", ("req-2943", "trace-2943")),
 )
@@ -122,52 +126,75 @@ def verify_routing_2943_behavior() -> dict:
     exp9 = ROUTING_2943_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
-    # 10. R3 -- visibility follows matching acknowledgement of the intent's
-    # catalog generation by every required shard.
-    intent = MutationIntent(mutation_id="m-schema", generation=41, required_shards=("shard-a", "shard-b"))
-    visible = decide_global_visibility(intent, (Acknowledgement("shard-a", 41), Acknowledgement("shard-b", 41)))
-    obs10 = visible.state
+    # 10. R2 -- the durable global intent is bound to the catalog generation
+    # that resolved the schema request, rather than only claiming reconciliation.
+    obs10 = schema.catalog_generation
     exp10 = ROUTING_2943_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
-    # 11. R4 -- leader-consistent reads name the leader forward target.
-    leader_read = decide_request_route(Request(kind="get", key="orders/42", consistency="leader"), catalog)
-    obs11 = leader_read.forward_target
+    # 11. R3 -- visibility follows matching acknowledgement of the intent's
+    # catalog generation by every required shard.
+    intent = MutationIntent(mutation_id="m-schema", generation=41, required_shards=("shard-a", "shard-b"))
+    visible = decide_global_visibility(intent, (Acknowledgement("shard-a", 41), Acknowledgement("shard-b", 41)))
+    obs11 = visible.state
     exp11 = ROUTING_2943_BEHAVIOR_MATRIX[10][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
-    # 12. R4 -- writes also name the leader forward target.
-    obs12 = index.forward_target
+    # 12. R4 -- leader-consistent reads name the leader forward target.
+    leader_read = decide_request_route(Request(kind="get", key="orders/42", consistency="leader"), catalog)
+    obs12 = leader_read.forward_target
     exp12 = ROUTING_2943_BEHAVIOR_MATRIX[11][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
 
-    # 13. R5 -- any-consistency can select an eligible non-voting replica.
-    any_target = decide_read_target("any", (Replica("pod-leader", voting=True, eligible=True), Replica("pod-read-replica", voting=False, eligible=True)))
-    obs13 = any_target.pod
+    # 13. R4 -- writes also name the leader forward target.
+    obs13 = index.forward_target
     exp13 = ROUTING_2943_BEHAVIOR_MATRIX[12][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
 
-    # 14. R6 -- the coordinator decision admits every named data pod.
-    coordinator = decide_coordinator(CoordinatorTopology(data_pods=("pod-a", "pod-b", "pod-c")), Request(kind="query", key="orders/42"))
-    obs14 = _outcome(coordinator)
+    # 14. R5 -- any-consistency can select an eligible non-voting replica.
+    any_target = decide_read_target("any", (Replica("pod-leader", voting=True, eligible=True), Replica("pod-read-replica", voting=False, eligible=True)))
+    obs14 = any_target.pod
     exp14 = ROUTING_2943_BEHAVIOR_MATRIX[13][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
-    # 15. R7 -- retry count zero is exactly the one allowed stale-map retry.
-    retry = decide_stale_map_retry(Request(kind="index", key="orders/42", mutation_id="m-index"), StaleMapResponse(generation=40), 0)
-    obs15 = retry.action
+    # 15-17. R6 -- each distinct public-Service data pod must coordinate the
+    # same request; no default or unspecified pod can satisfy these rows.
+    coordinator_topology = CoordinatorTopology(data_pods=("pod-a", "pod-b", "pod-c"))
+    coordinator_a = decide_coordinator(coordinator_topology, Request(kind="query", key="orders/42", coordinator_pod="pod-a"))
+    obs15 = _outcome(coordinator_a)
     exp15 = ROUTING_2943_BEHAVIOR_MATRIX[14][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
-    # 16. R8 -- forwarding preserves the verified caller identity.
-    forwarded = forward_context(CallerContext("ksa:tenant-a:writer", "write:orders", "req-2943", "trace-2943"), PeerContext("spiffe://lumen/pod-b"))
-    obs16 = forwarded.caller_identity
+    coordinator_b = decide_coordinator(coordinator_topology, Request(kind="query", key="orders/42", coordinator_pod="pod-b"))
+    obs16 = _outcome(coordinator_b)
     exp16 = ROUTING_2943_BEHAVIOR_MATRIX[15][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
 
-    # 17. R8 -- forwarding separately preserves request and trace correlation.
-    obs17 = (forwarded.request_id, forwarded.trace_context)
+    coordinator_c = decide_coordinator(coordinator_topology, Request(kind="query", key="orders/42", coordinator_pod="pod-c"))
+    obs17 = _outcome(coordinator_c)
     exp17 = ROUTING_2943_BEHAVIOR_MATRIX[16][1]
     checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+
+    # 18. R7 -- retry count zero is exactly the one allowed stale-map retry.
+    retry = decide_stale_map_retry(Request(kind="index", key="orders/42", mutation_id="m-index"), StaleMapResponse(generation=40), 0)
+    obs18 = retry.action
+    exp18 = ROUTING_2943_BEHAVIOR_MATRIX[17][1]
+    checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+
+    # 19. R7 -- the single refreshed retry retains the original mutation identity.
+    obs19 = retry.mutation_id
+    exp19 = ROUTING_2943_BEHAVIOR_MATRIX[18][1]
+    checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
+
+    # 20. R8 -- forwarding preserves the verified caller identity.
+    forwarded = forward_context(CallerContext("ksa:tenant-a:writer", "write:orders", "req-2943", "trace-2943"), PeerContext("spiffe://lumen/pod-b"))
+    obs20 = forwarded.caller_identity
+    exp20 = ROUTING_2943_BEHAVIOR_MATRIX[19][1]
+    checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
+
+    # 21. R8 -- forwarding separately preserves request and trace correlation.
+    obs21 = (forwarded.request_id, forwarded.trace_context)
+    exp21 = ROUTING_2943_BEHAVIOR_MATRIX[20][1]
+    checks.append({"name": ROUTING_2943_BEHAVIOR_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
 
     return {"case_id": "routing-2943-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

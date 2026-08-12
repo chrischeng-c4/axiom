@@ -13,7 +13,7 @@ from lumen.verification.classification import classify_failure
 from lumen.verification.result import decide_terminal_result
 from lumen.verification.verdict import Failure, Ownership, Rejection, VerificationRecord
 
-MINIMUM_CHECKS = 22
+MINIMUM_CHECKS = 24
 
 VERIFICATION_2328_SECURITY_MATRIX = (
     ("nonzero_gate_exit_is_refused", "gate_exit_nonzero"),
@@ -38,6 +38,8 @@ VERIFICATION_2328_SECURITY_MATRIX = (
     ("app_domain_skip_without_issue_names_bounded_issue", "bounded_issue"),
     ("unknown_ownership_fails_closed", "unknown_ownership"),
     ("unknown_ownership_refusal_names_ownership", "ownership"),
+    ("shared_pass_intent_is_refused", "tracked_skip_requires_app_domain"),
+    ("non_domain_pass_intent_is_refused", "tracked_skip_requires_app_domain"),
 )
 
 
@@ -193,6 +195,20 @@ def verify_verification_2328_security() -> dict:
     obs22 = unknown.field_path if isinstance(unknown, Rejection) else ""
     exp22 = VERIFICATION_2328_SECURITY_MATRIX[21][1]
     checks.append({"name": VERIFICATION_2328_SECURITY_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
+
+    shared_pass = decide_terminal_result(_complete_record(failure=shared, terminal_intent="passed"))
+
+    # 23. R3/AC3 -- unresolved shared work cannot be passed instead of repaired.
+    obs23 = _reason(shared_pass)
+    exp23 = VERIFICATION_2328_SECURITY_MATRIX[22][1]
+    checks.append({"name": VERIFICATION_2328_SECURITY_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
+
+    non_domain_pass = decide_terminal_result(_complete_record(failure=non_domain, terminal_intent="passed"))
+
+    # 24. R3/AC3 -- unresolved non-domain work has the same pass refusal.
+    obs24 = _reason(non_domain_pass)
+    exp24 = VERIFICATION_2328_SECURITY_MATRIX[23][1]
+    checks.append({"name": VERIFICATION_2328_SECURITY_MATRIX[23][0], "expected": exp24, "observed": obs24, "passed": obs24 == exp24})
 
     return {
         "case_id": "verification-2328-security",

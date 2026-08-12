@@ -15,7 +15,7 @@ from lumen.data_artifacts.inventory import classify_artifact, project_inventory
 from lumen.data_artifacts.selector import build_strict_selector
 from lumen.data_artifacts.spec import ArtifactFacts
 
-MINIMUM_CHECKS = 18
+MINIMUM_CHECKS = 19
 
 DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX = (
     ("identity_value_is_frozen", True),
@@ -35,6 +35,7 @@ DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX = (
     ("derived_identity_uses_observed_uid_not_label", "uid-orders-v2"),
     ("derived_identity_uses_durable_catalog_generation", 17),
     ("same_name_different_uid_has_a_disjoint_selector", True),
+    ("complete_selector_is_deterministic_and_contains_all_stable_identity_fields", True),
     ("inventory_names_only_the_exact_selected_artifact", ("raft-0",)),
 )
 
@@ -119,16 +120,25 @@ def verify_data_artifacts_3094_behavior() -> dict:
     exp16 = DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX[15][1]
     checks.append({"name": DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
 
-    # 14. R6/AC2 -- name reuse must not select artifacts from a prior CR UID.
+    # 17. R6/AC2 -- name reuse must not select artifacts from a prior CR UID.
     obs17 = build_strict_selector(_identity()) != build_strict_selector(_identity(uid="uid-orders-v1"))
     exp17 = DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX[16][1]
     checks.append({"name": DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
 
-    # 18. R7/AC4 -- projection retains the exact matching supplied artifact,
-    # never the same-name fact from a different CR incarnation.
-    inventory = project_inventory(identity, (ArtifactFacts(name="raft-0", identity=identity, backup_complete=None, failed_target=False), ArtifactFacts(name="raft-old", identity=_identity(uid="uid-orders-v1"), backup_complete=None, failed_target=False)))
-    obs18 = tuple(row.name for row in inventory)
+    # 18. R6 -- complete identities always produce the same selector and every
+    # stable identity value is represented in it.
+    selector = build_strict_selector(identity)
+    repeated_selector = build_strict_selector(_identity())
+    selector_text = str(selector)
+    obs18 = selector == repeated_selector and all(value in selector_text for value in ("payments", "orders", "uid-orders-v2", "raft", "shard-0-member-1", "17", "authoritative_voter"))
     exp18 = DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX[17][1]
     checks.append({"name": DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+
+    # 19. R7/AC4 -- projection retains only the exact supplied artifact, never
+    # a prior CR incarnation or a same-UID artifact with another member identity.
+    inventory = project_inventory(identity, (ArtifactFacts(name="raft-0", identity=identity, backup_complete=None, failed_target=False), ArtifactFacts(name="raft-old", identity=_identity(uid="uid-orders-v1"), backup_complete=None, failed_target=False), ArtifactFacts(name="raft-other-member", identity=DataArtifactIdentity(namespace="payments", instance_name="orders", cr_uid="uid-orders-v2", role="raft", member_identity="shard-0-member-2", topology_generation=17, authority_class="authoritative_voter"), backup_complete=None, failed_target=False)))
+    obs19 = tuple(row.name for row in inventory)
+    exp19 = DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX[18][1]
+    checks.append({"name": DATA_ARTIFACTS_3094_BEHAVIOR_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
 
     return {"case_id": "data-artifacts-3094-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

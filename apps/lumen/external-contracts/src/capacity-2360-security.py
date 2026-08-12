@@ -16,7 +16,7 @@ from lumen.capacity.resume import decide_resume
 from lumen.capacity.storage import decide_member_storage
 from lumen.capacity.transition import decide_downgrade
 
-MINIMUM_CHECKS = 14
+MINIMUM_CHECKS = 15
 
 CAPACITY_2360_SECURITY_MATRIX = (
     ("second_mutation_is_refused_while_one_is_active", "another_mutation_active"),
@@ -32,6 +32,7 @@ CAPACITY_2360_SECURITY_MATRIX = (
     ("quota_blocked_capacity_reports_capacity_blocked", "CapacityBlocked"),
     ("unschedulable_capacity_reports_capacity_blocked", "CapacityBlocked"),
     ("blocked_capacity_retains_a_healthy_old_member", True),
+    ("blocked_capacity_retains_the_old_member_identity", "member-0"),
     ("blocked_capacity_retains_the_requested_generation", 17),
 )
 
@@ -167,15 +168,19 @@ def verify_capacity_2360_security() -> dict:
     exp12 = CAPACITY_2360_SECURITY_MATRIX[11][1]
     checks.append({"name": CAPACITY_2360_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
 
-    # 13-14. R8 — blockage preserves the healthy incumbent and its identity
-    #        generation, rather than deleting it or starting a competing one.
+    # 13-15. R8 — blockage preserves the healthy incumbent, its identity, and
+    #         generation rather than deleting it or starting a competing one.
     obs13 = quota.old_member.healthy
     exp13 = CAPACITY_2360_SECURITY_MATRIX[12][1]
     checks.append({"name": CAPACITY_2360_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
 
-    obs14 = quota.generation
+    obs14 = quota.old_member.identifier
     exp14 = CAPACITY_2360_SECURITY_MATRIX[13][1]
     checks.append({"name": CAPACITY_2360_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    obs15 = quota.generation
+    exp15 = CAPACITY_2360_SECURITY_MATRIX[14][1]
+    checks.append({"name": CAPACITY_2360_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     return {
         "case_id": "capacity-2360-security",

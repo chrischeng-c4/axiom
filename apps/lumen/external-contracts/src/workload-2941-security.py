@@ -93,12 +93,12 @@ def verify_workload_2941_security() -> dict:
     checks.append({"name": WORKLOAD_2941_SECURITY_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
 
     # 7. AC3 -- removing an old-only voter takes the old set below quorum.
-    obs7 = can_voluntarily_evict({"joint": joint, "healthy_members": ("lumen-orders-0-0", "lumen-orders-0-1", "lumen-orders-0-2", "lumen-orders-0-3")}, "lumen-orders-0-0")
+    obs7 = can_voluntarily_evict({"joint": joint, "healthy_members": ("lumen-orders-0-0", "lumen-orders-0-1", "lumen-orders-0-3")}, "lumen-orders-0-0")
     exp7 = WORKLOAD_2941_SECURITY_MATRIX[6][1]
     checks.append({"name": WORKLOAD_2941_SECURITY_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
 
     # 8. AC3 -- removing a new-only voter takes the new set below quorum.
-    obs8 = can_voluntarily_evict({"joint": joint, "healthy_members": ("lumen-orders-0-0", "lumen-orders-0-1", "lumen-orders-0-2", "lumen-orders-0-3")}, "lumen-orders-0-3")
+    obs8 = can_voluntarily_evict({"joint": joint, "healthy_members": ("lumen-orders-0-0", "lumen-orders-0-1", "lumen-orders-0-3")}, "lumen-orders-0-3")
     exp8 = WORKLOAD_2941_SECURITY_MATRIX[7][1]
     checks.append({"name": WORKLOAD_2941_SECURITY_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 

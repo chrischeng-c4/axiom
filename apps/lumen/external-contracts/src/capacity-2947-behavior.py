@@ -17,7 +17,7 @@ from lumen.capacity.projection import redact_status
 from lumen.capacity.spec import CapacityWindow, MemberSample, StorageObservation, Topology, WorkloadObservation
 from lumen.capacity.verdict import AcceptedWindow
 
-MINIMUM_CHECKS = 10
+MINIMUM_CHECKS = 15
 
 CAPACITY_2947_BEHAVIOR_MATRIX = (
     ("complete_current_window_is_accepted", "accepted"),
@@ -30,13 +30,18 @@ CAPACITY_2947_BEHAVIOR_MATRIX = (
     ("aggregate_retains_snapshot_request_attribution", 13),
     ("aggregate_retains_raft_catch_up_latency_attribution", 19),
     ("redacted_status_publishes_only_derived_signals_and_freshness", ("cpu", "freshness", "memory", "reason", "storage", "workloads")),
+    ("incomplete_window_refuses_aggregation", True),
+    ("mixed_generation_window_refuses_aggregation", True),
+    ("read_dominated_window_retains_read_cpu_attribution", 31),
+    ("non_read_dominated_window_retains_write_cpu_attribution", 37),
+    ("paired_windows_keep_workload_cpu_latency_attribution_and_dominance", (31, 3, 7, 7, 11, 11, 13, 17, 17, 19, 5, 3, 37, 41, 11, 11, 13, 17, 17, 19, True, True)),
 )
 
 
-def _workloads() -> tuple[WorkloadObservation, ...]:
+def _workloads(*, read_cpu: int = 5, write_cpu: int = 7, write_latency: int = 7) -> tuple[WorkloadObservation, ...]:
     return (
-        WorkloadObservation(kind="read", requests=101, latency_ms=3, cpu=5),
-        WorkloadObservation(kind="write", requests=103, latency_ms=7, cpu=7),
+        WorkloadObservation(kind="read", requests=101, latency_ms=3, cpu=read_cpu),
+        WorkloadObservation(kind="write", requests=103, latency_ms=write_latency, cpu=write_cpu),
         WorkloadObservation(kind="compaction", requests=107, latency_ms=11, cpu=11),
         WorkloadObservation(kind="snapshot", requests=13, latency_ms=17, cpu=13),
         WorkloadObservation(kind="raft_catch_up", requests=127, latency_ms=19, cpu=17),
@@ -63,6 +68,23 @@ def _complete_window() -> CapacityWindow:
         generation=73,
         complete=True,
         fresh=True,
+    )
+
+
+def _synthetic_window(*, read_cpu: int, write_cpu: int, write_latency: int = 7) -> CapacityWindow:
+    window = _complete_window()
+    member = window.members[0]
+    return CapacityWindow(
+        members=(
+            MemberSample(
+                member_id=member.member_id, shard=member.shard, role=member.role, generation=member.generation,
+                cpu=member.cpu, memory=member.memory,
+                workloads=_workloads(read_cpu=read_cpu, write_cpu=write_cpu, write_latency=write_latency),
+                storage=member.storage,
+            ),
+        ),
+        expected_members=window.expected_members, generation=window.generation,
+        complete=window.complete, fresh=window.fresh,
     )
 
 
@@ -123,6 +145,56 @@ def verify_capacity_2947_behavior() -> dict:
     obs10 = tuple(sorted(status))
     exp10 = CAPACITY_2947_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": CAPACITY_2947_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
+
+    # 11-12. R3 -- aggregation refuses incomplete and mixed-generation windows.
+    incomplete = CapacityWindow(
+        members=window.members, expected_members=window.expected_members, generation=73,
+        complete=False, fresh=True,
+    )
+    obs11 = aggregate_window(incomplete, topology) is None
+    exp11 = CAPACITY_2947_BEHAVIOR_MATRIX[10][1]
+    checks.append({"name": CAPACITY_2947_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
+
+    mixed_generation = CapacityWindow(
+        members=(window.members[0], MemberSample(
+            member_id="member-1", shard="shard-a", role="voter", generation=72,
+            cpu=17, memory=29, workloads=_workloads(), storage=window.members[0].storage,
+        )),
+        expected_members=("member-0", "member-1"), generation=73, complete=True, fresh=True,
+    )
+    mixed_topology = Topology(generation=73, members=("member-0", "member-1"))
+    obs12 = aggregate_window(mixed_generation, mixed_topology) is None
+    exp12 = CAPACITY_2947_BEHAVIOR_MATRIX[11][1]
+    checks.append({"name": CAPACITY_2947_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    # 13-15. AC1 -- paired synthetic windows retain each workload's CPU and
+    # latency contribution while making read and write pressure distinguishable.
+    read_dominated = aggregate_window(_synthetic_window(read_cpu=31, write_cpu=7), topology)
+    write_dominated = aggregate_window(_synthetic_window(read_cpu=5, write_cpu=37, write_latency=41), topology)
+    obs13 = read_dominated.by_instance.workloads["read"].cpu
+    exp13 = CAPACITY_2947_BEHAVIOR_MATRIX[12][1]
+    checks.append({"name": CAPACITY_2947_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+    obs14 = write_dominated.by_instance.workloads["write"].cpu
+    exp14 = CAPACITY_2947_BEHAVIOR_MATRIX[13][1]
+    checks.append({"name": CAPACITY_2947_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+    read_workloads = read_dominated.by_instance.workloads
+    write_workloads = write_dominated.by_instance.workloads
+    obs15 = (
+        read_workloads["read"].cpu, read_workloads["read"].latency_ms,
+        read_workloads["write"].cpu, read_workloads["write"].latency_ms,
+        read_workloads["compaction"].cpu, read_workloads["compaction"].latency_ms,
+        read_workloads["snapshot"].cpu, read_workloads["snapshot"].latency_ms,
+        read_workloads["raft_catch_up"].cpu, read_workloads["raft_catch_up"].latency_ms,
+        write_workloads["read"].cpu, write_workloads["read"].latency_ms,
+        write_workloads["write"].cpu, write_workloads["write"].latency_ms,
+        write_workloads["compaction"].cpu, write_workloads["compaction"].latency_ms,
+        write_workloads["snapshot"].cpu, write_workloads["snapshot"].latency_ms,
+        write_workloads["raft_catch_up"].cpu, write_workloads["raft_catch_up"].latency_ms,
+        read_workloads["read"].cpu > read_workloads["write"].cpu,
+        write_workloads["write"].cpu > write_workloads["read"].cpu,
+    )
+    exp15 = CAPACITY_2947_BEHAVIOR_MATRIX[14][1]
+    checks.append({"name": CAPACITY_2947_BEHAVIOR_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     return {
         "case_id": "capacity-2947-behavior",

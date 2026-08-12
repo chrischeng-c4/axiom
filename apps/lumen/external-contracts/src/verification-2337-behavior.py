@@ -15,7 +15,7 @@ from lumen.verification.classification import classify_failure, split_failure
 from lumen.verification.verdict import Failure, Rejection
 from lumen.verification.verdict import decide_terminal_result
 
-MINIMUM_CHECKS = 7
+MINIMUM_CHECKS = 8
 
 VERIFICATION_2337_BEHAVIOR_MATRIX = (
     ("shared_failure_requires_shared_repair", "shared_repair_required"),
@@ -25,6 +25,7 @@ VERIFICATION_2337_BEHAVIOR_MATRIX = (
     ("mixed_failure_preserves_every_input_once", ("shared-http", "lumen-schema")),
     ("no_unresolved_failure_passes_after_rerun", "passed"),
     ("app_domain_only_failure_tracks_its_single_issue", "tracked_skip(#2338)"),
+    ("app_domain_only_failure_without_issue_is_refused", "exactly_one_issue_reference"),
 )
 
 
@@ -93,6 +94,13 @@ def verify_verification_2337_behavior() -> dict:
     obs7 = _terminal(tracked)
     exp7 = VERIFICATION_2337_BEHAVIOR_MATRIX[6][1]
     checks.append({"name": VERIFICATION_2337_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
+
+    # 8. AC3 -- the app-domain path stays open when its required single
+    #    bounded issue reference is absent.
+    missing_issue = decide_terminal_result((app_classification,), (), rerun_complete=True)
+    obs8 = _terminal(missing_issue)
+    exp8 = VERIFICATION_2337_BEHAVIOR_MATRIX[7][1]
+    checks.append({"name": VERIFICATION_2337_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
     return {
         "case_id": "verification-2337-behavior",

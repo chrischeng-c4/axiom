@@ -26,7 +26,7 @@ from lumen.topology.migration_admission import (
 from lumen.topology.migration import advance_migration, recover_authority
 from lumen.topology.verdict import Rejection
 
-MINIMUM_CHECKS = 10
+MINIMUM_CHECKS = 11
 
 MIGRATION_2961_BEHAVIOR_MATRIX = (
     ("non_empty_legacy_empty_raft_requires_migration", "migration_required"),
@@ -36,9 +36,10 @@ MIGRATION_2961_BEHAVIOR_MATRIX = (
     ("verified_target_admits_the_requested_catalog_generation", 17),
     ("persisted_pre_cutover_state_derives_legacy_authority", "legacy"),
     ("persisted_post_cutover_state_derives_raft_authority", "raft"),
-    ("pre_cutover_recovery_is_retryable_legacy", ("legacy", "retry")),
-    ("post_cutover_recovery_is_raft_with_source_retention", ("raft", "retain")),
+    ("pre_cutover_recovery_is_retryable_legacy", ("legacy", "retry", 16)),
+    ("post_cutover_recovery_is_raft_with_source_retention", ("raft", "retain", 17)),
     ("new_installation_selects_canonical_raft", "canonical_raft"),
+    ("persisted_final_fence_recovery_keeps_legacy_catalog", ("legacy", "retry", 16)),
 )
 
 
@@ -141,13 +142,21 @@ def verify_migration_2961_behavior() -> dict:
 
     # 8. AC2/AC3 -- recovery before cutover is one retryable legacy choice.
     recovered_pre = recover_authority(pre_cutover, legacy_to_empty_raft)
-    obs8 = (recovered_pre.authoritative_store.value, recovered_pre.required_action)
+    obs8 = (
+        recovered_pre.authoritative_store.value,
+        recovered_pre.required_action,
+        recovered_pre.catalog_generation,
+    )
     exp8 = MIGRATION_2961_BEHAVIOR_MATRIX[7][1]
     checks.append({"name": MIGRATION_2961_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
     # 9. AC2/AC3 -- recovery after cutover is one Raft choice and retains source.
     recovered_post = recover_authority(post_cutover, legacy_to_empty_raft)
-    obs9 = (recovered_post.authoritative_store.value, recovered_post.source_retention.value)
+    obs9 = (
+        recovered_post.authoritative_store.value,
+        recovered_post.source_retention.value,
+        recovered_post.catalog_generation,
+    )
     exp9 = MIGRATION_2961_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": MIGRATION_2961_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
@@ -162,6 +171,31 @@ def verify_migration_2961_behavior() -> dict:
     obs10 = installation_path.path.value if not isinstance(installation_path, Rejection) else _outcome(installation_path)
     exp10 = MIGRATION_2961_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": MIGRATION_2961_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
+
+    final_fence_persisted = MigrationProgress(
+        phase=MigrationPhase.FINAL_WRITE_FENCE,
+        checkpoint_durable=True,
+        acknowledged_watermark=41,
+        target_watermark=41,
+        verified_watermark=41,
+        catalog_cutover_committed=False,
+        catalog_generation=16,
+        post_cutover_restart_verified=False,
+        oracle_verified=False,
+        source_is_authoritative=False,
+        source_is_related=True,
+    )
+    recovered_final_fence = recover_authority(final_fence_persisted, legacy_to_empty_raft)
+
+    # 11. AC2 -- persisted final-fence recovery keeps the source authority and
+    #     pre-cutover catalog generation for the non-empty-legacy/empty-Raft case.
+    obs11 = (
+        recovered_final_fence.authoritative_store.value,
+        recovered_final_fence.required_action,
+        recovered_final_fence.catalog_generation,
+    )
+    exp11 = MIGRATION_2961_BEHAVIOR_MATRIX[10][1]
+    checks.append({"name": MIGRATION_2961_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
     return {
         "case_id": "migration-2961-behavior",
