@@ -193,10 +193,6 @@ target = "rust"
 command = "verification-2328-behavior"
 evidence_paths = ["evidence/verification-2328-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2328 pure verification design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes the frozen verification records, ownership classifications, mixed-failure slices, and pure terminal-decision entry points."
-
 [[tool.aw.python-ec.cases]]
 id = "verification-2328-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -210,10 +206,6 @@ oracle = "The verifier drives the pure terminal decider and ownership classifier
 target = "rust"
 command = "verification-2328-security"
 evidence_paths = ["evidence/verification-2328-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2328 pure verification design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes the frozen refusal vocabulary and fields for incomplete evidence, forbidden tracked skips, and unknown ownership."
 
 [[tool.aw.python-ec.cases]]
 id = "cli-spec-codegen-2334-behavior"
