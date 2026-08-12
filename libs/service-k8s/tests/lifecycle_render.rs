@@ -4,8 +4,9 @@ use service_k8s::lifecycle::{
     LifecyclePolicy, LifecyclePolicyError, ProbeTiming, TerminationBudget,
 };
 use service_k8s::render::common::ServicePodTemplate;
+use service_k8s::render::deployment::{service_deployment, ServiceDeployment};
 use service_k8s::render::guaranteed_resources;
-use service_k8s::render::RenderCtx;
+use service_k8s::render::{service_statefulset, RenderCtx, ServiceStatefulSet};
 
 fn test_cx() -> RenderCtx<'static> {
     RenderCtx {
@@ -43,6 +44,48 @@ fn test_pod_template<'a>(cx: &'a RenderCtx<'a>) -> ServicePodTemplate<'a> {
         volume_mounts: vec![],
         pod_annotations: None,
         topology_spread_constraints: vec![],
+    }
+}
+
+fn test_statefulset<'a>(cx: &'a RenderCtx<'a>) -> ServiceStatefulSet<'a> {
+    ServiceStatefulSet {
+        cx,
+        name: "test-ss",
+        component: "server",
+        image: "lumen:latest",
+        image_pull_policy: "IfNotPresent",
+        command: vec!["lumen".into()],
+        args: vec!["run".into()],
+        ports: vec![
+            json!({ "name": "http", "containerPort": 9080 }),
+            json!({ "name": "raft", "containerPort": 9081 }),
+        ],
+        headless_service: "test-ss-headless",
+        shard_count: 1,
+        replicas_per_shard: 3,
+        voter_count: 3,
+        headless_env_key: "LUMEN_HEADLESS_SERVICE",
+        service_account_name: Some("lumen"),
+        env: vec![],
+        env_from: vec![],
+        resources: guaranteed_resources("100m", "128Mi"),
+        pod_annotations: None,
+        pod_security_context: None,
+        container_security_context: None,
+        termination_grace_period_seconds: None,
+        readiness_probe: None,
+        liveness_probe: None,
+        startup_probe: None,
+        lifecycle: None,
+        volumes: vec![],
+        volume_mounts: vec![],
+        affinity: None,
+        node_selector: None,
+        tolerations: vec![],
+        topology_spread_constraints: vec![],
+        revision_history_limit: None,
+        update_strategy: None,
+        volume_claim: None,
     }
 }
 
@@ -863,4 +906,235 @@ fn prestop_safety_measurements() {
 
     assert_eq!(reserve_entries.len(), 1);
     assert_eq!(reserve_entries[0]["value"], "10");
+}
+
+#[test]
+fn workload_profiles_measurements() {
+    let cx = test_cx();
+
+    // Common budget: total 60, deadline 45, reserve 5, prestop_cost 8, timing 10/3/6/2
+    let budget = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 5,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: Some(8),
+        probe_timing: ProbeTiming {
+            period_seconds: 10,
+            timeout_seconds: 3,
+            failure_threshold: 6,
+            success_threshold: 2,
+        },
+    }
+    .validate()
+    .expect("policy must validate");
+
+    // Row 1: ServiceStatefulSet with adopter-shaped probe literals (initialDelaySeconds, failureThreshold 60)
+    let mut ss1_template = test_statefulset(&cx);
+    ss1_template.liveness_probe = Some(json!({"initialDelaySeconds": 10, "failureThreshold": 60}));
+    ss1_template.readiness_probe = Some(json!({"initialDelaySeconds": 10, "failureThreshold": 60}));
+    ss1_template.startup_probe = Some(json!({"initialDelaySeconds": 10, "failureThreshold": 60}));
+    let ss1 = service_statefulset(ss1_template.with_termination_budget(&budget, 8443));
+    let c1 = &ss1["spec"]["template"]["spec"]["containers"][0];
+
+    println!(
+        "Row 1 statefulset container: {}",
+        serde_json::to_string_pretty(c1).unwrap()
+    );
+
+    assert_eq!(
+        c1["livenessProbe"],
+        json!({
+            "httpGet": { "path": "/healthz", "port": 8443 },
+            "periodSeconds": 10,
+            "timeoutSeconds": 3,
+            "failureThreshold": 6,
+            "successThreshold": 1
+        })
+    );
+    assert_eq!(
+        c1["readinessProbe"],
+        json!({
+            "httpGet": { "path": "/readyz", "port": 8443 },
+            "periodSeconds": 10,
+            "timeoutSeconds": 3,
+            "failureThreshold": 6,
+            "successThreshold": 2
+        })
+    );
+    assert_eq!(
+        c1["startupProbe"],
+        json!({
+            "httpGet": { "path": "/readyz", "port": 8443 },
+            "periodSeconds": 10,
+            "timeoutSeconds": 3,
+            "failureThreshold": 6,
+            "successThreshold": 1
+        })
+    );
+    assert!(c1["livenessProbe"].get("initialDelaySeconds").is_none());
+    assert!(c1["readinessProbe"].get("initialDelaySeconds").is_none());
+    assert!(c1["startupProbe"].get("initialDelaySeconds").is_none());
+
+    // Row 2: ServiceStatefulSet whose own termination_grace_period_seconds is Some(30)
+    let mut ss2_template = test_statefulset(&cx);
+    ss2_template.termination_grace_period_seconds = Some(30);
+    let ss2 = service_statefulset(ss2_template.with_termination_budget(&budget, 8443));
+    let pod_spec2 = &ss2["spec"]["template"]["spec"];
+    let c2 = &pod_spec2["containers"][0];
+
+    println!(
+        "Row 2 pod terminationGracePeriodSeconds: {}",
+        pod_spec2["terminationGracePeriodSeconds"]
+    );
+
+    assert!(pod_spec2["terminationGracePeriodSeconds"].is_number());
+    assert_eq!(
+        pod_spec2["terminationGracePeriodSeconds"].as_u64(),
+        Some(60)
+    );
+
+    let deadline_entry2 = c2["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .expect("deadline env entry present");
+    assert_eq!(deadline_entry2["value"], "45");
+
+    // Row 3: ServiceStatefulSet cost 8 declared in budget
+    let ss3 = service_statefulset(test_statefulset(&cx).with_termination_budget(&budget, 8443));
+    let c3 = &ss3["spec"]["template"]["spec"]["containers"][0];
+
+    println!(
+        "Row 3 lifecycle: {}",
+        serde_json::to_string_pretty(&c3["lifecycle"]).unwrap()
+    );
+
+    assert_eq!(
+        c3["lifecycle"]["preStop"]["httpGet"],
+        json!({ "path": "/drain", "port": 8443 })
+    );
+
+    // Row 4 (negative control): ServiceStatefulSet with prestop_cost_seconds absent
+    let budget_no_prestop = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 5,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming {
+            period_seconds: 10,
+            timeout_seconds: 3,
+            failure_threshold: 6,
+            success_threshold: 2,
+        },
+    }
+    .validate()
+    .expect("policy without prestop cost must validate");
+
+    let ss4 = service_statefulset(
+        test_statefulset(&cx).with_termination_budget(&budget_no_prestop, 8443),
+    );
+    let ss4_str = serde_json::to_string(&ss4).unwrap();
+    let c4 = &ss4["spec"]["template"]["spec"]["containers"][0];
+
+    println!("Row 4 serialized ss4 text length: {}", ss4_str.len());
+
+    assert!(!ss4_str.contains("preStop"));
+    assert!(!ss4_str.contains("lifecycle"));
+    assert_eq!(c4["livenessProbe"]["httpGet"]["port"], 8443);
+
+    // Row 5: ServiceStatefulSet and ServiceDeployment built from same budget & port 8443
+    let ss5 = service_statefulset(test_statefulset(&cx).with_termination_budget(&budget, 8443));
+    let dep5 = service_deployment(ServiceDeployment {
+        name: "test-deploy",
+        replicas: 3,
+        min_ready_seconds: None,
+        revision_history_limit: None,
+        strategy: None,
+        pod: test_pod_template(&cx).with_termination_budget(&budget, 8443),
+    });
+
+    let c5_ss = &ss5["spec"]["template"]["spec"]["containers"][0];
+    let c5_dep = &dep5["spec"]["template"]["spec"]["containers"][0];
+    let spec5_ss = &ss5["spec"]["template"]["spec"];
+    let spec5_dep = &dep5["spec"]["template"]["spec"];
+
+    println!(
+        "Row 5 comparing probes, lifecycle, and termination grace period between SS and Deployment"
+    );
+
+    assert!(!c5_ss["livenessProbe"].is_null());
+    assert!(!c5_dep["livenessProbe"].is_null());
+    assert_eq!(c5_ss["livenessProbe"], c5_dep["livenessProbe"]);
+
+    assert!(!c5_ss["readinessProbe"].is_null());
+    assert!(!c5_dep["readinessProbe"].is_null());
+    assert_eq!(c5_ss["readinessProbe"], c5_dep["readinessProbe"]);
+
+    assert!(!c5_ss["startupProbe"].is_null());
+    assert!(!c5_dep["startupProbe"].is_null());
+    assert_eq!(c5_ss["startupProbe"], c5_dep["startupProbe"]);
+
+    assert!(!c5_ss["lifecycle"].is_null());
+    assert!(!c5_dep["lifecycle"].is_null());
+    assert_eq!(c5_ss["lifecycle"], c5_dep["lifecycle"]);
+
+    assert!(!spec5_ss["terminationGracePeriodSeconds"].is_null());
+    assert!(!spec5_dep["terminationGracePeriodSeconds"].is_null());
+    assert_eq!(
+        spec5_ss["terminationGracePeriodSeconds"],
+        spec5_dep["terminationGracePeriodSeconds"]
+    );
+
+    // Row 6 (negative control): StatefulSet carries serviceName, podManagementPolicy, SHARD_COUNT; Deployment carries none
+    let dep5_str = serde_json::to_string(&dep5).unwrap();
+
+    println!("Row 6 checking deployment text for stateful keys");
+
+    assert!(ss5["spec"]["serviceName"].is_string());
+    assert!(ss5["spec"]["podManagementPolicy"].is_string());
+    let shard_count_entry = c5_ss["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "SHARD_COUNT");
+    assert!(shard_count_entry.is_some());
+
+    assert!(!dep5_str.contains("serviceName"));
+    assert!(!dep5_str.contains("podManagementPolicy"));
+    assert!(!dep5_str.contains("SHARD_COUNT"));
+
+    // Row 7: ServiceStatefulSet with pre-existing SERVICE_RUNTIME_DEADLINE_SECONDS = "999", LUMEN_WAL = auto, POD_NAME valueFrom
+    let mut ss7_template = test_statefulset(&cx);
+    ss7_template.env = vec![
+        json!({ "name": "SERVICE_RUNTIME_DEADLINE_SECONDS", "value": "999" }),
+        json!({ "name": "LUMEN_WAL", "value": "auto" }),
+    ];
+    let ss7 = service_statefulset(ss7_template.with_termination_budget(&budget, 8443));
+    let c7 = &ss7["spec"]["template"]["spec"]["containers"][0];
+    let env7 = c7["env"].as_array().unwrap();
+
+    println!("Row 7 env: {}", serde_json::to_string_pretty(env7).unwrap());
+
+    let deadline_entries7: Vec<_> = env7
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .collect();
+    assert_eq!(deadline_entries7.len(), 1);
+    assert_eq!(deadline_entries7[0]["value"], "45");
+
+    let wal_entry7 = env7
+        .iter()
+        .find(|e| e["name"] == "LUMEN_WAL")
+        .expect("LUMEN_WAL entry present");
+    assert_eq!(wal_entry7["value"], "auto");
+
+    let pod_name_entry7 = env7
+        .iter()
+        .find(|e| e["name"] == "POD_NAME")
+        .expect("POD_NAME entry present");
+    assert!(pod_name_entry7.get("valueFrom").is_some());
+    assert!(pod_name_entry7.get("value").is_none());
 }

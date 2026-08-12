@@ -13,6 +13,8 @@
 
 use serde_json::{json, Value};
 
+use crate::lifecycle::TerminationBudget;
+use crate::render::common::apply_termination_budget;
 use crate::stateful::{resource_request_or_default, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST};
 
 // The downward-API env keys a sharded-HA StatefulSet injects. These MUST match
@@ -517,6 +519,7 @@ pub struct ServiceStatefulSet<'a> {
     pub readiness_probe: Option<Value>,
     pub liveness_probe: Option<Value>,
     pub startup_probe: Option<Value>,
+    pub lifecycle: Option<Value>,
     pub volumes: Vec<Value>,
     pub volume_mounts: Vec<Value>,
     /// Pod affinity/anti-affinity. Stateful data-plane callers should use
@@ -537,6 +540,23 @@ pub struct ServiceStatefulSet<'a> {
     pub update_strategy: Option<Value>,
     /// `Some(pvc)` for a durable workload (adds the claim template + mount).
     pub volume_claim: Option<WorkloadVolumeClaim<'a>>,
+}
+
+impl ServiceStatefulSet<'_> {
+    /// Apply probes, preStop lifecycle hook, environment variables, and termination grace period derived from a validated [`TerminationBudget`].
+    pub fn with_termination_budget(mut self, budget: &TerminationBudget, probe_port: u16) -> Self {
+        apply_termination_budget(
+            budget,
+            probe_port,
+            &mut self.env,
+            &mut self.liveness_probe,
+            &mut self.readiness_probe,
+            &mut self.startup_probe,
+            &mut self.termination_grace_period_seconds,
+            &mut self.lifecycle,
+        );
+        self
+    }
 }
 
 /// A configurable, downward-API StatefulSet primitive for sharded service
@@ -570,6 +590,7 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
         readiness_probe,
         liveness_probe,
         startup_probe,
+        lifecycle,
         volumes,
         volume_mounts,
         affinity,
@@ -614,6 +635,9 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
     }
     if let Some(startup_probe) = startup_probe {
         container["startupProbe"] = startup_probe;
+    }
+    if let Some(lifecycle) = lifecycle {
+        container["lifecycle"] = lifecycle;
     }
     if let Some(container_security_context) = container_security_context {
         container["securityContext"] = container_security_context;
@@ -774,6 +798,7 @@ pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
         readiness_probe: None,
         liveness_probe: None,
         startup_probe: None,
+        lifecycle: None,
         volumes: vec![],
         volume_mounts: vec![],
         affinity: Some(dedicated_node_affinity(p.cx.selector(p.component))),
@@ -1012,6 +1037,7 @@ mod tests {
             readiness_probe: None,
             liveness_probe: None,
             startup_probe: None,
+            lifecycle: None,
             volumes: vec![],
             volume_mounts: vec![],
             affinity: None,
@@ -1123,6 +1149,7 @@ mod tests {
                 "httpGet": { "path": "/healthz", "port": "http" },
                 "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
             })),
+            lifecycle: None,
             volumes: vec![
                 json!({ "name": "tmp", "emptyDir": {} }),
                 json!({

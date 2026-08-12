@@ -706,6 +706,7 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
             "httpGet": { "path": "/healthz", "port": "http" },
             "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
         })),
+        lifecycle: None,
         volumes,
         volume_mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),

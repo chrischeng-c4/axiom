@@ -269,6 +269,7 @@ fn statefulset(defer: &Defer, cx: &RenderCtx<'_>, headless: &str) -> Value {
         startup_probe: Some(
             json!({"httpGet": {"path": "/healthz", "port": "http"}, "periodSeconds": 5, "failureThreshold": 120}),
         ),
+        lifecycle: None,
         volumes,
         volume_mounts: mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
