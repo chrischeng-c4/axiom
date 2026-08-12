@@ -14,7 +14,7 @@ from lumen.topology.replica import ReplicaChangeRequest, TopologyPolicy, decide_
 from lumen.topology.replica_reclamation import ReclamationRequest, select
 from lumen.topology.replica_scale_in import ScaleInAdvanceRequest, ScaleInResumeRequest, advance, resume
 
-MINIMUM_CHECKS = 23
+MINIMUM_CHECKS = 26
 
 REPLICA_2950_SECURITY_MATRIX = (
     ("negative_replica_target_is_refused", "negative_read_replicas"),
@@ -29,11 +29,14 @@ REPLICA_2950_SECURITY_MATRIX = (
     ("skipped_scale_in_phase_is_refused", "required_predecessor_skipped"),
     ("skipped_phase_refusal_names_requested_phase", "requested_phase"),
     ("ordered_scale_in_neighbour_is_admitted", "remove_non_voter"),
+    ("removal_cannot_bypass_tombstone_to_grace", "required_predecessor_skipped"),
     ("voter_pvc_is_refused", "protected_role"),
     ("voter_pvc_refusal_names_role", "role"),
     ("shard_pvc_is_refused", "protected_role"),
     ("authoritative_handoff_pvc_is_refused", "authoritative_handoff"),
     ("safe_non_voter_neighbour_is_reclaimable", "reclaim"),
+    ("not_safely_removed_non_voter_pvc_is_refused", "not_safely_removed"),
+    ("non_reconstructible_non_voter_pvc_is_refused", "not_reconstructible"),
     ("committed_removal_refuses_routing_reentry", "routing_reentry_after_commit"),
     ("committed_reentry_refusal_names_commit_state", "committed_removal"),
     ("reused_identity_is_not_reclaimable", "identity_mismatch"),
@@ -79,45 +82,54 @@ def verify_replica_2950_security() -> dict:
 
     skipped = advance(ScaleInAdvanceRequest(current_phase="routing_drain", requested_phase="record_tombstone"))
     ordered = advance(ScaleInAdvanceRequest(current_phase="routing_drain", requested_phase="remove_non_voter"))
-    # 10-12. R4 -- tombstone cannot bypass committed non-voter removal.
+    removal_to_grace = advance(ScaleInAdvanceRequest(current_phase="remove_non_voter", requested_phase="rollback_grace_check"))
+    # 10-13. R4 -- each phase admits only its immediate lifecycle successor.
     obs10 = skipped.reason; exp10 = REPLICA_2950_SECURITY_MATRIX[9][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
     obs11 = skipped.field_path; exp11 = REPLICA_2950_SECURITY_MATRIX[10][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
     obs12 = ordered.next_phase; exp12 = REPLICA_2950_SECURITY_MATRIX[11][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+    obs13 = removal_to_grace.reason; exp13 = REPLICA_2950_SECURITY_MATRIX[12][1]
+    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
 
     voter = select(ReclamationRequest(identity="voter-a", generation=7, role="voter", safely_removed=True, reconstructible=True, authoritative_handoff=False))
     shard = select(ReclamationRequest(identity="shard-a", generation=7, role="shard", safely_removed=True, reconstructible=True, authoritative_handoff=False))
     handoff = select(ReclamationRequest(identity="replica-a", generation=7, role="non_voter", safely_removed=True, reconstructible=True, authoritative_handoff=True))
     safe = select(ReclamationRequest(identity="replica-a", generation=7, role="non_voter", safely_removed=True, reconstructible=True, authoritative_handoff=False))
-    # 13-17. R5 -- role and live authority independently protect PVCs.
-    obs13 = voter.reason; exp13 = REPLICA_2950_SECURITY_MATRIX[12][1]
-    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
-    obs14 = voter.field_path; exp14 = REPLICA_2950_SECURITY_MATRIX[13][1]
+    unsafe = select(ReclamationRequest(identity="replica-a", generation=7, role="non_voter", safely_removed=False, reconstructible=True, authoritative_handoff=False))
+    non_reconstructible = select(ReclamationRequest(identity="replica-a", generation=7, role="non_voter", safely_removed=True, reconstructible=False, authoritative_handoff=False))
+    # 14-20. R5 -- role, authority, removal, and reconstructibility independently protect PVCs.
+    obs14 = voter.reason; exp14 = REPLICA_2950_SECURITY_MATRIX[13][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
-    obs15 = shard.reason; exp15 = REPLICA_2950_SECURITY_MATRIX[14][1]
+    obs15 = voter.field_path; exp15 = REPLICA_2950_SECURITY_MATRIX[14][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
-    obs16 = handoff.reason; exp16 = REPLICA_2950_SECURITY_MATRIX[15][1]
+    obs16 = shard.reason; exp16 = REPLICA_2950_SECURITY_MATRIX[15][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
-    obs17 = safe.action; exp17 = REPLICA_2950_SECURITY_MATRIX[16][1]
+    obs17 = handoff.reason; exp17 = REPLICA_2950_SECURITY_MATRIX[16][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+    obs18 = safe.action; exp18 = REPLICA_2950_SECURITY_MATRIX[17][1]
+    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+    obs19 = unsafe.reason; exp19 = REPLICA_2950_SECURITY_MATRIX[18][1]
+    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
+    obs20 = non_reconstructible.reason; exp20 = REPLICA_2950_SECURITY_MATRIX[19][1]
+    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
 
     committed = resume(ScaleInResumeRequest(identity="replica-a", generation=7, committed_removal=True, requested_routing_reentry=True, reclaim_identity="replica-a", reclaim_generation=7))
     reused_identity = resume(ScaleInResumeRequest(identity="replica-a", generation=7, committed_removal=True, requested_routing_reentry=False, reclaim_identity="replica-b", reclaim_generation=7))
     reused_generation = resume(ScaleInResumeRequest(identity="replica-a", generation=7, committed_removal=True, requested_routing_reentry=False, reclaim_identity="replica-a", reclaim_generation=8))
-    # 18-23. R6 -- commitment closes routing and binds cleanup to identity plus generation.
-    obs18 = committed.reason; exp18 = REPLICA_2950_SECURITY_MATRIX[17][1]
-    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
-    obs19 = committed.field_path; exp19 = REPLICA_2950_SECURITY_MATRIX[18][1]
-    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
-    obs20 = reused_identity.reason; exp20 = REPLICA_2950_SECURITY_MATRIX[19][1]
-    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
-    obs21 = reused_identity.field_path; exp21 = REPLICA_2950_SECURITY_MATRIX[20][1]
+    # 21-26. R6 -- commitment closes routing and binds cleanup to identity plus generation.
+    obs21 = committed.reason; exp21 = REPLICA_2950_SECURITY_MATRIX[20][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
-    obs22 = reused_generation.reason; exp22 = REPLICA_2950_SECURITY_MATRIX[21][1]
+    obs22 = committed.field_path; exp22 = REPLICA_2950_SECURITY_MATRIX[21][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
-    obs23 = reused_generation.field_path; exp23 = REPLICA_2950_SECURITY_MATRIX[22][1]
+    obs23 = reused_identity.reason; exp23 = REPLICA_2950_SECURITY_MATRIX[22][1]
     checks.append({"name": REPLICA_2950_SECURITY_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
+    obs24 = reused_identity.field_path; exp24 = REPLICA_2950_SECURITY_MATRIX[23][1]
+    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[23][0], "expected": exp24, "observed": obs24, "passed": obs24 == exp24})
+    obs25 = reused_generation.reason; exp25 = REPLICA_2950_SECURITY_MATRIX[24][1]
+    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
+    obs26 = reused_generation.field_path; exp26 = REPLICA_2950_SECURITY_MATRIX[25][1]
+    checks.append({"name": REPLICA_2950_SECURITY_MATRIX[25][0], "expected": exp26, "observed": obs26, "passed": obs26 == exp26})
 
     return {"case_id": "replica-2950-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(check["passed"] for check in checks) and len(checks) == MINIMUM_CHECKS}

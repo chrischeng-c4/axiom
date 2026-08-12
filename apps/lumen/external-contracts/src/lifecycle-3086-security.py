@@ -21,17 +21,25 @@ from lumen.lifecycle.spec import LifecycleOperationRecord, OperationRequest
 from lumen.lifecycle.status import project_operation_conditions
 from lumen.lifecycle.verdict import Rejection
 
-MINIMUM_CHECKS = 17
+MINIMUM_CHECKS = 25
 
 LIFECYCLE_3086_SECURITY_MATRIX = (
     ("record_without_operation_id_is_rejected", "operation_id_required"),
     ("record_refusal_names_operation_id", "operation_id"),
     ("complete_record_neighbour_is_admitted", "admitted"),
+    ("record_without_generation_is_rejected", ("generation_required", "generation")),
+    ("record_without_kind_is_rejected", ("kind_required", "kind")),
+    ("record_without_phase_is_rejected", ("phase_required", "phase")),
+    ("record_without_owner_is_rejected", ("owner_required", "owner")),
+    ("record_with_incoherent_finalization_state_is_rejected", ("finalization_state_invalid", "finalization_state")),
+    ("record_without_target_summary_is_rejected", ("target_summary_required", "target_summary")),
+    ("record_with_non_actionable_blocker_is_rejected", ("blocker_invalid", "blocker")),
     ("older_generation_resume_is_rejected", "stale_generation"),
     ("stale_resume_refusal_names_generation", "generation"),
     ("matching_generation_resume_neighbour_is_admitted", "resume"),
     ("transition_conflict_is_rejected", "conflict"),
     ("transition_conflict_names_active_operation", "op-active"),
+    ("transition_conflict_preserves_active_record", ("op-active", 42, "restore", "restore-verifying", "reconcile-a", True, False, "snapshot-2026-08-12", "")),
     ("transition_conflict_names_safe_retry", "after_active_operation_finalizes"),
     ("transition_conflict_never_claims_or_advances", "conflict"),
     ("policy_conflict_is_rejected", "conflict"),
@@ -48,17 +56,27 @@ def _outcome(verdict) -> str:
     return verdict.reason.value if isinstance(verdict, Rejection) else verdict.action
 
 
-def _active(*, phase: str = "restore-verifying") -> LifecycleOperationRecord:
+def _active(
+    *,
+    generation: int = 42,
+    kind: str = "restore",
+    phase: str = "restore-verifying",
+    owner: str = "reconcile-a",
+    reversible: bool = True,
+    finalized: bool = False,
+    target_summary: str = "snapshot-2026-08-12",
+    blocker: str = "",
+) -> LifecycleOperationRecord:
     return LifecycleOperationRecord(
         operation_id="op-active",
-        generation=42,
-        kind="restore",
+        generation=generation,
+        kind=kind,
         phase=phase,
-        owner="reconcile-a",
-        reversible=True,
-        finalized=False,
-        target_summary="snapshot-2026-08-12",
-        blocker="",
+        owner=owner,
+        reversible=reversible,
+        finalized=finalized,
+        target_summary=target_summary,
+        blocker=blocker,
     )
 
 
@@ -78,7 +96,7 @@ def verify_lifecycle_3086_security() -> dict:
     )
     invalid = decide_operation_record(invalid_record)
 
-    # 1-3. R1 -- identity is explicit at record admission and a complete neighbour remains usable.
+    # 1-10. R1 -- every persisted record dimension rejects malformed input, while a complete neighbour remains usable.
     obs1 = _outcome(invalid)
     exp1 = LIFECYCLE_3086_SECURITY_MATRIX[0][1]
     checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[0][0], "expected": exp1, "observed": obs1, "passed": obs1 == exp1})
@@ -90,69 +108,113 @@ def verify_lifecycle_3086_security() -> dict:
     exp3 = LIFECYCLE_3086_SECURITY_MATRIX[2][1]
     checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[2][0], "expected": exp3, "observed": obs3, "passed": obs3 == exp3})
 
+    # 4-10. R2 -- every field of an operation record is independently required,
+    #   and each refusal names the one field it refused for. Written as one row
+    #   per field rather than a loop: a row appended inside a loop is a single
+    #   static site, so self-report and distinct-checks would inspect it once
+    #   and these seven observations would pass those gates unexamined.
+    def _refusal(record) -> tuple[str, str]:
+        return (_outcome(record), record.field_path if isinstance(record, Rejection) else "")
+
+    obs_generation = _refusal(decide_operation_record(_active(generation=0)))
+    exp_generation = LIFECYCLE_3086_SECURITY_MATRIX[3][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[3][0], "expected": exp_generation, "observed": obs_generation, "passed": obs_generation == exp_generation})
+    obs_kind = _refusal(decide_operation_record(_active(kind="")))
+    exp_kind = LIFECYCLE_3086_SECURITY_MATRIX[4][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[4][0], "expected": exp_kind, "observed": obs_kind, "passed": obs_kind == exp_kind})
+    obs_phase = _refusal(decide_operation_record(_active(phase="")))
+    exp_phase = LIFECYCLE_3086_SECURITY_MATRIX[5][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[5][0], "expected": exp_phase, "observed": obs_phase, "passed": obs_phase == exp_phase})
+    obs_owner = _refusal(decide_operation_record(_active(owner="")))
+    exp_owner = LIFECYCLE_3086_SECURITY_MATRIX[6][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[6][0], "expected": exp_owner, "observed": obs_owner, "passed": obs_owner == exp_owner})
+    obs_finalization = _refusal(decide_operation_record(_active(reversible=True, finalized=True)))
+    exp_finalization = LIFECYCLE_3086_SECURITY_MATRIX[7][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[7][0], "expected": exp_finalization, "observed": obs_finalization, "passed": obs_finalization == exp_finalization})
+    obs_target = _refusal(decide_operation_record(_active(target_summary="")))
+    exp_target = LIFECYCLE_3086_SECURITY_MATRIX[8][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[8][0], "expected": exp_target, "observed": obs_target, "passed": obs_target == exp_target})
+    obs_blocker = _refusal(decide_operation_record(_active(blocker="\x00")))
+    exp_blocker = LIFECYCLE_3086_SECURITY_MATRIX[9][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[9][0], "expected": exp_blocker, "observed": obs_blocker, "passed": obs_blocker == exp_blocker})
+
     stale = decide_resume(_active(), 43)
 
-    # 4-6. R4 -- generation fencing is typed, actionable, and does not reject the matching neighbour.
+    # 11-13. R4 -- generation fencing is typed, actionable, and does not reject the matching neighbour.
     obs4 = _outcome(stale)
-    exp4 = LIFECYCLE_3086_SECURITY_MATRIX[3][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[3][0], "expected": exp4, "observed": obs4, "passed": obs4 == exp4})
+    exp4 = LIFECYCLE_3086_SECURITY_MATRIX[10][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[10][0], "expected": exp4, "observed": obs4, "passed": obs4 == exp4})
     obs5 = stale.field_path if isinstance(stale, Rejection) else ""
-    exp5 = LIFECYCLE_3086_SECURITY_MATRIX[4][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[4][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
+    exp5 = LIFECYCLE_3086_SECURITY_MATRIX[11][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[11][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
     matching = decide_resume(_active(), 42)
     obs6 = _outcome(matching)
-    exp6 = LIFECYCLE_3086_SECURITY_MATRIX[5][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
+    exp6 = LIFECYCLE_3086_SECURITY_MATRIX[12][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[12][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
 
     conflicting_request = OperationRequest(kind="upgrade", generation=42, owner="reconcile-b", target_summary="v2")
     conflict = decide_operation_transition(_active(), conflicting_request)
 
-    # 7-10. R5/AC3 -- transition conflict preserves the active identity and retry condition.
+    # 14-18. R5/AC3 -- transition conflict preserves the complete active record and retry condition.
     obs7 = _outcome(conflict)
-    exp7 = LIFECYCLE_3086_SECURITY_MATRIX[6][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
+    exp7 = LIFECYCLE_3086_SECURITY_MATRIX[13][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[13][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
     obs8 = conflict.active_operation_id if not isinstance(conflict, Rejection) else ""
-    exp8 = LIFECYCLE_3086_SECURITY_MATRIX[7][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
-    obs9 = conflict.safe_retry_condition if not isinstance(conflict, Rejection) else ""
-    exp9 = LIFECYCLE_3086_SECURITY_MATRIX[8][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
-    obs10 = conflict.action if not isinstance(conflict, Rejection) else "rejected"
-    exp10 = LIFECYCLE_3086_SECURITY_MATRIX[9][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
+    exp8 = LIFECYCLE_3086_SECURITY_MATRIX[14][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[14][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
+    retained = conflict.active_record if not isinstance(conflict, Rejection) else None
+    obs9 = (
+        retained.operation_id,
+        retained.generation,
+        retained.kind,
+        retained.phase,
+        retained.owner,
+        retained.reversible,
+        retained.finalized,
+        retained.target_summary,
+        retained.blocker,
+    ) if retained is not None else ()
+    exp9 = LIFECYCLE_3086_SECURITY_MATRIX[15][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[15][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
+    obs10 = conflict.safe_retry_condition if not isinstance(conflict, Rejection) else ""
+    exp10 = LIFECYCLE_3086_SECURITY_MATRIX[16][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[16][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
+    obs11 = conflict.action if not isinstance(conflict, Rejection) else "rejected"
+    exp11 = LIFECYCLE_3086_SECURITY_MATRIX[17][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[17][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
     policy_conflict = decide_operation_claim(_active(), "upgrade", 42)
 
-    # 11-13. R3/R5 -- the policy entry point has the same conflict fence and can resume its own operation.
-    obs11 = _outcome(policy_conflict)
-    exp11 = LIFECYCLE_3086_SECURITY_MATRIX[10][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
-    obs12 = policy_conflict.active_phase if not isinstance(policy_conflict, Rejection) else ""
-    exp12 = LIFECYCLE_3086_SECURITY_MATRIX[11][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+    # 19-21. R3/R5 -- the policy entry point has the same conflict fence and can resume its own operation.
+    obs12 = _outcome(policy_conflict)
+    exp12 = LIFECYCLE_3086_SECURITY_MATRIX[18][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[18][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+    obs13 = policy_conflict.active_phase if not isinstance(policy_conflict, Rejection) else ""
+    exp13 = LIFECYCLE_3086_SECURITY_MATRIX[19][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[19][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
     policy_resume = decide_operation_claim(_active(), "restore", 42)
-    obs13 = _outcome(policy_resume)
-    exp13 = LIFECYCLE_3086_SECURITY_MATRIX[12][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+    obs14 = _outcome(policy_resume)
+    exp14 = LIFECYCLE_3086_SECURITY_MATRIX[20][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[20][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
     failed = decide_operation_transition(_active(phase="failed"), OperationRequest(kind="restore", generation=42, owner="reconcile-a", target_summary="snapshot-2026-08-12"))
 
-    # 14-15. AC4/R6 -- failure keeps authority only under an explicit retry rule and is visibly blocked.
-    obs14 = _outcome(failed)
-    exp14 = LIFECYCLE_3086_SECURITY_MATRIX[13][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+    # 22-23. AC4/R6 -- failure keeps authority only under an explicit retry rule and is visibly blocked.
+    obs15 = _outcome(failed)
+    exp15 = LIFECYCLE_3086_SECURITY_MATRIX[21][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[21][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
     failed_status = project_operation_conditions(_active(phase="failed"), phase_age=10)
-    obs15 = failed_status.blocked_condition
-    exp15 = LIFECYCLE_3086_SECURITY_MATRIX[14][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
+    obs16 = failed_status.blocked_condition
+    exp16 = LIFECYCLE_3086_SECURITY_MATRIX[22][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[22][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
 
-    # 16-17. R3/R7 -- unknown kinds fail closed and policy cannot hide a Lumen kind.
+    # 24-25. R3/R7 -- unknown kinds fail closed and policy cannot hide a Lumen kind.
     unsupported = decide_operation_claim(None, "delete_everything", 42)
-    obs16 = _outcome(unsupported)
-    exp16 = LIFECYCLE_3086_SECURITY_MATRIX[15][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
-    obs17 = tuple(sorted(operation_kind_policy))
-    exp17 = LIFECYCLE_3086_SECURITY_MATRIX[16][1]
-    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+    obs17 = _outcome(unsupported)
+    exp17 = LIFECYCLE_3086_SECURITY_MATRIX[23][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[23][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+    obs18 = tuple(sorted(operation_kind_policy))
+    exp18 = LIFECYCLE_3086_SECURITY_MATRIX[24][1]
+    checks.append({"name": LIFECYCLE_3086_SECURITY_MATRIX[24][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
 
     return {"case_id": "lifecycle-3086-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

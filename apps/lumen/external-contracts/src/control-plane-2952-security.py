@@ -24,7 +24,7 @@ from lumen.control_plane.spec import (
 from lumen.control_plane.status import ControlPlaneStatus
 from lumen.control_plane.verdict import Rejection
 
-MINIMUM_CHECKS = 23
+MINIMUM_CHECKS = 27
 
 CONTROL_PLANE_2952_SECURITY_MATRIX = (
     ("instance_scoped_operator_is_rejected", "instance_scope_not_allowed"),
@@ -50,6 +50,10 @@ CONTROL_PLANE_2952_SECURITY_MATRIX = (
     ("failed_preflight_preserves_current_machine", "n2-standard-4"),
     ("failed_preflight_preserves_target_machine", "c3-standard-4"),
     ("failed_preflight_preserves_transition_generation_and_phase", (11, "preflight-pending")),
+    ("unsupported_preflight_preserves_ready_replicas", 2),
+    ("unsupported_preflight_preserves_current_machine", "n2-standard-4"),
+    ("unsupported_preflight_preserves_target_machine", "c3-standard-4"),
+    ("unsupported_preflight_preserves_transition_generation_and_phase", (11, "preflight-pending")),
 )
 
 
@@ -192,5 +196,21 @@ def verify_control_plane_2952_security() -> dict:
     obs23 = (missing.live_state.transition_generation, missing.live_state.phase) if isinstance(missing, Rejection) else (None, None)
     exp23 = CONTROL_PLANE_2952_SECURITY_MATRIX[22][1]
     checks.append({"name": CONTROL_PLANE_2952_SECURITY_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
+    # 24. R7/AC4 -- unsupported preflight retains ready replicas.
+    obs24 = unsupported.live_state.ready_replicas if isinstance(unsupported, Rejection) else -1
+    exp24 = CONTROL_PLANE_2952_SECURITY_MATRIX[23][1]
+    checks.append({"name": CONTROL_PLANE_2952_SECURITY_MATRIX[23][0], "expected": exp24, "observed": obs24, "passed": obs24 == exp24})
+    # 25. R7/AC4 -- unsupported preflight retains the controller-owned current machine.
+    obs25 = unsupported.live_state.current_machine if isinstance(unsupported, Rejection) else "admitted"
+    exp25 = CONTROL_PLANE_2952_SECURITY_MATRIX[24][1]
+    checks.append({"name": CONTROL_PLANE_2952_SECURITY_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
+    # 26. R7/AC4 -- unsupported preflight retains the controller-owned target machine.
+    obs26 = unsupported.live_state.target_machine if isinstance(unsupported, Rejection) else "admitted"
+    exp26 = CONTROL_PLANE_2952_SECURITY_MATRIX[25][1]
+    checks.append({"name": CONTROL_PLANE_2952_SECURITY_MATRIX[25][0], "expected": exp26, "observed": obs26, "passed": obs26 == exp26})
+    # 27. R7/AC4 -- unsupported preflight retains generation and phase as one transition identity.
+    obs27 = (unsupported.live_state.transition_generation, unsupported.live_state.phase) if isinstance(unsupported, Rejection) else (None, None)
+    exp27 = CONTROL_PLANE_2952_SECURITY_MATRIX[26][1]
+    checks.append({"name": CONTROL_PLANE_2952_SECURITY_MATRIX[26][0], "expected": exp27, "observed": obs27, "passed": obs27 == exp27})
 
     return {"case_id": "control-plane-2952-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

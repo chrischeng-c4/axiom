@@ -21,12 +21,13 @@ from lumen.release_artifacts.spec import (
 )
 from lumen.release_artifacts.verdict import Rejection
 
-MINIMUM_CHECKS = 14
+MINIMUM_CHECKS = 17
 
 RELEASE_ARTIFACTS_3130_SECURITY_MATRIX = (
     ("tag_only_artifact_reference_is_rejected", "tag_only_reference"),
     ("tag_only_artifact_refusal_names_reference", "reference"),
     ("unresolved_artifact_reference_is_rejected", "unresolved_reference"),
+    ("foreign_repository_digest_reference_is_rejected", "foreign_repository_reference"),
     ("unsigned_digest_verification_request_is_rejected", "unsigned_evidence"),
     ("unsigned_request_refusal_names_signature_evidence", "signature_present"),
     ("wrong_repository_identity_is_rejected", "repository_identity_mismatch"),
@@ -38,6 +39,8 @@ RELEASE_ARTIFACTS_3130_SECURITY_MATRIX = (
     ("tag_only_handoff_proof_is_rejected", "mutable_tag_proof"),
     ("tag_only_handoff_refusal_names_declared_subjects", "declared_subjects"),
     ("unresolved_handoff_subject_is_rejected", "unresolved_subject"),
+    ("handoff_missing_repository_identity_is_rejected", "missing_repository_identity"),
+    ("handoff_missing_workflow_identity_is_rejected", "missing_workflow_identity"),
 )
 
 
@@ -67,6 +70,7 @@ def verify_release_artifacts_3130_security() -> dict:
     digest = "ghcr.io/chrischeng-c4/lumen@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     tag = "ghcr.io/chrischeng-c4/lumen:0.4.5"
     unresolved = "ghcr.io/chrischeng-c4/lumen@sha256:"
+    foreign_digest = "ghcr.io/other/lumen@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
     tag_reference = decide_artifact_reference(_reference(tag))
 
@@ -89,73 +93,95 @@ def verify_release_artifacts_3130_security() -> dict:
         _request(subject=digest, signature_present=False)
     )
 
-    # 4-5. R8 -- explicit absence of signature evidence fails closed and names
-    #        the evidence field; a default could not exercise this policy.
-    obs4 = _outcome(unsigned)
+    # 4. R2 -- syntactically valid immutable references from another image
+    #    path cannot be substituted for Lumen's canonical GHCR subject.
+    obs4 = _outcome(decide_artifact_reference(_reference(foreign_digest)))
     exp4 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[3][1]
     checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[3][0], "expected": exp4, "observed": obs4, "passed": obs4 == exp4})
-    obs5 = unsigned.field_path if isinstance(unsigned, Rejection) else "admitted"
+
+    # 5-6. R8 -- explicit absence of signature evidence fails closed and names
+    #        the evidence field; a default could not exercise this policy.
+    obs5 = _outcome(unsigned)
     exp5 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[4][1]
     checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[4][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
+    obs6 = unsigned.field_path if isinstance(unsigned, Rejection) else "admitted"
+    exp6 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[5][1]
+    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
 
     repository_mismatch = decide_verification_request(
         _request(subject=digest, expected_identity=_identity(), observed_identity=_identity(repository="other-org/other-repo"))
     )
 
-    # 6-7. R4/R8 -- repository identity mismatch is independently forbidden.
-    obs6 = _outcome(repository_mismatch)
-    exp6 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[5][1]
-    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
-    obs7 = repository_mismatch.field_path if isinstance(repository_mismatch, Rejection) else "admitted"
+    # 7-8. R4/R8 -- repository identity mismatch is independently forbidden.
+    obs7 = _outcome(repository_mismatch)
     exp7 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[6][1]
     checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
+    obs8 = repository_mismatch.field_path if isinstance(repository_mismatch, Rejection) else "admitted"
+    exp8 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[7][1]
+    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
     workflow_mismatch = decide_verification_request(
         _request(subject=digest, expected_identity=_identity(), observed_identity=_identity(workflow=".github/workflows/other.yml"))
     )
 
-    # 8-9. R4/R8 -- workflow identity is a separate OIDC claim and therefore a
+    # 9-10. R4/R8 -- workflow identity is a separate OIDC claim and therefore a
     #        separate fail-closed check, not an implication of repository match.
-    obs8 = _outcome(workflow_mismatch)
-    exp8 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[7][1]
-    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
-    obs9 = workflow_mismatch.field_path if isinstance(workflow_mismatch, Rejection) else "admitted"
+    obs9 = _outcome(workflow_mismatch)
     exp9 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[8][1]
     checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
-
-    # 10. R2/R8 -- verification admission repeats the tag-only refusal; checking
-    #     only reference admission would let this entry point become permissive.
-    obs10 = _outcome(decide_verification_request(_request(subject=tag)))
+    obs10 = workflow_mismatch.field_path if isinstance(workflow_mismatch, Rejection) else "admitted"
     exp10 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[9][1]
     checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
-    # 11. R2/R8 -- verification admission also rejects an unresolved digest.
-    obs11 = _outcome(decide_verification_request(_request(subject=unresolved)))
+    # 11. R2/R8 -- verification admission repeats the tag-only refusal; checking
+    #     only reference admission would let this entry point become permissive.
+    obs11 = _outcome(decide_verification_request(_request(subject=tag)))
     exp11 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[10][1]
     checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
+
+    # 12. R2/R8 -- verification admission also rejects an unresolved digest.
+    obs12 = _outcome(decide_verification_request(_request(subject=unresolved)))
+    exp12 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[11][1]
+    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
 
     tag_handoff = decide_handoff_content(
         HandoffContent(declared_subjects=(_reference(tag),), expected_identity=_identity())
     )
 
-    # 12-13. AC3 -- handoff validation independently rejects mutable proof and
+    # 13-14. AC3 -- handoff validation independently rejects mutable proof and
     #        tells the author that the declared proof subject is the defect.
-    obs12 = _outcome(tag_handoff)
-    exp12 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[11][1]
-    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
-    obs13 = tag_handoff.field_path if isinstance(tag_handoff, Rejection) else "admitted"
+    obs13 = _outcome(tag_handoff)
     exp13 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[12][1]
     checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+    obs14 = tag_handoff.field_path if isinstance(tag_handoff, Rejection) else "admitted"
+    exp14 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[13][1]
+    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
-    # 14. R2/AC3 -- handoff content also rejects unresolved subjects instead of
+    # 15. R2/AC3 -- handoff content also rejects unresolved subjects instead of
     #     accepting their spelling as a digest-bound proof.
-    obs14 = _outcome(
+    obs15 = _outcome(
         decide_handoff_content(
             HandoffContent(declared_subjects=(_reference(unresolved),), expected_identity=_identity())
         )
     )
-    exp14 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[13][1]
-    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+    exp15 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[14][1]
+    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
+
+    # 16-17. AC3 -- handoff proof needs both independently useful identity
+    #        fields; an immutable subject alone is never sufficient guidance.
+    missing_repository = decide_handoff_content(
+        HandoffContent(declared_subjects=(_reference(digest),), expected_identity=_identity(repository=""))
+    )
+    obs16 = _outcome(missing_repository)
+    exp16 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[15][1]
+    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
+
+    missing_workflow = decide_handoff_content(
+        HandoffContent(declared_subjects=(_reference(digest),), expected_identity=_identity(workflow=""))
+    )
+    obs17 = _outcome(missing_workflow)
+    exp17 = RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[16][1]
+    checks.append({"name": RELEASE_ARTIFACTS_3130_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
 
     return {
         "case_id": "release-artifacts-3130-security",

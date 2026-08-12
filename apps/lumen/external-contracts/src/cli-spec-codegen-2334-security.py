@@ -28,7 +28,7 @@ from lumen.cli_spec_codegen.spec import (
 )
 from lumen.cli_spec_codegen.verdict import Rejection
 
-MINIMUM_CHECKS = 32
+MINIMUM_CHECKS = 40
 
 CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX = (
     ("changed_reusable_command_is_rejected", "required_command_mismatch"),
@@ -63,6 +63,14 @@ CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX = (
     ("generated_test_work_refusal_names_count", "generated_test_work_count"),
     ("incomplete_cleanup_is_rejected", "CLEANUP_INCOMPLETE"),
     ("incomplete_cleanup_refusal_names_category", "process"),
+    ("omitted_required_gate_is_rejected_and_names_gates", ("required_gate_missing", "gates")),
+    ("missing_environment_is_rejected_and_names_field", ("missing_environment", "evidence.environment")),
+    ("missing_output_summary_is_rejected_and_names_field", ("missing_output_summary", "evidence.output_summary")),
+    ("missing_evidence_path_is_rejected_and_names_field", ("missing_evidence_path", "evidence.evidence_path")),
+    ("absent_validated_issue_is_rejected_and_names_field", ("validated_issue_number_missing", "validated_issue_number")),
+    ("nonpositive_validated_issue_is_rejected_and_names_field", ("validated_issue_number_nonpositive", "validated_issue_number")),
+    ("absent_exact_reproduction_is_rejected_and_names_field", ("exact_reproduction_missing", "exact_reproduction")),
+    ("declared_category_without_receipt_is_rejected_and_named", ("CLEANUP_INCOMPLETE", "namespace")),
 )
 
 
@@ -270,6 +278,63 @@ def verify_cli_spec_codegen_2334_security() -> dict:
     obs32 = incomplete_cleanup.field_path if isinstance(incomplete_cleanup, Rejection) else ""
     exp32 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[31][1]
     checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[31][0], "expected": exp32, "observed": obs32, "passed": obs32 == exp32})
+
+    omitted_gate = decide_verification_record(
+        _complete_record(gates=(
+            GateObservation(name="cli_convention", exit_code=0, work_count=3),
+            GateObservation(name="spec_cli", exit_code=0, work_count=8),
+            GateObservation(name="spec_gen_e2e", exit_code=0, work_count=4),
+        ))
+    )
+    # 33. R1/AC1 -- every gate named by the immutable command requires an observation.
+    obs33 = (_reason(omitted_gate), omitted_gate.field_path if isinstance(omitted_gate, Rejection) else "")
+    exp33 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[32][1]
+    checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[32][0], "expected": exp33, "observed": obs33, "passed": obs33 == exp33})
+
+    missing_environment = decide_verification_record(_complete_record(evidence=VerificationEvidence(commit="abc1234", environment=None, output_summary="ok", evidence_path="external-contracts/evidence/2334.json", duration_ms=1200, resource_summary="peak_rss_mb=96")))
+    # 34. R1/AC1 -- evidence must record the execution environment.
+    obs34 = (_reason(missing_environment), missing_environment.field_path if isinstance(missing_environment, Rejection) else "")
+    exp34 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[33][1]
+    checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[33][0], "expected": exp34, "observed": obs34, "passed": obs34 == exp34})
+
+    missing_output_summary = decide_verification_record(_complete_record(evidence=VerificationEvidence(commit="abc1234", environment="local-isolated", output_summary=None, evidence_path="external-contracts/evidence/2334.json", duration_ms=1200, resource_summary="peak_rss_mb=96")))
+    # 35. R1/AC1 -- evidence must retain an observable output summary.
+    obs35 = (_reason(missing_output_summary), missing_output_summary.field_path if isinstance(missing_output_summary, Rejection) else "")
+    exp35 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[34][1]
+    checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[34][0], "expected": exp35, "observed": obs35, "passed": obs35 == exp35})
+
+    missing_evidence_path = decide_verification_record(_complete_record(evidence=VerificationEvidence(commit="abc1234", environment="local-isolated", output_summary="ok", evidence_path=None, duration_ms=1200, resource_summary="peak_rss_mb=96")))
+    # 36. R1/AC1 -- evidence without a retained location fails closed.
+    obs36 = (_reason(missing_evidence_path), missing_evidence_path.field_path if isinstance(missing_evidence_path, Rejection) else "")
+    exp36 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[35][1]
+    checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[35][0], "expected": exp36, "observed": obs36, "passed": obs36 == exp36})
+
+    absent_issue = decide_terminal_result(TerminalInput(record=exact_command, classification=FailureClassification.APP_DOMAIN_ONLY, cleanup=cleanup, exact_reproduction="lumen spec gen --lang rust --out /tmp/lumen-client"))
+    # 37. R3/AC3 -- app-domain-only classification alone cannot reach tracked_skip.
+    obs37 = (_reason(absent_issue), absent_issue.field_path if isinstance(absent_issue, Rejection) else "")
+    exp37 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[36][1]
+    checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[36][0], "expected": exp37, "observed": obs37, "passed": obs37 == exp37})
+
+    nonpositive_issue = decide_terminal_result(TerminalInput(record=exact_command, classification=FailureClassification.APP_DOMAIN_ONLY, cleanup=cleanup, validated_issue_number="#0", exact_reproduction="lumen spec gen --lang rust --out /tmp/lumen-client"))
+    # 38. R3/AC3 -- a non-positive issue reference cannot authorize tracked_skip.
+    obs38 = (_reason(nonpositive_issue), nonpositive_issue.field_path if isinstance(nonpositive_issue, Rejection) else "")
+    exp38 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[37][1]
+    checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[37][0], "expected": exp38, "observed": obs38, "passed": obs38 == exp38})
+
+    absent_reproduction = decide_terminal_result(TerminalInput(record=exact_command, classification=FailureClassification.APP_DOMAIN_ONLY, cleanup=cleanup, validated_issue_number="#2340"))
+    # 39. R3/AC3 -- a bounded issue needs exact reproduction before tracked_skip.
+    obs39 = (_reason(absent_reproduction), absent_reproduction.field_path if isinstance(absent_reproduction, Rejection) else "")
+    exp39 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[38][1]
+    checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[38][0], "expected": exp39, "observed": obs39, "passed": obs39 == exp39})
+
+    missing_category_receipt = decide_cleanup_record(_complete_cleanup(receipts=(
+        CleanupReceipt(category=ResourceCategory.PROCESS, success_path_complete=True, failure_path_complete=True),
+        CleanupReceipt(category=ResourceCategory.EVIDENCE, success_path_complete=True, failure_path_complete=True),
+    )))
+    # 40. AC4 -- every declared resource category must have a receipt.
+    obs40 = (_reason(missing_category_receipt), missing_category_receipt.field_path if isinstance(missing_category_receipt, Rejection) else "")
+    exp40 = CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[39][1]
+    checks.append({"name": CLI_SPEC_CODEGEN_2334_SECURITY_MATRIX[39][0], "expected": exp40, "observed": obs40, "passed": obs40 == exp40})
 
     return {
         "case_id": "cli-spec-codegen-2334-security",

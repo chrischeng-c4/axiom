@@ -24,7 +24,7 @@ from lumen.topology.control_plane_spec import (
     TransitionSnapshot,
 )
 
-MINIMUM_CHECKS = 17
+MINIMUM_CHECKS = 29
 
 CONTROL_2953_SECURITY_MATRIX = (
     ("incomplete_calibration_is_refused", "INCOMPLETE_CALIBRATION"),
@@ -44,6 +44,18 @@ CONTROL_2953_SECURITY_MATRIX = (
     ("sustained_upgrade_boundary_holds_transient_pressure", "SUSTAINED_UPGRADE"),
     ("slow_downgrade_boundary_holds_an_early_downgrade", "SLOW_DOWNGRADE"),
     ("post_convergence_boundary_holds_a_pre_window_downgrade", "POST_CONVERGENCE_WINDOW"),
+    ("non_leader_commit_request_is_refused", "REFUSED"),
+    ("generation_conflict_commit_request_is_refused", "REFUSED"),
+    ("non_two_replica_policy_has_a_typed_rejection", "REFUSED"),
+    ("horizontal_autoscaling_policy_has_a_typed_rejection", "REFUSED"),
+    ("incomplete_telemetry_returns_hold_action", "HOLD"),
+    ("insufficient_downgrade_headroom_returns_hold_action", "HOLD"),
+    ("cooldown_returns_hold_action", "HOLD"),
+    ("daily_change_budget_returns_hold_action", "HOLD"),
+    ("spend_ceiling_returns_hold_action", "HOLD"),
+    ("sustained_upgrade_boundary_returns_hold_action", "HOLD"),
+    ("slow_downgrade_boundary_returns_hold_action", "HOLD"),
+    ("post_convergence_boundary_returns_hold_action", "HOLD"),
 )
 
 
@@ -153,5 +165,47 @@ def verify_control_2953_security() -> dict:
     obs17 = pre_window.reason
     exp17 = CONTROL_2953_SECURITY_MATRIX[16][1]
     checks.append({"name": CONTROL_2953_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+
+    # 18-21. R4/R7/AC3/AC5 — refusal labels cannot accompany a successful
+    # commit or admitted policy.
+    obs18 = not_elected.action
+    exp18 = CONTROL_2953_SECURITY_MATRIX[17][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+    obs19 = conflict.action
+    exp19 = CONTROL_2953_SECURITY_MATRIX[18][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
+    obs20 = wrong_replicas.outcome
+    exp20 = CONTROL_2953_SECURITY_MATRIX[19][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
+    obs21 = hpa.outcome
+    exp21 = CONTROL_2953_SECURITY_MATRIX[20][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
+
+    # 22-29. R5/R6/AC2/AC4 — each unsafe predicate must literally hold the
+    # machine transition, not merely attach the correct refusal reason.
+    obs22 = telemetry.action
+    exp22 = CONTROL_2953_SECURITY_MATRIX[21][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
+    obs23 = headroom.action
+    exp23 = CONTROL_2953_SECURITY_MATRIX[22][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
+    obs24 = cooldown.action
+    exp24 = CONTROL_2953_SECURITY_MATRIX[23][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[23][0], "expected": exp24, "observed": obs24, "passed": obs24 == exp24})
+    obs25 = daily.action
+    exp25 = CONTROL_2953_SECURITY_MATRIX[24][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
+    obs26 = spend.action
+    exp26 = CONTROL_2953_SECURITY_MATRIX[25][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[25][0], "expected": exp26, "observed": obs26, "passed": obs26 == exp26})
+    obs27 = sustained.action
+    exp27 = CONTROL_2953_SECURITY_MATRIX[26][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[26][0], "expected": exp27, "observed": obs27, "passed": obs27 == exp27})
+    obs28 = slow.action
+    exp28 = CONTROL_2953_SECURITY_MATRIX[27][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[27][0], "expected": exp28, "observed": obs28, "passed": obs28 == exp28})
+    obs29 = pre_window.action
+    exp29 = CONTROL_2953_SECURITY_MATRIX[28][1]
+    checks.append({"name": CONTROL_2953_SECURITY_MATRIX[28][0], "expected": exp29, "observed": obs29, "passed": obs29 == exp29})
 
     return {"case_id": "control-2953-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

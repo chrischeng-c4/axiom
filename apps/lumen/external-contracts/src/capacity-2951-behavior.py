@@ -17,7 +17,7 @@ from lumen.capacity.verdict import (
     SplitTriggerInput,
 )
 
-MINIMUM_CHECKS = 12
+MINIMUM_CHECKS = 14
 
 CAPACITY_2951_BEHAVIOR_MATRIX = (
     ("user_minimum_independently_selects_a_split_request", "split_request"),
@@ -26,10 +26,12 @@ CAPACITY_2951_BEHAVIOR_MATRIX = (
     ("write_saturation_at_maximum_useful_machine_selects_a_split_request", "split_request"),
     ("compaction_saturation_at_maximum_useful_machine_selects_a_split_request", "split_request"),
     ("recovery_time_above_policy_selects_a_split_request", "split_request"),
+    ("all_clear_capacity_selects_no_action_and_has_no_split_request", ("no_action", None)),
     ("read_only_pressure_selects_read_replicas", "read_replica"),
     ("read_only_pressure_has_no_shard_split_request", None),
     ("hottest_eligible_shard_is_selected", "shard-b"),
     ("selection_carries_exactly_the_next_generation", 18),
+    ("selection_carries_a_different_next_generation", 41),
     ("equal_hottest_shards_use_the_deterministic_tie_break", "shard-a"),
     ("v1_decision_vocabulary_has_no_merge_action", ("no_action", "read_replica", "split_request", "capacity_blocked")),
 )
@@ -139,7 +141,27 @@ def verify_capacity_2951_behavior() -> dict:
     exp6 = CAPACITY_2951_BEHAVIOR_MATRIX[5][1]
     checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
 
-    # 7-8. R2/AC2 -- eligible read replicas service read-only pressure, not a
+    # 7. R1 -- when neither a user minimum nor a durable ceiling applies, no
+    # split request is proposed.
+    all_clear = decide_split_request(
+        SplitTriggerInput(
+            current_shard_count=2,
+            requested_shard_minimum=2,
+            pvc_growth_possible=True,
+            write_saturated=False,
+            compaction_saturated=False,
+            at_maximum_useful_machine=False,
+            measured_recovery_seconds=10,
+            recovery_policy_seconds=60,
+            aggregate_read_pressure=False,
+            read_replicas_eligible=False,
+        )
+    )
+    obs7 = (all_clear.action.value, all_clear.split_request)
+    exp7 = CAPACITY_2951_BEHAVIOR_MATRIX[6][1]
+    checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
+
+    # 8-9. R2/AC2 -- eligible read replicas service read-only pressure, not a
     # shard split request.
     reads = decide_split_request(
         SplitTriggerInput(
@@ -155,15 +177,15 @@ def verify_capacity_2951_behavior() -> dict:
             read_replicas_eligible=True,
         )
     )
-    obs7 = reads.action.value
-    exp7 = CAPACITY_2951_BEHAVIOR_MATRIX[6][1]
-    checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
-
-    obs8 = reads.split_request
+    obs8 = reads.action.value
     exp8 = CAPACITY_2951_BEHAVIOR_MATRIX[7][1]
     checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
-    # 9-10. R3 -- selection chooses one eligible hottest shard and exactly the
+    obs9 = reads.split_request
+    exp9 = CAPACITY_2951_BEHAVIOR_MATRIX[8][1]
+    checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
+
+    # 10-12. R3 -- selection chooses one eligible hottest shard and exactly the
     # caller-supplied next generation.
     selected = select_split_target(
         SplitSelectionInput(
@@ -171,25 +193,35 @@ def verify_capacity_2951_behavior() -> dict:
             next_generation=18,
         )
     )
-    obs9 = selected.shard_id
-    exp9 = CAPACITY_2951_BEHAVIOR_MATRIX[8][1]
-    checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
-
-    obs10 = selected.generation
+    obs10 = selected.shard_id
     exp10 = CAPACITY_2951_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
-    # 11. R3 -- equal eligible loads use a deterministic (lexical) tie break.
-    tied = select_split_target(
-        SplitSelectionInput(shard_loads=(("shard-b", 90, True), ("shard-a", 90, True)), next_generation=18)
-    )
-    obs11 = tied.shard_id
+    obs11 = selected.generation
     exp11 = CAPACITY_2951_BEHAVIOR_MATRIX[10][1]
     checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
-    # 12. R5 -- v1 has a closed decision vocabulary and never proposes merge.
-    obs12 = tuple(action.value for action in CapacityAction)
+    alternate_selection = select_split_target(
+        SplitSelectionInput(
+            shard_loads=(("shard-a", 70, True), ("shard-b", 90, True), ("shard-c", 99, False)),
+            next_generation=41,
+        )
+    )
+    obs12 = alternate_selection.generation
     exp12 = CAPACITY_2951_BEHAVIOR_MATRIX[11][1]
     checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    # 13. R3 -- equal eligible loads use a deterministic (lexical) tie break.
+    tied = select_split_target(
+        SplitSelectionInput(shard_loads=(("shard-b", 90, True), ("shard-a", 90, True)), next_generation=18)
+    )
+    obs13 = tied.shard_id
+    exp13 = CAPACITY_2951_BEHAVIOR_MATRIX[12][1]
+    checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+
+    # 14. R5 -- v1 has a closed decision vocabulary and never proposes merge.
+    obs14 = tuple(action.value for action in CapacityAction)
+    exp14 = CAPACITY_2951_BEHAVIOR_MATRIX[13][1]
+    checks.append({"name": CAPACITY_2951_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
     return {"case_id": "capacity-2951-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

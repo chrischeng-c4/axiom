@@ -20,7 +20,7 @@ from lumen.topology.observability import (
     phase_age_seconds,
 )
 
-MINIMUM_CHECKS = 20
+MINIMUM_CHECKS = 21
 
 OBSERVABILITY_2533_BEHAVIOR_MATRIX = (
     ("mutation_observation_has_the_required_value_fields", ("mutation_kind", "phase", "generation", "phase_entered_at", "phase_age_seconds", "progress_counters", "last_progress_at")),
@@ -43,6 +43,7 @@ OBSERVABILITY_2533_BEHAVIOR_MATRIX = (
     ("prepare_split_is_independently_stall_eligible", "stalled"),
     ("backup_observation_has_only_backup_status_fields", ("pinned_generation", "shard_artifact_progress", "last_successful_manifest", "failure_reason")),
     ("incomplete_backup_preserves_prior_manifest_and_failure", (41, {"orders-3": "partial"}, "manifest://backup/40", "upload_failed")),
+    ("old_phase_with_recent_progress_is_not_stalled", "not_stalled"),
 )
 
 
@@ -61,7 +62,7 @@ def verify_observability_2533_behavior() -> dict:
         generation=41,
         phase_entered_at=900,
         progress_counters=ProgressCounters({"members_transferred": 2, "members_total": 3}),
-        last_progress_at=1_440,
+        last_progress_at=1_000,
         instance="lumen-search",
         shard_or_group="orders-3",
     )
@@ -189,5 +190,24 @@ def verify_observability_2533_behavior() -> dict:
     obs20 = (backup.pinned_generation, backup.shard_artifact_progress, backup.last_successful_manifest, backup.failure_reason)
     exp20 = OBSERVABILITY_2533_BEHAVIOR_MATRIX[19][1]
     checks.append({"name": OBSERVABILITY_2533_BEHAVIOR_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
+
+    old_phase_recent_progress = decide_mutation_observation(
+        MutationState(
+            mutation_kind=MutationKind.MEMBER_HANDOFF,
+            phase=Phase.HANDOFF,
+            generation=41,
+            phase_entered_at=900,
+            progress_counters=ProgressCounters({"members_transferred": 3, "members_total": 3}),
+            last_progress_at=1_499,
+            instance="lumen-search",
+            shard_or_group="orders-3",
+        ),
+        now_epoch_seconds=1_500,
+    )
+    # 21. AC2 -- the same 600-second-old phase is not stalled when its durable
+    #     progress watermark is recent; phase age alone must not decide the alert.
+    obs21 = decide_stall_signal(old_phase_recent_progress, policy).status
+    exp21 = OBSERVABILITY_2533_BEHAVIOR_MATRIX[20][1]
+    checks.append({"name": OBSERVABILITY_2533_BEHAVIOR_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
 
     return {"case_id": "observability-2533-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(check["passed"] for check in checks) and len(checks) == MINIMUM_CHECKS}

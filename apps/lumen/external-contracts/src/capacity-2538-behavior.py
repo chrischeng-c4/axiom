@@ -14,15 +14,17 @@ from lumen.capacity.admission import decide_capacity_guidance
 from lumen.capacity.spec import CapacitySpec, MachineFamily, StorageClass, StorageFormat
 from lumen.capacity.verdict import AdmittedGuidance
 
-MINIMUM_CHECKS = 6
+MINIMUM_CHECKS = 8
 
 CAPACITY_2538_BEHAVIOR_MATRIX = (
     ("eligible_guidance_is_admitted", "admitted"),
     ("eligible_guidance_selects_e2", "E2"),
     ("eligible_guidance_selects_pd_balanced", "pd-balanced"),
     ("eligible_guidance_labels_pd_ssd_initial_only_future", "INITIAL_ONLY_FUTURE"),
+    ("n2_evidence_without_e2_rejection_keeps_e2_default", "E2"),
     ("qualifying_e2_rejection_permits_n2", "N2"),
     ("qualifying_e2_rejection_keeps_pd_balanced", "pd-balanced"),
+    ("qualifying_e2_rejection_keeps_pd_ssd_initial_only_future", "INITIAL_ONLY_FUTURE"),
 )
 
 
@@ -81,9 +83,25 @@ def verify_capacity_2538_behavior() -> dict:
     exp4 = CAPACITY_2538_BEHAVIOR_MATRIX[3][1]
     checks.append({"name": CAPACITY_2538_BEHAVIOR_MATRIX[3][0], "expected": exp4, "observed": obs4, "passed": obs4 == exp4})
 
-    # 5-6. R6/AC3/AC4 — a different default is permitted only with the named
+    # 5. R6/AC4 — qualified N2 evidence alone is not a different-default
+    #    permission; the E2/pd-balanced rejection is independently required.
+    n2_without_e2_rejection = decide_capacity_guidance(
+        _eligible_spec(
+            n2_evidence_eligible=True,
+            requested_machine_family=MachineFamily.N2,
+        )
+    )
+    obs5 = (
+        n2_without_e2_rejection.machine_family.value
+        if isinstance(n2_without_e2_rejection, AdmittedGuidance)
+        else "rejected"
+    )
+    exp5 = CAPACITY_2538_BEHAVIOR_MATRIX[4][1]
+    checks.append({"name": CAPACITY_2538_BEHAVIOR_MATRIX[4][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
+
+    # 6-8. R6/AC3/AC4 — a different default is permitted only with the named
     #        E2/pd-balanced rejection and qualifying N2 evidence; it does not
-    #        turn the storage default into pd-ssd.
+    #        turn the storage default or pd-ssd disposition into migration.
     rejected_e2 = decide_capacity_guidance(
         _eligible_spec(
             n2_evidence_eligible=True,
@@ -92,16 +110,20 @@ def verify_capacity_2538_behavior() -> dict:
         )
     )
     obs5 = rejected_e2.machine_family.value if isinstance(rejected_e2, AdmittedGuidance) else "rejected"
-    exp5 = CAPACITY_2538_BEHAVIOR_MATRIX[4][1]
-    checks.append({"name": CAPACITY_2538_BEHAVIOR_MATRIX[4][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
-
-    obs6 = rejected_e2.storage_class.value if isinstance(rejected_e2, AdmittedGuidance) else "rejected"
     exp6 = CAPACITY_2538_BEHAVIOR_MATRIX[5][1]
-    checks.append({"name": CAPACITY_2538_BEHAVIOR_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
+    checks.append({"name": CAPACITY_2538_BEHAVIOR_MATRIX[5][0], "expected": exp6, "observed": obs5, "passed": obs5 == exp6})
+
+    obs7 = rejected_e2.storage_class.value if isinstance(rejected_e2, AdmittedGuidance) else "rejected"
+    exp7 = CAPACITY_2538_BEHAVIOR_MATRIX[6][1]
+    checks.append({"name": CAPACITY_2538_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
+
+    obs8 = rejected_e2.pd_ssd_disposition.value if isinstance(rejected_e2, AdmittedGuidance) else "rejected"
+    exp8 = CAPACITY_2538_BEHAVIOR_MATRIX[7][1]
+    checks.append({"name": CAPACITY_2538_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
     return {
         "case_id": "capacity-2538-behavior",
         "minimum_checks": MINIMUM_CHECKS,
         "checks": checks,
-        "passed": all(c["passed"] for c in checks) and len(checks) >= MINIMUM_CHECKS,
+        "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS,
     }

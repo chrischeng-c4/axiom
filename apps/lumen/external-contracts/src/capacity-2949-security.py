@@ -25,7 +25,7 @@ from lumen.topology.capacity_admission import (
 from lumen.topology.capacity_status import project_resize_status
 from lumen.topology.capacity_verdict import RejectedCapacity
 
-MINIMUM_CHECKS = 10
+MINIMUM_CHECKS = 12
 
 CAPACITY_2949_SECURITY_MATRIX = (
     ("index_bytes_only_observation_is_refused", "index_bytes_only"),
@@ -38,6 +38,8 @@ CAPACITY_2949_SECURITY_MATRIX = (
     ("measured_io_ceiling_returns_split_needed", "split_needed"),
     ("unsupported_expansion_projects_operator_action", "operator_action_required"),
     ("failed_expansion_projects_split_needed", "split_needed"),
+    ("missing_node_proof_withholds_generation_commit", "await_expansion_proofs"),
+    ("insufficient_filesystem_capacity_withholds_generation_commit", "await_expansion_proofs"),
 )
 
 
@@ -121,5 +123,31 @@ def verify_capacity_2949_security() -> dict:
     obs10 = failed.status.value
     exp10 = CAPACITY_2949_SECURITY_MATRIX[9][1]
     checks.append({"name": CAPACITY_2949_SECURITY_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
+
+    # 11. R4 -- controller confirmation alone cannot commit the generation;
+    # every required member must also have completed node-side expansion.
+    node_incomplete = can_commit_storage_generation(
+        ResizeIntent(desired_gib=20, generation=8),
+        (
+            MemberExpansionProof(member="raft-lumen-0", controller_expanded=True, node_expanded=True, filesystem_capacity_gib=20),
+            MemberExpansionProof(member="raft-lumen-1", controller_expanded=True, node_expanded=False, filesystem_capacity_gib=20),
+        ),
+    )
+    obs11 = _kind(node_incomplete)
+    exp11 = CAPACITY_2949_SECURITY_MATRIX[10][1]
+    checks.append({"name": CAPACITY_2949_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
+
+    # 12. R4 -- a PVC's control-plane resize is insufficient until the
+    # filesystem exposes at least the persisted desired capacity.
+    filesystem_incomplete = can_commit_storage_generation(
+        ResizeIntent(desired_gib=20, generation=8),
+        (
+            MemberExpansionProof(member="raft-lumen-0", controller_expanded=True, node_expanded=True, filesystem_capacity_gib=20),
+            MemberExpansionProof(member="raft-lumen-1", controller_expanded=True, node_expanded=True, filesystem_capacity_gib=19),
+        ),
+    )
+    obs12 = _kind(filesystem_incomplete)
+    exp12 = CAPACITY_2949_SECURITY_MATRIX[11][1]
+    checks.append({"name": CAPACITY_2949_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
 
     return {"case_id": "capacity-2949-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

@@ -28,7 +28,7 @@ from lumen.topology.machine_capacity_transition import (
     resume_transition,
 )
 
-MINIMUM_CHECKS = 13
+MINIMUM_CHECKS = 16
 
 MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX = (
     ("transition_without_a_direct_edge_is_refused", "no_direct_transition"),
@@ -44,6 +44,9 @@ MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX = (
     ("capacity_block_never_claims_pool_create_resize_or_delete", "none"),
     ("capacity_block_uses_a_bounded_retry_hold", "bounded_retry_hold"),
     ("unavailable_target_keeps_a_healthy_old_member", "retain_healthy_old_member"),
+    ("zero_slot_target_with_remaining_pool_headroom_is_capacity_blocked", "CapacityBlocked"),
+    ("each_unavailable_target_retains_the_healthy_old_member", ("retain_healthy_old_member", "retain_healthy_old_member", "retain_healthy_old_member", "retain_healthy_old_member", "retain_healthy_old_member", "retain_healthy_old_member")),
+    ("each_ac3_target_state_uses_a_bounded_retry_hold", ("bounded_retry_hold", "bounded_retry_hold", "bounded_retry_hold", "bounded_retry_hold", "bounded_retry_hold")),
 )
 
 
@@ -135,12 +138,13 @@ def verify_machine_capacity_transition_2948_security() -> dict:
     exp9 = MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[8][1]
     checks.append({"name": MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
-    # 10-13. R7/AC3 -- all catalog-capacity failures become a typed bounded
+    # 10-16. R7/AC3 -- all catalog-capacity failures become a typed bounded
     # hold: no pool operation is claimed and a healthy old member is retained.
     unavailable = (
         TargetCapacityObservation("n2-standard-8", False, False, 0, False, True, False),
         TargetCapacityObservation("n2-standard-8", True, True, 1, False, True, False),
-        TargetCapacityObservation("n2-standard-8", True, False, 0, True, True, False),
+        TargetCapacityObservation("n2-standard-8", True, False, 0, False, True, True),
+        TargetCapacityObservation("n2-standard-8", True, False, 1, True, True, True),
         TargetCapacityObservation("n2-standard-8", True, False, 1, False, False, False),
         TargetCapacityObservation("n2-standard-8", True, False, 1, False, True, False),
     )
@@ -154,8 +158,28 @@ def verify_machine_capacity_transition_2948_security() -> dict:
     obs12 = holds[1].retry_disposition
     exp12 = MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[11][1]
     checks.append({"name": MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
-    obs13 = holds[2].old_member_action
+    obs13 = holds[3].old_member_action
     exp13 = MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[12][1]
     checks.append({"name": MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+
+    # 14. AC3 -- an existing, schedulable target with pool headroom still
+    # holds when it presently has no capacity; it must not be treated as an
+    # immediately admissible handoff merely because the pool could grow.
+    obs14 = holds[2].classification
+    exp14 = MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[13][1]
+    checks.append({"name": MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    # 15. R7 -- every unavailable observation, including draining, quota, and
+    # unschedulable, explicitly retains the healthy source member.
+    obs15 = tuple(item.old_member_action for item in holds)
+    exp15 = MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[14][1]
+    checks.append({"name": MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
+
+    # 16. AC3 -- independently model absent, zero-slot, at-maximum,
+    # quota-blocked, and unschedulable targets; each is a bounded retry/hold.
+    ac3_holds = (holds[0], holds[2], holds[3], holds[4], holds[5])
+    obs16 = tuple(item.retry_disposition for item in ac3_holds)
+    exp16 = MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[15][1]
+    checks.append({"name": MACHINE_CAPACITY_TRANSITION_2948_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
 
     return {"case_id": "machine-capacity-transition-2948-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

@@ -25,7 +25,7 @@ from lumen.capacity.selection import (
 from lumen.capacity.spec import CapacityProfile, CatalogProfile
 from lumen.capacity.verdict import Rejection
 
-MINIMUM_CHECKS = 14
+MINIMUM_CHECKS = 16
 
 CAPACITY_3066_BEHAVIOR_MATRIX = (
     ("finite_direct_machine_type_profile_is_admitted", "admitted"),
@@ -39,6 +39,8 @@ CAPACITY_3066_BEHAVIOR_MATRIX = (
     ("selector_resolution_returns_the_catalog_selector", ("lumen.axiom.dev/capacity-profile", "n2-standard-8")),
     ("matching_node_evidence_is_admitted_against_the_catalog", "admitted"),
     ("terraform_is_admitted_to_create_a_capacity_pool", "admitted"),
+    ("terraform_is_admitted_to_update_a_capacity_pool", "admitted"),
+    ("terraform_is_admitted_to_delete_a_capacity_pool", "admitted"),
     ("zero_minimum_data_pools_with_system_capacity_are_admitted", "admitted"),
     ("ordinary_profile_removal_enters_draining", "draining"),
     ("ordinary_profile_removal_retains_the_pool", "retain"),
@@ -119,31 +121,40 @@ def verify_capacity_3066_behavior() -> dict:
     exp10 = CAPACITY_3066_BEHAVIOR_MATRIX[9][1]
     checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
 
-    # 11. R7 -- Terraform is the caller that owns pool lifecycle changes.
+    # 11-13. R7 -- Terraform owns every pool lifecycle action, including the
+    # updates and destructive deletion that the runtime/operator must never do.
     terraform_create = decide_capacity_action("terraform", "create")
     obs11 = _outcome(terraform_create)
     exp11 = CAPACITY_3066_BEHAVIOR_MATRIX[10][1]
     checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
+    terraform_update = decide_capacity_action("terraform", "update")
+    obs12 = _outcome(terraform_update)
+    exp12 = CAPACITY_3066_BEHAVIOR_MATRIX[11][1]
+    checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+    terraform_delete = decide_capacity_action("terraform", "delete")
+    obs13 = _outcome(terraform_delete)
+    exp13 = CAPACITY_3066_BEHAVIOR_MATRIX[12][1]
+    checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
 
-    # 12. R8/AC4 -- all data minima may be zero once concrete non-data system
+    # 14. R8/AC4 -- all data minima may be zero once concrete non-data system
     # capacity is supplied; an empty/default prerequisite is not used.
     installation = decide_installation_prerequisites(
         {"system_pool": "n2-standard-4", "minimum_nodes": 1},
         profiles,
     )
-    obs12 = _outcome(installation)
-    exp12 = CAPACITY_3066_BEHAVIOR_MATRIX[11][1]
-    checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
-
-    # 13-14. R9 -- ordinary omission begins a drain but cannot delete the
-    # existing Terraform pool in the same decision.
-    retirement = decide_profile_retirement(profile, None, 2, False)
-    obs13 = retirement.lifecycle_state
-    exp13 = CAPACITY_3066_BEHAVIOR_MATRIX[12][1]
-    checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
-    obs14 = retirement.pool_disposition
+    obs14 = _outcome(installation)
     exp14 = CAPACITY_3066_BEHAVIOR_MATRIX[13][1]
     checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    # 15-16. R9 -- ordinary omission begins a drain but cannot delete the
+    # existing Terraform pool in the same decision.
+    retirement = decide_profile_retirement(profile, None, 2, False)
+    obs15 = retirement.lifecycle_state
+    exp15 = CAPACITY_3066_BEHAVIOR_MATRIX[14][1]
+    checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
+    obs16 = retirement.pool_disposition
+    exp16 = CAPACITY_3066_BEHAVIOR_MATRIX[15][1]
+    checks.append({"name": CAPACITY_3066_BEHAVIOR_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
 
     return {
         "case_id": "capacity-3066-behavior",

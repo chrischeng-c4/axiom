@@ -26,7 +26,7 @@ from lumen.topology.split import (
     start_topology_mutation,
 )
 
-MINIMUM_CHECKS = 18
+MINIMUM_CHECKS = 22
 
 SPLIT_2945_BEHAVIOR_MATRIX = (
     ("one_voter_source_is_preserved", 1),
@@ -47,6 +47,10 @@ SPLIT_2945_BEHAVIOR_MATRIX = (
     ("first_mutation_starts_at_prepare", "prepare"),
     ("split_kind_is_admitted", "split"),
     ("durable_committed_targets_admit_source_retirement", "admitted"),
+    ("one_voter_split_left_target_has_one_voter", 1),
+    ("one_voter_split_right_target_has_one_voter", 1),
+    ("one_voter_split_left_target_preserves_read_replicas", 0),
+    ("one_voter_split_right_target_preserves_read_replicas", 0),
 )
 
 
@@ -168,6 +172,26 @@ def verify_split_2945_behavior() -> dict:
     obs18 = retirement.outcome
     exp18 = SPLIT_2945_BEHAVIOR_MATRIX[17][1]
     checks.append({"name": SPLIT_2945_BEHAVIOR_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+
+    # 19. R1 -- the left one-voter target retains the requested voting membership.
+    obs19 = one_voter.left_target.voters
+    exp19 = SPLIT_2945_BEHAVIOR_MATRIX[18][1]
+    checks.append({"name": SPLIT_2945_BEHAVIOR_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
+
+    # 20. R1 -- the right one-voter target retains the requested voting membership.
+    obs20 = one_voter.right_target.voters
+    exp20 = SPLIT_2945_BEHAVIOR_MATRIX[19][1]
+    checks.append({"name": SPLIT_2945_BEHAVIOR_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
+
+    # 21. R1 -- the left one-voter target retains the requested non-voting count.
+    obs21 = one_voter.left_target.read_replicas
+    exp21 = SPLIT_2945_BEHAVIOR_MATRIX[20][1]
+    checks.append({"name": SPLIT_2945_BEHAVIOR_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
+
+    # 22. R1 -- the right one-voter target retains the requested non-voting count.
+    obs22 = one_voter.right_target.read_replicas
+    exp22 = SPLIT_2945_BEHAVIOR_MATRIX[21][1]
+    checks.append({"name": SPLIT_2945_BEHAVIOR_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
 
     return {
         "case_id": "split-2945-behavior",

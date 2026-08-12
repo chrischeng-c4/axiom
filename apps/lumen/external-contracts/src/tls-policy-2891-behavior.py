@@ -26,7 +26,7 @@ from lumen.topology.tls_policy import (
 )
 from lumen.topology.tls_verdict import Refusal
 
-MINIMUM_CHECKS = 21
+MINIMUM_CHECKS = 29
 
 TLS_POLICY_2891_BEHAVIOR_MATRIX = (
     ("serving_tls_secret_is_externally_owned", "external-secret"),
@@ -50,6 +50,14 @@ TLS_POLICY_2891_BEHAVIOR_MATRIX = (
     ("public_generations_are_retained_evidence", "retained"),
     ("timings_are_retained_evidence", "retained"),
     ("cleanup_is_retained_evidence", "retained"),
+    ("connect_refuses_non_loopback_forward_at_forwarding_boundary", "forward_host"),
+    ("connect_refuses_wrong_service_dns_at_identity_boundary", "service_dns"),
+    ("connect_refuses_wrong_token_audience_at_token_boundary", "token_audience"),
+    ("connect_refuses_unbound_token_subject_at_subject_boundary", "token_subject"),
+    ("external_rotation_refuses_serving_only_generation", "peer_generation"),
+    ("external_rotation_refuses_peer_only_generation", "serving_generation"),
+    ("external_rotation_refuses_unchanged_active_serving_fingerprint", "active_serving_fingerprint"),
+    ("external_rotation_refuses_unchanged_active_peer_fingerprint", "active_peer_fingerprint"),
 )
 
 
@@ -163,5 +171,73 @@ def verify_tls_policy_2891_behavior() -> dict:
     obs21 = classify_field(EvidenceField("cleanup")).value
     exp21 = TLS_POLICY_2891_BEHAVIOR_MATRIX[20][1]
     checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
+
+    non_loopback_forward = decide_connect_policy(ConnectRequest(
+        forward_host="0.0.0.0", service_dns="lumen.lumen-auth.svc",
+        token_subject="system:serviceaccount:lumen-auth:client", token_audience="lumen.axiom.dev",
+        insecure_skip_hostname_verification=False,
+    ))
+    wrong_connect_dns = decide_connect_policy(ConnectRequest(
+        forward_host="127.0.0.1", service_dns="wrong.lumen-auth.svc",
+        token_subject="system:serviceaccount:lumen-auth:client", token_audience="lumen.axiom.dev",
+        insecure_skip_hostname_verification=False,
+    ))
+    wrong_connect_audience = decide_connect_policy(ConnectRequest(
+        forward_host="127.0.0.1", service_dns="lumen.lumen-auth.svc",
+        token_subject="system:serviceaccount:lumen-auth:client", token_audience="wrong.audience",
+        insecure_skip_hostname_verification=False,
+    ))
+    unbound_connect_subject = decide_connect_policy(ConnectRequest(
+        forward_host="127.0.0.1", service_dns="lumen.lumen-auth.svc",
+        token_subject="system:serviceaccount:lumen-auth:unbound", token_audience="lumen.axiom.dev",
+        insecure_skip_hostname_verification=False,
+    ))
+    # 22-25. R4 -- each required connect binding rejects its own invalid neighbour.
+    obs22 = non_loopback_forward.field_path if isinstance(non_loopback_forward, Refusal) else "admitted"
+    exp22 = TLS_POLICY_2891_BEHAVIOR_MATRIX[21][1]
+    checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
+    obs23 = wrong_connect_dns.field_path if isinstance(wrong_connect_dns, Refusal) else "admitted"
+    exp23 = TLS_POLICY_2891_BEHAVIOR_MATRIX[22][1]
+    checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
+    obs24 = wrong_connect_audience.field_path if isinstance(wrong_connect_audience, Refusal) else "admitted"
+    exp24 = TLS_POLICY_2891_BEHAVIOR_MATRIX[23][1]
+    checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[23][0], "expected": exp24, "observed": obs24, "passed": obs24 == exp24})
+    obs25 = unbound_connect_subject.field_path if isinstance(unbound_connect_subject, Refusal) else "admitted"
+    exp25 = TLS_POLICY_2891_BEHAVIOR_MATRIX[24][1]
+    checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
+
+    serving_only_rotation = decide_external_rotation(ExternalRotation(
+        serving_generation="serving-v2", peer_generation="peer-v1",
+        previous_serving_fingerprint="serving-fp-v1", active_serving_fingerprint="serving-fp-v2",
+        previous_peer_fingerprint="peer-fp-v1", active_peer_fingerprint="peer-fp-v2",
+    ))
+    peer_only_rotation = decide_external_rotation(ExternalRotation(
+        serving_generation="serving-v1", peer_generation="peer-v2",
+        previous_serving_fingerprint="serving-fp-v1", active_serving_fingerprint="serving-fp-v2",
+        previous_peer_fingerprint="peer-fp-v1", active_peer_fingerprint="peer-fp-v2",
+    ))
+    unchanged_serving_fingerprint = decide_external_rotation(ExternalRotation(
+        serving_generation="serving-v2", peer_generation="peer-v2",
+        previous_serving_fingerprint="serving-fp-v1", active_serving_fingerprint="serving-fp-v1",
+        previous_peer_fingerprint="peer-fp-v1", active_peer_fingerprint="peer-fp-v2",
+    ))
+    unchanged_peer_fingerprint = decide_external_rotation(ExternalRotation(
+        serving_generation="serving-v2", peer_generation="peer-v2",
+        previous_serving_fingerprint="serving-fp-v1", active_serving_fingerprint="serving-fp-v2",
+        previous_peer_fingerprint="peer-fp-v1", active_peer_fingerprint="peer-fp-v1",
+    ))
+    # 26-29. R6 -- each Secret generation and active fingerprint is independently mandatory.
+    obs26 = serving_only_rotation.field_path if isinstance(serving_only_rotation, Refusal) else "admitted"
+    exp26 = TLS_POLICY_2891_BEHAVIOR_MATRIX[25][1]
+    checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[25][0], "expected": exp26, "observed": obs26, "passed": obs26 == exp26})
+    obs27 = peer_only_rotation.field_path if isinstance(peer_only_rotation, Refusal) else "admitted"
+    exp27 = TLS_POLICY_2891_BEHAVIOR_MATRIX[26][1]
+    checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[26][0], "expected": exp27, "observed": obs27, "passed": obs27 == exp27})
+    obs28 = unchanged_serving_fingerprint.field_path if isinstance(unchanged_serving_fingerprint, Refusal) else "admitted"
+    exp28 = TLS_POLICY_2891_BEHAVIOR_MATRIX[27][1]
+    checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[27][0], "expected": exp28, "observed": obs28, "passed": obs28 == exp28})
+    obs29 = unchanged_peer_fingerprint.field_path if isinstance(unchanged_peer_fingerprint, Refusal) else "admitted"
+    exp29 = TLS_POLICY_2891_BEHAVIOR_MATRIX[28][1]
+    checks.append({"name": TLS_POLICY_2891_BEHAVIOR_MATRIX[28][0], "expected": exp29, "observed": obs29, "passed": obs29 == exp29})
 
     return {"case_id": "tls-policy-2891-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

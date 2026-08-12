@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from lumen.capacity import admission, hpa_handoff, spec, verdict
 
-MINIMUM_CHECKS = 7
+MINIMUM_CHECKS = 8
 
 CAPACITY_2680_BEHAVIOR_MATRIX = (
     ("supported_serving_surface_without_autoscaling_is_admitted", "admitted"),
@@ -21,6 +21,7 @@ CAPACITY_2680_BEHAVIOR_MATRIX = (
     ("matching_unwanted_hpa_with_multiple_labels_is_deleted", "DELETE"),
     ("missing_hpa_is_not_deleted", "KEEP"),
     ("foreign_labelled_hpa_is_not_deleted", "KEEP"),
+    ("foreign_labelled_hpa_with_expected_labels_is_not_deleted", "KEEP"),
     ("wanted_matching_hpa_is_not_deleted", "KEEP"),
 )
 
@@ -84,14 +85,24 @@ def verify_capacity_2680_behavior() -> dict:
     exp6 = CAPACITY_2680_BEHAVIOR_MATRIX[5][1]
     checks.append({"name": CAPACITY_2680_BEHAVIOR_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
 
-    # 7. R2 -- the deletion handoff exists only once no HPA is wanted; a live
+    # 7. R2 -- containment is insufficient: even an HPA with every expected
+    #    label is foreign when its live label set contains an extra label.
+    expected_plus_extra = {**labels, "app.kubernetes.io/part-of": "foreign"}
+    expected_plus_extra_hpa = hpa_handoff.decide_stale_hpa_cleanup(
+        "search-serving", labels, "search-serving", expected_plus_extra, False
+    )
+    obs7 = expected_plus_extra_hpa.action.value
+    exp7 = CAPACITY_2680_BEHAVIOR_MATRIX[6][1]
+    checks.append({"name": CAPACITY_2680_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
+
+    # 8. R2 -- the deletion handoff exists only once no HPA is wanted; a live
     #    matching object remains when the desired state still wants one.
     wanted = hpa_handoff.decide_stale_hpa_cleanup(
         "search-serving", labels, "search-serving", labels, True
     )
-    obs7 = wanted.action.value
-    exp7 = CAPACITY_2680_BEHAVIOR_MATRIX[6][1]
-    checks.append({"name": CAPACITY_2680_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
+    obs8 = wanted.action.value
+    exp8 = CAPACITY_2680_BEHAVIOR_MATRIX[7][1]
+    checks.append({"name": CAPACITY_2680_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
     return {
         "case_id": "capacity-2680-behavior",

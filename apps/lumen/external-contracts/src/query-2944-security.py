@@ -12,7 +12,7 @@ from lumen.query.merge import compare_to_canonical, decide_lexical_protocol, mer
 from lumen.query.spec import CanonicalResult, HybridQueryRequest, ShardOutcome, ShardResult, VectorCandidate
 from lumen.query.verdict import Rejection
 
-MINIMUM_CHECKS = 18
+MINIMUM_CHECKS = 19
 
 QUERY_2944_SECURITY_MATRIX = (
     ("raw_shard_local_lexical_scores_are_rejected", "shard_local_scores_not_globally_comparable"),
@@ -23,6 +23,7 @@ QUERY_2944_SECURITY_MATRIX = (
     ("missing_shard_refusal_carries_pinned_generation", 9),
     ("timed_out_required_shard_is_not_complete", "shard_timeout"),
     ("timed_out_shard_refusal_names_the_shard", "shard-b"),
+    ("timed_out_shard_refusal_carries_pinned_generation", 9),
     ("failed_required_shard_is_not_complete", "shard_failed"),
     ("complete_neighbour_requires_all_shards", "complete"),
     ("generation_change_is_retryable", "retryable_generation_change"),
@@ -62,45 +63,47 @@ def verify_query_2944_security() -> dict:
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
 
     timeout = decide_completion(9, (ShardOutcome(shard_id="shard-a", status="complete", generation=9), ShardOutcome(shard_id="shard-b", status="timeout", generation=9)))
-    # 7-8. R4/AC2 -- timeout has its own typed, shard-identifying non-success outcome.
+    # 7-9. R4/AC2 -- timeout has its own typed, shard-identifying, generation-carrying non-success outcome.
     obs7 = _outcome(timeout); exp7 = QUERY_2944_SECURITY_MATRIX[6][1]
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
     obs8 = timeout.shard_id if isinstance(timeout, Rejection) else ""; exp8 = QUERY_2944_SECURITY_MATRIX[7][1]
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
+    obs9 = timeout.pinned_generation if isinstance(timeout, Rejection) else -1; exp9 = QUERY_2944_SECURITY_MATRIX[8][1]
+    checks.append({"name": QUERY_2944_SECURITY_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
     failed = decide_completion(9, (ShardOutcome(shard_id="shard-a", status="complete", generation=9), ShardOutcome(shard_id="shard-b", status="failed", generation=9)))
     complete = decide_completion(9, (ShardOutcome(shard_id="shard-a", status="complete", generation=9), ShardOutcome(shard_id="shard-b", status="complete", generation=9)))
-    # 9-10. R4/AC2 -- an explicit shard failure is non-success, while the all-complete neighbour admits.
-    obs9 = _outcome(failed); exp9 = QUERY_2944_SECURITY_MATRIX[8][1]
-    checks.append({"name": QUERY_2944_SECURITY_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
-    obs10 = _outcome(complete); exp10 = QUERY_2944_SECURITY_MATRIX[9][1]
+    # 10-11. R4/AC2 -- an explicit shard failure is non-success, while the all-complete neighbour admits.
+    obs10 = _outcome(failed); exp10 = QUERY_2944_SECURITY_MATRIX[9][1]
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
+    obs11 = _outcome(complete); exp11 = QUERY_2944_SECURITY_MATRIX[10][1]
+    checks.append({"name": QUERY_2944_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
     cutover = decide_generation_outcome(9, (9, 10))
-    # 11-13. R5/AC3 -- split cutover is named retryable failure; matching observations complete.
-    obs11 = _outcome(cutover); exp11 = QUERY_2944_SECURITY_MATRIX[10][1]
-    checks.append({"name": QUERY_2944_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
-    obs12 = cutover.field_path if isinstance(cutover, Rejection) else ""; exp12 = QUERY_2944_SECURITY_MATRIX[11][1]
+    # 12-14. R5/AC3 -- split cutover is named retryable failure; matching observations complete.
+    obs12 = _outcome(cutover); exp12 = QUERY_2944_SECURITY_MATRIX[11][1]
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
-    obs13 = _outcome(decide_generation_outcome(9, (9, 9))); exp13 = QUERY_2944_SECURITY_MATRIX[12][1]
+    obs13 = cutover.field_path if isinstance(cutover, Rejection) else ""; exp13 = QUERY_2944_SECURITY_MATRIX[12][1]
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+    obs14 = _outcome(decide_generation_outcome(9, (9, 9))); exp14 = QUERY_2944_SECURITY_MATRIX[13][1]
+    checks.append({"name": QUERY_2944_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
 
     merged = CanonicalResult(identities=("doc-a", "doc-b"), scores=(0.97, 0.91), filters=("tenant:acme",), cursor_position=2)
-    # 14-17. AC1 -- every canonical dimension produces its own named mismatch, not an equality flag.
-    obs14 = compare_to_canonical(merged, CanonicalResult(identities=("doc-a", "doc-b"), scores=(0.98, 0.91), filters=("tenant:acme",), cursor_position=2)).mismatch_field; exp14 = QUERY_2944_SECURITY_MATRIX[13][1]
-    checks.append({"name": QUERY_2944_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
-    obs15 = compare_to_canonical(merged, CanonicalResult(identities=("doc-b", "doc-a"), scores=(0.97, 0.91), filters=("tenant:acme",), cursor_position=2)).mismatch_field; exp15 = QUERY_2944_SECURITY_MATRIX[14][1]
+    # 15-18. AC1 -- every canonical dimension produces its own named mismatch, not an equality flag.
+    obs15 = compare_to_canonical(merged, CanonicalResult(identities=("doc-a", "doc-b"), scores=(0.98, 0.91), filters=("tenant:acme",), cursor_position=2)).mismatch_field; exp15 = QUERY_2944_SECURITY_MATRIX[14][1]
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
-    obs16 = compare_to_canonical(merged, CanonicalResult(identities=("doc-a", "doc-b"), scores=(0.97, 0.91), filters=("tenant:other",), cursor_position=2)).mismatch_field; exp16 = QUERY_2944_SECURITY_MATRIX[15][1]
+    obs16 = compare_to_canonical(merged, CanonicalResult(identities=("doc-b", "doc-a"), scores=(0.97, 0.91), filters=("tenant:acme",), cursor_position=2)).mismatch_field; exp16 = QUERY_2944_SECURITY_MATRIX[15][1]
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
-    obs17 = compare_to_canonical(merged, CanonicalResult(identities=("doc-a", "doc-b"), scores=(0.97, 0.91), filters=("tenant:acme",), cursor_position=3)).mismatch_field; exp17 = QUERY_2944_SECURITY_MATRIX[16][1]
+    obs17 = compare_to_canonical(merged, CanonicalResult(identities=("doc-a", "doc-b"), scores=(0.97, 0.91), filters=("tenant:other",), cursor_position=2)).mismatch_field; exp17 = QUERY_2944_SECURITY_MATRIX[16][1]
     checks.append({"name": QUERY_2944_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+    obs18 = compare_to_canonical(merged, CanonicalResult(identities=("doc-a", "doc-b"), scores=(0.97, 0.91), filters=("tenant:acme",), cursor_position=3)).mismatch_field; exp18 = QUERY_2944_SECURITY_MATRIX[17][1]
+    checks.append({"name": QUERY_2944_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
 
     hybrid_request = HybridQueryRequest(page_offset=0, page_size=2, filters=("tenant:acme",), fusion="rrf", cursor=None, pinned_generation=9)
     split_results = (ShardResult(shard_id="shard-a", generation=9, candidates=(VectorCandidate(shard_id="shard-a", identity="doc-a", score=0.97, filters=("tenant:acme",)),)), ShardResult(shard_id="shard-b", generation=10, candidates=(VectorCandidate(shard_id="shard-b", identity="doc-b", score=0.91, filters=("tenant:acme",)),)))
     split_page = merge_hybrid_results(hybrid_request, split_results)
-    # 18. AC3 -- hybrid merge itself cannot turn a generation transition into a page.
-    obs18 = _outcome(split_page); exp18 = QUERY_2944_SECURITY_MATRIX[17][1]
-    checks.append({"name": QUERY_2944_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+    # 19. AC3 -- hybrid merge itself cannot turn a generation transition into a page.
+    obs19 = _outcome(split_page); exp19 = QUERY_2944_SECURITY_MATRIX[18][1]
+    checks.append({"name": QUERY_2944_SECURITY_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
 
     return {"case_id": "query-2944-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

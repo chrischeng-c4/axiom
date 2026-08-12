@@ -23,7 +23,7 @@ from lumen.capacity.selection import (
 from lumen.capacity.spec import CapacityProfile, CatalogProfile
 from lumen.capacity.verdict import Rejection
 
-MINIMUM_CHECKS = 24
+MINIMUM_CHECKS = 27
 
 CAPACITY_3066_SECURITY_MATRIX = (
     ("zero_maximum_is_rejected", "maximum_nodes_must_be_positive"),
@@ -46,9 +46,12 @@ CAPACITY_3066_SECURITY_MATRIX = (
     ("system_capacity_refusal_names_system_capacity", "system_capacity"),
     ("profile_removal_with_assigned_members_cannot_delete", "assigned_members_must_be_zero"),
     ("assigned_members_refusal_names_assigned_members", "assigned_members"),
-    ("zero_member_removal_without_second_authorization_cannot_delete", "destructive_authorization_required"),
-    ("authorization_refusal_names_destructive_authorization", "destructive_authorization"),
-    ("zero_member_removal_with_explicit_authorization_deletes", "delete"),
+    ("zero_member_active_profile_removal_enters_draining", "draining"),
+    ("zero_member_active_profile_removal_retains_pool", "retain"),
+    ("zero_member_active_profile_removal_with_authorization_retains_pool", "retain"),
+    ("draining_profile_deletion_without_second_authorization_is_rejected", "destructive_authorization_required"),
+    ("draining_profile_authorization_refusal_names_destructive_authorization", "destructive_authorization"),
+    ("draining_profile_deletion_with_explicit_authorization_deletes", "delete"),
     ("neighbouring_valid_direct_profile_remains_admitted", "admitted"),
 )
 
@@ -57,7 +60,7 @@ def _reason(value) -> str:
     return value.reason.value if isinstance(value, Rejection) else "admitted"
 
 
-def _catalog_profile() -> CatalogProfile:
+def _catalog_profile(lifecycle_state: str = "active") -> CatalogProfile:
     return CatalogProfile(
         machine_type="n2-standard-8",
         stable_selector=("lumen.axiom.dev/capacity-profile", "n2-standard-8"),
@@ -66,7 +69,7 @@ def _catalog_profile() -> CatalogProfile:
         memory_gib=32,
         downgrade_edges=("n2-standard-4",),
         max_nodes=3,
-        lifecycle_state="active",
+        lifecycle_state=lifecycle_state,
     )
 
 
@@ -159,8 +162,11 @@ def verify_capacity_3066_security() -> dict:
     exp18 = CAPACITY_3066_SECURITY_MATRIX[17][1]
     checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
 
-    # 19-23. R9 -- deletion has two independent explicit gates: no assigned
-    # members and a second destructive authorization after the drain decision.
+    # 19-26. R9 -- ordinary removal of an active profile always starts the
+    # draining stage and retains its pool, even when zero members and an
+    # authorization are supplied.  Only a separately modeled draining profile
+    # reaches the destructive second step, which requires both zero members
+    # and explicit authorization.
     assigned = decide_profile_retirement(profile, None, 1, True)
     obs19 = _reason(assigned)
     exp19 = CAPACITY_3066_SECURITY_MATRIX[18][1]
@@ -169,23 +175,35 @@ def verify_capacity_3066_security() -> dict:
     exp20 = CAPACITY_3066_SECURITY_MATRIX[19][1]
     checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
     missing_authorization = decide_profile_retirement(profile, None, 0, False)
-    obs21 = _reason(missing_authorization)
+    obs21 = missing_authorization.lifecycle_state
     exp21 = CAPACITY_3066_SECURITY_MATRIX[20][1]
     checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
-    obs22 = missing_authorization.field_path
+    obs22 = missing_authorization.pool_disposition
     exp22 = CAPACITY_3066_SECURITY_MATRIX[21][1]
     checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
-    deletion = decide_profile_retirement(profile, None, 0, True)
-    obs23 = deletion.pool_disposition
+    active_authorization = decide_profile_retirement(profile, None, 0, True)
+    obs23 = active_authorization.pool_disposition
     exp23 = CAPACITY_3066_SECURITY_MATRIX[22][1]
     checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
-
-    # 24. R2 -- refusal is narrow: the adjacent literal direct-machine profile
-    # with an explicit positive finite maximum remains admitted.
-    neighbour = decide_capacity_profiles({"n2-standard-8": CapacityProfile(min_nodes=0, max_nodes=3)})
-    obs24 = _reason(neighbour)
+    draining_profile = _catalog_profile(lifecycle_state="draining")
+    draining_without_authorization = decide_profile_retirement(draining_profile, None, 0, False)
+    obs24 = _reason(draining_without_authorization)
     exp24 = CAPACITY_3066_SECURITY_MATRIX[23][1]
     checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[23][0], "expected": exp24, "observed": obs24, "passed": obs24 == exp24})
+    obs25 = draining_without_authorization.field_path
+    exp25 = CAPACITY_3066_SECURITY_MATRIX[24][1]
+    checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
+    deletion = decide_profile_retirement(draining_profile, None, 0, True)
+    obs26 = deletion.pool_disposition
+    exp26 = CAPACITY_3066_SECURITY_MATRIX[25][1]
+    checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[25][0], "expected": exp26, "observed": obs26, "passed": obs26 == exp26})
+
+    # 27. R2 -- refusal is narrow: the adjacent literal direct-machine profile
+    # with an explicit positive finite maximum remains admitted.
+    neighbour = decide_capacity_profiles({"n2-standard-8": CapacityProfile(min_nodes=0, max_nodes=3)})
+    obs27 = _reason(neighbour)
+    exp27 = CAPACITY_3066_SECURITY_MATRIX[26][1]
+    checks.append({"name": CAPACITY_3066_SECURITY_MATRIX[26][0], "expected": exp27, "observed": obs27, "passed": obs27 == exp27})
 
     return {
         "case_id": "capacity-3066-security",

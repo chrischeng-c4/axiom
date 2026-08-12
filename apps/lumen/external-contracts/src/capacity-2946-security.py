@@ -16,7 +16,7 @@ from lumen.capacity.spec import CapacitySpec
 from lumen.capacity.status import CapacityState, project_capacity_status
 from lumen.capacity.verdict import Rejection
 
-MINIMUM_CHECKS = 16
+MINIMUM_CHECKS = 23
 
 CAPACITY_2946_SECURITY_MATRIX = (
     ("service_tier_value_is_rejected_at_spec_admission", "unsupported_machine_type"),
@@ -35,6 +35,13 @@ CAPACITY_2946_SECURITY_MATRIX = (
     ("duplicate_node_refusal_names_placements", "placements"),
     ("monetary_policy_field_is_rejected", "monetary_policy_not_allowed"),
     ("blocked_status_is_capacity_blocked", "CapacityBlocked"),
+    ("incompatible_catalog_is_blocked_before_disruption", "catalog_incompatible"),
+    ("forbidden_transition_is_rejected", "transition_not_allowed"),
+    ("transition_decision_exposes_configured_read_replica_cap", 6),
+    ("transition_decision_exposes_configured_shard_cap", 9),
+    ("currency_policy_field_is_rejected", "monetary_policy_not_allowed"),
+    ("price_policy_field_is_rejected", "monetary_policy_not_allowed"),
+    ("cost_ceiling_policy_field_is_rejected", "monetary_policy_not_allowed"),
 )
 
 
@@ -133,5 +140,46 @@ def verify_capacity_2946_security() -> dict:
     obs16 = status.phase
     exp16 = CAPACITY_2946_SECURITY_MATRIX[15][1]
     checks.append({"name": CAPACITY_2946_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
+
+    # 17. R4 -- an incompatible catalog entry is a typed preflight block.
+    incompatible = preflight_capacity(request, CapacityCatalog(entries=(CatalogEntry("e2-standard-2", "a", "ready", True, False, True, False),)))
+    obs17 = _outcome(incompatible)
+    exp17 = CAPACITY_2946_SECURITY_MATRIX[16][1]
+    checks.append({"name": CAPACITY_2946_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+
+    # 18. R8 -- a transition outside configured policy is refused.
+    forbidden = decide_transition("e2-standard-2", "n2-standard-4", CapacityPolicy(allowed_transitions=(), node_cap=3, read_replica_cap=2, shard_cap=4, cooldown_seconds=300), catalog_maximum=3)
+    obs18 = _outcome(forbidden)
+    exp18 = CAPACITY_2946_SECURITY_MATRIX[17][1]
+    checks.append({"name": CAPACITY_2946_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+
+    admitted_policy = CapacityPolicy(allowed_transitions=("scale_out",), node_cap=3, read_replica_cap=6, shard_cap=9, cooldown_seconds=300)
+    admitted_transition = decide_transition("e2-standard-2", "e2-standard-2", admitted_policy, catalog_maximum=3)
+
+    # 19. R8 -- read-replica cap comes from operator configuration.
+    obs19 = admitted_transition.read_replica_cap if not isinstance(admitted_transition, Rejection) else -1
+    exp19 = CAPACITY_2946_SECURITY_MATRIX[18][1]
+    checks.append({"name": CAPACITY_2946_SECURITY_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
+
+    # 20. R8 -- shard cap comes from operator configuration.
+    obs20 = admitted_transition.shard_cap if not isinstance(admitted_transition, Rejection) else -1
+    exp20 = CAPACITY_2946_SECURITY_MATRIX[19][1]
+    checks.append({"name": CAPACITY_2946_SECURITY_MATRIX[19][0], "expected": exp20, "observed": obs20, "passed": obs20 == exp20})
+
+    # 21-23. R8 -- each monetary policy field is independently forbidden.
+    currency = decide_transition("e2-standard-2", "e2-standard-2", CapacityPolicy(allowed_transitions=("scale_out",), node_cap=3, read_replica_cap=2, shard_cap=4, cooldown_seconds=300, currency="USD"), catalog_maximum=3)
+    obs21 = _outcome(currency)
+    exp21 = CAPACITY_2946_SECURITY_MATRIX[20][1]
+    checks.append({"name": CAPACITY_2946_SECURITY_MATRIX[20][0], "expected": exp21, "observed": obs21, "passed": obs21 == exp21})
+
+    price = decide_transition("e2-standard-2", "e2-standard-2", CapacityPolicy(allowed_transitions=("scale_out",), node_cap=3, read_replica_cap=2, shard_cap=4, cooldown_seconds=300, price="0.10"), catalog_maximum=3)
+    obs22 = _outcome(price)
+    exp22 = CAPACITY_2946_SECURITY_MATRIX[21][1]
+    checks.append({"name": CAPACITY_2946_SECURITY_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
+
+    cost_ceiling = decide_transition("e2-standard-2", "e2-standard-2", CapacityPolicy(allowed_transitions=("scale_out",), node_cap=3, read_replica_cap=2, shard_cap=4, cooldown_seconds=300, cost_ceiling="100USD"), catalog_maximum=3)
+    obs23 = _outcome(cost_ceiling)
+    exp23 = CAPACITY_2946_SECURITY_MATRIX[22][1]
+    checks.append({"name": CAPACITY_2946_SECURITY_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
 
     return {"case_id": "capacity-2946-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

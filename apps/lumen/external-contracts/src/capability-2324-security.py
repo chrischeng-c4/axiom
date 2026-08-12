@@ -18,7 +18,7 @@ from lumen.capability_ownership import (
     validate_ownership_inventory,
 )
 
-MINIMUM_CHECKS = 15
+MINIMUM_CHECKS = 16
 
 CAPABILITY_2324_SECURITY_MATRIX = (
     ("inventory_mapping_is_immutable", "TypeError"),
@@ -36,6 +36,7 @@ CAPABILITY_2324_SECURITY_MATRIX = (
     ("shared_failure_names_the_failure_owner_field", "failure_owners"),
     ("unbounded_domain_skip_is_refused", "missing_bounded_issue"),
     ("unbounded_domain_skip_names_the_issue_field", "issue"),
+    ("malformed_present_domain_issue_is_refused", "invalid_bounded_issue"),
 )
 
 
@@ -162,6 +163,13 @@ def verify_capability_2324_security() -> dict:
     obs15 = _field_path(missing_issue)
     exp15 = CAPABILITY_2324_SECURITY_MATRIX[14][1]
     checks.append({"name": CAPABILITY_2324_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
+
+    malformed_issue = decide_terminal_result(("Lumen-domain",), "unbounded")
+
+    # 16. AC3/R4 -- a present linkage still requires bounded issue identity.
+    obs16 = _outcome(malformed_issue)
+    exp16 = CAPABILITY_2324_SECURITY_MATRIX[15][1]
+    checks.append({"name": CAPABILITY_2324_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
 
     return {
         "case_id": "capability-2324-security",

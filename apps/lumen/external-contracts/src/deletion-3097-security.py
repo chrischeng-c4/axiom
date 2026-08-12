@@ -10,6 +10,9 @@ credentials out of the pure status projection.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
+
 from lumen.deletion.inventory import ArtifactRecord, ClosedInventory, DeletionBlocked, close_inventory
 from lumen.deletion.plan import plan_exact_destruction
 from lumen.deletion.policy import DataDeletionPolicy, DeletionLifecycle, decide_deletion_start, effective_data_deletion_policy
@@ -28,7 +31,7 @@ DELETION_3097_SECURITY_MATRIX = (
     ("unlabeled_artifact_blocks_closure", "unlabeled"),
     ("contradictory_manifest_artifact_blocks_closure", "contradictory"),
     ("unquiesced_inventory_is_refused", "DeletionBlocked"),
-    ("destruction_targets_have_only_exact_inventory_uids", ("uid-pvc-7", "uid-stage-7", "uid-backup-7", "uid-meta-7")),
+    ("destruction_targets_have_only_exact_inventory_uids", ("uid-stage-7", "uid-pvc-7", "uid-backup-7", "uid-meta-7")),
     ("destruction_target_vocabulary_has_no_prefix_or_namespace_sweep", ()),
     ("unknown_key_not_found_is_blocked", "DeletionBlocked"),
     ("permission_failure_leaves_artifact_nonterminal", "pending"),
@@ -165,9 +168,22 @@ def verify_deletion_3097_security() -> dict:
     exp18 = DELETION_3097_SECURITY_MATRIX[17][1]
     checks.append({"name": DELETION_3097_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
 
-    # 19. R8 -- a blocked projection says why without copying credentials.
-    status = project_deletion_status(_closed(), progress, generation=17, refusal=unknown_key)
-    obs19 = (status.refusal.reason.value, any(word in key.lower() for key in status.__dataclass_fields__ for word in ("credential", "secret", "token", "password", "authorization")))
+    # 19. R8 -- a blocked projection says why without copying an opaque
+    # credential-shaped value that appeared in an exact-but-unknown key.
+    credential_sentinel = "credential-sentinel-3097-never-project"
+    unknown_sentinel_key = apply_artifact_result(
+        progress,
+        ArtifactRecord(
+            uid="uid-unknown-sentinel",
+            role="backup",
+            generation=17,
+            manifest_key=f"backups/{credential_sentinel}",
+        ),
+        ArtifactDeleteResult.NOT_FOUND,
+    )
+    status = project_deletion_status(_closed(), progress, generation=17, refusal=unknown_sentinel_key)
+    serialized_status = json.dumps(asdict(status), default=str, sort_keys=True)
+    obs19 = (status.refusal.reason.value, credential_sentinel in serialized_status)
     exp19 = DELETION_3097_SECURITY_MATRIX[18][1]
     checks.append({"name": DELETION_3097_SECURITY_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
 

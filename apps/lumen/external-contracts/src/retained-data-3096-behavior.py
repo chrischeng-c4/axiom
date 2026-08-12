@@ -59,12 +59,29 @@ def _complete(*, name: str = "backup-17", generation: int = 17) -> BackupSetCand
 def verify_retained_data_3096_behavior() -> dict:
     checks = []
     retained = decide_backupset_retention(
-        (_complete(name="backup-16", generation=16), _complete(name="backup-17"), _complete(name="backup-18", generation=18)),
+        (
+            _complete(name="backup-16", generation=16),
+            _complete(name="backup-17"),
+            _complete(name="backup-18", generation=18),
+            BackupSetCandidate(
+                name="backup-19-incomplete",
+                source_uid="uid-orders-deleted",
+                catalog_generation=19,
+                complete=False,
+                manifests_present=True,
+                artifacts_present=True,
+                compatible=True,
+                corrupt=False,
+                topology_generation=17,
+                format="raft-runtime-v1",
+            ),
+        ),
         RetentionPolicy(daily_complete_limit=2),
     )
 
     # 1-3. R1 -- the retained record preserves lineage and keeps exactly the
-    # policy-selected two most recent complete sets.
+    # policy-selected two most recent complete sets, excluding a newer
+    # incomplete candidate.
     obs1 = retained.retained[1].source_uid if isinstance(retained, AdmittedRetention) else "rejected"
     exp1 = RETAINED_DATA_3096_BEHAVIOR_MATRIX[0][1]
     checks.append({"name": RETAINED_DATA_3096_BEHAVIOR_MATRIX[0][0], "expected": exp1, "observed": obs1, "passed": obs1 == exp1})

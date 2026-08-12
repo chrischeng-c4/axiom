@@ -28,9 +28,9 @@ from lumen.topology.capacity_admission import (
     decide_storage_growth,
     desired_storage_for_member,
 )
-from lumen.topology.capacity_verdict import GrowthPlanned
+from lumen.topology.capacity_verdict import GrowthPlanned, RejectedCapacity
 
-MINIMUM_CHECKS = 8
+MINIMUM_CHECKS = 9
 
 CAPACITY_2949_BEHAVIOR_MATRIX = (
     ("pressure_selects_the_next_configured_geometric_generation", (20, 8)),
@@ -41,11 +41,16 @@ CAPACITY_2949_BEHAVIOR_MATRIX = (
     ("all_required_expansion_proofs_allow_commit", "commit_generation"),
     ("reapplying_a_completed_reconciliation_preserves_target", (20, 8)),
     ("reconciliation_transition_never_lowers_requested_capacity", (20, 8)),
+    ("storage_class_without_expansion_refuses_growth", "expansion_not_permitted"),
 )
 
 
 def _kind(verdict) -> str:
     return verdict.kind.value
+
+
+def _reason(verdict) -> str:
+    return verdict.reason.value if isinstance(verdict, RejectedCapacity) else "growth_planned"
 
 
 def verify_capacity_2949_behavior() -> dict:
@@ -129,5 +134,12 @@ def verify_capacity_2949_behavior() -> dict:
     obs8 = (monotonic.desired_gib, monotonic.generation)
     exp8 = CAPACITY_2949_BEHAVIOR_MATRIX[7][1]
     checks.append({"name": CAPACITY_2949_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
+
+    # 9. R1 -- disk pressure cannot override a StorageClass that has disabled
+    # expansion; this must refuse rather than issue a direct-PVC grow plan.
+    disallowed = decide_storage_growth(intent, pressure, ExpansionPermission(enabled=False), policy)
+    obs9 = _reason(disallowed)
+    exp9 = CAPACITY_2949_BEHAVIOR_MATRIX[8][1]
+    checks.append({"name": CAPACITY_2949_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
     return {"case_id": "capacity-2949-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

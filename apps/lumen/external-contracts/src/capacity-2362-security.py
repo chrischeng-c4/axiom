@@ -15,7 +15,7 @@ from lumen.capacity.spec import CapacityInput, CapacityPolicy, CapacitySignals, 
 from lumen.capacity.status import CapacityStatus
 from lumen.capacity.verdict import ActionKind
 
-MINIMUM_CHECKS = 28
+MINIMUM_CHECKS = 36
 
 CAPACITY_2362_SECURITY_MATRIX = (
     ("incomplete_telemetry_holds", "HOLD"),
@@ -46,6 +46,14 @@ CAPACITY_2362_SECURITY_MATRIX = (
     ("policy_has_no_monetary_or_currency_input", ()),
     ("action_vocabulary_excludes_voters_merges_shrinks_hpa_and_vpa", ("HOLD", "PVC_GROW", "SPLIT", "READ_REPLICA", "MACHINE_UPGRADE", "HIGHMEM_UPGRADE", "READ_REPLICA_REMOVE", "MACHINE_DOWNGRADE")),
     ("mismatched_capacity_generations_are_not_accepted_as_bound", (41, 42, 41)),
+    ("unsafe_cpu_projection_holds_downgrade", "HOLD"),
+    ("declared_but_unreachable_target_is_capacity_blocked", "CapacityBlocked"),
+    ("unreachable_target_returns_no_profile", None),
+    ("scale_in_before_slower_post_convergence_window_holds", "HOLD"),
+    ("scale_in_at_slower_post_convergence_window_downgrades", "MACHINE_DOWNGRADE"),
+    ("scale_in_sustained_window_exceeds_scale_out_window", True),
+    ("equal_capacity_generations_are_generation_bound", True),
+    ("mismatched_capacity_generations_are_not_generation_bound", False),
 )
 
 
@@ -200,8 +208,8 @@ def verify_capacity_2362_security() -> dict:
     exp25 = CAPACITY_2362_SECURITY_MATRIX[24][1]
     checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[24][0], "expected": exp25, "observed": obs25, "passed": obs25 == exp25})
 
-    # 26. R7 -- policy exposes technical controls only, never currency, price, or monetary input.
-    obs26 = tuple(sorted(name for name in CapacityPolicy.__dataclass_fields__ if name in {"currency", "price", "monetary"}))
+    # 26. R7 -- policy exposes technical controls only, never monetary, price, cost, or budget input.
+    obs26 = tuple(sorted(name for name in CapacityPolicy.__dataclass_fields__ if any(term in name.lower() for term in ("currency", "price", "monetary", "cost", "budget"))))
     exp26 = CAPACITY_2362_SECURITY_MATRIX[25][1]
     checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[25][0], "expected": exp26, "observed": obs26, "passed": obs26 == exp26})
 
@@ -215,5 +223,49 @@ def verify_capacity_2362_security() -> dict:
     obs28 = (unbound.recommendation_generation, unbound.action_generation, unbound.status_generation)
     exp28 = CAPACITY_2362_SECURITY_MATRIX[27][1]
     checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[27][0], "expected": exp28, "observed": obs28, "passed": obs28 == exp28})
+
+    # 29. R6/AC3 -- an unsafe projected constraint must produce a hold, never a downgrade action.
+    obs29 = cpu.action.kind
+    exp29 = CAPACITY_2362_SECURITY_MATRIX[28][1]
+    checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[28][0], "expected": exp29, "observed": obs29, "passed": obs29 == exp29})
+
+    unreachable = select_profile(ProfileCatalog(installed=("standard-4", "highmem-4"), availability={"standard-4": ProfileAvailability.AVAILABLE, "highmem-4": ProfileAvailability.AVAILABLE}), TransitionGraph({"standard-2": ("standard-4",)}), "standard-2", "highmem-4")
+
+    # 30. R8/R9 -- an installed and available target without a declared edge is CapacityBlocked.
+    obs30 = unreachable.reason
+    exp30 = CAPACITY_2362_SECURITY_MATRIX[29][1]
+    checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[29][0], "expected": exp30, "observed": obs30, "passed": obs30 == exp30})
+
+    # 31. R8 -- an unreachable request selects no profile, even when the requested profile is installed.
+    obs31 = unreachable.profile
+    exp31 = CAPACITY_2362_SECURITY_MATRIX[30][1]
+    checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[30][0], "expected": exp31, "observed": obs31, "passed": obs31 == exp31})
+
+    # 32. R7/AC2 -- 1,799 seconds of a wholly post-convergence low window remains too early.
+    slow_scale_in_early = decide_capacity(CapacityInput(signals=CapacitySignals(low_utilization=True, window_started_at=901), state=CapacityState(converged_at=900), policy=policy), SyntheticClock(now=2_700))
+    obs32 = slow_scale_in_early.action.kind
+    exp32 = CAPACITY_2362_SECURITY_MATRIX[31][1]
+    checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[31][0], "expected": exp32, "observed": obs32, "passed": obs32 == exp32})
+
+    # 33. R7/AC2 -- the same wholly post-convergence window admits exactly at the 1,800-second boundary.
+    slow_scale_in_ready = decide_capacity(CapacityInput(signals=CapacitySignals(low_utilization=True, window_started_at=901), state=CapacityState(converged_at=900), policy=policy), SyntheticClock(now=2_701))
+    obs33 = slow_scale_in_ready.action.kind
+    exp33 = CAPACITY_2362_SECURITY_MATRIX[32][1]
+    checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[32][0], "expected": exp33, "observed": obs33, "passed": obs33 == exp33})
+
+    # 34. R7 -- the configured slow scale-in window is materially longer than scale-out's 300 seconds.
+    obs34 = policy.scale_in_sustained_seconds > policy.scale_out_sustained_seconds
+    exp34 = CAPACITY_2362_SECURITY_MATRIX[33][1]
+    checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[33][0], "expected": exp34, "observed": obs34, "passed": obs34 == exp34})
+
+    # 35. AC6 -- the status predicate accepts exactly matching recommendation, action, and status generations.
+    obs35 = CapacityStatus(recommendation_generation=41, action_generation=41, status_generation=41).is_generation_bound()
+    exp35 = CAPACITY_2362_SECURITY_MATRIX[34][1]
+    checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[34][0], "expected": exp35, "observed": obs35, "passed": obs35 == exp35})
+
+    # 36. AC6 -- the same predicate rejects a mismatched action generation.
+    obs36 = unbound.is_generation_bound()
+    exp36 = CAPACITY_2362_SECURITY_MATRIX[35][1]
+    checks.append({"name": CAPACITY_2362_SECURITY_MATRIX[35][0], "expected": exp36, "observed": obs36, "passed": obs36 == exp36})
 
     return {"case_id": "capacity-2362-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

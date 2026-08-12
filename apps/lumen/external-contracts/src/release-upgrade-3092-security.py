@@ -31,10 +31,10 @@ from lumen.release_upgrade.spec import (
     RolloutRequest,
     RunEvidenceManifest,
 )
-from lumen.release_upgrade.status import ReleaseStatus, RolloutStatus
+from lumen.release_upgrade.status import RolloutStatus
 from lumen.release_upgrade.verdict import Rejected
 
-MINIMUM_CHECKS = 21
+MINIMUM_CHECKS = 23
 
 RELEASE_UPGRADE_3092_SECURITY_MATRIX = (
     ("equal_generations_are_rejected", "generations_must_differ"),
@@ -51,13 +51,15 @@ RELEASE_UPGRADE_3092_SECURITY_MATRIX = (
     ("every_typed_fault_is_halted_with_old_authority", (("halted", "N-1"), ("halted", "N-1"), ("halted", "N-1"), ("halted", "N-1"), ("halted", "N-1"), ("halted", "N-1"))),
     ("every_typed_fault_exposes_its_exact_blocked_phase", ("incompatible_image", "image_pull_or_readiness", "capacity", "operator_restart", "member_restart", "leader_transfer")),
     ("all_active_operation_kinds_conflict", ("conflict", "conflict", "conflict", "conflict")),
-    ("no_active_operation_admits_one_request", "admitted"),
+    ("no_active_operation_admits_exactly_one_competing_request", ("admitted", "conflict", "conflict", "conflict")),
     ("finalize_without_soak_or_verified_backup_names_each_missing_predicate", (("healthy_soak_required", "healthy_soak"), ("verified_backup_required", "verified_old_compatible_backup"))),
     ("healthy_verified_finalize_neighbour_is_admitted", "admitted"),
     ("finalized_status_refuses_n_minus_one_readiness_and_downgrade_and_preserves_matched_epochs", ("not_ready", "downgrade_rejected", ("public-v1", "durable-v1"))),
     ("multiple_operator_leaders_are_rejected_and_rollback_retains_crd_n", ("multiple_active_reconcilers", "N")),
     ("incomplete_evidence_returns_concrete_missing_keys", ("backup", "cleanup")),
     ("forward_incompatible_backup_is_rejected_with_typed_reason", "backup_not_forward_compatible"),
+    ("malformed_release_metadata_is_rejected_with_typed_field_path", ("rejected", "target.binary_identity")),
+    ("admitted_finalize_produces_finalized_status", "finalized"),
 )
 
 
@@ -90,6 +92,16 @@ def verify_release_upgrade_3092_security() -> dict:
     obs5 = _outcome(distinct); exp5 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[4][1]
     checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[4][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
 
+    # R1 -- incomplete immutable identity metadata is a typed refusal with the
+    # exact field the release producer must repair, rather than a generic fail.
+    malformed = decide_release_metadata(ReleaseMetadataRequest(
+        previous=previous,
+        target=ReleaseIdentity(generation="N", image_digest="sha256:target", binary_identity="", build_identity="build-id"),
+    ))
+    obs22 = ("rejected" if isinstance(malformed, Rejected) else "admitted", malformed.field_path if isinstance(malformed, Rejected) else "")
+    exp22 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[21][1]
+    checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[21][0], "expected": exp22, "observed": obs22, "passed": obs22 == exp22})
+
     # 6-8. R2-R4 -- every ordering rule is exercised with a forbidden explicit
     # request, never through a convenient default.
     rollout = decide_rollout(RolloutRequest(crd_generation="N", operator_from="N-1", operator_to="N", operator_replicas=2, phases=("operator-N-1-to-N", "crd-N")))
@@ -113,11 +125,11 @@ def verify_release_upgrade_3092_security() -> dict:
     obs11 = mismatch.authority if not isinstance(mismatch, Rejected) else "rejected"; exp11 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[10][1]
     checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
 
-    # 12-13. R7/AC2 -- each typed fault exposes a value-level halt result and
-    # a distinct typed phase while retaining old authority.  The first value is
-    # intentionally a string derived by the EC, never a design boolean.
+    # 12-13. R7/AC2 -- each typed fault must itself derive a value-level halt
+    # result and exact typed phase while retaining old authority.  Supplying no
+    # blocked phase prevents the fixture from echoing an EC-provided value.
     faults = ("incompatible_image", "image_pull_or_readiness", "capacity", "operator_restart", "member_restart", "leader_transfer")
-    statuses = tuple(RolloutStatus(authoritative_generation="N-1", fault=fault, blocked_phase=fault) for fault in faults)
+    statuses = tuple(RolloutStatus(authoritative_generation="N-1", fault=fault) for fault in faults)
     obs12 = tuple(("halted" if status.is_halted() else "not_halted", status.authoritative_generation) for status in statuses)
     exp12 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[11][1]
     checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
@@ -125,13 +137,21 @@ def verify_release_upgrade_3092_security() -> dict:
     exp13 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[12][1]
     checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
 
-    # 14-15. R10 -- each conflict kind is fenced at the lifecycle entry point;
-    # with no active operation exactly one explicit request is admitted.
+    # 14-15. R10 -- each conflict kind is fenced at the lifecycle entry point.
+    # Competing requests begin from the same no-active state; the first admitted
+    # request becomes active before each remaining contender is decided.
     conflicts = tuple(_outcome(decide_lifecycle_operation(LifecycleOperationRequest(kind=kind, active_operation="upgrade"))) for kind in ("capacity", "split", "restore", "delete"))
     obs14 = conflicts; exp14 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[13][1]
     checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
-    open_request = decide_lifecycle_operation(LifecycleOperationRequest(kind="restore", active_operation=None))
-    obs15 = _outcome(open_request); exp15 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[14][1]
+    active_operation = None
+    contenders = ("capacity", "split", "restore", "delete")
+    competing_outcomes = []
+    for kind in contenders:
+        contender = decide_lifecycle_operation(LifecycleOperationRequest(kind=kind, active_operation=active_operation))
+        competing_outcomes.append(_outcome(contender))
+        if not isinstance(contender, Rejected):
+            active_operation = kind
+    obs15 = tuple(competing_outcomes); exp15 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[14][1]
     checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     # 16-17. R8/AC5 -- each prerequisite has an independent typed refusal;
@@ -147,9 +167,16 @@ def verify_release_upgrade_3092_security() -> dict:
     obs17 = _outcome(finalize); exp17 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[16][1]
     checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
 
-    # 18. AC4/R8 -- after finalization an N-1 member cannot be made ready or
-    # public/durable epochs remain a matched, inspectable pair.
-    status = ReleaseStatus(finalized=True, public_epoch="public-v1", durable_epoch="durable-v1")
+    # R8/AC4 -- finalization is not merely admitted: the admitted verdict
+    # produces the terminal state whose public downgrade boundary is enforced.
+    finalized_status = finalize.status if not isinstance(finalize, Rejected) else None
+    obs23 = "finalized" if finalized_status is not None and finalized_status.finalized else "not_finalized"
+    exp23 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[22][1]
+    checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[22][0], "expected": exp23, "observed": obs23, "passed": obs23 == exp23})
+
+    # 18. AC4/R8 -- the status produced by finalization cannot make an N-1
+    # member ready or permit downgrade, and exposes matched public/durable epochs.
+    status = finalized_status
     obs18 = ("ready" if status.can_ready("N-1") else "not_ready", "downgrade_allowed" if status.can_downgrade() else "downgrade_rejected", (status.public_epoch, status.durable_epoch))
     exp18 = RELEASE_UPGRADE_3092_SECURITY_MATRIX[17][1]
     checks.append({"name": RELEASE_UPGRADE_3092_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})

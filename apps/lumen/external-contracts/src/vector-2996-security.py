@@ -15,7 +15,7 @@ from lumen.vector.determinism import (
 )
 from lumen.vector.evidence import failure_context
 
-MINIMUM_CHECKS = 8
+MINIMUM_CHECKS = 9
 
 VECTOR_2996_SECURITY_MATRIX = (
     ("filtered_oracle_never_admits_the_excluded_global_nearest_id", ("eligible-a", "eligible-b", "eligible-c", "eligible-d", "eligible-e")),
@@ -26,6 +26,7 @@ VECTOR_2996_SECURITY_MATRIX = (
     ("excluded_id_candidate_is_a_named_filtered_mismatch", "mismatch"),
     ("excluded_id_mismatch_names_actual_ids", "actual_ids"),
     ("failure_context_does_not_drop_empty_supplied_parameter_fields", ((), ())),
+    ("failure_context_retains_zero_as_the_supplied_seed", 0),
 )
 
 
@@ -91,5 +92,11 @@ def verify_vector_2996_security() -> dict:
     obs8 = (tuple(sorted(empty_context.construction_parameters.items())), tuple(sorted(empty_context.search_parameters.items())))
     exp8 = VECTOR_2996_SECURITY_MATRIX[7][1]
     checks.append({"name": VECTOR_2996_SECURITY_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
+
+    # 9. R5 -- independently exercise the supplied seed with a value distinct
+    # from the behavior fixture, so evidence cannot hard-code its seed.
+    obs9 = empty_context.seed
+    exp9 = VECTOR_2996_SECURITY_MATRIX[8][1]
+    checks.append({"name": VECTOR_2996_SECURITY_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
     return {"case_id": "vector-2996-security", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}

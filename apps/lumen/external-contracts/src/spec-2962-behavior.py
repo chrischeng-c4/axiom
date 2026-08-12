@@ -33,7 +33,7 @@ from lumen.topology.backup.spec import (
 from lumen.topology.backup.status import project_backup_status
 from lumen.topology.backup.verdict import Rejection
 
-MINIMUM_CHECKS = 16
+MINIMUM_CHECKS = 18
 
 SPEC_2962_BEHAVIOR_MATRIX = (
     ("complete_metadata_is_admitted", "admitted"),
@@ -48,7 +48,9 @@ SPEC_2962_BEHAVIOR_MATRIX = (
     ("duplicate_valid_apply_is_idempotent", "catalog_applied"),
     ("destination_default_schedule_is_daily", "daily"),
     ("destination_default_retains_two_successful_complete_sets", 2),
-    ("explicit_operator_policy_is_preserved", "weekly"),
+    ("explicit_operator_policy_is_preserved", ("weekly", 5)),
+    ("identical_default_policy_inputs_are_deterministic", (("daily", 2), ("daily", 2))),
+    ("identical_explicit_policy_inputs_are_deterministic", (("weekly", 5), ("weekly", 5))),
     ("verified_success_exposes_manifest_identifier", "manifest-7"),
     ("verified_success_exposes_manifest_time", "2026-08-12T00:00:00Z"),
     ("verified_success_exposes_manifest_generation", "catalog-gen-7"),
@@ -156,10 +158,30 @@ def verify_spec_2962_behavior() -> dict:
 
     explicit_policy = derive_schedule_policy(destination="s3://lumen-backups", operator_policy={"schedule": "weekly", "successful_complete_set_retention": 5})
 
-    # 13. R7/AC5 -- an operator selection replaces the defaults without rewriting it.
-    obs13 = explicit_policy.schedule
+    # 13. R7/AC5 -- an operator selection replaces both defaults without rewriting either value.
+    obs13 = (explicit_policy.schedule, explicit_policy.successful_complete_set_retention)
     exp13 = SPEC_2962_BEHAVIOR_MATRIX[12][1]
     checks.append({"name": SPEC_2962_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+
+    repeated_default_policy = derive_schedule_policy(destination="s3://lumen-backups", operator_policy=None)
+
+    # 14. AC5 -- the full default policy is deterministic for identical destination inputs.
+    obs14 = (
+        (default_policy.schedule, default_policy.successful_complete_set_retention),
+        (repeated_default_policy.schedule, repeated_default_policy.successful_complete_set_retention),
+    )
+    exp14 = SPEC_2962_BEHAVIOR_MATRIX[13][1]
+    checks.append({"name": SPEC_2962_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    repeated_explicit_policy = derive_schedule_policy(destination="s3://lumen-backups", operator_policy={"schedule": "weekly", "successful_complete_set_retention": 5})
+
+    # 15. AC5 -- the full explicit override is also deterministic for identical inputs.
+    obs15 = (
+        (explicit_policy.schedule, explicit_policy.successful_complete_set_retention),
+        (repeated_explicit_policy.schedule, repeated_explicit_policy.successful_complete_set_retention),
+    )
+    exp15 = SPEC_2962_BEHAVIOR_MATRIX[14][1]
+    checks.append({"name": SPEC_2962_BEHAVIOR_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     truthful_status = project_backup_status(
         verified_manifest=BackupManifest(
@@ -171,20 +193,20 @@ def verify_spec_2962_behavior() -> dict:
         job_outcome=JobOutcome(configured_schedule="daily", succeeded=True),
     )
 
-    # 14. R8 -- success exposes the identifier of the verified manifest, not a schedule.
-    obs14 = truthful_status.manifest_identifier
-    exp14 = SPEC_2962_BEHAVIOR_MATRIX[13][1]
-    checks.append({"name": SPEC_2962_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
-
-    # 15. R8 -- it separately exposes when that exact manifest was verified.
-    obs15 = truthful_status.manifest_time
-    exp15 = SPEC_2962_BEHAVIOR_MATRIX[14][1]
-    checks.append({"name": SPEC_2962_BEHAVIOR_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
-
-    # 16. R8 -- it also exposes the generation that makes the status meaningful.
-    obs16 = truthful_status.catalog_generation
+    # 16. R8 -- success exposes the identifier of the verified manifest, not a schedule.
+    obs16 = truthful_status.manifest_identifier
     exp16 = SPEC_2962_BEHAVIOR_MATRIX[15][1]
     checks.append({"name": SPEC_2962_BEHAVIOR_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
+
+    # 17. R8 -- it separately exposes when that exact manifest was verified.
+    obs17 = truthful_status.manifest_time
+    exp17 = SPEC_2962_BEHAVIOR_MATRIX[16][1]
+    checks.append({"name": SPEC_2962_BEHAVIOR_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+
+    # 18. R8 -- it also exposes the generation that makes the status meaningful.
+    obs18 = truthful_status.catalog_generation
+    exp18 = SPEC_2962_BEHAVIOR_MATRIX[17][1]
+    checks.append({"name": SPEC_2962_BEHAVIOR_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
 
     return {
         "case_id": "spec-2962-behavior",

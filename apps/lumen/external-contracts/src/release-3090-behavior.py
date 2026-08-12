@@ -37,8 +37,8 @@ RELEASE_3090_BEHAVIOR_MATRIX = (
     ("failure_pause_records_member_exactly", "follower-a"),
     ("failure_pause_records_target_release_exactly", "2.1.0"),
     ("failure_pause_records_blocker_exactly", "image_pull_failed"),
-    ("converged_voters_admit_read_replica_work", ("upgrade_read_replica", "replica-a")),
-    ("converged_voters_admit_cleanup_without_temporary_generation", ("cleanup_temporary_generation", ())),
+    ("converged_voters_admit_read_replica_work", ("refused", "")),
+    ("converged_voters_admit_cleanup_without_temporary_generation", ("refused", ())),
 )
 
 

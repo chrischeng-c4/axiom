@@ -16,19 +16,23 @@ from lumen.topology.spec import TopologySpec
 from lumen.topology.status import TopologyStatus
 from lumen.topology.verdict import AdmittedTopology, Rejection
 
-MINIMUM_CHECKS = 11
+MINIMUM_CHECKS = 15
 
 TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX = (
     ("default_shard_minimum_is_one", 1),
     ("default_voter_count_is_one", 1),
     ("default_read_replica_count_is_zero", 0),
     ("default_spec_is_admitted", "admitted"),
+    ("default_admission_preserves_the_1x1_topology", (1, 1, 0)),
     ("three_voters_is_admitted", "admitted"),
     ("admitted_shard_count_follows_shard_minimum", 4),
     ("read_replicas_are_excluded_from_the_voter_count", 3),
     ("admitted_topology_carries_the_read_replica_count", 5),
     ("status_separates_policy_current_target_and_generations", True),
     ("uncommitted_render_is_not_converged", False),
+    ("committed_matching_status_is_converged", True),
+    ("unequal_generations_are_not_converged", False),
+    ("unequal_current_and_target_topologies_are_not_converged", False),
     ("three_voters_survive_one_unexpected_node_loss", "survives_one_unexpected_node_loss"),
 )
 
@@ -60,46 +64,56 @@ def verify_topology_contract_behavior() -> dict:
     exp4 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[3][1]
     checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[3][0], "expected": exp4, "observed": obs4, "passed": obs4 == exp4})
 
-    # 5. R3 — three voters is the other user-facing availability selection.
-    ha_spec = TopologySpec(shard_minimum=1, voters=3, read_replicas=0)
-    verdict_ha = decide_topology_spec(ha_spec)
-    obs5 = verdict_ha.reason.value if isinstance(verdict_ha, Rejection) else "admitted"
+    # 5. R1 — admission preserves the canonical physical default rather than
+    #    merely accepting the input and substituting another topology.
+    obs5 = (
+        (verdict_default.shard_count, verdict_default.voters, verdict_default.read_replicas)
+        if isinstance(verdict_default, AdmittedTopology)
+        else None
+    )
     exp5 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[4][1]
     checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[4][0], "expected": exp5, "observed": obs5, "passed": obs5 == exp5})
 
-    # 6. R4 — the user sets a minimum shard count and the admitted topology
+    # 6. R3 — three voters is the other user-facing availability selection.
+    ha_spec = TopologySpec(shard_minimum=1, voters=3, read_replicas=0)
+    verdict_ha = decide_topology_spec(ha_spec)
+    obs5 = verdict_ha.reason.value if isinstance(verdict_ha, Rejection) else "admitted"
+    exp6 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[5][1]
+    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[5][0], "expected": exp6, "observed": obs5, "passed": obs5 == exp6})
+
+    # 7. R4 — the user sets a minimum shard count and the admitted topology
     #    honours it rather than substituting a controller-chosen number.
     wide_spec = TopologySpec(shard_minimum=4, voters=3, read_replicas=0)
     admitted_wide = decide_topology_spec(wide_spec)
-    obs6 = admitted_wide.shard_count if isinstance(admitted_wide, AdmittedTopology) else -1
-    exp6 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[5][1]
-    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[5][0], "expected": exp6, "observed": obs6, "passed": obs6 == exp6})
+    obs7 = admitted_wide.shard_count if isinstance(admitted_wide, AdmittedTopology) else -1
+    exp7 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[6][1]
+    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
 
-    # 7. R3 — a non-voting role. Five read replicas must not become voters,
+    # 8. R3 — a non-voting role. Five read replicas must not become voters,
     #    which is the reading that would silently turn a 3-voter quorum into an
     #    8-member one and change what a majority means.
     replica_spec = TopologySpec(shard_minimum=1, voters=3, read_replicas=5)
     admitted_replicas = decide_topology_spec(replica_spec)
-    obs7 = admitted_replicas.voters if isinstance(admitted_replicas, AdmittedTopology) else -1
-    exp7 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[6][1]
-    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[6][0], "expected": exp7, "observed": obs7, "passed": obs7 == exp7})
-
-    # 8. R3 — and they are still carried, not discarded, by the admitted shape.
-    obs8 = admitted_replicas.read_replicas if isinstance(admitted_replicas, AdmittedTopology) else -1
+    obs8 = admitted_replicas.voters if isinstance(admitted_replicas, AdmittedTopology) else -1
     exp8 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[7][1]
     checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[7][0], "expected": exp8, "observed": obs8, "passed": obs8 == exp8})
 
-    # 9. R7 — the four status compartments are distinct named fields. A status
-    #    that folds policy into current cannot express "asked for, not yet
-    #    running", which is the state the whole epic turns on.
-    status_fields = frozenset(TopologyStatus.__dataclass_fields__)
-    obs9 = status_fields.issuperset(
-        {"policy", "current", "target", "observed_generation", "converged_generation"}
-    )
+    # 9. R3 — and they are still carried, not discarded, by the admitted shape.
+    obs9 = admitted_replicas.read_replicas if isinstance(admitted_replicas, AdmittedTopology) else -1
     exp9 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[8][1]
     checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[8][0], "expected": exp9, "observed": obs9, "passed": obs9 == exp9})
 
-    # 10. R7 — an uncommitted resource render is never converged serving state,
+    # 10. R7 — the four status compartments are distinct named fields. A status
+    #    that folds policy into current cannot express "asked for, not yet
+    #    running", which is the state the whole epic turns on.
+    status_fields = frozenset(TopologyStatus.__dataclass_fields__)
+    obs10 = status_fields.issuperset(
+        {"policy", "current", "target", "observed_generation", "converged_generation"}
+    )
+    exp10 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[9][1]
+    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
+
+    # 11. R7 — an uncommitted resource render is never converged serving state,
     #     even when both generations already agree.
     pending = TopologyStatus(
         policy=default_spec,
@@ -109,19 +123,61 @@ def verify_topology_contract_behavior() -> dict:
         converged_generation=7,
         render_committed=False,
     )
-    obs10 = pending.is_converged()
-    exp10 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[9][1]
-    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[9][0], "expected": exp10, "observed": obs10, "passed": obs10 == exp10})
-
-    # 11. R5 — three voters is the availability option, and the design says so
-    #     in its own vocabulary rather than leaving the promise to the README.
-    obs11 = availability_promise(3)
+    obs11 = pending.is_converged()
     exp11 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[10][1]
     checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[10][0], "expected": exp11, "observed": obs11, "passed": obs11 == exp11})
+
+    # 12. R7 — the full committed, generation-equal, topology-equal state is
+    #     converged; this prevents an always-false implementation from passing.
+    converged = TopologyStatus(
+        policy=default_spec,
+        current=AdmittedTopology(shard_count=1, voters=1, read_replicas=0),
+        target=AdmittedTopology(shard_count=1, voters=1, read_replicas=0),
+        observed_generation=7,
+        converged_generation=7,
+        render_committed=True,
+    )
+    obs12 = converged.is_converged()
+    exp12 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[11][1]
+    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    # 13. R7 — a committed render with stale observed generation is not yet
+    #     converged serving state.
+    unequal_generations = TopologyStatus(
+        policy=default_spec,
+        current=AdmittedTopology(shard_count=1, voters=1, read_replicas=0),
+        target=AdmittedTopology(shard_count=1, voters=1, read_replicas=0),
+        observed_generation=6,
+        converged_generation=7,
+        render_committed=True,
+    )
+    obs13 = unequal_generations.is_converged()
+    exp13 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[12][1]
+    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+
+    # 14. R7 — a committed, generation-equal render remains unconverged while
+    #     the admitted current and target topologies differ.
+    unequal_topologies = TopologyStatus(
+        policy=default_spec,
+        current=AdmittedTopology(shard_count=1, voters=1, read_replicas=0),
+        target=AdmittedTopology(shard_count=1, voters=3, read_replicas=0),
+        observed_generation=7,
+        converged_generation=7,
+        render_committed=True,
+    )
+    obs14 = unequal_topologies.is_converged()
+    exp14 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[13][1]
+    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    # 15. R5 — three voters is the availability option, and the design says so
+    #     in its own vocabulary rather than leaving the promise to the README.
+    obs15 = availability_promise(3)
+    exp15 = TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[14][1]
+    checks.append({"name": TOPOLOGY_CONTRACT_BEHAVIOR_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     return {
         "case_id": "topology-contract-behavior",
         "minimum_checks": MINIMUM_CHECKS,
         "checks": checks,
-        "passed": all(c["passed"] for c in checks) and len(checks) >= MINIMUM_CHECKS,
+        "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS,
     }

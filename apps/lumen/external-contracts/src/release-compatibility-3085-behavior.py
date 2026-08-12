@@ -26,7 +26,7 @@ from lumen.release_compatibility.status import (
 )
 from lumen.release_compatibility.verdict import Rejection
 
-MINIMUM_CHECKS = 18
+MINIMUM_CHECKS = 19
 
 RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX = (
     ("descriptor_preserves_binary_version", "2.1.0"),
@@ -46,6 +46,7 @@ RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX = (
     ("status_retains_format_fact", ((1,), (1,))),
     ("adjacent_overlapping_releases_are_admitted", "admitted"),
     ("mixed_release_operations_are_the_intersection", ("search",)),
+    ("mixed_release_response_fields_are_the_intersection", ("hits",)),
     ("one_recorded_digest_for_every_member_is_admitted", "admitted"),
 )
 
@@ -159,9 +160,12 @@ def verify_release_compatibility_3085_behavior() -> dict:
     mixed = decide_mixed_release_contract((previous, descriptor))
     obs17 = mixed.advertised_operations; exp17 = RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX[16][1]
     checks.append({"name": RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
-    # 18. R7 -- one immutable digest across staged/replacement members admits.
-    digest = decide_target_digest("sha256:1111", ("sha256:1111", "sha256:1111"))
-    obs18 = _outcome(digest); exp18 = RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX[17][1]
+    # 18. R6 -- every admitted member limits advertised response fields too.
+    obs18 = mixed.advertised_response_fields; exp18 = RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX[17][1]
     checks.append({"name": RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+    # 19. R7 -- one immutable digest across staged/replacement members admits.
+    digest = decide_target_digest("sha256:1111", ("sha256:1111", "sha256:1111"))
+    obs19 = _outcome(digest); exp19 = RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX[18][1]
+    checks.append({"name": RELEASE_COMPATIBILITY_3085_BEHAVIOR_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
 
     return {"case_id": "release-compatibility-3085-behavior", "minimum_checks": MINIMUM_CHECKS, "checks": checks, "passed": all(c["passed"] for c in checks) and len(checks) == MINIMUM_CHECKS}
