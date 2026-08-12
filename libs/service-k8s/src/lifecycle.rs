@@ -4,7 +4,8 @@
 //! `terminationGracePeriodSeconds` allocated to it. The budget includes
 //! an in-process runtime deadline (`runtime_deadline_seconds`), a trailing
 //! SIGKILL reserve (`sigkill_reserve_seconds`), application-declared minimum
-//! hook duration (`min_hook_duration_seconds`), and probe timing definitions.
+//! hook duration (`min_hook_duration_seconds`), an optional preStop drain cost
+//! (`prestop_cost_seconds`), and probe timing definitions.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub const HEALTH_ENDPOINT_PATH: &str = "/healthz";
 /// Standard HTTP path for readiness and startup probes.
 pub const READY_ENDPOINT_PATH: &str = "/readyz";
+/// Standard HTTP path for preStop drain triggers.
+pub const DRAIN_ENDPOINT_PATH: &str = "/drain";
 
 /// Standard environment variable name for the in-process runtime shutdown deadline (seconds).
 pub const ENV_SERVICE_RUNTIME_DEADLINE_SECONDS: &str = "SERVICE_RUNTIME_DEADLINE_SECONDS";
@@ -48,6 +51,8 @@ pub struct LifecyclePolicy {
     pub runtime_deadline_seconds: u64,
     pub sigkill_reserve_seconds: u64,
     pub min_hook_duration_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prestop_cost_seconds: Option<u64>,
     #[serde(default)]
     pub probe_timing: ProbeTiming,
 }
@@ -59,6 +64,7 @@ impl Default for LifecyclePolicy {
             runtime_deadline_seconds: 25,
             sigkill_reserve_seconds: 5,
             min_hook_duration_seconds: 1,
+            prestop_cost_seconds: None,
             probe_timing: ProbeTiming::default(),
         }
     }
@@ -69,7 +75,7 @@ impl Default for LifecyclePolicy {
 /// Constructed only via [`LifecyclePolicy::validate`] or [`TryFrom`].
 /// Guarantees that:
 /// - `total_grace_period_seconds > 0`
-/// - `runtime_deadline_seconds + sigkill_reserve_seconds <= total_grace_period_seconds`
+/// - `runtime_deadline_seconds + sigkill_reserve_seconds + prestop_cost <= total_grace_period_seconds`
 /// - `runtime_deadline_seconds >= min_hook_duration_seconds`
 /// - Addition does not overflow `u64`
 /// - Probe timing fields (period, timeout, failure, success) are all >= 1
@@ -79,6 +85,7 @@ pub struct TerminationBudget {
     runtime_deadline_seconds: u64,
     sigkill_reserve_seconds: u64,
     min_hook_duration_seconds: u64,
+    prestop_cost_seconds: Option<u64>,
     probe_timing: ProbeTiming,
 }
 
@@ -99,6 +106,10 @@ impl TerminationBudget {
         self.min_hook_duration_seconds
     }
 
+    pub fn prestop_cost_seconds(&self) -> Option<u64> {
+        self.prestop_cost_seconds
+    }
+
     pub fn probe_timing(&self) -> ProbeTiming {
         self.probe_timing
     }
@@ -109,6 +120,7 @@ impl TerminationBudget {
             runtime_deadline_seconds: self.runtime_deadline_seconds,
             sigkill_reserve_seconds: self.sigkill_reserve_seconds,
             min_hook_duration_seconds: self.min_hook_duration_seconds,
+            prestop_cost_seconds: self.prestop_cost_seconds,
             probe_timing: self.probe_timing,
         }
     }
@@ -161,12 +173,13 @@ pub enum LifecyclePolicyError {
     #[error("total_grace_period_seconds must be greater than zero")]
     ZeroTotalGrace,
     #[error(
-        "runtime deadline ({runtime_deadline_seconds}s) + SIGKILL reserve ({sigkill_reserve_seconds}s) exceeds total grace period ({total_grace_period_seconds}s)"
+        "runtime deadline ({runtime_deadline_seconds}s) + SIGKILL reserve ({sigkill_reserve_seconds}s) + preStop cost ({prestop_cost_seconds}s) exceeds total grace period ({total_grace_period_seconds}s)"
     )]
     BudgetExceedsTotal {
         total_grace_period_seconds: u64,
         runtime_deadline_seconds: u64,
         sigkill_reserve_seconds: u64,
+        prestop_cost_seconds: u64,
     },
     #[error(
         "runtime deadline ({runtime_deadline_seconds}s) is below application minimum hook duration ({min_hook_duration_seconds}s)"
@@ -194,9 +207,12 @@ impl LifecyclePolicy {
             return Err(LifecyclePolicyError::ZeroTotalGrace);
         }
 
+        let prestop_cost = self.prestop_cost_seconds.unwrap_or(0);
+
         let required = self
             .runtime_deadline_seconds
             .checked_add(self.sigkill_reserve_seconds)
+            .and_then(|s| s.checked_add(prestop_cost))
             .ok_or(LifecyclePolicyError::Overflow)?;
 
         if required > self.total_grace_period_seconds {
@@ -204,6 +220,7 @@ impl LifecyclePolicy {
                 total_grace_period_seconds: self.total_grace_period_seconds,
                 runtime_deadline_seconds: self.runtime_deadline_seconds,
                 sigkill_reserve_seconds: self.sigkill_reserve_seconds,
+                prestop_cost_seconds: prestop_cost,
             });
         }
 
@@ -232,6 +249,7 @@ impl LifecyclePolicy {
             runtime_deadline_seconds: self.runtime_deadline_seconds,
             sigkill_reserve_seconds: self.sigkill_reserve_seconds,
             min_hook_duration_seconds: self.min_hook_duration_seconds,
+            prestop_cost_seconds: self.prestop_cost_seconds,
             probe_timing: self.probe_timing,
         })
     }

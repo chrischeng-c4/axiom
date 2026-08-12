@@ -8,7 +8,8 @@
 use serde_json::{json, Value};
 
 use crate::lifecycle::{
-    TerminationBudget, ENV_SERVICE_RUNTIME_DEADLINE_SECONDS, ENV_SERVICE_SIGKILL_RESERVE_SECONDS,
+    TerminationBudget, DRAIN_ENDPOINT_PATH, ENV_SERVICE_RUNTIME_DEADLINE_SECONDS,
+    ENV_SERVICE_SIGKILL_RESERVE_SECONDS,
 };
 
 pub use super::{
@@ -46,12 +47,23 @@ pub struct ServicePodTemplate<'a> {
 }
 
 impl ServicePodTemplate<'_> {
-    /// Apply probes, environment variables, and termination grace period derived from a validated [`TerminationBudget`].
+    /// Apply probes, preStop lifecycle hook, environment variables, and termination grace period derived from a validated [`TerminationBudget`].
     pub fn with_termination_budget(mut self, budget: &TerminationBudget, probe_port: u16) -> Self {
         self.liveness_probe = Some(budget.render_liveness_probe(probe_port));
         self.readiness_probe = Some(budget.render_readiness_probe(probe_port));
         self.startup_probe = Some(budget.render_startup_probe(probe_port));
         self.termination_grace_period_seconds = Some(budget.total_grace_period_seconds());
+
+        if budget.prestop_cost_seconds().is_some() {
+            self.lifecycle = Some(json!({
+                "preStop": {
+                    "httpGet": {
+                        "path": DRAIN_ENDPOINT_PATH,
+                        "port": probe_port,
+                    }
+                }
+            }));
+        }
 
         let deadline_val = budget.runtime_deadline_seconds().to_string();
         let reserve_val = budget.sigkill_reserve_seconds().to_string();

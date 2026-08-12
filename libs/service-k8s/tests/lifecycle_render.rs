@@ -53,6 +53,7 @@ fn policy_shape_and_serde_round_trip() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming {
             period_seconds: 10,
             timeout_seconds: 2,
@@ -94,6 +95,7 @@ fn budget_validation_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m1_budget = m1_policy.validate().expect("Measurement 1 must succeed");
@@ -106,6 +108,7 @@ fn budget_validation_measurements() {
         runtime_deadline_seconds: 55,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m2_err = m2_policy
@@ -115,6 +118,7 @@ fn budget_validation_measurements() {
         total_grace_period_seconds: 60,
         runtime_deadline_seconds: 55,
         sigkill_reserve_seconds: 10,
+        prestop_cost_seconds: 0,
     };
     assert_eq!(m2_err, m2_expected);
     println!("Row 2 reason: {}", m2_err);
@@ -125,6 +129,7 @@ fn budget_validation_measurements() {
         runtime_deadline_seconds: 3,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m3_err = m3_policy
@@ -147,6 +152,7 @@ fn budget_validation_measurements() {
         runtime_deadline_seconds: u64::MAX,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m4_err = m4_policy
@@ -161,6 +167,7 @@ fn budget_validation_measurements() {
         runtime_deadline_seconds: 0,
         sigkill_reserve_seconds: 0,
         min_hook_duration_seconds: 0,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m5_err = m5_policy
@@ -180,6 +187,7 @@ fn probe_derivation_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming {
             period_seconds: 7,
             timeout_seconds: 3,
@@ -250,6 +258,7 @@ fn probe_derivation_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming {
             period_seconds: 7,
             timeout_seconds: 3,
@@ -284,6 +293,7 @@ fn probe_derivation_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming {
             period_seconds: 1,
             timeout_seconds: 0,
@@ -323,6 +333,7 @@ fn probe_derivation_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming {
             period_seconds: 1,
             timeout_seconds: 1,
@@ -362,6 +373,7 @@ fn probe_derivation_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming {
             period_seconds: 1,
             timeout_seconds: 1,
@@ -401,6 +413,7 @@ fn probe_derivation_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming {
             period_seconds: 0,
             timeout_seconds: 0,
@@ -426,6 +439,7 @@ fn probe_derivation_measurements() {
         total_grace_period_seconds: 60,
         runtime_deadline_seconds: 55,
         sigkill_reserve_seconds: 10,
+        prestop_cost_seconds: 0,
     };
     let min_hook_err = LifecyclePolicyError::RuntimeBelowMinimumHook {
         runtime_deadline_seconds: 3,
@@ -448,6 +462,7 @@ fn probe_derivation_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming {
             period_seconds: 1,
             timeout_seconds: 1,
@@ -484,6 +499,7 @@ fn probe_derivation_measurements() {
         runtime_deadline_seconds: 50,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m5_boundary_budget = m5_boundary_policy
@@ -528,6 +544,7 @@ fn runtime_inputs_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 10,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m1_budget = m1_policy.validate().expect("m1 policy must validate");
@@ -610,6 +627,7 @@ fn runtime_inputs_measurements() {
         runtime_deadline_seconds: 90,
         sigkill_reserve_seconds: 25,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m4_budget = m4_policy.validate().expect("m4 policy must validate");
@@ -653,6 +671,7 @@ fn runtime_inputs_measurements() {
         runtime_deadline_seconds: 45,
         sigkill_reserve_seconds: 0,
         min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
         probe_timing: ProbeTiming::default(),
     };
     let m6_budget = m6_policy.validate().expect("m6 policy must validate");
@@ -670,4 +689,178 @@ fn runtime_inputs_measurements() {
         .collect();
     assert_eq!(reserve_entries6.len(), 1);
     assert_eq!(reserve_entries6[0]["value"], "0");
+}
+
+#[test]
+fn prestop_safety_measurements() {
+    let cx = test_cx();
+
+    // Row 1: Policy declaring no preStop trigger (total 60, runtime 45, reserve 10, min hook 5)
+    let r1_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming::default(),
+    };
+    let r1_budget = r1_policy.validate().expect("r1 policy must validate");
+    let pod1 = test_pod_template(&cx)
+        .with_termination_budget(&r1_budget, 9080)
+        .render();
+    let container1 = &pod1["spec"]["containers"][0];
+    let container1_str = serde_json::to_string(container1).unwrap();
+
+    println!("Row 1 container: {}", container1_str);
+
+    assert!(container1["lifecycle"].is_null());
+    assert!(!container1_str.contains("preStop"));
+    assert!(!container1_str.contains("exec"));
+    assert!(!container1_str.contains("sleep"));
+
+    // Row 2 (negative control): preStop cost 12, total 60, runtime 45, reserve 8, min hook 5
+    // 45 + 8 + 12 = 65 > 60 -> fails
+    let r2_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 8,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: Some(12),
+        probe_timing: ProbeTiming::default(),
+    };
+    let r2_err = r2_policy
+        .validate()
+        .expect_err("r2 policy with prestop cost 12 must fail");
+    let r2_err_str = r2_err.to_string();
+
+    println!("Row 2 error message: {}", r2_err_str);
+
+    assert!(r2_err_str.contains("60"));
+    assert!(r2_err_str.contains("12"));
+    assert!(r2_err_str.contains("45"));
+    assert!(r2_err_str.contains("8"));
+
+    // Paired positive control: same policy with prestop cost removed validates
+    let r2_paired_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 8,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming::default(),
+    };
+    let r2_paired_budget = r2_paired_policy
+        .validate()
+        .expect("paired policy without prestop cost must validate");
+    assert_eq!(r2_paired_budget.runtime_deadline_seconds(), 45);
+
+    // Row 3: parts sum exactly to total (preStop 3, runtime 25, reserve 2, total 30, min hook 5)
+    // 25 + 2 + 3 = 30 == 30
+    let r3_policy = LifecyclePolicy {
+        total_grace_period_seconds: 30,
+        runtime_deadline_seconds: 25,
+        sigkill_reserve_seconds: 2,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: Some(3),
+        probe_timing: ProbeTiming::default(),
+    };
+    let r3_budget = r3_policy
+        .validate()
+        .expect("r3 policy with exact equality sum 30 must validate");
+    assert_eq!(r3_budget.prestop_cost_seconds(), Some(3));
+
+    // Row 4: preStop cost 5 (total 60, runtime 45, reserve 10, min hook 5) at probe port 8443
+    let r4_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: Some(5),
+        probe_timing: ProbeTiming::default(),
+    };
+    let r4_budget = r4_policy.validate().expect("r4 policy must validate");
+    let pod4 = test_pod_template(&cx)
+        .with_termination_budget(&r4_budget, 8443)
+        .render();
+    let container4 = &pod4["spec"]["containers"][0];
+
+    println!(
+        "Row 4 container: {}",
+        serde_json::to_string_pretty(container4).unwrap()
+    );
+
+    assert_eq!(
+        container4["lifecycle"]["preStop"]["httpGet"]["path"],
+        "/drain"
+    );
+    assert_eq!(container4["lifecycle"]["preStop"]["httpGet"]["port"], 8443);
+    assert!(container4["lifecycle"]["preStop"]["exec"].is_null());
+    assert_eq!(container4["livenessProbe"]["httpGet"]["port"], 8443);
+
+    // Row 5 (negative control): template initially carries exec sleep 30 hook
+    let mut pod5_template = test_pod_template(&cx);
+    pod5_template.lifecycle = Some(json!({
+        "preStop": {
+            "exec": {
+                "command": ["/bin/sh", "-c", "sleep 30"]
+            }
+        }
+    }));
+    let pod5 = pod5_template
+        .with_termination_budget(&r4_budget, 8443)
+        .render();
+    let container5 = &pod5["spec"]["containers"][0];
+    let container5_str = serde_json::to_string(container5).unwrap();
+
+    println!("Row 5 container: {}", container5_str);
+
+    assert_eq!(
+        container5["lifecycle"]["preStop"]["httpGet"]["path"],
+        "/drain"
+    );
+    assert_eq!(container5["lifecycle"]["preStop"]["httpGet"]["port"], 8443);
+    assert!(container5["lifecycle"]["preStop"]["exec"].is_null());
+    assert!(!container5_str.contains("sleep"));
+    assert!(!container5_str.contains("/bin/sh"));
+
+    // Row 6: preStop 5, runtime 45, reserve 10, total 60, rendered at port 9080
+    // 45 + 10 + 5 = 60 == 60
+    let r6_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: Some(5),
+        probe_timing: ProbeTiming::default(),
+    };
+    let r6_budget = r6_policy.validate().expect("r6 policy must validate");
+    let pod6 = test_pod_template(&cx)
+        .with_termination_budget(&r6_budget, 9080)
+        .render();
+    let container6 = &pod6["spec"]["containers"][0];
+    let pod6_grace = &pod6["spec"]["terminationGracePeriodSeconds"];
+    let env6 = container6["env"].as_array().expect("env array");
+
+    println!(
+        "Row 6 container: {}",
+        serde_json::to_string_pretty(container6).unwrap()
+    );
+
+    assert!(pod6_grace.is_number());
+    assert_eq!(pod6_grace.as_u64(), Some(60));
+
+    let deadline_entries: Vec<_> = env6
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .collect();
+    let reserve_entries: Vec<_> = env6
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_SIGKILL_RESERVE_SECONDS")
+        .collect();
+
+    assert_eq!(deadline_entries.len(), 1);
+    assert_eq!(deadline_entries[0]["value"], "45");
+
+    assert_eq!(reserve_entries.len(), 1);
+    assert_eq!(reserve_entries[0]["value"], "10");
 }
