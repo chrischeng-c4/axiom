@@ -221,10 +221,6 @@ target = "rust"
 command = "cli-spec-codegen-2334-behavior"
 evidence_paths = ["evidence/cli-spec-codegen-2334-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2334 pure CLI-spec-codegen design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes frozen record, cleanup, classification, evidence, and typed terminal verdict inputs plus the three pure decision entry points."
-
 [[tool.aw.python-ec.cases]]
 id = "cli-spec-codegen-2334-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -238,10 +234,6 @@ oracle = "The verifier supplies explicit invalid values to each pure decision en
 target = "rust"
 command = "cli-spec-codegen-2334-security"
 evidence_paths = ["evidence/cli-spec-codegen-2334-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2334 pure CLI-spec-codegen design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes precise fail-closed rejection reasons and fields, complete cleanup decisions, and open versus terminal result types."
 
 [[tool.aw.python-ec.cases]]
 id = "verification-2337-behavior"
