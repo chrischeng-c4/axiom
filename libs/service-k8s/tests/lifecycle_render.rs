@@ -1138,3 +1138,236 @@ fn workload_profiles_measurements() {
     assert!(pod_name_entry7.get("valueFrom").is_some());
     assert!(pod_name_entry7.get("value").is_none());
 }
+
+#[test]
+fn termination_contract_split_measurements() {
+    let cx = test_cx();
+
+    let fixture_readiness = json!({
+        "httpGet": { "path": "/readyz", "port": "http", "scheme": "HTTPS" },
+        "initialDelaySeconds": 5, "periodSeconds": 10,
+        "timeoutSeconds": 3, "failureThreshold": 60,
+    });
+    let fixture_liveness = json!({
+        "httpGet": { "path": "/healthz", "port": "http", "scheme": "HTTPS" },
+        "initialDelaySeconds": 15, "periodSeconds": 30,
+        "timeoutSeconds": 5, "failureThreshold": 3,
+    });
+    let fixture_startup = json!({
+        "httpGet": { "path": "/healthz", "port": "http", "scheme": "HTTPS" },
+        "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
+    });
+
+    let budget_b = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 5,
+        min_hook_duration_seconds: 1,
+        prestop_cost_seconds: Some(10),
+        probe_timing: ProbeTiming::default(),
+    }
+    .validate()
+    .expect("budget B must validate");
+
+    // Row 1: Deployment pod template carrying fixture A, given budget B through termination-only entry point
+    let mut pod1 = test_pod_template(&cx);
+    pod1.readiness_probe = Some(fixture_readiness.clone());
+    pod1.liveness_probe = Some(fixture_liveness.clone());
+    pod1.startup_probe = Some(fixture_startup.clone());
+
+    let dep1 = service_deployment(ServiceDeployment {
+        name: "test-deploy",
+        replicas: 3,
+        min_ready_seconds: None,
+        revision_history_limit: None,
+        strategy: None,
+        pod: pod1.with_termination_contract(&budget_b, 8443),
+    });
+
+    let c1 = &dep1["spec"]["template"]["spec"]["containers"][0];
+    let spec1 = &dep1["spec"]["template"]["spec"];
+
+    println!(
+        "Row 1 deployment container: {}",
+        serde_json::to_string_pretty(c1).unwrap()
+    );
+
+    assert_eq!(c1["readinessProbe"], fixture_readiness);
+    assert_eq!(c1["livenessProbe"], fixture_liveness);
+    assert_eq!(c1["startupProbe"], fixture_startup);
+    assert_eq!(spec1["terminationGracePeriodSeconds"], 60);
+
+    let env1 = c1["env"].as_array().unwrap();
+    let deadline1 = env1
+        .iter()
+        .find(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .unwrap();
+    let reserve1 = env1
+        .iter()
+        .find(|e| e["name"] == "SERVICE_SIGKILL_RESERVE_SECONDS")
+        .unwrap();
+    assert_eq!(deadline1["value"], "45");
+    assert_eq!(reserve1["value"], "5");
+
+    // Row 2: StatefulSet carrying fixture A, given budget B through termination-only entry point
+    let mut ss2_template = test_statefulset(&cx);
+    ss2_template.readiness_probe = Some(fixture_readiness.clone());
+    ss2_template.liveness_probe = Some(fixture_liveness.clone());
+    ss2_template.startup_probe = Some(fixture_startup.clone());
+
+    let ss2 = service_statefulset(ss2_template.with_termination_contract(&budget_b, 8443));
+    let c2 = &ss2["spec"]["template"]["spec"]["containers"][0];
+    let spec2 = &ss2["spec"]["template"]["spec"];
+
+    println!(
+        "Row 2 statefulset container: {}",
+        serde_json::to_string_pretty(c2).unwrap()
+    );
+
+    assert_eq!(c2["readinessProbe"], fixture_readiness);
+    assert_eq!(c2["livenessProbe"], fixture_liveness);
+    assert_eq!(c2["startupProbe"], fixture_startup);
+    assert_eq!(spec2["terminationGracePeriodSeconds"], 60);
+
+    let env2 = c2["env"].as_array().unwrap();
+    let deadline2 = env2
+        .iter()
+        .find(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .unwrap();
+    let reserve2 = env2
+        .iter()
+        .find(|e| e["name"] == "SERVICE_SIGKILL_RESERVE_SECONDS")
+        .unwrap();
+    assert_eq!(deadline2["value"], "45");
+    assert_eq!(reserve2["value"], "5");
+
+    // Row 3: Either profile, fixture A, budget B -> preStop.httpGet.path == "/drain" while probes equal fixture A
+    assert_eq!(c1["lifecycle"]["preStop"]["httpGet"]["path"], "/drain");
+    assert_eq!(c1["readinessProbe"], fixture_readiness);
+    assert_eq!(c1["livenessProbe"], fixture_liveness);
+    assert_eq!(c1["startupProbe"], fixture_startup);
+
+    assert_eq!(c2["lifecycle"]["preStop"]["httpGet"]["path"], "/drain");
+    assert_eq!(c2["readinessProbe"], fixture_readiness);
+    assert_eq!(c2["livenessProbe"], fixture_liveness);
+    assert_eq!(c2["startupProbe"], fixture_startup);
+
+    // Row 4 (negative control): Either profile with readiness/liveness/startup_probe: None, budget B through termination-only entry point
+    let dep4 = service_deployment(ServiceDeployment {
+        name: "test-deploy",
+        replicas: 3,
+        min_ready_seconds: None,
+        revision_history_limit: None,
+        strategy: None,
+        pod: test_pod_template(&cx).with_termination_contract(&budget_b, 8443),
+    });
+    let c4_dep = &dep4["spec"]["template"]["spec"]["containers"][0];
+    let spec4_dep = &dep4["spec"]["template"]["spec"];
+
+    let ss4 = service_statefulset(test_statefulset(&cx).with_termination_contract(&budget_b, 8443));
+    let c4_ss = &ss4["spec"]["template"]["spec"]["containers"][0];
+    let spec4_ss = &ss4["spec"]["template"]["spec"];
+
+    println!("Row 4 container probe keys absent check");
+
+    assert!(c4_dep.get("readinessProbe").is_none());
+    assert!(c4_dep.get("livenessProbe").is_none());
+    assert!(c4_dep.get("startupProbe").is_none());
+    assert_eq!(spec4_dep["terminationGracePeriodSeconds"], 60);
+
+    assert!(c4_ss.get("readinessProbe").is_none());
+    assert!(c4_ss.get("livenessProbe").is_none());
+    assert!(c4_ss.get("startupProbe").is_none());
+    assert_eq!(spec4_ss["terminationGracePeriodSeconds"], 60);
+
+    let env4_dep = c4_dep["env"].as_array().unwrap();
+    assert_eq!(
+        env4_dep
+            .iter()
+            .find(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+            .unwrap()["value"],
+        "45"
+    );
+    assert_eq!(
+        env4_dep
+            .iter()
+            .find(|e| e["name"] == "SERVICE_SIGKILL_RESERVE_SECONDS")
+            .unwrap()["value"],
+        "5"
+    );
+
+    let env4_ss = c4_ss["env"].as_array().unwrap();
+    assert_eq!(
+        env4_ss
+            .iter()
+            .find(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+            .unwrap()["value"],
+        "45"
+    );
+    assert_eq!(
+        env4_ss
+            .iter()
+            .find(|e| e["name"] == "SERVICE_SIGKILL_RESERVE_SECONDS")
+            .unwrap()["value"],
+        "5"
+    );
+
+    // Row 5: Deployment pod template carrying fixture A, given budget B through existing with_termination_budget
+    let mut pod5 = test_pod_template(&cx);
+    pod5.readiness_probe = Some(fixture_readiness.clone());
+    pod5.liveness_probe = Some(fixture_liveness.clone());
+    pod5.startup_probe = Some(fixture_startup.clone());
+
+    let dep5 = service_deployment(ServiceDeployment {
+        name: "test-deploy",
+        replicas: 3,
+        min_ready_seconds: None,
+        revision_history_limit: None,
+        strategy: None,
+        pod: pod5.with_termination_budget(&budget_b, 9080),
+    });
+    let c5 = &dep5["spec"]["template"]["spec"]["containers"][0];
+
+    println!(
+        "Row 5 deployment container: {}",
+        serde_json::to_string_pretty(c5).unwrap()
+    );
+
+    assert_ne!(c5["readinessProbe"], fixture_readiness);
+    assert!(c5["readinessProbe"].get("scheme").is_none());
+    assert!(c5["livenessProbe"].get("scheme").is_none());
+    assert!(c5["startupProbe"].get("scheme").is_none());
+
+    assert_eq!(c5["readinessProbe"]["periodSeconds"], 10);
+    assert_eq!(c5["livenessProbe"]["periodSeconds"], 10);
+    assert_eq!(c5["startupProbe"]["periodSeconds"], 10);
+
+    assert_eq!(c5["readinessProbe"]["httpGet"]["port"], 9080);
+    assert_eq!(c5["livenessProbe"]["httpGet"]["port"], 9080);
+    assert_eq!(c5["startupProbe"]["httpGet"]["port"], 9080);
+
+    // Row 6: Pod template whose env already declares SERVICE_RUNTIME_DEADLINE_SECONDS = "999", fixture A, budget B through termination-only entry point
+    let mut pod6 = test_pod_template(&cx);
+    pod6.readiness_probe = Some(fixture_readiness);
+    pod6.liveness_probe = Some(fixture_liveness);
+    pod6.startup_probe = Some(fixture_startup);
+    pod6.env = vec![json!({ "name": "SERVICE_RUNTIME_DEADLINE_SECONDS", "value": "999" })];
+
+    let dep6 = service_deployment(ServiceDeployment {
+        name: "test-deploy",
+        replicas: 3,
+        min_ready_seconds: None,
+        revision_history_limit: None,
+        strategy: None,
+        pod: pod6.with_termination_contract(&budget_b, 8443),
+    });
+    let c6 = &dep6["spec"]["template"]["spec"]["containers"][0];
+    let env6 = c6["env"].as_array().unwrap();
+
+    let deadline_entries6: Vec<_> = env6
+        .iter()
+        .filter(|e| e["name"] == "SERVICE_RUNTIME_DEADLINE_SECONDS")
+        .collect();
+    assert_eq!(deadline_entries6.len(), 1);
+    assert_eq!(deadline_entries6[0]["value"], "45");
+}
