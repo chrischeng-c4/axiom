@@ -745,10 +745,6 @@ target = "rust"
 command = "catalog-2939-behavior"
 evidence_paths = ["evidence/catalog-2939-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2939 pure catalog design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes frozen catalog specification and state models plus pure admission, serving-authority, bootstrap, and cache-transition entry points."
-
 [[tool.aw.python-ec.cases]]
 id = "catalog-2939-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -762,10 +758,6 @@ oracle = "The verifier drives every pure catalog entry point with EC-owned expli
 target = "rust"
 command = "catalog-2939-security"
 evidence_paths = ["evidence/catalog-2939-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2939 pure catalog design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes typed fail-closed catalog admission, serving-source, bootstrap, and cache-quorum verdicts."
 
 [[tool.aw.python-ec.cases]]
 id = "workload-2941-behavior"
