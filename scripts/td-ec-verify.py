@@ -625,10 +625,33 @@ def main() -> int:
     parser.add_argument("project", type=Path, help="project root, e.g. libs/peer-tls")
     parser.add_argument("--mutations", type=Path, default=None)
     parser.add_argument("--skip-mutations", action="store_true")
+    parser.add_argument(
+        "--demand",
+        action="append",
+        default=[],
+        metavar="CASE_ID",
+        help=(
+            "judge this case live even though it declares known_failure. "
+            "The declaration keeps the branch honest while a design is being "
+            "written; this makes one named case the thing a run has to turn "
+            "green, so a round can be gated on it before the block is deleted."
+        ),
+    )
     args = parser.parse_args()
 
     project = Project.load(args.project.resolve())
-    print(f"verifying {args.project} — TD {project.td_dir.name}, EC {project.ec_dir.name}\n")
+    demanded = set(args.demand)
+    unknown = demanded - {c["id"] for c in project.cases} - {c["command"] for c in project.cases}
+    if unknown:
+        raise SystemExit(f"--demand names no declared case: {', '.join(sorted(unknown))}")
+    for case in project.cases:
+        if case["id"] in demanded or case["command"] in demanded:
+            case.pop("known_failure", None)
+
+    print(f"verifying {args.project} — TD {project.td_dir.name}, EC {project.ec_dir.name}")
+    if demanded:
+        print(f"demanding {len(demanded)} held case(s) live: {', '.join(sorted(demanded))}")
+    print()
 
     report = Report()
     run_unittests(report, "td-unit-tests", project.td_dir / "tests")
