@@ -5,12 +5,16 @@ R1/R3 refuse an explicitly embedded backend at the
 ``decide_new_shard_durability`` admission entry point and R3 retains the local,
 test, and detected-legacy exceptions; R4 reports ``MigrationRequired``, names
 the legacy state that blocks startup, and supplies no bootstrap plan; R7 maps a
-typed persistence failure to ``durability-unavailable`` and ``unready``.
+typed persistence failure to ``durability-unavailable`` and ``unready``; R2
+preserves a refused plan's refusal through mutation routing and routes embedded
+test plans locally; and R3 admits an explicitly Raft-backed test profile and
+new shard as Raft rather than imposing embedded durability.
 """
 
 from __future__ import annotations
 
 from lumen.topology.durability_admission import (
+    decide_mutation_route,
     decide_new_shard_durability,
     decide_profile_durability,
     decide_startup_state,
@@ -24,9 +28,9 @@ from lumen.topology.durability_spec import (
     RaftState,
     ShardDurabilityIntent,
 )
-from lumen.topology.durability_verdict import Rejection
+from lumen.topology.durability_verdict import AdmittedDurability, Rejection
 
-MINIMUM_CHECKS = 15
+MINIMUM_CHECKS = 19
 
 DURABILITY_CONTRACT_SECURITY_MATRIX = (
     ("production_embedded_is_rejected_for_raft_requirement", "production_requires_raft"),
@@ -44,6 +48,10 @@ DURABILITY_CONTRACT_SECURITY_MATRIX = (
     ("new_production_shard_embedded_is_rejected_for_raft_requirement", "production_requires_raft"),
     ("new_production_shard_embedded_refusal_names_backend", "backend"),
     ("new_production_shard_raft_neighbour_is_admitted", "admitted"),
+    ("refused_shard_plan_preserves_production_requires_raft_reason", "production_requires_raft"),
+    ("test_embedded_shard_routes_locally", "embedded_local_apply"),
+    ("test_explicit_raft_profile_is_admitted_as_raft", "raft"),
+    ("test_explicit_raft_new_shard_is_admitted_as_raft", "raft"),
 )
 
 
@@ -173,6 +181,52 @@ def verify_durability_contract_security() -> dict:
     obs15 = _outcome(production_raft_shard)
     exp15 = DURABILITY_CONTRACT_SECURITY_MATRIX[14][1]
     checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
+
+    # 16. R2 -- a refused durability plan stays refused through mutation routing.
+    refused_mutation_route = decide_mutation_route(production_embedded_shard, "index")
+    obs16 = _outcome(refused_mutation_route)
+    exp16 = DURABILITY_CONTRACT_SECURITY_MATRIX[15][1]
+    checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[15][0], "expected": exp16, "observed": obs16, "passed": obs16 == exp16})
+
+    test_embedded_shard = decide_new_shard_durability(
+        ShardDurabilityIntent(
+            profile=ProfileClass.TEST,
+            shard_name="orders",
+            shard_ordinal=0,
+            voters=1,
+            backend="embedded",
+        )
+    )
+
+    # 17. R2/R3 -- an admitted embedded test plan uses the local apply route.
+    obs17 = decide_mutation_route(test_embedded_shard, "index")
+    exp17 = DURABILITY_CONTRACT_SECURITY_MATRIX[16][1]
+    checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[16][0], "expected": exp17, "observed": obs17, "passed": obs17 == exp17})
+
+    test_raft_profile = decide_profile_durability(
+        DurabilityProfile(profile=ProfileClass.TEST, backend="raft"),
+        LegacyState.absent(),
+    )
+
+    # 18. R3 -- test permits embedded but does not override an explicit Raft choice.
+    obs18 = test_raft_profile.backend if isinstance(test_raft_profile, AdmittedDurability) else _outcome(test_raft_profile)
+    exp18 = DURABILITY_CONTRACT_SECURITY_MATRIX[17][1]
+    checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[17][0], "expected": exp18, "observed": obs18, "passed": obs18 == exp18})
+
+    test_raft_shard = decide_new_shard_durability(
+        ShardDurabilityIntent(
+            profile=ProfileClass.TEST,
+            shard_name="orders",
+            shard_ordinal=0,
+            voters=1,
+            backend="raft",
+        )
+    )
+
+    # 19. R3 -- test permits embedded but does not override an explicit Raft new-shard choice.
+    obs19 = test_raft_shard.backend if isinstance(test_raft_shard, AdmittedDurability) else _outcome(test_raft_shard)
+    exp19 = DURABILITY_CONTRACT_SECURITY_MATRIX[18][1]
+    checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[18][0], "expected": exp19, "observed": obs19, "passed": obs19 == exp19})
 
     return {
         "case_id": "durability-contract-security",
