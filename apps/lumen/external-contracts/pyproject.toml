@@ -114,3 +114,38 @@ evidence_paths = ["evidence/gke-ksa-rbac-cb-security.json"]
 [tool.aw.python-ec.cases.known_failure]
 reason = "The current retained GKE producer does not yet emit source-bound public-CLI failure, raw RoleBinding deletion/poll/audit UID rows, exact every-class verify-clean identities and raw empty responses, or controller-committed live destruction plus terminal full-corpus redaction records."
 expected = "The CB security verifier fails closed for uncorrelated direct-Google evidence, summary-only revocation/cleanup, arbitrary/no-op query identities, forged canaries, missing credential destruction, appended terminal files, or nonterminal redaction proof until the CB/harness stage retains the required raw records."
+[[tool.aw.python-ec.cases]]
+id = "durability-contract-behavior"
+artifact_id = "artifact:lumen/topology-public-contract"
+capability_id = "kubernetes-native-deployment"
+use_case_id = "primary-replicas-topology"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/durability-contract-behavior.py"
+promise = "The #2938 durability design selects one named Raft group for every new production shard including one-voter shards, routes index/delete/schema/admin mutations through durable Raft commit-and-apply, admits Raft in production, preserves group identity and durable format through learner or voter extension, and maps typed persistence failure to durability-unavailable degraded status. The closest existing topology capability and use case are reused because this durability path is the production shard topology's persistence dimension."
+oracle = "The verifier imports and drives the pure durability design with EC-owned literal profile, shard, group, membership, mutation, and persistence-failure inputs. Every expected value is transcribed from #2938 R1/R2/R3/R5/R7; no expected value is read from the design, and no design-computed validity flag is accepted in place of the observed plan, route, identity, format, result, or status value."
+target = "rust"
+command = "durability-contract-behavior"
+evidence_paths = ["evidence/durability-contract-behavior.json"]
+
+[tool.aw.python-ec.cases.known_failure]
+reason = "The #2938 pure durability design modules have not landed, so the EC import fails closed."
+expected = "The behavior verifier remains a known failure until the design exposes the frozen specification, admitted durability verdicts, and pure admission, routing, membership, and failure-mapping entry points."
+
+[[tool.aw.python-ec.cases]]
+id = "durability-contract-security"
+artifact_id = "artifact:lumen/topology-public-contract"
+capability_id = "kubernetes-native-deployment"
+use_case_id = "primary-replicas-topology"
+dimension = "security"
+applicability = "td"
+test_path = "src/durability-contract-security.py"
+promise = "The #2938 durability design fails closed when production selects embedded durability, keeps local/test/detected-legacy exceptions explicit, refuses non-empty legacy embedded state without Raft as migration-required without a bootstrap plan, and never overclaims a typed persistence failure as a successful or ready write. The closest existing topology capability and use case are reused because this durability path is the production shard topology's persistence dimension."
+oracle = "The verifier drives pure durability-profile, startup-state, and typed-persistence-failure deciders with EC-owned literal inputs. It checks exact refusal vocabulary, the named offending field, neighbouring admitted profiles, the absence of a bootstrap plan, and structured write/readiness values; expected values are never read from the design and a design-computed boolean cannot satisfy a row."
+target = "rust"
+command = "durability-contract-security"
+evidence_paths = ["evidence/durability-contract-security.json"]
+
+[tool.aw.python-ec.cases.known_failure]
+reason = "The #2938 pure durability design modules have not landed, so the EC import fails closed."
+expected = "The security verifier remains a known failure until the design exposes fail-closed profile and startup verdicts plus structured persistence-failure status and write results."
