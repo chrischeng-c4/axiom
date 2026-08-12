@@ -179,10 +179,6 @@ target = "rust"
 command = "capability-2324-security"
 evidence_paths = ["evidence/capability-2324-security.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "An independent review of this contract against #2324 AC3 found the security case covered only a *missing* issue linkage, while AC3 refuses linkage that is 'missing or invalid'. The row added for the invalid-but-present case is red against the landed design, which accepts the string 'unbounded' as a bounded issue and returns tracked_skip(#unbounded). The design predates the row, so this is a design gap the contract now names, not a contract defect."
-expected = "The security verifier fails closed on malformed_present_domain_issue_is_refused until decide_terminal_result validates the issue linkage it was given rather than only its presence, at which point this waiver expires loudly."
-
 [[tool.aw.python-ec.cases]]
 id = "verification-2328-behavior"
 artifact_id = "artifact:lumen/topology-public-contract"

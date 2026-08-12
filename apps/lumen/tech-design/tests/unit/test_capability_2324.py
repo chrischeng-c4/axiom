@@ -148,6 +148,15 @@ class TestCapability2324(unittest.TestCase):
             self.assertEqual(verdict.reason, Reason.MISSING_BOUNDED_ISSUE)
             self.assertEqual(verdict.field_path, "issue")
 
+    def test_decide_terminal_result_refuses_invalid_issue(self) -> None:
+        for malformed in ("unbounded", "issue filed soon", "#abc", "-50"):
+            verdict = decide_terminal_result(("Lumen-domain",), malformed)
+            self.assertIsInstance(verdict, OwnershipVerdict)
+            if isinstance(verdict, OwnershipVerdict):
+                self.assertEqual(verdict.reason, Reason.INVALID_BOUNDED_ISSUE)
+                self.assertEqual(verdict.field_path, "issue")
+
 
 if __name__ == "__main__":
     unittest.main()
+
