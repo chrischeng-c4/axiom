@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Final, Iterable
 
+import lumen.topology.matrix as _matrix  # noqa: F401
 from lumen.topology.spec import TopologySpec
 from lumen.topology.verdict import (
     AdmittedTopology,
@@ -84,7 +85,31 @@ def decide_topology_mutation(
     if isinstance(current_verdict, Rejection):
         return current_verdict
 
-    if current_spec != target_spec:
+    current_pvc = getattr(current_spec, "shard_pvc_capacity_gib", 100)
+    target_pvc = getattr(target_spec, "shard_pvc_capacity_gib", 100)
+
+    if target_spec.shard_minimum < current_spec.shard_minimum:
+        return Rejection(
+            reason=RejectionReason.SHARD_CONTRACTION_NOT_SUPPORTED,
+            field_path="shard_count",
+            message="automatic shard count contraction is not supported in v1",
+        )
+
+    if target_spec.voters < current_spec.voters:
+        return Rejection(
+            reason=RejectionReason.VOTER_CONTRACTION_NOT_SUPPORTED,
+            field_path="voters",
+            message="automatic voter count contraction is not supported in v1",
+        )
+
+    if target_pvc < current_pvc:
+        return Rejection(
+            reason=RejectionReason.SHARD_PVC_CAPACITY_CONTRACTION_NOT_SUPPORTED,
+            field_path="shard_pvc_capacity_gib",
+            message="automatic voter/shard PVC capacity contraction is not supported in v1",
+        )
+
+    if target_spec.shard_minimum != current_spec.shard_minimum or target_spec.voters != current_spec.voters:
         return Rejection(
             reason=RejectionReason.NO_SAFE_TOPOLOGY_MUTATION,
             field_path="voters",

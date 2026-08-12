@@ -333,10 +333,6 @@ target = "rust"
 command = "matrix-2349-behavior"
 evidence_paths = ["evidence/matrix-2349-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2349 pure topology matrix and mutation design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes the frozen matrix descriptors, admitted topology values, permitted scale-down decisions, and availability promises."
-
 [[tool.aw.python-ec.cases]]
 id = "matrix-2349-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -350,10 +346,6 @@ oracle = "The verifier drives the pure placement and topology-mutation deciders 
 target = "rust"
 command = "matrix-2349-security"
 evidence_paths = ["evidence/matrix-2349-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2349 pure topology matrix and mutation design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes fail-closed placement and contraction verdicts with precise refusal vocabulary and field paths."
 
 [[tool.aw.python-ec.cases]]
 id = "capacity-2360-behavior"
