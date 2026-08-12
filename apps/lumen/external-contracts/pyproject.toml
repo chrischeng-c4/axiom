@@ -305,10 +305,6 @@ target = "rust"
 command = "kind-verification-2348-behavior"
 evidence_paths = ["evidence/kind-verification-2348-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2348 pure Kind-verification design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes immutable failure and verification-record inputs plus total ownership partitioning and terminal-admission entry points."
-
 [[tool.aw.python-ec.cases]]
 id = "kind-verification-2348-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -322,10 +318,6 @@ oracle = "The verifier drives the terminal-admission entry point with EC-owned l
 target = "rust"
 command = "kind-verification-2348-security"
 evidence_paths = ["evidence/kind-verification-2348-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2348 pure Kind-verification design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes closed terminal vocabulary and typed fail-closed refusals for shared, mixed, and missing-domain-issue records."
 
 [[tool.aw.python-ec.cases]]
 id = "matrix-2349-behavior"
