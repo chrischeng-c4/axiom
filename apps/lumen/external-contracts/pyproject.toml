@@ -277,10 +277,6 @@ target = "rust"
 command = "container-kustomize-2343-behavior"
 evidence_paths = ["evidence/container-kustomize-2343-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2343 pure container-and-Kustomize decision modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes frozen ownership and issue specifications plus pure classification, mixed-failure, and terminal-result decision entry points."
-
 [[tool.aw.python-ec.cases]]
 id = "container-kustomize-2343-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -294,10 +290,6 @@ oracle = "The verifier drives every pure #2343 entry point with EC-owned invalid
 target = "rust"
 command = "container-kustomize-2343-security"
 evidence_paths = ["evidence/container-kustomize-2343-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2343 pure container-and-Kustomize decision modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes fail-closed classification and terminal result verdicts with exact reasons, field paths, and split shared/domain actions."
 
 [[tool.aw.python-ec.cases]]
 id = "kind-verification-2348-behavior"
