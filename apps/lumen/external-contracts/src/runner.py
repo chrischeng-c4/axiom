@@ -1,9 +1,14 @@
-"""Protocol runner for the #2879 Python external contract.
+"""Protocol runner for the lumen Python external contracts.
 
 ``--list`` is purely descriptive.  Case execution reads supplied TD or retained
 GKE evidence and writes an EC result; it never invokes a cloud or harness
 command.  A controller runs the real GKE harness separately, then binds this
 runner to its generated run id, source revision, and freshness boundary.
+
+Two routes exist.  The #2879 GKE contract predates this project's row-shaped
+case convention and keeps the hardcoded entry points in ``run_case``.  Every
+case authored since is one self-contained file named for its case id, resolved
+by name in ``_run_generic_case`` so a new contract costs no branch here.
 """
 
 from __future__ import annotations
@@ -23,6 +28,14 @@ TD_CASE_IDS = ("gke-ksa-rbac-td-behavior", "gke-ksa-rbac-td-security")
 CB_CASE_IDS = ("gke-ksa-rbac-cb-behavior", "gke-ksa-rbac-cb-security")
 CASE_IDS = TD_CASE_IDS + CB_CASE_IDS
 CASE_EVIDENCE_PATHS = {case_id: f"evidence/{case_id}.json" for case_id in CASE_IDS}
+
+# A row-shaped case imports the design it verifies. The TD source root is
+# reached from this artifact's own location for the same reason `_repo_root`
+# refuses an environment override: an arbitrary checkout must not be able to
+# redirect verification at attacker-selected source.
+_DESIGN_SRC = Path(__file__).resolve().parents[2] / "tech-design" / "src"
+if str(_DESIGN_SRC) not in sys.path:
+    sys.path.insert(0, str(_DESIGN_SRC))
 
 
 def _required_env(name: str) -> str:
@@ -173,6 +186,57 @@ def run_case(case_id: str, source_digest: str, dependency_lock_digest: str, evid
     )
 
 
+def _case_file(command: str) -> Path:
+    return Path(__file__).with_name(f"{command}.py")
+
+
+def _run_generic_case(command: str, evidence_dir: Path) -> str:
+    """Route a row-shaped case to ``src/<command>.py::verify_<command>()``.
+
+    The verifier owns its own result payload -- ``minimum_checks``, the
+    ``checks`` rows, and ``passed`` -- and this function only persists it. A
+    runner that recomputed ``passed`` from the rows would be a second opinion
+    on the case's own verdict, and the two would eventually disagree.
+    """
+    case_file = _case_file(command)
+    module_name = command.replace("-", "_")
+    spec = importlib.util.spec_from_file_location(module_name, case_file)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load external-contract module {case_file}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    verifier = getattr(module, f"verify_{module_name}", None)
+    if not callable(verifier):
+        raise ValueError(f"{case_file.name} defines no verify_{module_name}()")
+    result = verifier()
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / f"{command}.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    if result.get("passed") is not True:
+        failing = [c.get("name") for c in result.get("checks", []) if not c.get("passed")]
+        raise ValueError(f"case did not pass: {failing or 'no failing row reported'}")
+    return f"evidence/{command}.json"
+
+
+def _write_generic_failure(
+    evidence_dir: Path, command: str, detail: str
+) -> str:
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"case_id": command, "checks": [], "passed": False, "detail": detail}
+    path = evidence_dir / f"{command}.json"
+    if path.is_file():
+        # The verifier already wrote its rows; keep them and record why the
+        # run failed. Overwriting here would erase the very rows that name the
+        # failure and leave only this summary behind.
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        existing["detail"] = detail
+        payload = existing
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return f"evidence/{command}.json"
+
+
 def main() -> None:
     command = sys.argv[1] if len(sys.argv) == 2 else ""
     if command == "--list":
@@ -181,16 +245,24 @@ def main() -> None:
     source_digest = os.environ.get("AW_PYTHON_ARTIFACT_SOURCE_DIGEST")
     dependency_lock_digest = os.environ.get("AW_PYTHON_ARTIFACT_DEPENDENCY_LOCK_DIGEST")
     evidence_dir_value = os.environ.get("AW_PYTHON_ARTIFACT_EVIDENCE_DIR")
+    generic = command not in CASE_IDS and bool(command) and _case_file(command).is_file()
     try:
         if os.environ.get("AW_PYTHON_ARTIFACT_PROTOCOL") != PROTOCOL:
             raise ValueError("AW_PYTHON_ARTIFACT_PROTOCOL is missing or unsupported")
-        if command not in CASE_IDS:
+        if command not in CASE_IDS and not generic:
             raise ValueError(f"unknown external-contract command {command!r}")
         if not source_digest or not dependency_lock_digest or not evidence_dir_value:
             raise ValueError("artifact source, dependency-lock, and evidence environment is required")
-        evidence = run_case(command, source_digest, dependency_lock_digest, Path(evidence_dir_value))
+        if generic:
+            evidence = _run_generic_case(command, Path(evidence_dir_value))
+        else:
+            evidence = run_case(command, source_digest, dependency_lock_digest, Path(evidence_dir_value))
     except Exception as error:
-        if source_digest and dependency_lock_digest and evidence_dir_value and command in CASE_IDS:
+        have_env = bool(source_digest and dependency_lock_digest and evidence_dir_value)
+        if have_env and generic:
+            evidence = _write_generic_failure(Path(evidence_dir_value), command, str(error))
+            _emit("failed", source_digest, dependency_lock_digest, [{"id": command, "evidence_path": evidence}])
+        elif have_env and command in CASE_IDS:
             evidence = _write_evidence(
                 Path(evidence_dir_value),
                 command,

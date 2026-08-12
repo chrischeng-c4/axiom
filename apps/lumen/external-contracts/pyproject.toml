@@ -16,6 +16,42 @@ author = "019fb951-e713-7600-b4a2-bf3949cb7a48"
 efficiency_policy = "optional"
 
 [[tool.aw.python-ec.cases]]
+id = "topology-contract-behavior"
+artifact_id = "artifact:lumen/topology-public-contract"
+capability_id = "kubernetes-native-deployment"
+use_case_id = "primary-replicas-topology"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/topology-contract-behavior.py"
+promise = "The #2937 topology design admits the canonical 1x1 default, admits one or three voters, carries a user-set shard minimum and a non-voting read-replica count into the admitted topology, separates user policy from current topology, target topology, and generations, and refuses to call an uncommitted render converged."
+oracle = "The verifier imports the design and drives its real admission, status, and availability entry points with EC-owned literal specs. Every expected value is transcribed from issue #2937 R1/R3/R5/R7; no expectation is read back out of the design, and no boolean pass flag is accepted in place of an observed value."
+target = "rust"
+command = "topology-contract-behavior"
+evidence_paths = ["evidence/topology-contract-behavior.json"]
+
+[tool.aw.python-ec.cases.known_failure]
+reason = "The #2937 topology design does not exist yet: apps/lumen/tech-design/src/lumen/topology/ is unwritten, so the case cannot import decide_topology_spec, TopologyStatus, or availability_promise."
+expected = "The behavior verifier fails closed on the missing design until the TD stage lands lumen.topology with the admission, status, and availability surface this contract drives."
+
+[[tool.aw.python-ec.cases]]
+id = "topology-contract-security"
+artifact_id = "artifact:lumen/topology-public-contract"
+capability_id = "kubernetes-native-deployment"
+use_case_id = "primary-replicas-topology"
+dimension = "security"
+applicability = "td"
+test_path = "src/topology-contract-security.py"
+promise = "The #2937 topology design fails closed on zero shard minimums, zero voters, even voter counts, unsupported odd voter counts, the ambiguous legacy replica field, negative read-replica counts, HPA/VPA knobs it does not own, voter-membership mutations with no safe controller, and two Lumen instances placing data members on one node; and it never describes a one-voter shard as surviving unexpected node loss."
+oracle = "Each refusal is driven with an EC-owned literal spec and checked against the exact rejection reason named in issue #2937 R2/R4/R5/R6, not merely against 'some rejection happened'. A closing row holds every refusal in the case to a non-empty field path, so an admission that refuses without naming the offending field fails."
+target = "rust"
+command = "topology-contract-security"
+evidence_paths = ["evidence/topology-contract-security.json"]
+
+[tool.aw.python-ec.cases.known_failure]
+reason = "The #2937 topology design does not exist yet: apps/lumen/tech-design/src/lumen/topology/ is unwritten, so the case cannot import decide_topology_spec, decide_topology_mutation, decide_placement, or availability_promise."
+expected = "The security verifier fails closed on the missing design until the TD stage lands lumen.topology with the fail-closed admission surface and the rejection-reason vocabulary this contract pins."
+
+[[tool.aw.python-ec.cases]]
 id = "gke-ksa-rbac-td-behavior"
 artifact_id = "artifact:lumen/ksa-rbac-auth"
 capability_id = "security-hardening"

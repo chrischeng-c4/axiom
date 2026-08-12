@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 CASE_PATH = ROOT / "src" / "ec-2879.py"
 RUNNER_PATH = ROOT / "src" / "runner.py"
-AUDITOR_PATH = ROOT / "src" / "redaction_auditor.py"
+AUDITOR_PATH = ROOT / "src" / "support" / "redaction_auditor.py"
 EXPECTED_RUN_ID = "ec2879synthetic"
 EXPECTED_GIT_SHA = "1eec8d061998"
 EXPECTED_PROJECT = "lumen-ec-project"
@@ -828,7 +828,13 @@ class RunnerProtocolTests(unittest.TestCase):
         manifest = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         sections = re.findall(r"\[\[tool\.aw\.python-ec\.cases\]\](.*?)(?=\n\[\[|\Z)", manifest, flags=re.DOTALL)
         observed = {(re.search(r'^id = "([^"]+)"$', section, flags=re.MULTILINE).group(1), re.search(r'^applicability = "([^"]+)"$', section, flags=re.MULTILINE).group(1), re.search(r'^dimension = "([^"]+)"$', section, flags=re.MULTILINE).group(1)) for section in sections}
-        self.assertEqual(observed, {("gke-ksa-rbac-td-behavior", "td", "behavior"), ("gke-ksa-rbac-td-security", "td", "security"), ("gke-ksa-rbac-cb-behavior", "cb", "behavior"), ("gke-ksa-rbac-cb-security", "cb", "security")})
+        # Scoped to the #2879 rows. This manifest is the whole project's case
+        # inventory, so asserting equality against it made every unrelated
+        # contract landing in apps/lumen fail here. Restricting to the
+        # gke-ksa-rbac family still catches a missing, retyped, or extra #2879
+        # case; whether some *other* case is declared is the inventory gate's
+        # question, not this file's.
+        self.assertEqual({row for row in observed if row[0].startswith("gke-ksa-rbac-")}, {("gke-ksa-rbac-td-behavior", "td", "behavior"), ("gke-ksa-rbac-td-security", "td", "security"), ("gke-ksa-rbac-cb-behavior", "cb", "behavior"), ("gke-ksa-rbac-cb-security", "cb", "security")})
 
     def test_list_and_canonical_case_envelopes_are_machine_readable(self) -> None:
         listed = subprocess.run([sys.executable, "-I", str(RUNNER_PATH), "--list"], check=False, capture_output=True, encoding="utf-8")
