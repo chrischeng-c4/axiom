@@ -1,15 +1,17 @@
 """EC security case for #2938 -- fail-closed durability admission.
 
 Every expected value below is an EC-owned literal transcribed from #2938:
-R3 refuses embedded durability for production while retaining the local, test,
-and detected-legacy exceptions; R4 reports ``MigrationRequired``, names the
-legacy state that blocks startup, and supplies no bootstrap plan; R7 maps a
+R1/R3 refuse an explicitly embedded backend at the
+``decide_new_shard_durability`` admission entry point and R3 retains the local,
+test, and detected-legacy exceptions; R4 reports ``MigrationRequired``, names
+the legacy state that blocks startup, and supplies no bootstrap plan; R7 maps a
 typed persistence failure to ``durability-unavailable`` and ``unready``.
 """
 
 from __future__ import annotations
 
 from lumen.topology.durability_admission import (
+    decide_new_shard_durability,
     decide_profile_durability,
     decide_startup_state,
     map_persistence_failure,
@@ -20,10 +22,11 @@ from lumen.topology.durability_spec import (
     PersistenceFailure,
     ProfileClass,
     RaftState,
+    ShardDurabilityIntent,
 )
 from lumen.topology.durability_verdict import Rejection
 
-MINIMUM_CHECKS = 12
+MINIMUM_CHECKS = 15
 
 DURABILITY_CONTRACT_SECURITY_MATRIX = (
     ("production_embedded_is_rejected_for_raft_requirement", "production_requires_raft"),
@@ -38,6 +41,9 @@ DURABILITY_CONTRACT_SECURITY_MATRIX = (
     ("persistence_failure_is_never_success", "durability-unavailable"),
     ("persistence_failure_is_unready", "unready"),
     ("unready_failure_names_the_persistence_failure", "persistence_failure"),
+    ("new_production_shard_embedded_is_rejected_for_raft_requirement", "production_requires_raft"),
+    ("new_production_shard_embedded_refusal_names_backend", "backend"),
+    ("new_production_shard_raft_neighbour_is_admitted", "admitted"),
 )
 
 
@@ -132,6 +138,41 @@ def verify_durability_contract_security() -> dict:
     obs12 = failure.field_path
     exp12 = DURABILITY_CONTRACT_SECURITY_MATRIX[11][1]
     checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[11][0], "expected": exp12, "observed": obs12, "passed": obs12 == exp12})
+
+    production_embedded_shard = decide_new_shard_durability(
+        ShardDurabilityIntent(
+            profile=ProfileClass.PRODUCTION,
+            shard_name="orders",
+            shard_ordinal=0,
+            voters=1,
+            backend="embedded",
+        )
+    )
+
+    # 13. R1/R3 -- new production shards cannot explicitly opt into embedded state.
+    obs13 = _outcome(production_embedded_shard)
+    exp13 = DURABILITY_CONTRACT_SECURITY_MATRIX[12][1]
+    checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[12][0], "expected": exp13, "observed": obs13, "passed": obs13 == exp13})
+
+    # 14. R1/R3 -- the admission refusal names the dangerous backend field.
+    obs14 = production_embedded_shard.field_path if isinstance(production_embedded_shard, Rejection) else ""
+    exp14 = DURABILITY_CONTRACT_SECURITY_MATRIX[13][1]
+    checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[13][0], "expected": exp14, "observed": obs14, "passed": obs14 == exp14})
+
+    production_raft_shard = decide_new_shard_durability(
+        ShardDurabilityIntent(
+            profile=ProfileClass.PRODUCTION,
+            shard_name="orders",
+            shard_ordinal=0,
+            voters=1,
+            backend="raft",
+        )
+    )
+
+    # 15. R1/R3 -- an explicitly Raft-backed production shard remains admitted.
+    obs15 = _outcome(production_raft_shard)
+    exp15 = DURABILITY_CONTRACT_SECURITY_MATRIX[14][1]
+    checks.append({"name": DURABILITY_CONTRACT_SECURITY_MATRIX[14][0], "expected": exp15, "observed": obs15, "passed": obs15 == exp15})
 
     return {
         "case_id": "durability-contract-security",
