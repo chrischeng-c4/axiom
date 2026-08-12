@@ -1439,7 +1439,7 @@ def _verify_redaction_proof(evidence_root: Path, auth_dir: Path, run_id: str, ex
     live_path = auth_dir / "lumen-auth-live-redaction-scan.json"
     proof_path = auth_dir / "lumen-auth-redaction-audit.json"
     live = _read_json(live_path)
-    expected_source = _digest(Path(__file__).with_name("redaction_auditor.py").read_bytes())
+    expected_source = _digest((Path(__file__).parent / "support" / "redaction_auditor.py").read_bytes())
     if live.get("schema") != LIVE_REDACTION_SCHEMA or live.get("run_id") != run_id or live.get("controller_commitment") != expected_commitment:
         raise EvidenceError("live redaction scan is not bound to the controller commitment and run")
     credential_digests = live.get("credential_digests")
