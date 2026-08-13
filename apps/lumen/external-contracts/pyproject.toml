@@ -505,10 +505,6 @@ command = "capacity-2538-behavior"
 evidence_paths = ["evidence/capacity-2538-behavior.json"]
 
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2538 pure design modules (lumen.capacity.spec, lumen.capacity.verdict, lumen.capacity.admission, lumen.capacity.__init__) have not landed, so the behavior verifier fails closed on import."
-expected = "The behavior verifier remains a known failure until the design exposes the entry points #2538 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
-
 [[tool.aw.python-ec.cases]]
 id = "capacity-2538-security"
 artifact_id = "artifact:lumen/capacity-guidance"
@@ -522,10 +518,6 @@ oracle = "The verifier drives every refusal with an EC-owned literal capacity sp
 target = "rust"
 command = "capacity-2538-security"
 evidence_paths = ["evidence/capacity-2538-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2538 pure design modules (lumen.capacity.spec, lumen.capacity.verdict, lumen.capacity.admission, lumen.capacity.__init__) have not landed, so the security verifier fails closed on import."
-expected = "The security verifier remains a known failure until the design exposes the entry points #2538 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
 
 [[tool.aw.python-ec.cases]]
 id = "capacity-2680-behavior"
