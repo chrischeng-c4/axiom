@@ -1,2 +1,13 @@
 [project]
 name = "agentic-workflow"
+
+# Who produces the semantic verdict on an external-contract case -- the one
+# question `ec.py check` cannot answer, because nothing in its list reads what
+# the contract means.
+#
+# Every value is a skill, never a mode name, so "does this route resolve to
+# something that exists?" is one total check rather than an enum with a
+# fallthrough. `ec.py` reads this key and emits the skill to invoke; no skill
+# parses this file.
+[review]
+ec = "skill:codex-review"
