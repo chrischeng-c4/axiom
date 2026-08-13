@@ -20,6 +20,10 @@ path = "e2e/fenced_assignment.rs"
 name = "peer_mtls"
 path = "e2e/peer_mtls.rs"
 
+[[test]]
+name = "applied_watch"
+path = "e2e/applied_watch.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }
