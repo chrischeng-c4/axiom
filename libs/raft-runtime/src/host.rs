@@ -66,7 +66,31 @@ struct RaftStatus {
     applied_index: u64,
     leader: Option<NodeId>,
     is_leader: bool,
+    durability_error: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageFailed {
+    pub node_id: NodeId,
+    pub operation: &'static str,
+    pub path: std::path::PathBuf,
+    pub kind: std::io::ErrorKind,
+}
+
+impl std::fmt::Display for StorageFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "durable storage failed for node {} on {} at {}: {:?}",
+            self.node_id,
+            self.operation,
+            self.path.display(),
+            self.kind
+        )
+    }
+}
+
+impl std::error::Error for StorageFailed {}
 
 struct Shared {
     id: NodeId,
@@ -84,6 +108,7 @@ struct Shared {
     applied_tx: watch::Sender<Index>,
     cfg: HostConfig,
     rpc_tracker: Arc<RpcTracker>,
+    latched_failure: StdMutex<Option<StorageFailed>>,
 }
 
 #[derive(Default)]
@@ -131,8 +156,23 @@ impl Shared {
             .unwrap_or_else(|| self.client.clone())
     }
 
-    fn persist(&self, node: &RaftNode) {
-        let _ = self.store.save(&node.persisted());
+    fn persist(&self, node: &RaftNode) -> Result<(), StorageFailed> {
+        if let Some(err) = self.latched_failure.lock().unwrap().clone() {
+            return Err(err);
+        }
+        match self.store.save(&node.persisted()) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let err = StorageFailed {
+                    node_id: self.id,
+                    operation: "save",
+                    path: self.store.path().to_path_buf(),
+                    kind: e.kind(),
+                };
+                *self.latched_failure.lock().unwrap() = Some(err.clone());
+                Err(err)
+            }
+        }
     }
 
     /// The single applier. Called under the node lock everywhere committed
@@ -264,7 +304,9 @@ impl Shared {
         if let Some(reply) = reply {
             let mut n = self.node.lock().await;
             n.handle(to, reply);
-            self.persist(&n);
+            if self.persist(&n).is_err() {
+                return;
+            }
             self.apply_ready(&mut n);
             // Subsequent outbound work is shipped by the pump (no recursive flush).
         }
@@ -295,7 +337,9 @@ impl Shared {
             let Some(idx) = n.propose(command) else {
                 return Ok(None);
             };
-            self.persist(&n);
+            if let Err(e) = self.persist(&n) {
+                return Err(anyhow::anyhow!(e));
+            }
             self.apply_ready(&mut n); // sole voter commits+applies here
             idx
         };
@@ -422,6 +466,7 @@ impl RaftHost {
             applied_tx,
             cfg,
             rpc_tracker: Arc::new(RpcTracker::default()),
+            latched_failure: StdMutex::new(None),
         });
 
         let s = Arc::clone(&shared);
@@ -431,8 +476,9 @@ impl RaftHost {
                 {
                     let mut n = s.node.lock().await;
                     n.tick();
-                    s.persist(&n);
-                    s.apply_ready(&mut n);
+                    if s.persist(&n).is_ok() {
+                        s.apply_ready(&mut n);
+                    }
                 }
                 s.flush().await;
             }
@@ -471,6 +517,11 @@ impl RaftHost {
         Ok(())
     }
 
+    /// Access the underlying raft store.
+    pub fn store(&self) -> &RaftStore {
+        &self.shared.store
+    }
+
     pub async fn is_leader(&self) -> bool {
         self.shared.node.lock().await.is_leader()
     }
@@ -487,6 +538,9 @@ impl RaftHost {
     /// (read-your-write). Retries within the propose deadline while no leader.
     pub async fn propose(&self, command: Command) -> Result<Index> {
         let s = &self.shared;
+        if let Some(err) = s.latched_failure.lock().unwrap().clone() {
+            bail!(err);
+        }
         let deadline = Instant::now() + s.cfg.propose_timeout;
         let mut last_route_error = None;
         loop {
@@ -570,7 +624,7 @@ impl RaftHost {
         }
         let bytes = self.shared.sm.snapshot()?;
         n.compact(applied, bytes);
-        self.shared.persist(&n);
+        self.shared.persist(&n)?;
         Ok(applied)
     }
 
@@ -610,7 +664,12 @@ async fn request_vote(
 ) -> Json<VoteResp> {
     let mut n = s.node.lock().await;
     n.handle(env.from, RaftMsg::Vote(env.req));
-    s.persist(&n);
+    if s.persist(&n).is_err() {
+        return Json(VoteResp {
+            term: 0,
+            granted: false,
+        });
+    }
     Json(match take_reply(&mut n, env.from) {
         Some(RaftMsg::VoteResp(r)) => r,
         _ => VoteResp {
@@ -626,7 +685,13 @@ async fn append_entries(
 ) -> Json<AppendResp> {
     let mut n = s.node.lock().await;
     n.handle(env.from, RaftMsg::Append(env.req));
-    s.persist(&n);
+    if s.persist(&n).is_err() {
+        return Json(AppendResp {
+            term: 0,
+            success: false,
+            match_index: 0,
+        });
+    }
     s.apply_ready(&mut n);
     Json(match take_reply(&mut n, env.from) {
         Some(RaftMsg::AppendResp(r)) => r,
@@ -644,7 +709,12 @@ async fn install_snapshot(
 ) -> Json<InstallSnapshotResp> {
     let mut n = s.node.lock().await;
     n.handle(env.from, RaftMsg::InstallSnapshot(env.req));
-    s.persist(&n);
+    if s.persist(&n).is_err() {
+        return Json(InstallSnapshotResp {
+            term: 0,
+            snapshot_index: 0,
+        });
+    }
     s.apply_ready(&mut n); // restores the SM from the installed snapshot
     Json(match take_reply(&mut n, env.from) {
         Some(RaftMsg::InstallSnapshotResp(r)) => r,
@@ -705,6 +775,7 @@ async fn publish_handler(
 
 async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
     let n = s.node.lock().await;
+    let durability_error = s.latched_failure.lock().unwrap().as_ref().map(|e| e.to_string());
     Json(RaftStatus {
         id: s.id,
         role: format!("{:?}", n.role()),
@@ -715,6 +786,7 @@ async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
         applied_index: s.sm.applied_index(),
         leader: n.leader(),
         is_leader: n.is_leader(),
+        durability_error,
     })
 }
 

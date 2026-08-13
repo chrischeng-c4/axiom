@@ -35,7 +35,7 @@ pub use config::{HostConfig, SnapshotPolicy};
 pub use fenced_assignment::{
     ActiveAssignment, AssignmentEpoch, AssignmentError, FenceToken, FencedAssignment,
 };
-pub use host::RaftHost;
+pub use host::{RaftHost, StorageFailed};
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
 pub use peer_transport::PeerTransport;
 pub use proposal_cache::{ProposalCache, DEFAULT_PROPOSAL_CACHE_CAPACITY};

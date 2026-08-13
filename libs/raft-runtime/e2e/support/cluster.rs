@@ -53,6 +53,7 @@ pub fn peers_excluding(me: u64, all: &[(u64, String)]) -> HashMap<u64, String> {
 pub struct Node {
     pub host: Arc<RaftHost>,
     pub sm: Arc<TestSm>,
+    pub url: String,
     pub _serve: tokio::task::JoinHandle<()>,
     pub _dir: TempDir,
 }
@@ -95,9 +96,11 @@ pub async fn cluster(n: u64) -> Vec<Node> {
                 }
             }
         });
+        let url = all[idx].1.clone();
         nodes.push(Node {
             host,
             sm,
+            url,
             _serve: serve,
             _dir: dir,
         });
