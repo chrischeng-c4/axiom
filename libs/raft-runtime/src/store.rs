@@ -22,6 +22,7 @@ pub struct RaftStore {
     path: PathBuf,
     fsync: FsyncPolicy,
     last_saved: Mutex<Option<Vec<u8>>>,
+    injected_save_failure: Mutex<Option<io::ErrorKind>>,
 }
 
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-store-rs.md#source
@@ -34,7 +35,18 @@ impl RaftStore {
             path: dir.join(format!("raft-{node_id}.state")),
             fsync,
             last_saved: Mutex::new(None),
+            injected_save_failure: Mutex::new(None),
         })
+    }
+
+    /// Fault-injection seam for testing durable persistence failures.
+    pub fn inject_next_save_failure_with_kind(&self, kind: io::ErrorKind) {
+        *self.injected_save_failure.lock().expect("injected_save_failure mutex poisoned") = Some(kind);
+    }
+
+    /// Access the file path of this store.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
     }
 
     /// Durably persist the hard state (atomic temp-write + rename, fsync unless
@@ -45,6 +57,9 @@ impl RaftStore {
         let mut last_saved = self.last_saved.lock().expect("raft store cache poisoned");
         if last_saved.as_deref() == Some(bytes.as_slice()) {
             return Ok(());
+        }
+        if let Some(kind) = self.injected_save_failure.lock().expect("injected_save_failure mutex poisoned").take() {
+            return Err(io::Error::new(kind, "injected save failure (fault-injection seam)"));
         }
         storage_durable::atomic_write(&self.path, &bytes, self.fsync).map_err(io::Error::other)?;
         *last_saved = Some(bytes);

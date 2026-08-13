@@ -28,6 +28,10 @@ path = "e2e/applied_watch.rs"
 name = "concurrent_host"
 path = "e2e/concurrent_host.rs"
 
+[[test]]
+name = "durable_persistence"
+path = "e2e/durable_persistence.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }
