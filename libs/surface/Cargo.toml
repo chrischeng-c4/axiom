@@ -7,6 +7,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Renderer-neutral UI element model shared by Jet WASM, native desktop readers, renderers, and parity tools"
+autotests = false
 
 [lib]
 name = "cclab_surface"
@@ -18,3 +19,11 @@ serde = { workspace = true, features = ["derive"] }
 [dev-dependencies]
 serde_json.workspace = true
 # CODEGEN-END
+
+[[test]]
+name = "behavior_renderer_neutral_ui_surface_model_contract"
+path = "e2e/behavior_renderer_neutral_ui_surface_model_contract.rs"
+
+[[test]]
+name = "snapshot"
+path = "e2e/snapshot.rs"

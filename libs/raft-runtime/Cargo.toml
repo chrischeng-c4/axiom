@@ -4,9 +4,21 @@ version = "0.1.0"
 edition = "2021"
 description = "Shared Raft runtime that drives raft-core for a service state machine over transport-h2c, including apply, snapshot, compaction, topology, and read-your-write proposal handling."
 
+# e2e tests live in e2e/, not Cargo's autodiscovered tests/, so every one of
+# them has to be declared below. The list is the crate's e2e inventory.
+autotests = false
+
 [lib]
 name = "raft_runtime"
 path = "src/lib.rs"
+
+[[test]]
+name = "fenced_assignment"
+path = "e2e/fenced_assignment.rs"
+
+[[test]]
+name = "peer_mtls"
+path = "e2e/peer_mtls.rs"
 
 [dependencies]
 raft-core = { path = "../raft-core" }
