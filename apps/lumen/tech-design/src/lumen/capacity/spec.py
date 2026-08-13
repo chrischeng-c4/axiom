@@ -8,10 +8,38 @@ from typing import Final, Optional
 __aw_artifact_id__: Final[str] = "artifact:lumen/capacity/spec"
 
 
+class MachineFamily(str, Enum):
+    E2 = "E2"
+    N2 = "N2"
+
+
+class StorageClass(str, Enum):
+    PD_BALANCED = "pd-balanced"
+    PD_SSD = "pd-ssd"
+
+
+class StorageFormat(str, Enum):
+    SEGMENT_CHECKPOINT = "segment_checkpoint"
+    LEGACY_WHOLE_STATE_JSON = "legacy_whole_state_json"
+
+
+class PdSsdDisposition(str, Enum):
+    INITIAL_ONLY_FUTURE = "INITIAL_ONLY_FUTURE"
+
+
 @dataclass(frozen=True)
 class CapacitySpec:
-    machine_type: str
+    machine_type: str = ""
     owner: str = "automatic"
+    declared_record_schema_fields: frozenset[str] = frozenset()
+    storage_format: StorageFormat = StorageFormat.SEGMENT_CHECKPOINT
+    storage_format_attested: bool = True
+    bounded_steady_state_write_amplification_attested: bool = True
+    n2_evidence_eligible: bool = False
+    explicit_e2_pd_balanced_rejection: bool = False
+    requested_automatic_storage_class_migration: bool = False
+    requested_machine_family: MachineFamily = MachineFamily.E2
+    requested_storage_class: StorageClass = StorageClass.PD_BALANCED
 
 
 @dataclass(frozen=True)
