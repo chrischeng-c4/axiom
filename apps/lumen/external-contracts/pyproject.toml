@@ -390,10 +390,6 @@ target = "rust"
 command = "capacity-2362-behavior"
 evidence_paths = ["evidence/capacity-2362-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2362 pure capacity design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes frozen capacity inputs, deterministic arbitration and projection verdicts, catalog target selection, supplied-clock policy, and generation-bound status records."
-
 [[tool.aw.python-ec.cases]]
 id = "capacity-2362-security"
 artifact_id = "artifact:lumen/capacity-arbitration"
@@ -407,10 +403,6 @@ oracle = "The verifier drives each pure refusal entry point with EC-owned forbid
 target = "rust"
 command = "capacity-2362-security"
 evidence_paths = ["evidence/capacity-2362-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2362 pure capacity design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes fail-closed arbitration, named projection constraints, declared reachable catalog selection with CapacityBlocked outcomes, and generation-bound status records."
 
 [[tool.aw.python-ec.cases]]
 id = "competitor-verification-2376-behavior"

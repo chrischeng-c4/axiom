@@ -1,5 +1,4 @@
-"""Capacity design package for Lumen (#2360)."""
-
+"""Lumen capacity arbitration design package."""
 from __future__ import annotations
 
 from typing import Final
