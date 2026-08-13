@@ -24,6 +24,10 @@ path = "e2e/peer_mtls.rs"
 name = "applied_watch"
 path = "e2e/applied_watch.rs"
 
+[[test]]
+name = "concurrent_host"
+path = "e2e/concurrent_host.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }
