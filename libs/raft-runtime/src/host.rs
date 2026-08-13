@@ -158,7 +158,7 @@ impl Shared {
             advanced = true;
         }
         if advanced {
-            let _ = self.applied_tx.send(self.sm.applied_index());
+            let _ = self.applied_tx.send_replace(self.sm.applied_index());
         }
         // 3. compaction (gated on policy; safe — the SM and node share one applier).
         self.maybe_compact(node);
