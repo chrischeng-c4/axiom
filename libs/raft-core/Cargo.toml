@@ -6,6 +6,11 @@ authors.workspace = true
 license.workspace = true
 description = "Self-contained, step-driven Raft consensus core — transport- and storage-agnostic. Consumers (relay, keep) supply the network, persistence, and state machine."
 
+
+# e2e tests live in e2e/, not Cargo's autodiscovered tests/, so every one
+# of them has to be declared below. The list is this crate's e2e inventory.
+autotests = false
+
 [lib]
 name = "raft_core"
 path = "src/lib.rs"
@@ -15,3 +20,11 @@ serde = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+
+[[test]]
+name = "consensus"
+path = "e2e/consensus.rs"
+
+[[test]]
+name = "snapshot"
+path = "e2e/snapshot.rs"

@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Shared HTTP protocol runtime built on server-lifecycle and server-tcp: HTTP/1.1 plus h2c serving, request tracing, and hooks for service shells and development servers."
 
+
+# e2e tests live in e2e/, not Cargo's autodiscovered tests/, so every one
+# of them has to be declared below. The list is this crate's e2e inventory.
+autotests = false
+
 [lib]
 name = "server_http"
 path = "src/lib.rs"
@@ -35,3 +40,15 @@ hyper-util = { version = "0.1", features = ["client", "client-legacy", "tokio"] 
 http-body-util = "0.1"
 bytes = { workspace = true }
 http = { workspace = true }
+
+[[test]]
+name = "lifecycle_composition"
+path = "e2e/lifecycle_composition.rs"
+
+[[test]]
+name = "ownership"
+path = "e2e/ownership.rs"
+
+[[test]]
+name = "tls_reload"
+path = "e2e/tls_reload.rs"

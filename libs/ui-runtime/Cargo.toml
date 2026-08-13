@@ -7,6 +7,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Renderer-neutral component runtime: hooks, fiber storage, mount, flush, and update scheduling over cclab-surface elements"
+autotests = false
 
 [features]
 default = []
@@ -16,3 +17,7 @@ debug = ["serde_json"]
 cclab-surface = { path = "../surface" }
 serde_json = { version = "1", optional = true }
 # CODEGEN-END
+
+[[test]]
+name = "behavior_renderer_neutral_component_runtime_contract"
+path = "e2e/behavior_renderer_neutral_component_runtime_contract.rs"

@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Shared HTTP-service policy and adapters: standard probe routes, observability compatibility, lifecycle readiness, runtime delegation, and the {error, message} envelope."
 
+
+# e2e tests live in e2e/, not Cargo's autodiscovered tests/, so every one
+# of them has to be declared below. The list is this crate's e2e inventory.
+autotests = false
+
 [lib]
 name = "service_http"
 path = "src/lib.rs"
@@ -43,3 +48,35 @@ tokio = { workspace = true, features = ["full"] }
 tower = { workspace = true, features = ["util"] }
 futures-util = "0.3"
 tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter", "registry"] }
+
+[[test]]
+name = "access_log"
+path = "e2e/access_log.rs"
+
+[[test]]
+name = "body_limit"
+path = "e2e/body_limit.rs"
+
+[[test]]
+name = "lifecycle_observability"
+path = "e2e/lifecycle_observability.rs"
+
+[[test]]
+name = "lifecycle_probes"
+path = "e2e/lifecycle_probes.rs"
+
+[[test]]
+name = "lifecycle_signal"
+path = "e2e/lifecycle_signal.rs"
+
+[[test]]
+name = "otlp_tracing"
+path = "e2e/otlp_tracing.rs"
+
+[[test]]
+name = "request_trace_context"
+path = "e2e/request_trace_context.rs"
+
+[[test]]
+name = "server_timing"
+path = "e2e/server_timing.rs"

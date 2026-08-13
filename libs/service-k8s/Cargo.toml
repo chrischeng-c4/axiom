@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Shared Kubernetes integration for Axiom services: managed-service reconciliation, leader election, CRD and workload rendering, stateful capacity planning, and resize primitives."
 
+
+# e2e tests live in e2e/, not Cargo's autodiscovered tests/, so every one
+# of them has to be declared below. The list is this crate's e2e inventory.
+autotests = false
+
 [lib]
 name = "service_k8s"
 path = "src/lib.rs"
@@ -53,3 +58,27 @@ tower = { workspace = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+
+[[test]]
+name = "certificate_kubernetes_store"
+path = "e2e/certificate_kubernetes_store.rs"
+
+[[test]]
+name = "certificate_lifecycle"
+path = "e2e/certificate_lifecycle.rs"
+
+[[test]]
+name = "certificate_ownership"
+path = "e2e/certificate_ownership.rs"
+
+[[test]]
+name = "certificate_rotation"
+path = "e2e/certificate_rotation.rs"
+
+[[test]]
+name = "certificate_status"
+path = "e2e/certificate_status.rs"
+
+[[test]]
+name = "lifecycle_render"
+path = "e2e/lifecycle_render.rs"
