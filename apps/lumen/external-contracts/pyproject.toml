@@ -476,10 +476,6 @@ command = "observability-2533-behavior"
 evidence_paths = ["evidence/observability-2533-behavior.json"]
 
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2533 pure design modules (lumen.topology.observability, lumen.topology.backup_status, lumen.topology.status) have not landed, so the behavior verifier fails closed on import."
-expected = "The behavior verifier remains a known failure until the design exposes the entry points #2533 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
-
 [[tool.aw.python-ec.cases]]
 id = "observability-2533-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -493,10 +489,6 @@ oracle = "The verifier drives explicit phase timestamps and explicit per-phase p
 target = "rust"
 command = "observability-2533-security"
 evidence_paths = ["evidence/observability-2533-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2533 pure design modules (lumen.topology.observability, lumen.topology.backup_status, lumen.topology.status) have not landed, so the security verifier fails closed on import."
-expected = "The security verifier remains a known failure until the design exposes the entry points #2533 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
 
 [[tool.aw.python-ec.cases]]
 id = "capacity-2538-behavior"
