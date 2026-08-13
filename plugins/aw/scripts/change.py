@@ -56,6 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import workitem  # noqa: E402
 from workitem import (  # noqa: E402,F401
     AW_TOML,
+    LEGS,
     PRIORITIES,
     REPO_ROOT,
     WORK_ITEM_TYPES,
@@ -862,6 +863,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", help="bare project name or a qualified label")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_create)
+
+    p = sub.add_parser("lifecycle", help="record a landed leg in the body's lifecycle block")
+    p.add_argument("iid")
+    p.add_argument("--leg", required=True, choices=LEGS)
+    p.add_argument("--commit", required=True, help="the full sha the leg landed as")
+    p.add_argument("--digest", help="the change digest the leg was reviewed against")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=workitem.cmd_lifecycle)
 
     p = sub.add_parser("update", help="edit an existing change")
     p.add_argument("iid")

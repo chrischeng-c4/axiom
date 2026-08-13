@@ -30,6 +30,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -585,6 +586,129 @@ def cmd_update(args) -> int:
     out = run_or_show(argv, args.dry_run)
     if not args.dry_run:
         print(out.strip() or f"updated #{args.iid}")
+    return 0
+
+
+# The lifecycle block, and why it is shaped the way it is.
+#
+# A work item's body is authored prose under four H2s, and that set is closed:
+# `validate_body` refuses any other H2 by name. So the legs cannot record
+# themselves as a `## Lifecycle` section -- doing that would make the *next*
+# leg's work-item precondition fail on the body its own predecessor wrote.
+# Measured, not assumed: an appended `## Lifecycle` is INVALID, an appended
+# HTML comment and an appended horizontal rule are both valid.
+#
+# What lands instead is a block fenced by two HTML comments, appended after the
+# last authored section. The fence is what makes the write an *upsert*: a
+# re-run of a leg, or a later leg, rewrites the block rather than stacking a
+# second copy under it. Without a fence the only available operation is append,
+# and append plus retry is how a body accumulates three contradictory records
+# of the same leg.
+#
+# The rule is inside the fence and readable on the tracker rather than only
+# here, because the next person to see it will be reading a GitHub issue, not
+# this file.
+LIFECYCLE_BEGIN = "<!-- aw:lifecycle:begin -->"
+LIFECYCLE_END = "<!-- aw:lifecycle:end -->"
+LIFECYCLE_NOTE = ("*Written by `aw` as each leg lands. Not authored content, and not "
+                  "reviewed: edit the sections above, never this block.*")
+LEGS = ("ec", "td", "cb")
+
+
+def lifecycle_rows(body: str) -> dict:
+    """The legs already recorded in `body`, keyed by leg name."""
+    start = body.find(LIFECYCLE_BEGIN)
+    end = body.find(LIFECYCLE_END)
+    if start == -1 or end == -1:
+        return {}
+    rows = {}
+    for line in body[start:end].splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 3 and cells[0] in LEGS:
+            rows[cells[0]] = cells
+    return rows
+
+
+def lifecycle_upsert(body: str, leg: str, commit: str, digest: str) -> str:
+    """`body` with `leg`'s row set to `commit`/`digest`, block created if absent.
+
+    Ordering is by `LEGS`, not by arrival, so the block reads as the lifecycle
+    rather than as a log. A leg that lands twice occupies one row either way.
+    """
+    rows = lifecycle_rows(body)
+    rows[leg] = [leg, f"`{commit}`", f"`{digest}`" if digest else "--"]
+
+    # "digest" rather than "change digest": this is the type-agnostic engine,
+    # and `check_engine_split.py` reads a work-item type name in a literal here
+    # as the engine having learned about one specific type. It is right to --
+    # the column is the same column whatever type the item is.
+    table = ["| leg | commit | digest |", "|---|---|---|"]
+    table += [f"| {' | '.join(rows[name])} |" for name in LEGS if name in rows]
+    block = "\n".join([LIFECYCLE_BEGIN, "", "---", "", LIFECYCLE_NOTE, "",
+                       *table, "", LIFECYCLE_END])
+
+    start = body.find(LIFECYCLE_BEGIN)
+    if start == -1:
+        return body.rstrip("\n") + "\n\n" + block + "\n"
+    end = body.find(LIFECYCLE_END) + len(LIFECYCLE_END)
+    return body[:start] + block + body[end:]
+
+
+def cmd_lifecycle(args) -> int:
+    """Record a landed leg in the work item's body.
+
+    The body is fetched live rather than read from the staged copy. A leg lands
+    at the end of a session that started by staging the body, and between those
+    two moments the tracker is the only thing that knows whether someone else
+    wrote to it. Rewriting a stale local copy back over the issue would silently
+    revert them.
+
+    The result is validated *before* it is pushed, and that check is the whole
+    safety argument for writing to the body at all: it is the same function the
+    next leg's precondition runs, so a body this verb would refuse can never
+    reach the tracker.
+    """
+    issue = fetch_issue(args.iid, args.repo)
+    require_type(issue, "lifecycle", args.wi_type)
+
+    def hard(text: str) -> list[str]:
+        return [e for e in validate_body(text, args.wi_type) if not e.startswith("note:")]
+
+    original = issue["body"] or ""
+    body = lifecycle_upsert(original, args.leg, args.commit, args.digest)
+
+    # Two refusals, and they are kept apart because they have different fixes
+    # and only one of them is this verb's fault. A body that was already
+    # malformed cannot be recorded onto, but saying "the result fails" there
+    # would point at the append -- sending whoever reads it to look for a bug
+    # in a block that is doing exactly what it should.
+    before, after = hard(original), hard(body)
+    if before:
+        print(f"refusing to record {args.leg}: #{args.iid} already fails "
+              f"{len(before)} schema rule(s) before this leg touches it")
+        for error in before:
+            print(f"  - {error}")
+        print("fix the work item first; this verb does not repair a body")
+        return 1
+    if after:
+        print(f"refusing to record {args.leg}: the append would break a body that "
+              f"validates today, on {len(after)} rule(s)")
+        for error in after:
+            print(f"  - {error}")
+        return 1
+
+    # Through a file rather than `--body-file -` or `--body`: the body is
+    # markdown with newlines, backticks and pipes in it, and every route that
+    # puts it on a command line is a quoting bug waiting for the first work
+    # item whose prose contains the wrong character.
+    with tempfile.TemporaryDirectory() as scratch:
+        staged = Path(scratch) / f"{args.iid}.md"
+        staged.write_text(body, encoding="utf-8")
+        argv = ["issue", "edit", str(args.iid), "--repo", args.repo,
+                "--body-file", str(staged)]
+        out = run_or_show(argv, args.dry_run)
+    if not args.dry_run:
+        print(out.strip() or f"recorded {args.leg} on #{args.iid}: {args.commit}")
     return 0
 
 

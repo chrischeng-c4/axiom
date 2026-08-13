@@ -1005,9 +1005,10 @@ def cmd_commit(args: argparse.Namespace) -> int:
     # let a path be reviewed and then not committed, or committed without ever
     # having been in the digest -- and neither would show up as a red row.
     allowlist = dirty
+    digest = change_digest(repo, args.wi, dirty)
     trailers = [
         f"EC-Review: {review_route(repo, args.project)}",
-        f"EC-Change-Digest: {change_digest(repo, args.wi, dirty)}",
+        f"EC-Change-Digest: {digest}",
     ]
     for _status, name, detail in chk.pending:
         trailers.append(f"EC-Pending: {name} ({detail.splitlines()[0]})")
@@ -1036,7 +1037,30 @@ def cmd_commit(args: argparse.Namespace) -> int:
         cwd=repo, capture_output=True, text=True,
     )
     print(proc.stdout or proc.stderr)
-    return proc.returncode
+    if proc.returncode != 0:
+        return proc.returncode
+
+    # The link the commit makes is one-way: it carries `Refs #<iid>`, and
+    # nothing on the work item points back. Recovering the commit from the
+    # tracker means running `git log --grep` in a checkout, which is not
+    # available to anyone reading the issue.
+    #
+    # Closing that is a tracker write, and `ec.py` does not make tracker
+    # writes -- the same boundary that makes the skill run `change.py fetch`
+    # rather than reading the issue here. So this resolves the sha, prints it,
+    # and names the verb that records it. Resolved rather than parsed out of
+    # git's own output: that line carries an abbreviated sha whose length is a
+    # local config, and half a link is worse than none.
+    head = subprocess.run([*GIT, "rev-parse", "HEAD"],
+                          cwd=repo, capture_output=True, text=True)
+    if head.returncode != 0:
+        print(head.stderr)
+        return head.returncode
+    sha = head.stdout.strip()
+    print(f"EC-Commit: {sha}")
+    print(f"\nnext.command: change.py lifecycle {args.wi} --leg ec "
+          f"--commit {sha} --digest {digest}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

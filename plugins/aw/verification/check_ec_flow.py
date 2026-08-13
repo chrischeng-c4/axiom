@@ -48,7 +48,11 @@ Structure of the controls
   5 digest controls   -- the binding that makes an approval die when the case,
                          the inventory, or the work item changes, plus what
                          happens with no verdict at all.
-  1 commit control    -- the diff that was reviewed is the diff that lands.
+  3 commit controls   -- the diff that was reviewed is the diff that lands, and
+                         the two halves of the back-link to the work item: the
+                         full sha `ec.py` hands out, and the fenced block that
+                         records it without breaking the schema the next leg
+                         validates against.
 
 C2 has no mutation because it is a named PENDING in every fixture: it looks for
 an engineering baseline this fixture project does not have, and says so rather
@@ -66,7 +70,7 @@ import tempfile
 import threading
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _paths import EC_SCRIPT, pinned_interpreter  # noqa: E402
+from _paths import EC_SCRIPT, load_change_module, pinned_interpreter  # noqa: E402
 
 Path = pathlib.Path
 
@@ -484,6 +488,44 @@ def main() -> int:
                      "clean tree, the case in HEAD, digest in the trailer",
                      f"exit {done.returncode}; left over {after!r}; landed {landed}", ok)
 
+        # The first half of the back-link. `ec.py` makes no tracker write, so
+        # what it owes the work item is a sha someone else can record -- and it
+        # has to be the *full* one, resolved rather than scraped out of git's
+        # own output, where the abbreviation length is a local config.
+        def commit_emits_the_landed_sha() -> None:
+            w = h.fresh()
+            h.accept(w, GOOD_TRANSCRIPT)
+            done = h.commit(w)
+            head = git(w, "rev-parse", "HEAD").stdout.strip()
+            emitted = [line.split(":", 1)[1].strip()
+                       for line in done.stdout.splitlines()
+                       if line.startswith("EC-Commit:")]
+            ok = (done.returncode == 0 and emitted == [head] and len(head) == 40
+                  and f"change.py lifecycle {WI} --leg ec --commit {head}" in done.stdout)
+            h.record("commit emits the full sha it landed as, and how to record it",
+                     f"EC-Commit: {head} and a lifecycle next.command",
+                     f"emitted {emitted}", ok)
+
+        # The second half, and the reason a body write is allowed at all. The
+        # authored H2 set is closed, so the block has to survive the same
+        # validator the next leg's P1 runs -- twice, because a leg that lands
+        # twice must occupy one row rather than two.
+        def lifecycle_block_is_upsert_and_stays_valid() -> None:
+            change = load_change_module()
+            wi = change.workitem
+            once = wi.lifecycle_upsert(WI_BODY, "ec", "a" * 40, "d" * 64)
+            twice = wi.lifecycle_upsert(once, "ec", "b" * 40, "e" * 64)
+            later = wi.lifecycle_upsert(twice, "td", "c" * 40, "")
+            errors = [e for e in change.validate_body(later)
+                      if not e.startswith("note:")]
+            ok = (errors == []
+                  and later.startswith(WI_BODY.rstrip("\n"))
+                  and wi.lifecycle_rows(later).keys() == {"ec", "td"}
+                  and "b" * 40 in later and "a" * 40 not in later)
+            h.record("the lifecycle block upserts by leg and the body stays valid",
+                     "one row per leg, authored sections untouched, no schema error",
+                     f"rows {sorted(wi.lifecycle_rows(later))}; errors {errors}", ok)
+
         # Declaration order is report order: `h.run` files each result under the
         # index it sits at here, so the table below reads the same on every run
         # no matter which control finishes first.
@@ -612,6 +654,8 @@ def main() -> int:
 
             # -- the commit itself ---------------------------------------------
             commit_lands_the_diff,
+            commit_emits_the_landed_sha,
+            lifecycle_block_is_upsert_and_stays_valid,
         ])
 
         print(f"\n{'':8s} {'control':66s} observation")
