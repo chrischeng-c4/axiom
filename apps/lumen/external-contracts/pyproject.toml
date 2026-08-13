@@ -1997,10 +1997,6 @@ target = "rust"
 command = "operational-log-integration-2377-behavior"
 evidence_paths = ["evidence/operational-log-integration-2377-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2377 pure operational-log integration design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes frozen gate-record, coverage, ownership, issue, and terminal specifications plus the pure admission deciders named by #2377."
-
 [[tool.aw.python-ec.cases]]
 id = "operational-log-integration-2377-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -2014,10 +2010,6 @@ oracle = "The verifier supplies explicit forbidden inputs to every applicable pu
 target = "rust"
 command = "operational-log-integration-2377-security"
 evidence_paths = ["evidence/operational-log-integration-2377-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2377 pure operational-log integration design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes the frozen typed refusal vocabulary and pure gate-record, coverage, ownership, mixed-disposition, and terminal-result entry points."
 
 [[tool.aw.python-ec.cases]]
 id = "body-limit-2584-behavior"
