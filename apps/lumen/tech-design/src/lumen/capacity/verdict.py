@@ -1,12 +1,11 @@
-"""Capacity decision verdict models and reason vocabulary."""
-
+"""Verdict models and ActionKind enumeration for capacity decisions."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import Final
 
-__aw_artifact_id__: Final[str] = "artifact:lumen/capacity-verdict"
+__aw_artifact_id__: Final[str] = "artifact:lumen/capacity/verdict"
 
 
 class CapacityReason(str, Enum):
@@ -46,3 +45,42 @@ class CapacityRejection:
     @property
     def kind(self) -> TransitionKind:
         return TransitionKind.REJECTED
+
+
+class ActionKind(str, Enum):
+    HOLD = "HOLD"
+    PVC_GROW = "PVC_GROW"
+    SPLIT = "SPLIT"
+    READ_REPLICA = "READ_REPLICA"
+    MACHINE_UPGRADE = "MACHINE_UPGRADE"
+    HIGHMEM_UPGRADE = "HIGHMEM_UPGRADE"
+    READ_REPLICA_REMOVE = "READ_REPLICA_REMOVE"
+    MACHINE_DOWNGRADE = "MACHINE_DOWNGRADE"
+
+
+@dataclass(frozen=True)
+class CapacityAction:
+    kind: ActionKind
+    target: str | None = None
+
+
+@dataclass(frozen=True)
+class CapacityDecision:
+    action: CapacityAction
+    reason: str = "ok"
+    field_path: str = ""
+
+
+@dataclass(frozen=True)
+class DowngradeVerdict:
+    action: CapacityAction
+    failing_constraint: str | None = None
+    reason: str = "ok"
+    field_path: str = ""
+
+
+@dataclass(frozen=True)
+class ProfileSelection:
+    profile: str | None
+    reason: str
+    field_path: str = ""
