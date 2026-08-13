@@ -34,8 +34,50 @@ CASE_EVIDENCE_PATHS = {case_id: f"evidence/{case_id}.json" for case_id in CASE_I
 # refuses an environment override: an arbitrary checkout must not be able to
 # redirect verification at attacker-selected source.
 _DESIGN_SRC = Path(__file__).resolve().parents[2] / "tech-design" / "src"
-if str(_DESIGN_SRC) not in sys.path:
-    sys.path.insert(0, str(_DESIGN_SRC))
+
+# Lumen's design composes shared-crate designs the way the crate does at
+# runtime, so a lumen module may delegate a decision to the crate that owns it
+# rather than restating it. Those designs are separate Python projects, and the
+# contract cannot import through `lumen.*` unless they are importable too.
+#
+# Enumerated, not globbed over `libs/*/tech-design/src`: this is exactly the
+# set of libs Lumen already declares as path dependencies in
+# `apps/lumen/Cargo.toml`, so the design-time import surface is the twin of the
+# compile-time one. A glob would drift from that set the moment a lib exists
+# that Lumen does not depend on, and would then let an import be satisfied by a
+# crate the implementation could not use.
+#
+# The two lists are kept equal by assertion, not by discipline -- a narrower
+# hand-picked subset is a second list with no principle selecting its members,
+# and it fails late, inside a worker that cannot import a crate for a reason
+# that has nothing to do with its round.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_SHARED_DESIGN_CRATES = (
+    "build-stamp",
+    "cli-std",
+    "metrics-prometheus",
+    "openapi-codegen",
+    "peer-tls",
+    "raft-core",
+    "raft-runtime",
+    "service-auth",
+    "service-backup",
+    "service-http",
+    "service-k8s",
+    "service-observability",
+    "storage-durable",
+    "transport-h2c",
+)
+_SHARED_DESIGN_SRC = tuple(
+    _REPO_ROOT / "libs" / crate / "tech-design" / "src"
+    for crate in _SHARED_DESIGN_CRATES
+)
+
+# Lumen's own root goes on last so it is searched first: a shared crate must
+# never be able to shadow a `lumen.*` module the contract names.
+for _root in (*_SHARED_DESIGN_SRC, _DESIGN_SRC):
+    if _root.is_dir() and str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
 
 
 def _required_env(name: str) -> str:
