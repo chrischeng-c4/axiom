@@ -1,11 +1,32 @@
 # Verification
 
 Gates for the `aw` plugin and the two work-item schemas its scripts enforce.
-Run everything with:
 
 ```
-python3 plugins/aw/verification/run_all.py
+uv run --python 3.13 --no-project plugins/aw/verification/run_all.py                          # ~12s
+uv run --python 3.13 --no-project plugins/aw/verification/run_all.py --with-negative-controls  # ~40s
 ```
+
+One interpreter, the same launcher the skills use to run the scripts. The gates
+do not need 3.11 themselves — they spawn the scripts under test through
+`_paths.pinned_interpreter()` — but naming a second interpreter here is how a
+gate suite ends up documented under one and only ever run under another, which
+is the shape that let a `list[str] | None` at module scope sit in `_paths.py`
+red under `python3` (3.9) and green under everything anyone actually typed.
+
+The default runs the checkers — "is this tree admissible?", the question a
+working session asks. The flag adds the negative controls, which answer a
+different question: can each checker be seen to fail at all? That one is about
+the gate rather than the tree, so its answer only changes when a gate changes,
+and it is expensive by construction — a control mutates the thing under test
+once per declared defect and re-runs the whole checker for each mutation.
+`check_plugin_negative_control.py` is nine such rounds and half the runtime.
+
+Run the full suite whenever a gate itself changes, and before reporting any
+claim of the form "this is verified". The default mode is not allowed to sound
+like the full one: it names the controls it did not run and prints
+`CHECKERS GREEN`, never `ALL GREEN`, because the second string is the one that
+gets pasted as evidence.
 
 Each gate resolves the checkout through `_paths.py`, which walks up to the
 outermost `aw.toml` — the same rule the scripts use, so a gate and the script it

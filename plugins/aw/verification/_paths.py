@@ -12,6 +12,14 @@ Resolution follows the same rule `epic.py` itself uses -- walk up to the
 *outermost* `aw.toml` -- so the gates and the script under test can never
 disagree about which checkout is being measured.
 """
+# Not stylistic. `_RESOLVED` below is annotated `list[str] | None`, and a
+# module-level annotation is *evaluated* -- so without this the whole module
+# dies at import on 3.10 and older, taking every gate that imports it with it.
+# That is what happened here: the annotation was written while everything was
+# being run through the pinned launcher, and it took a run under bare `python3`
+# to see it. Deferring annotations costs nothing and removes the class.
+from __future__ import annotations
+
 import importlib.util
 import pathlib
 import subprocess
