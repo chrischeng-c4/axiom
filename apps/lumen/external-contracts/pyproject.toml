@@ -362,10 +362,6 @@ command = "capacity-2360-behavior"
 evidence_paths = ["evidence/capacity-2360-behavior.json"]
 
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2360 pure design modules (lumen/capacity/__init__.py, lumen/capacity/spec.py, lumen/capacity/verdict.py, lumen/capacity/transition.py) have not landed, so the behavior verifier fails closed on import."
-expected = "The behavior verifier remains a known failure until the design exposes the entry points #2360 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
-
 [[tool.aw.python-ec.cases]]
 id = "capacity-2360-security"
 artifact_id = "artifact:lumen/capacity-retained-gke-journey"
@@ -379,10 +375,6 @@ oracle = "The verifier sends explicit forbidden inputs to the pure capacity deci
 target = "rust"
 command = "capacity-2360-security"
 evidence_paths = ["evidence/capacity-2360-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2360 pure design modules (lumen/capacity/__init__.py, lumen/capacity/spec.py, lumen/capacity/verdict.py, lumen/capacity/transition.py) have not landed, so the security verifier fails closed on import."
-expected = "The security verifier remains a known failure until the design exposes the entry points #2360 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
 
 [[tool.aw.python-ec.cases]]
 id = "capacity-2362-behavior"
