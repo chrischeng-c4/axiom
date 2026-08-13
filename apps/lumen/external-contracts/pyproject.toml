@@ -447,10 +447,6 @@ command = "contraction-2528-behavior"
 evidence_paths = ["evidence/contraction-2528-behavior.json"]
 
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2528 pure design modules (lumen/topology/contraction_spec.py, lumen/topology/contraction_verdict.py, lumen/topology/contraction_admission.py, lumen/topology/contraction_review.py) have not landed, so the behavior verifier fails closed on import."
-expected = "The behavior verifier remains a known failure until the design exposes the entry points #2528 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
-
 [[tool.aw.python-ec.cases]]
 id = "contraction-2528-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -464,10 +460,6 @@ oracle = "Each refusal is driven by an EC-owned literal request that explicitly 
 target = "rust"
 command = "contraction-2528-security"
 evidence_paths = ["evidence/contraction-2528-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2528 pure design modules (lumen/topology/contraction_spec.py, lumen/topology/contraction_verdict.py, lumen/topology/contraction_admission.py, lumen/topology/contraction_review.py) have not landed, so the security verifier fails closed on import."
-expected = "The security verifier remains a known failure until the design exposes the entry points #2528 names; the gate reports a known_failure that starts passing, so this block expires loudly once the design lands."
 
 [[tool.aw.python-ec.cases]]
 id = "observability-2533-behavior"
