@@ -2001,10 +2001,6 @@ target = "rust"
 command = "body-limit-2584-behavior"
 evidence_paths = ["evidence/body-limit-2584-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2584 pure body-limit design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes the frozen optional body-limit specification, admitted effective-limit verdict, and pure admission entry point."
-
 [[tool.aw.python-ec.cases]]
 id = "body-limit-2584-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -2019,6 +2015,3 @@ target = "rust"
 command = "body-limit-2584-security"
 evidence_paths = ["evidence/body-limit-2584-security.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2584 pure body-limit design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes the exact fail-closed rejection vocabulary, body_limit_bytes field path, and no-fallback invalid-value verdicts."
