@@ -418,10 +418,6 @@ target = "rust"
 command = "competitor-verification-2376-behavior"
 evidence_paths = ["evidence/competitor-verification-2376-behavior.json"]
 
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2376 pure competitor-verification design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes frozen evidence, ownership, issue, and terminal specifications plus pure evidence-admission, failure-disposition, and terminal-result entry points."
-
 [[tool.aw.python-ec.cases]]
 id = "competitor-verification-2376-security"
 artifact_id = "artifact:lumen/topology-public-contract"
@@ -435,10 +431,6 @@ oracle = "The verifier supplies explicit forbidden inputs to every applicable pu
 target = "rust"
 command = "competitor-verification-2376-security"
 evidence_paths = ["evidence/competitor-verification-2376-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2376 pure competitor-verification design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes typed fail-closed evidence, issue-backing, duplicate-WI, ownership, and terminal-result verdicts."
 
 [[tool.aw.python-ec.cases]]
 id = "contraction-2528-behavior"
