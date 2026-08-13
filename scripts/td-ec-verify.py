@@ -8,6 +8,16 @@ than merely observed green.
 
     python3 scripts/td-ec-verify.py libs/peer-tls
     python3 scripts/td-ec-verify.py libs/peer-tls --mutations scripts/td-ec-mutations/peer-tls.toml
+    python3 scripts/td-ec-verify.py apps/lumen libs/service-k8s --skip-mutations
+
+More than one project root verifies each in turn and fails if *any* of them
+fails. That is one command rather than two because a round is gated on exactly
+one: `agy-dispatch`'s `lint` refuses a `## Gate` section naming a second
+command, and `prove` runs `task_contract.gate_command` alone. A round that
+lands a decision in a shared crate and the composition that consumes it is
+therefore only honestly gated when both projects are judged by the single
+command the round is proved against -- otherwise the crate half is authorized
+but never measured.
 
 Gates, in order. Any failure is fatal and exits 1.
 
@@ -622,7 +632,12 @@ def gate_mutations(report: Report, project: Project, mutations_path: Path | None
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("project", type=Path, help="project root, e.g. libs/peer-tls")
+    parser.add_argument(
+        "project",
+        type=Path,
+        nargs="+",
+        help="one or more project roots, e.g. libs/peer-tls apps/lumen",
+    )
     parser.add_argument("--mutations", type=Path, default=None)
     parser.add_argument("--skip-mutations", action="store_true")
     parser.add_argument(
@@ -639,35 +654,67 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    project = Project.load(args.project.resolve())
+    roots = list(dict.fromkeys(args.project))
+    if args.mutations and len(roots) > 1:
+        raise SystemExit("--mutations names one spec and cannot address several "
+                         "projects; run the mutation suite one project at a time")
+
+    projects = [Project.load(root.resolve()) for root in roots]
+
+    # `--demand` is resolved against the union rather than per project, because
+    # the caller names a case, not a project. Resolving it per project would
+    # make every name unknown to every project but one, so the check has to see
+    # all of them before it can call a name unknown.
     demanded = set(args.demand)
-    unknown = demanded - {c["id"] for c in project.cases} - {c["command"] for c in project.cases}
+    known = {key for project in projects for case in project.cases
+             for key in (case["id"], case["command"])}
+    unknown = demanded - known
     if unknown:
         raise SystemExit(f"--demand names no declared case: {', '.join(sorted(unknown))}")
-    for case in project.cases:
-        if case["id"] in demanded or case["command"] in demanded:
-            case.pop("known_failure", None)
+    for project in projects:
+        for case in project.cases:
+            if case["id"] in demanded or case["command"] in demanded:
+                case.pop("known_failure", None)
 
-    print(f"verifying {args.project} — TD {project.td_dir.name}, EC {project.ec_dir.name}")
-    if demanded:
-        print(f"demanding {len(demanded)} held case(s) live: {', '.join(sorted(demanded))}")
-    print()
+    rejected = []
+    for root, project in zip(roots, projects):
+        print(f"verifying {root} — TD {project.td_dir.name}, EC {project.ec_dir.name}")
+        if demanded:
+            live = sorted(k for k in demanded
+                          if k in {c["id"] for c in project.cases}
+                          | {c["command"] for c in project.cases})
+            if live:
+                print(f"demanding {len(live)} held case(s) live: {', '.join(live)}")
+        print()
 
-    report = Report()
-    run_unittests(report, "td-unit-tests", project.td_dir / "tests")
-    run_unittests(report, "ec-unit-tests", project.ec_dir / "tests")
-    gate_inventory(report, project)
-    gate_execution(report, project)
-    gate_static_audits(report, project)
-    if not args.skip_mutations:
-        gate_mutations(report, project, args.mutations)
+        report = Report()
+        run_unittests(report, "td-unit-tests", project.td_dir / "tests")
+        run_unittests(report, "ec-unit-tests", project.ec_dir / "tests")
+        gate_inventory(report, project)
+        gate_execution(report, project)
+        gate_static_audits(report, project)
+        if not args.skip_mutations:
+            gate_mutations(report, project, args.mutations)
 
-    failed = [g.gate_id for g in report.gates if not g.ok]
-    print()
-    if failed:
-        print(f"REJECTED — {len(failed)} gate(s) failed: {', '.join(failed)}")
+        failed = [g.gate_id for g in report.gates if not g.ok]
+        print()
+        if failed:
+            print(f"REJECTED {root} — {len(failed)} gate(s) failed: {', '.join(failed)}")
+            rejected.append(root)
+        else:
+            print(f"ACCEPTED {root} — {len(report.gates)}/{len(report.gates)} gates green")
+        print()
+
+    # Every project is verified before the verdict, never short-circuited on the
+    # first failure. A round that lands in two projects has to see both results
+    # in one run, or the second is only ever read after the first is repaired --
+    # which is how a two-project round turns into two sequential single-project
+    # rounds without anyone deciding to.
+    if rejected:
+        print(f"REJECTED — {len(rejected)}/{len(roots)} project(s): "
+              f"{', '.join(str(r) for r in rejected)}")
         return 1
-    print(f"ACCEPTED — {len(report.gates)}/{len(report.gates)} gates green")
+    print(f"ACCEPTED — {len(roots)}/{len(roots)} project(s) green")
     return 0
 
 
