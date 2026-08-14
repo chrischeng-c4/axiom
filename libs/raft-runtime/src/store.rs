@@ -16,6 +16,8 @@ use std::sync::Mutex;
 use raft_core::{Index, NodeId, PersistedState, Term};
 pub use storage_durable::FsyncPolicy;
 
+use crate::group::{GroupId, LEGACY_GROUP_ID};
+
 /// File-backed persistence for one raft node.
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-store-rs.md#source
 pub struct RaftStore {
@@ -29,10 +31,29 @@ pub struct RaftStore {
 impl RaftStore {
     /// Open (creating the dir if needed) the state file `raft-<node_id>.state`.
     pub fn open(dir: &str, node_id: NodeId, fsync: FsyncPolicy) -> io::Result<RaftStore> {
+        Self::open_group(dir, node_id, GroupId(LEGACY_GROUP_ID.to_string()), fsync)
+    }
+
+    pub fn open_group(
+        dir: &str,
+        node_id: NodeId,
+        group_id: GroupId,
+        fsync: FsyncPolicy,
+    ) -> io::Result<RaftStore> {
         let dir = PathBuf::from(dir);
         create_dir_all(&dir)?;
+        let filename = if group_id.0 == LEGACY_GROUP_ID {
+            format!("raft-{node_id}.state")
+        } else {
+            let mut s = String::new();
+            for b in group_id.0.as_bytes() {
+                use std::fmt::Write;
+                write!(&mut s, "{:02x}", b).unwrap();
+            }
+            format!("raft-{node_id}-{s}.state")
+        };
         Ok(RaftStore {
-            path: dir.join(format!("raft-{node_id}.state")),
+            path: dir.join(filename),
             fsync,
             last_saved: Mutex::new(None),
             injected_save_failure: Mutex::new(None),
@@ -41,7 +62,10 @@ impl RaftStore {
 
     /// Fault-injection seam for testing durable persistence failures.
     pub fn inject_next_save_failure_with_kind(&self, kind: io::ErrorKind) {
-        *self.injected_save_failure.lock().expect("injected_save_failure mutex poisoned") = Some(kind);
+        *self
+            .injected_save_failure
+            .lock()
+            .expect("injected_save_failure mutex poisoned") = Some(kind);
     }
 
     /// Access the file path of this store.
@@ -58,8 +82,16 @@ impl RaftStore {
         if last_saved.as_deref() == Some(bytes.as_slice()) {
             return Ok(());
         }
-        if let Some(kind) = self.injected_save_failure.lock().expect("injected_save_failure mutex poisoned").take() {
-            return Err(io::Error::new(kind, "injected save failure (fault-injection seam)"));
+        if let Some(kind) = self
+            .injected_save_failure
+            .lock()
+            .expect("injected_save_failure mutex poisoned")
+            .take()
+        {
+            return Err(io::Error::new(
+                kind,
+                "injected save failure (fault-injection seam)",
+            ));
         }
         storage_durable::atomic_write(&self.path, &bytes, self.fsync).map_err(io::Error::other)?;
         *last_saved = Some(bytes);
