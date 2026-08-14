@@ -1,7 +1,7 @@
 use std::io::ErrorKind;
 use tempfile::TempDir;
 
-use raft_core::{PersistedState, RaftEntry};
+use raft_core::{EntryKind, PersistedState, RaftEntry};
 use raft_runtime::{FsyncPolicy, RaftStore};
 
 fn pseudo_random_bytes(len: usize) -> Vec<u8> {
@@ -27,11 +27,13 @@ fn measurement_1_command_bytes_bounded_size() {
             term: 1,
             index: 1,
             command,
+            kind: EntryKind::Command,
         }],
         commit_index: 1,
         snapshot_index: 0,
         snapshot_term: 0,
         snapshot: vec![],
+        conf: None,
     };
 
     store.save(&state).unwrap();
@@ -59,6 +61,7 @@ fn measurement_2_snapshot_bytes_bounded_size() {
         snapshot_index: 1,
         snapshot_term: 1,
         snapshot,
+        conf: None,
     };
 
     store.save(&state).unwrap();
@@ -98,11 +101,13 @@ fn measurement_3_payload_byte_exactness() {
                 term: 2,
                 index: 1,
                 command: payload.clone(),
+                kind: EntryKind::Command,
             }],
             commit_index: 1,
             snapshot_index: 0,
             snapshot_term: 0,
             snapshot: payload.clone(),
+            conf: None,
         };
 
         store.save(&state).unwrap();
@@ -135,6 +140,7 @@ fn measurement_4_cache_footprint_bounded_and_invariant() {
         snapshot_index: 0,
         snapshot_term: 0,
         snapshot: vec![0xAA; 1024],
+        conf: None,
     };
     store.save(&state_1k).unwrap();
 
@@ -152,6 +158,7 @@ fn measurement_4_cache_footprint_bounded_and_invariant() {
         snapshot_index: 0,
         snapshot_term: 0,
         snapshot: vec![0xBB; 1024 * 1024],
+        conf: None,
     };
     store.save(&state_1m).unwrap();
 
@@ -174,11 +181,13 @@ fn measurement_5_dedup_and_fault_injection_interaction() {
             term: 1,
             index: 1,
             command: vec![1, 2, 3],
+            kind: EntryKind::Command,
         }],
         commit_index: 1,
         snapshot_index: 0,
         snapshot_term: 0,
         snapshot: vec![],
+        conf: None,
     };
 
     store.save(&state_a).unwrap();
@@ -199,11 +208,13 @@ fn measurement_5_dedup_and_fault_injection_interaction() {
             term: 2,
             index: 1,
             command: vec![1, 2, 3],
+            kind: EntryKind::Command,
         }],
         commit_index: 1,
         snapshot_index: 0,
         snapshot_term: 0,
         snapshot: vec![],
+        conf: None,
     };
 
     // Different save must not short-circuit, consuming the fault injection and returning StorageFull.
@@ -228,11 +239,13 @@ fn measurement_6_legacy_json_backward_compatibility() {
             term: 3,
             index: 1,
             command: vec![10, 20, 30],
+            kind: EntryKind::Command,
         }],
         commit_index: 1,
         snapshot_index: 1,
         snapshot_term: 2,
         snapshot: vec![40, 50, 60],
+        conf: None,
     };
 
     assert_eq!(loaded, expected);

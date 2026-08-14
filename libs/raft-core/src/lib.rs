@@ -46,6 +46,14 @@ const ELECTION_MIN: u64 = 50;
 /// Ticks between leader heartbeats / replication pushes.
 const HEARTBEAT_TIMEOUT: u64 = 3;
 
+/// Discriminator distinguishing client commands from internal configuration entries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntryKind {
+    #[default]
+    Command,
+    Config,
+}
+
 /// One replicated command entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
@@ -53,6 +61,8 @@ pub struct RaftEntry {
     pub term: Term,
     pub index: Index,
     pub command: Vec<u8>,
+    #[serde(default)]
+    pub kind: EntryKind,
 }
 
 /// The durable hard state of a Raft node: what must survive a restart so the
@@ -77,6 +87,8 @@ pub struct PersistedState {
     pub snapshot_term: Term,
     #[serde(default)]
     pub snapshot: Vec<u8>,
+    #[serde(default)]
+    pub conf: Option<ConfState>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,11 +182,73 @@ pub trait RaftTransport {
 }
 
 /// Cluster membership for one Raft group.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 /// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct Membership {
     pub voters: Vec<NodeId>,
     pub learners: Vec<NodeId>,
+}
+
+/// Monotonically sequenced cluster membership.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfState {
+    pub membership: Membership,
+    pub generation: u64,
+}
+
+impl ConfState {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(
+            24 + (self.membership.voters.len() + self.membership.learners.len()) * 8,
+        );
+        buf.extend_from_slice(&self.generation.to_le_bytes());
+        buf.extend_from_slice(&(self.membership.voters.len() as u64).to_le_bytes());
+        for &v in &self.membership.voters {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        buf.extend_from_slice(&(self.membership.learners.len() as u64).to_le_bytes());
+        for &l in &self.membership.learners {
+            buf.extend_from_slice(&l.to_le_bytes());
+        }
+        buf
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<ConfState> {
+        if bytes.len() < 24 {
+            return None;
+        }
+        let mut offset = 0;
+        let generation = u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?);
+        offset += 8;
+        let voters_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?) as usize;
+        offset += 8;
+        if bytes.len() < offset + voters_len * 8 + 8 {
+            return None;
+        }
+        let mut voters = Vec::with_capacity(voters_len);
+        for _ in 0..voters_len {
+            voters.push(u64::from_le_bytes(
+                bytes[offset..offset + 8].try_into().ok()?,
+            ));
+            offset += 8;
+        }
+        let learners_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?) as usize;
+        offset += 8;
+        if bytes.len() < offset + learners_len * 8 {
+            return None;
+        }
+        let mut learners = Vec::with_capacity(learners_len);
+        for _ in 0..learners_len {
+            learners.push(u64::from_le_bytes(
+                bytes[offset..offset + 8].try_into().ok()?,
+            ));
+            offset += 8;
+        }
+        Some(ConfState {
+            membership: Membership { voters, learners },
+            generation,
+        })
+    }
 }
 
 /// Derive membership for node ids `0..n`: voters are the largest **odd** prefix
@@ -198,6 +272,7 @@ pub struct RaftNode {
     voters: Vec<NodeId>,
     peers: Vec<NodeId>, // all other members (voters + learners)
     is_voter: bool,
+    conf_state: ConfState,
 
     role: Role,
     current_term: Term,
@@ -245,6 +320,10 @@ impl RaftNode {
             voters: membership.voters.clone(),
             peers,
             is_voter: membership.voters.contains(&id),
+            conf_state: ConfState {
+                membership: membership.clone(),
+                generation: 0,
+            },
             role: Role::Follower,
             current_term: 0,
             voted_for: None,
@@ -272,7 +351,12 @@ impl RaftNode {
     /// restarts as a Follower at the snapshot point and is re-derived via
     /// replication. Committed entries re-apply idempotently downstream.
     pub fn from_persisted(id: NodeId, membership: &Membership, state: PersistedState) -> RaftNode {
-        let mut node = RaftNode::new(id, membership);
+        let conf = state.conf.unwrap_or_else(|| ConfState {
+            membership: membership.clone(),
+            generation: 0,
+        });
+        let mut node = RaftNode::new(id, &conf.membership);
+        node.conf_state = conf;
         node.current_term = state.term;
         node.voted_for = state.voted_for;
         node.log = state.log;
@@ -300,7 +384,41 @@ impl RaftNode {
             snapshot_index: self.snapshot_index,
             snapshot_term: self.snapshot_term,
             snapshot: self.snapshot.clone(),
+            conf: Some(self.conf_state.clone()),
         }
+    }
+
+    pub fn conf_state(&self) -> &ConfState {
+        &self.conf_state
+    }
+
+    /// Adopt a superseding configuration state. Refuses configurations whose
+    /// generation does not strictly exceed the one in force.
+    pub fn adopt_conf(&mut self, conf: ConfState) -> bool {
+        if conf.generation <= self.conf_state.generation {
+            return false;
+        }
+        let mut members: Vec<NodeId> = conf
+            .membership
+            .voters
+            .iter()
+            .chain(conf.membership.learners.iter())
+            .copied()
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        self.peers = members.into_iter().filter(|m| *m != self.id).collect();
+        self.voters = conf.membership.voters.clone();
+        self.is_voter = conf.membership.voters.contains(&self.id);
+        self.conf_state = conf;
+        if self.role == Role::Leader {
+            let next = self.last_index() + 1;
+            for p in &self.peers {
+                self.next_index.entry(*p).or_insert(next);
+                self.match_index.entry(*p).or_insert(0);
+            }
+        }
+        true
     }
 
     pub fn id(&self) -> NodeId {
@@ -367,12 +485,21 @@ impl RaftNode {
     }
 
     /// Newly committed entries (in index order); advances `last_applied`.
+    /// Configuration entries are adopted into force and withheld from the
+    /// consumer.
     pub fn take_committed(&mut self) -> Vec<RaftEntry> {
         let mut out = Vec::new();
         while self.last_applied < self.commit_index {
             let idx = self.last_applied + 1;
             let pos = (idx - self.snapshot_index - 1) as usize;
-            out.push(self.log[pos].clone());
+            let entry = &self.log[pos];
+            if entry.kind == EntryKind::Config {
+                if let Some(conf) = ConfState::decode(&entry.command) {
+                    self.adopt_conf(conf);
+                }
+            } else {
+                out.push(entry.clone());
+            }
             self.last_applied = idx;
         }
         out
@@ -546,9 +673,28 @@ impl RaftNode {
             term: self.current_term,
             index,
             command,
+            kind: EntryKind::Command,
         });
         self.broadcast_append();
         self.maybe_commit(); // sole voter commits immediately
+        Some(index)
+    }
+
+    /// Append a configuration entry on the leader and replicate it. Returns its
+    /// index, or `None` if this node is not the leader.
+    pub fn propose_config(&mut self, conf: ConfState) -> Option<Index> {
+        if self.role != Role::Leader {
+            return None;
+        }
+        let index = self.last_index() + 1;
+        self.log.push(RaftEntry {
+            term: self.current_term,
+            index,
+            command: conf.encode(),
+            kind: EntryKind::Config,
+        });
+        self.broadcast_append();
+        self.maybe_commit();
         Some(index)
     }
 

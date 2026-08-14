@@ -1,7 +1,7 @@
 use std::io;
 use tempfile::TempDir;
 
-use raft_core::{PersistedState, RaftEntry};
+use raft_core::{EntryKind, PersistedState, RaftEntry};
 use raft_runtime::{group::GroupId, FsyncPolicy, RaftStore};
 
 #[test]
@@ -51,6 +51,7 @@ fn measurement_1_migrate_legacy_json_to_named_group() {
             term: 3,
             index: 1,
             command: vec![10, 20, 30],
+            kind: EntryKind::Command,
         }]
     );
 }
@@ -71,6 +72,7 @@ fn measurement_2_migrate_legacy_store_with_snapshot_artifact() {
                 snapshot_index: 3,
                 snapshot_term: 2,
                 snapshot: snap_payload.clone(),
+                conf: None,
             })
             .unwrap();
     }
