@@ -13,7 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use raft_core::{ConfState, EntryKind, Index, Membership, NodeId, PersistedState, RaftEntry, Term};
+use raft_core::{ConfState, EntryKind, Index, NodeId, PersistedState, RaftEntry, Term};
 use sha2::{Digest, Sha256};
 pub use storage_durable::FsyncPolicy;
 
@@ -249,6 +249,45 @@ impl RaftStore {
         Ok(())
     }
 
+    fn read_snapshot_artifact(
+        &self,
+        snapshot_index: Index,
+        snapshot_term: Term,
+        snapshot_len: usize,
+        snapshot_digest: &[u8],
+    ) -> io::Result<Vec<u8>> {
+        if snapshot_len == 0 {
+            return Ok(Vec::new());
+        }
+        let art_path = self.artifact_path(snapshot_index, snapshot_term);
+        if !art_path.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "missing snapshot artifact for index {snapshot_index} term {snapshot_term}"
+                ),
+            ));
+        }
+        let art_bytes = std::fs::read(&art_path)?;
+        if art_bytes.len() != snapshot_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "snapshot artifact truncated: expected {snapshot_len} bytes, found {}",
+                    art_bytes.len()
+                ),
+            ));
+        }
+        let actual_digest: [u8; 32] = Sha256::digest(&art_bytes).into();
+        if actual_digest.as_slice() != snapshot_digest {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "snapshot artifact digest mismatch (content corrupted)",
+            ));
+        }
+        Ok(art_bytes)
+    }
+
     /// Returns the number of heap/retained bytes in the save-dedup cache.
     pub fn cache_footprint(&self) -> usize {
         if self
@@ -374,57 +413,22 @@ impl RaftStore {
             let snapshot_len = r.read_u64()? as usize;
             let snapshot_digest = r.read_bytes(32)?;
 
-            let snapshot = if snapshot_len == 0 {
-                Vec::new()
-            } else {
-                let art_path = self.artifact_path(snapshot_index, snapshot_term);
-                if !art_path.exists() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "missing snapshot artifact for index {snapshot_index} term {snapshot_term}"
-                        ),
-                    ));
-                }
-                let art_bytes = std::fs::read(&art_path)?;
-                if art_bytes.len() != snapshot_len {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "snapshot artifact truncated: expected {snapshot_len} bytes, found {}",
-                            art_bytes.len()
-                        ),
-                    ));
-                }
-                let actual_digest: [u8; 32] = Sha256::digest(&art_bytes).into();
-                if actual_digest.as_slice() != snapshot_digest.as_slice() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "snapshot artifact digest mismatch (content corrupted)",
-                    ));
-                }
-                art_bytes
-            };
+            let snapshot = self.read_snapshot_artifact(
+                snapshot_index,
+                snapshot_term,
+                snapshot_len,
+                &snapshot_digest,
+            )?;
 
             let has_conf = r.read_u8()?;
             let conf = match has_conf {
                 0 => None,
                 1 => {
-                    let generation = r.read_u64()?;
-                    let voters_len = r.read_u64()? as usize;
-                    let mut voters = Vec::with_capacity(voters_len.min(100_000));
-                    for _ in 0..voters_len {
-                        voters.push(r.read_u64()?);
-                    }
-                    let learners_len = r.read_u64()? as usize;
-                    let mut learners = Vec::with_capacity(learners_len.min(100_000));
-                    for _ in 0..learners_len {
-                        learners.push(r.read_u64()?);
-                    }
-                    Some(ConfState {
-                        membership: Membership { voters, learners },
-                        generation,
-                    })
+                    let (conf, consumed) = ConfState::decode_with_len(r.0).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "invalid conf state")
+                    })?;
+                    r.0 = &r.0[consumed..];
+                    Some(conf)
                 }
                 _ => {
                     return Err(io::Error::new(
@@ -495,37 +499,12 @@ impl RaftStore {
             let snapshot_len = r.read_u64()? as usize;
             let snapshot_digest = r.read_bytes(32)?;
 
-            let snapshot = if snapshot_len == 0 {
-                Vec::new()
-            } else {
-                let art_path = self.artifact_path(snapshot_index, snapshot_term);
-                if !art_path.exists() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "missing snapshot artifact for index {snapshot_index} term {snapshot_term}"
-                        ),
-                    ));
-                }
-                let art_bytes = std::fs::read(&art_path)?;
-                if art_bytes.len() != snapshot_len {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "snapshot artifact truncated: expected {snapshot_len} bytes, found {}",
-                            art_bytes.len()
-                        ),
-                    ));
-                }
-                let actual_digest: [u8; 32] = Sha256::digest(&art_bytes).into();
-                if actual_digest.as_slice() != snapshot_digest.as_slice() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "snapshot artifact digest mismatch (content corrupted)",
-                    ));
-                }
-                art_bytes
-            };
+            let snapshot = self.read_snapshot_artifact(
+                snapshot_index,
+                snapshot_term,
+                snapshot_len,
+                &snapshot_digest,
+            )?;
 
             let log_len = r.read_u64()? as usize;
             let mut log = Vec::with_capacity(log_len.min(100_000));
@@ -674,15 +653,7 @@ fn encode_persisted_state_v3(state: &PersistedState, snapshot_digest: &[u8; 32])
     match &state.conf {
         Some(conf) => {
             buf.push(1);
-            buf.extend_from_slice(&conf.generation.to_le_bytes());
-            buf.extend_from_slice(&(conf.membership.voters.len() as u64).to_le_bytes());
-            for &v in &conf.membership.voters {
-                buf.extend_from_slice(&v.to_le_bytes());
-            }
-            buf.extend_from_slice(&(conf.membership.learners.len() as u64).to_le_bytes());
-            for &l in &conf.membership.learners {
-                buf.extend_from_slice(&l.to_le_bytes());
-            }
+            buf.extend_from_slice(&ConfState::encode(conf));
         }
         None => {
             buf.push(0);
