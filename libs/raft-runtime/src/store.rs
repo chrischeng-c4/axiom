@@ -48,6 +48,18 @@ impl RaftStore {
     ) -> io::Result<RaftStore> {
         let dir = PathBuf::from(dir);
         create_dir_all(&dir)?;
+        if group_id.0 != LEGACY_GROUP_ID {
+            let legacy_file = dir.join(format!("raft-{node_id}.state"));
+            if legacy_file.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "cannot open named group {:?} for node {node_id}: legacy state file raft-{node_id}.state exists and must be explicitly migrated",
+                        group_id.0
+                    ),
+                ));
+            }
+        }
         let filename = if group_id.0 == LEGACY_GROUP_ID {
             format!("raft-{node_id}.state")
         } else {
@@ -66,6 +78,119 @@ impl RaftStore {
             injected_after_artifact_failure: Mutex::new(None),
             injected_after_publish_failure: Mutex::new(None),
         })
+    }
+
+    /// Explicitly migrate a node's legacy single-group state file and its snapshot
+    /// artifacts to a named group.
+    ///
+    /// Validates that the legacy state file exists and successfully decodes, and that
+    /// the target named group state file does not already exist, before moving any files.
+    pub fn migrate_legacy_to_group(
+        dir: &str,
+        node_id: NodeId,
+        target_group: GroupId,
+        fsync: FsyncPolicy,
+    ) -> io::Result<RaftStore> {
+        if target_group.0 == LEGACY_GROUP_ID {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cannot migrate legacy state to legacy group ID",
+            ));
+        }
+
+        let dir_path = PathBuf::from(dir);
+        let legacy_filename = format!("raft-{node_id}.state");
+        let legacy_path = dir_path.join(&legacy_filename);
+        if !legacy_path.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("legacy state file not found: {}", legacy_path.display()),
+            ));
+        }
+
+        let mut s = String::new();
+        for b in target_group.0.as_bytes() {
+            use std::fmt::Write;
+            write!(&mut s, "{:02x}", b).unwrap();
+        }
+        let target_filename = format!("raft-{node_id}-{s}.state");
+        let target_path = dir_path.join(&target_filename);
+        if target_path.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "target state file already exists: {}",
+                    target_path.display()
+                ),
+            ));
+        }
+
+        let legacy_store = RaftStore {
+            path: legacy_path.clone(),
+            fsync,
+            last_saved: Mutex::new(None),
+            injected_save_failure: Mutex::new(None),
+            injected_after_artifact_failure: Mutex::new(None),
+            injected_after_publish_failure: Mutex::new(None),
+        };
+
+        // Read and decode to ensure valid format before any filesystem mutations
+        let legacy_bytes = std::fs::read(&legacy_path)?;
+        let _state = legacy_store.decode_persisted_state(&legacy_bytes)?;
+
+        // Discover all associated snapshot artifact files to rename
+        let legacy_stem = format!("raft-{node_id}");
+        let legacy_prefix = format!("{legacy_stem}-snap-");
+        let target_stem = format!("raft-{node_id}-{s}");
+
+        let mut artifacts_to_rename = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir_path) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if let Some(fname) = p.file_name().and_then(|n| n.to_str()) {
+                    if fname.starts_with(&legacy_prefix) && fname.ends_with(".artifact") {
+                        let suffix = &fname[legacy_prefix.len()..];
+                        let target_art_name = format!("{target_stem}-snap-{suffix}");
+                        let target_art_path = dir_path.join(target_art_name);
+                        if target_art_path.exists() {
+                            return Err(io::Error::new(
+                                io::ErrorKind::AlreadyExists,
+                                format!(
+                                    "target artifact file already exists: {}",
+                                    target_art_path.display()
+                                ),
+                            ));
+                        }
+                        artifacts_to_rename.push((p, target_art_path));
+                    }
+                }
+            }
+        }
+
+        // Perform renames
+        for (src, dst) in &artifacts_to_rename {
+            std::fs::rename(src, dst)?;
+        }
+        std::fs::rename(&legacy_path, &target_path)?;
+
+        Ok(RaftStore {
+            path: target_path,
+            fsync,
+            last_saved: Mutex::new(None),
+            injected_save_failure: Mutex::new(None),
+            injected_after_artifact_failure: Mutex::new(None),
+            injected_after_publish_failure: Mutex::new(None),
+        })
+    }
+
+    /// Alias for [`Self::migrate_legacy_to_group`].
+    pub fn migrate_legacy(
+        dir: &str,
+        node_id: NodeId,
+        target_group: GroupId,
+        fsync: FsyncPolicy,
+    ) -> io::Result<RaftStore> {
+        Self::migrate_legacy_to_group(dir, node_id, target_group, fsync)
     }
 
     /// Fault-injection seam for testing durable persistence failures before save.
