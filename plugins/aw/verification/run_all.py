@@ -5,14 +5,15 @@ Two modes, because the two halves answer different questions and cost two
 orders of magnitude apart.
 
 The **checkers** ask whether this tree is admissible. That is the question a
-working session asks, and it is answered in about nine seconds.
+working session asks, and it is answered in about half a minute -- almost all
+of it `check_tdd_flow.py`, whose fixture is a real cargo crate.
 
 The **negative controls** ask whether a checker can be seen to fail at all.
 That question is about the gate rather than the tree, so its answer only
 changes when a gate changes -- and answering it is expensive by construction:
 each control mutates the thing under test once per declared defect and re-runs
 the *whole* checker for each mutation. `check_plugin_negative_control.py` alone
-is nine such rounds and half this suite's runtime.
+is eleven such rounds and nearly all of what the flag adds.
 
 So the controls are opt-in, and the thing that makes the split safe is that the
 default mode is not allowed to sound like the full one. A run that skipped
@@ -44,8 +45,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 FLAG = "--with-negative-controls"
 
 # (checker, its negative control). `None` where a gate has no control: the two
-# probes stage their own throwaway trees and `check_ec_flow.py` carries its
-# controls inside itself -- 30 of them, each already a declared mutation.
+# probes stage their own throwaway trees, and the flow gates carry their
+# controls inside themselves -- each row already a declared mutation.
 SUITE = [
     ("check_manifests_cli.py", "check_manifests_cli_negative_control.py"),
     ("check_plugin.py", "check_plugin_negative_control.py"),
@@ -54,15 +55,32 @@ SUITE = [
     ("check_change_schema.py", "check_change_schema_negative_control.py"),
     # Reads the epic snapshot and calls `order_children` as a pure function;
     # nothing is spawned and nothing is written, so it costs about as much as
-    # the probes and sits with them rather than with the flow gate below.
+    # the probes and sits with them rather than with the flow gates below.
     ("check_epic_order.py", None),
     ("probe_plugin_root.py", None),
     ("probe_local_verbs.py", None),
-    # Exempt from the ordering rule above, and last because it is the slowest.
-    # It mutates nothing in this checkout: its fixture is a `tempfile` tree with
-    # its own `aw.toml` and its own git repository, so it can neither be
-    # disturbed by a control above nor leave residue for one below.
-    ("check_ec_flow.py", None),
+    # Exempt from the ordering rule above, and last because they are the
+    # slowest. They mutate nothing in this checkout: each fixture is a
+    # `tempfile` tree with its own `aw.toml` and its own git repository, so it
+    # can neither be disturbed by a control above nor leave residue for one
+    # below.
+    #
+    # `check_ec_flow.py`, `check_td_flow.py` and `check_cb_flow.py` stood here
+    # until the ladder they measured was deleted. A gate outlives the thing it
+    # gates only as a source of false confidence, so they went with it -- but
+    # not before what they covered had somewhere else to be measured, which is
+    # what the two rows below are.
+    #
+    # The semantic review, which the EC gate used to own. Cargo-free: the
+    # transcript parser and the record are `leg.py`'s, both reviewed phases call
+    # the same code, and driving every shape of it through one phase measures
+    # the shared implementation once instead of once per phase.
+    ("check_review_flow.py", None),
+    # The `e2e -> unit -> logic` ladder, and the slowest of the lot: its
+    # fixture is a real cargo crate, so every row that runs `test` pays a
+    # compile. Each phase's own review wiring is here rather than above,
+    # because a commit gate is what the verdict has to be able to stop.
+    ("check_tdd_flow.py", None),
 ]
 
 unknown = [a for a in sys.argv[1:] if a != FLAG]

@@ -3,8 +3,8 @@
 Gates for the `aw` plugin and the two work-item schemas its scripts enforce.
 
 ```
-uv run --python 3.13 --no-project plugins/aw/verification/run_all.py                          # ~12s
-uv run --python 3.13 --no-project plugins/aw/verification/run_all.py --with-negative-controls  # ~40s
+uv run --python 3.13 --no-project plugins/aw/verification/run_all.py                          # ~31s
+uv run --python 3.13 --no-project plugins/aw/verification/run_all.py --with-negative-controls  # ~62s
 ```
 
 One interpreter, the same launcher the skills use to run the scripts. The gates
@@ -20,7 +20,10 @@ different question: can each checker be seen to fail at all? That one is about
 the gate rather than the tree, so its answer only changes when a gate changes,
 and it is expensive by construction — a control mutates the thing under test
 once per declared defect and re-runs the whole checker for each mutation.
-`check_plugin_negative_control.py` is nine such rounds and half the runtime.
+`check_plugin_negative_control.py` is eleven such rounds, ~24s of the ~31s the
+flag adds. The other big number is in the default run and is cargo:
+`check_tdd_flow.py` builds and tests a synthetic crate through all three phases,
+~25s of the ~31s there.
 
 Run the full suite whenever a gate itself changes, and before reporting any
 claim of the form "this is verified". The default mode is not allowed to sound
@@ -39,10 +42,19 @@ The plugin's shape:
 
 ```
 plugins/aw/
-  scripts/     epic.py, change.py — the type-bound facades — and workitem.py, the engine
-  skills/      wi-epic-grill, wi-change-grill, wi-epic-reconcile
+  scripts/        epic.py, change.py — the type-bound facades — and workitem.py, the engine
+                  leg.py, and the three phases it is shared by: e2e.py, unit.py, logic.py
+  skills/         codex-code-review, codex-e2e-review,
+                  wi-change-grill, wi-epic-grill, wi-epic-reconcile, wi-tdd
   verification/
 ```
+
+`ec.py`, `td.py`, `cb.py`, their three gates, and the twelve `wi-{ec,td,cb}-*`
+wrappers were **deleted**, not archived. An archive of instructions for scripts
+that no longer exist is not history: it is a set of commands that fail with "no
+such file" for a reader who cannot tell that from a broken checkout. What each
+one was for survives where it is load-bearing — in the docstrings of the phases
+that replaced them, and in `run_all.py`'s note on why three rows left the suite.
 
 The scripts sit beside the skills rather than inside one. They lived under
 `skills/wi-epic-grill/scripts/` while that was the only skill running them,
@@ -67,6 +79,8 @@ directory for a file none of them owns.
 | `check_epic_order.py` | an epic sequence that was guessed — a cycle answered with an arbitrary order, a child appended to the end because nothing placed it, or a declared dependency dropped because it could not be parsed |
 | `probe_plugin_root.py` | a script that only resolves the repository when it happens to live inside one |
 | `probe_local_verbs.py` | an `adopt` that overwrites, or an id parser that invents a number |
+| `check_review_flow.py` | a verdict that outlives the bytes it was given — or one assembled from a transcript that never carried it |
+| `check_tdd_flow.py` | an `e2e → unit → logic` phase whose green is not attributable to a red the phase before it named |
 
 `check_manifests_cli.py` is the only gate here whose oracle this repository does
 not own: it shells out to `claude plugin validate`, so it stays correct when
@@ -77,7 +91,16 @@ requires kebab-case. The negative control prints that exit code under the
 mutation, so "the exit code cannot see this" is a number in the output rather
 than a claim in a comment.
 
-Three of these encode defects that actually shipped and were caught late:
+The last two carry their negative controls inside themselves rather than in a
+sibling file. Each row of those gates *is* a declared mutation: the gate stages
+a throwaway tree, breaks one thing in it, and requires the ladder to refuse for
+the named reason — so `None` in `run_all.py`'s control column means "already
+controlled", not "uncontrolled". `check_tdd_flow.py`'s fixture is a real cargo
+crate, which is why it runs last and costs the most; `check_review_flow.py`'s
+is deliberately cargo-free, which is why it is a fifth of the cost for two
+thirds as many rows.
+
+Four of these encode defects that actually shipped and were caught late:
 
 - **`probe_plugin_root.py`.** `_repo_root()` walked up from `__file__`. A
   git-marketplace install puts the plugin under `~/.claude/plugins/`, where no
@@ -103,6 +126,102 @@ Three of these encode defects that actually shipped and were caught late:
   knows Claude Code's naming rules well enough to have caught a name that is
   accepted locally and rejected by the marketplace sync. Asking the tool is the
   only reading of that rule that cannot drift from it.
+
+## The ladder, and what makes a phase's green mean anything
+
+`e2e → unit → logic` replaces `ec → td → cb`. The rule the three phases exist to
+enforce is that a green is only evidence when a **named** red was measured
+immediately before it, in the same tree, by the phase that had reason to
+predict it. `check_tdd_flow.py` is 25 declared mutations against that rule.
+
+Four things it refuses that a simpler reading lets through:
+
+- **A build failure is not a red.** `cargo test` exits non-zero both when
+  nothing compiles and when an assertion fails, so `unit` declares `[unit]
+  build` and `[unit] test` as separate commands and requires the first to pass
+  before the second can count.
+- **An exit code is not a measurement.** A selector matching nothing exits 0
+  with 0 tests. `unit` records failing test *names*, and set-subtracts what was
+  already failing at HEAD, so a pre-existing red cannot be claimed as the one
+  this phase produced.
+- **A deleted test and a passing test look alike.** `logic` requires each
+  recorded test to be *present* as well as passing, and separately requires the
+  rest of the suite to be whole — nothing else newly red, and nothing else
+  silently unwired.
+- **A row that vanished reads like a row that passed.** Every unrun row prints
+  `PENDING`.
+
+The `unit`/`logic` boundary is drawn by **filename**: colocated tests live in
+`src/**/tests.rs`, and the `todo!()` skeleton `unit` writes goes outside it so
+`logic` is free to replace it. Drawing the line by parsing `#[cfg(test)]` spans
+instead has been got wrong here twice — item-level `#[cfg(test)] fn` and `use`
+read as production, and a brace scanner that does not strip `r#"…"#` counts
+fixture text as code. A filename cannot be got wrong that way.
+
+Evidence lives in commit trailers, not a state file: `E2E-Red`, `Unit-Red`,
+`Logic-Contract`, each beside a `*-Change-Digest`. HEAD comparisons use
+`git worktree add --detach`, never a stash — a stash mutates the tree it is
+supposed to be measuring against.
+
+## The two semantic reviews
+
+Two of the three phases end in a question no exit code answers, and they are
+different questions, so they are two reviews with two rubrics and two skills:
+
+| phase | skill | what it is shown | what it is asked |
+|---|---|---|---|
+| `e2e` | `/aw:codex-e2e-review` | the work item, the cases, the exception each currently dies on | does this case pin what was asked for, and would it refuse a wrong implementation? |
+| `logic` | `/aw:codex-code-review` | the work item, the tests as `unit` committed them, the source each sits beside | does this code satisfy the work item, or only its own tests? |
+
+`unit` has none, and the reason is structural rather than a saving: at `unit`
+only half the pair exists, so the question the code review asks has no
+implementation to ask it about yet.
+
+The review lands as a record under `.aw/review/<phase>-wi-<iid>.json`, and the
+commit gate's `C7` row reads it. Three things are asserted about that record and
+each is the answer to a way the review could be theatre:
+
+- **It binds the bytes.** `change_digest` is sha256 over the work item's body
+  *and* every changed file, so editing either side after the verdict makes the
+  record describe bytes that no longer exist, and `C7` says so by name. The work
+  item is inside the digest because the question was a comparison.
+- **It is derived, not written.** `verdict` parses the raw transcript itself —
+  verdicts must agree, one must be the final non-empty line, and a `rejected`
+  with no `FINDING:` is refused. The stored transcript is a byte copy of the
+  file that was parsed.
+- **Its absence is not silence.** A commit with no verdict at all is a `FAIL` on
+  `C7`, not a missing row.
+
+`codex exec` is the subcommand, not `codex review`: the latter emits a fixed
+`[P1]`/`[P2]` schema against a diff and ignores the prompt's output contract, so
+it produced correct findings and zero `VERDICT:` lines, and the parser refused
+the transcript.
+
+Which skill a phase routes to is a **module constant in the phase script**, and
+that is a deliberate move away from where it used to live. It was a `[review]`
+key in each project's `aw.toml`, read at runtime, which made "the configured
+reviewer is a skill that exists" a claim nothing could check until someone
+invoked a reviewer against a project that had been misconfigured. As a constant
+it is resolvable without running anything, so `check_plugin.py` asserts both
+that it names a bundled skill and that it names *the one declared for that
+phase* — the second because both reviewer names are real, and a `logic.py`
+pointing at the contract reviewer passes an existence check while handing the
+implementation to a rubric that never mentions it. Two negative-control
+mutations, `reviewer-swap` and `reviewer-gone`, are what keep those two rows
+distinguishable.
+
+The gate split is a cost decision. `check_review_flow.py` owns the transcript
+parser, the record, and both whole-surface prompt forms, and needs no cargo at
+all — both reviewed phases call the same `leg.py` code, so driving every shape
+of it through one phase measures the shared implementation once instead of once
+per phase. What stays in `check_tdd_flow.py` is each phase's own `C7` wiring,
+because a commit gate is the thing a verdict has to be able to stop, and that
+costs a compile.
+
+Omitting the iid switches both `review-prompt` verbs to a whole-surface,
+advisory review of the project. `verdict` refuses that form rather than writing
+an unbound record: a file shaped like the one a commit gate reads, holding an
+approval of nothing, is worse than no file.
 
 ## Where an epic's order comes from
 
@@ -131,11 +250,6 @@ requirement it covers.
 The order refuses rather than guesses. A cycle yields *no* order at all, not a
 declaration-ordered fallback — a fallback would be indistinguishable from a
 computed answer, and the finding printed beside it would read as advisory.
-
-Nothing drives the verb yet: its caller is the execution ladder, which is not in
-this plugin. That gap is a declared exemption in `check_plugin.py` rather than a
-silence, and the declaration is checked in both directions — the verb has to
-still exist, and no skill may have quietly started naming it.
 
 ## The engine/facade split
 

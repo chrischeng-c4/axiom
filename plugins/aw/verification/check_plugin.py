@@ -35,10 +35,10 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
-from _paths import (CHANGE_SCRIPT, EC_SCRIPT, INTERVIEWING,  # noqa: E402
+from _paths import (CHANGE_SCRIPT, INTERVIEWING,  # noqa: E402
                     MARKETPLACE, PINNED_PYTHON, PLUGIN_DIR, PLUGIN_JSON,
-                    PROCEDURAL, REPO, SCRIPT, SCRIPTS, SKILLS,
-                    pinned_interpreter)
+                    E2E_SCRIPT, LOGIC_SCRIPT, PROCEDURAL, REPO, SCRIPT, SCRIPTS,
+                    SKILLS, UNIT_SCRIPT, pinned_interpreter)
 
 PLUGIN_NAME = "aw"
 
@@ -48,19 +48,41 @@ PLUGIN_NAME = "aw"
 # engine had leaked the epic's shape into the wrong type.
 REQUIRED = {
     "epic.py": {"skeleton", "create", "update", "validate", "close", "show",
-                "children", "reconcile", "bodydir", "fetch"},
+                "children", "order", "reconcile", "bodydir", "fetch"},
     "change.py": {"skeleton", "create", "update", "validate", "show",
                   "bodydir", "fetch"},
-    # Each of the four legs re-runs every check below it, so a skill could name
-    # only `commit` and still be correct. Requiring the whole ladder anyway is
-    # what keeps the four-step shape documented: each stage has to be able to
-    # see its own reading before it hands over, or the only way to learn a
-    # change is inadmissible is to attempt the commit. `red` and `check` are the
-    # case-scoped debugging primitives the authoring skill reaches for; they are
-    # required for the same reason, one level down.
-    "ec.py": {"red", "check", "start", "verify", "review-prompt", "verdict",
-              "commit"},
+    # The three phases of the ladder, each with the same four verbs. Unlike the
+    # deleted `wi-{ec,td,cb}-*` wrappers there is one skill for all twelve
+    # rather than one skill per verb -- the sequence is fixed and each verb
+    # prints the next, so what a skill adds is the entry point and the refusal
+    # list, not a wrapper per step. All four are required of each: a phase
+    # whose `start` stopped being named would be a phase an agent could enter
+    # without the tree being checked clean first.
+    #
+    # The two reviewed phases carry two more. `review-prompt` and `verdict` are
+    # required of exactly the phases a reviewer skill exists for, so a rename
+    # that leaves a reviewer naming a verb its script no longer has goes red --
+    # and so does a phase that grows a reviewer without anything driving it.
+    "e2e.py": {"start", "verify", "test", "commit", "review-prompt", "verdict"},
+    "unit.py": {"start", "verify", "test", "commit"},
+    "logic.py": {"start", "verify", "test", "commit", "review-prompt", "verdict"},
 }
+
+# Which phase each reviewer skill drives, and -- for `unit.py` -- that it drives
+# none. This is the whole of the routing: it used to be a `[review]` key in each
+# project's `aw.toml`, read at runtime, which meant "the configured reviewer is
+# a skill that exists" was a claim nothing checked until a reviewer was invoked
+# against a project someone had misconfigured. Naming it here instead makes it a
+# constant in the script, resolvable without running anything, and the pairing
+# below is what refuses a constant pointing at a skill that is not in the
+# bundle.
+REVIEWED = {"e2e.py": "codex-e2e-review", "logic.py": "codex-code-review"}
+UNREVIEWED_WHY = ("the unit phase's tests are landed red and never read on "
+                  "their own: at `unit` only half the pair exists, and the "
+                  "question a reviewer would be asked -- do these tests admit "
+                  "an implementation that misses the requirement -- has no "
+                  "implementation to ask it about yet. It is asked at `logic`, "
+                  "over both halves at once.")
 
 # Verbs a script exposes that no skill drives, and why. A silent gap between
 # what a script can do and what any skill documents is how a verb rots; writing
@@ -72,25 +94,39 @@ ADOPT_WHY = ("`create` renames the staged body itself on both facades, so no "
              "`probe_local_verbs.py` is what keeps that path working -- a "
              "declaration here exempts a verb from being *named*, never from "
              "being tested.")
-ORDER_WHY = ("`order` computes the sequence an epic's children have to be "
-             "worked in, and nothing drives it yet -- the caller is the "
-             "execution ladder, which is not in this plugin. It is exempt from "
-             "being *named*, never from being tested: `check_epic_order.py` "
-             "runs it against the epic corpus. The moment a skill starts "
-             "naming it this declaration goes red rather than stale, because "
-             "an exemption is refused once it stops being true.")
 UNUSED = {
-    "epic.py": {"adopt": ADOPT_WHY, "order": ORDER_WHY},
+    "epic.py": {"adopt": ADOPT_WHY},
     "change.py": {"adopt": ADOPT_WHY},
-    "ec.py": {},
+    "e2e.py": {},
+    "unit.py": {},
+    "logic.py": {},
 }
-SCRIPT_PATHS = {"epic.py": SCRIPT, "change.py": CHANGE_SCRIPT, "ec.py": EC_SCRIPT}
+SCRIPT_PATHS = {"epic.py": SCRIPT, "change.py": CHANGE_SCRIPT,
+                "e2e.py": E2E_SCRIPT, "unit.py": UNIT_SCRIPT,
+                "logic.py": LOGIC_SCRIPT}
 
 # Scripts that cannot run under a bare `python3`, and the pin the skills must
 # carry. Derived from the source rather than listed by hand: a script that grows
 # a `tomllib` import joins this set on its own, and one that loses it leaves.
+#
+# Transitively, and that is not tidiness. `logic.py` imports no TOML itself and
+# was therefore exempt from the assertion below, while dying under 3.9 anyway --
+# it loads `unit.py` through `leg.sibling`, and the import happens there. A
+# direct-import-only derivation exempts exactly the scripts whose dependence is
+# hardest to see by reading them, which is the opposite of what a derivation is
+# for. The edge is the `sibling("<name>", ...)` call, closed to a fixed point.
+SIBLING_EDGE = re.compile(r'sibling\(\s*"([a-z0-9_]+)"')
+SOURCES = {name: path.read_text(encoding="utf-8") for name, path in SCRIPT_PATHS.items()}
+DEPENDS = {name: {f"{s}.py" for s in SIBLING_EDGE.findall(text)} & set(SCRIPT_PATHS)
+           for name, text in SOURCES.items()}
 NEEDS_PIN = {name: path for name, path in SCRIPT_PATHS.items()
-             if re.search(r"^import tomllib\b", path.read_text(encoding="utf-8"), re.M)}
+             if re.search(r"^import tomllib\b", SOURCES[name], re.M)}
+while True:
+    grown = {name: path for name, path in SCRIPT_PATHS.items()
+             if name in NEEDS_PIN or DEPENDS[name] & set(NEEDS_PIN)}
+    if grown.keys() == NEEDS_PIN.keys():
+        break
+    NEEDS_PIN = grown
 ABSENT = "ship"
 AW_DRIVEN = "aw-goal"
 AW_INVOCATION = re.compile(r"`aw\s+[a-z]")
@@ -239,6 +275,45 @@ for skill in PROCEDURAL:
     check(f"{skill}: names no AskUserQuestion, because a gate has nothing to ask",
           "AskUserQuestion" not in bodies[skill])
 
+# -- the reviewer a phase names is a skill that exists ----------------------
+# The routing, end to end. Each reviewed phase holds its reviewer as a module
+# constant; the assertion is that the constant resolves to a bundled skill, and
+# that the pairing is the one declared above rather than merely *some* skill.
+# The second half matters because both reviewers are real names: a `logic.py`
+# pointing at the contract reviewer would pass a mere existence check while
+# handing the implementation to a rubric that never mentions it.
+REVIEWER_CONST = re.compile(r'^REVIEWER\s*=\s*"([^"]*)"\s*$', re.M)
+for name in sorted(SCRIPT_PATHS):
+    found = REVIEWER_CONST.findall(SOURCES[name])
+    if name not in REVIEWED:
+        check(f"{name}: declares no reviewer, and the declaration holds",
+              not found, UNREVIEWED_WHY if not found else f"found {found}")
+        continue
+    check(f"{name}: names exactly one reviewer", len(found) == 1, f"found={found}")
+    if len(found) == 1:
+        check(f"{name}: its reviewer resolves to a bundled skill",
+              found[0].lstrip("/") in expected,
+              f"reviewer={found[0]!r}; bundled={sorted(expected)}")
+        check(f"{name}: its reviewer is the one declared for this phase",
+              found[0] == f"/{PLUGIN_NAME}:{REVIEWED[name]}",
+              f"reviewer={found[0]!r} declared={REVIEWED[name]!r}")
+
+# And the other direction: a reviewer skill nobody routes to is a skill an
+# agent can invoke against a phase that will not read its verdict.
+routed = {f"{PLUGIN_NAME}:{s}" for s in REVIEWED.values()}
+for skill in sorted(s for s in SKILLS if s.startswith("codex-")):
+    check(f"{skill}: some phase routes to it",
+          f"{PLUGIN_NAME}:{skill}" in routed, f"routed={sorted(routed)}")
+
+# Positive control: the transitive half of the pin derivation. `logic.py`
+# imports no TOML of its own -- it is in the set only through `unit.py` -- so a
+# direct-import-only derivation would exempt it, and the assertion further down
+# would stop covering the one script whose dependence is invisible in its own
+# source.
+check("positive control: the pin population is transitive, not direct-only",
+      "logic.py" in NEEDS_PIN and not re.search(r"^import tomllib\b", SOURCES["logic.py"], re.M),
+      f"needs the pin={sorted(NEEDS_PIN)}; via={sorted(DEPENDS['logic.py'])}")
+
 # -- scripts that cannot run under a bare `python3` ------------------------
 # The pin is not a style preference. `tomllib` is 3.11+, `python3` is 3.9 here,
 # and the failure without the pin is a ModuleNotFoundError traceback that reads
@@ -296,7 +371,7 @@ MENTIONED = {name: set(re.findall(rf"{re.escape(name)} ([a-z][a-z-]*)", joined))
 # below read from. Each one is a `--help` in its own process: nothing is written
 # and nothing is shared, so the order they finish in cannot change an answer.
 # Serially they were most of this gate's runtime, and this gate is re-run once
-# per mutation by its negative control, so the cost was paid nine times over.
+# per mutation by its negative control, so the cost was paid eleven times over.
 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
     list(pool.map(
         lambda pair: resolves(*pair),

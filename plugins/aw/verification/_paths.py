@@ -44,8 +44,22 @@ MARKETPLACE = REPO / ".claude-plugin/marketplace.json"
 # `plugin:skill` from the plugin name and the directory name, and ignores the
 # frontmatter `name:` entirely. Naming them here rather than globbing keeps a
 # stray directory from silently joining the population under test.
-SKILLS = ("codex-review", "wi-change-grill", "wi-ec-commit", "wi-ec-review",
-          "wi-ec-start", "wi-ec-verify", "wi-epic-grill", "wi-epic-reconcile")
+SKILLS = ("codex-code-review", "codex-e2e-review", "wi-change-grill",
+          "wi-epic-grill", "wi-epic-reconcile", "wi-tdd")
+
+# The `ec -> td -> cb` ladder is gone from this plugin: three scripts, three
+# gates, and the twelve `wi-{ec,td,cb}-*` wrappers, deleted rather than
+# archived. An archive of instructions for scripts that no longer exist is not
+# history, it is a set of commands that fail with "no such file" for a reader
+# who cannot tell that from a broken checkout.
+#
+# What replaced them is `e2e -> unit -> logic`, driven by each verb's printed
+# `next.command` rather than by a skill per step. Two skills survive from that
+# ladder, because the semantic review is the one step whose work is a model's
+# rather than a command's, and it is two reviews rather than one: a contract is
+# judged against the work item alone, code is judged against the work item *and*
+# the tests, and a reviewer shown both at the contract phase would judge the
+# case by whether the code passes it.
 
 # Two kinds of skill, and the difference decides which rules can apply.
 #
@@ -60,9 +74,15 @@ SKILLS = ("codex-review", "wi-change-grill", "wi-ec-commit", "wi-ec-review",
 #
 # The two lists are asserted exhaustive and disjoint over SKILLS, so a new skill
 # cannot join without someone deciding which kind it is.
+#
+# `wi-tdd` is procedural despite the phases it drives being model work rather
+# than command work -- so are the two reviewers. The line is not "does a model
+# write something", it is whether the skill has anything left to ask. By the
+# time the ladder starts, the work item has already said what the change is;
+# what remains is a fixed sequence of verbs and the exit codes they return, and
+# the only question a gate could raise is whether it counts.
 INTERVIEWING = ("wi-change-grill", "wi-epic-grill", "wi-epic-reconcile")
-PROCEDURAL = ("codex-review", "wi-ec-commit", "wi-ec-review", "wi-ec-start",
-              "wi-ec-verify")
+PROCEDURAL = ("codex-code-review", "codex-e2e-review", "wi-tdd")
 
 # The scripts sit at the plugin root, not inside a skill. They were under
 # `wi-epic-grill/scripts/` while it was the only skill running them, which made
@@ -73,10 +93,18 @@ PROCEDURAL = ("codex-review", "wi-ec-commit", "wi-ec-review", "wi-ec-start",
 SCRIPTS = PLUGIN_DIR / "scripts"
 SCRIPT = SCRIPTS / "epic.py"
 CHANGE_SCRIPT = SCRIPTS / "change.py"
-EC_SCRIPT = SCRIPTS / "ec.py"
+LEG_SCRIPT = SCRIPTS / "leg.py"
 ENGINE = SCRIPTS / "workitem.py"
 
-# `ec.py` reads TOML, `tomllib` landed in 3.11, and `python3` is 3.9 on at least
+# The three phases that replaced `ec -> td -> cb`. They were named here before
+# they existed on disk, because the gate that drives them was written first and
+# had to be able to go red for the right reason: "the script is missing" rather
+# than "this module has no such attribute", which is a red about the gate.
+E2E_SCRIPT = SCRIPTS / "e2e.py"
+UNIT_SCRIPT = SCRIPTS / "unit.py"
+LOGIC_SCRIPT = SCRIPTS / "logic.py"
+
+# The phase scripts read TOML, `tomllib` landed in 3.11, and `python3` is 3.9 on at least
 # one machine this runs on. Both the skills and the gates below have to invoke it
 # through a pinned interpreter -- and they have to agree on which, or a gate can
 # pass against an interpreter no skill ever uses.

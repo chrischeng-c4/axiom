@@ -30,9 +30,28 @@ Each mutation below is a break that really ships:
   no-ask         an interviewing skill loses every AskUserQuestion. The body
                  still reads like an interview; it just stops holding one, and
                  the answers come from the agent instead of the human.
-  unpinned       an EC skill invokes `ec.py` with a bare `python3`. It reads as
-                 the shorter, more normal form of the same line, and it is a
-                 ModuleNotFoundError on any interpreter below 3.11.
+  unpinned       the code reviewer invokes `logic.py` with a bare `python3`. It
+                 reads as the shorter, more normal form of the same line, and it
+                 is a ModuleNotFoundError on any interpreter below 3.11. All
+                 three occurrences are replaced and all three are expected to go
+                 red: the rule fires per invocation, so a control that mutated
+                 one line would be green off the others' survival.
+
+                 The target is `logic.py` on purpose. It imports no TOML itself
+                 -- it reaches `tomllib` only through the `unit.py` it loads --
+                 so under a direct-import-only pin population it would not be in
+                 the set at all, this mutation would produce no reds, and the
+                 control would fail. That is the point: it is what holds the
+                 transitive half of that derivation in place.
+  reviewer-swap  a phase's `REVIEWER` constant names the *other* phase's
+                 reviewer. Both are real, bundled, correctly-named skills, so an
+                 existence check passes; the implementation is simply handed to
+                 a rubric that judges contracts. This is the routing's real
+                 failure mode, and it is why the pairing is asserted rather than
+                 mere resolvability.
+  reviewer-gone  a phase's `REVIEWER` names a skill that is not in the bundle --
+                 here the deleted `codex-review`, which is exactly the shape a
+                 rename leaves behind.
   unclassified   a skill drops out of the interviewing/procedural partition.
                  Nothing fails to load and no body changes -- the skill simply
                  stops having any per-skill rule applied to it, which is the
@@ -66,8 +85,16 @@ CHECK = HERE / "check_plugin.py"
 GRILL = PLUGIN_DIR / "skills/wi-epic-grill/SKILL.md"
 CHANGE_GRILL = PLUGIN_DIR / "skills/wi-change-grill/SKILL.md"
 RECONCILE = PLUGIN_DIR / "skills/wi-epic-reconcile/SKILL.md"
-EC_START = PLUGIN_DIR / "skills/wi-ec-start/SKILL.md"
-EC_COMMIT = PLUGIN_DIR / "skills/wi-ec-commit/SKILL.md"
+# The `ask-in-gate` and `unpinned` mutations have been re-pointed twice now:
+# first from `wi-ec-commit`/`wi-ec-start` to `codex-review` when the leg
+# wrappers were retired, and now to `codex-code-review` when `codex-review` was
+# split in two and the `ec -> td -> cb` scripts were deleted outright. A control
+# whose target disappears has to be re-pointed rather than dropped -- a rule
+# with no live target is a rule nobody is measuring, and it reads identically to
+# a rule that passes.
+CODE_REVIEW = PLUGIN_DIR / "skills/codex-code-review/SKILL.md"
+E2E_SCRIPT = PLUGIN_DIR / "scripts/e2e.py"
+LOGIC_SCRIPT = PLUGIN_DIR / "scripts/logic.py"
 PATHS = HERE / "_paths.py"
 COPY_DIR = PLUGIN_DIR / "skills/wi-epic-reconcile/scripts"
 
@@ -110,13 +137,13 @@ MUTATIONS = [
     ),
     (
         "ask-in-gate",
-        EC_COMMIT,
-        "Run the verb. Read the rows. There are exactly three outcomes.",
-        "Run the verb. Read the rows. There are exactly three outcomes.\n"
+        CODE_REVIEW,
+        "Three commands, in this order, none of them optional.",
+        "Three commands, in this order, none of them optional.\n"
         "\n"
-        "If a row is red, use AskUserQuestion to ask the human whether to "
-        "proceed anyway.",
-        ["FAIL wi-ec-commit: names no AskUserQuestion, because a gate "
+        "If the transcript carries no VERDICT line, use AskUserQuestion to ask "
+        "the human whether to record an acceptance anyway.",
+        ["FAIL codex-code-review: names no AskUserQuestion, because a gate "
          "has nothing to ask"],
     ),
     (
@@ -129,16 +156,32 @@ MUTATIONS = [
     ),
     (
         "unpinned",
-        EC_START,
-        'uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/ec.py"',
-        'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ec.py"',
-        ["FAIL wi-ec-start: `ec.py` is invoked through the pinned interpreter"],
+        CODE_REVIEW,
+        'uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py"',
+        'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py"',
+        ["FAIL codex-code-review: `logic.py` is invoked through the pinned interpreter"] * 3,
+        3,
+    ),
+    (
+        "reviewer-swap",
+        LOGIC_SCRIPT,
+        'REVIEWER = "/aw:codex-code-review"',
+        'REVIEWER = "/aw:codex-e2e-review"',
+        ["FAIL logic.py: its reviewer is the one declared for this phase"],
+    ),
+    (
+        "reviewer-gone",
+        E2E_SCRIPT,
+        'REVIEWER = "/aw:codex-e2e-review"',
+        'REVIEWER = "/aw:codex-review"',
+        ["FAIL e2e.py: its reviewer resolves to a bundled skill",
+         "FAIL e2e.py: its reviewer is the one declared for this phase"],
     ),
     (
         "unclassified",
         PATHS,
-        '              "wi-ec-verify")',
-        '              )',
+        'PROCEDURAL = ("codex-code-review", "codex-e2e-review", "wi-tdd")',
+        "PROCEDURAL = ()",
         ["FAIL every skill is classified exactly once"],
     ),
 ]
