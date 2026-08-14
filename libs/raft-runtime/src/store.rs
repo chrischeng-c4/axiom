@@ -183,16 +183,6 @@ impl RaftStore {
         })
     }
 
-    /// Alias for [`Self::migrate_legacy_to_group`].
-    pub fn migrate_legacy(
-        dir: &str,
-        node_id: NodeId,
-        target_group: GroupId,
-        fsync: FsyncPolicy,
-    ) -> io::Result<RaftStore> {
-        Self::migrate_legacy_to_group(dir, node_id, target_group, fsync)
-    }
-
     /// Fault-injection seam for testing durable persistence failures before save.
     pub fn inject_next_save_failure_with_kind(&self, kind: io::ErrorKind) {
         *self
