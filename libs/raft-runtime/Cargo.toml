@@ -44,6 +44,10 @@ path = "e2e/durable_layout.rs"
 name = "snapshot_generations"
 path = "e2e/snapshot_generations.rs"
 
+[[test]]
+name = "group_registry"
+path = "e2e/group_registry.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }

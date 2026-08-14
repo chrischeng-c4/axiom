@@ -36,47 +36,47 @@ use crate::store::RaftStore;
 
 // --- peer RPC envelopes (the `from` id rides alongside the raft_core message) ---
 
-#[derive(Serialize, Deserialize)]
-struct VoteEnvelope {
-    group_id: String,
-    from: NodeId,
-    req: VoteReq,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct VoteEnvelope {
+    pub(crate) group_id: String,
+    pub(crate) from: NodeId,
+    pub(crate) req: VoteReq,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct AppendEnvelope {
+    pub(crate) group_id: String,
+    pub(crate) from: NodeId,
+    pub(crate) req: AppendReq,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct SnapEnvelope {
+    pub(crate) group_id: String,
+    pub(crate) from: NodeId,
+    pub(crate) req: InstallSnapshotReq,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct PublishEnvelope {
+    pub(crate) group_id: String,
+    pub(crate) command: Vec<u8>,
 }
 #[derive(Serialize, Deserialize)]
-struct AppendEnvelope {
-    group_id: String,
-    from: NodeId,
-    req: AppendReq,
+pub(crate) struct NotLeader {
+    pub(crate) error: &'static str,
+    pub(crate) leader: Option<NodeId>,
 }
-#[derive(Serialize, Deserialize)]
-struct SnapEnvelope {
-    group_id: String,
-    from: NodeId,
-    req: InstallSnapshotReq,
-}
-#[derive(Serialize, Deserialize)]
-struct PublishEnvelope {
-    group_id: String,
-    command: Vec<u8>,
-}
-#[derive(Serialize, Deserialize)]
-struct NotLeader {
-    error: &'static str,
-    leader: Option<NodeId>,
-}
-#[derive(Serialize, Deserialize)]
-struct RaftStatus {
-    group_id: String,
-    id: NodeId,
-    role: String,
-    term: u64,
-    commit_index: u64,
-    last_index: u64,
-    snapshot_index: u64,
-    applied_index: u64,
-    leader: Option<NodeId>,
-    is_leader: bool,
-    durability_error: Option<String>,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RaftStatus {
+    pub group_id: String,
+    pub id: NodeId,
+    pub role: String,
+    pub term: u64,
+    pub commit_index: u64,
+    pub last_index: u64,
+    pub snapshot_index: u64,
+    pub applied_index: u64,
+    pub leader: Option<NodeId>,
+    pub is_leader: bool,
+    pub durability_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,40 +102,40 @@ impl std::fmt::Display for StorageFailed {
 
 impl std::error::Error for StorageFailed {}
 
-struct Shared {
-    id: NodeId,
-    group_id: GroupId,
-    node: Mutex<RaftNode>,
-    store: RaftStore,
-    sm: Arc<dyn RaftStateMachine>,
-    peers: HashMap<NodeId, String>,
+pub(crate) struct Shared {
+    pub(crate) id: NodeId,
+    pub(crate) group_id: GroupId,
+    pub(crate) node: Mutex<RaftNode>,
+    pub(crate) store: RaftStore,
+    pub(crate) sm: Arc<dyn RaftStateMachine>,
+    pub(crate) peers: HashMap<NodeId, String>,
     /// One coalescing RPC lane per peer. Raft's latest AppendEntries contains
     /// the complete missing suffix, so retaining every intermediate request
     /// only creates out-of-order progress and repeated durable writes.
-    peer_lanes: HashMap<NodeId, Arc<PeerLane>>,
-    client: reqwest::Client,
-    peer_transport: Option<PeerTransport>,
+    pub(crate) peer_lanes: HashMap<NodeId, Arc<PeerLane>>,
+    pub(crate) client: reqwest::Client,
+    pub(crate) peer_transport: Option<PeerTransport>,
     /// Fires (with the SM's applied head) whenever apply advances.
-    applied_tx: watch::Sender<Index>,
-    cfg: HostConfig,
-    rpc_tracker: Arc<RpcTracker>,
-    latched_failure: StdMutex<Option<StorageFailed>>,
+    pub(crate) applied_tx: watch::Sender<Index>,
+    pub(crate) cfg: HostConfig,
+    pub(crate) rpc_tracker: Arc<RpcTracker>,
+    pub(crate) latched_failure: StdMutex<Option<StorageFailed>>,
 }
 
 #[derive(Default)]
-struct RpcTracker {
-    active: AtomicUsize,
-    idle: Notify,
+pub(crate) struct RpcTracker {
+    pub(crate) active: AtomicUsize,
+    pub(crate) idle: Notify,
 }
 
 #[derive(Default)]
-struct PeerLane {
-    pending: Mutex<Option<RaftMsg>>,
-    running: AtomicBool,
+pub(crate) struct PeerLane {
+    pub(crate) pending: Mutex<Option<RaftMsg>>,
+    pub(crate) running: AtomicBool,
 }
 
 impl RpcTracker {
-    async fn wait_idle(&self) {
+    pub(crate) async fn wait_idle(&self) {
         loop {
             let notified = self.idle.notified();
             if self.active.load(Ordering::Acquire) == 0 {
@@ -395,7 +395,7 @@ impl Shared {
 /// A running raft group host. Cheap to hold; aborts its tasks on drop.
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#source
 pub struct RaftHost {
-    shared: Arc<Shared>,
+    pub(crate) shared: Arc<Shared>,
     tasks: StdMutex<Option<(JoinHandle<()>, JoinHandle<()>)>>,
 }
 
@@ -443,6 +443,11 @@ impl RaftHost {
         cfg: HostConfig,
     ) -> RaftHost {
         Self::spawn_inner(id, group_id, membership, peers, store, sm, cfg, None)
+    }
+
+    /// Access the group identity of this host.
+    pub fn group_id(&self) -> &GroupId {
+        &self.shared.group_id
     }
 
     /// Spawn a host whose outgoing peer RPCs use the current generation of a
@@ -737,7 +742,7 @@ fn take_reply(node: &mut RaftNode, to: NodeId) -> Option<RaftMsg> {
     reply
 }
 
-async fn request_vote(
+pub(crate) async fn request_vote(
     State(s): State<Arc<Shared>>,
     Json(env): Json<VoteEnvelope>,
 ) -> axum::response::Response {
@@ -763,7 +768,7 @@ async fn request_vote(
     .into_response()
 }
 
-async fn append_entries(
+pub(crate) async fn append_entries(
     State(s): State<Arc<Shared>>,
     Json(env): Json<AppendEnvelope>,
 ) -> axum::response::Response {
@@ -792,7 +797,7 @@ async fn append_entries(
     .into_response()
 }
 
-async fn install_snapshot(
+pub(crate) async fn install_snapshot(
     State(s): State<Arc<Shared>>,
     Json(env): Json<SnapEnvelope>,
 ) -> axum::response::Response {
@@ -821,7 +826,7 @@ async fn install_snapshot(
 
 /// Leader-side write target (the redirect destination): propose + apply, return
 /// the seq; or `421` with a leader hint if this node is not the leader.
-async fn publish_handler(
+pub(crate) async fn publish_handler(
     State(s): State<Arc<Shared>>,
     Json(env): Json<PublishEnvelope>,
 ) -> axum::response::Response {
@@ -870,7 +875,7 @@ async fn publish_handler(
     }
 }
 
-async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
+pub(crate) async fn host_status(s: &Shared) -> RaftStatus {
     let n = s.node.lock().await;
     let durability_error = s
         .latched_failure
@@ -878,7 +883,7 @@ async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
         .unwrap()
         .as_ref()
         .map(|e| e.to_string());
-    Json(RaftStatus {
+    RaftStatus {
         group_id: s.group_id.0.clone(),
         id: s.id,
         role: format!("{:?}", n.role()),
@@ -890,7 +895,11 @@ async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
         leader: n.leader(),
         is_leader: n.is_leader(),
         durability_error,
-    })
+    }
+}
+
+pub(crate) async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
+    Json(host_status(&s).await)
 }
 
 enum Route {
