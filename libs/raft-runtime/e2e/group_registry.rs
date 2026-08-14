@@ -758,7 +758,11 @@ async fn row6_failure_isolation() {
         .send()
         .await
         .unwrap();
-    assert_ne!(resp_alpha.status(), reqwest::StatusCode::OK);
+    // 503 is the host's own latched-durability refusal. Naming the literal
+    // keeps this row able to tell it apart from the registry's 404 for an
+    // unknown group and the single-host router's 400 for a foreign one;
+    // `assert_ne!(.., OK)` accepts all three and so separates none of them.
+    assert_eq!(resp_alpha.status().as_u16(), 503);
 
     // Proposal into beta succeeds
     let resp_beta = client
