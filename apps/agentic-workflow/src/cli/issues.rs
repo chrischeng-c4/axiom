@@ -57,6 +57,8 @@ pub enum IssuesCommand {
     Update(UpdateArgs),
     /// Close a work-item, optionally with a reason.
     Close(CloseArgs),
+    /// Author an Epic on the work-item type axis and close it on its terminal state.
+    Epic(EpicArgs),
     /// Converge a timeboxed Spike to its typed terminal record.
     Spike(SpikeArgs),
     /// Triage a Report to a typed verdict, optionally spawning delivery work.
@@ -409,6 +411,155 @@ pub struct UpdateArgs {
 // @spec apps/agentic-workflow/tech-design/core/logic/issues-backend.md#R3
 #[derive(Debug, Args)]
 pub struct CloseArgs {
+    /// Work-item identifier (slug for local, numeric for remote).
+    pub id: String,
+
+    /// Close reason (optional comment).
+    #[arg(long)]
+    pub reason: Option<String>,
+
+    /// Also close on remote backend.
+    #[arg(long)]
+    pub push: bool,
+
+    /// Output machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+/// Epic entry of the closed work-item type axis. The axis fixes the type, so no
+/// leaf below it accepts `--type`, and every leaf that touches an existing
+/// work-item refuses a target whose type is not `epic`.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+#[derive(Debug, Args)]
+pub struct EpicArgs {
+    #[command(subcommand)]
+    pub command: EpicCommand,
+}
+
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+#[derive(Debug, Subcommand)]
+pub enum EpicCommand {
+    /// Create a new epic work-item.
+    Create(EpicCreateArgs),
+    /// Update an existing epic's metadata or body.
+    Update(EpicUpdateArgs),
+    /// Validate an epic's quality and boundedness.
+    Validate(EpicValidateArgs),
+    /// Close an epic once every owned child is terminal.
+    Close(EpicCloseArgs),
+}
+
+/// `aw wi epic create`. Mirrors `CreateArgs` minus `--type` (fixed by the axis)
+/// and minus `--epic` (an epic has no owning epic).
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+#[derive(Debug, Args)]
+pub struct EpicCreateArgs {
+    /// Draft markdown file created by `aw wi draft init`.
+    pub draft_path: Option<PathBuf>,
+
+    /// Work-item title.
+    #[arg(long, required_unless_present = "draft_path")]
+    pub title: Option<String>,
+
+    /// Inline body text. Mutually exclusive with --body-file.
+    #[arg(long, conflicts_with = "body_file")]
+    pub body: Option<String>,
+
+    /// Read body from a file path, or `-` for stdin.
+    #[arg(long)]
+    pub body_file: Option<String>,
+
+    /// Project name. An epic takes 0 or 1 value (lead/owner); multi-project
+    /// spans live in the body.
+    #[arg(long = "project")]
+    pub projects: Vec<String>,
+
+    /// Priority level. Closed enum: p0 | p1 | p2 | p3.
+    #[arg(long = "priority")]
+    pub priority: Option<PriorityFilter>,
+
+    /// Agent name. Resolved against `[[agents]]` in `aw.toml`.
+    #[arg(long = "agent")]
+    pub agent: Option<String>,
+
+    /// Output machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+/// `aw wi epic update`. Mirrors `UpdateArgs` minus `--epic`.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+#[derive(Debug, Args)]
+pub struct EpicUpdateArgs {
+    /// Work-item identifier (slug for local, numeric for remote).
+    pub id: String,
+
+    /// New title.
+    #[arg(long)]
+    pub title: Option<String>,
+
+    /// New state.
+    #[arg(long)]
+    pub state: Option<StateFilter>,
+
+    /// Add a label (repeatable).
+    #[arg(long = "add-label")]
+    pub add_labels: Vec<String>,
+
+    /// Remove a label (repeatable).
+    #[arg(long = "remove-label")]
+    pub remove_labels: Vec<String>,
+
+    /// Read replacement body from a file path, or `-` for stdin.
+    #[arg(long)]
+    pub body_file: Option<String>,
+
+    /// Also push to remote backend via `gh issue edit`.
+    #[arg(long)]
+    pub push: bool,
+
+    /// Output machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+/// `aw wi epic validate`. Mirrors `ValidateArgs`.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+#[derive(Debug, Args)]
+pub struct EpicValidateArgs {
+    /// Work-item slug.
+    pub slug: String,
+
+    /// Emit human-readable validation text instead of the default agent JSON envelope.
+    #[arg(long)]
+    pub human: bool,
+
+    /// Pretty-print the default JSON envelope for debugging.
+    #[arg(long)]
+    pub pretty: bool,
+
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+/// `aw wi epic close`. Mirrors `CloseArgs`, plus the epic terminal-state rollup.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+#[derive(Debug, Args)]
+pub struct EpicCloseArgs {
     /// Work-item identifier (slug for local, numeric for remote).
     pub id: String,
 
@@ -1277,6 +1428,7 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Create(a) => run_create(a).await,
         IssuesCommand::Update(a) => run_update(a).await,
         IssuesCommand::Close(a) => run_close(a).await,
+        IssuesCommand::Epic(a) => run_epic(a).await,
         IssuesCommand::Spike(a) => run_spike(a).await,
         IssuesCommand::Triage(a) => run_triage(a).await,
         IssuesCommand::Find(a) => run_find(a).await,
@@ -4186,6 +4338,226 @@ async fn run_close(args: CloseArgs) -> Result<()> {
         println!("Closed {}", args.id);
     }
     Ok(())
+}
+
+/// Dispatch the epic entry of the work-item type axis.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+async fn run_epic(args: EpicArgs) -> Result<()> {
+    match args.command {
+        EpicCommand::Create(args) => run_epic_create(args).await,
+        EpicCommand::Update(args) => run_epic_update(args).await,
+        EpicCommand::Validate(args) => run_epic_validate(args).await,
+        EpicCommand::Close(args) => run_epic_close(args).await,
+    }
+}
+
+/// The identifier a refusal names an issue by: the local slug when present,
+/// then the local UUID, then the tracker number.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+fn axis_issue_id(issue: &Issue) -> String {
+    if !issue.slug.is_empty() {
+        return issue.slug.clone();
+    }
+    if let Some(id) = &issue.id {
+        return id.clone();
+    }
+    if let Some(github_id) = issue.github_id {
+        return github_id.to_string();
+    }
+    if let Some(gitlab_id) = issue.gitlab_id {
+        return gitlab_id.to_string();
+    }
+    "unknown".to_string()
+}
+
+/// Ensure a work-item has immutable type `epic` for the `aw wi epic` type axis.
+/// The axis fixes the type, so every leaf that touches an existing work-item
+/// refuses a non-epic target instead of silently operating on it.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+pub fn ensure_epic_issue(issue: &Issue, verb: &str) -> Result<()> {
+    if matches!(issue.issue_type, IssueType::Epic) {
+        return Ok(());
+    }
+    let id = axis_issue_id(issue);
+    let actual_type = match issue.issue_type {
+        IssueType::Epic => "epic",
+        IssueType::Change => "change",
+        IssueType::Spike => "spike",
+        IssueType::Report => "report",
+        IssueType::Bug => "bug",
+        IssueType::Enhancement => "enhancement",
+        IssueType::Refactor => "refactor",
+        IssueType::Test => "test",
+    };
+    anyhow::bail!(
+        "work-item `{id}` has immutable type `{actual_type}`; `aw wi epic {verb}` accepts only type:epic"
+    );
+}
+
+/// Resolve the epic axis target plus the complete tracker inventory from one
+/// backend resolution, so ownership is read from exactly the inventory
+/// `aw wi graph` reads rather than a second, possibly divergent, source.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+async fn load_epic_axis_inventory(
+    id: &str,
+    repo: Option<String>,
+    want_inventory: bool,
+) -> Result<(Issue, Vec<Issue>)> {
+    let project_root = crate::find_project_root()?;
+    let (kind, resolved_repo, host) = resolve_validate_backend(repo, &project_root)?;
+    let backend = make_backend(&kind, &project_root, resolved_repo, host)
+        .context("Failed to create issue backend for the work-item type axis")?;
+    let target = match backend.get(id).await? {
+        Some(issue) => issue,
+        None => anyhow::bail!("issue '{id}' not found"),
+    };
+    let inventory = if want_inventory {
+        backend.list(&IssueFilter::default()).await?
+    } else {
+        Vec::new()
+    };
+    Ok((target, inventory))
+}
+
+/// Every canonical `epic:<id>` ownership label this epic answers to. A child
+/// authored against the slug is still owned when the epic is addressed by
+/// number, and vice versa.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+fn epic_owner_labels(epic: &Issue, requested_id: &str) -> BTreeSet<String> {
+    let mut labels = BTreeSet::new();
+    labels.insert(epic_owner_label(requested_id));
+    if !epic.slug.is_empty() {
+        labels.insert(epic_owner_label(&epic.slug));
+    }
+    if let Some(id) = &epic.id {
+        labels.insert(epic_owner_label(id));
+    }
+    if let Some(github_id) = epic.github_id {
+        labels.insert(epic_owner_label(&github_id.to_string()));
+    }
+    if let Some(gitlab_id) = epic.gitlab_id {
+        labels.insert(epic_owner_label(&gitlab_id.to_string()));
+    }
+    labels
+}
+
+/// The owned children that are not yet terminal, named by exact id. An epic's
+/// terminal state is "all owned children are terminal", and a child is terminal
+/// exactly when its tracker state is closed.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+fn epic_non_terminal_children(epic: &Issue, inventory: &[Issue], requested_id: &str) -> Vec<String> {
+    let owner_labels = epic_owner_labels(epic, requested_id);
+    let mut blocking: Vec<String> = inventory
+        .iter()
+        .filter(|child| {
+            child
+                .labels
+                .iter()
+                .any(|label| owner_labels.contains(label.as_str()))
+        })
+        .filter(|child| child.state != IssueState::Closed)
+        .map(axis_issue_id)
+        .collect();
+    blocking.sort();
+    blocking.dedup();
+    blocking
+}
+
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+async fn run_epic_create(args: EpicCreateArgs) -> Result<()> {
+    run_create(CreateArgs {
+        draft_path: args.draft_path,
+        title: args.title,
+        // The axis fixes the type; no leaf below `aw wi epic` accepts `--type`.
+        issue_type: Some(TypeFilter::Epic),
+        body: args.body,
+        body_file: args.body_file,
+        projects: args.projects,
+        priority: args.priority,
+        agent: args.agent,
+        // An epic has no owning epic.
+        epic: None,
+        remote: false,
+        json: args.json,
+        repo: args.repo,
+    })
+    .await
+}
+
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+async fn run_epic_update(args: EpicUpdateArgs) -> Result<()> {
+    let (target, _) = load_epic_axis_inventory(&args.id, args.repo.clone(), false).await?;
+    if let Err(e) = ensure_epic_issue(&target, "update") {
+        if args.json {
+            emit_json_error(&e.to_string(), IssueErrorCode::Validation);
+        }
+        return Err(e);
+    }
+    run_update(UpdateArgs {
+        id: args.id,
+        title: args.title,
+        state: args.state,
+        add_labels: args.add_labels,
+        remove_labels: args.remove_labels,
+        body_file: args.body_file,
+        // An epic has no owning epic.
+        epic: None,
+        push: args.push,
+        json: args.json,
+        repo: args.repo,
+    })
+    .await
+}
+
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+async fn run_epic_validate(args: EpicValidateArgs) -> Result<()> {
+    let (target, _) = load_epic_axis_inventory(&args.slug, args.repo.clone(), false).await?;
+    ensure_epic_issue(&target, "validate")?;
+    run_validate(ValidateArgs {
+        slug: args.slug,
+        json: false,
+        human: args.human,
+        pretty: args.pretty,
+        repo: args.repo,
+    })
+    .await
+}
+
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+async fn run_epic_close(args: EpicCloseArgs) -> Result<()> {
+    let (target, inventory) = load_epic_axis_inventory(&args.id, args.repo.clone(), true).await?;
+    if let Err(e) = ensure_epic_issue(&target, "close") {
+        if args.json {
+            emit_json_error(&e.to_string(), IssueErrorCode::Validation);
+        }
+        return Err(e);
+    }
+
+    // The epic terminal state is enforced here, at the mutation point, so a
+    // refused close leaves the tracker record byte-for-byte unmodified. The
+    // graph projection reports after the fact and cannot serve as this gate.
+    let blocking = epic_non_terminal_children(&target, &inventory, &args.id);
+    if !blocking.is_empty() {
+        let id = axis_issue_id(&target);
+        let msg = format!(
+            "epic `{id}` is not terminal: {} owned child work-item(s) are not closed: {}; close each one, then rerun `aw wi epic close {id}`",
+            blocking.len(),
+            blocking.join(", ")
+        );
+        if args.json {
+            emit_json_error(&msg, IssueErrorCode::Validation);
+        }
+        anyhow::bail!(msg);
+    }
+
+    run_close(CloseArgs {
+        id: args.id,
+        reason: args.reason,
+        push: args.push,
+        json: args.json,
+        repo: args.repo,
+    })
+    .await
 }
 
 async fn run_spike(args: SpikeArgs) -> Result<()> {

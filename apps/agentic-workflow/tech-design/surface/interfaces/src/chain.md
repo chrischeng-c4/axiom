@@ -2324,4 +2324,16 @@ changes:
       Project-plan v2 registers staged plan, plan-answer, and plan-apply
       resume commands. Lifecycle classification keeps plan-review and
       plan-answer non-mutating and makes plan-apply the sole mutating leaf.
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Registers the four `wi.epic.*` leaves in `VERB_LIFECYCLE_REGISTRY`. A new
+      clap leaf that is absent from the registry turns the whole crate gate
+      red, so the epic type axis has to declare all four rows at the same time
+      it declares the clap subcommands. Lifecycle classification follows the
+      flat `wi.*` rows the leaves delegate to: `wi.epic.create`,
+      `wi.epic.update`, and `wi.epic.close` mutate lifecycle state,
+      `wi.epic.validate` does not.
 ```

@@ -831,6 +831,30 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         sunset_criterion: "",
     },
     VerbLifecycle {
+        path: "wi.epic.create",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.epic.update",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.epic.validate",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.epic.close",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
         path: "wi.spike.resolve",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: true,
@@ -2004,8 +2028,8 @@ mod tests {
         let wi_paths: Vec<_> = paths.iter().filter(|p| p.starts_with("wi.")).collect();
         assert_eq!(
             wi_paths.len(),
-            28,
-            "expected 28 wi.* paths (24 existing + 4 new), got {}",
+            32,
+            "expected 32 wi.* paths (24 existing + 4 change-contract + 4 epic type-axis), got {}",
             wi_paths.len()
         );
     }

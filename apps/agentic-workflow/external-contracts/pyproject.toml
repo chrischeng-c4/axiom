@@ -1990,3 +1990,17 @@ oracle = "The Python external contract drives real aw cb materialize and aw cb p
 target = "rust"
 command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case aw-cb-materialization-controller-git-ownership"
 evidence_paths = ["evidence/aw-cb-materialization-controller-git-ownership.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-epic-type-axis-verb-surface"
+artifact_id = "artifact:work-item-planning/public-contract"
+capability_id = "work-item-planning"
+use_case_id = "epic-type-axis-verb-surface"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-epic-type-axis-verb-surface.py"
+promise = "The epic work-item type is reachable as the verb axis `aw wi epic {create,update,validate,close}`, and the epic terminal state -- every owned child is terminal -- is refused at the close mutation point rather than diagnosed afterwards."
+oracle = "The Python external contract drives the real aw binary over a local tracker fixture: it pins the epic group's command list to exactly four leaves, proves create fixes the type from the axis by rejecting --type while still emitting type:epic, and proves close refuses an epic owning a non-closed change by exact child id with the epic's on-disk record byte-for-byte unchanged, then flips the same command green once the child closes, and independently refuses each of update/validate/close against a type:change target without mutating it."
+target = "rust"
+command = "uv run --frozen --offline --project apps/agentic-workflow/external-contracts python apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-type-axis-verb-surface"
+evidence_paths = ["evidence/work-item-planning-epic-type-axis-verb-surface.json"]

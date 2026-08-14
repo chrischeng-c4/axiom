@@ -24,6 +24,11 @@ command_refs:
   - command: aw wi draft init
   - command: aw wi draft validate
   - command: aw wi enrich
+  - command: aw wi epic
+  - command: aw wi epic close
+  - command: aw wi epic create
+  - command: aw wi epic update
+  - command: aw wi epic validate
   - command: aw wi epicize
   - command: aw wi fill-section
   - command: aw wi find
@@ -75,6 +80,28 @@ Registered rows carrying a retired `project:` label are canonicalized by their
 source path before `resolve_project_label` and `build_create_label_vec` emit the
 current `app:` or `lib:` identity. The suffix comes from the registered name,
 including when a discovered project-local row supplies the stale override.
+
+`aw wi epic` is the epic entry of the work-item type axis, exposing exactly
+`create`, `update`, `validate`, and `close`. The axis — not a `--type` flag —
+fixes the type, so `aw wi epic create` rejects `--type` and `--epic` outright
+while still emitting the canonical `type:epic` label, and inherits every other
+create producer unchanged, including the epic-specific 0-or-1 `--project`
+cardinality. `update`, `validate`, and `close` each resolve their target first
+and refuse a target whose type is not `epic`, naming the target id, before any
+tracker mutation.
+
+`aw wi epic close` is where the epic terminal state becomes a refusal. The
+closed type enum gives each work-item type its own terminal state, and an
+epic's is that every owned child is terminal; a change child is terminal
+exactly when its tracker state is `closed`. Type-blind `aw wi close` closes an
+epic that still owns an open child, and neither that verb nor the `aw wi graph`
+projection reports it — the rollup lives only in the goal-loop readiness
+selector, which routes rather than refuses. The epic leaf moves the rule to the
+mutation point: it enumerates the epic's owned children from the same tracker
+inventory the graph reads, and when any child is not closed it exits non-zero
+naming the blocking children by exact id, leaving the epic record byte-for-byte
+unchanged. Detecting the violation after the close has landed is not a
+substitute for refusing it.
 
 ### Symbols
 
@@ -10551,4 +10578,26 @@ changes:
       envelope root, separates independent review from human answers and
       mutation application, emits host-native HITL question metadata, and
       terminates only after zero-diff verify writes a digest-bound checkpoint.
+  - path: apps/agentic-workflow/src/cli/issues.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Adds `aw wi epic` as the epic entry of the work-item type axis, with
+      exactly the leaves create/update/validate/close. The axis fixes the type,
+      so the create leaf rejects `--type` and `--epic` while still emitting
+      `type:epic` and keeping the epic-specific 0-or-1 `--project` cardinality.
+      update/validate/close resolve the target before mutating and refuse a
+      non-epic target by id.
+
+      The close leaf turns the epic terminal state into a refusal at the
+      mutation point. Type-blind `aw wi close` closes an epic that still owns a
+      non-closed change and neither it nor `aw wi graph` reports the violation;
+      the children-terminal rollup exists only in the goal-loop readiness
+      selector, which routes rather than refuses. The epic close leaf
+      enumerates owned children from the tracker inventory, exits non-zero
+      naming every non-closed child by exact id, and leaves the epic record
+      byte-for-byte unchanged.
+      Pinned by external contract
+      `work-item-planning-epic-type-axis-verb-surface`.
 ```
