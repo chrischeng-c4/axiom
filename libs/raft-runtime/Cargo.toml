@@ -32,6 +32,10 @@ path = "e2e/concurrent_host.rs"
 name = "durable_persistence"
 path = "e2e/durable_persistence.rs"
 
+[[test]]
+name = "group_identity"
+path = "e2e/group_identity.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }

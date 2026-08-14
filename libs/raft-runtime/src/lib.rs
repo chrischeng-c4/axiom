@@ -16,6 +16,7 @@ mod applied_index_store;
 pub mod cluster;
 mod config;
 mod fenced_assignment;
+pub mod group;
 mod host;
 pub mod llm;
 mod outcome_window;
@@ -35,6 +36,7 @@ pub use config::{HostConfig, SnapshotPolicy};
 pub use fenced_assignment::{
     ActiveAssignment, AssignmentEpoch, AssignmentError, FenceToken, FencedAssignment,
 };
+pub use group::{GroupId, LEGACY_GROUP_ID};
 pub use host::{RaftHost, StorageFailed};
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
 pub use peer_transport::PeerTransport;

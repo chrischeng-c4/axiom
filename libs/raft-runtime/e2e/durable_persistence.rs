@@ -1,6 +1,9 @@
 use std::io::ErrorKind;
 use std::sync::Arc;
-use raft_runtime::{FsyncPolicy, HostConfig, Membership, RaftHost, RaftStateMachine, RaftStore};
+use raft_runtime::{
+    group::LEGACY_GROUP_ID, FsyncPolicy, HostConfig, Membership, RaftHost,
+    RaftStateMachine, RaftStore,
+};
 
 #[path = "support/cluster.rs"]
 mod cluster;
@@ -67,6 +70,7 @@ async fn test_2_request_vote_refusal() {
     let vote_resp: serde_json::Value = client
         .post(&format!("{}/raft/request-vote", node.url))
         .json(&serde_json::json!({
+            "group_id": LEGACY_GROUP_ID,
             "from": 1,
             "req": {
                 "term": 2,
@@ -98,6 +102,7 @@ async fn test_3_append_entries_refusal() {
     let append_resp: serde_json::Value = client
         .post(&format!("{}/raft/append-entries", node.url))
         .json(&serde_json::json!({
+            "group_id": LEGACY_GROUP_ID,
             "from": 1,
             "req": {
                 "term": 2,
@@ -189,6 +194,7 @@ async fn test_6_install_snapshot_refusal() {
     let snap_resp: serde_json::Value = client
         .post(&format!("{}/raft/install-snapshot", node.url))
         .json(&serde_json::json!({
+            "group_id": LEGACY_GROUP_ID,
             "from": 1,
             "req": {
                 "term": 2,
@@ -221,6 +227,7 @@ async fn test_7_peer_requests_healthy_vs_latched() {
 
     // 1. Healthy host accepts request_vote
     let vote_req = serde_json::json!({
+        "group_id": LEGACY_GROUP_ID,
         "from": 1,
         "req": {
             "term": 2,
@@ -237,6 +244,7 @@ async fn test_7_peer_requests_healthy_vs_latched() {
 
     // 2. Healthy host accepts append_entries
     let append_req = serde_json::json!({
+        "group_id": LEGACY_GROUP_ID,
         "from": 1,
         "req": {
             "term": 2,
@@ -255,6 +263,7 @@ async fn test_7_peer_requests_healthy_vs_latched() {
 
     // 3. Healthy host accepts install_snapshot
     let snap_req = serde_json::json!({
+        "group_id": LEGACY_GROUP_ID,
         "from": 1,
         "req": {
             "term": 2,
@@ -277,6 +286,7 @@ async fn test_7_peer_requests_healthy_vs_latched() {
 
     // 1b. Latched host refuses request_vote (with term 3 to avoid stale term rejection if it wasn't latched)
     let vote_req_latched = serde_json::json!({
+        "group_id": LEGACY_GROUP_ID,
         "from": 1,
         "req": {
             "term": 3,
@@ -293,6 +303,7 @@ async fn test_7_peer_requests_healthy_vs_latched() {
 
     // 2b. Latched host refuses append_entries
     let append_req_latched = serde_json::json!({
+        "group_id": LEGACY_GROUP_ID,
         "from": 1,
         "req": {
             "term": 3,
@@ -311,6 +322,7 @@ async fn test_7_peer_requests_healthy_vs_latched() {
 
     // 3b. Latched host refuses install_snapshot
     let snap_req_latched = serde_json::json!({
+        "group_id": LEGACY_GROUP_ID,
         "from": 1,
         "req": {
             "term": 3,

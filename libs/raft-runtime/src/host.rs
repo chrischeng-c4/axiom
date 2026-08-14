@@ -29,6 +29,7 @@ use tokio::sync::{watch, Mutex, Notify};
 use tokio::task::JoinHandle;
 
 use crate::config::{HostConfig, SnapshotPolicy};
+use crate::group::{GroupId, LEGACY_GROUP_ID};
 use crate::peer_transport::PeerTransport;
 use crate::state_machine::{Command, RaftStateMachine};
 use crate::store::RaftStore;
@@ -37,18 +38,26 @@ use crate::store::RaftStore;
 
 #[derive(Serialize, Deserialize)]
 struct VoteEnvelope {
+    group_id: String,
     from: NodeId,
     req: VoteReq,
 }
 #[derive(Serialize, Deserialize)]
 struct AppendEnvelope {
+    group_id: String,
     from: NodeId,
     req: AppendReq,
 }
 #[derive(Serialize, Deserialize)]
 struct SnapEnvelope {
+    group_id: String,
     from: NodeId,
     req: InstallSnapshotReq,
+}
+#[derive(Serialize, Deserialize)]
+struct PublishEnvelope {
+    group_id: String,
+    command: Vec<u8>,
 }
 #[derive(Serialize, Deserialize)]
 struct NotLeader {
@@ -57,6 +66,7 @@ struct NotLeader {
 }
 #[derive(Serialize, Deserialize)]
 struct RaftStatus {
+    group_id: String,
     id: NodeId,
     role: String,
     term: u64,
@@ -94,6 +104,7 @@ impl std::error::Error for StorageFailed {}
 
 struct Shared {
     id: NodeId,
+    group_id: GroupId,
     node: Mutex<RaftNode>,
     store: RaftStore,
     sm: Arc<dyn RaftStateMachine>,
@@ -278,7 +289,11 @@ impl Shared {
             RaftMsg::Vote(req) => self
                 .post(
                     &format!("{base}/raft/request-vote"),
-                    &VoteEnvelope { from: self.id, req },
+                    &VoteEnvelope {
+                        group_id: self.group_id.0.clone(),
+                        from: self.id,
+                        req,
+                    },
                 )
                 .await
                 .and_then(|r| serde_json::from_slice::<VoteResp>(&r).ok())
@@ -286,7 +301,11 @@ impl Shared {
             RaftMsg::Append(req) => self
                 .post(
                     &format!("{base}/raft/append-entries"),
-                    &AppendEnvelope { from: self.id, req },
+                    &AppendEnvelope {
+                        group_id: self.group_id.0.clone(),
+                        from: self.id,
+                        req,
+                    },
                 )
                 .await
                 .and_then(|r| serde_json::from_slice::<AppendResp>(&r).ok())
@@ -294,7 +313,11 @@ impl Shared {
             RaftMsg::InstallSnapshot(req) => self
                 .post(
                     &format!("{base}/raft/install-snapshot"),
-                    &SnapEnvelope { from: self.id, req },
+                    &SnapEnvelope {
+                        group_id: self.group_id.0.clone(),
+                        from: self.id,
+                        req,
+                    },
                 )
                 .await
                 .and_then(|r| serde_json::from_slice::<InstallSnapshotResp>(&r).ok())
@@ -399,7 +422,27 @@ impl RaftHost {
         sm: Arc<dyn RaftStateMachine>,
         cfg: HostConfig,
     ) -> RaftHost {
-        Self::spawn_inner(id, membership, peers, store, sm, cfg, None)
+        Self::spawn_group(
+            id,
+            GroupId(LEGACY_GROUP_ID.to_string()),
+            membership,
+            peers,
+            store,
+            sm,
+            cfg,
+        )
+    }
+
+    pub fn spawn_group(
+        id: NodeId,
+        group_id: GroupId,
+        membership: Membership,
+        peers: HashMap<NodeId, String>,
+        store: RaftStore,
+        sm: Arc<dyn RaftStateMachine>,
+        cfg: HostConfig,
+    ) -> RaftHost {
+        Self::spawn_inner(id, group_id, membership, peers, store, sm, cfg, None)
     }
 
     /// Spawn a host whose outgoing peer RPCs use the current generation of a
@@ -414,11 +457,43 @@ impl RaftHost {
         cfg: HostConfig,
         peer_transport: PeerTransport,
     ) -> RaftHost {
-        Self::spawn_inner(id, membership, peers, store, sm, cfg, Some(peer_transport))
+        Self::spawn_with_peer_transport_group(
+            id,
+            GroupId(LEGACY_GROUP_ID.to_string()),
+            membership,
+            peers,
+            store,
+            sm,
+            cfg,
+            peer_transport,
+        )
+    }
+
+    pub fn spawn_with_peer_transport_group(
+        id: NodeId,
+        group_id: GroupId,
+        membership: Membership,
+        peers: HashMap<NodeId, String>,
+        store: RaftStore,
+        sm: Arc<dyn RaftStateMachine>,
+        cfg: HostConfig,
+        peer_transport: PeerTransport,
+    ) -> RaftHost {
+        Self::spawn_inner(
+            id,
+            group_id,
+            membership,
+            peers,
+            store,
+            sm,
+            cfg,
+            Some(peer_transport),
+        )
     }
 
     fn spawn_inner(
         id: NodeId,
+        group_id: GroupId,
         membership: Membership,
         peers: HashMap<NodeId, String>,
         store: RaftStore,
@@ -456,6 +531,7 @@ impl RaftHost {
             .collect();
         let shared = Arc::new(Shared {
             id,
+            group_id,
             node: Mutex::new(node),
             store,
             sm,
@@ -588,7 +664,10 @@ impl RaftHost {
             // commit and local state-machine apply. Its request budget is the
             // proposal deadline, not the short peer transport timeout.
             .timeout(self.shared.cfg.propose_timeout)
-            .body(command.to_vec())
+            .json(&PublishEnvelope {
+                group_id: self.shared.group_id.0.clone(),
+                command: command.to_vec(),
+            })
             .send()
             .await?;
         if resp.status() != StatusCode::OK {
@@ -661,14 +740,18 @@ fn take_reply(node: &mut RaftNode, to: NodeId) -> Option<RaftMsg> {
 async fn request_vote(
     State(s): State<Arc<Shared>>,
     Json(env): Json<VoteEnvelope>,
-) -> Json<VoteResp> {
+) -> axum::response::Response {
+    if env.group_id != s.group_id.0 {
+        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+    }
     let mut n = s.node.lock().await;
     n.handle(env.from, RaftMsg::Vote(env.req));
     if s.persist(&n).is_err() {
         return Json(VoteResp {
             term: 0,
             granted: false,
-        });
+        })
+        .into_response();
     }
     Json(match take_reply(&mut n, env.from) {
         Some(RaftMsg::VoteResp(r)) => r,
@@ -677,12 +760,16 @@ async fn request_vote(
             granted: false,
         },
     })
+    .into_response()
 }
 
 async fn append_entries(
     State(s): State<Arc<Shared>>,
     Json(env): Json<AppendEnvelope>,
-) -> Json<AppendResp> {
+) -> axum::response::Response {
+    if env.group_id != s.group_id.0 {
+        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+    }
     let mut n = s.node.lock().await;
     n.handle(env.from, RaftMsg::Append(env.req));
     if s.persist(&n).is_err() {
@@ -690,7 +777,8 @@ async fn append_entries(
             term: 0,
             success: false,
             match_index: 0,
-        });
+        })
+        .into_response();
     }
     s.apply_ready(&mut n);
     Json(match take_reply(&mut n, env.from) {
@@ -701,19 +789,24 @@ async fn append_entries(
             match_index: 0,
         },
     })
+    .into_response()
 }
 
 async fn install_snapshot(
     State(s): State<Arc<Shared>>,
     Json(env): Json<SnapEnvelope>,
-) -> Json<InstallSnapshotResp> {
+) -> axum::response::Response {
+    if env.group_id != s.group_id.0 {
+        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+    }
     let mut n = s.node.lock().await;
     n.handle(env.from, RaftMsg::InstallSnapshot(env.req));
     if s.persist(&n).is_err() {
         return Json(InstallSnapshotResp {
             term: 0,
             snapshot_index: 0,
-        });
+        })
+        .into_response();
     }
     s.apply_ready(&mut n); // restores the SM from the installed snapshot
     Json(match take_reply(&mut n, env.from) {
@@ -723,14 +816,18 @@ async fn install_snapshot(
             snapshot_index: 0,
         },
     })
+    .into_response()
 }
 
 /// Leader-side write target (the redirect destination): propose + apply, return
 /// the seq; or `421` with a leader hint if this node is not the leader.
 async fn publish_handler(
     State(s): State<Arc<Shared>>,
-    body: axum::body::Bytes,
+    Json(env): Json<PublishEnvelope>,
 ) -> axum::response::Response {
+    if env.group_id != s.group_id.0 {
+        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+    }
     let leader = {
         let n = s.node.lock().await;
         if n.is_leader() {
@@ -749,7 +846,7 @@ async fn publish_handler(
         )
             .into_response();
     }
-    match s.try_propose_applied(body.to_vec()).await {
+    match s.try_propose_applied(env.command).await {
         Ok(Some(seq)) => (StatusCode::OK, Json(serde_json::json!({ "seq": seq }))).into_response(),
         Ok(None) => {
             let leader = {
@@ -775,8 +872,14 @@ async fn publish_handler(
 
 async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
     let n = s.node.lock().await;
-    let durability_error = s.latched_failure.lock().unwrap().as_ref().map(|e| e.to_string());
+    let durability_error = s
+        .latched_failure
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|e| e.to_string());
     Json(RaftStatus {
+        group_id: s.group_id.0.clone(),
         id: s.id,
         role: format!("{:?}", n.role()),
         term: n.current_term(),
