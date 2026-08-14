@@ -233,6 +233,17 @@ fn measurement_4_fault_after_publish_retains_durable_generation_and_collects_lat
     });
     assert!(res.is_err(), "save must return Err when fault is armed");
 
+    // Collection is the last step, so at this seam both generations' artifacts
+    // are still on disk. Without this the row cannot tell "collection has not
+    // run yet" from "collection already ran before the reference was durable" —
+    // the second is an ordering defect that leaves the durable reference naming
+    // an artifact that has been deleted.
+    assert_eq!(
+        count_artifacts(dir.path()),
+        2,
+        "collection must not have run yet at the after-publish seam"
+    );
+
     // A fresh store loads generation 2 because the hard-state reference was already durable
     let fresh_store = RaftStore::open(dir.path().to_str().unwrap(), 1, FsyncPolicy::Os).unwrap();
     let loaded_gen2 = fresh_store
