@@ -63,13 +63,17 @@ fn measurement_2_snapshot_bytes_bounded_size() {
 
     store.save(&state).unwrap();
 
-    let meta = std::fs::metadata(store.path()).unwrap();
-    let file_len = meta.len();
+    let total_dir_len: u64 = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.metadata().map(|m| m.len()).unwrap_or(0))
+        .sum();
+
     assert!(
-        file_len <= 1024 * 1024 + 4096,
-        "file length {file_len} exceeds 1 MiB + 4096"
+        total_dir_len <= 1024 * 1024 + 4096,
+        "total dir length {total_dir_len} exceeds 1 MiB + 4096"
     );
-    assert!(file_len >= 1024 * 1024);
+    assert!(total_dir_len >= 1024 * 1024);
 }
 
 #[test]

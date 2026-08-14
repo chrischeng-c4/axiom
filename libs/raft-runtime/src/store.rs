@@ -10,7 +10,7 @@
 
 use std::fs::create_dir_all;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use raft_core::{Index, NodeId, PersistedState, RaftEntry, Term};
@@ -20,6 +20,7 @@ pub use storage_durable::FsyncPolicy;
 use crate::group::{GroupId, LEGACY_GROUP_ID};
 
 const MAGIC_V1: &[u8; 8] = b"RAFTST01";
+const MAGIC_V2: &[u8; 8] = b"RAFTST02";
 
 /// File-backed persistence for one raft node.
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-store-rs.md#source
@@ -28,6 +29,8 @@ pub struct RaftStore {
     fsync: FsyncPolicy,
     last_saved: Mutex<Option<[u8; 32]>>,
     injected_save_failure: Mutex<Option<io::ErrorKind>>,
+    injected_after_artifact_failure: Mutex<Option<io::ErrorKind>>,
+    injected_after_publish_failure: Mutex<Option<io::ErrorKind>>,
 }
 
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-store-rs.md#source
@@ -60,10 +63,12 @@ impl RaftStore {
             fsync,
             last_saved: Mutex::new(None),
             injected_save_failure: Mutex::new(None),
+            injected_after_artifact_failure: Mutex::new(None),
+            injected_after_publish_failure: Mutex::new(None),
         })
     }
 
-    /// Fault-injection seam for testing durable persistence failures.
+    /// Fault-injection seam for testing durable persistence failures before save.
     pub fn inject_next_save_failure_with_kind(&self, kind: io::ErrorKind) {
         *self
             .injected_save_failure
@@ -71,9 +76,61 @@ impl RaftStore {
             .expect("injected_save_failure mutex poisoned") = Some(kind);
     }
 
+    /// Fault-injection seam armed after the snapshot artifact is written and before the hard-state reference is published.
+    pub fn inject_next_after_artifact_failure_with_kind(&self, kind: io::ErrorKind) {
+        *self
+            .injected_after_artifact_failure
+            .lock()
+            .expect("injected_after_artifact_failure mutex poisoned") = Some(kind);
+    }
+
+    /// Fault-injection seam armed after the hard-state reference is published and before superseded artifact collection.
+    pub fn inject_next_after_publish_failure_with_kind(&self, kind: io::ErrorKind) {
+        *self
+            .injected_after_publish_failure
+            .lock()
+            .expect("injected_after_publish_failure mutex poisoned") = Some(kind);
+    }
+
     /// Access the file path of this store.
     pub fn path(&self) -> &std::path::Path {
         &self.path
+    }
+
+    /// Returns the snapshot artifact path for a given generation.
+    pub fn artifact_path(&self, snapshot_index: Index, snapshot_term: Term) -> PathBuf {
+        let stem = self
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("raft");
+        let dir = self.path.parent().unwrap_or_else(|| Path::new("."));
+        dir.join(format!(
+            "{stem}-snap-{snapshot_index}-{snapshot_term}.artifact"
+        ))
+    }
+
+    fn collect_superseded_artifacts(&self, current_artifact: Option<&Path>) -> io::Result<()> {
+        let stem = self
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("raft");
+        let dir = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let prefix = format!("{stem}-snap-");
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with(&prefix) && name.ends_with(".artifact") {
+                        if current_artifact.map_or(true, |cur| cur != path.as_path()) {
+                            let _ = std::fs::remove_file(&path);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Returns the number of heap/retained bytes in the save-dedup cache.
@@ -93,12 +150,17 @@ impl RaftStore {
     /// Durably persist the hard state (atomic temp-write + rename, fsync unless
     /// [`FsyncPolicy::Os`]).
     pub fn save(&self, state: &PersistedState) -> io::Result<()> {
-        let bytes = encode_persisted_state(state);
-        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        let snapshot_digest: [u8; 32] = Sha256::digest(&state.snapshot).into();
+        let bytes = encode_persisted_state_v2(state, &snapshot_digest);
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let digest: [u8; 32] = hasher.finalize().into();
+
         let mut last_saved = self.last_saved.lock().expect("raft store cache poisoned");
         if *last_saved == Some(digest) {
             return Ok(());
         }
+
         if let Some(kind) = self
             .injected_save_failure
             .lock()
@@ -110,7 +172,45 @@ impl RaftStore {
                 "injected save failure (fault-injection seam)",
             ));
         }
+
+        let current_artifact = if !state.snapshot.is_empty() {
+            let art_path = self.artifact_path(state.snapshot_index, state.snapshot_term);
+            if !art_path.exists() {
+                storage_durable::atomic_write(&art_path, &state.snapshot, self.fsync)
+                    .map_err(io::Error::other)?;
+            }
+            Some(art_path)
+        } else {
+            None
+        };
+
+        if let Some(kind) = self
+            .injected_after_artifact_failure
+            .lock()
+            .expect("injected_after_artifact_failure mutex poisoned")
+            .take()
+        {
+            return Err(io::Error::new(
+                kind,
+                "injected after-artifact failure (fault-injection seam)",
+            ));
+        }
+
         storage_durable::atomic_write(&self.path, &bytes, self.fsync).map_err(io::Error::other)?;
+
+        if let Some(kind) = self
+            .injected_after_publish_failure
+            .lock()
+            .expect("injected_after_publish_failure mutex poisoned")
+            .take()
+        {
+            return Err(io::Error::new(
+                kind,
+                "injected after-publish failure (fault-injection seam)",
+            ));
+        }
+
+        let _ = self.collect_superseded_artifacts(current_artifact.as_deref());
         *last_saved = Some(digest);
         Ok(())
     }
@@ -119,13 +219,163 @@ impl RaftStore {
     pub fn load(&self) -> io::Result<Option<PersistedState>> {
         match std::fs::read(&self.path) {
             Ok(bytes) => {
-                let state = decode_persisted_state(&bytes)?;
-                let digest: [u8; 32] = Sha256::digest(&encode_persisted_state(&state)).into();
+                let state = self.decode_persisted_state(&bytes)?;
+                let snapshot_digest: [u8; 32] = Sha256::digest(&state.snapshot).into();
+                let hard_bytes = encode_persisted_state_v2(&state, &snapshot_digest);
+                let mut hasher = Sha256::new();
+                hasher.update(&hard_bytes);
+                let digest: [u8; 32] = hasher.finalize().into();
                 *self.last_saved.lock().expect("raft store cache poisoned") = Some(digest);
                 Ok(Some(state))
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
+        }
+    }
+
+    fn decode_persisted_state(&self, bytes: &[u8]) -> io::Result<PersistedState> {
+        if bytes.starts_with(MAGIC_V2) {
+            let mut r = CursorReader(&bytes[MAGIC_V2.len()..]);
+            let term = r.read_u64()?;
+            let has_voted_for = r.read_u8()?;
+            let voted_for = match has_voted_for {
+                0 => None,
+                1 => Some(r.read_u64()?),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid voted_for tag",
+                    ))
+                }
+            };
+            let commit_index = r.read_u64()?;
+            let snapshot_index = r.read_u64()?;
+            let snapshot_term = r.read_u64()?;
+            let snapshot_len = r.read_u64()? as usize;
+            let snapshot_digest = r.read_bytes(32)?;
+
+            let snapshot = if snapshot_len == 0 {
+                Vec::new()
+            } else {
+                let art_path = self.artifact_path(snapshot_index, snapshot_term);
+                if !art_path.exists() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "missing snapshot artifact for index {snapshot_index} term {snapshot_term}"
+                        ),
+                    ));
+                }
+                let art_bytes = std::fs::read(&art_path)?;
+                if art_bytes.len() != snapshot_len {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "snapshot artifact truncated: expected {snapshot_len} bytes, found {}",
+                            art_bytes.len()
+                        ),
+                    ));
+                }
+                let actual_digest: [u8; 32] = Sha256::digest(&art_bytes).into();
+                if actual_digest.as_slice() != snapshot_digest.as_slice() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "snapshot artifact digest mismatch (content corrupted)",
+                    ));
+                }
+                art_bytes
+            };
+
+            let log_len = r.read_u64()? as usize;
+            let mut log = Vec::with_capacity(log_len.min(100_000));
+            for _ in 0..log_len {
+                let entry_term = r.read_u64()?;
+                let entry_index = r.read_u64()?;
+                let command_len = r.read_u64()? as usize;
+                let command = r.read_bytes(command_len)?;
+                log.push(RaftEntry {
+                    term: entry_term,
+                    index: entry_index,
+                    command,
+                });
+            }
+            if !r.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "trailing bytes after persisted state",
+                ));
+            }
+            Ok(PersistedState {
+                term,
+                voted_for,
+                log,
+                commit_index,
+                snapshot_index,
+                snapshot_term,
+                snapshot,
+            })
+        } else if bytes.starts_with(MAGIC_V1) {
+            let mut r = CursorReader(&bytes[MAGIC_V1.len()..]);
+            let term = r.read_u64()?;
+            let has_voted_for = r.read_u8()?;
+            let voted_for = match has_voted_for {
+                0 => None,
+                1 => Some(r.read_u64()?),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid voted_for tag",
+                    ))
+                }
+            };
+            let commit_index = r.read_u64()?;
+            let snapshot_index = r.read_u64()?;
+            let snapshot_term = r.read_u64()?;
+            let snapshot_len = r.read_u64()? as usize;
+            let snapshot = r.read_bytes(snapshot_len)?;
+            let log_len = r.read_u64()? as usize;
+            let mut log = Vec::with_capacity(log_len.min(100_000));
+            for _ in 0..log_len {
+                let entry_term = r.read_u64()?;
+                let entry_index = r.read_u64()?;
+                let command_len = r.read_u64()? as usize;
+                let command = r.read_bytes(command_len)?;
+                log.push(RaftEntry {
+                    term: entry_term,
+                    index: entry_index,
+                    command,
+                });
+            }
+            if !r.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "trailing bytes after persisted state",
+                ));
+            }
+            Ok(PersistedState {
+                term,
+                voted_for,
+                log,
+                commit_index,
+                snapshot_index,
+                snapshot_term,
+                snapshot,
+            })
+        } else if let Some(&first_non_ws) = bytes.iter().find(|&&b| !b.is_ascii_whitespace()) {
+            if first_non_ws == b'{' {
+                serde_json::from_slice(bytes)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unrecognised durable state format marker",
+                ))
+            }
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "empty durable state file",
+            ))
         }
     }
 
@@ -157,9 +407,9 @@ impl RaftStore {
     }
 }
 
-fn encode_persisted_state(state: &PersistedState) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(65 + state.snapshot.len() + state.log.len() * 32);
-    buf.extend_from_slice(MAGIC_V1);
+fn encode_persisted_state_v2(state: &PersistedState, snapshot_digest: &[u8; 32]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(97 + state.log.len() * 32);
+    buf.extend_from_slice(MAGIC_V2);
     buf.extend_from_slice(&state.term.to_le_bytes());
     match state.voted_for {
         Some(node_id) => {
@@ -174,7 +424,7 @@ fn encode_persisted_state(state: &PersistedState) -> Vec<u8> {
     buf.extend_from_slice(&state.snapshot_index.to_le_bytes());
     buf.extend_from_slice(&state.snapshot_term.to_le_bytes());
     buf.extend_from_slice(&(state.snapshot.len() as u64).to_le_bytes());
-    buf.extend_from_slice(&state.snapshot);
+    buf.extend_from_slice(snapshot_digest);
     buf.extend_from_slice(&(state.log.len() as u64).to_le_bytes());
     for entry in &state.log {
         buf.extend_from_slice(&entry.term.to_le_bytes());
@@ -226,71 +476,6 @@ impl<'a> CursorReader<'a> {
 
     fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-}
-
-fn decode_persisted_state(bytes: &[u8]) -> io::Result<PersistedState> {
-    if bytes.starts_with(MAGIC_V1) {
-        let mut r = CursorReader(&bytes[MAGIC_V1.len()..]);
-        let term = r.read_u64()?;
-        let has_voted_for = r.read_u8()?;
-        let voted_for = match has_voted_for {
-            0 => None,
-            1 => Some(r.read_u64()?),
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid voted_for tag",
-                ))
-            }
-        };
-        let commit_index = r.read_u64()?;
-        let snapshot_index = r.read_u64()?;
-        let snapshot_term = r.read_u64()?;
-        let snapshot_len = r.read_u64()? as usize;
-        let snapshot = r.read_bytes(snapshot_len)?;
-        let log_len = r.read_u64()? as usize;
-        let mut log = Vec::with_capacity(log_len.min(100_000));
-        for _ in 0..log_len {
-            let entry_term = r.read_u64()?;
-            let entry_index = r.read_u64()?;
-            let command_len = r.read_u64()? as usize;
-            let command = r.read_bytes(command_len)?;
-            log.push(RaftEntry {
-                term: entry_term,
-                index: entry_index,
-                command,
-            });
-        }
-        if !r.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "trailing bytes after persisted state",
-            ));
-        }
-        Ok(PersistedState {
-            term,
-            voted_for,
-            log,
-            commit_index,
-            snapshot_index,
-            snapshot_term,
-            snapshot,
-        })
-    } else if let Some(&first_non_ws) = bytes.iter().find(|&&b| !b.is_ascii_whitespace()) {
-        if first_non_ws == b'{' {
-            serde_json::from_slice(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unrecognised durable state format marker",
-            ))
-        }
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "empty durable state file",
-        ))
     }
 }
 // CODEGEN-END
