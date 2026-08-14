@@ -36,6 +36,10 @@ path = "e2e/durable_persistence.rs"
 name = "group_identity"
 path = "e2e/group_identity.rs"
 
+[[test]]
+name = "durable_layout"
+path = "e2e/durable_layout.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }
@@ -48,6 +52,7 @@ axum = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 tokio = { workspace = true }
 tracing = { workspace = true }
 rustls = "0.23"
