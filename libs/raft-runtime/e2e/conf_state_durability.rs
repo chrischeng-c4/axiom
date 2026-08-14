@@ -177,6 +177,72 @@ fn the_configuration_and_entry_kinds_survive_the_durable_round_trip() {
 }
 
 #[test]
+fn the_record_carries_the_configuration_as_the_canonical_encoder_writes_it() {
+    let dir = TempDir::new().unwrap();
+    let conf = ConfState {
+        membership: Membership {
+            voters: vec![4, 5, 6],
+            learners: vec![7, 8],
+        },
+        generation: 11,
+    };
+    let state = PersistedState {
+        term: 2,
+        voted_for: None,
+        log: vec![RaftEntry {
+            term: 2,
+            index: 1,
+            command: b"payload".to_vec(),
+            kind: EntryKind::Command,
+        }],
+        commit_index: 1,
+        snapshot_index: 0,
+        snapshot_term: 0,
+        snapshot: vec![],
+        conf: Some(conf.clone()),
+    };
+
+    let store = open(&dir);
+    store.save(&state).unwrap();
+    let bytes = std::fs::read(store.path()).unwrap();
+
+    // The expectation is the canonical encoder's output, never a byte string
+    // spelled out here: a literal is satisfied by whichever implementation
+    // wrote the file and would keep passing while the two drift apart.
+    let encoded = conf.encode();
+    let matches: Vec<usize> = bytes
+        .windows(encoded.len())
+        .enumerate()
+        .filter(|(_, window)| *window == encoded.as_slice())
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(
+        matches.len(),
+        1,
+        "the record must carry the configuration exactly as ConfState::encode writes it, but those {} bytes occur {} times in the {} the store wrote",
+        encoded.len(),
+        matches.len(),
+        bytes.len()
+    );
+
+    // The log length begins where the encoder stopped. A writer emitting a
+    // different number of bytes than the canonical encoder accounts for leaves
+    // everything after the configuration at the wrong offset.
+    let after = matches[0] + encoded.len();
+    assert_eq!(
+        &bytes[after..after + 8],
+        &(state.log.len() as u64).to_le_bytes(),
+        "the log length must begin immediately after the bytes the canonical encoder wrote"
+    );
+
+    assert_eq!(
+        open(&dir).load().unwrap().unwrap(),
+        state,
+        "the record the canonical encoder's bytes were written into must read back unchanged"
+    );
+}
+
+#[test]
 fn saving_after_loading_an_older_record_upgrades_the_file_in_place() {
     let dir = TempDir::new().unwrap();
     let store = open(&dir);
