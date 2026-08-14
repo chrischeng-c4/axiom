@@ -28,3 +28,7 @@ path = "e2e/consensus.rs"
 [[test]]
 name = "snapshot"
 path = "e2e/snapshot.rs"
+
+[[test]]
+name = "membership_durability"
+path = "e2e/membership_durability.rs"
