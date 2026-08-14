@@ -72,8 +72,15 @@ ADOPT_WHY = ("`create` renames the staged body itself on both facades, so no "
              "`probe_local_verbs.py` is what keeps that path working -- a "
              "declaration here exempts a verb from being *named*, never from "
              "being tested.")
+ORDER_WHY = ("`order` computes the sequence an epic's children have to be "
+             "worked in, and nothing drives it yet -- the caller is the "
+             "execution ladder, which is not in this plugin. It is exempt from "
+             "being *named*, never from being tested: `check_epic_order.py` "
+             "runs it against the epic corpus. The moment a skill starts "
+             "naming it this declaration goes red rather than stale, because "
+             "an exemption is refused once it stops being true.")
 UNUSED = {
-    "epic.py": {"adopt": ADOPT_WHY},
+    "epic.py": {"adopt": ADOPT_WHY, "order": ORDER_WHY},
     "change.py": {"adopt": ADOPT_WHY},
     "ec.py": {},
 }

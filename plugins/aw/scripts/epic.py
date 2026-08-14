@@ -232,6 +232,95 @@ def _inventory_requirement_cells(text: str) -> list[str]:
     return cells
 
 
+def _table_rows(text: str) -> list[list[str]]:
+    """Every pipe row in a section, split into cells, separators dropped.
+
+    `_inventory_requirement_cells` reads the first column and can drop the
+    header by name. Ordering needs whole rows and needs the header kept, since
+    the header is what says whether a `Depends On` column exists at all.
+    """
+    rows: list[list[str]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if all(not cell or set(cell) <= set("-: ") for cell in cells):
+            continue
+        rows.append(cells)
+    return rows
+
+
+# The spellings a `Depends On` cell uses for "nothing". 221 rows say `-` and 5
+# say `none`; without this list every one of them would be reported as a
+# dependency the order could not read.
+NO_DEPENDENCY = frozenset({"", "-", "--", "none", "n/a", "na", "–", "—"})
+
+
+def _inventory_edges(inventory: str) -> tuple[dict[int, set[int]], bool, list[dict]]:
+    """The requirement dependency graph, whether one was declared, and what
+    could not be read.
+
+    Returns `nodes -> the requirements they wait on`. A node is a requirement
+    with an inventory row; the second value is False when the table has no
+    `Depends On` column, which is a shape and not a defect -- measured over the
+    255-epic snapshot the inventory has exactly two header spellings, 45 with
+    the column and 14 without, so a reading that treated its absence as an
+    error would condemn a quarter of the corpus for being older.
+
+    The third value is the part that cannot be silent. 35 live rows across 10
+    epics fill the cell with something that is not a requirement reference --
+    an issue number (`#2403`, `#2526, #2515`) or prose (`shared harness WI`).
+    Each is a dependency the author declared and this function cannot read, and
+    on 4 of those epics there are real `R -> R` edges alongside, so dropping
+    them quietly yields an order that looks complete and has lost a constraint.
+    They are returned rather than interpreted: reading `#2403` as an edge would
+    mean guessing whether the author meant that issue or the requirement it
+    covers, and a guess is what an order must never contain.
+    """
+    rows = _table_rows(inventory)
+    if not rows or rows[0][0].strip().lower() != "requirement":
+        return {}, False, []
+    header = [cell.strip().lower() for cell in rows[0]]
+    column = header.index("depends on") if "depends on" in header else None
+    edges: dict[int, set[int]] = {}
+    unreadable: list[dict] = []
+    for cells in rows[1:]:
+        cell = cells[column].strip() if column is not None and column < len(cells) else ""
+        refs = _requirement_refs(cell)
+        if cell and not refs and cell.lower() not in NO_DEPENDENCY:
+            unreadable.append({"requirement": cells[0], "cell": cell})
+        for node in _requirement_refs(cells[0]):
+            edges.setdefault(node, set()).update(refs - {node})
+    return edges, column is not None, unreadable
+
+
+def _child_requirements(section: str) -> dict[str, set[int]]:
+    """Issue number -> the requirements the child table says it covers.
+
+    The issue's own cell is excluded from the requirement scan on purpose: the
+    live tables are not one shape (`| Work item | Requirements |` in #3254,
+    `| Issue | Covers | Deliverable |` in #2936), so the requirement refs are
+    found by scanning the row rather than by trusting a column index -- and a
+    row whose deliverable prose happens to contain a bare `R2` would otherwise
+    acquire a requirement nobody assigned it.
+    """
+    mapping: dict[str, set[int]] = {}
+    for cells in _table_rows(section):
+        found = [(i, m) for i, cell in enumerate(cells)
+                 for m in re.findall(r"#(\d{2,6})\b", cell)]
+        if not found:
+            continue
+        index = found[0][0]
+        refs: set[int] = set()
+        for i, cell in enumerate(cells):
+            if i != index:
+                refs |= _requirement_refs(cell)
+        for _, number in found:
+            mapping.setdefault(number, set()).update(refs)
+    return mapping
+
+
 def _requirements_are_inventoried(sections: dict[str, str]) -> list[str]:
     """Every R<n> declared in `## Requirements` must appear in the inventory.
 
@@ -328,6 +417,161 @@ class Finding:
         }
 
 
+PRIORITY_UNSET = 9
+
+
+def _priority(child: dict) -> int:
+    """`priority:p0`..`p5` as a sort key; unlabelled sorts after all of them.
+
+    Not a default of p2 or p3. An unlabelled child has not been prioritised,
+    and giving it a middle value would silently interleave it with children a
+    human did rank -- the one place a made-up value is indistinguishable from
+    a stated one.
+    """
+    for label in child.get("labels", []):
+        match = re.fullmatch(r"priority:p([0-9])", label.strip())
+        if match:
+            return int(match.group(1))
+    return PRIORITY_UNSET
+
+
+def _ranks(edges: dict[int, set[int]]) -> tuple[dict[int, int], list[int]]:
+    """Depth of each requirement, or the cycle that makes depth undefined.
+
+    Depth is `1 + max(depth of what it waits on)`, so a requirement's rank is
+    the length of the longest chain behind it. Edges to a requirement with no
+    row are skipped here rather than guessed at: they are already reported as
+    `dangling-dependency`, and inventing a depth for one would let a broken
+    graph produce a confident order.
+    """
+    depth: dict[int, int] = {}
+    state: dict[int, int] = {}  # 1 = on the stack, 2 = settled
+
+    def walk(node: int, trail: list[int]) -> list[int]:
+        if state.get(node) == 2:
+            return []
+        if state.get(node) == 1:
+            return trail[trail.index(node):]
+        state[node] = 1
+        trail.append(node)
+        best = 0
+        for dep in sorted(edges[node]):
+            if dep not in edges:
+                continue
+            cycle = walk(dep, trail)
+            if cycle:
+                return cycle
+            best = max(best, depth[dep] + 1)
+        trail.pop()
+        state[node] = 2
+        depth[node] = best
+        return []
+
+    for node in sorted(edges):
+        cycle = walk(node, [])
+        if cycle:
+            return {}, cycle
+    return depth, []
+
+
+def covers_any_child(epic: dict) -> bool:
+    """Whether the body maps at least one child to a requirement."""
+    sections = split_sections(epic.get("body") or "")
+    return bool(_child_requirements("\n".join(
+        sections.get(heading, "") for heading in CHILD_DECLARING_SECTIONS
+    )))
+
+
+def order_children(epic: dict, children: list[dict]) -> dict:
+    """The sequence an epic's children have to run in, or why there is none.
+
+    Composed from two sections that were already in the tracker and had no
+    consumer: `## Verification Inventory` partially orders the requirements
+    through `Depends On`, and `## Child Work Items` says which requirements
+    each child covers. A child inherits the position of the *deepest*
+    requirement it covers -- taking the shallowest would place a child before
+    work it needs, which is the one arrangement worse than no order at all.
+
+    A cycle returns no order. Falling back to declaration order there would
+    hand the caller a sequence indistinguishable from a computed one, and the
+    finding printed beside it would read as advisory.
+    """
+    sections = split_sections(epic.get("body") or "")
+    edges, declared, unreadable = _inventory_edges(
+        sections.get("Verification Inventory", ""))
+    covers = _child_requirements("\n".join(
+        sections.get(heading, "") for heading in CHILD_DECLARING_SECTIONS
+    ))
+    dangling = sorted({dep for deps in edges.values() for dep in deps} - set(edges))
+    depth, cycle = _ranks(edges)
+
+    graph = {str(node): sorted(deps) for node, deps in sorted(edges.items()) if deps}
+    payload = {
+        "epic": epic.get("number"),
+        "declares_dependencies": declared,
+        # Whether the body maps any child to a requirement at all. 21 of 255
+        # epics carry `## Child Work Items`, so on the rest every child is
+        # unmapped for one reason -- and that reason is a property of the epic,
+        # not of each child. Without this flag the only way to say it is one
+        # identical line per child, which on a 30-child epic buries whatever
+        # else the order had to report.
+        "maps_children": bool(covers),
+        "graph": graph,
+        "cycle": [f"R{n}" for n in cycle],
+        "dangling": dangling,
+        # Reported, not withheld. A cycle means no order exists; an unreadable
+        # cell means the order below is the best reading of what could be
+        # parsed and may be missing an edge. Withholding it would lose the part
+        # that is correct, so it ships with the flag and `reconcile` raises the
+        # structural finding -- the same split `not-terminal` already uses,
+        # where the readout informs and the verb refuses.
+        "unreadable": unreadable,
+        "order": [],
+        "unordered": [],
+    }
+
+    owned = [str(child["number"]) for child in children]
+    if cycle:
+        payload["unordered"] = owned
+        payload["orderable"] = False
+        return payload
+
+    rows = []
+    for child in children:
+        number = str(child["number"])
+        refs = sorted(covers.get(number, set()))
+        if not refs:
+            payload["unordered"].append(number)
+            continue
+        blockers = {dep for ref in refs for dep in edges.get(ref, set())}
+        rows.append((
+            max((depth.get(ref, 0) for ref in refs), default=0),
+            _priority(child),
+            int(number),
+            number,
+            refs,
+            blockers,
+        ))
+
+    by_requirement: dict[int, list[str]] = {}
+    for _, _, _, number, refs, _ in rows:
+        for ref in refs:
+            by_requirement.setdefault(ref, []).append(number)
+
+    for rank, _, _, number, refs, blockers in sorted(rows):
+        payload["order"].append({
+            "number": number,
+            "requirements": [f"R{n}" for n in refs],
+            "rank": rank,
+            "blocked_by": sorted(
+                {n for ref in blockers for n in by_requirement.get(ref, [])} - {number},
+                key=int,
+            ),
+        })
+    payload["orderable"] = not (cycle or payload["unordered"] or unreadable)
+    return payload
+
+
 def reconcile_findings(epic: dict, children: list[dict], repo: str) -> list[Finding]:
     """Split what is computable from what needs a human.
 
@@ -379,6 +623,70 @@ def reconcile_findings(epic: dict, children: list[dict], repo: str) -> list[Find
                     "enters executable backlog work",
                     command=None,
                     subjects=[str(child["number"])],
+                )
+            )
+
+    # -- structural: the order has no answer ---------------------------------
+    # All three are decidable from the body alone, which is what keeps them out
+    # of the semantic tier. None carries a repair command: the fix is an edit
+    # to prose only the author can write, and a `gh issue edit` that rewrote a
+    # dependency cell would be this tier inventing the answer it exists to
+    # refuse inventing.
+    ordering = order_children(epic, children)
+    if ordering["dangling"]:
+        named = ", ".join(f"R{n}" for n in ordering["dangling"])
+        findings.append(
+            Finding(
+                tier="structural",
+                kind="dangling-dependency",
+                detail=f"`## Verification Inventory` has a `Depends On` naming {named}, "
+                "which no row in the table declares; the order those edges imply "
+                "cannot be computed",
+                command=None,
+                subjects=[f"R{n}" for n in ordering["dangling"]],
+            )
+        )
+    if ordering["unreadable"]:
+        named = "; ".join(f"{row['requirement']} -> {row['cell']}"
+                          for row in ordering["unreadable"])
+        findings.append(
+            Finding(
+                tier="structural",
+                kind="unreadable-dependency",
+                detail=f"{len(ordering['unreadable'])} `Depends On` cell(s) name no "
+                f"requirement ({named}); the order cannot honour a dependency it "
+                "cannot read, so it is computed without them",
+                command=None,
+                subjects=[row["requirement"] for row in ordering["unreadable"]],
+            )
+        )
+    if ordering["cycle"]:
+        findings.append(
+            Finding(
+                tier="structural",
+                kind="cyclic-dependency",
+                detail=f"the requirement graph closes a cycle "
+                f"({' -> '.join(ordering['cycle'] + ordering['cycle'][:1])}); no sequence "
+                f"satisfies it, so `epic.py order {iid}` returns none",
+                command=None,
+                subjects=ordering["cycle"],
+            )
+        )
+    # Silent when the table maps nothing at all. 21 of 255 epics carry the
+    # section, so on the rest every owned child is unmapped -- and a finding
+    # that fires on all of them says only that the epic predates the section,
+    # which `no-children` and `possible-coverage-gap` already cover. It fires
+    # once an ordering exists and a child is missing from it.
+    elif covers_any_child(epic):
+        for number in sorted(ordering["unordered"], key=int):
+            findings.append(
+                Finding(
+                    tier="structural",
+                    kind="undeclared-order",
+                    detail=f"#{number} is owned but `## Child Work Items` maps it to no "
+                    "requirement, so it has no position in the order",
+                    command=None,
+                    subjects=[number],
                 )
             )
 
@@ -490,6 +798,56 @@ def cmd_children(args) -> int:
     return 0
 
 
+def cmd_order(args) -> int:
+    """The sequence the children run in, for a human or for a driver.
+
+    Exits non-zero when there is no order to give -- a cycle, or a child with
+    no position. A driver that consumed this and ran the children in the order
+    printed would otherwise treat "here is a partial answer" and "here is the
+    answer" as the same stdout.
+    """
+    issue = fetch_issue(args.iid, args.repo)
+    require_epic(issue, "order")
+    children = fetch_children(args.iid, args.repo)
+    if args.open_only:
+        children = [c for c in children if c["state"] != "CLOSED"]
+    payload = order_children(issue, children)
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"epic #{issue['number']}: {issue['title']}")
+        if not payload["declares_dependencies"]:
+            print("  `## Verification Inventory` has no `Depends On` column; "
+                  "every child is at rank 0")
+        for row in payload["order"]:
+            blocked = (" after " + ", ".join("#" + n for n in row["blocked_by"])
+                       if row["blocked_by"] else "")
+            print(f"  {row['rank']}  #{row['number']:<7} "
+                  f"{', '.join(row['requirements']):<16}{blocked}")
+        for row in payload["unreadable"]:
+            print(f"  !  {row['requirement']} depends on {row['cell']}, which names "
+                  "no requirement -- the order was computed without it")
+        if payload["cycle"]:
+            print(f"  !  no order: the requirement graph closes a cycle "
+                  f"({' -> '.join(payload['cycle'] + payload['cycle'][:1])})")
+        elif not payload["maps_children"]:
+            print(f"  ?  no order: `## Child Work Items` maps no child to a "
+                  f"requirement, so none of the {len(payload['unordered'])} owned "
+                  "child work-item(s) has a position")
+        else:
+            for number in payload["unordered"]:
+                print(f"  ?  #{number} has no position; "
+                      "`## Child Work Items` maps it to no requirement")
+
+    # Non-zero whenever the printed order is not one this verb can vouch for --
+    # including an unreadable `Depends On`, where an order *was* printed but is
+    # missing an edge somebody declared. Exiting 0 there would mean a driver
+    # reading the exit code runs the children in a sequence the epic did not
+    # ask for, while the human reading stdout is told to stop.
+    return 0 if payload["orderable"] else 1
+
+
 def cmd_reconcile(args) -> int:
     issue = fetch_issue(args.iid, args.repo)
     require_epic(issue, "reconcile")
@@ -597,6 +955,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("iid")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_children)
+
+    p = sub.add_parser("order", help="the sequence the owned children run in")
+    p.add_argument("iid")
+    p.add_argument("--open-only", action="store_true",
+                   help="drop closed children; the order of what is left to do")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_order)
 
     p = sub.add_parser("reconcile", help="read-only structural and semantic findings")
     p.add_argument("iid")

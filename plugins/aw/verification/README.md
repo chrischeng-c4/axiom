@@ -64,6 +64,7 @@ directory for a file none of them owns.
 | `check_engine_split_negative_control.py` | a split gate whose extractor reports "clean" because it found nothing |
 | `check_change_schema.py` | a change facade whose reading of the GHAN schema has drifted from the crate that owns it |
 | `check_change_schema_negative_control.py` | a port gate that stays green while one ported rule quietly stops firing |
+| `check_epic_order.py` | an epic sequence that was guessed — a cycle answered with an arbitrary order, a child appended to the end because nothing placed it, or a declared dependency dropped because it could not be parsed |
 | `probe_plugin_root.py` | a script that only resolves the repository when it happens to live inside one |
 | `probe_local_verbs.py` | an `adopt` that overwrites, or an id parser that invents a number |
 
@@ -102,6 +103,39 @@ Three of these encode defects that actually shipped and were caught late:
   knows Claude Code's naming rules well enough to have caught a name that is
   accepted locally and rejected by the marketplace sync. Asking the tool is the
   only reading of that rule that cannot drift from it.
+
+## Where an epic's order comes from
+
+`epic.py order` composes two sections that were already in every epic body and
+had no consumer: `## Verification Inventory` partially orders the requirements
+through its `Depends On` column, and `## Child Work Items` maps each child to
+the requirements it covers. A child inherits the position of the *deepest*
+requirement it covers — taking the shallowest would place it before work it
+needs — and equal positions break by `priority:` then by issue number.
+
+Measured over the 255-epic snapshot: 45 epics carry the `Depends On` column and
+14 do not, so its absence is a shape rather than a defect; 32 have at least one
+real `R → R` edge; and there are **0 cycles and 0 dangling references** today.
+
+A baseline of zero is also what a detector that never fires reports, so
+`check_epic_order.py` seeds one cycle and one dangling reference into a copy of
+the corpus and requires both counts to move to one. The row that carries real
+weight is the fourth finding: **10 epics fill a `Depends On` with an issue
+number (`#2403`) or with prose (`shared harness WI`)**, and on 4 of them there
+are real edges alongside — so reading those cells as "no dependency" produced
+an order that looked complete and had silently lost a constraint. They are
+reported as `unreadable-dependency` rather than interpreted, because reading
+`#2403` as an edge means guessing whether the author meant that issue or the
+requirement it covers.
+
+The order refuses rather than guesses. A cycle yields *no* order at all, not a
+declaration-ordered fallback — a fallback would be indistinguishable from a
+computed answer, and the finding printed beside it would read as advisory.
+
+Nothing drives the verb yet: its caller is the execution ladder, which is not in
+this plugin. That gap is a declared exemption in `check_plugin.py` rather than a
+silence, and the declaration is checked in both directions — the verb has to
+still exist, and no skill may have quietly started naming it.
 
 ## The engine/facade split
 

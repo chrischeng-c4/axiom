@@ -52,6 +52,10 @@ SUITE = [
     ("check_coverage_rule.py", "check_coverage_rule_negative_control.py"),
     ("check_engine_split.py", "check_engine_split_negative_control.py"),
     ("check_change_schema.py", "check_change_schema_negative_control.py"),
+    # Reads the epic snapshot and calls `order_children` as a pure function;
+    # nothing is spawned and nothing is written, so it costs about as much as
+    # the probes and sits with them rather than with the flow gate below.
+    ("check_epic_order.py", None),
     ("probe_plugin_root.py", None),
     ("probe_local_verbs.py", None),
     # Exempt from the ordering rule above, and last because it is the slowest.
