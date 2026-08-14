@@ -13,7 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use raft_core::{Index, NodeId, PersistedState, RaftEntry, Term};
+use raft_core::{ConfState, EntryKind, Index, Membership, NodeId, PersistedState, RaftEntry, Term};
 use sha2::{Digest, Sha256};
 pub use storage_durable::FsyncPolicy;
 
@@ -21,6 +21,7 @@ use crate::group::{GroupId, LEGACY_GROUP_ID};
 
 const MAGIC_V1: &[u8; 8] = b"RAFTST01";
 const MAGIC_V2: &[u8; 8] = b"RAFTST02";
+const MAGIC_V3: &[u8; 8] = b"RAFTST03";
 
 /// File-backed persistence for one raft node.
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-store-rs.md#source
@@ -266,7 +267,7 @@ impl RaftStore {
     /// [`FsyncPolicy::Os`]).
     pub fn save(&self, state: &PersistedState) -> io::Result<()> {
         let snapshot_digest: [u8; 32] = Sha256::digest(&state.snapshot).into();
-        let bytes = encode_persisted_state_v2(state, &snapshot_digest);
+        let bytes = encode_persisted_state_v3(state, &snapshot_digest);
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let digest: [u8; 32] = hasher.finalize().into();
@@ -335,12 +336,16 @@ impl RaftStore {
         match std::fs::read(&self.path) {
             Ok(bytes) => {
                 let state = self.decode_persisted_state(&bytes)?;
-                let snapshot_digest: [u8; 32] = Sha256::digest(&state.snapshot).into();
-                let hard_bytes = encode_persisted_state_v2(&state, &snapshot_digest);
-                let mut hasher = Sha256::new();
-                hasher.update(&hard_bytes);
-                let digest: [u8; 32] = hasher.finalize().into();
-                *self.last_saved.lock().expect("raft store cache poisoned") = Some(digest);
+                if bytes.starts_with(MAGIC_V3) {
+                    let snapshot_digest: [u8; 32] = Sha256::digest(&state.snapshot).into();
+                    let hard_bytes = encode_persisted_state_v3(&state, &snapshot_digest);
+                    let mut hasher = Sha256::new();
+                    hasher.update(&hard_bytes);
+                    let digest: [u8; 32] = hasher.finalize().into();
+                    *self.last_saved.lock().expect("raft store cache poisoned") = Some(digest);
+                } else {
+                    *self.last_saved.lock().expect("raft store cache poisoned") = None;
+                }
                 Ok(Some(state))
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -349,7 +354,128 @@ impl RaftStore {
     }
 
     fn decode_persisted_state(&self, bytes: &[u8]) -> io::Result<PersistedState> {
-        if bytes.starts_with(MAGIC_V2) {
+        if bytes.starts_with(MAGIC_V3) {
+            let mut r = CursorReader(&bytes[MAGIC_V3.len()..]);
+            let term = r.read_u64()?;
+            let has_voted_for = r.read_u8()?;
+            let voted_for = match has_voted_for {
+                0 => None,
+                1 => Some(r.read_u64()?),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid voted_for tag",
+                    ))
+                }
+            };
+            let commit_index = r.read_u64()?;
+            let snapshot_index = r.read_u64()?;
+            let snapshot_term = r.read_u64()?;
+            let snapshot_len = r.read_u64()? as usize;
+            let snapshot_digest = r.read_bytes(32)?;
+
+            let snapshot = if snapshot_len == 0 {
+                Vec::new()
+            } else {
+                let art_path = self.artifact_path(snapshot_index, snapshot_term);
+                if !art_path.exists() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "missing snapshot artifact for index {snapshot_index} term {snapshot_term}"
+                        ),
+                    ));
+                }
+                let art_bytes = std::fs::read(&art_path)?;
+                if art_bytes.len() != snapshot_len {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "snapshot artifact truncated: expected {snapshot_len} bytes, found {}",
+                            art_bytes.len()
+                        ),
+                    ));
+                }
+                let actual_digest: [u8; 32] = Sha256::digest(&art_bytes).into();
+                if actual_digest.as_slice() != snapshot_digest.as_slice() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "snapshot artifact digest mismatch (content corrupted)",
+                    ));
+                }
+                art_bytes
+            };
+
+            let has_conf = r.read_u8()?;
+            let conf = match has_conf {
+                0 => None,
+                1 => {
+                    let generation = r.read_u64()?;
+                    let voters_len = r.read_u64()? as usize;
+                    let mut voters = Vec::with_capacity(voters_len.min(100_000));
+                    for _ in 0..voters_len {
+                        voters.push(r.read_u64()?);
+                    }
+                    let learners_len = r.read_u64()? as usize;
+                    let mut learners = Vec::with_capacity(learners_len.min(100_000));
+                    for _ in 0..learners_len {
+                        learners.push(r.read_u64()?);
+                    }
+                    Some(ConfState {
+                        membership: Membership { voters, learners },
+                        generation,
+                    })
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid conf tag",
+                    ))
+                }
+            };
+
+            let log_len = r.read_u64()? as usize;
+            let mut log = Vec::with_capacity(log_len.min(100_000));
+            for _ in 0..log_len {
+                let entry_term = r.read_u64()?;
+                let entry_index = r.read_u64()?;
+                let kind_tag = r.read_u8()?;
+                let kind = match kind_tag {
+                    0 => EntryKind::Command,
+                    1 => EntryKind::Config,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "invalid entry kind tag",
+                        ))
+                    }
+                };
+                let command_len = r.read_u64()? as usize;
+                let command = r.read_bytes(command_len)?;
+                log.push(RaftEntry {
+                    term: entry_term,
+                    index: entry_index,
+                    command,
+                    kind,
+                });
+            }
+            if !r.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "trailing bytes after persisted state",
+                ));
+            }
+            Ok(PersistedState {
+                term,
+                voted_for,
+                log,
+                commit_index,
+                snapshot_index,
+                snapshot_term,
+                snapshot,
+                conf,
+            })
+        } else if bytes.starts_with(MAGIC_V2) {
             let mut r = CursorReader(&bytes[MAGIC_V2.len()..]);
             let term = r.read_u64()?;
             let has_voted_for = r.read_u8()?;
@@ -412,6 +538,7 @@ impl RaftStore {
                     term: entry_term,
                     index: entry_index,
                     command,
+                    kind: EntryKind::Command,
                 });
             }
             if !r.is_empty() {
@@ -428,6 +555,7 @@ impl RaftStore {
                 snapshot_index,
                 snapshot_term,
                 snapshot,
+                conf: None,
             })
         } else if bytes.starts_with(MAGIC_V1) {
             let mut r = CursorReader(&bytes[MAGIC_V1.len()..]);
@@ -459,6 +587,7 @@ impl RaftStore {
                     term: entry_term,
                     index: entry_index,
                     command,
+                    kind: EntryKind::Command,
                 });
             }
             if !r.is_empty() {
@@ -475,6 +604,7 @@ impl RaftStore {
                 snapshot_index,
                 snapshot_term,
                 snapshot,
+                conf: None,
             })
         } else if let Some(&first_non_ws) = bytes.iter().find(|&&b| !b.is_ascii_whitespace()) {
             if first_non_ws == b'{' {
@@ -518,13 +648,14 @@ impl RaftStore {
             snapshot_index,
             snapshot_term,
             snapshot,
+            conf: None,
         })
     }
 }
 
-fn encode_persisted_state_v2(state: &PersistedState, snapshot_digest: &[u8; 32]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(97 + state.log.len() * 32);
-    buf.extend_from_slice(MAGIC_V2);
+fn encode_persisted_state_v3(state: &PersistedState, snapshot_digest: &[u8; 32]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(128 + state.log.len() * 33);
+    buf.extend_from_slice(MAGIC_V3);
     buf.extend_from_slice(&state.term.to_le_bytes());
     match state.voted_for {
         Some(node_id) => {
@@ -540,10 +671,31 @@ fn encode_persisted_state_v2(state: &PersistedState, snapshot_digest: &[u8; 32])
     buf.extend_from_slice(&state.snapshot_term.to_le_bytes());
     buf.extend_from_slice(&(state.snapshot.len() as u64).to_le_bytes());
     buf.extend_from_slice(snapshot_digest);
+    match &state.conf {
+        Some(conf) => {
+            buf.push(1);
+            buf.extend_from_slice(&conf.generation.to_le_bytes());
+            buf.extend_from_slice(&(conf.membership.voters.len() as u64).to_le_bytes());
+            for &v in &conf.membership.voters {
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+            buf.extend_from_slice(&(conf.membership.learners.len() as u64).to_le_bytes());
+            for &l in &conf.membership.learners {
+                buf.extend_from_slice(&l.to_le_bytes());
+            }
+        }
+        None => {
+            buf.push(0);
+        }
+    }
     buf.extend_from_slice(&(state.log.len() as u64).to_le_bytes());
     for entry in &state.log {
         buf.extend_from_slice(&entry.term.to_le_bytes());
         buf.extend_from_slice(&entry.index.to_le_bytes());
+        match entry.kind {
+            EntryKind::Command => buf.push(0),
+            EntryKind::Config => buf.push(1),
+        }
         buf.extend_from_slice(&(entry.command.len() as u64).to_le_bytes());
         buf.extend_from_slice(&entry.command);
     }

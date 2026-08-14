@@ -3,7 +3,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-use raft_core::{PersistedState, RaftEntry};
+use raft_core::{EntryKind, PersistedState, RaftEntry};
 use raft_runtime::{FsyncPolicy, RaftStore};
 
 fn find_artifact(dir_path: &std::path::Path) -> Option<PathBuf> {
@@ -48,11 +48,13 @@ fn measurement_1_hard_state_size_bounded_and_independent_of_snapshot() {
             term: 1,
             index: 2,
             command: vec![1, 2, 3, 4],
+            kind: EntryKind::Command,
         }],
         commit_index: 2,
         snapshot_index: 1,
         snapshot_term: 1,
         snapshot: snap_1m,
+        conf: None,
     };
     store1.save(&state1).unwrap();
     let len1 = std::fs::metadata(store1.path()).unwrap().len();
@@ -68,11 +70,13 @@ fn measurement_1_hard_state_size_bounded_and_independent_of_snapshot() {
             term: 1,
             index: 2,
             command: vec![1, 2, 3, 4],
+            kind: EntryKind::Command,
         }],
         commit_index: 2,
         snapshot_index: 1,
         snapshot_term: 1,
         snapshot: snap_8m,
+        conf: None,
     };
     store2.save(&state2).unwrap();
     let len2 = std::fs::metadata(store2.path()).unwrap().len();
@@ -110,6 +114,7 @@ fn measurement_2_log_append_does_not_rewrite_snapshot_artifact() {
         snapshot_index: 1,
         snapshot_term: 1,
         snapshot: snap.clone(),
+        conf: None,
     };
     store.save(&state).unwrap();
 
@@ -127,11 +132,13 @@ fn measurement_2_log_append_does_not_rewrite_snapshot_artifact() {
             term: 1,
             index: 2,
             command: vec![0x55; 64],
+            kind: EntryKind::Command,
         }],
         commit_index: 2,
         snapshot_index: 1,
         snapshot_term: 1,
         snapshot: snap,
+        conf: None,
     };
     store.save(&state2).unwrap();
 
@@ -169,6 +176,7 @@ fn measurement_3_fault_before_publish_recovers_last_complete_generation() {
         snapshot_index: 1,
         snapshot_term: 1,
         snapshot: gen1_bytes.clone(),
+        conf: None,
     };
     store.save(&state_gen1).unwrap();
 
@@ -184,6 +192,7 @@ fn measurement_3_fault_before_publish_recovers_last_complete_generation() {
         snapshot_index: 2,
         snapshot_term: 2,
         snapshot: gen2_bytes,
+        conf: None,
     };
     let res = store.save(&state_gen2);
     assert!(res.is_err(), "save must fail when fault is armed");
@@ -215,6 +224,7 @@ fn measurement_4_fault_after_publish_retains_durable_generation_and_collects_lat
             snapshot_index: 1,
             snapshot_term: 1,
             snapshot: gen1_bytes,
+            conf: None,
         })
         .unwrap();
 
@@ -230,6 +240,7 @@ fn measurement_4_fault_after_publish_retains_durable_generation_and_collects_lat
         snapshot_index: 2,
         snapshot_term: 2,
         snapshot: gen2_bytes.clone(),
+        conf: None,
     });
     assert!(res.is_err(), "save must return Err when fault is armed");
 
@@ -265,6 +276,7 @@ fn measurement_4_fault_after_publish_retains_durable_generation_and_collects_lat
             snapshot_index: 3,
             snapshot_term: 3,
             snapshot: gen3_bytes.clone(),
+            conf: None,
         })
         .unwrap();
 
@@ -295,17 +307,20 @@ fn measurement_5_missing_artifact_fails_identically_regardless_of_log_size() {
                     term: 3,
                     index: 6,
                     command: vec![1, 2, 3],
+                    kind: EntryKind::Command,
                 },
                 RaftEntry {
                     term: 3,
                     index: 7,
                     command: vec![4, 5, 6],
+                    kind: EntryKind::Command,
                 },
             ],
             commit_index: 7,
             snapshot_index: 5,
             snapshot_term: 3,
             snapshot: snap_a,
+            conf: None,
         })
         .unwrap();
 
@@ -334,11 +349,13 @@ fn measurement_5_missing_artifact_fails_identically_regardless_of_log_size() {
                 term: 3,
                 index: 6,
                 command: vec![0x99; 1024 * 1024],
+                kind: EntryKind::Command,
             }],
             commit_index: 6,
             snapshot_index: 5,
             snapshot_term: 3,
             snapshot: snap_b,
+            conf: None,
         })
         .unwrap();
 
@@ -380,6 +397,7 @@ fn measurement_6_corrupted_content_same_length_fails_load() {
             snapshot_index: 1,
             snapshot_term: 1,
             snapshot: snap,
+            conf: None,
         })
         .unwrap();
 
@@ -416,6 +434,7 @@ fn measurement_7_superseded_artifacts_collected_leaving_only_latest() {
             snapshot_index: 1,
             snapshot_term: 1,
             snapshot: gen1_bytes,
+            conf: None,
         })
         .unwrap();
 
@@ -429,6 +448,7 @@ fn measurement_7_superseded_artifacts_collected_leaving_only_latest() {
             snapshot_index: 2,
             snapshot_term: 2,
             snapshot: gen2_bytes,
+            conf: None,
         })
         .unwrap();
 
@@ -442,6 +462,7 @@ fn measurement_7_superseded_artifacts_collected_leaving_only_latest() {
             snapshot_index: 3,
             snapshot_term: 3,
             snapshot: gen3_bytes.clone(),
+            conf: None,
         })
         .unwrap();
 
