@@ -213,7 +213,7 @@ impl ConfState {
         buf
     }
 
-    pub fn decode(bytes: &[u8]) -> Option<ConfState> {
+    pub fn decode_with_len(bytes: &[u8]) -> Option<(ConfState, usize)> {
         if bytes.len() < 24 {
             return None;
         }
@@ -244,10 +244,17 @@ impl ConfState {
             ));
             offset += 8;
         }
-        Some(ConfState {
-            membership: Membership { voters, learners },
-            generation,
-        })
+        Some((
+            ConfState {
+                membership: Membership { voters, learners },
+                generation,
+            },
+            offset,
+        ))
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<ConfState> {
+        Self::decode_with_len(bytes).map(|(conf, _)| conf)
     }
 }
 
