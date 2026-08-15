@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Final, Iterable
 
-import lumen.topology.matrix as _matrix  # noqa: F401
 from lumen.topology.spec import TopologySpec
 from lumen.topology.verdict import (
     AdmittedTopology,
@@ -85,8 +84,8 @@ def decide_topology_mutation(
     if isinstance(current_verdict, Rejection):
         return current_verdict
 
-    current_pvc = getattr(current_spec, "shard_pvc_capacity_gib", 100)
-    target_pvc = getattr(target_spec, "shard_pvc_capacity_gib", 100)
+    current_pvc = current_spec.shard_pvc_capacity_gib
+    target_pvc = target_spec.shard_pvc_capacity_gib
 
     if target_spec.shard_minimum < current_spec.shard_minimum:
         return Rejection(

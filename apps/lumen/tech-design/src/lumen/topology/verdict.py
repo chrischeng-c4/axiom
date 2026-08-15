@@ -19,6 +19,9 @@ class RejectionReason(str, Enum):
     NO_SAFE_TOPOLOGY_MUTATION = "no_safe_topology_mutation"
     DATA_MEMBER_NODE_CONFLICT = "data_member_node_conflict"
     NO_PROMISE_ON_UNEXPECTED_NODE_LOSS = "no_promise_on_unexpected_node_loss"
+    SHARD_CONTRACTION_NOT_SUPPORTED = "shard_contraction_not_supported"
+    VOTER_CONTRACTION_NOT_SUPPORTED = "voter_contraction_not_supported"
+    SHARD_PVC_CAPACITY_CONTRACTION_NOT_SUPPORTED = "shard_pvc_capacity_contraction_not_supported"
 
 
 @dataclass(frozen=True)
