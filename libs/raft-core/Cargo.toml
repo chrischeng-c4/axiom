@@ -44,3 +44,7 @@ path = "e2e/joint_promotion.rs"
 [[test]]
 name = "leadership_transfer"
 path = "e2e/leadership_transfer.rs"
+
+[[test]]
+name = "demotion_removal"
+path = "e2e/demotion_removal.rs"
