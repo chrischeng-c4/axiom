@@ -96,6 +96,21 @@ impl Bus {
         panic!("the bus never reached quiescence");
     }
 
+    /// Tick the leader and deliver, repeatedly. A peer that joins a running
+    /// group is first contacted by a heartbeat: `adopt_conf` only seeds its
+    /// replication bookkeeping, and `propose_config`'s broadcast went out before
+    /// it was a peer. A bus that merely drains outboxes therefore never reaches
+    /// a newcomer at all, which is a property of the driver and not of the
+    /// engine — every real driver ticks.
+    fn settle(&mut self) {
+        for _ in 0..40 {
+            if let Some(leader) = self.leader() {
+                self.nodes.get_mut(&leader).unwrap().tick();
+            }
+            self.pump();
+        }
+    }
+
     fn tick_all(&mut self) {
         for node in self.nodes.values_mut() {
             node.tick();
@@ -185,7 +200,7 @@ fn a_learner_added_at_runtime_is_withheld_from_reads_until_it_reaches_the_record
 
     // Now let it catch up.
     bus.dropped.remove(&3);
-    bus.pump();
+    bus.settle();
 
     let node = &bus.nodes[&leader];
     let matched = node.learner_matched(3).expect("still an admitted learner");
@@ -215,7 +230,7 @@ fn the_read_target_is_fixed_at_admission_and_does_not_follow_the_commit_index() 
     let (mut bus, leader) = running_group();
 
     bus.nodes.get_mut(&leader).unwrap().add_learner(3).unwrap();
-    bus.pump();
+    bus.settle();
     let target = bus.nodes[&leader].learner_read_target(3).unwrap();
     assert_eq!(
         bus.nodes[&leader].learner_read_eligible(3),
@@ -275,7 +290,7 @@ fn a_learner_admitted_after_compaction_catches_up_through_the_snapshot_path() {
     );
 
     bus.dropped.remove(&3);
-    bus.pump();
+    bus.settle();
 
     assert_eq!(
         bus.installed[&3], 1,
@@ -302,7 +317,7 @@ fn a_caught_up_learner_still_never_votes_and_never_counts_toward_a_majority() {
     let (mut bus, leader) = running_group();
 
     bus.nodes.get_mut(&leader).unwrap().add_learner(3).unwrap();
-    bus.pump();
+    bus.settle();
     assert_eq!(
         bus.nodes[&leader].learner_read_eligible(3),
         Some(true),
@@ -364,7 +379,7 @@ fn only_an_admitted_learner_has_a_read_target_and_only_a_leader_reports_eligibil
     );
 
     bus.nodes.get_mut(&leader).unwrap().add_learner(3).unwrap();
-    bus.pump();
+    bus.settle();
 
     assert_eq!(
         bus.nodes[&follower].learner_matched(3),
