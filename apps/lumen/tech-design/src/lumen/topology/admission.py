@@ -90,7 +90,7 @@ def decide_topology_mutation(
     if target_spec.shard_minimum < current_spec.shard_minimum:
         return Rejection(
             reason=RejectionReason.SHARD_CONTRACTION_NOT_SUPPORTED,
-            field_path="shard_count",
+            field_path="shard_minimum",
             message="automatic shard count contraction is not supported in v1",
         )
 
@@ -111,7 +111,7 @@ def decide_topology_mutation(
     if target_spec.shard_minimum != current_spec.shard_minimum or target_spec.voters != current_spec.voters:
         return Rejection(
             reason=RejectionReason.NO_SAFE_TOPOLOGY_MUTATION,
-            field_path="voters",
+            field_path="shard_minimum" if target_spec.shard_minimum != current_spec.shard_minimum else "voters",
             message="no safe controller exists for topology mutation",
         )
 

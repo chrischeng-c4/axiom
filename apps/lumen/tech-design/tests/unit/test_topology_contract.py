@@ -106,7 +106,7 @@ class TestTopologyContract(unittest.TestCase):
         self.assertIsInstance(verdict, Rejection)
         if isinstance(verdict, Rejection):
             self.assertEqual(verdict.reason, RejectionReason.NO_SAFE_TOPOLOGY_MUTATION)
-            self.assertEqual(verdict.field_path, "voters")
+            self.assertEqual(verdict.field_path, "shard_minimum")
 
 
 if __name__ == "__main__":
