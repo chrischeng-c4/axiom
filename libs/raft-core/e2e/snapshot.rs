@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-core/tech-design/semantic/source/libs-raft-core-tests-snapshot-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Snapshot / log-compaction: a compacted leader still brings a lagging follower
 //! fully up to date by shipping its state-machine snapshot, and the durable hard
