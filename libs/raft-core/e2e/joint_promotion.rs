@@ -754,3 +754,67 @@ fn a_second_promotion_while_a_transition_is_in_flight_is_refused() {
         "node 4 was not promoted, so it is still a learner"
     );
 }
+
+/// #3585. A node that is not the leader is told exactly that.
+///
+/// The group here is quiescent: no transition is in flight and no transfer is
+/// pending, so `TransitionInFlight` would be a false statement about it rather
+/// than a vague one. The row therefore separates the two conditions the guard
+/// currently answers alike, which reading the voter list back cannot do.
+///
+/// The second half is the row's teeth. A refusal is cheap to produce by
+/// refusing everything, so the same promotion is then made on the leader and
+/// must succeed: the refusal has to be about which node was asked, not about
+/// the request.
+#[test]
+fn promoting_on_a_node_that_is_not_the_leader_names_that_and_not_a_transition() {
+    let (mut bus, leader) = group_with_caught_up_learner(&[0, 1, 2, 3], &three_voters(), 3);
+
+    let mut followers: Vec<NodeId> = bus
+        .voters_of(leader)
+        .into_iter()
+        .filter(|id| *id != leader)
+        .collect();
+    followers.sort_unstable();
+    let follower = *followers
+        .first()
+        .expect("a three-voter group has a voter that is not its leader");
+
+    assert!(
+        !bus.nodes[&follower].is_joint(),
+        "nothing has been promoted yet, so no transition is in flight and the \
+         in-flight refusal would be false here rather than merely unhelpful"
+    );
+
+    let refusal = bus
+        .nodes
+        .get_mut(&follower)
+        .unwrap()
+        .promote_learner(3)
+        .expect_err("a node that is not the leader cannot promote a learner");
+    assert!(
+        matches!(refusal, PromotionRefused::NotLeader),
+        "the refusal must name the condition that applies to this node -- it is \
+         not the leader -- rather than reporting a transition that does not \
+         exist; got {refusal:?}"
+    );
+
+    assert_eq!(
+        bus.voters_of(follower),
+        vec![0, 1, 2],
+        "a refused promotion must leave the configuration alone"
+    );
+
+    bus.nodes
+        .get_mut(&leader)
+        .unwrap()
+        .promote_learner(3)
+        .expect("the same promotion on the leader must succeed, or the refusal \
+                 above was about the request rather than the node asked");
+    bus.settle();
+    assert_eq!(
+        bus.voters_of(leader),
+        vec![0, 1, 2, 3],
+        "the leader's promotion committed, so node 3 is a voter"
+    );
+}
