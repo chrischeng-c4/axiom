@@ -779,6 +779,16 @@ impl RaftNode {
         Some(matched >= target)
     }
 
+    /// Number of committed entries an admitted learner is behind, measured
+    /// against this leader's commit index when asked (the live freshness
+    /// question, as opposed to [`learner_read_eligible`](Self::learner_read_eligible)
+    /// which answers the admission question), or `None` if this node is not the
+    /// leader or `peer` is not an admitted learner.
+    pub fn learner_replication_gap(&self, peer: NodeId) -> Option<Index> {
+        let matched = self.learner_matched(peer)?;
+        Some(self.commit_index.saturating_sub(matched))
+    }
+
     fn last_term(&self) -> Term {
         self.log
             .last()
