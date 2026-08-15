@@ -56,6 +56,10 @@ path = "e2e/legacy_store_migration.rs"
 name = "conf_state_durability"
 path = "e2e/conf_state_durability.rs"
 
+[[test]]
+name = "group_membership_isolation"
+path = "e2e/group_membership_isolation.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }
