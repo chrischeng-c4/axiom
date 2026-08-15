@@ -22,7 +22,7 @@ MATRIX_2349_SECURITY_MATRIX = (
     ("co_location_refusal_names_the_node_field", "placement.node_name"),
     ("distinct_node_neighbour_is_admitted", "admitted"),
     ("automatic_shard_contraction_is_refused", "shard_contraction_not_supported"),
-    ("shard_contraction_refusal_names_shard_count", "shard_count"),
+    ("shard_contraction_refusal_names_shard_minimum", "shard_minimum"),
     ("automatic_voter_contraction_is_refused", "voter_contraction_not_supported"),
     ("voter_contraction_refusal_names_voters", "voters"),
     ("automatic_shard_pvc_capacity_contraction_is_refused", "shard_pvc_capacity_contraction_not_supported"),
