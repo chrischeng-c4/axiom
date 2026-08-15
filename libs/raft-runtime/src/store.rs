@@ -456,6 +456,12 @@ impl RaftStore {
                 };
                 let command_len = r.read_u64()? as usize;
                 let command = r.read_bytes(command_len)?;
+                if kind == EntryKind::Config && ConfState::decode(&command).is_none() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid conf state",
+                    ));
+                }
                 log.push(RaftEntry {
                     term: entry_term,
                     index: entry_index,
