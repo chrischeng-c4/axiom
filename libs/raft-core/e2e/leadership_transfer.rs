@@ -38,6 +38,26 @@
 //! the transfer to be accepted. A refusal that is always returned satisfies the
 //! first half of every one of them.
 //!
+//! # Why the two receiving-side rows exist (#3586)
+//!
+//! Every row above is written from the sender's side: a leader is asked to hand
+//! off and either does or refuses. None of them makes a node *receive* the
+//! message under a condition it must refuse, so both guards inside
+//! `handle_timeout_now` — a learner never campaigns, a stale term is ignored —
+//! landed with no row at all. #3571's mutation sweep declared them survivors
+//! before it ran and observed both surviving: deleting either guard left the
+//! whole gate green.
+//!
+//! The learner row asserts the term as well as the role. The voter guard sits
+//! above the branch that raises the receiver's term, so an implementation that
+//! moved it below would still refuse to campaign while quietly bumping the
+//! learner's term, and a row reading only the role would not see it.
+//!
+//! Both rows carry a second half that removes the reason and requires the same
+//! message to be obeyed. Without it, a `handle_timeout_now` that returns
+//! unconditionally — the message reaching the node and being discarded — passes
+//! the first half of each.
+//!
 //! # Why the abandonment row observes `propose`
 //!
 //! "The leader stops accepting new proposals once a transfer begins" and "an
@@ -51,7 +71,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use raft_core::{Membership, NodeId, RaftNode, TransferRefused};
+use raft_core::{Membership, NodeId, RaftMsg, RaftNode, Role, TimeoutNowReq, TransferRefused};
 
 /// Voters 0,1,2 — at least three, so "the named node became leader" is not the
 /// same statement as "the only other node became leader".
@@ -407,5 +427,137 @@ fn a_transfer_that_cannot_complete_is_abandoned_and_the_original_leader_resumes(
         "the resumed leader must be able to commit, not merely to append: a \
          `propose` that returns an index the group never applies is the freeze \
          still in force with its symptom hidden"
+    );
+}
+
+/// Whether any of the messages a node just produced is a request for votes —
+/// the only observable a campaign has before its first reply arrives.
+fn campaigned(node: &mut RaftNode) -> bool {
+    node.take_outgoing()
+        .iter()
+        .any(|o| matches!(o.msg, RaftMsg::Vote(_)))
+}
+
+/// Receiving side. A learner asked to campaign refuses, and refuses *before*
+/// adopting the term it was asked at.
+#[test]
+fn a_learner_asked_to_campaign_neither_campaigns_nor_takes_the_senders_term() {
+    let membership = Membership {
+        voters: vec![0, 1, 2],
+        learners: vec![3],
+    };
+    let mut learner = RaftNode::new(3, &membership);
+    assert!(
+        !learner.is_voter(),
+        "the node under test must be a learner of its group, or this row is \
+         about a voter and measures nothing"
+    );
+    let term_before = learner.current_term();
+    let sender_term = term_before + 5;
+
+    learner.handle(
+        0,
+        RaftMsg::TimeoutNow(TimeoutNowReq {
+            term: sender_term,
+            leader: 0,
+        }),
+    );
+
+    assert_eq!(
+        learner.role(),
+        Role::Follower,
+        "a learner cannot win an election, so campaigning spends the whole \
+         election timeout the handoff exists to avoid"
+    );
+    assert_eq!(
+        learner.current_term(),
+        term_before,
+        "the guard must sit above the branch that adopts the sender's term; one \
+         that sits below it still refuses to campaign while raising the \
+         learner's term, and a row reading only the role cannot tell the two \
+         apart"
+    );
+    assert!(
+        !campaigned(&mut learner),
+        "a refusal that still puts a vote request on the wire has campaigned"
+    );
+
+    // Second half: the same message, at the same term, to a voter of the same
+    // group. Without it a `handle_timeout_now` that returns unconditionally
+    // passes everything above.
+    let mut voter = RaftNode::new(0, &membership);
+    voter.handle(
+        1,
+        RaftMsg::TimeoutNow(TimeoutNowReq {
+            term: sender_term,
+            leader: 1,
+        }),
+    );
+    assert_eq!(
+        voter.role(),
+        Role::Candidate,
+        "a voter given the identical message must campaign, or the refusal \
+         above is the node ignoring every handoff rather than the learner guard"
+    );
+    assert!(
+        voter.current_term() > sender_term,
+        "a voter that campaigns must stand at a term above the one it was asked \
+         at, since it votes for itself in a new term"
+    );
+}
+
+/// Receiving side. A message from a term the receiver has already left is
+/// ignored, so a deposed leader cannot make the group campaign on its behalf.
+#[test]
+fn a_voter_asked_to_campaign_at_a_stale_term_stays_where_it_is() {
+    let (mut bus, leader, target) = settled_group();
+    let term = bus.nodes[&target].current_term();
+    assert!(
+        term > 0,
+        "the group has elected a leader, so the receiver's term stands above \
+         the floor a stale message has to sit below; at term 0 there is no \
+         stale term to send and this row would be vacuous"
+    );
+    assert_eq!(
+        bus.nodes[&target].role(),
+        Role::Follower,
+        "the receiver must start as a follower, or 'it did not become a \
+         candidate' is already true for another reason"
+    );
+
+    let node = bus.nodes.get_mut(&target).unwrap();
+    node.handle(
+        leader,
+        RaftMsg::TimeoutNow(TimeoutNowReq {
+            term: term - 1,
+            leader,
+        }),
+    );
+
+    assert_eq!(
+        node.role(),
+        Role::Follower,
+        "a message from a term the receiver has already left must not start an \
+         election"
+    );
+    assert_eq!(
+        node.current_term(),
+        term,
+        "an ignored message must leave the receiver's term where it was"
+    );
+    assert!(
+        !campaigned(node),
+        "a receiver that ignored the message must not have put a vote request \
+         on the wire"
+    );
+
+    // Second half: the same message at the receiver's own term is obeyed, so
+    // the row above cannot pass by the message being discarded wholesale.
+    node.handle(leader, RaftMsg::TimeoutNow(TimeoutNowReq { term, leader }));
+    assert_eq!(
+        node.role(),
+        Role::Candidate,
+        "the identical message at a term the receiver has not left must start \
+         an election, or the refusal above is not about the term"
     );
 }
