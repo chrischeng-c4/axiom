@@ -14,8 +14,9 @@ use axum::{Json, Router};
 
 use crate::group::GroupId;
 use crate::host::{
-    append_entries, host_status, install_snapshot, publish_handler, request_vote, AppendEnvelope,
-    PublishEnvelope, RaftHost, RaftStatus, SnapEnvelope, VoteEnvelope,
+    append_entries, host_status, install_snapshot, publish_handler, request_vote, timeout_now,
+    AppendEnvelope, PublishEnvelope, RaftHost, RaftStatus, SnapEnvelope, TimeoutNowEnvelope,
+    VoteEnvelope,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +94,7 @@ impl RaftRegistry {
             .route("/raft/request-vote", post(request_vote_demux))
             .route("/raft/append-entries", post(append_entries_demux))
             .route("/raft/install-snapshot", post(install_snapshot_demux))
+            .route("/raft/timeout-now", post(timeout_now_demux))
             .route("/raft/publish", post(publish_demux))
             .route("/raftz", get(raftz_demux))
             .with_state(Arc::clone(&self.shared))
@@ -137,6 +139,20 @@ async fn install_snapshot_demux(
     };
     match host {
         Some(h) => install_snapshot(State(Arc::clone(&h.shared)), Json(env)).await,
+        None => (StatusCode::NOT_FOUND, "group not found").into_response(),
+    }
+}
+
+async fn timeout_now_demux(
+    State(reg): State<Arc<RegistryShared>>,
+    Json(env): Json<TimeoutNowEnvelope>,
+) -> axum::response::Response {
+    let host = {
+        let groups = reg.groups.lock().unwrap();
+        groups.get(&GroupId(env.group_id.clone())).cloned()
+    };
+    match host {
+        Some(h) => timeout_now(State(Arc::clone(&h.shared)), Json(env)).await,
         None => (StatusCode::NOT_FOUND, "group not found").into_response(),
     }
 }

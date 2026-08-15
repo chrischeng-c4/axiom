@@ -155,6 +155,13 @@ pub struct InstallSnapshotResp {
     pub snapshot_index: Index,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
+pub struct TimeoutNowReq {
+    pub term: Term,
+    pub leader: NodeId,
+}
+
 #[derive(Clone, Debug)]
 /// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub enum RaftMsg {
@@ -164,6 +171,7 @@ pub enum RaftMsg {
     AppendResp(AppendResp),
     InstallSnapshot(InstallSnapshotReq),
     InstallSnapshotResp(InstallSnapshotResp),
+    TimeoutNow(TimeoutNowReq),
 }
 
 /// A message the driver must deliver to node `to`.
@@ -186,6 +194,20 @@ pub trait RaftTransport {
 pub enum PromotionRefused {
     NotCaughtUp { matched: Index, target: Index },
     TransitionInFlight,
+}
+
+/// Why a leader refused a leadership transfer request (#3571).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransferRefused {
+    NotLeader,
+    NotAVoter {
+        target: NodeId,
+    },
+    NotCaughtUp {
+        target: NodeId,
+        matched: Index,
+        last_index: Index,
+    },
 }
 
 /// Cluster membership for one Raft group.
@@ -356,6 +378,10 @@ pub struct RaftNode {
     /// Last known leader for this term (drives producer redirect-to-leader).
     leader_id: Option<NodeId>,
 
+    // leadership transfer
+    transfer_in_flight: Option<NodeId>,
+    transfer_elapsed: u64,
+
     outbox: Vec<Outgoing>,
 }
 
@@ -404,6 +430,8 @@ impl RaftNode {
             election_timeout: ELECTION_MIN + id,
             heartbeat_elapsed: 0,
             leader_id: None,
+            transfer_in_flight: None,
+            transfer_elapsed: 0,
             outbox: Vec::new(),
         }
     }
@@ -460,9 +488,42 @@ impl RaftNode {
         self.conf_state.outgoing.is_some()
     }
 
+    /// Transfer leadership to a named caught-up voter (#3571).
+    pub fn transfer_leadership(&mut self, target: NodeId) -> Result<(), TransferRefused> {
+        if self.role != Role::Leader {
+            return Err(TransferRefused::NotLeader);
+        }
+        if !self.conf_state.membership.voters.contains(&target) {
+            return Err(TransferRefused::NotAVoter { target });
+        }
+        let matched = if target == self.id {
+            self.last_index()
+        } else {
+            self.match_index.get(&target).copied().unwrap_or(0)
+        };
+        let last_index = self.last_index();
+        if matched < last_index {
+            return Err(TransferRefused::NotCaughtUp {
+                target,
+                matched,
+                last_index,
+            });
+        }
+        self.transfer_in_flight = Some(target);
+        self.transfer_elapsed = 0;
+        self.send(
+            target,
+            RaftMsg::TimeoutNow(TimeoutNowReq {
+                term: self.current_term,
+                leader: self.id,
+            }),
+        );
+        Ok(())
+    }
+
     /// Promote a caught-up learner to voter through a joint configuration.
     pub fn promote_learner(&mut self, peer: NodeId) -> Result<Index, PromotionRefused> {
-        if self.role != Role::Leader || self.is_joint() {
+        if self.role != Role::Leader || self.is_joint() || self.transfer_in_flight.is_some() {
             return Err(PromotionRefused::TransitionInFlight);
         }
         if self
@@ -679,6 +740,13 @@ impl RaftNode {
         self.election_elapsed += 1;
         self.heartbeat_elapsed += 1;
         if self.role == Role::Leader {
+            if self.transfer_in_flight.is_some() {
+                self.transfer_elapsed += 1;
+                if self.transfer_elapsed >= self.election_timeout {
+                    self.transfer_in_flight = None;
+                    self.transfer_elapsed = 0;
+                }
+            }
             if self.heartbeat_elapsed >= HEARTBEAT_TIMEOUT {
                 self.heartbeat_elapsed = 0;
                 self.broadcast_append();
@@ -754,6 +822,8 @@ impl RaftNode {
             self.match_index.insert(p, 0);
         }
         self.heartbeat_elapsed = 0;
+        self.transfer_in_flight = None;
+        self.transfer_elapsed = 0;
         self.broadcast_append();
         if self.is_joint() {
             self.check_leave_joint();
@@ -786,6 +856,8 @@ impl RaftNode {
         }
         self.role = Role::Follower;
         self.election_elapsed = 0;
+        self.transfer_in_flight = None;
+        self.transfer_elapsed = 0;
     }
 
     fn broadcast_append(&mut self) {
@@ -840,7 +912,7 @@ impl RaftNode {
     /// Append a command on the leader and replicate it. Returns its index, or
     /// `None` if this node is not the leader.
     pub fn propose(&mut self, command: Vec<u8>) -> Option<Index> {
-        if self.role != Role::Leader {
+        if self.role != Role::Leader || self.transfer_in_flight.is_some() {
             return None;
         }
         let index = self.last_index() + 1;
@@ -858,7 +930,7 @@ impl RaftNode {
     /// Append a configuration entry on the leader and replicate it. Returns its
     /// index, or `None` if this node is not the leader.
     pub fn propose_config(&mut self, conf: ConfState) -> Option<Index> {
-        if self.role != Role::Leader {
+        if self.role != Role::Leader || self.transfer_in_flight.is_some() {
             return None;
         }
         let index = self.last_index() + 1;
@@ -876,7 +948,7 @@ impl RaftNode {
     /// Append a configuration entry adding a learner on the leader and replicate
     /// it. Returns its index, or `None` if this node is not the leader.
     pub fn add_learner(&mut self, peer: NodeId) -> Option<Index> {
-        if self.role != Role::Leader {
+        if self.role != Role::Leader || self.transfer_in_flight.is_some() {
             return None;
         }
         let mut conf = self.conf_state.clone();
@@ -897,6 +969,7 @@ impl RaftNode {
             RaftMsg::AppendResp(resp) => self.handle_append_resp(from, resp),
             RaftMsg::InstallSnapshot(req) => self.handle_install_snapshot(req),
             RaftMsg::InstallSnapshotResp(resp) => self.handle_install_snapshot_resp(from, resp),
+            RaftMsg::TimeoutNow(req) => self.handle_timeout_now(req),
         }
     }
 
@@ -1161,6 +1234,20 @@ impl RaftNode {
             }
         }
         self.commit_index = new_commit;
+    }
+
+    fn handle_timeout_now(&mut self, req: TimeoutNowReq) {
+        if !self.is_voter {
+            return;
+        }
+        if req.term < self.current_term {
+            return;
+        }
+        if req.term > self.current_term {
+            self.current_term = req.term;
+            self.voted_for = None;
+        }
+        self.start_election();
     }
 }
 // CODEGEN-END

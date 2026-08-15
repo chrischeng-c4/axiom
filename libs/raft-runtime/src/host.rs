@@ -22,7 +22,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use raft_core::{
     AppendReq, AppendResp, Index, InstallSnapshotReq, InstallSnapshotResp, Membership, NodeId,
-    RaftMsg, RaftNode, VoteReq, VoteResp,
+    RaftMsg, RaftNode, TimeoutNowReq, VoteReq, VoteResp,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Mutex, Notify};
@@ -53,6 +53,12 @@ pub(crate) struct SnapEnvelope {
     pub(crate) group_id: String,
     pub(crate) from: NodeId,
     pub(crate) req: InstallSnapshotReq,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct TimeoutNowEnvelope {
+    pub(crate) group_id: String,
+    pub(crate) from: NodeId,
+    pub(crate) req: TimeoutNowReq,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct PublishEnvelope {
@@ -322,6 +328,18 @@ impl Shared {
                 .await
                 .and_then(|r| serde_json::from_slice::<InstallSnapshotResp>(&r).ok())
                 .map(RaftMsg::InstallSnapshotResp),
+            RaftMsg::TimeoutNow(req) => {
+                self.post(
+                    &format!("{base}/raft/timeout-now"),
+                    &TimeoutNowEnvelope {
+                        group_id: self.group_id.0.clone(),
+                        from: self.id,
+                        req,
+                    },
+                )
+                .await;
+                None
+            }
             _ => None,
         };
         if let Some(reply) = reply {
@@ -719,6 +737,7 @@ impl RaftHost {
             .route("/raft/request-vote", post(request_vote))
             .route("/raft/append-entries", post(append_entries))
             .route("/raft/install-snapshot", post(install_snapshot))
+            .route("/raft/timeout-now", post(timeout_now))
             .route("/raft/publish", post(publish_handler))
             .route("/raftz", get(raftz))
             .with_state(Arc::clone(&self.shared))
@@ -822,6 +841,21 @@ pub(crate) async fn install_snapshot(
         },
     })
     .into_response()
+}
+
+pub(crate) async fn timeout_now(
+    State(s): State<Arc<Shared>>,
+    Json(env): Json<TimeoutNowEnvelope>,
+) -> axum::response::Response {
+    if env.group_id != s.group_id.0 {
+        return (StatusCode::BAD_REQUEST, "group id mismatch").into_response();
+    }
+    let mut n = s.node.lock().await;
+    n.handle(env.from, RaftMsg::TimeoutNow(env.req));
+    if s.persist(&n).is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    StatusCode::OK.into_response()
 }
 
 /// Leader-side write target (the redirect destination): propose + apply, return
