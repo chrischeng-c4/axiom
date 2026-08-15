@@ -497,3 +497,69 @@ fn a_config_entry_whose_command_does_not_decode_is_refused() {
         ),
     }
 }
+
+/// The companion to the row above, and the reason it is not enough on its own:
+/// there, the command is ten bytes, so a store that refused every short command
+/// without ever consulting the decoder would pass it. Here the command is past
+/// the decoder's length floor and still does not decode, so length cannot be the
+/// reason it is refused. Together the two rows say the criterion is the
+/// decoder's verdict.
+#[test]
+fn a_config_entry_longer_than_the_decoders_floor_is_still_judged_by_the_decoder() {
+    let dir = TempDir::new().unwrap();
+    let conf = ConfState {
+        membership: Membership {
+            voters: vec![0, 1, 2],
+            learners: vec![3],
+        },
+        outgoing: None,
+        generation: 9,
+    };
+
+    // The decoder's own layout: generation, then a voters length claiming far
+    // more slots than the remaining bytes can hold. Forty bytes, so the 24-byte
+    // floor is cleared and the refusal has to come from the bound check.
+    let mut undecodable = Vec::new();
+    undecodable.extend_from_slice(&0u64.to_le_bytes());
+    undecodable.extend_from_slice(&1000u64.to_le_bytes());
+    undecodable.extend_from_slice(&[0u8; 24]);
+    assert!(
+        undecodable.len() >= 24,
+        "this row is worthless unless the command clears the decoder's floor; it is {} bytes",
+        undecodable.len()
+    );
+    assert!(
+        ConfState::decode(&undecodable).is_none(),
+        "this row needs a long command that does not decode; {undecodable:?} does"
+    );
+
+    let state = PersistedState {
+        term: 4,
+        voted_for: Some(0),
+        log: vec![RaftEntry {
+            term: 4,
+            index: 1,
+            command: undecodable,
+            kind: EntryKind::Config,
+        }],
+        commit_index: 1,
+        snapshot_index: 0,
+        snapshot_term: 0,
+        snapshot: vec![],
+        conf: Some(conf),
+    };
+
+    open(&dir).save(&state).unwrap();
+
+    match open(&dir).load() {
+        Err(e) => assert_eq!(
+            e.kind(),
+            std::io::ErrorKind::InvalidData,
+            "a Config entry whose command does not decode must be refused as invalid data, not as {:?}",
+            e.kind()
+        ),
+        Ok(loaded) => panic!(
+            "load() accepted a record whose Config entry command is long but undecodable, returning {loaded:?} — the refusal is keyed on the command's length, not on whether it decodes"
+        ),
+    }
+}
