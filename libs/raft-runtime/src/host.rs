@@ -70,6 +70,12 @@ pub(crate) struct NotLeader {
     pub(crate) error: &'static str,
     pub(crate) leader: Option<NodeId>,
 }
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MembershipPhase {
+    Stable,
+    Joint,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RaftStatus {
     pub group_id: String,
@@ -83,6 +89,10 @@ pub struct RaftStatus {
     pub leader: Option<NodeId>,
     pub is_leader: bool,
     pub durability_error: Option<String>,
+    pub committed_voters: Vec<NodeId>,
+    pub incoming_voters: Option<Vec<NodeId>>,
+    pub learners: Vec<NodeId>,
+    pub membership_phase: MembershipPhase,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -917,10 +927,29 @@ pub(crate) async fn host_status(s: &Shared) -> RaftStatus {
         .unwrap()
         .as_ref()
         .map(|e| e.to_string());
+    let conf = n.conf_state();
+    let (committed_voters, incoming_voters, membership_phase) = match &conf.outgoing {
+        Some(outgoing) => (
+            outgoing.clone(),
+            Some(conf.membership.voters.clone()),
+            MembershipPhase::Joint,
+        ),
+        None => (
+            conf.membership.voters.clone(),
+            None,
+            MembershipPhase::Stable,
+        ),
+    };
+    let learners = conf.membership.learners.clone();
+    let role = if !n.is_voter() {
+        "Learner".to_string()
+    } else {
+        format!("{:?}", n.role())
+    };
     RaftStatus {
         group_id: s.group_id.0.clone(),
         id: s.id,
-        role: format!("{:?}", n.role()),
+        role,
         term: n.current_term(),
         commit_index: n.commit_index(),
         last_index: n.last_index(),
@@ -929,6 +958,10 @@ pub(crate) async fn host_status(s: &Shared) -> RaftStatus {
         leader: n.leader(),
         is_leader: n.is_leader(),
         durability_error,
+        committed_voters,
+        incoming_voters,
+        learners,
+        membership_phase,
     }
 }
 
