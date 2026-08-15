@@ -298,6 +298,7 @@ pub struct RaftNode {
     // leader-only, per peer
     next_index: HashMap<NodeId, Index>,
     match_index: HashMap<NodeId, Index>,
+    learner_read_targets: HashMap<NodeId, Index>,
 
     // election
     votes: HashSet<NodeId>,
@@ -322,6 +323,10 @@ impl RaftNode {
             .collect();
         members.sort_unstable();
         let peers = members.into_iter().filter(|m| *m != id).collect();
+        let mut learner_read_targets = HashMap::new();
+        for &l in &membership.learners {
+            learner_read_targets.insert(l, 0);
+        }
         RaftNode {
             id,
             voters: membership.voters.clone(),
@@ -343,6 +348,7 @@ impl RaftNode {
             installed_snapshot: None,
             next_index: HashMap::new(),
             match_index: HashMap::new(),
+            learner_read_targets,
             votes: HashSet::new(),
             election_elapsed: 0,
             // distinct per node so one voter always times out first.
@@ -418,6 +424,11 @@ impl RaftNode {
         self.voters = conf.membership.voters.clone();
         self.is_voter = conf.membership.voters.contains(&self.id);
         self.conf_state = conf;
+        for l in &self.conf_state.membership.learners {
+            self.learner_read_targets
+                .entry(*l)
+                .or_insert(self.commit_index);
+        }
         if self.role == Role::Leader {
             let next = self.last_index() + 1;
             for p in &self.peers {
@@ -461,6 +472,32 @@ impl RaftNode {
     /// Last known leader for the current term (for producer redirect).
     pub fn leader(&self) -> Option<NodeId> {
         self.leader_id
+    }
+
+    /// Highest index this leader has recorded as replicated to `peer`, or `None`
+    /// if this node is not the leader or `peer` is not an admitted learner.
+    pub fn learner_matched(&self, peer: NodeId) -> Option<Index> {
+        if self.role != Role::Leader || !self.conf_state.membership.learners.contains(&peer) {
+            return None;
+        }
+        self.match_index.get(&peer).copied().or(Some(0))
+    }
+
+    /// The index `peer` must replicate to before it is fit to serve reads, or
+    /// `None` if `peer` is not an admitted learner.
+    pub fn learner_read_target(&self, peer: NodeId) -> Option<Index> {
+        if !self.conf_state.membership.learners.contains(&peer) {
+            return None;
+        }
+        self.learner_read_targets.get(&peer).copied()
+    }
+
+    /// Whether an admitted learner has caught up to its recorded read target,
+    /// or `None` if this node is not the leader or `peer` is not an admitted learner.
+    pub fn learner_read_eligible(&self, peer: NodeId) -> Option<bool> {
+        let matched = self.learner_matched(peer)?;
+        let target = self.learner_read_target(peer)?;
+        Some(matched >= target)
     }
 
     fn last_term(&self) -> Term {
@@ -703,6 +740,21 @@ impl RaftNode {
         self.broadcast_append();
         self.maybe_commit();
         Some(index)
+    }
+
+    /// Append a configuration entry adding a learner on the leader and replicate
+    /// it. Returns its index, or `None` if this node is not the leader.
+    pub fn add_learner(&mut self, peer: NodeId) -> Option<Index> {
+        if self.role != Role::Leader {
+            return None;
+        }
+        let mut conf = self.conf_state.clone();
+        conf.generation += 1;
+        if !conf.membership.learners.contains(&peer) {
+            conf.membership.learners.push(peer);
+            conf.membership.learners.sort_unstable();
+        }
+        self.propose_config(conf)
     }
 
     /// Feed an incoming message from `from`.
