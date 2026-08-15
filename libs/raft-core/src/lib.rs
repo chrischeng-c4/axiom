@@ -192,6 +192,7 @@ pub trait RaftTransport {
 /// Why a leader refused a promotion request (#3570).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PromotionRefused {
+    NotLeader,
     NotCaughtUp { matched: Index, target: Index },
     TransitionInFlight,
 }
@@ -365,7 +366,6 @@ pub fn auto_membership(n: u64) -> Membership {
 /// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct RaftNode {
     id: NodeId,
-    voters: Vec<NodeId>,
     peers: Vec<NodeId>, // all other members (voters + learners)
     is_voter: bool,
     conf_state: ConfState,
@@ -422,7 +422,6 @@ impl RaftNode {
         }
         RaftNode {
             id,
-            voters: membership.voters.clone(),
             peers,
             is_voter: membership.voters.contains(&id),
             conf_state: ConfState {
@@ -542,7 +541,10 @@ impl RaftNode {
 
     /// Promote a caught-up learner to voter through a joint configuration.
     pub fn promote_learner(&mut self, peer: NodeId) -> Result<Index, PromotionRefused> {
-        if self.role != Role::Leader || self.is_joint() || self.transfer_in_flight.is_some() {
+        if self.role != Role::Leader {
+            return Err(PromotionRefused::NotLeader);
+        }
+        if self.is_joint() || self.transfer_in_flight.is_some() {
             return Err(PromotionRefused::TransitionInFlight);
         }
         if self
@@ -695,7 +697,6 @@ impl RaftNode {
         members.sort_unstable();
         members.dedup();
         self.peers = members.into_iter().filter(|m| *m != self.id).collect();
-        self.voters = conf.membership.voters.clone();
         self.is_voter = conf.membership.voters.contains(&self.id)
             || conf
                 .outgoing
