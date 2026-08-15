@@ -36,3 +36,7 @@ path = "e2e/membership_durability.rs"
 [[test]]
 name = "learner_admission"
 path = "e2e/learner_admission.rs"
+
+[[test]]
+name = "joint_promotion"
+path = "e2e/joint_promotion.rs"
