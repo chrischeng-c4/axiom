@@ -181,6 +181,13 @@ pub trait RaftTransport {
     fn deliver(&mut self, from: NodeId, out: Outgoing);
 }
 
+/// Why a leader refused a promotion request (#3570).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PromotionRefused {
+    NotCaughtUp { matched: Index, target: Index },
+    TransitionInFlight,
+}
+
 /// Cluster membership for one Raft group.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 /// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
@@ -193,13 +200,17 @@ pub struct Membership {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfState {
     pub membership: Membership,
+    #[serde(default)]
+    pub outgoing: Option<Vec<NodeId>>,
     pub generation: u64,
 }
 
 impl ConfState {
     pub fn encode(&self) -> Vec<u8> {
+        let outgoing_len = self.outgoing.as_ref().map(|o| o.len()).unwrap_or(0);
         let mut buf = Vec::with_capacity(
-            24 + (self.membership.voters.len() + self.membership.learners.len()) * 8,
+            24 + (self.membership.voters.len() + self.membership.learners.len() + outgoing_len) * 8
+                + 8,
         );
         buf.extend_from_slice(&self.generation.to_le_bytes());
         buf.extend_from_slice(&(self.membership.voters.len() as u64).to_le_bytes());
@@ -209,6 +220,17 @@ impl ConfState {
         buf.extend_from_slice(&(self.membership.learners.len() as u64).to_le_bytes());
         for &l in &self.membership.learners {
             buf.extend_from_slice(&l.to_le_bytes());
+        }
+        match &self.outgoing {
+            Some(outgoing) => {
+                buf.extend_from_slice(&(outgoing.len() as u64).to_le_bytes());
+                for &v in outgoing {
+                    buf.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            None => {
+                buf.extend_from_slice(&0u64.to_le_bytes());
+            }
         }
         buf
     }
@@ -244,9 +266,35 @@ impl ConfState {
             ));
             offset += 8;
         }
+        let outgoing = if offset == bytes.len() {
+            None
+        } else {
+            if bytes.len() - offset < 8 {
+                return None;
+            }
+            let outgoing_len =
+                u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?) as usize;
+            offset += 8;
+            if outgoing_len == 0 {
+                None
+            } else {
+                if outgoing_len > (bytes.len() - offset) / 8 {
+                    return None;
+                }
+                let mut outgoing_voters = Vec::with_capacity(outgoing_len);
+                for _ in 0..outgoing_len {
+                    outgoing_voters.push(u64::from_le_bytes(
+                        bytes[offset..offset + 8].try_into().ok()?,
+                    ));
+                    offset += 8;
+                }
+                Some(outgoing_voters)
+            }
+        };
         Some((
             ConfState {
                 membership: Membership { voters, learners },
+                outgoing,
                 generation,
             },
             offset,
@@ -334,6 +382,7 @@ impl RaftNode {
             is_voter: membership.voters.contains(&id),
             conf_state: ConfState {
                 membership: membership.clone(),
+                outgoing: None,
                 generation: 0,
             },
             role: Role::Follower,
@@ -366,6 +415,7 @@ impl RaftNode {
     pub fn from_persisted(id: NodeId, membership: &Membership, state: PersistedState) -> RaftNode {
         let conf = state.conf.unwrap_or_else(|| ConfState {
             membership: membership.clone(),
+            outgoing: None,
             generation: 0,
         });
         let mut node = RaftNode::new(id, &conf.membership);
@@ -405,6 +455,51 @@ impl RaftNode {
         &self.conf_state
     }
 
+    /// Whether this node has a joint configuration in force.
+    pub fn is_joint(&self) -> bool {
+        self.conf_state.outgoing.is_some()
+    }
+
+    /// Promote a caught-up learner to voter through a joint configuration.
+    pub fn promote_learner(&mut self, peer: NodeId) -> Result<Index, PromotionRefused> {
+        if self.role != Role::Leader || self.is_joint() {
+            return Err(PromotionRefused::TransitionInFlight);
+        }
+        if self
+            .log
+            .iter()
+            .any(|e| e.index > self.commit_index && e.kind == EntryKind::Config)
+        {
+            return Err(PromotionRefused::TransitionInFlight);
+        }
+        let matched = self.learner_matched(peer).unwrap_or(0);
+        let target = self.learner_read_target(peer).unwrap_or(0);
+        if matched < target {
+            return Err(PromotionRefused::NotCaughtUp { matched, target });
+        }
+        let mut new_voters = self.conf_state.membership.voters.clone();
+        if !new_voters.contains(&peer) {
+            new_voters.push(peer);
+            new_voters.sort_unstable();
+        }
+        let mut new_learners = self.conf_state.membership.learners.clone();
+        new_learners.retain(|l| *l != peer);
+
+        let outgoing = Some(self.conf_state.membership.voters.clone());
+        let conf = ConfState {
+            membership: Membership {
+                voters: new_voters,
+                learners: new_learners,
+            },
+            outgoing,
+            generation: self.conf_state.generation + 1,
+        };
+        let idx = self
+            .propose_config(conf)
+            .ok_or(PromotionRefused::TransitionInFlight)?;
+        Ok(idx)
+    }
+
     /// Adopt a superseding configuration state. Refuses configurations whose
     /// generation does not strictly exceed the one in force.
     pub fn adopt_conf(&mut self, conf: ConfState) -> bool {
@@ -416,13 +511,18 @@ impl RaftNode {
             .voters
             .iter()
             .chain(conf.membership.learners.iter())
+            .chain(conf.outgoing.iter().flatten())
             .copied()
             .collect();
         members.sort_unstable();
         members.dedup();
         self.peers = members.into_iter().filter(|m| *m != self.id).collect();
         self.voters = conf.membership.voters.clone();
-        self.is_voter = conf.membership.voters.contains(&self.id);
+        self.is_voter = conf.membership.voters.contains(&self.id)
+            || conf
+                .outgoing
+                .as_ref()
+                .map_or(false, |o| o.contains(&self.id));
         self.conf_state = conf;
         for l in &self.conf_state.membership.learners {
             self.learner_read_targets
@@ -519,10 +619,6 @@ impl RaftNode {
         }
     }
 
-    fn majority(&self) -> usize {
-        self.voters.len() / 2 + 1
-    }
-
     /// Drain messages the driver must deliver.
     pub fn take_outgoing(&mut self) -> Vec<Outgoing> {
         std::mem::take(&mut self.outbox)
@@ -540,6 +636,9 @@ impl RaftNode {
             if entry.kind == EntryKind::Config {
                 if let Some(conf) = ConfState::decode(&entry.command) {
                     self.adopt_conf(conf);
+                    if self.role == Role::Leader && self.is_joint() {
+                        self.check_leave_joint();
+                    }
                 }
             } else {
                 out.push(entry.clone());
@@ -599,12 +698,13 @@ impl RaftNode {
         self.election_elapsed = 0;
         let (lli, llt) = (self.last_index(), self.last_term());
         let term = self.current_term;
-        let peers: Vec<NodeId> = self
-            .voters
-            .iter()
-            .copied()
-            .filter(|v| *v != self.id)
-            .collect();
+        let mut vote_targets = self.conf_state.membership.voters.clone();
+        if let Some(outgoing) = &self.conf_state.outgoing {
+            vote_targets.extend(outgoing);
+        }
+        vote_targets.sort_unstable();
+        vote_targets.dedup();
+        let peers: Vec<NodeId> = vote_targets.into_iter().filter(|v| *v != self.id).collect();
         for v in peers {
             self.send(
                 v,
@@ -624,12 +724,21 @@ impl RaftNode {
         if self.role != Role::Candidate {
             return;
         }
-        let granted = self
+        let incoming_granted = self
             .votes
             .iter()
-            .filter(|v| self.voters.contains(v))
+            .filter(|v| self.conf_state.membership.voters.contains(v))
             .count();
-        if granted >= self.majority() {
+        let incoming_maj = self.conf_state.membership.voters.len() / 2 + 1;
+        let outgoing_satisfied = match &self.conf_state.outgoing {
+            Some(outgoing) => {
+                let outgoing_granted = self.votes.iter().filter(|v| outgoing.contains(v)).count();
+                let outgoing_maj = outgoing.len() / 2 + 1;
+                outgoing_granted >= outgoing_maj
+            }
+            None => true,
+        };
+        if incoming_granted >= incoming_maj && outgoing_satisfied {
             self.become_leader();
         }
     }
@@ -646,6 +755,28 @@ impl RaftNode {
         }
         self.heartbeat_elapsed = 0;
         self.broadcast_append();
+        if self.is_joint() {
+            self.check_leave_joint();
+        }
+    }
+
+    fn check_leave_joint(&mut self) {
+        if self.role != Role::Leader || !self.is_joint() {
+            return;
+        }
+        let has_pending = self.log.iter().any(|e| {
+            e.index > self.commit_index
+                && e.kind == EntryKind::Config
+                && e.term == self.current_term
+        });
+        if !has_pending {
+            let conf = ConfState {
+                membership: self.conf_state.membership.clone(),
+                outgoing: None,
+                generation: self.conf_state.generation + 1,
+            };
+            self.propose_config(conf);
+        }
     }
 
     fn step_down(&mut self, term: Term) {
@@ -975,29 +1106,57 @@ impl RaftNode {
     }
 
     /// Leader: advance `commit_index` to the highest index replicated to a
-    /// majority of **voters** whose entry is from the current term.
+    /// majority of **voters** (both incoming and outgoing sets if joint)
+    /// whose entry is from the current term.
     fn maybe_commit(&mut self) {
         if self.role != Role::Leader {
             return;
         }
         let last = self.last_index();
         let mut new_commit = self.commit_index;
+        let incoming_maj = self.conf_state.membership.voters.len() / 2 + 1;
+        let outgoing_maj = self
+            .conf_state
+            .outgoing
+            .as_ref()
+            .map(|out| out.len() / 2 + 1);
+
         for n in (self.commit_index + 1)..=last {
             if self.term_at(n) != self.current_term {
                 continue;
             }
-            let mut count = 0usize;
-            for v in &self.voters {
+            let mut incoming_count = 0usize;
+            for v in &self.conf_state.membership.voters {
                 let m = if *v == self.id {
                     last
                 } else {
                     *self.match_index.get(v).unwrap_or(&0)
                 };
                 if m >= n {
-                    count += 1;
+                    incoming_count += 1;
                 }
             }
-            if count >= self.majority() {
+            let incoming_ok = incoming_count >= incoming_maj;
+
+            let outgoing_ok = match &self.conf_state.outgoing {
+                Some(outgoing) => {
+                    let mut outgoing_count = 0usize;
+                    for v in outgoing {
+                        let m = if *v == self.id {
+                            last
+                        } else {
+                            *self.match_index.get(v).unwrap_or(&0)
+                        };
+                        if m >= n {
+                            outgoing_count += 1;
+                        }
+                    }
+                    outgoing_count >= outgoing_maj.unwrap()
+                }
+                None => true,
+            };
+
+            if incoming_ok && outgoing_ok {
                 new_commit = n;
             }
         }

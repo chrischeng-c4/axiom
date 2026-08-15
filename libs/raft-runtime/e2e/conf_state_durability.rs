@@ -136,6 +136,7 @@ fn the_configuration_and_entry_kinds_survive_the_durable_round_trip() {
             voters: vec![0, 1, 2],
             learners: vec![3],
         },
+        outgoing: None,
         generation: 9,
     };
     let state = PersistedState {
@@ -184,6 +185,7 @@ fn the_record_carries_the_configuration_as_the_canonical_encoder_writes_it() {
             voters: vec![4, 5, 6],
             learners: vec![7, 8],
         },
+        outgoing: None,
         generation: 11,
     };
     let state = PersistedState {
@@ -281,6 +283,7 @@ fn a_configuration_claiming_a_length_the_record_cannot_hold_is_refused() {
             voters: vec![4, 5, 6],
             learners: vec![7, 8],
         },
+        outgoing: None,
         generation: 11,
     };
 
