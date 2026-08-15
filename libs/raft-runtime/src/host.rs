@@ -22,7 +22,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use raft_core::{
     AppendReq, AppendResp, Index, InstallSnapshotReq, InstallSnapshotResp, Membership, NodeId,
-    RaftMsg, RaftNode, TimeoutNowReq, VoteReq, VoteResp,
+    RaftMsg, RaftNode, TimeoutNowReq, TransferRefused, VoteReq, VoteResp,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Mutex, Notify};
@@ -636,6 +636,17 @@ impl RaftHost {
     }
     pub async fn leader(&self) -> Option<NodeId> {
         self.shared.node.lock().await.leader()
+    }
+    /// Transfer leadership to a named caught-up voter (#3586).
+    pub async fn transfer_leadership(
+        &self,
+        target: NodeId,
+    ) -> std::result::Result<(), TransferRefused> {
+        let res = self.shared.node.lock().await.transfer_leadership(target);
+        if res.is_ok() {
+            self.shared.flush().await;
+        }
+        res
     }
     /// Watch the state machine's applied head (followers await an index here).
     pub fn applied_watch(&self) -> watch::Receiver<Index> {
