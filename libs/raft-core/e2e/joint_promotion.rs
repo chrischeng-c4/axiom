@@ -33,6 +33,28 @@
 //! implementation can satisfy, or worse, asserts nothing because the set it
 //! chose satisfies both quorums.
 //!
+//! # Why the same pair is repeated for elections
+//!
+//! Quorum is decided at three sites — `majority()`, the vote count in
+//! `maybe_become_leader`, and the acknowledgement count that advances
+//! `commit_index` — and the two commit rows reach only the third. Each of them
+//! drives the group with `settle`, which ticks the leader alone, so no election
+//! ever runs in them and a mutation at the vote-counting site is inert
+//! everywhere they look. `a_leader_lost_mid_transition...` does hold an election,
+//! but its survivors are a majority of *both* configurations, so it elects with
+//! either set consulted and cannot separate them either.
+//!
+//! The election rows therefore repeat the partition argument above at the same
+//! two sizes, and for the same reason: one size can only show the outgoing set
+//! being ignored, the other only the incoming set. Each also has a second half
+//! that restores a node and requires an election to succeed, so "refuse every
+//! election while joint" is not a way to pass the first half.
+//!
+//! Both election rows need every node joint before the partition is installed,
+//! not just the leader — a candidate that has not itself entered the joint state
+//! runs the single-configuration path, where the mutation being hunted does not
+//! exist.
+//!
 //! # Why a configuration takes effect on apply here
 //!
 //! `adopt_conf` is reached from exactly one place, `take_committed`
@@ -186,6 +208,61 @@ impl Bus {
         panic!("the leader never entered a joint configuration");
     }
 
+    /// Run rounds until *every* node in `ids` has applied the joint
+    /// configuration, which is what the election rows need: a mutation at the
+    /// vote-counting site is inert on a candidate that is not itself joint, so a
+    /// row partitioning before the followers have entered the joint state would
+    /// pass with the mutant in place.
+    ///
+    /// Panics if the leader leaves the joint state first. That ordering would
+    /// mean the transition completed before the partition could be installed,
+    /// and the row would then be measuring an ordinary election.
+    fn round_until_all_joint(&mut self, ids: &[NodeId], leader: NodeId) {
+        let mut leader_was_joint = false;
+        for _ in 0..200 {
+            if ids.iter().all(|id| self.nodes[id].is_joint()) {
+                return;
+            }
+            if leader_was_joint && !self.nodes[&leader].is_joint() {
+                panic!(
+                    "the leader left the joint state before every node had entered it, so \
+                     this row cannot hold the group joint long enough to measure an election"
+                );
+            }
+            leader_was_joint |= self.nodes[&leader].is_joint();
+            self.round();
+        }
+        panic!("not every node entered the joint configuration");
+    }
+
+    /// Tick every node that is not partitioned off and deliver, up to `rounds`
+    /// times. Returns the leader among the *reachable* nodes: a leader that has
+    /// been dropped still reports itself one in its own state, and counting it
+    /// would let a stranded partition look like it had elected.
+    fn run_until_reachable_leader(&mut self, rounds: usize) -> Option<NodeId> {
+        for _ in 0..rounds {
+            let live: Vec<NodeId> = self
+                .nodes
+                .keys()
+                .copied()
+                .filter(|id| !self.dropped.contains(id))
+                .collect();
+            for id in live {
+                self.nodes.get_mut(&id).unwrap().tick();
+            }
+            self.pump();
+            if let Some(id) = self
+                .nodes
+                .iter()
+                .find(|(id, n)| n.is_leader() && !self.dropped.contains(id))
+                .map(|(id, _)| *id)
+            {
+                return Some(id);
+            }
+        }
+        None
+    }
+
     /// The voters of the configuration `node` currently has in force.
     fn voters_of(&self, node: NodeId) -> Vec<NodeId> {
         self.nodes[&node].conf_state().membership.voters.clone()
@@ -266,7 +343,10 @@ fn while_joint_a_majority_of_the_outgoing_voters_alone_cannot_commit() {
     // voter and the newcomer leaves exactly {leader, other}: 2 of the outgoing 3
     // and 2 of the incoming 4.
     let other = [0, 1, 2].into_iter().find(|v| *v != leader).unwrap();
-    for id in [0, 1, 2].into_iter().filter(|v| *v != leader && *v != other) {
+    for id in [0, 1, 2]
+        .into_iter()
+        .filter(|v| *v != leader && *v != other)
+    {
         bus.dropped.insert(id);
     }
     bus.dropped.insert(3);
@@ -317,8 +397,7 @@ fn while_joint_a_majority_of_the_outgoing_voters_alone_cannot_commit() {
 /// uses — see this file's header.
 #[test]
 fn while_joint_a_majority_of_the_incoming_voters_alone_cannot_commit() {
-    let (mut bus, leader) =
-        group_with_caught_up_learner(&[0, 1, 2, 3, 4], &four_voters(), 4);
+    let (mut bus, leader) = group_with_caught_up_learner(&[0, 1, 2, 3, 4], &four_voters(), 4);
 
     let joint_at = bus
         .nodes
@@ -368,6 +447,108 @@ fn while_joint_a_majority_of_the_incoming_voters_alone_cannot_commit() {
         applied_before,
         "a command acknowledged by an incoming majority alone was applied; the \
          outgoing configuration was not consulted"
+    );
+}
+
+/// R4, election side. While joint, a majority of the *outgoing* voters is not
+/// enough to elect. Three outgoing voters: `maj_old = 2`, `maj_new = 3`, so the
+/// two surviving outgoing voters are an outgoing majority and one short of an
+/// incoming one. This is the direction an implementation counting votes against
+/// the outgoing set alone gets wrong.
+///
+/// The commit rows above cannot stand in for this one: `settle` ticks only the
+/// leader, so no election runs in any of them, and a vote-counting mutation is
+/// inert everywhere they look.
+#[test]
+fn while_joint_a_majority_of_the_outgoing_voters_alone_cannot_elect() {
+    let (mut bus, leader) = group_with_caught_up_learner(&[0, 1, 2, 3], &three_voters(), 3);
+
+    bus.nodes
+        .get_mut(&leader)
+        .unwrap()
+        .promote_learner(3)
+        .expect("a leader promotes a caught-up learner");
+    bus.round_until_all_joint(&[0, 1, 2, 3], leader);
+
+    // Lose the leader and the newcomer. The survivors are the other two
+    // outgoing voters: 2 of the outgoing 3, and 2 of the incoming 4.
+    let survivors: Vec<NodeId> = [0, 1, 2].into_iter().filter(|v| *v != leader).collect();
+    bus.dropped.insert(leader);
+    bus.dropped.insert(3);
+
+    assert_eq!(
+        bus.run_until_reachable_leader(200),
+        None,
+        "{survivors:?} is a majority of the outgoing voters {{0,1,2}} but only 2 of the \
+         4 incoming voters {{0,1,2,3}}, so while the transition is in flight they must \
+         not be able to elect between themselves"
+    );
+
+    // Restoring the newcomer makes the reachable set a majority of both, so a
+    // leader must appear. Without this half, refusing every election while joint
+    // would pass the assertion above.
+    bus.dropped.remove(&3);
+    let elected = bus.run_until_reachable_leader(200).expect(
+        "with the newcomer reachable the survivors are 2 of the outgoing 3 and 3 of the \
+         incoming 4 — a majority of both — so they must be able to elect",
+    );
+    assert!(
+        survivors.contains(&elected),
+        "the newcomer is not a member of the outgoing configuration, so it must not be \
+         the node that takes over while that configuration is still in force; got \
+         {elected}"
+    );
+}
+
+/// R4, election side. While joint, a majority of the *incoming* voters is not
+/// enough to elect either. Four outgoing voters: `maj_old = 3`, `maj_new = 3`,
+/// so the three survivors are an incoming majority while holding only 2 of the 4
+/// outgoing voters. This is the direction an implementation counting votes
+/// against the incoming set alone gets wrong, and — exactly as for the commit
+/// pair — it is unmeasurable at the size the row above uses.
+#[test]
+fn while_joint_a_majority_of_the_incoming_voters_alone_cannot_elect() {
+    let (mut bus, leader) = group_with_caught_up_learner(&[0, 1, 2, 3, 4], &four_voters(), 4);
+
+    bus.nodes
+        .get_mut(&leader)
+        .unwrap()
+        .promote_learner(4)
+        .expect("a leader promotes a caught-up learner");
+    bus.round_until_all_joint(&[0, 1, 2, 3, 4], leader);
+
+    // Lose the leader and one more outgoing voter. The survivors are two
+    // outgoing voters plus the newcomer: 3 of the incoming 5, 2 of the outgoing 4.
+    let mut rest = [0, 1, 2, 3].into_iter().filter(|v| *v != leader);
+    let a = rest.next().unwrap();
+    let b = rest.next().unwrap();
+    let c = rest.next().unwrap();
+    bus.dropped.insert(leader);
+    bus.dropped.insert(c);
+
+    assert_eq!(
+        bus.run_until_reachable_leader(200),
+        None,
+        "{{{a}, {b}, 4}} is 3 of the 5 incoming voters {{0,1,2,3,4}} but only 2 of the 4 \
+         outgoing voters {{0,1,2,3}}, so while the transition is in flight they must not \
+         be able to elect between themselves"
+    );
+
+    // Restoring the third outgoing voter makes the reachable set a majority of
+    // both. Without this half, refusing every election while joint would pass.
+    bus.dropped.remove(&c);
+    let elected = bus.run_until_reachable_leader(200).unwrap_or_else(|| {
+        panic!(
+            "with {a}, {b}, {c} and 4 reachable the survivors are 3 of the outgoing 4 \
+             and 4 of the incoming 5 — a majority of both — so they must be able to \
+             elect"
+        )
+    });
+    assert!(
+        [a, b, c].contains(&elected),
+        "the newcomer is not a member of the outgoing configuration, so it must not be \
+         the node that takes over while that configuration is still in force; got \
+         {elected}"
     );
 }
 
@@ -523,7 +704,10 @@ fn a_second_promotion_while_a_transition_is_in_flight_is_refused() {
     // Hold the group joint: {leader, other} is a majority of the outgoing 3 and
     // one short of the incoming 4.
     let other = [0, 1, 2].into_iter().find(|v| *v != leader).unwrap();
-    for id in [0, 1, 2].into_iter().filter(|v| *v != leader && *v != other) {
+    for id in [0, 1, 2]
+        .into_iter()
+        .filter(|v| *v != leader && *v != other)
+    {
         bus.dropped.insert(id);
     }
     bus.dropped.insert(3);
@@ -561,10 +745,7 @@ fn a_second_promotion_while_a_transition_is_in_flight_is_refused() {
          already in flight"
     );
     assert!(
-        node.conf_state()
-            .membership
-            .learners
-            .contains(&4),
+        node.conf_state().membership.learners.contains(&4),
         "node 4 was not promoted, so it is still a learner"
     );
 }
