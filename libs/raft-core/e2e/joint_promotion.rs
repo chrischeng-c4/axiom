@@ -167,10 +167,15 @@ impl Bus {
         }
     }
 
+    /// The reachable leader. A node that has been dropped keeps `Leader` until
+    /// it hears a higher term, which it cannot while it is unreachable, so a
+    /// scan that ignores `dropped` reports the deposed leader and masks the one
+    /// the survivors just elected. `consensus.rs` and `snapshot.rs` filter here
+    /// for the same reason.
     fn leader(&self) -> Option<NodeId> {
         self.nodes
             .iter()
-            .find(|(_, n)| n.is_leader())
+            .find(|(id, n)| n.is_leader() && !self.dropped.contains(*id))
             .map(|(id, _)| *id)
     }
 
