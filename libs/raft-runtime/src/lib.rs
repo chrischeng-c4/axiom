@@ -38,7 +38,7 @@ pub use fenced_assignment::{
     ActiveAssignment, AssignmentEpoch, AssignmentError, FenceToken, FencedAssignment,
 };
 pub use group::{GroupId, LEGACY_GROUP_ID};
-pub use host::{RaftHost, RaftStatus, StorageFailed};
+pub use host::{MembershipPhase, RaftHost, RaftStatus, StorageFailed};
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
 pub use peer_transport::PeerTransport;
 pub use proposal_cache::{ProposalCache, DEFAULT_PROPOSAL_CACHE_CAPACITY};
