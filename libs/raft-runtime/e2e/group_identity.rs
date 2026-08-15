@@ -498,3 +498,257 @@ fn row4_durable_file_paths() {
     assert!(s_adv.path().starts_with(dir.path()));
     assert_eq!(s_adv.path().parent().unwrap(), dir.path());
 }
+
+async fn wait_leader(host: &RaftHost) {
+    for _ in 0..200 {
+        if host.is_leader().await {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("leader was not elected within timeout");
+}
+
+#[tokio::test]
+async fn row6_install_snapshot_refusal() {
+    let dir = TempDir::new().unwrap();
+    let sm = TestSm::new();
+    let store = RaftStore::open_group(
+        dir.path().to_str().unwrap(),
+        0,
+        GroupId("alpha".to_string()),
+        FsyncPolicy::Os,
+    )
+    .unwrap();
+    let (l, url) = bind().await;
+    let host = Arc::new(RaftHost::spawn_group(
+        0,
+        GroupId("alpha".to_string()),
+        Membership {
+            voters: vec![0, 1],
+            learners: vec![],
+        },
+        HashMap::new(),
+        store,
+        sm.clone() as Arc<dyn RaftStateMachine>,
+        HostConfig::default(),
+    ));
+    let serve = tokio::spawn({
+        let r = host.router();
+        async move {
+            loop {
+                if let Ok((stream, _)) = l.accept().await {
+                    let r = r.clone();
+                    tokio::spawn(async move {
+                        let _ = transport_h2c::server::serve_connection(stream, r).await;
+                    });
+                }
+            }
+        }
+    });
+
+    let client = h2c_client();
+
+    let z1: serde_json::Value = client
+        .get(&format!("{}/raftz", url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let req_beta = serde_json::json!({
+        "group_id": "beta",
+        "from": 1,
+        "req": {
+            "term": 2,
+            "leader": 1,
+            "snapshot_index": 2,
+            "snapshot_term": 2,
+            "data": [],
+        }
+    });
+    let resp_beta = client
+        .post(&format!("{}/raft/install-snapshot", url))
+        .json(&req_beta)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_beta.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "a message addressed to another group must be refused by the guard, not \
+         by the router having no such route"
+    );
+
+    let z2: serde_json::Value = client
+        .get(&format!("{}/raftz", url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        z1.get("applied_index").unwrap().as_u64().unwrap(),
+        z2.get("applied_index").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        z1.get("term").unwrap().as_u64().unwrap(),
+        z2.get("term").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        z1.get("commit_index").unwrap().as_u64().unwrap(),
+        z2.get("commit_index").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        z1.get("last_index").unwrap().as_u64().unwrap(),
+        z2.get("last_index").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        z1.get("snapshot_index").unwrap().as_u64().unwrap(),
+        z2.get("snapshot_index").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(sm.applied_index(), 0);
+
+    let req_alpha = serde_json::json!({
+        "group_id": "alpha",
+        "from": 1,
+        "req": {
+            "term": 2,
+            "leader": 1,
+            "snapshot_index": 2,
+            "snapshot_term": 2,
+            "data": [],
+        }
+    });
+    let resp_alpha = client
+        .post(&format!("{}/raft/install-snapshot", url))
+        .json(&req_alpha)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_alpha.status(), reqwest::StatusCode::OK);
+
+    let body_alpha: serde_json::Value = resp_alpha.json().await.unwrap();
+    assert!(body_alpha.get("term").is_some());
+
+    serve.abort();
+}
+
+#[tokio::test]
+async fn row7_publish_refusal() {
+    let dir = TempDir::new().unwrap();
+    let sm = TestSm::new();
+    let store = RaftStore::open_group(
+        dir.path().to_str().unwrap(),
+        0,
+        GroupId("alpha".to_string()),
+        FsyncPolicy::Os,
+    )
+    .unwrap();
+    let (l, url) = bind().await;
+    let host = Arc::new(RaftHost::spawn_group(
+        0,
+        GroupId("alpha".to_string()),
+        Membership {
+            voters: vec![0],
+            learners: vec![],
+        },
+        HashMap::new(),
+        store,
+        sm.clone() as Arc<dyn RaftStateMachine>,
+        HostConfig::default(),
+    ));
+    wait_leader(&host).await;
+
+    let serve = tokio::spawn({
+        let r = host.router();
+        async move {
+            loop {
+                if let Ok((stream, _)) = l.accept().await {
+                    let r = r.clone();
+                    tokio::spawn(async move {
+                        let _ = transport_h2c::server::serve_connection(stream, r).await;
+                    });
+                }
+            }
+        }
+    });
+
+    let client = h2c_client();
+
+    let z1: serde_json::Value = client
+        .get(&format!("{}/raftz", url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let req_beta = serde_json::json!({
+        "group_id": "beta",
+        "command": vec![1u8, 2, 3],
+    });
+    let resp_beta = client
+        .post(&format!("{}/raft/publish", url))
+        .json(&req_beta)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_beta.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "a message addressed to another group must be refused by the guard, not \
+         by the router having no such route"
+    );
+
+    let z2: serde_json::Value = client
+        .get(&format!("{}/raftz", url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        z1.get("applied_index").unwrap().as_u64().unwrap(),
+        z2.get("applied_index").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        z1.get("term").unwrap().as_u64().unwrap(),
+        z2.get("term").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        z1.get("commit_index").unwrap().as_u64().unwrap(),
+        z2.get("commit_index").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        z1.get("last_index").unwrap().as_u64().unwrap(),
+        z2.get("last_index").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        z1.get("snapshot_index").unwrap().as_u64().unwrap(),
+        z2.get("snapshot_index").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(sm.applied_index(), 0);
+
+    let req_alpha = serde_json::json!({
+        "group_id": "alpha",
+        "command": vec![1u8, 2, 3],
+    });
+    let resp_alpha = client
+        .post(&format!("{}/raft/publish", url))
+        .json(&req_alpha)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_alpha.status(), reqwest::StatusCode::OK);
+
+    let body_alpha: serde_json::Value = resp_alpha.json().await.unwrap();
+    assert!(body_alpha.get("seq").is_some());
+
+    serve.abort();
+}
