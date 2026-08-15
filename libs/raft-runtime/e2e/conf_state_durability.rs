@@ -269,3 +269,91 @@ fn saving_after_loading_an_older_record_upgrades_the_file_in_place() {
         "the upgraded file must read back as the same state"
     );
 }
+
+/// The record is bytes on disk, so both of the configuration's length fields
+/// are reachable by corruption and nothing upstream of the decoder bounds them
+/// (#3580). A claimed length the record cannot honour must be refused the way
+/// every other malformed field is.
+#[test]
+fn a_configuration_claiming_a_length_the_record_cannot_hold_is_refused() {
+    let conf = ConfState {
+        membership: Membership {
+            voters: vec![4, 5, 6],
+            learners: vec![7, 8],
+        },
+        generation: 11,
+    };
+
+    // Offsets inside the canonical encoder's output: generation, the voters
+    // length, the voters, the learners length, the learners.
+    const VOTERS_LEN_AT: usize = 8;
+    let learners_len_at = VOTERS_LEN_AT + 8 + conf.membership.voters.len() * 8;
+
+    // `claimed * 8` is the byte cost the decoder computes before it has decided
+    // the claim is honourable. `1 << 61` makes that product wrap, which is the
+    // arithmetic this row exists for. `1_000` does not wrap and is already
+    // refused, and is here so that a fix which caps or truncates an over-long
+    // claim rather than refusing it stays red.
+    let cases: [(&str, usize, u64); 3] = [
+        (
+            "a voters length whose byte cost wraps",
+            VOTERS_LEN_AT,
+            1u64 << 61,
+        ),
+        (
+            "a learners length whose byte cost wraps",
+            learners_len_at,
+            1u64 << 61,
+        ),
+        (
+            "a voters length larger than the record",
+            VOTERS_LEN_AT,
+            1_000,
+        ),
+    ];
+
+    for (what, field_at, claimed) in cases {
+        let dir = TempDir::new().unwrap();
+        let state = PersistedState {
+            term: 2,
+            voted_for: None,
+            log: vec![RaftEntry {
+                term: 2,
+                index: 1,
+                command: b"payload".to_vec(),
+                kind: EntryKind::Command,
+            }],
+            commit_index: 1,
+            snapshot_index: 0,
+            snapshot_term: 0,
+            snapshot: vec![],
+            conf: Some(conf.clone()),
+        };
+        let store = open(&dir);
+        store.save(&state).unwrap();
+
+        // Locate the configuration by the canonical encoder's bytes rather than
+        // by a fixed offset into the record, so this row keeps pointing at the
+        // field it names if anything ahead of the configuration changes width.
+        let mut bytes = std::fs::read(store.path()).unwrap();
+        let encoded = conf.encode();
+        let at = bytes
+            .windows(encoded.len())
+            .position(|window| window == encoded.as_slice())
+            .unwrap_or_else(|| panic!("the record must carry the configuration, for {what}"));
+        bytes[at + field_at..at + field_at + 8].copy_from_slice(&claimed.to_le_bytes());
+        std::fs::write(store.path(), bytes).unwrap();
+
+        match open(&dir).load() {
+            Err(e) => assert_eq!(
+                e.kind(),
+                std::io::ErrorKind::InvalidData,
+                "{what}: a corrupt configuration length must be refused as invalid data, not as {:?}",
+                e.kind()
+            ),
+            Ok(loaded) => panic!(
+                "{what}: the record claims {claimed} members it does not carry, and load() returned {loaded:?} — a claim that is capped or truncated instead of refused hands the caller a configuration the record never held"
+            ),
+        }
+    }
+}
