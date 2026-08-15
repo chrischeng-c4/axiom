@@ -75,7 +75,7 @@ class TestMatrix2349(unittest.TestCase):
         self.assertIsInstance(res_sc, Rejection)
         if isinstance(res_sc, Rejection):
             self.assertEqual(res_sc.reason, RejectionReason.SHARD_CONTRACTION_NOT_SUPPORTED)
-            self.assertEqual(res_sc.field_path, "shard_count")
+            self.assertEqual(res_sc.field_path, "shard_minimum")
 
         t_voter_contract = TopologySpec(shard_minimum=4, voters=1, read_replicas=2, shard_pvc_capacity_gib=200, machine_type="n2-standard-16")
         res_vc = decide_topology_mutation(c_large, t_voter_contract)
