@@ -215,9 +215,11 @@ pub enum TransferRefused {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DemotionRefused {
     NotLeader,
+    IsTheLeader { target: NodeId },
     TransitionInFlight,
     NotAVoter { target: NodeId },
     ToleranceWouldDrop { before: usize, after: usize },
+    WouldEmptyVoterSet { target: NodeId },
 }
 
 /// Why a leader refused a removal request (#3572).
@@ -228,6 +230,7 @@ pub enum RemovalRefused {
     NotAMember { target: NodeId },
     IsTheLeader { target: NodeId },
     ToleranceWouldDrop { before: usize, after: usize },
+    WouldEmptyVoterSet { target: NodeId },
 }
 
 /// Cluster membership for one Raft group.
@@ -587,6 +590,9 @@ impl RaftNode {
         if self.role != Role::Leader {
             return Err(DemotionRefused::NotLeader);
         }
+        if peer == self.id {
+            return Err(DemotionRefused::IsTheLeader { target: peer });
+        }
         if self.is_joint() || self.transfer_in_flight.is_some() {
             return Err(DemotionRefused::TransitionInFlight);
         }
@@ -600,14 +606,17 @@ impl RaftNode {
         if !self.conf_state.membership.voters.contains(&peer) {
             return Err(DemotionRefused::NotAVoter { target: peer });
         }
+        let mut new_voters = self.conf_state.membership.voters.clone();
+        new_voters.retain(|v| *v != peer);
+        if new_voters.is_empty() {
+            return Err(DemotionRefused::WouldEmptyVoterSet { target: peer });
+        }
         let n = self.conf_state.membership.voters.len();
         let before = n.saturating_sub(n / 2 + 1);
         let after = (n - 1).saturating_sub((n - 1) / 2 + 1);
         if after < before {
             return Err(DemotionRefused::ToleranceWouldDrop { before, after });
         }
-        let mut new_voters = self.conf_state.membership.voters.clone();
-        new_voters.retain(|v| *v != peer);
         let mut new_learners = self.conf_state.membership.learners.clone();
         if !new_learners.contains(&peer) {
             new_learners.push(peer);
@@ -652,7 +661,12 @@ impl RaftNode {
         if !is_voter && !is_learner {
             return Err(RemovalRefused::NotAMember { target: peer });
         }
+        let mut new_voters = self.conf_state.membership.voters.clone();
+        new_voters.retain(|v| *v != peer);
         if is_voter {
+            if new_voters.is_empty() {
+                return Err(RemovalRefused::WouldEmptyVoterSet { target: peer });
+            }
             let n = self.conf_state.membership.voters.len();
             let before = n.saturating_sub(n / 2 + 1);
             let after = (n - 1).saturating_sub((n - 1) / 2 + 1);
@@ -660,8 +674,6 @@ impl RaftNode {
                 return Err(RemovalRefused::ToleranceWouldDrop { before, after });
             }
         }
-        let mut new_voters = self.conf_state.membership.voters.clone();
-        new_voters.retain(|v| *v != peer);
         let mut new_learners = self.conf_state.membership.learners.clone();
         new_learners.retain(|l| *l != peer);
 
