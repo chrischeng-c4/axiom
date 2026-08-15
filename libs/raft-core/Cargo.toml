@@ -52,3 +52,7 @@ path = "e2e/leadership_transfer.rs"
 [[test]]
 name = "demotion_removal"
 path = "e2e/demotion_removal.rs"
+
+[[test]]
+name = "leader_self_demotion"
+path = "e2e/leader_self_demotion.rs"
