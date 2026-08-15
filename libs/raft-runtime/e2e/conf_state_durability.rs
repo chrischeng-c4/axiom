@@ -431,3 +431,69 @@ fn a_voters_length_claiming_one_slot_past_the_bound_is_refused() {
         ),
     }
 }
+
+/// A `Config` entry whose command does not decode as a `ConfState` must be
+/// refused by `load()`, the way the record's own configuration field already is
+/// (#3582). Until it is, the entry survives the load and `take_committed`
+/// silently drops it — on every restart, because `last_applied` is not
+/// persisted — so the node runs on a membership its own log does not agree
+/// with, and nothing is reported to the host.
+#[test]
+fn a_config_entry_whose_command_does_not_decode_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let conf = ConfState {
+        membership: Membership {
+            voters: vec![0, 1, 2],
+            learners: vec![3],
+        },
+        outgoing: None,
+        generation: 9,
+    };
+
+    // Shorter than the decoder's own floor, so it cannot decode. Asserted here
+    // rather than assumed: if that floor ever moves, this row says so instead
+    // of quietly becoming a test of a well-formed entry.
+    let undecodable = b"not a conf".to_vec();
+    assert!(
+        ConfState::decode(&undecodable).is_none(),
+        "this row needs a command that does not decode; {undecodable:?} does"
+    );
+
+    let state = PersistedState {
+        term: 4,
+        voted_for: Some(0),
+        log: vec![
+            RaftEntry {
+                term: 4,
+                index: 1,
+                command: b"cmd".to_vec(),
+                kind: EntryKind::Command,
+            },
+            RaftEntry {
+                term: 4,
+                index: 2,
+                command: undecodable,
+                kind: EntryKind::Config,
+            },
+        ],
+        commit_index: 2,
+        snapshot_index: 0,
+        snapshot_term: 0,
+        snapshot: vec![],
+        conf: Some(conf),
+    };
+
+    open(&dir).save(&state).unwrap();
+
+    match open(&dir).load() {
+        Err(e) => assert_eq!(
+            e.kind(),
+            std::io::ErrorKind::InvalidData,
+            "a Config entry whose command does not decode must be refused as invalid data, not as {:?}",
+            e.kind()
+        ),
+        Ok(loaded) => panic!(
+            "load() accepted a record whose Config entry command cannot decode, returning {loaded:?} — the entry is dropped on every restart and the log disagrees with the membership in force"
+        ),
+    }
+}
