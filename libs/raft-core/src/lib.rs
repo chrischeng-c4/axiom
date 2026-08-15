@@ -222,7 +222,7 @@ impl ConfState {
         offset += 8;
         let voters_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?) as usize;
         offset += 8;
-        if bytes.len() < offset + voters_len * 8 + 8 {
+        if voters_len > (bytes.len() - offset - 8) / 8 {
             return None;
         }
         let mut voters = Vec::with_capacity(voters_len);
@@ -234,7 +234,7 @@ impl ConfState {
         }
         let learners_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?) as usize;
         offset += 8;
-        if bytes.len() < offset + learners_len * 8 {
+        if learners_len > (bytes.len() - offset) / 8 {
             return None;
         }
         let mut learners = Vec::with_capacity(learners_len);
