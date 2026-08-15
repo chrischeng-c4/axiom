@@ -40,3 +40,7 @@ path = "e2e/learner_admission.rs"
 [[test]]
 name = "joint_promotion"
 path = "e2e/joint_promotion.rs"
+
+[[test]]
+name = "leadership_transfer"
+path = "e2e/leadership_transfer.rs"

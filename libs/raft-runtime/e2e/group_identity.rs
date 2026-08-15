@@ -366,6 +366,98 @@ async fn row3_absent_group_id_refused() {
     serve.abort();
 }
 
+/// The leadership-transfer endpoint (#3571) carries the same cross-group guard
+/// as the four that preceded it.
+///
+/// The foreign-group case asserts `400 BAD_REQUEST` exactly, not merely "not
+/// `200 OK`". A route that does not exist answers `404`, so the looser form —
+/// which rows 1 through 3 above use — is satisfied before the endpoint is
+/// added, and this row's whole purpose is to show that it was. That is the
+/// shape #3566 records: a guard that lands with no row, or a row a missing
+/// guard also passes.
+///
+/// This row measures the guard and the route, not the handoff. What the message
+/// does once it is past the guard is `libs/raft-core/e2e/leadership_transfer.rs`.
+#[tokio::test]
+async fn row5_timeout_now_refusal() {
+    let dir = TempDir::new().unwrap();
+    let sm = TestSm::new();
+    let store = RaftStore::open_group(
+        dir.path().to_str().unwrap(),
+        0,
+        GroupId("alpha".to_string()),
+        FsyncPolicy::Os,
+    )
+    .unwrap();
+    let (l, url) = bind().await;
+    let host = Arc::new(RaftHost::spawn_group(
+        0,
+        GroupId("alpha".to_string()),
+        Membership {
+            voters: vec![0, 1],
+            learners: vec![],
+        },
+        HashMap::new(),
+        store,
+        sm as Arc<dyn RaftStateMachine>,
+        HostConfig::default(),
+    ));
+    let serve = tokio::spawn({
+        let r = host.router();
+        async move {
+            loop {
+                if let Ok((stream, _)) = l.accept().await {
+                    let r = r.clone();
+                    tokio::spawn(async move {
+                        let _ = transport_h2c::server::serve_connection(stream, r).await;
+                    });
+                }
+            }
+        }
+    });
+
+    let client = h2c_client();
+
+    let req_beta = serde_json::json!({
+        "group_id": "beta",
+        "from": 1,
+        "req": {
+            "term": 2,
+            "leader": 1,
+        }
+    });
+    let resp_beta = client
+        .post(&format!("{}/raft/timeout-now", url))
+        .json(&req_beta)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_beta.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "a message addressed to another group must be refused by the guard, not \
+         by the router having no such route"
+    );
+
+    let req_alpha = serde_json::json!({
+        "group_id": "alpha",
+        "from": 1,
+        "req": {
+            "term": 2,
+            "leader": 1,
+        }
+    });
+    let resp_alpha = client
+        .post(&format!("{}/raft/timeout-now", url))
+        .json(&req_alpha)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_alpha.status(), reqwest::StatusCode::OK);
+
+    serve.abort();
+}
+
 #[test]
 fn row4_durable_file_paths() {
     let dir = TempDir::new().unwrap();
