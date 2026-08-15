@@ -60,6 +60,10 @@ path = "e2e/conf_state_durability.rs"
 name = "group_membership_isolation"
 path = "e2e/group_membership_isolation.rs"
 
+[[test]]
+name = "leadership_transfer"
+path = "e2e/leadership_transfer.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }
