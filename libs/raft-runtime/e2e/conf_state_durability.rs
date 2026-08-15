@@ -360,3 +360,74 @@ fn a_configuration_claiming_a_length_the_record_cannot_hold_is_refused() {
         }
     }
 }
+
+/// The voters bound in `ConfState::decode_with_len` reserves eight bytes for
+/// the trailing `learners_len` field (#3589). A claim of exactly one slot past
+/// that bound must be refused by `RaftStore::load` as `InvalidData` rather than
+/// proceeding to read past the end of the buffer and panicking.
+#[test]
+fn a_voters_length_claiming_one_slot_past_the_bound_is_refused() {
+    let conf = ConfState {
+        membership: Membership {
+            voters: vec![4, 5, 6],
+            learners: vec![7, 8],
+        },
+        outgoing: None,
+        generation: 11,
+    };
+
+    const VOTERS_LEN_AT: usize = 8;
+
+    let dir = TempDir::new().unwrap();
+    let state = PersistedState {
+        term: 2,
+        voted_for: None,
+        log: vec![RaftEntry {
+            term: 2,
+            index: 1,
+            command: b"payload".to_vec(),
+            kind: EntryKind::Command,
+        }],
+        commit_index: 1,
+        snapshot_index: 0,
+        snapshot_term: 0,
+        snapshot: vec![],
+        conf: Some(conf.clone()),
+    };
+    let store = open(&dir);
+    store.save(&state).unwrap();
+
+    let mut bytes = std::fs::read(store.path()).unwrap();
+    let encoded = conf.encode();
+    let at = bytes
+        .windows(encoded.len())
+        .position(|window| window == encoded.as_slice())
+        .expect("the record must carry the configuration");
+
+    let body_len = bytes.len() - at;
+    assert_eq!(
+        body_len % 8,
+        0,
+        "the decoder's buffer must end on an eight-byte boundary"
+    );
+
+    // Compute the claim from the record that was just written: exactly one slot
+    // past what the bound permits ((body_len - 16 - 8) / 8).
+    let bound = (body_len - 16 - 8) / 8;
+    let claimed = (bound + 1) as u64;
+
+    bytes[at + VOTERS_LEN_AT..at + VOTERS_LEN_AT + 8].copy_from_slice(&claimed.to_le_bytes());
+    std::fs::write(store.path(), bytes).unwrap();
+
+    match open(&dir).load() {
+        Err(e) => assert_eq!(
+            e.kind(),
+            std::io::ErrorKind::InvalidData,
+            "a voters length one slot past the bound must be refused as invalid data, not as {:?}",
+            e.kind()
+        ),
+        Ok(loaded) => panic!(
+            "the record claims {claimed} voters (bound is {bound}), and load() returned {loaded:?} — an over-bound claim must be refused"
+        ),
+    }
+}
