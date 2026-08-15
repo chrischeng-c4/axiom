@@ -14,6 +14,8 @@ class TopologySpec:
     read_replicas: int = 0
     legacy_replicas: int | None = None
     hpa_knobs: tuple[str, ...] = ()
+    shard_pvc_capacity_gib: int = 100
+    machine_type: str = "n2-standard-4"
 
     @classmethod
     def default(cls) -> TopologySpec:
@@ -23,4 +25,6 @@ class TopologySpec:
             read_replicas=0,
             legacy_replicas=None,
             hpa_knobs=(),
+            shard_pvc_capacity_gib=100,
+            machine_type="n2-standard-4",
         )
