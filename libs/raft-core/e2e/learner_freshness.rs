@@ -342,3 +342,62 @@ fn the_admission_predicate_is_unchanged_for_a_learner_admitted_at_runtime() {
         "the learner must not have campaigned while this row was running",
     );
 }
+
+/// A learner can be strictly *ahead* of the commit index. The leader replicates
+/// to it and records the acknowledgement immediately, while commitment waits on a
+/// majority of voters — which a learner never counts toward. The figure is a
+/// count of committed entries the learner is owed, so here it is zero, and the
+/// subtraction that produces it must not be allowed to run backwards.
+///
+/// This row was added after the sweep for #3583: `commit_index - matched` in
+/// place of the candidate's `saturating_sub` survived every other row, because
+/// none of them puts the learner past the commit index. In debug builds that
+/// mutation panics on overflow, and in release it wraps to a figure near
+/// `u64::MAX` — a learner that is perfectly caught up would be reported as
+/// astronomically stale.
+#[test]
+fn a_learner_ahead_of_the_commit_index_is_reported_as_owed_nothing() {
+    let mut bus = Bus::new(&[0, 1, 2, 3], &three_voters_and_a_learner());
+    let leader = bus.run_until_leader();
+    for i in 0..3u8 {
+        bus.commit(leader, vec![i]);
+    }
+    bus.settle();
+
+    // Both other voters go away and the learner stays reachable. The leader is
+    // one acknowledgement short of a majority, so what it appends from here
+    // reaches the learner but never commits.
+    bus.dropped.insert(1);
+    bus.dropped.insert(2);
+    for i in 0..2u8 {
+        bus.nodes
+            .get_mut(&leader)
+            .unwrap()
+            .propose(vec![100 + i])
+            .expect("the leader appends the proposal even with no voter to acknowledge it");
+        bus.pump();
+    }
+
+    let node = &bus.nodes[&leader];
+    let commit_index = node.commit_index();
+    let matched = node.learner_matched(3).expect("still a learner");
+
+    // Premises. Without the first of these the row is a duplicate of the
+    // caught-up case and buys nothing.
+    assert!(
+        node.is_leader(),
+        "the node stepped down while the row was setting up, so nothing below is being asked of a leader",
+    );
+    assert!(
+        matched > commit_index,
+        "this row is worthless unless the learner is strictly ahead of the leader's commit index: matched {matched}, commit index {commit_index}",
+    );
+
+    assert_eq!(
+        node.learner_replication_gap(3),
+        Some(0),
+        "learner 3 holds every committed entry and {} the group has not committed (matched {matched}, commit index {commit_index}), so it is owed nothing, but the leader reports {:?}",
+        matched - commit_index,
+        node.learner_replication_gap(3),
+    );
+}
