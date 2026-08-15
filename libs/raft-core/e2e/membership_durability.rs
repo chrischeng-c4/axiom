@@ -46,6 +46,7 @@ fn recovered_configuration_beats_the_callers_bootstrap_argument() {
     );
     assert!(node.adopt_conf(ConfState {
         membership: agreed.clone(),
+        outgoing: None,
         generation: 4,
     }));
     let state = node.persisted();
@@ -118,12 +119,14 @@ fn a_configuration_that_does_not_supersede_is_refused() {
             voters: vec![0, 1, 2],
             learners: vec![3],
         },
+        outgoing: None,
         generation: 7,
     };
     assert!(node.adopt_conf(in_force.clone()));
 
     let same_generation = ConfState {
         membership: sole_voter(),
+        outgoing: None,
         generation: 7,
     };
     assert!(
@@ -138,6 +141,7 @@ fn a_configuration_that_does_not_supersede_is_refused() {
 
     let older = ConfState {
         membership: sole_voter(),
+        outgoing: None,
         generation: 6,
     };
     assert!(
@@ -164,6 +168,7 @@ fn a_superseding_configuration_moves_the_voter_set_that_decides_a_commit() {
             voters: vec![0, 1, 2],
             learners: vec![],
         },
+        outgoing: None,
         generation: 1,
     };
     assert!(node.adopt_conf(widened.clone()));
@@ -192,6 +197,7 @@ fn a_committed_configuration_entry_is_adopted_and_withheld_from_the_consumer() {
             voters: vec![0],
             learners: vec![9],
         },
+        outgoing: None,
         generation: 3,
     };
     assert_eq!(node.propose_config(next.clone()), Some(2));
@@ -234,6 +240,7 @@ fn the_durable_state_carries_the_configuration_and_the_entry_kinds() {
             voters: vec![0],
             learners: vec![4],
         },
+        outgoing: None,
         generation: 2,
     };
     node.propose_config(next.clone()).unwrap();
