@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Self-contained Raft consensus core (no external dependency).
 //!

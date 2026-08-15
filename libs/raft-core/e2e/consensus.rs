@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-core/tech-design/semantic/source/libs-raft-core-tests-consensus-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Deterministic in-process simulation of the raft_core consensus engine — no
 //! network, no clock, commands are opaque bytes. A bus pumps every node's outbox
