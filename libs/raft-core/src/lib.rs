@@ -210,6 +210,25 @@ pub enum TransferRefused {
     },
 }
 
+/// Why a leader refused a demotion request (#3572).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DemotionRefused {
+    NotLeader,
+    TransitionInFlight,
+    NotAVoter { target: NodeId },
+    ToleranceWouldDrop { before: usize, after: usize },
+}
+
+/// Why a leader refused a removal request (#3572).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RemovalRefused {
+    NotLeader,
+    TransitionInFlight,
+    NotAMember { target: NodeId },
+    IsTheLeader { target: NodeId },
+    ToleranceWouldDrop { before: usize, after: usize },
+}
+
 /// Cluster membership for one Raft group.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 /// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
@@ -558,6 +577,104 @@ impl RaftNode {
         let idx = self
             .propose_config(conf)
             .ok_or(PromotionRefused::TransitionInFlight)?;
+        Ok(idx)
+    }
+
+    /// Demote a voter to a learner through a joint configuration (#3572).
+    pub fn demote_voter(&mut self, peer: NodeId) -> Result<Index, DemotionRefused> {
+        if self.role != Role::Leader {
+            return Err(DemotionRefused::NotLeader);
+        }
+        if self.is_joint() || self.transfer_in_flight.is_some() {
+            return Err(DemotionRefused::TransitionInFlight);
+        }
+        if self
+            .log
+            .iter()
+            .any(|e| e.index > self.commit_index && e.kind == EntryKind::Config)
+        {
+            return Err(DemotionRefused::TransitionInFlight);
+        }
+        if !self.conf_state.membership.voters.contains(&peer) {
+            return Err(DemotionRefused::NotAVoter { target: peer });
+        }
+        let n = self.conf_state.membership.voters.len();
+        let before = n.saturating_sub(n / 2 + 1);
+        let after = (n - 1).saturating_sub((n - 1) / 2 + 1);
+        if after < before {
+            return Err(DemotionRefused::ToleranceWouldDrop { before, after });
+        }
+        let mut new_voters = self.conf_state.membership.voters.clone();
+        new_voters.retain(|v| *v != peer);
+        let mut new_learners = self.conf_state.membership.learners.clone();
+        if !new_learners.contains(&peer) {
+            new_learners.push(peer);
+            new_learners.sort_unstable();
+        }
+
+        let outgoing = Some(self.conf_state.membership.voters.clone());
+        let conf = ConfState {
+            membership: Membership {
+                voters: new_voters,
+                learners: new_learners,
+            },
+            outgoing,
+            generation: self.conf_state.generation + 1,
+        };
+        let idx = self
+            .propose_config(conf)
+            .ok_or(DemotionRefused::TransitionInFlight)?;
+        Ok(idx)
+    }
+
+    /// Remove a member from the group through a joint configuration (#3572).
+    pub fn remove_member(&mut self, peer: NodeId) -> Result<Index, RemovalRefused> {
+        if self.role != Role::Leader {
+            return Err(RemovalRefused::NotLeader);
+        }
+        if peer == self.id {
+            return Err(RemovalRefused::IsTheLeader { target: peer });
+        }
+        if self.is_joint() || self.transfer_in_flight.is_some() {
+            return Err(RemovalRefused::TransitionInFlight);
+        }
+        if self
+            .log
+            .iter()
+            .any(|e| e.index > self.commit_index && e.kind == EntryKind::Config)
+        {
+            return Err(RemovalRefused::TransitionInFlight);
+        }
+        let is_voter = self.conf_state.membership.voters.contains(&peer);
+        let is_learner = self.conf_state.membership.learners.contains(&peer);
+        if !is_voter && !is_learner {
+            return Err(RemovalRefused::NotAMember { target: peer });
+        }
+        if is_voter {
+            let n = self.conf_state.membership.voters.len();
+            let before = n.saturating_sub(n / 2 + 1);
+            let after = (n - 1).saturating_sub((n - 1) / 2 + 1);
+            if after < before {
+                return Err(RemovalRefused::ToleranceWouldDrop { before, after });
+            }
+        }
+        let mut new_voters = self.conf_state.membership.voters.clone();
+        new_voters.retain(|v| *v != peer);
+        let mut new_learners = self.conf_state.membership.learners.clone();
+        new_learners.retain(|l| *l != peer);
+
+        let outgoing = Some(self.conf_state.membership.voters.clone());
+        let conf = ConfState {
+            membership: Membership {
+                voters: new_voters,
+                learners: new_learners,
+            },
+            outgoing,
+            generation: self.conf_state.generation + 1,
+        };
+        let idx = self
+            .propose_config(conf)
+            .ok_or(RemovalRefused::TransitionInFlight)?;
         Ok(idx)
     }
 
