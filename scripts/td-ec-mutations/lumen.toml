@@ -149,10 +149,10 @@ new = '''    return AdmittedTopology(
 id = "voter-membership-mutation-admitted"
 intent = "a 1-to-3 voter change is admitted although the issue states no safe controller exists for it"
 file = "lumen/topology/admission.py"
-old = '''    if current_spec != target_spec:
+old = '''    if target_spec.shard_minimum != current_spec.shard_minimum or target_spec.voters != current_spec.voters:
         return Rejection(
             reason=RejectionReason.NO_SAFE_TOPOLOGY_MUTATION,
-            field_path="voters",
+            field_path="shard_minimum" if target_spec.shard_minimum != current_spec.shard_minimum else "voters",
             message="no safe controller exists for topology mutation",
         )
 '''
@@ -201,6 +201,8 @@ old = '''    shard_minimum: int = 1
     read_replicas: int = 0
     legacy_replicas: int | None = None
     hpa_knobs: tuple[str, ...] = ()
+    shard_pvc_capacity_gib: int = 100
+    machine_type: str = "n2-standard-4"
 
     @classmethod
     def default(cls) -> TopologySpec:
@@ -212,6 +214,8 @@ new = '''    shard_minimum: int = 1
     read_replicas: int = 0
     legacy_replicas: int | None = None
     hpa_knobs: tuple[str, ...] = ()
+    shard_pvc_capacity_gib: int = 100
+    machine_type: str = "n2-standard-4"
 
     @classmethod
     def default(cls) -> TopologySpec:
