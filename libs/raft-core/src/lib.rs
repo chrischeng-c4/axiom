@@ -580,6 +580,7 @@ impl RaftNode {
         };
         let idx = self
             .propose_config(conf)
+            // unreachable: propose_config returns None only when self.role != Role::Leader or self.transfer_in_flight.is_some(), which are excluded above by self.role != Role::Leader and self.is_joint() || self.transfer_in_flight.is_some().
             .ok_or(PromotionRefused::TransitionInFlight)?;
         Ok(idx)
     }
@@ -633,6 +634,7 @@ impl RaftNode {
         };
         let idx = self
             .propose_config(conf)
+            // unreachable: propose_config returns None only when self.role != Role::Leader or self.transfer_in_flight.is_some(), which are excluded above by self.role != Role::Leader and self.is_joint() || self.transfer_in_flight.is_some().
             .ok_or(DemotionRefused::TransitionInFlight)?;
         Ok(idx)
     }
@@ -687,6 +689,7 @@ impl RaftNode {
         };
         let idx = self
             .propose_config(conf)
+            // unreachable: propose_config returns None only when self.role != Role::Leader or self.transfer_in_flight.is_some(), which are excluded above by self.role != Role::Leader and self.is_joint() || self.transfer_in_flight.is_some().
             .ok_or(RemovalRefused::TransitionInFlight)?;
         Ok(idx)
     }
