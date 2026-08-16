@@ -1345,6 +1345,7 @@ mod tests {
             service_account_annotations: BTreeMap::new(),
             peer_tls_secret: None,
             serving_tls_secret: None,
+            body_limit_bytes: None,
         };
         let mut lumen = Lumen::new("search", spec);
         lumen.metadata.namespace = Some("acme".to_string());
@@ -1932,6 +1933,7 @@ mod tests {
             service_account_annotations: std::collections::BTreeMap::new(),
             peer_tls_secret: None,
             serving_tls_secret: None,
+            body_limit_bytes: None,
         }
     }
 

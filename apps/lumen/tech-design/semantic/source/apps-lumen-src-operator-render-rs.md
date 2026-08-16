@@ -709,6 +709,7 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
             "httpGet": { "path": "/healthz", "port": "http", "scheme": probe_scheme },
             "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
         })),
+        lifecycle: None,
         volumes,
         volume_mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
@@ -879,6 +880,9 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         if let Some(v) = admission.max_keys {
             env.push(json!({ "name": "LUMEN_ADMISSION_MAX_KEYS", "value": v.to_string() }));
         }
+    }
+    if let Some(limit) = lumen.spec.body_limit_bytes {
+        env.push(json!({ "name": "LUMEN_BODY_LIMIT_BYTES", "value": limit.to_string() }));
     }
     env
 }

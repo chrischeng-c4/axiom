@@ -1589,12 +1589,19 @@ async fn run_migration_pass_impl(
             &buckets,
         )
         .await?;
+        let max_batch_bytes = lumen
+            .spec
+            .body_limit_bytes
+            .map(|b| b as usize)
+            .unwrap_or(crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES)
+            / 2;
         let batches = snapshot_reshard_batches(
             &snapshot,
             &current,
             &target,
             &buckets,
             MAX_EXTERNAL_IDS_PER_BATCH,
+            max_batch_bytes,
         )?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
@@ -1656,7 +1663,7 @@ async fn run_migration_pass_impl(
                 &target,
                 &buckets,
                 &collection_ids,
-                crate::reshard::MAX_BATCH_BYTES,
+                max_batch_bytes,
             )?;
             for chunk in &prune_chunks {
                 let Some(&to_shard) = to_shard_by_bucket.get(&chunk.bucket) else {
@@ -2610,6 +2617,7 @@ mod tests {
             service_account_annotations: BTreeMap::new(),
             peer_tls_secret: None,
             serving_tls_secret: None,
+            body_limit_bytes: None,
         }
     }
 

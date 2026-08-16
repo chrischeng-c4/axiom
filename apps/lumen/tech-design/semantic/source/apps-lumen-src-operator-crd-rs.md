@@ -237,7 +237,19 @@ pub struct LumenSpec {
     /// declarative surface for the existing env-driven behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
+
+    /// Data-plane request body size limit (bytes). Requests with
+    /// `Content-Length` exceeding this are rejected with 413; streamed bodies
+    /// are bounded mid-read. Defaults to 8 MiB. Unset means the server
+    /// default (#2584). Accepted range: 1 MiB (1048576) to 64 MiB (67108864).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_limit_bytes: Option<u64>,
 }
+
+/// Minimum accepted request body limit: 1 MiB (1048576 bytes).
+pub const MIN_BODY_LIMIT_BYTES: u64 = 1024 * 1024;
+/// Maximum accepted request body limit: 64 MiB (67108864 bytes).
+pub const MAX_BODY_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Declarative form of the `LUMEN_ADMISSION_*` env grammar. Every field is
 /// optional and independently maps to one env var; a field left unset never
@@ -778,6 +790,13 @@ impl LumenSpec {
     /// composes — a rule added here holds for both, and a rule added anywhere
     /// else would not.
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(limit) = self.body_limit_bytes {
+            if limit < MIN_BODY_LIMIT_BYTES || limit > MAX_BODY_LIMIT_BYTES {
+                return Err(format!(
+                    "bodyLimitBytes ({limit}) must be between {MIN_BODY_LIMIT_BYTES} (1 MiB) and {MAX_BODY_LIMIT_BYTES} (64 MiB) inclusive"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1001,6 +1020,72 @@ fn default_grace_secs() -> u64 {
 }
 fn default_raft_storage() -> String {
     "20Gi".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_spec() -> LumenSpec {
+        LumenSpec {
+            image: "lumen:latest".into(),
+            image_pull_policy: None,
+            placement: PlacementSpec::default(),
+            shard_count: 1,
+            shard_map: ShardMapSpec::default(),
+            replicas_per_shard: 1,
+            voter_count: 1,
+            log_format: LogFormat::Pretty,
+            log_level: None,
+            auth: AuthMode::Off,
+            serving: ServingSpec::default(),
+            reshard_policy: ReshardPolicy::default(),
+            observability: false,
+            network_policy: false,
+            admission: None,
+            service_account_name: None,
+            service_account_annotations: BTreeMap::new(),
+            peer_tls_secret: None,
+            serving_tls_secret: None,
+            body_limit_bytes: None,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_omitted_or_in_range_body_limit() {
+        let mut spec = test_spec();
+        assert!(spec.validate().is_ok());
+
+        spec.body_limit_bytes = Some(MIN_BODY_LIMIT_BYTES);
+        assert!(spec.validate().is_ok());
+
+        spec.body_limit_bytes = Some(8 * 1024 * 1024);
+        assert!(spec.validate().is_ok());
+
+        spec.body_limit_bytes = Some(MAX_BODY_LIMIT_BYTES);
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_body_limit() {
+        let mut spec = test_spec();
+        for invalid in [0, 512, MIN_BODY_LIMIT_BYTES - 1, MAX_BODY_LIMIT_BYTES + 1] {
+            spec.body_limit_bytes = Some(invalid);
+            let err = spec.validate().expect_err("expected error");
+            assert!(
+                err.contains("bodyLimitBytes"),
+                "error message should name bodyLimitBytes: {err}"
+            );
+            assert!(
+                err.contains(&MIN_BODY_LIMIT_BYTES.to_string()),
+                "error message should name lower bound: {err}"
+            );
+            assert!(
+                err.contains(&MAX_BODY_LIMIT_BYTES.to_string()),
+                "error message should name upper bound: {err}"
+            );
+        }
+    }
 }
 // CODEGEN-END
 ```

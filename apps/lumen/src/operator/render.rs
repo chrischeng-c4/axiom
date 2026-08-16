@@ -811,6 +811,9 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
             env.push(json!({ "name": "LUMEN_ADMISSION_MAX_KEYS", "value": v.to_string() }));
         }
     }
+    if let Some(limit) = lumen.spec.body_limit_bytes {
+        env.push(json!({ "name": "LUMEN_BODY_LIMIT_BYTES", "value": limit.to_string() }));
+    }
     env
 }
 
