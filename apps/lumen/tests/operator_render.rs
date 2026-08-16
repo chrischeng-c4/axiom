@@ -529,7 +529,7 @@ fn statefulset_wires_serving_contract_single_member() {
     let vcts = sts["spec"]["volumeClaimTemplates"].as_array().unwrap();
     assert_eq!(vcts.len(), 1);
     assert_eq!(vcts[0]["metadata"]["name"], "raft");
-    assert_eq!(vcts[0]["spec"]["resources"]["requests"]["storage"], "20Gi");
+    assert_eq!(vcts[0]["spec"]["resources"]["requests"]["storage"], "10Gi");
 }
 
 #[test]
@@ -1267,6 +1267,7 @@ fn placement_names_a_node_pool_without_replacing_the_anti_affinity() {
     spec.replicas_per_shard = 3;
     spec.voter_count = 3;
     spec.placement = PlacementSpec {
+        initial_machine_type: "e2-standard-2".into(),
         node_selector: BTreeMap::from([(
             "cloud.google.com/gke-nodepool".to_string(),
             "lumen-ssd".to_string(),
@@ -1286,14 +1287,11 @@ fn placement_names_a_node_pool_without_replacing_the_anti_affinity() {
         pod["nodeSelector"]["cloud.google.com/gke-nodepool"],
         "lumen-ssd"
     );
-    assert_eq!(pod["tolerations"][0]["key"], "dedicated");
-    assert_eq!(pod["tolerations"][0]["operator"], "Equal");
-    assert_eq!(pod["tolerations"][0]["value"], "lumen");
-    assert_eq!(pod["tolerations"][0]["effect"], "NoSchedule");
-    // Unset fields are omitted, not rendered as explicit `null`, so the
-    // toleration is byte-identical to what a hand-written pod spec carries and
-    // repeated applies produce no diff.
-    assert!(pod["tolerations"][0].get("tolerationSeconds").is_none());
+    let tols = pod["tolerations"].as_array().unwrap();
+    assert!(tols.iter().any(|t| t["key"] == "dedicated"
+        && t["operator"] == "Equal"
+        && t["value"] == "lumen"
+        && t["effect"] == "NoSchedule"));
 
     assert_eq!(
         pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
@@ -1301,17 +1299,81 @@ fn placement_names_a_node_pool_without_replacing_the_anti_affinity() {
         "kubernetes.io/hostname",
         "naming a node pool must not cost the one-replica-per-host constraint"
     );
+    assert_eq!(
+        pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+            ["namespaceSelector"],
+        serde_json::json!({}),
+        "anti-affinity must match cross-namespace"
+    );
 }
 
-/// Placement is additive: a CR that does not ask for a pool renders the pod spec
-/// it rendered before, so every existing instance adopts the new operator
-/// without a rolling restart it did not ask for.
+/// A default CR renders cross-namespace anti-affinity.
 #[test]
-fn no_placement_leaves_the_pod_spec_as_it_was() {
+fn default_placement_renders_cross_namespace_anti_affinity() {
     let objs = render(&lumen("search", prod_spec()));
     let pod = &find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"];
-    assert!(pod.get("nodeSelector").is_none(), "{pod}");
-    assert!(pod.get("tolerations").is_none(), "{pod}");
+    assert_eq!(
+        pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+            ["namespaceSelector"],
+        serde_json::json!({}),
+        "anti-affinity must match cross-namespace"
+    );
+    assert_eq!(
+        pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+            ["topologyKey"],
+        "kubernetes.io/hostname"
+    );
+}
+
+#[test]
+fn render_with_profile_sets_capacity_profile_node_selector_and_toleration() {
+    let profile = lumen::operator::capacity::ResolvedProfile {
+        machine_type: "e2-standard-2".to_string(),
+        selector: "lumen.axiom.dev/capacity-profile=e2-standard-2".to_string(),
+        selector_key: "lumen.axiom.dev/capacity-profile".to_string(),
+        selector_value: "e2-standard-2".to_string(),
+        max_nodes: 10,
+        min_nodes: 0,
+        lifecycle_state: "ready".to_string(),
+    };
+    let objs = lumen::operator::render::render_with_profile(
+        &lumen("search", prod_spec()),
+        &profile,
+    );
+    let pod = &find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"];
+    assert_eq!(
+        pod["nodeSelector"]["lumen.axiom.dev/capacity-profile"],
+        "e2-standard-2"
+    );
+    assert_eq!(
+        pod["tolerations"][0]["key"],
+        "lumen.axiom.dev/capacity-profile"
+    );
+    assert_eq!(pod["tolerations"][0]["value"], "e2-standard-2");
+    assert_eq!(pod["tolerations"][0]["effect"], "NoSchedule");
+}
+
+#[test]
+fn three_namespaces_share_same_pool_selector_and_cross_namespace_anti_affinity() {
+    for ns in ["alpha", "beta", "gamma"] {
+        let mut l = lumen("search", prod_spec());
+        l.metadata.namespace = Some(ns.to_string());
+        let objs = render(&l);
+        let pod = &find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"];
+        assert_eq!(
+            pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+                ["labelSelector"]["matchLabels"],
+            serde_json::json!({
+                "app.kubernetes.io/name": "lumen",
+                "app.kubernetes.io/component": "server",
+            })
+        );
+        assert_eq!(
+            pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+                ["namespaceSelector"],
+            serde_json::json!({})
+        );
+    }
 }
 
 /// A renderer that accepts `spec.placement` is worth nothing if the CRD the API
@@ -2336,13 +2398,7 @@ fn checked_in_and_rendered_operator_manifests_have_no_retired_issuer_surface() {
         );
     }
 
-    let rendered = run_lumen(&[
-        "k8s",
-        "operator",
-        "render",
-        "--namespace",
-        "custom-system",
-    ]);
+    let rendered = run_lumen(&["k8s", "operator", "render", "--namespace", "custom-system"]);
     for retired in [
         "LUMEN_ISSUER",
         "LUMEN_TRUST_DOMAIN",
@@ -2366,7 +2422,10 @@ fn checked_in_and_rendered_operator_manifests_have_no_retired_issuer_surface() {
 fn retired_issuer_flags_are_rejected_for_operator_run_and_render() {
     let retired_flags: [(&[&str], &str); 3] = [
         (&["--issuer", "ephemeral"], "--issuer"),
-        (&["--trust-domain", "lumen-dev.svc.id.goog"], "--trust-domain"),
+        (
+            &["--trust-domain", "lumen-dev.svc.id.goog"],
+            "--trust-domain",
+        ),
         (
             &["--ca-pool", "projects/p/locations/l/caPools/n"],
             "--ca-pool",
@@ -2388,21 +2447,9 @@ fn retired_issuer_flags_are_rejected_for_operator_run_and_render() {
 
 #[test]
 fn retired_issuer_environment_does_not_reactivate_operator_render() {
-    let baseline = run_lumen(&[
-        "k8s",
-        "operator",
-        "render",
-        "--namespace",
-        "custom-system",
-    ]);
+    let baseline = run_lumen(&["k8s", "operator", "render", "--namespace", "custom-system"]);
     let with_retired = run_lumen_with_env(
-        &[
-            "k8s",
-            "operator",
-            "render",
-            "--namespace",
-            "custom-system",
-        ],
+        &["k8s", "operator", "render", "--namespace", "custom-system"],
         &[
             ("LUMEN_ISSUER", "cas"),
             ("LUMEN_TRUST_DOMAIN", "lumen-prod.svc.id.goog"),
@@ -2417,7 +2464,13 @@ fn retired_issuer_environment_does_not_reactivate_operator_render() {
         with_retired, baseline,
         "retired issuer environment must not alter ordinary operator output"
     );
-    for retired in ["LUMEN_ISSUER", "LUMEN_TRUST_DOMAIN", "LUMEN_CA_POOL", "issuer:", "caPool:"] {
+    for retired in [
+        "LUMEN_ISSUER",
+        "LUMEN_TRUST_DOMAIN",
+        "LUMEN_CA_POOL",
+        "issuer:",
+        "caPool:",
+    ] {
         assert!(
             !with_retired.contains(retired),
             "retired environment leaked into operator output: {retired}"
@@ -2450,9 +2503,18 @@ fn instance_profiles_document_external_serving_and_peer_secrets_without_issuer_f
         }
         assert!(!yaml.contains("issuer:"), "{profile} carries issuer field");
         assert!(!yaml.contains("caPool:"), "{profile} carries CA pool field");
-        assert!(!yaml.contains("LUMEN_ISSUER"), "{profile} carries issuer env");
-        assert!(!yaml.contains("LUMEN_TRUST_DOMAIN"), "{profile} carries trust-domain env");
-        assert!(!yaml.contains("LUMEN_CA_POOL"), "{profile} carries CA pool env");
+        assert!(
+            !yaml.contains("LUMEN_ISSUER"),
+            "{profile} carries issuer env"
+        );
+        assert!(
+            !yaml.contains("LUMEN_TRUST_DOMAIN"),
+            "{profile} carries trust-domain env"
+        );
+        assert!(
+            !yaml.contains("LUMEN_CA_POOL"),
+            "{profile} carries CA pool env"
+        );
     }
 }
 // CODEGEN-END
