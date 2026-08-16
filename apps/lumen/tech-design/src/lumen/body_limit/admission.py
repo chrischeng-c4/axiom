@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from service_http.application.body_limit import DEFAULT_BODY_LIMIT_BYTES
+
 from lumen.body_limit.spec import BodyLimitSpec
 from lumen.body_limit.verdict import (
     AdmittedBodyLimit,
@@ -13,7 +15,6 @@ from lumen.body_limit.verdict import (
 
 __aw_artifact_id__: Final[str] = "artifact:lumen/body-limit/admission"
 
-DEFAULT_BODY_LIMIT_BYTES: Final[int] = 8388608
 MIN_BODY_LIMIT_BYTES: Final[int] = 1
 MAX_BODY_LIMIT_BYTES: Final[int] = 18446744073709551615
 
@@ -21,7 +22,7 @@ MAX_BODY_LIMIT_BYTES: Final[int] = 18446744073709551615
 def decide_body_limit_spec(spec: BodyLimitSpec) -> Verdict:
     """Decide admission for a given BodyLimitSpec.
 
-    Returns an AdmittedBodyLimit if omitted (using compiled default 8388608)
+    Returns an AdmittedBodyLimit if omitted (using compiled default from shared design)
     or a valid u64 integer (1 to 18446744073709551615).
     Returns a Rejection for non-integer or out-of-range inputs.
     """
