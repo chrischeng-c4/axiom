@@ -38,6 +38,14 @@ Public API manifest for `apps/lumen/src/vector_index.rs` generated from AST duri
 <!-- type: rust-source-unit lang: rust -->
 
 
+
+
+
+
+
+
+
+
 ```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#rust-source-unit
 // CODEGEN-BEGIN
@@ -640,20 +648,23 @@ impl VectorIndex for HnswCpuIndex {
         if n == 0 || k == 0 {
             return Ok(Vec::new());
         }
-        // hnsw_rs exposes no mid-traversal filter hook, so we over-fetch
-        // a candidate pool and keep only allowed (and non-orphaned) ids,
-        // doubling the pool until we have `k` allowed hits or have
-        // scanned the whole index. The base over-fetch (`k*4 + k`) also
-        // absorbs stale ids left by replaces. For an unfiltered query
-        // the first pass already yields `k`, so the widening loop never
-        // iterates — the hot path is unchanged.
-        let mut pool = (k * 4 + k).min(n);
+        // hnsw_rs exposes no mid-traversal filter hook and does not support node
+        // removal. When a query cannot be answered conclusively from the graph
+        // (due to filter selectivity or orphan interference), the candidate pool
+        // widens up to the total graph capacity (`inner.next_id`). For clean
+        // graphs without orphan interference, the traversal answers directly.
+        let graph_len = inner.next_id;
+        let mut pool = (k * 4 + k).min(graph_len);
         let ef = inner.ef_search;
         loop {
             let raw = inner.hnsw.search(query, pool, ef);
-            let mut out = Vec::with_capacity(k);
-            for (id, dist) in raw {
-                let Some(eid) = inner.id_to_eid.get(&id) else {
+            let mut out: Vec<(String, f32)> = Vec::with_capacity(k);
+            let mut has_unresolved_orphan = false;
+            for (id, dist) in &raw {
+                let Some(eid) = inner.id_to_eid.get(id) else {
+                    if out.len() < k || *dist <= -out.last().unwrap().1 {
+                        has_unresolved_orphan = true;
+                    }
                     continue; // orphaned by a replace
                 };
                 if !allow(eid) {
@@ -664,13 +675,36 @@ impl VectorIndex for HnswCpuIndex {
                     break;
                 }
             }
-            // Enough allowed hits, or the pool already covers the whole
-            // index (a wider search cannot surface more) → done.
-            if out.len() == k || pool >= n {
+
+            if out.len() == k && !has_unresolved_orphan && pool < graph_len {
                 return Ok(out);
             }
-            pool = (pool * 2).min(n);
+
+            if pool >= graph_len {
+                break;
+            }
+            pool = (pool * 2).min(graph_len);
         }
+
+        // When the candidate pool covers the graph or orphans prevent a conclusive
+        // approximate answer, fall back to an exact filtered scan over the live store
+        // rather than returning a short or degraded result.
+        let metric = inner.store.spec.metric;
+        let mut cand: Vec<(String, f32)> = inner
+            .store
+            .iter_decoded()
+            .filter(|(eid, _)| allow(eid))
+            .map(|(eid, v)| (eid, -distance(metric, query, &v)))
+            .collect();
+        let want = k.min(cand.len());
+        if want > 0 && want < cand.len() {
+            cand.select_nth_unstable_by(want - 1, |a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            cand.truncate(want);
+        }
+        cand.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(cand)
     }
 
     fn len(&self) -> usize {
