@@ -235,3 +235,7 @@ path = "e2e/capacity_retire_hpa.rs"
 [[test]]
 name = "body_limit_configurable"
 path = "e2e/body_limit_configurable.rs"
+
+[[test]]
+name = "vector_filtered_recall_after_replace"
+path = "e2e/vector_filtered_recall_after_replace.rs"
