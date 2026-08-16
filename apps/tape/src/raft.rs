@@ -457,9 +457,9 @@ impl RaftStateMachine for TapeStateMachine {
         Ok(())
     }
 
-    fn snapshot(&self) -> Result<Vec<u8>> {
+    fn snapshot(&self, writer: &mut dyn std::io::Write) -> Result<()> {
         let journal = self.journal.lock().expect("journal mutex poisoned").clone();
-        Ok(serde_json::to_vec(&JournalSnapshot {
+        let bytes = serde_json::to_vec(&JournalSnapshot {
             up_to: self.applied_index(),
             journal,
             completed_proposals: self
@@ -467,11 +467,15 @@ impl RaftStateMachine for TapeStateMachine {
                 .lock()
                 .expect("completed proposals")
                 .snapshot(),
-        })?)
+        })?;
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
-    fn restore(&self, snapshot: &[u8]) -> Result<()> {
-        let snap: JournalSnapshot = serde_json::from_slice(snapshot)?;
+    fn restore(&self, reader: &mut dyn std::io::Read) -> Result<()> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        let snap: JournalSnapshot = serde_json::from_slice(&bytes)?;
         *self.journal.lock().expect("journal mutex poisoned") = snap.journal;
         self.completed
             .lock()
@@ -799,7 +803,9 @@ impl TapeRaft {
     /// Capture the exact state-machine snapshot, including the bounded
     /// proposal-outcome cache needed for ambiguous retry idempotency.
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>> {
-        self.sm.snapshot()
+        let mut buf = Vec::new();
+        self.sm.snapshot(&mut buf)?;
+        Ok(buf)
     }
 
     /// The journal this group replicates into.
@@ -870,10 +876,11 @@ mod tests {
             .append("orders", None, serde_json::json!({"n": 1}), Some(100));
         let sm = TapeStateMachine::new(j, None).unwrap();
         sm.applied.store(3, Ordering::Release);
-        let bytes = sm.snapshot().unwrap();
+        let mut bytes = Vec::new();
+        sm.snapshot(&mut bytes).unwrap();
 
         let fresh = TapeStateMachine::new(journal(), None).unwrap();
-        fresh.restore(&bytes).unwrap();
+        fresh.restore(&mut std::io::Cursor::new(&bytes)).unwrap();
         assert_eq!(fresh.applied_index(), 3);
         assert_eq!(fresh.journal().lock().unwrap().end_offset("orders"), 1);
     }

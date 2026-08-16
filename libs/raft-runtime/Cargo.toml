@@ -64,6 +64,10 @@ path = "e2e/group_membership_isolation.rs"
 name = "leadership_transfer"
 path = "e2e/leadership_transfer.rs"
 
+[[test]]
+name = "snapshot_peak_memory"
+path = "e2e/snapshot_peak_memory.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }

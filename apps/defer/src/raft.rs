@@ -340,8 +340,8 @@ impl RaftStateMachine for DeferStateMachine {
         Ok(())
     }
 
-    fn snapshot(&self) -> Result<Vec<u8>> {
-        Ok(serde_json::to_vec(&SchedulerSnapshot {
+    fn snapshot(&self, writer: &mut dyn std::io::Write) -> Result<()> {
+        let bytes = serde_json::to_vec(&SchedulerSnapshot {
             up_to: self.applied_index(),
             scheduler: self
                 .scheduler
@@ -353,11 +353,15 @@ impl RaftStateMachine for DeferStateMachine {
                 .lock()
                 .expect("completed proposals")
                 .snapshot(),
-        })?)
+        })?;
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
-    fn restore(&self, snapshot: &[u8]) -> Result<()> {
-        let snapshot: SchedulerSnapshot = serde_json::from_slice(snapshot)?;
+    fn restore(&self, reader: &mut dyn std::io::Read) -> Result<()> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        let snapshot: SchedulerSnapshot = serde_json::from_slice(&bytes)?;
         *self.scheduler.lock().expect("scheduler mutex poisoned") = snapshot.scheduler;
         self.completed
             .lock()
@@ -722,7 +726,9 @@ impl DeferRaft {
     }
 
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>> {
-        self.sm.snapshot()
+        let mut buf = Vec::new();
+        self.sm.snapshot(&mut buf)?;
+        Ok(buf)
     }
 }
 // HANDWRITE-END
@@ -802,7 +808,11 @@ mod tests {
 
         let restored_scheduler = Arc::new(Mutex::new(DeferScheduler::new()));
         let restored = DeferStateMachine::new(restored_scheduler.clone(), None).unwrap();
-        restored.restore(&sm.snapshot().unwrap()).unwrap();
+        let mut snap_bytes = Vec::new();
+        sm.snapshot(&mut snap_bytes).unwrap();
+        restored
+            .restore(&mut std::io::Cursor::new(&snap_bytes))
+            .unwrap();
         restored.apply(4, &lease_bytes).unwrap();
         let repeated = match restored.claim_outcome(4).unwrap() {
             DeferOutcome::Leased(Ok(mut leases)) => leases.remove(0),
