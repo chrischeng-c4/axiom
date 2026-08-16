@@ -160,7 +160,7 @@ spec:
                 type: object
               replicasPerShard:
                 default: 1
-                description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads (no HPA — raft needs a known membership).'
+                description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads (raft needs a known membership).'
                 type: integer
                 minimum: 0.0
               reshardPolicy:
@@ -170,7 +170,7 @@ spec:
                   workflow:
                     phase: Complete
                     convergenceRemediationRestartCount: 0
-                description: Operator-owned storage reshard policy. HPA never changes storage ownership; this policy only prepares/recommends explicit shard topology changes.
+                description: Operator-owned storage reshard policy. This policy only prepares/recommends explicit shard topology changes.
                 properties:
                   maxShardBytes:
                     type: integer
@@ -256,10 +256,6 @@ spec:
                 type: string
               serving:
                 default:
-                  autoscaling:
-                    minReplicas: 3
-                    maxReplicas: 12
-                    targetCpuUtilization: 70
                   cpu: '1'
                   memory: 4Gi
                   graceSecs: 30
@@ -267,30 +263,6 @@ spec:
                   raftStorageClass: null
                 description: Stateless serving-fleet shape.
                 properties:
-                  autoscaling:
-                    default:
-                      minReplicas: 3
-                      maxReplicas: 12
-                      targetCpuUtilization: 70
-                    description: HPA bounds + CPU target.
-                    properties:
-                      maxReplicas:
-                        description: Ceiling.
-                        format: int32
-                        type: integer
-                      minReplicas:
-                        description: Floor (also the StatefulSet's apply-time replica count in HPA mode).
-                        format: int32
-                        type: integer
-                      targetCpuUtilization:
-                        description: Target average CPU utilization (%) — read QPS proxied by CPU.
-                        format: int32
-                        type: integer
-                    required:
-                    - maxReplicas
-                    - minReplicas
-                    - targetCpuUtilization
-                    type: object
                   backup:
                     description: Optional scheduled backup (#808). When set, the operator renders a `<name>-backup` CronJob (see [`super::render::backup_cron_job`]) that invokes `lumen backup` on this schedule against the running serving fleet's own already-existing `/admin/backup` endpoint — no new snapshot mechanism, only scheduling + transport. Absent means no CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`, `POST /admin/restore`) is still reachable for manual/scripted use either way (see `lumen llm --topic storage`).
                     nullable: true
@@ -364,7 +336,7 @@ spec:
                 type: string
               shardCount:
                 default: 1
-                description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. HPA never changes this value.
+                description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing.
                 type: integer
                 minimum: 0.0
               shardMap:
@@ -441,7 +413,7 @@ spec:
                 type: array
               desiredReplicas:
                 default: 0
-                description: Desired serving replicas (HPA floor at apply, or the live count).
+                description: Desired serving replicas (apply-time count, or the live count).
                 format: int32
                 type: integer
               message:
@@ -693,7 +665,7 @@ spec:
                     type: object
                   replicasPerShard:
                     default: 1
-                    description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads (no HPA — raft needs a known membership).'
+                    description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads (raft needs a known membership).'
                     type: integer
                     minimum: 0.0
                   reshardPolicy:
@@ -703,7 +675,7 @@ spec:
                       workflow:
                         phase: Complete
                         convergenceRemediationRestartCount: 0
-                    description: Operator-owned storage reshard policy. HPA never changes storage ownership; this policy only prepares/recommends explicit shard topology changes.
+                    description: Operator-owned storage reshard policy. This policy only prepares/recommends explicit shard topology changes.
                     properties:
                       maxShardBytes:
                         type: integer
@@ -789,10 +761,6 @@ spec:
                     type: string
                   serving:
                     default:
-                      autoscaling:
-                        minReplicas: 3
-                        maxReplicas: 12
-                        targetCpuUtilization: 70
                       cpu: '1'
                       memory: 4Gi
                       graceSecs: 30
@@ -800,30 +768,6 @@ spec:
                       raftStorageClass: null
                     description: Stateless serving-fleet shape.
                     properties:
-                      autoscaling:
-                        default:
-                          minReplicas: 3
-                          maxReplicas: 12
-                          targetCpuUtilization: 70
-                        description: HPA bounds + CPU target.
-                        properties:
-                          maxReplicas:
-                            description: Ceiling.
-                            format: int32
-                            type: integer
-                          minReplicas:
-                            description: Floor (also the StatefulSet's apply-time replica count in HPA mode).
-                            format: int32
-                            type: integer
-                          targetCpuUtilization:
-                            description: Target average CPU utilization (%) — read QPS proxied by CPU.
-                            format: int32
-                            type: integer
-                        required:
-                        - maxReplicas
-                        - minReplicas
-                        - targetCpuUtilization
-                        type: object
                       backup:
                         description: Optional scheduled backup (#808). When set, the operator renders a `<name>-backup` CronJob (see [`super::render::backup_cron_job`]) that invokes `lumen backup` on this schedule against the running serving fleet's own already-existing `/admin/backup` endpoint — no new snapshot mechanism, only scheduling + transport. Absent means no CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`, `POST /admin/restore`) is still reachable for manual/scripted use either way (see `lumen llm --topic storage`).
                         nullable: true
@@ -897,7 +841,7 @@ spec:
                     type: string
                   shardCount:
                     default: 1
-                    description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. HPA never changes this value.
+                    description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing.
                     type: integer
                     minimum: 0.0
                   shardMap:

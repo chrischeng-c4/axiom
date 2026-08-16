@@ -227,3 +227,7 @@ harness = false
 [[bench]]
 name = "bench_duplicates"
 harness = false
+
+[[test]]
+name = "capacity_retire_hpa"
+path = "e2e/capacity_retire_hpa.rs"

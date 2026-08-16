@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use kube::api::ObjectMeta;
 use lumen::operator::crd::{
-    AuthMode, Autoscaling, LogFormat, LumenStatus, PlacementSpec, ReshardPhase, ReshardPolicy,
+    AuthMode, LogFormat, LumenStatus, PlacementSpec, ReshardPhase, ReshardPolicy,
     ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
 use lumen::operator::render::{
@@ -47,14 +47,7 @@ fn dev_spec() -> LumenSpec {
         log_format: LogFormat::Pretty,
         log_level: None,
         auth: AuthMode::Off,
-        serving: ServingSpec {
-            autoscaling: Autoscaling {
-                min_replicas: 1,
-                max_replicas: 3,
-                target_cpu_utilization: 70,
-            },
-            ..Default::default()
-        },
+        serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy::default(),
         observability: false,
         network_policy: false,
@@ -79,11 +72,6 @@ fn prod_spec() -> LumenSpec {
         log_level: Some("warn".into()),
         auth: AuthMode::Required,
         serving: ServingSpec {
-            autoscaling: Autoscaling {
-                min_replicas: 6,
-                max_replicas: 12,
-                target_cpu_utilization: 65,
-            },
             cpu: "4".into(),
             memory: "16Gi".into(),
             grace_secs: 45,
@@ -563,8 +551,6 @@ fn multi_shard_single_replica_is_fixed_storage_topology_not_hpa() {
     let mut spec = dev_spec();
     spec.shard_count = 4;
     spec.replicas_per_shard = 1;
-    spec.serving.autoscaling.min_replicas = 1;
-    spec.serving.autoscaling.max_replicas = 12;
     let l = lumen("search", spec);
     let objs = render(&l);
 
@@ -606,31 +592,13 @@ fn direct_hpa_is_never_rendered_for_single_replica_serving() {
 }
 
 #[test]
-fn single_member_storage_pod_count_ignores_legacy_autoscaling_bounds() {
-    // #1317: default `Autoscaling` (minReplicas: 3, maxReplicas: 12) at the
-    // CRD's own default topology (shardCount: 1, replicasPerShard: 1) must
-    // not fan out to 3+ uncoordinated shard-0 copies.
-    let mut default_bounds_spec = dev_spec();
-    default_bounds_spec.serving.autoscaling = Autoscaling::default();
-    assert_eq!(default_bounds_spec.serving.autoscaling.min_replicas, 3);
-    assert_eq!(default_bounds_spec.serving.autoscaling.max_replicas, 12);
-    assert_eq!(default_bounds_spec.storage_pod_count(), 1);
+fn single_member_storage_pod_count_clamps_to_one() {
+    // #1317: single-member topology (shardCount: 1, replicasPerShard: 1)
+    // must clamp to exactly 1 replica.
+    let default_spec = dev_spec();
+    assert_eq!(default_spec.storage_pod_count(), 1);
 
-    let l = lumen("search", default_bounds_spec);
-    let objs = render(&l);
-    let sts = find(&objs, "StatefulSet", "search");
-    assert_eq!(sts["spec"]["replicas"], 1);
-    assert!(!has(&objs, "HorizontalPodAutoscaler", "search"));
-
-    // Also an explicit, non-default CR bound (minReplicas: 3) — the same
-    // clamp applies whether the bounds come from the CRD default or an
-    // operator's explicit override.
-    let mut explicit_spec = dev_spec();
-    explicit_spec.serving.autoscaling.min_replicas = 3;
-    explicit_spec.serving.autoscaling.max_replicas = 3;
-    assert_eq!(explicit_spec.storage_pod_count(), 1);
-
-    let l = lumen("search", explicit_spec);
+    let l = lumen("search", default_spec);
     let objs = render(&l);
     let sts = find(&objs, "StatefulSet", "search");
     assert_eq!(sts["spec"]["replicas"], 1);
@@ -645,7 +613,6 @@ fn raft_ha_storage_pod_count_is_unaffected_by_single_member_clamp() {
     let mut spec = dev_spec();
     spec.shard_count = 2;
     spec.replicas_per_shard = 3;
-    spec.serving.autoscaling = Autoscaling::default();
     assert_eq!(spec.storage_pod_count(), 6);
 }
 
