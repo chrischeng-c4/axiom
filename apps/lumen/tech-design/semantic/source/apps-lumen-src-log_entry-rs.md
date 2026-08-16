@@ -25,7 +25,8 @@ Public API manifest for `apps/lumen/src/log_entry.rs` generated from AST during 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-log_entry-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The write-log entry vocabulary: the committed-mutation enum that flows
@@ -93,8 +94,7 @@ pub enum RaftLogEntry {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-log_entry-rs.md#source
 pub struct RaftLogResponse;
 // CODEGEN-END
-
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

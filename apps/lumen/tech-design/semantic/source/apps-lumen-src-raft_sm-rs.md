@@ -36,7 +36,8 @@ Public API manifest for `apps/lumen/src/raft_sm.rs` generated from AST during Sc
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `EngineSm` — lumen's [`Engine`] as a [`raft_runtime::RaftStateMachine`].
@@ -123,16 +124,20 @@ impl RaftStateMachine for EngineSm {
         Ok(()) // the entry is "applied" (a failed apply no-ops the engine + is surfaced via the outcome)
     }
 
-    fn snapshot(&self) -> Result<Vec<u8>> {
-        RdbSnapshot {
+    fn snapshot(&self, writer: &mut dyn std::io::Write) -> Result<()> {
+        let bytes = RdbSnapshot {
             up_to_seq: self.applied_index(),
             snapshot: self.engine.snapshot()?,
         }
-        .encode()
+        .encode()?;
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
-    fn restore(&self, snapshot: &[u8]) -> Result<()> {
-        let rdb = RdbSnapshot::decode(snapshot)?;
+    fn restore(&self, reader: &mut dyn std::io::Read) -> Result<()> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        let rdb = RdbSnapshot::decode(&bytes)?;
         self.engine.restore(rdb.snapshot)?;
         self.applied.store(rdb.up_to_seq, Ordering::Release);
         Ok(())
@@ -276,7 +281,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

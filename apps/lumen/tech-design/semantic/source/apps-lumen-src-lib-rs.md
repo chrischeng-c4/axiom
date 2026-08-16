@@ -51,6 +51,7 @@ Public API manifest for `apps/lumen/src/lib.rs` generated from AST during Score 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
+
 ```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
@@ -99,7 +100,8 @@ pub mod native_wire;
 /// K8s Operator: the `Lumen` CRD plus the reconcile loop that renders + applies
 /// the Lumen serving/data-plane resources. The CRD and reconcile loop are behind
 /// the `operator` feature so the serving binary never pulls in kube-rs; pure
-/// configuration submodules (like `issuer_config`) build unconditionally.
+/// configuration stays in the operator and shared libraries; Lumen consumes
+/// externally provisioned TLS Secrets rather than resolving issuers.
 pub mod operator;
 /// Cluster-state view types backing the read/admin API. This surface is the
 /// compatibility bridge for Lumen-owned primary/replica replication.
