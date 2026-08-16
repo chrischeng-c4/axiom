@@ -251,10 +251,15 @@ pub struct AdmissionSpec {
 /// until this existed there was no way to ask for one: the StatefulSet is
 /// operator-rendered, so a manual `kubectl patch` is reverted on the next
 /// reconcile.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct PlacementSpec {
+    /// Initial GCE machine type for the data plane (e.g. `e2-standard-2`).
+    /// Defaults to `e2-standard-2`. Immutable create-time configuration.
+    #[serde(default = "default_initial_machine_type")]
+    pub initial_machine_type: String,
+
     /// `spec.template.spec.nodeSelector` for the serving pods, e.g.
     /// `{ "cloud.google.com/gke-nodepool": "lumen-ssd" }`. Empty means the
     /// scheduler picks from every node, as before.
@@ -268,6 +273,16 @@ pub struct PlacementSpec {
     /// the cluster's general pool.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tolerations: Vec<Toleration>,
+}
+
+impl Default for PlacementSpec {
+    fn default() -> Self {
+        Self {
+            initial_machine_type: default_initial_machine_type(),
+            node_selector: BTreeMap::new(),
+            tolerations: Vec::new(),
+        }
+    }
 }
 
 /// One entry of [`PlacementSpec::tolerations`], mirroring the Kubernetes
@@ -654,6 +669,9 @@ pub struct LumenStatus {
     /// can distinguish "complete" from "unknown policy".
     #[serde(default)]
     pub reshard: LumenReshardStatus,
+    /// Data-plane capacity status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<LumenCapacityStatus>,
     /// Last human-readable reconcile message.
     #[serde(default)]
     pub message: String,
@@ -667,6 +685,31 @@ pub struct LumenStatus {
     /// [`super::reconcile`]'s no-I/O `status_patch` contract.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conditions: Vec<service_k8s::Condition>,
+}
+
+/// Data-plane capacity status.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct LumenCapacityStatus {
+    /// Current active GCE machine type.
+    #[serde(default)]
+    pub current_machine_type: String,
+    /// Target GCE machine type.
+    #[serde(default)]
+    pub target_machine_type: String,
+    /// Transition generation count.
+    #[serde(default)]
+    pub transition_generation: u64,
+    /// Capacity lifecycle phase (`Stable` | `CapacityBlocked`).
+    #[serde(default)]
+    pub phase: String,
+    /// Whether the old healthy member remains authoritative during transition/block.
+    #[serde(default)]
+    pub old_member_authoritative: bool,
+    /// Human-readable capacity status message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -742,6 +785,13 @@ impl LumenSpec {
     /// composes — a rule added here holds for both, and a rule added anywhere
     /// else would not.
     pub fn validate(&self) -> Result<(), String> {
+        if !super::capacity::is_valid_direct_gce_machine_type(&self.placement.initial_machine_type)
+        {
+            return Err(format!(
+                "initialMachineType ({}) is not an allowed direct GCE machine type; service-tier names are forbidden",
+                self.placement.initial_machine_type
+            ));
+        }
         if let Some(limit) = self.body_limit_bytes {
             if limit < MIN_BODY_LIMIT_BYTES || limit > MAX_BODY_LIMIT_BYTES {
                 return Err(format!(
@@ -971,7 +1021,10 @@ fn default_grace_secs() -> u64 {
     30
 }
 fn default_raft_storage() -> String {
-    "20Gi".into()
+    "10Gi".into()
+}
+fn default_initial_machine_type() -> String {
+    "e2-standard-2".into()
 }
 
 #[cfg(test)]
@@ -1000,6 +1053,31 @@ mod tests {
             peer_tls_secret: None,
             serving_tls_secret: None,
             body_limit_bytes: None,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_valid_direct_gce_machine_type() {
+        let mut spec = test_spec();
+        assert!(spec.validate().is_ok());
+
+        spec.placement.initial_machine_type = "n2-standard-4".into();
+        assert!(spec.validate().is_ok());
+
+        spec.placement.initial_machine_type = "c2-standard-8".into();
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_service_tier_machine_types() {
+        let mut spec = test_spec();
+        for invalid in ["lumen-premium", "bronze", "small", "tier-1", "large"] {
+            spec.placement.initial_machine_type = invalid.into();
+            let err = spec.validate().expect_err("expected error");
+            assert!(
+                err.contains("initialMachineType"),
+                "error message should name initialMachineType: {err}"
+            );
         }
     }
 
