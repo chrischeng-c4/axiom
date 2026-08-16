@@ -52,6 +52,7 @@ terraform -chdir="$LUMEN_TERRAFORM" fmt -check -recursive
 bash "$ACCEPTANCE_ROOT/tests/acceptance_mode_selection.sh"
 bash "$ACCEPTANCE_ROOT/tests/manifest_render_matrix.sh"
 bash "$ACCEPTANCE_ROOT/tests/lumen_pki_ownership.sh"
+bash "$ACCEPTANCE_ROOT/tests/lumen_capacity_ownership.sh"
 
 # Validate in a disposable copy so provider initialization never writes a
 # lock/cache artifact into the source tree.
@@ -82,7 +83,7 @@ mkdir -p "$validate_root/lumen-terraform"
 tar -C "$LUMEN_TERRAFORM" -cf - \
   --exclude='.terraform' --exclude='.terraform.lock.hcl' . |
   tar -C "$validate_root/lumen-terraform" -xf -
-for pki_dir in modules/lumen-pki examples/installation; do
+for pki_dir in modules/lumen-pki modules/lumen-capacity examples/installation; do
   pki_slug="${pki_dir//\//-}"
   TF_DATA_DIR="$validate_root/.terraform-$pki_slug" terraform \
     -chdir="$validate_root/lumen-terraform/$pki_dir" init -backend=false -input=false
