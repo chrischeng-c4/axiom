@@ -1,9 +1,7 @@
 """Unit tests for Lumen request body limit decisions (#2584) outside EC matrix."""
-from pathlib import Path
-import sys
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+import _design_path  # noqa: F401
 
 from lumen.body_limit.admission import (
     DEFAULT_BODY_LIMIT_BYTES,
