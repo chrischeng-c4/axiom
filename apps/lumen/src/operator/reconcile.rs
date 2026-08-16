@@ -766,7 +766,6 @@ impl ManagedService for Lumen {
     ) -> impl std::future::Future<Output = anyhow::Result<service_k8s::service::ReconcilePlan>> + Send
     {
         let validation = self.spec.validate();
-        let children = render::render(self);
         // #2876: the serving ServiceAccount's `system:auth-delegator` binding
         // is cluster-scoped, so it cannot be one of `children` — those are all
         // applied into the CR's namespace. This hook is where it goes: it is
@@ -792,6 +791,25 @@ impl ManagedService for Lumen {
                     serde_json::Value::String(error),
                 );
             }
+
+            // Fetch in-cluster capacity catalog from ConfigMap published by Terraform (catalog.tf)
+            let catalog = crate::operator::capacity::fetch_capacity_catalog(
+                &client,
+                crate::operator::capacity::DEFAULT_CATALOG_NAMESPACE,
+                crate::operator::capacity::DEFAULT_CATALOG_CONFIG_MAP_NAME,
+            )
+            .await
+            .map_err(|rejection| anyhow::anyhow!(rejection.message))?;
+
+            // Resolve direct GCE machine type from the discovered catalog
+            let profile = crate::operator::capacity::resolve_machine_type(
+                &lumen.spec.placement.initial_machine_type,
+                &catalog,
+            )
+            .map_err(|rejection| anyhow::anyhow!(rejection.message))?;
+
+            let children = render::render_with_profile(&lumen, &profile);
+
             Ok(service_k8s::service::ReconcilePlan {
                 children,
                 context: serde_json::Value::Object(context),

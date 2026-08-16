@@ -173,6 +173,21 @@ pub(crate) fn hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, St
 /// membership-aware whole-layer transition before changing pod count.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
+    render_with_profile_opt(lumen, None)
+}
+
+/// Render child objects using an explicitly resolved capacity profile.
+pub fn render_with_profile(
+    lumen: &Lumen,
+    profile: &super::capacity::ResolvedProfile,
+) -> Vec<Value> {
+    render_with_profile_opt(lumen, Some(profile))
+}
+
+fn render_with_profile_opt(
+    lumen: &Lumen,
+    profile: Option<&super::capacity::ResolvedProfile>,
+) -> Vec<Value> {
     let name = instance(lumen);
     let ns = namespace(lumen);
     let cx = ctx(lumen, &name, &ns);
@@ -191,7 +206,7 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
     out.push(bsa);
     out.push(serving_configmap(lumen, &cx));
     out.extend([
-        serving_statefulset(lumen, &cx, &headless),
+        serving_statefulset(lumen, &cx, &headless, profile),
         render::headless_service_with_ports(
             &cx,
             &headless,
@@ -513,7 +528,12 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
 /// raft-only env vars and resets the apply-time replica count to exactly 1
 /// (#1317) — more than one pod would be an uncoordinated shard-0 copy with no
 /// consensus link.
-fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Value {
+fn serving_statefulset(
+    lumen: &Lumen,
+    cx: &RenderCtx<'_>,
+    headless: &str,
+    profile: Option<&super::capacity::ResolvedProfile>,
+) -> Value {
     let s = &lumen.spec.serving;
     let sa_name = serving_service_account_name(lumen);
     let res = render::requested_resources(&s.cpu, &s.memory);
@@ -642,19 +662,36 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         lifecycle: None,
         volumes,
         volume_mounts,
-        affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
-        // `spec.placement` names the node pool; the anti-affinity above stays
-        // operator-owned so asking for a pool can never cost the constraint
-        // that keeps two replicas of a shard off one host.
-        node_selector: (!lumen.spec.placement.node_selector.is_empty())
-            .then(|| json!(lumen.spec.placement.node_selector)),
-        tolerations: lumen
-            .spec
-            .placement
-            .tolerations
-            .iter()
-            .map(|t| json!(t))
-            .collect(),
+        affinity: Some(super::capacity::cross_namespace_dedicated_data_node_affinity()),
+        // `profile` supplies the operator-resolved capacity selector and toleration;
+        // `spec.placement` layers additional user selectors/tolerations.
+        // The cross-namespace anti-affinity above stays operator-owned so data members of any
+        // instance or namespace are kept mutually exclusive per node.
+        node_selector: {
+            let mut sel = std::collections::BTreeMap::new();
+            if let Some(profile) = profile {
+                sel.insert(profile.selector_key.clone(), profile.selector_value.clone());
+            }
+            for (k, v) in &lumen.spec.placement.node_selector {
+                sel.insert(k.clone(), v.clone());
+            }
+            (!sel.is_empty()).then(|| json!(sel))
+        },
+        tolerations: {
+            let mut tols = Vec::new();
+            if let Some(profile) = profile {
+                tols.push(json!({
+                    "key": profile.selector_key,
+                    "operator": "Equal",
+                    "value": profile.selector_value,
+                    "effect": "NoSchedule",
+                }));
+            }
+            for t in &lumen.spec.placement.tolerations {
+                tols.push(json!(t));
+            }
+            tols
+        },
         topology_spread_constraints: vec![
             spread("topology.kubernetes.io/zone"),
             spread("kubernetes.io/hostname"),
@@ -764,7 +801,9 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         env.push(json!({ "name": "LUMEN_TLS", "value": "on" }));
         env.push(json!({ "name": "LUMEN_TLS_CERT", "value": format!("{SERVING_TLS_MOUNT_PATH}/tls.crt") }));
         env.push(json!({ "name": "LUMEN_TLS_KEY", "value": format!("{SERVING_TLS_MOUNT_PATH}/tls.key") }));
-        env.push(json!({ "name": "LUMEN_TLS_CA", "value": format!("{SERVING_TLS_MOUNT_PATH}/ca.crt") }));
+        env.push(
+            json!({ "name": "LUMEN_TLS_CA", "value": format!("{SERVING_TLS_MOUNT_PATH}/ca.crt") }),
+        );
         // The names the leaf must answer to, from the operator that asked for
         // it — the pod has no other way to learn which Service it fronts, and
         // guessing from its own hostname would accept a certificate issued for
