@@ -243,3 +243,8 @@ path = "e2e/body_limit_configurable.rs"
 [[test]]
 name = "vector_filtered_recall_after_replace"
 path = "e2e/vector_filtered_recall_after_replace.rs"
+
+[[test]]
+name = "feature_gated_targets_are_registered"
+path = "e2e/feature_gated_targets_are_registered.rs"
+
