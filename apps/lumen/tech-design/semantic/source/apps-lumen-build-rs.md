@@ -22,7 +22,10 @@ No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+
+```rust
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-build-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Build script: stamp `LUMEN_GIT_SHA` and `LUMEN_BUILT_AT` into the binary
 //! so `GET /version` can report provenance.
 //!
@@ -36,7 +39,8 @@ No public AST symbols.
 fn main() {
     build_stamp::stamp("LUMEN");
 }
-````
+// CODEGEN-END
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

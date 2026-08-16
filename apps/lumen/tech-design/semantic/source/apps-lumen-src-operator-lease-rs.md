@@ -22,7 +22,10 @@ No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+
+```rust
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-lease-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! lumen's leader-election lease — now the shared `service_k8s::lease`.
 //!
 //! The implementation moved to `libs/service-k8s` (the Lease name is parameterized
@@ -30,7 +33,8 @@ No public AST symbols.
 //! so existing `crate::operator::lease::*` paths still resolve.
 
 pub use service_k8s::lease::*;
-````
+// CODEGEN-END
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

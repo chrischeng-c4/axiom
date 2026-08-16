@@ -29,7 +29,8 @@ Public API manifest for `apps/lumen/src/wal_nats.rs` generated from AST during S
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-wal_nats-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! NATS JetStream backend for [`WalLog`].
@@ -277,8 +278,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

@@ -61,6 +61,7 @@ Public API manifest for `apps/lumen/src/routing.rs` generated from AST during Sc
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
+
 ```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#rust-source-unit
 // CODEGEN-BEGIN
@@ -765,15 +766,16 @@ fn parse_cursor(s: &str) -> Option<u64> {
 
 pub(crate) fn search_request_offset(req: &SearchRequest) -> Result<usize> {
     if req.offset != 0 && req.cursor.is_some() {
-        return Err(StorageError::InvalidPagination(
-            "offset and cursor cannot be combined".into(),
-        )
-        .into());
+        return Err(
+            StorageError::InvalidPagination("offset and cursor cannot be combined".into()).into(),
+        );
     }
     match req.cursor.as_deref().and_then(parse_cursor) {
         Some(offset) => usize::try_from(offset).map_err(|_| {
-            StorageError::InvalidPagination("cursor offset does not fit this server platform".into())
-                .into()
+            StorageError::InvalidPagination(
+                "cursor offset does not fit this server platform".into(),
+            )
+            .into()
         }),
         None => usize::try_from(req.offset).map_err(|_| {
             StorageError::InvalidPagination("offset does not fit this server platform".into())
@@ -981,7 +983,11 @@ mod tests {
             |_, _| None,
         );
 
-        let ids: Vec<_> = resp.hits.iter().map(|hit| hit.external_id.as_str()).collect();
+        let ids: Vec<_> = resp
+            .hits
+            .iter()
+            .map(|hit| hit.external_id.as_str())
+            .collect();
         assert_eq!(ids, ["c", "d"]);
         assert_eq!(resp.total, 4);
     }
@@ -1009,7 +1015,11 @@ mod tests {
                 _ => None,
             },
         );
-        let ids: Vec<_> = resp.hits.iter().map(|hit| hit.external_id.as_str()).collect();
+        let ids: Vec<_> = resp
+            .hits
+            .iter()
+            .map(|hit| hit.external_id.as_str())
+            .collect();
         assert_eq!(ids, ["middle", "older"]);
     }
 

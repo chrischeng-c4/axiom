@@ -68,7 +68,8 @@ Public API manifest for `apps/lumen/src/segment.rs` generated from AST during Sc
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-segment-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Columnar mmap disk segment — Stage 2 disk-tier (Phase 0 + 2a + 2b).
@@ -3681,8 +3682,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

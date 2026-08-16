@@ -29,6 +29,7 @@ Public API manifest for `apps/lumen/src/tokenize.rs` generated from AST during S
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
+
 ```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#rust-source-unit
 // CODEGEN-BEGIN
@@ -41,10 +42,7 @@ Public API manifest for `apps/lumen/src/tokenize.rs` generated from AST during S
 //! - `whitespace_lower` — lowercase + Unicode whitespace split. Default.
 //!   Adequate for English; Chinese falls through as one big token.
 //! - `jieba` — Chinese word segmentation. Feature-gated; falls back to
-//!   CJK-bigram tokenization (Han/Hiragana/Katakana/Hangul runs emit overlapping
-//!   2-char bigrams; non-CJK runs use whitespace_lower) when the `jieba`
-//!   feature is off. *Note: Documents indexed under the old whole-string
-//!   fallback need reindex before new-query CJK-bigram tokens will match them.*
+//!   `whitespace_lower` when the `jieba` feature is off.
 //! - `ngram` — character N-grams (default 2..3). Useful for substring
 //!   search on identifier-like fields.
 //!
@@ -112,6 +110,7 @@ pub(crate) fn for_whitespace_lower_cow<'a>(
     emitted
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1975" reason="logic section in tokenize.rs is hand-written pending codegen support">
 #[cfg(feature = "jieba")]
 fn jieba(text: &str) -> Vec<String> {
     use std::sync::OnceLock;
@@ -131,12 +130,12 @@ fn jieba(text: &str) -> Vec<String> {
     // CJK runs emit overlapping 2-char bigrams (or a single unigram for length-1 runs).
     // Non-CJK runs are tokenized via the existing for_whitespace_lower path.
     // Output preserves scan order (CJK and non-CJK tokens interleaved as they appear).
-    
+
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return vec![];
     }
-    
+
     let mut tokens = Vec::new();
     let chars: Vec<char> = trimmed.chars().collect();
     let mut i = 0;
@@ -150,9 +149,9 @@ fn jieba(text: &str) -> Vec<String> {
         while i < chars.len() && is_cjk_char(chars[i]) == is_cjk {
             i += 1;
         }
-        
+
         let run: String = chars[run_start..i].iter().collect();
-        
+
         if is_cjk {
             // CJK run: emit overlapping bigrams (or unigram for length 1)
             let run_chars: Vec<char> = run.chars().collect();
@@ -169,7 +168,7 @@ fn jieba(text: &str) -> Vec<String> {
             for_whitespace_lower(&run, |tok| tokens.push(tok));
         }
     }
-    
+
     tokens
 }
 
@@ -188,6 +187,7 @@ fn is_cjk_char(c: char) -> bool {
         // Hangul syllables: U+AC00..U+D7A3
         || (code >= 0xAC00 && code <= 0xD7A3)
 }
+// </HANDWRITE>
 
 fn ngram(text: &str, min: usize, max: usize) -> Vec<String> {
     let chars: Vec<char> = text
@@ -239,6 +239,7 @@ mod tests {
         assert!(tokenize("a", Analyzer::Ngram).is_empty());
     }
 
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#1975" reason="unit-test section in tokenize.rs is hand-written pending codegen support">
     #[test]
     fn jieba_fallback_when_no_feature() {
         let tokens = tokenize("北京大學", Analyzer::Jieba);
@@ -286,6 +287,7 @@ mod tests {
         let tokens = tokenize("   ", Analyzer::Jieba);
         assert_eq!(tokens, Vec::<String>::new());
     }
+    // </HANDWRITE>
 }
 // CODEGEN-END
 ```

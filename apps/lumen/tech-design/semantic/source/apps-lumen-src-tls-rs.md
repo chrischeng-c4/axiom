@@ -37,7 +37,10 @@ Public API manifest for `apps/lumen/src/tls.rs` generated from AST during Score 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+
+```rust
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! mTLS configuration for the peer (`:8082`) transport.
 //!
 //! v1 ships the configuration surface — paths to cert / key / CA bundle
@@ -772,7 +775,8 @@ LkjT2UdpFBDZGWHwqDRhXX8k
         );
     }
 }
-````
+// CODEGEN-END
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->
