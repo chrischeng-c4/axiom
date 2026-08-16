@@ -31,6 +31,7 @@ fn lumen_with_backup() -> Lumen {
         service_account_annotations: std::collections::BTreeMap::new(),
         peer_tls_secret: None,
         serving_tls_secret: None,
+        body_limit_bytes: None,
     };
     spec.serving.backup = Some(ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {

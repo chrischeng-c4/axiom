@@ -79,6 +79,11 @@ spec:
                 - disabled
                 - required
                 type: string
+              bodyLimitBytes:
+                description: 'Data-plane request body size limit (bytes). Requests with `Content-Length` exceeding this are rejected with 413; streamed bodies are bounded mid-read. Defaults to 8 MiB. Unset means the server default (#2584). Accepted range: 1 MiB (1048576) to 64 MiB (67108864).'
+                type: integer
+                minimum: 0.0
+                nullable: true
               image:
                 description: Serving container image, e.g. `lumen:latest`. Required.
                 type: string
@@ -584,6 +589,11 @@ spec:
                     - disabled
                     - required
                     type: string
+                  bodyLimitBytes:
+                    description: 'Data-plane request body size limit (bytes). Requests with `Content-Length` exceeding this are rejected with 413; streamed bodies are bounded mid-read. Defaults to 8 MiB. Unset means the server default (#2584). Accepted range: 1 MiB (1048576) to 64 MiB (67108864).'
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
                   image:
                     description: Serving container image, e.g. `lumen:latest`. Required.
                     type: string

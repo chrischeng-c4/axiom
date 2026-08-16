@@ -27,6 +27,15 @@ use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub const ADMIN_ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
+/// Resolve the data-plane body limit from `LUMEN_BODY_LIMIT_BYTES`, falling
+/// back to [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] (8 MiB) when unset or invalid.
+pub fn body_limit_bytes_from_env() -> usize {
+    std::env::var("LUMEN_BODY_LIMIT_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(ADMIN_ROUTE_BODY_LIMIT_BYTES)
+}
+
 /// Upper bound on one batch's serialized `snapshot` payload (#1396 R4):
 /// [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] is the route's hard 413 cutoff, but
 /// [`snapshot_reshard_batches`] used to cap batches only by external-id count
@@ -214,9 +223,13 @@ pub fn snapshot_reshard_batches(
     to: &VirtualBucketShardMap,
     buckets: &BTreeSet<u32>,
     max_external_ids_per_batch: usize,
+    max_batch_bytes: usize,
 ) -> Result<Vec<ReshardBatch>> {
     if max_external_ids_per_batch == 0 {
         bail!("max_external_ids_per_batch must be > 0");
+    }
+    if max_batch_bytes == 0 {
+        bail!("max_batch_bytes must be > 0");
     }
 
     let moves = bucket_moves(from, to)?;
@@ -277,7 +290,7 @@ pub fn snapshot_reshard_batches(
 
         for chunk in pending.chunks(max_external_ids_per_batch) {
             let mut sub_batches = Vec::new();
-            byte_cap_chunk(snapshot, chunk, MAX_BATCH_BYTES, &mut sub_batches)?;
+            byte_cap_chunk(snapshot, chunk, max_batch_bytes, &mut sub_batches)?;
             for (external_ids, partial) in sub_batches {
                 batches.push(ReshardBatch {
                     from_map_version: from.version(),
@@ -929,7 +942,9 @@ mod tests {
         let from = VirtualBucketShardMap::new(1, vec![0, 0, 0, 0], 1).unwrap();
         let to = VirtualBucketShardMap::new(2, vec![0, 1, 0, 1], 2).unwrap();
         let all_buckets: BTreeSet<u32> = (0..4).collect();
-        let batches = snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 3).unwrap();
+        let batches =
+            snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 3, MAX_BATCH_BYTES)
+                .unwrap();
 
         assert!(!batches.is_empty());
         assert!(batches
@@ -1091,8 +1106,15 @@ mod tests {
         // A generous id-count cap so byte size, not id count, is what
         // forces the split.
         let all_buckets: BTreeSet<u32> = BTreeSet::from([0]);
-        let batches =
-            snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 10_000).unwrap();
+        let batches = snapshot_reshard_batches(
+            &snapshot,
+            &from,
+            &to,
+            &all_buckets,
+            10_000,
+            MAX_BATCH_BYTES,
+        )
+        .unwrap();
 
         assert!(
             batches.len() > 1,

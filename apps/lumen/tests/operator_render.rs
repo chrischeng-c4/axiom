@@ -56,6 +56,7 @@ fn dev_spec() -> LumenSpec {
         service_account_annotations: BTreeMap::new(),
         peer_tls_secret: None,
         serving_tls_secret: None,
+        body_limit_bytes: None,
     }
 }
 
@@ -85,6 +86,7 @@ fn prod_spec() -> LumenSpec {
         service_account_annotations: BTreeMap::new(),
         peer_tls_secret: None,
         serving_tls_secret: None,
+        body_limit_bytes: None,
     }
 }
 

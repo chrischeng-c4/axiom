@@ -954,7 +954,7 @@ pub fn router_with_admission(
         // /version, /docs) are unaffected as they are merged separately and stay
         // unbounded.
         .layer(service_http::body_limit_layer(
-            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
+            crate::reshard::body_limit_bytes_from_env(),
         ));
     let data_plane = match admission {
         Some(controller) => data_plane.route_layer(from_fn_with_state(
