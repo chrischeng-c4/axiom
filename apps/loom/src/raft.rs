@@ -144,12 +144,16 @@ impl raft_runtime::RaftStateMachine for LoomSm {
         Ok(())
     }
 
-    fn snapshot(&self) -> anyhow::Result<Vec<u8>> {
-        Ok(self.encode_snapshot())
+    fn snapshot(&self, writer: &mut dyn std::io::Write) -> anyhow::Result<()> {
+        let bytes = self.encode_snapshot();
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
-    fn restore(&self, snapshot: &[u8]) -> anyhow::Result<()> {
-        self.load_snapshot(snapshot);
+    fn restore(&self, reader: &mut dyn std::io::Read) -> anyhow::Result<()> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        self.load_snapshot(&bytes);
         self.persist_snapshot();
         Ok(())
     }

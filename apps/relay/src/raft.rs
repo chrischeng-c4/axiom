@@ -314,8 +314,8 @@ impl RaftStateMachine for RelayStateMachine {
         Ok(())
     }
 
-    fn snapshot(&self) -> Result<Vec<u8>> {
-        Ok(serde_json::to_vec(&EngineSnapshot {
+    fn snapshot(&self, writer: &mut dyn std::io::Write) -> Result<()> {
+        let bytes = serde_json::to_vec(&EngineSnapshot {
             up_to: self.applied_index(),
             subjects: self.relay.dump_live()?,
             completed_proposals: self
@@ -323,11 +323,15 @@ impl RaftStateMachine for RelayStateMachine {
                 .lock()
                 .expect("completed proposals")
                 .snapshot(),
-        })?)
+        })?;
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
-    fn restore(&self, snapshot: &[u8]) -> Result<()> {
-        let snap: EngineSnapshot = serde_json::from_slice(snapshot)?;
+    fn restore(&self, reader: &mut dyn std::io::Read) -> Result<()> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        let snap: EngineSnapshot = serde_json::from_slice(&bytes)?;
         self.relay.load_live(snap.subjects)?;
         self.completed
             .lock()

@@ -31,6 +31,8 @@ Public API manifest for `libs/raft-runtime/src/state_machine.rs` captured during
 ````rust
 //! The `RaftStateMachine` a consumer supplies to [`crate::RaftHost`].
 
+use std::io::{Read, Write};
+
 use raft_core::Index;
 
 /// Opaque committed-entry bytes (raft_core's `RaftEntry.command`). The host never
@@ -55,12 +57,12 @@ pub trait RaftStateMachine: Send + Sync + 'static {
 
     /// Serialize the full state as of the last applied index. The host ships
     /// these bytes via `InstallSnapshot` and stores them through `node.compact`.
-    fn snapshot(&self) -> anyhow::Result<Vec<u8>>;
+    fn snapshot(&self, writer: &mut dyn Write) -> anyhow::Result<()>;
 
     /// Replace the entire state from snapshot bytes (a follower installing a
     /// leader's snapshot, or cold-start). After this, [`applied_index`] must
     /// return the snapshot's index.
-    fn restore(&self, snapshot: &[u8]) -> anyhow::Result<()>;
+    fn restore(&self, reader: &mut dyn Read) -> anyhow::Result<()>;
 
     /// Highest index durably applied by this state machine (survives restart).
     /// Drives the host's commit-wait (read-your-write) and the idempotency floor.

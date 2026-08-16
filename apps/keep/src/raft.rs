@@ -95,21 +95,25 @@ impl RaftStateMachine for KvStateMachine {
         Ok(())
     }
 
-    fn snapshot(&self) -> Result<Vec<u8>> {
+    fn snapshot(&self, writer: &mut dyn std::io::Write) -> Result<()> {
         let values = self
             .engine
             .dump_values()
             .into_iter()
             .filter(|(k, _)| self.cluster.shard_for(k) == self.shard)
             .collect();
-        Ok(serde_json::to_vec(&ShardSnapshot {
+        let bytes = serde_json::to_vec(&ShardSnapshot {
             up_to: self.applied_index(),
             values,
-        })?)
+        })?;
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
-    fn restore(&self, snapshot: &[u8]) -> Result<()> {
-        let snap: ShardSnapshot = serde_json::from_slice(snapshot)?;
+    fn restore(&self, reader: &mut dyn std::io::Read) -> Result<()> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        let snap: ShardSnapshot = serde_json::from_slice(&bytes)?;
         self.engine.load_values(snap.values);
         self.applied.store(snap.up_to, Ordering::Release);
         Ok(())

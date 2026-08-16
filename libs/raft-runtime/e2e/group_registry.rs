@@ -53,16 +53,20 @@ impl RaftStateMachine for SequenceSm {
         Ok(())
     }
 
-    fn snapshot(&self) -> anyhow::Result<Vec<u8>> {
+    fn snapshot(&self, writer: &mut dyn std::io::Write) -> anyhow::Result<()> {
         let cmds = self.commands.lock().unwrap().clone();
-        Ok(serde_json::to_vec(&cmds)?)
+        let bytes = serde_json::to_vec(&cmds)?;
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
-    fn restore(&self, snapshot: &[u8]) -> anyhow::Result<()> {
-        if snapshot.is_empty() {
+    fn restore(&self, reader: &mut dyn std::io::Read) -> anyhow::Result<()> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        if bytes.is_empty() {
             return Ok(());
         }
-        let cmds: Vec<u64> = serde_json::from_slice(snapshot)?;
+        let cmds: Vec<u64> = serde_json::from_slice(&bytes)?;
         let last = cmds.len() as u64;
         *self.commands.lock().unwrap() = cmds;
         self.applied.store(last, Ordering::Release);

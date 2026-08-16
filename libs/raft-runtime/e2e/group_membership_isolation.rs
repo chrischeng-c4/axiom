@@ -53,11 +53,11 @@ impl RaftStateMachine for NullSm {
         Ok(())
     }
 
-    fn snapshot(&self) -> anyhow::Result<Vec<u8>> {
-        Ok(Vec::new())
+    fn snapshot(&self, _writer: &mut dyn std::io::Write) -> anyhow::Result<()> {
+        Ok(())
     }
 
-    fn restore(&self, _snapshot: &[u8]) -> anyhow::Result<()> {
+    fn restore(&self, _reader: &mut dyn std::io::Read) -> anyhow::Result<()> {
         Ok(())
     }
 
