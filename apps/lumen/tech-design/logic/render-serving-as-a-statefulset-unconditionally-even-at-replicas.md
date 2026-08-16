@@ -29,8 +29,8 @@ nodes:
   base:       { kind: process,  label: "build StatefulSet base: PVC volumeClaimTemplate 'raft' @ /var/lib/lumen + headless Service + ClusterIP Service + PDB" }
   raft_ha:    { kind: decision, label: "replicasPerShard > 1?" }
   raft_env:   { kind: process,  label: "add raft downward-API env (POD_NAME/POD_NAMESPACE/REPLICAS_PER_SHARD/VOTER_COUNT/LUMEN_HEADLESS_SERVICE); replicas = shardCount * replicasPerShard; no HPA" }
-  solo_env:   { kind: process,  label: "no raft env (single member, no consensus); replicas = autoscaling.minReplicas; attach HPA (scaleTargetRef=StatefulSet)" }
-  emit:       { kind: terminal, label: "emit StatefulSet + headless Service + Service + [HPA] + PDB (+ observability if enabled)" }
+  solo_env:   { kind: process,  label: "no raft env (single member, no consensus); replicas = 1; no HPA" }
+  emit:       { kind: terminal, label: "emit StatefulSet + headless Service + Service + PDB (+ observability if enabled)" }
 edges:
   - { from: start,   to: base }
   - { from: base,    to: raft_ha }
@@ -43,8 +43,8 @@ flowchart TD
     start([render lumen serving fleet]) --> base[build StatefulSet base: raft PVC + headless Svc + Svc + PDB]
     base --> raft_ha{replicasPerShard > 1?}
     raft_ha -->|yes: raft consensus| raft_env[raft downward-API env; replicas = shardCount * replicasPerShard; no HPA]
-    raft_ha -->|no: single member| solo_env[no raft env; replicas = autoscaling.minReplicas; HPA -> StatefulSet]
-    raft_env --> emit([StatefulSet + headless Svc + Svc + optional HPA + PDB])
+    raft_ha -->|no: single member| solo_env[no raft env; replicas = 1; no HPA]
+    raft_env --> emit([StatefulSet + headless Svc + Svc + PDB])
     solo_env --> emit
 ```
 ## Unit Test

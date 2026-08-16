@@ -22,7 +22,6 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 |------|--------|------|------------|------|-----------|
 | `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 181 |  |
 | `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 463 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 609 |  |
 | `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 440 |  |
 | `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 671 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 43 |  |
@@ -57,8 +56,8 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 //! as a StatefulSet with a durable per-pod `raft` PVC backing the WAL —
 //! `replicasPerShard` only gates raft consensus, never persistence. The
 //! reconcile loop in [`super::reconcile`] turns this spec into StatefulSet,
-//! Service, ConfigMap, HPA (single-member regime only), PDB, and
-//! ServiceAccount objects, garbage-collected via owner references.
+//! Service, ConfigMap, PDB, and ServiceAccount objects, garbage-collected
+//! via owner references.
 
 use std::collections::BTreeMap;
 
@@ -99,7 +98,7 @@ pub struct LumenSpec {
 
     /// Physical storage shard count. Data ownership is resolved through the
     /// versioned virtual-bucket map, not permanent `hash % shardCount`
-    /// routing. HPA never changes this value.
+    /// routing.
     #[serde(default = "default_shard_count")]
     pub shard_count: u32,
 
@@ -111,9 +110,9 @@ pub struct LumenSpec {
 
     /// Raft replicas per shard. `1` (default) = a single-member serving
     /// StatefulSet with no raft consensus (still durable — the same
-    /// PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds
-    /// raft-HA: a fixed peer set whose pods inject the downward-API env
-    /// `raft_runtime::cluster` reads (no HPA — raft needs a known membership).
+    /// PVC-backed `raft` volume). `> 1` adds raft-HA: a fixed peer set whose
+    /// pods inject the downward-API env `raft_runtime::cluster` reads (raft
+    /// needs a known membership).
     #[serde(default = "default_replicas_per_shard")]
     pub replicas_per_shard: u32,
 
@@ -205,9 +204,8 @@ pub struct LumenSpec {
     #[serde(default)]
     pub placement: PlacementSpec,
 
-    /// Operator-owned storage reshard policy. HPA never changes storage
-    /// ownership; this policy only prepares/recommends explicit shard topology
-    /// changes.
+    /// Operator-owned storage reshard policy. This policy only
+    /// prepares/recommends explicit shard topology changes.
     #[serde(default)]
     pub reshard_policy: ReshardPolicy,
 
@@ -557,14 +555,11 @@ impl AuthMode {
     }
 }
 
-/// Stateless serving-fleet shape: autoscaling bounds + per-pod resources.
+/// Stateless serving-fleet shape: per-pod resources.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct ServingSpec {
-    /// HPA bounds + CPU target.
-    #[serde(default)]
-    pub autoscaling: Autoscaling,
     /// Per-pod CPU, applied as request==limit (Guaranteed QoS). e.g. `"2"`.
     #[serde(default = "default_serving_cpu")]
     pub cpu: String,
@@ -614,7 +609,6 @@ pub struct ServingSpec {
 impl Default for ServingSpec {
     fn default() -> Self {
         Self {
-            autoscaling: Autoscaling::default(),
             cpu: default_serving_cpu(),
             memory: default_serving_memory(),
             grace_secs: default_grace_secs(),
@@ -672,30 +666,6 @@ impl std::ops::Deref for ServingBackupSpec {
     }
 }
 
-/// HPA bounds for the serving fleet.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
-pub struct Autoscaling {
-    /// Floor (also the StatefulSet's apply-time replica count in HPA mode).
-    pub min_replicas: i32,
-    /// Ceiling.
-    pub max_replicas: i32,
-    /// Target average CPU utilization (%) — read QPS proxied by CPU.
-    pub target_cpu_utilization: i32,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
-impl Default for Autoscaling {
-    fn default() -> Self {
-        Self {
-            min_replicas: 3,
-            max_replicas: 12,
-            target_cpu_utilization: 70,
-        }
-    }
-}
-
 /// Status subresource, written back by the reconcile loop.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -710,7 +680,7 @@ pub struct LumenStatus {
     /// Ready serving replicas (from the StatefulSet status).
     #[serde(default)]
     pub serving_ready_replicas: i32,
-    /// Desired serving replicas (HPA floor at apply, or the live count).
+    /// Desired serving replicas (apply-time count, or the live count).
     #[serde(default)]
     pub desired_replicas: i32,
     /// Effective shard count.
@@ -835,8 +805,7 @@ impl LumenSpec {
             // local copies behind one Service — confirmed empirically on a
             // kind cluster (a write via one pod is invisible on the others;
             // a load-balanced Service returns divergent results for the
-            // same read). Clamp to exactly 1 regardless of the CR's
-            // `serving.autoscaling` bounds; CPU-driven scaling requires
+            // same read). Clamp to exactly 1; multi-replica scaling requires
             // opting into `replicasPerShard > 1` (raft-HA).
             1
         }

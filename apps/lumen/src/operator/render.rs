@@ -511,8 +511,8 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
 /// mount, PVC, probes, and observability annotations on top. At
 /// `replicasPerShard <= 1` (single shard) the single-member path strips the
 /// raft-only env vars and resets the apply-time replica count to exactly 1
-/// (#1317) — `autoscaling.minReplicas` is ignored here since more than one
-/// pod would be an uncoordinated shard-0 copy with no consensus link.
+/// (#1317) — more than one pod would be an uncoordinated shard-0 copy with no
+/// consensus link.
 fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Value {
     let s = &lumen.spec.serving;
     let sa_name = serving_service_account_name(lumen);
@@ -674,9 +674,8 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
                 lumen.spec.shard_count as i32
             } else {
                 // Single shard, single member, no raft consensus (#1317):
-                // clamp to exactly 1 regardless of `autoscaling.minReplicas`
-                // — see `LumenSpec::storage_pod_count` for why more than one
-                // pod here means uncoordinated shard-0 copies.
+                // clamp to exactly 1 — see `LumenSpec::storage_pod_count`
+                // for why more than one pod here means uncoordinated shard-0 copies.
                 1
             };
             spec.insert("replicas".into(), json!(replicas));

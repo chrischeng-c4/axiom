@@ -155,12 +155,6 @@ semantic_domain:
           - name: "ServingBackupSpec"
             kind: "struct"
             public: true
-          - name: "Autoscaling"
-            kind: "struct"
-            public: true
-          - name: "default"
-            kind: "function"
-            public: false
           - name: "LumenStatus"
             kind: "struct"
             public: true

@@ -20,11 +20,6 @@ spec:
   # The value is spelled `disabled`, not `off` — YAML 1.1 reads a bare `off`
   # as the boolean false.
   auth: disabled
-  serving:
-    autoscaling:
-      minReplicas: 1
-      maxReplicas: 3
-      targetCpuUtilization: 70
 
 ---
 # Production: 6 shards x 3 replicas per shard, Lumen-owned raft WAL,
@@ -50,10 +45,6 @@ spec:
   # `identityAudiences` is rejected by the API server, not silently ignored.
   auth: required
   serving:
-    autoscaling:
-      minReplicas: 6
-      maxReplicas: 12
-      targetCpuUtilization: 65
     cpu: "4"
     memory: 16Gi
     graceSecs: 45

@@ -187,10 +187,6 @@ spec:
   serving:
     cpu: "${SERVING_CPU}"
     memory: "${SERVING_MEMORY}"
-    autoscaling:
-      minReplicas: 1
-      maxReplicas: 3
-      targetCpuUtilization: 70
 EOF
 
   echo "   Lumen/${LUMEN_CR_NAME} applied; waiting for the operator to render child objects"
