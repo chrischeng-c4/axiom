@@ -323,42 +323,6 @@ command = "capacity-2538-security"
 evidence_paths = ["evidence/capacity-2538-security.json"]
 
 [[tool.aw.python-ec.cases]]
-id = "capacity-2680-behavior"
-artifact_id = "artifact:lumen/topology-public-contract"
-capability_id = "kubernetes-native-deployment"
-use_case_id = "primary-replicas-topology"
-dimension = "behavior"
-applicability = "td"
-test_path = "src/capacity-2680-behavior.py"
-promise = "The #2680 capacity design admits supported serving fields that omit retired autoscaling, excludes retired autoscaling vocabulary, and deletes only an unwanted stale HPA whose name and complete labels exactly match the operator-rendered object. The closest existing topology capability and use case are reused because this is the serving deployment surface's capacity-removal dimension."
-oracle = "The verifier imports and drives the pure capacity admission and stale-HPA handoff entry points with EC-owned literal field vocabularies, names, labels, and wanted state. Every expected value is transcribed from #2680 R1/R2/R4/AC1/AC3; no expected value is read from the design, and no design-computed validity flag is accepted in place of the observed outcome, vocabulary, action, refusal, or field path."
-target = "rust"
-command = "capacity-2680-behavior"
-evidence_paths = ["evidence/capacity-2680-behavior.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2680 pure capacity design modules have not landed, so the EC import fails closed."
-expected = "The behavior verifier remains a known failure until the design exposes the frozen serving-surface admission and stale-HPA cleanup entry points with typed admitted and cleanup decisions."
-
-[[tool.aw.python-ec.cases]]
-id = "capacity-2680-security"
-artifact_id = "artifact:lumen/topology-public-contract"
-capability_id = "kubernetes-native-deployment"
-use_case_id = "primary-replicas-topology"
-dimension = "security"
-applicability = "td"
-test_path = "src/capacity-2680-security.py"
-promise = "The #2680 capacity design fails closed on every retired autoscaling field and replacement CPU, memory, or disk threshold field, identifies the offending field, still admits the neighbouring supported serving surface, and never deletes a stale-HPA candidate with the wrong name. The closest existing topology capability and use case are reused because this is the serving deployment surface's capacity-removal dimension."
-oracle = "Each refusal is driven through the pure admission entry point with an EC-owned literal forbidden field and checked against the exact reason and field path, while an independently supplied neighbouring supported field set must be admitted. The stale-HPA handoff receives explicit expected and live identities; no expected value is read from the design and no boolean pass flag substitutes for an observed outcome, reason, field path, or action."
-target = "rust"
-command = "capacity-2680-security"
-evidence_paths = ["evidence/capacity-2680-security.json"]
-
-[tool.aw.python-ec.cases.known_failure]
-reason = "The #2680 pure capacity design modules have not landed, so the EC import fails closed."
-expected = "The security verifier remains a known failure until the design exposes structured retired-field and replacement-threshold refusals plus fail-closed stale-HPA cleanup decisions."
-
-[[tool.aw.python-ec.cases]]
 id = "peer-identity-2890-behavior"
 artifact_id = "artifact:lumen/peer-identity-public-contract"
 capability_id = "kubernetes-native-deployment"
