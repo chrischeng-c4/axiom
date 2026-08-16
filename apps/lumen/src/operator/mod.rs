@@ -14,6 +14,8 @@
 //! ```
 
 #[cfg(feature = "operator")]
+pub mod capacity;
+#[cfg(feature = "operator")]
 pub mod certificate;
 #[cfg(feature = "operator")]
 pub mod crd;

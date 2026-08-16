@@ -982,7 +982,7 @@ The operator (`lumen::operator::render`) renders the serving fleet as a
 Kubernetes `StatefulSet` unconditionally — never a `Deployment` — regardless
 of `spec.replicasPerShard`. Every serving pod mounts a durable
 `volumeClaimTemplates`-backed PVC named `raft` at `/var/lib/lumen`, sized by
-`spec.serving.raftStorage` (default `20Gi`) and optionally pinned to
+`spec.serving.raftStorage` (default `10Gi`) and optionally pinned to
 `spec.serving.raftStorageClass`.
 
 This means a pod reschedule, eviction, or node loss never wipes the WAL —

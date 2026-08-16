@@ -33,6 +33,7 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 <!-- type: rust-source-unit lang: rust -->
 
 
+
 ````rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
@@ -49,6 +50,8 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 
+#[cfg(feature = "operator")]
+pub mod capacity;
 #[cfg(feature = "operator")]
 pub mod certificate;
 #[cfg(feature = "operator")]

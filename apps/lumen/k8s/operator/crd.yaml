@@ -123,9 +123,14 @@ spec:
                 nullable: true
                 type: string
               placement:
-                default: {}
+                default:
+                  initialMachineType: e2-standard-2
                 description: Which nodes the serving pods may run on.
                 properties:
+                  initialMachineType:
+                    default: e2-standard-2
+                    description: Initial GCE machine type for the data plane (e.g. `e2-standard-2`). Defaults to `e2-standard-2`. Immutable create-time configuration.
+                    type: string
                   nodeSelector:
                     additionalProperties:
                       type: string
@@ -264,7 +269,7 @@ spec:
                   cpu: '1'
                   memory: 4Gi
                   graceSecs: 30
-                  raftStorage: 20Gi
+                  raftStorage: 10Gi
                   raftStorageClass: null
                 description: Stateless serving-fleet shape.
                 properties:
@@ -320,7 +325,7 @@ spec:
                     description: Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
                     type: string
                   raftStorage:
-                    default: 20Gi
+                    default: 10Gi
                     description: Per-pod WAL/raft hard-state PVC size. Always applied — the serving StatefulSet's `raft` volumeClaimTemplate exists at every `replicasPerShard` value, not only when raft consensus (`> 1`) is active.
                     type: string
                   raftStorageClass:
@@ -377,6 +382,36 @@ spec:
             description: Status subresource, written back by the reconcile loop. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
             nullable: true
             properties:
+              capacity:
+                description: Data-plane capacity status.
+                nullable: true
+                properties:
+                  currentMachineType:
+                    default: ''
+                    description: Current active GCE machine type.
+                    type: string
+                  message:
+                    description: Human-readable capacity status message.
+                    nullable: true
+                    type: string
+                  oldMemberAuthoritative:
+                    default: false
+                    description: Whether the old healthy member remains authoritative during transition/block.
+                    type: boolean
+                  phase:
+                    default: ''
+                    description: Capacity lifecycle phase (`Stable` | `CapacityBlocked`).
+                    type: string
+                  targetMachineType:
+                    default: ''
+                    description: Target GCE machine type.
+                    type: string
+                  transitionGeneration:
+                    default: 0
+                    description: Transition generation count.
+                    type: integer
+                    minimum: 0.0
+                type: object
               conditions:
                 description: |-
                   Kubernetes-convention convergence conditions (#2601): `Ready`, `Progressing`, `ReshardInProgress`. This is the surface `kubectl wait --for=condition=Ready`, Argo CD health assessment, and Flux readiness gates read; `phase` and `reshard.blockingConditions` are unchanged and still populated, so nothing already consuming them breaks.
@@ -633,9 +668,14 @@ spec:
                     nullable: true
                     type: string
                   placement:
-                    default: {}
+                    default:
+                      initialMachineType: e2-standard-2
                     description: Which nodes the serving pods may run on.
                     properties:
+                      initialMachineType:
+                        default: e2-standard-2
+                        description: Initial GCE machine type for the data plane (e.g. `e2-standard-2`). Defaults to `e2-standard-2`. Immutable create-time configuration.
+                        type: string
                       nodeSelector:
                         additionalProperties:
                           type: string
@@ -774,7 +814,7 @@ spec:
                       cpu: '1'
                       memory: 4Gi
                       graceSecs: 30
-                      raftStorage: 20Gi
+                      raftStorage: 10Gi
                       raftStorageClass: null
                     description: Stateless serving-fleet shape.
                     properties:
@@ -830,7 +870,7 @@ spec:
                         description: Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
                         type: string
                       raftStorage:
-                        default: 20Gi
+                        default: 10Gi
                         description: Per-pod WAL/raft hard-state PVC size. Always applied — the serving StatefulSet's `raft` volumeClaimTemplate exists at every `replicasPerShard` value, not only when raft consensus (`> 1`) is active.
                         type: string
                       raftStorageClass:

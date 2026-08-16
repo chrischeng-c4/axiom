@@ -233,6 +233,10 @@ name = "capacity_retire_hpa"
 path = "e2e/capacity_retire_hpa.rs"
 
 [[test]]
+name = "capacity_catalog_contract"
+path = "e2e/capacity_catalog_contract.rs"
+
+[[test]]
 name = "body_limit_configurable"
 path = "e2e/body_limit_configurable.rs"
 

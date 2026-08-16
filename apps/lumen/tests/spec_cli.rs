@@ -564,7 +564,7 @@ fn llm_storage_documents_unconditional_statefulset_pvc() {
         "raft",
         "/var/lib/lumen",
         "replicasPerShard: 1",
-        "20Gi",
+        "10Gi",
         "no raft consensus",
         "legacy single-shard HPA path",
         "continuously catch",
