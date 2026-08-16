@@ -2,6 +2,7 @@
 # other's resources.
 
 mock_provider "google" {}
+mock_provider "kubernetes" {}
 
 variables {
   project_id             = "lumen-pki-fixture"
