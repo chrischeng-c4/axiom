@@ -200,6 +200,8 @@ pub struct RaftStatus {
     pub membership_phase: MembershipPhase,
     pub undeliverable_never_addressed: u64,
     pub undeliverable_withdrawn_address: u64,
+    pub proposal_admission_closed: bool,
+    pub lifecycle_generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,6 +269,7 @@ pub(crate) struct Shared {
     pub(crate) latched_failure: StdMutex<Option<StorageFailed>>,
     pub(crate) undeliverable_never_addressed: AtomicU64,
     pub(crate) undeliverable_withdrawn_address: AtomicU64,
+    pub(crate) lifecycle_generation: AtomicU64,
 }
 
 #[derive(Default)]
@@ -567,6 +570,9 @@ impl Shared {
     /// re-route the command: it was not appended. Once an index is allocated,
     /// an apply timeout remains an error and must not be retried blindly.
     async fn try_propose_applied(self: &Arc<Self>, command: Command) -> Result<Option<Index>> {
+        if self.lifecycle_generation.load(Ordering::Acquire) > 0 {
+            bail!("raft: proposal admission closed");
+        }
         let index = {
             let mut n = self.node.lock().await;
             let Some(idx) = n.propose(command) else {
@@ -763,6 +769,7 @@ impl RaftHost {
             latched_failure: StdMutex::new(None),
             undeliverable_never_addressed: AtomicU64::new(0),
             undeliverable_withdrawn_address: AtomicU64::new(0),
+            lifecycle_generation: AtomicU64::new(0),
         });
 
         let s = Arc::clone(&shared);
@@ -792,12 +799,22 @@ impl RaftHost {
         }
     }
 
+    /// Quiesce proposal admission on this host. Returns `true` if this call
+    /// transitioned admission from open to closed, or `false` if already closed.
+    pub fn quiesce_proposals(&self) -> bool {
+        self.shared
+            .lifecycle_generation
+            .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
     /// Stop the periodic host loops and wait for every already-dispatched peer
     /// RPC to finish before the h2 client is dropped. Service shutdown should
     /// stop public ingress first, call this method, then close the peer
     /// listener. The bounded wait prevents active HTTP/2 streams from being
     /// torn down with the Tokio runtime.
     pub async fn shutdown(&self) -> Result<()> {
+        self.quiesce_proposals();
         let tasks = self.tasks.lock().expect("raft task mutex poisoned").take();
         if let Some((tick, pump)) = tasks {
             tick.abort();
@@ -925,6 +942,9 @@ impl RaftHost {
     /// (read-your-write). Retries within the propose deadline while no leader.
     pub async fn propose(&self, command: Command) -> Result<Index> {
         let s = &self.shared;
+        if s.lifecycle_generation.load(Ordering::Acquire) > 0 {
+            bail!("raft: proposal admission closed");
+        }
         if let Some(err) = s.latched_failure.lock().unwrap().clone() {
             bail!(err);
         }
@@ -1248,6 +1268,8 @@ pub(crate) async fn host_status(s: &Shared) -> RaftStatus {
         undeliverable_withdrawn_address: s
             .undeliverable_withdrawn_address
             .load(Ordering::Relaxed),
+        proposal_admission_closed: s.lifecycle_generation.load(Ordering::Acquire) > 0,
+        lifecycle_generation: s.lifecycle_generation.load(Ordering::Acquire),
     }
 }
 
