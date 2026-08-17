@@ -1,7 +1,7 @@
 {
   "name": "aw",
   "version": "0.1.0",
-  "description": "Agentic Workflow skills for the axiom monorepo. Currently the epic axis: interview-driven epic bodies with a schema the validator enforces, and child-set reconciliation split by who may decide each finding.",
+  "description": "Agentic Workflow skills for the axiom monorepo. Interview-driven change and epic bodies with a schema the validator enforces, child-set reconciliation split by who may decide each finding, and the e2e -> unit -> logic ladder with a cross-model review at each end of it.",
   "author": {
     "name": "chrischeng-c4"
   },

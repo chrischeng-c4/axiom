@@ -142,12 +142,6 @@ def pinned_interpreter() -> list[str]:
                      else list(PINNED_PYTHON))
     return list(_RESOLVED)
 
-# The crate that owns the change work-item schema. `change.py` is a port of it,
-# not a second authority, so the gates read these two files as the oracle.
-CRATE = REPO / "apps/agentic-workflow/src"
-GHAN_RS = CRATE / "issues/ghan.rs"
-ISSUES_RS = CRATE / "cli/issues.rs"
-
 HERE = pathlib.Path(__file__).resolve().parent
 SNAPSHOTS = HERE / "_snapshots"
 

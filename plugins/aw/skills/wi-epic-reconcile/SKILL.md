@@ -128,10 +128,10 @@ is the same link `epic.py children <iid>` reads back. Run that after each child
 lands and confirm it appears: the label is what makes a child a child, and an
 unlabelled issue is not one no matter what its body says.
 
-What the child's body must contain is not restated here. That schema belongs to
-`apps/agentic-workflow/src/issues/ghan.rs`, the change grill ports it, and a
-summary of it in this file would be a third reading — correct on the day it is
-written and silently wrong afterwards.
+What the child's body must contain is not restated here. `change.py skeleton`
+emits it and `change.py validate` refuses it; a summary in this file would be a
+second reading — correct on the day it is written and silently wrong
+afterwards.
 
 ## Report
 

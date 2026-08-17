@@ -1,28 +1,52 @@
 #!/usr/bin/env python3
 """Negative control for `check_change_schema.py`, one mutation per drift class.
 
-The gate exists to catch a port drifting from the crate it ports. So each
-mutation here is a plausible drift, not a broken file: every one leaves
-`change.py` importable, leaves the CLI working, and leaves every other gate
-green. A drift that crashed would not need a gate.
+The gate exists to catch the change schema shifting under the one script that
+owns it. So each mutation here is a plausible drift, not a broken file: every
+one leaves `change.py` importable, leaves the CLI working, and leaves every
+other gate green. A drift that crashed would not need a gate.
 
-  narrowed-vocab   one hedge word dropped from the port's list. This is what
-                   re-typing a word list actually looks like when it goes
-                   wrong, and it is silent -- the dropped word is one the
-                   crate's own corpus never exercises, so only the constant
-                   comparison can see it.
+The first three take one word list apart three different ways, because the gate
+holds that list two different ways and each half is blind to one of them.
+
+  narrowed-vocab   one hedge word dropped. This is what re-typing a word list
+                   looks like when it goes wrong, and it is silent in ordinary
+                   use. Two assertions must red, not one: the declared
+                   inventory, and the liveness probe for that word. The second
+                   red is the load-bearing one -- it is only there if the probe
+                   loop is generated from the gate's own literal. Generate the
+                   loop from `change.py` instead and deleting a word deletes
+                   its own probe, so this mutation would red once and look
+                   fine.
+  widened-vocab    one hedge word added. The inventory reds alone; every probe
+                   still passes, because every declared word still works. This
+                   is the inventory half isolated, and the direction a
+                   liveness-only gate cannot see at all.
+  dead-vocab       the list left intact, but the loop that reads it made to
+                   skip its first entry. The inventory agrees perfectly; the
+                   word has simply stopped refusing anything. This is the
+                   liveness half isolated, and the half a snapshot oracle
+                   structurally cannot catch -- two identical lists agree
+                   whether or not either one does any work.
   template-drift   one word changed in the empty body. Two surfaces handing a
                    human two different forms to fill in, with nothing else
                    observably different.
   rule-lost        the change-point/must-not-touch collision rule made
-                   unreachable. The port still validates, still refuses
-                   everything else, and has quietly stopped enforcing one rule.
-  coverage-blind   one replay deleted from the gate's own case table. The
-                   count assertion is what makes the corpus non-optional; if
-                   deleting a case is free, the corpus is decoration.
-  extractor-blind  the crate-constant extractor pointed at a name that does
-                   not exist. Every comparison downstream would then be a
-                   tautology, so the positive control must red first.
+                   unreachable. `change.py` still imports, still validates,
+                   still refuses everything else, and has quietly stopped
+                   enforcing one rule. It reds twice -- the case, and refusal
+                   coverage -- because a rule that stops firing is both.
+  coverage-blind   one case deleted from the gate's own table. Refusal coverage
+                   is what makes the corpus non-optional; if deleting a case is
+                   free, the corpus is decoration. The case chosen is the sole
+                   reader of one `errors.append` site, so its removal is
+                   exactly a rule going unobserved.
+  fixtures-missing the gate's own fixture directory pointed somewhere that does
+                   not exist. Every mutation-based case swaps a fragment of the
+                   sample body, so a fixture channel that silently stopped
+                   resolving would make those cases vacuous. The positive
+                   control must red first, and it must red before any case
+                   runs.
 
 Applied one at a time. The control demands isolation -- exactly the matching
 assertion goes red -- and restores by writing the captured bytes back, verified
@@ -30,11 +54,10 @@ by sha256; a reverse string-replace restores a file that only looks like the
 original.
 
 One honest limit, recorded rather than papered over: there is no mutation here
-for passing `## How` comment-stripped into `validate_never`. The crate's corpus
-does not discriminate that choice -- its sample body has no commented-out
-change point -- so a mutation would leave the gate green, and a control that
-cannot go red proves nothing. The port follows the crate because the crate is
-the authority, not because this gate measures it.
+for passing `## How` comment-stripped into `validate_never`. No case
+discriminates that choice -- the sample body has no commented-out change point
+-- so a mutation would leave the gate green, and a control that cannot go red
+proves nothing. It is a real gap in the corpus, not a rule the gate measures.
 """
 import hashlib
 import pathlib
@@ -52,35 +75,51 @@ MUTATIONS = [
         CHANGE_SCRIPT,
         '    "supposedly",\n',
         "",
-        ["FAIL the hedge vocabulary agrees with the crate"],
+        ["FAIL the hedge vocabulary is the declared one",
+         "FAIL the hedge `supposedly` refuses a premise"],
+    ),
+    (
+        "widened-vocab",
+        CHANGE_SCRIPT,
+        '    "supposedly",\n',
+        '    "supposedly",\n    "perhaps",\n',
+        ["FAIL the hedge vocabulary is the declared one"],
+    ),
+    (
+        "dead-vocab",
+        CHANGE_SCRIPT,
+        "for hedge in HEDGE_WORDS:",
+        "for hedge in HEDGE_WORDS[1:]:",
+        ["FAIL the hedge `should` refuses a premise"],
     ),
     (
         "template-drift",
         CHANGE_SCRIPT,
         "<!-- List actions that must not be taken. -->",
         "<!-- List actions that must not be done. -->",
-        ["FAIL the skeleton is the crate's own empty change body"],
+        ["FAIL the skeleton is the declared empty change body"],
     ),
     (
         "rule-lost",
         CHANGE_SCRIPT,
         "        if normalize_path(path) in change_paths:",
         "        if False and normalize_path(path) in change_paths:",
-        ["FAIL replay: a_change_point_cannot_also_be_must_not_touch"],
+        ["FAIL a change point cannot also be must-not-touch",
+         "FAIL every refusal site in the validators is reached by some case"],
     ),
     (
         "coverage-blind",
         GATE,
-        '    "table_rows_skips_header_and_separator": case_table_rows,\n',
+        '    "a gate row whose why-column is a placeholder is refused": case_gate_row_needs_a_why,\n',
         "",
-        ["FAIL every crate test has a replay here"],
+        ["FAIL every refusal site in the validators is reached by some case"],
     ),
     (
-        "extractor-blind",
+        "fixtures-missing",
         GATE,
-        'CRATE_HEDGES = rust_str_list(GHAN_SRC, "HEDGE_WORDS")',
-        'CRATE_HEDGES = rust_str_list(GHAN_SRC, "HEDGE_WORDS_RENAMED")',
-        ["FAIL positive control: the crate constants extract"],
+        'FIXTURES = HERE / "_fixtures"',
+        'FIXTURES = HERE / "_fixtures_gone"',
+        ["FAIL positive control: the fixtures are on disk"],
     ),
 ]
 

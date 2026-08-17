@@ -94,7 +94,6 @@ else:
 Check = leg.Check
 GIT = leg.GIT
 PHASE = "e2e"
-DEFAULT_PROJECT = "agentic-workflow"
 
 # What a case must declare about itself before it is trusted to run. These are
 # read out of the file without importing it, so the declaration is available
@@ -355,8 +354,8 @@ def _print_cases(repo: Path, root: Path, inv: dict[str, dict[str, Any]],
     """Every case the reviewer has to read, and how it currently fails.
 
     `run` is off for the whole-surface form. Producing a prompt is not worth
-    executing a project's entire inventory -- agentic-workflow's is in the
-    hundreds -- and the advisory review is a reading of the contract, not a
+    executing a project's entire inventory -- the largest one measured here ran
+    to 142 cases -- and the advisory review is a reading of the contract, not a
     measurement of it. The scoped form runs them, because "is this red for the
     reason it claims" is exactly Q5 and cannot be answered without the output.
     """
@@ -414,7 +413,8 @@ def cmd_review_prompt(args: argparse.Namespace) -> int:
         raise SystemExit(
             f"#{args.wi} is not mechanically admissible yet, and a semantic review "
             f"of an inadmissible change spends a reviewer on a question the checks "
-            f"already answered. Run: e2e.py verify {args.wi}"
+            f"already answered. Run: "
+            f"{leg.phase_command(PHASE, args.project, 'verify', args.wi)}"
         )
 
     print(RUBRIC)
@@ -551,7 +551,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     print(f"Nothing under apps/{args.project}/src/ may be written here. The unit")
     print("tests and the implementation are two later phases, and a case written")
     print("beside the code it is meant to refuse has nothing left to refuse.")
-    print(f"\nnext.command: e2e.py verify {args.wi}")
+    print(f"\nnext.command: {leg.phase_command(PHASE, args.project, 'verify', args.wi)}")
     return 0
 
 
@@ -568,7 +568,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print("\nnext.command: fix the FAIL rows above, then re-run this verb")
         return 1
     print(f"\n{len(cases)} case(s) must come out red: {', '.join(cases)}")
-    print(f"next.command: e2e.py test {args.wi}")
+    print(f"next.command: {leg.phase_command(PHASE, args.project, 'test', args.wi)}")
     return 0
 
 
@@ -583,7 +583,8 @@ def cmd_test(args: argparse.Namespace) -> int:
     print(f"\nall {len(cases)} case(s) refuse the product: {', '.join(cases)}")
     print("\nThe cases are red. Whether they are red for the reason they claim")
     print(f"is a reading question, and {REVIEWER} is what answers it.")
-    print(f"next.command: e2e.py review-prompt {args.wi}")
+    print(f"next.command: "
+          f"{leg.phase_command(PHASE, args.project, 'review-prompt', args.wi)}")
     return 0
 
 
@@ -640,7 +641,13 @@ def cmd_commit(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="e2e.py", description=__doc__.splitlines()[0])
-    parser.add_argument("--project", default=DEFAULT_PROJECT, help="project under apps/")
+    # Required, with no default. It used to default to `agentic-workflow`;
+    # that crate was removed, so the default became a write root that does
+    # not exist -- and a phase resolving a missing directory reports a
+    # project the caller never chose. There is no project this plugin can
+    # assume, so it is named or the run refuses.
+    parser.add_argument("--project", required=True,
+                        help="project under apps/; must precede the verb")
     sub = parser.add_subparsers(dest="verb", required=True)
 
     wi = argparse.ArgumentParser(add_help=False)

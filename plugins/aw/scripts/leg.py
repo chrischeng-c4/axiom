@@ -148,6 +148,20 @@ def is_test_file(rel: str) -> bool:
     return any(rel == name or rel.endswith("/" + name) for name in TEST_FILES)
 
 
+def phase_command(phase: str, project: str, verb: str, wi: int | str) -> str:
+    """The next command in the ladder, spelled so it can be pasted and run.
+
+    `--project` sits on the top-level parser, ahead of the subparsers, so it
+    has to precede the verb -- a printed command carrying it after the verb is
+    a command that exits 2. It is printed at all because there is no default
+    project to fall back on: the phases used to default to `agentic-workflow`,
+    and when that crate was removed the default became a path that does not
+    exist. Every printed command therefore names the project it was run for,
+    which is also the only place an agent reading the output can see it.
+    """
+    return f"{phase}.py --project {project} {verb} {wi}"
+
+
 # --------------------------------------------------------------------------
 # locating things
 # --------------------------------------------------------------------------

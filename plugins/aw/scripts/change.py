@@ -1,31 +1,36 @@
 #!/usr/bin/env python3
-"""Change work-item surface -- a port of the crate that owns the change schema.
+"""Change work-item surface -- this is where the change schema lives.
 
 This is the second facade over `workitem.py`, and it is shaped differently from
-`epic.py` on purpose. The epic schema is this plugin's own invention, so
-`epic.py` declares it as `Section` data and lets the engine walk it. The change
-schema is not mine: `apps/agentic-workflow/src/issues/ghan.rs` defines it,
-`aw wi validate` enforces it, and the tracker's change work items are already
-judged by it. Writing a second, prettier reading of those rules here would not
-produce a schema -- it would produce a fork that stays invisible for exactly as
-long as the two readings happen to agree.
+`epic.py` for historical reasons worth keeping. The epic schema is this plugin's
+own invention, so `epic.py` declares it as `Section` data and lets the engine
+walk it. The change schema arrived from somewhere else: it was written in
+`apps/agentic-workflow/src/issues/ghan.rs`, `aw wi validate` enforced it, and
+the tracker's 640 change work items were judged by it. While that crate existed
+this file was a *port*, and writing a second, prettier reading of the rules
+would have produced a fork that stays invisible for exactly as long as the two
+readings happen to agree.
 
-So everything below the CLI section is a transliteration of `ghan.rs`, kept
-deliberately un-Pythonic: the error strings are verbatim, the short-circuits
-are in the same places, the helpers keep the crate's names, and the markdown
+The crate is gone. This file is now the only definition, and the transliteration
+is kept rather than tidied: the error strings are verbatim, the short-circuits
+are in the same places, the helpers keep their original names, and the markdown
 primitives reproduce Rust's `str` semantics (`_lines` is `str::lines`,
 `_split_on` is `str::split(char_predicate)`, `_ascii_lower` is
-`to_ascii_lowercase`) rather than Python's near-misses. Reading it as ordinary
-Python is the wrong lens; read it against `ghan.rs`, which is what
-`verification/check_change_schema.py` does mechanically -- constants, the empty
-template, and all 18 of the crate's own `#[test]` cases replayed against this
-file.
+`to_ascii_lowercase`) rather than Python's near-misses. That is not nostalgia --
+those primitives are the behaviour the existing population was judged by, so
+replacing one with its Python near-miss re-judges live work items. Pythonising
+this file is a schema change.
 
-One rule of `validate_ghan_body` is deliberately absent:
-`looks_too_large_for_atomic_wi`, a boundedness heuristic over prose that lives
-in `planner.rs` rather than in the section schema.
-`verification/measure_change_agreement.py` names it as the single excluded
-error class and measures that the exclusion is exactly that wide.
+`verification/check_change_schema.py` is what holds it in place now that there
+is no upstream to compare against: a declared inventory of every section,
+heading and word; a liveness probe proving each declared entry still refuses
+something; and a traced assertion that every `errors.append` site in the
+validators is reached by some case.
+
+One rule of the original `validate_ghan_body` is deliberately absent:
+`looks_too_large_for_atomic_wi`, a boundedness heuristic over prose that lived
+in `planner.rs` rather than in the section schema. It was measured to be the
+single excluded error class while both sides still existed.
 
 Verbs
 -----
@@ -84,7 +89,8 @@ PARENT_LABEL_PREFIX = "epic:"
 
 
 # ==========================================================================
-# Port of apps/agentic-workflow/src/issues/ghan.rs
+# The GHAN schema. Transliterated from Rust, and kept that way -- see the
+# module docstring for why the un-Pythonic primitives are load-bearing.
 # ==========================================================================
 
 # The four canonical GHAN H2 headings, in canonical order.
@@ -232,7 +238,7 @@ def body_shape(body: str) -> str:
 
 
 def validate_ghan_sections(body: str) -> list[str]:
-    """Section-level GHAN rules, in the crate's order and with its strings."""
+    """Section-level GHAN rules, in their original order and with their strings."""
     headings = h2_headings(body)
     errors: list[str] = []
 
@@ -258,9 +264,11 @@ def validate_ghan_sections(body: str) -> list[str]:
     errors.extend(validate_goal(goal))
     errors.extend(validate_how(how))
     errors.extend(validate_acceptance(acceptance))
-    # `how` goes in raw, not comment-stripped: the crate passes the section as
-    # it read it, and stripping here would let a commented-out change point
-    # stop colliding with a must-not-touch entry.
+    # `how` goes in raw, not comment-stripped: the section is passed as it was
+    # read, and stripping here would let a commented-out change point stop
+    # colliding with a must-not-touch entry. No case discriminates this, which
+    # is recorded as a gap in `check_change_schema_negative_control.py` rather
+    # than defended by a control that cannot go red.
     errors.extend(validate_never(never, how))
     return errors
 
@@ -677,10 +685,11 @@ def preview(text: str) -> str:
 # ==========================================================================
 # The empty body
 #
-# Not authored here. This is the template `aw wi create --type change` hands
-# out, transcribed from its one `return` site in `cli/issues.rs`, so a human
-# who starts from either surface fills in the same slots.
-# `check_change_schema.py` compares it byte-for-byte against that site.
+# This is the form a human fills in, and it was not authored here: it is the
+# template `aw wi create --type change` handed out, transcribed byte-for-byte
+# from its one `return` site. `check_change_schema.py` compares it against
+# `_fixtures/change_skeleton.md`, which was lifted from that site before the
+# crate was removed.
 # ==========================================================================
 
 CHANGE_TEMPLATE = """## Goal
@@ -731,9 +740,9 @@ CHANGE = WorkItemType(
     name="change",
     type_label=TYPE_LABEL,
     prog="change.py",
-    # Empty on purpose. The declarative walk is for a type whose schema this
-    # plugin owns; this one delegates to the port above through `validate`,
-    # and hands out the crate's own body through `skeleton_text`.
+    # Empty on purpose. The declarative walk suits a schema authored as
+    # `Section` data; this one is a transliteration, so it delegates to
+    # `validate_ghan_sections` above and hands out `CHANGE_TEMPLATE` verbatim.
     sections=(),
     phase_label=PHASE_LABEL,
     validate=validate_ghan_sections,
@@ -822,8 +831,7 @@ LOCAL_VERBS = ("skeleton", "bodydir", "adopt", "validate")
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="change.py",
-        description="Change work-item surface over the `gh` CLI (GHAN rules ported "
-                    "from apps/agentic-workflow/src/issues/ghan.rs).",
+        description="Change work-item surface over the `gh` CLI (GHAN rules).",
     )
     parser.add_argument("--repo", help="owner/name; defaults to aw.toml's issue platform")
     sub = parser.add_subparsers(dest="verb", required=True)

@@ -65,10 +65,17 @@ and the sequence would then be yours rather than the author's.
 Every command goes through the pinned interpreter:
 
 ```
-uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" start <iid>
-uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/unit.py" start <iid>
-uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py" start <iid>
+uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" --project <app> start <iid>
+uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/unit.py" --project <app> start <iid>
+uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py" --project <app> start <iid>
 ```
+
+`--project` is required and must come before the verb — it is on the top-level
+parser, so after the verb it exits 2. There is no default: the phases used to
+assume one project, and a default is how a phase writes into a tree nobody
+named. `<app>` is a directory under `apps/`, and every command a phase prints
+afterwards carries the same flag, so paste those verbatim rather than
+retyping them.
 
 The pin is load-bearing. `e2e.py` and `unit.py` read TOML, `tomllib` is 3.11+,
 and a bare `python3` is 3.9 on at least one machine this runs on — where the

@@ -120,7 +120,6 @@ unit_mod = leg.sibling("unit", "unitmod")
 Check = leg.Check
 GIT = leg.GIT
 PHASE = "logic"
-DEFAULT_PROJECT = "agentic-workflow"
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -439,7 +438,8 @@ def cmd_review_prompt(args: argparse.Namespace) -> int:
         raise SystemExit(
             f"#{args.wi} is not mechanically admissible yet, and a semantic review "
             f"of an inadmissible change spends a reviewer on a question the checks "
-            f"already answered. Run: logic.py verify {args.wi}"
+            f"already answered. Run: "
+            f"{leg.phase_command(PHASE, args.project, 'verify', args.wi)}"
         )
 
     print(RUBRIC)
@@ -633,7 +633,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     print("If the implementation cannot satisfy both oracles without changing")
     print("one of them, say so and stop. That is a defect in a phase that is")
     print("closed, not something to route around here.")
-    print(f"\nnext.command: logic.py verify {args.wi}")
+    print(f"\nnext.command: {leg.phase_command(PHASE, args.project, 'verify', args.wi)}")
     return 0
 
 
@@ -650,7 +650,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print("\nnext.command: fix the FAIL rows above, then re-run this verb")
         return 1
     print(f"\n{len(cases)} case(s) and the declared suite will decide it.")
-    print(f"next.command: logic.py test {args.wi}")
+    print(f"next.command: {leg.phase_command(PHASE, args.project, 'test', args.wi)}")
     return 0
 
 
@@ -668,7 +668,8 @@ def cmd_test(args: argparse.Namespace) -> int:
           f"out of questions. Whether the implementation satisfies the work "
           f"item, or only the tests, is a reading question, and {REVIEWER} is "
           f"what answers it.")
-    print(f"next.command: logic.py review-prompt {args.wi}")
+    print(f"next.command: "
+          f"{leg.phase_command(PHASE, args.project, 'review-prompt', args.wi)}")
     return 0
 
 
@@ -717,7 +718,13 @@ def cmd_commit(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="logic.py", description=__doc__.splitlines()[0])
-    parser.add_argument("--project", default=DEFAULT_PROJECT, help="project under apps/")
+    # Required, with no default. It used to default to `agentic-workflow`;
+    # that crate was removed, so the default became a write root that does
+    # not exist -- and a phase resolving a missing directory reports a
+    # project the caller never chose. There is no project this plugin can
+    # assume, so it is named or the run refuses.
+    parser.add_argument("--project", required=True,
+                        help="project under apps/; must precede the verb")
     sub = parser.add_subparsers(dest="verb", required=True)
 
     wi = argparse.ArgumentParser(add_help=False)

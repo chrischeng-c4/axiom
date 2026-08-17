@@ -128,7 +128,6 @@ while True:
         break
     NEEDS_PIN = grown
 ABSENT = "ship"
-AW_DRIVEN = "aw-goal"
 AW_INVOCATION = re.compile(r"`aw\s+[a-z]")
 
 # The tracker's own CLI in write mode. Reconcile carried exactly the string
@@ -335,14 +334,21 @@ check("positive control: the pin detector refuses a bare python3 invocation",
           rf'(\S+(?: \S+)*?) "\$\{{CLAUDE_PLUGIN_ROOT\}}/scripts/{re.escape(sorted(NEEDS_PIN)[0])}"',
           BARE).group(1).endswith(PINNED_PREFIX))
 
-# The `aw <verb>` detector is only meaningful if it can fire. This used to be
-# guarded by `if aw_skill.is_file()`, which made a moved or deleted control
-# indistinguishable from a control that passed.
-aw_skill = REPO / "apps/agentic-workflow/templates/cli/mainthread/skills" / AW_DRIVEN / "SKILL.md"
-check("the `aw <verb>` positive control is where it is expected", aw_skill.is_file(), str(aw_skill))
-if aw_skill.is_file():
-    check("positive control: the `aw <verb>` detector fires on aw-goal",
-          bool(AW_INVOCATION.search(aw_skill.read_text(encoding="utf-8"))))
+# The `aw <verb>` detector is only meaningful if it can fire. The control used
+# to be a real file -- the crate's own `aw-goal` skill template -- read off
+# disk, which is why it was accompanied by an existence assertion: a moved or
+# deleted control would otherwise be indistinguishable from one that passed.
+#
+# That crate is gone, and with it the last body in this repository that drove
+# the binary. So the control is now the literal below, verbatim from the
+# `aw-goal` template's routing table as it stood at deletion. That is the same
+# choice `GH_WRITE_CONTROL` makes for the same reason: pin the detector to the
+# real defect, not to a caricature of it. What is lost with the file is small
+# and worth naming -- the control no longer proves the detector fires on
+# something *someone else wrote*, only on something this gate declares.
+AW_INVOCATION_CONTROL = "| wi | `aw goal wi <id>` | lifecycle chain of that root |"
+check("positive control: the `aw <verb>` detector fires on a real invocation",
+      bool(AW_INVOCATION.search(AW_INVOCATION_CONTROL)), AW_INVOCATION_CONTROL)
 
 check("positive control: the gh write detector fires on the block reconcile carried",
       bool(GH_WRITE.search(GH_WRITE_CONTROL)))

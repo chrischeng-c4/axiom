@@ -26,22 +26,23 @@ from its own location, which may or may not sit inside a checkout. Run it from
 inside the checkout you mean to write against. For readability this skill
 writes the short form `change.py <verb>` from here on.
 
-## The schema is not this plugin's
+## The schema is older than this plugin
 
-The epic schema is this plugin's own invention. This one is not:
-`apps/agentic-workflow/src/issues/ghan.rs` owns the GHAN rules, the workflow
-CLI's `wi validate` enforces them, and every live change work item is judged by
-them. `change.py` is a **port** of that file, kept honest by a gate that reads
-the crate as its oracle.
+The epic schema is this plugin's own invention. This one is not. The GHAN rules
+were written elsewhere, a now-retired CLI enforced them, and every live change
+work item was judged by them; `change.py` began as a transliteration of that
+implementation and is now the only copy of it.
 
 Two consequences bind this interview:
 
-- When `change.py validate` and the workflow CLI disagree, the crate is right
-  and the port has a bug. Report it; do not work around it by reshaping the
-  body until the port stops complaining.
-- Never edit the rules to fit an answer. The rule set is upstream of this
-  plugin, and `.agents/rules/authoring/agent-instruction-ghan.md` is where its
-  intent is written down.
+- The rules judge a population that already exists. When `change.py validate`
+  refuses a body, the answer is to fix the body — not to reshape it until the
+  validator stops complaining, and not to decide the rule is wrong because it
+  is inconvenient here.
+- Never edit the rules to fit an answer. If a rule is genuinely wrong, that is
+  a change to `change.py` with a gate behind it, and
+  `.agents/rules/authoring/agent-instruction-ghan.md` is where its intent is
+  written down.
 
 ## Identity branch
 
@@ -67,7 +68,7 @@ in place.
 
 Run `change.py skeleton`. Its output is the authoritative section set — do not
 carry a second copy of it in your head or in this file, because a copy drifts
-the moment the crate's schema moves. Each slot carries an HTML comment stating
+the moment the schema moves. Each slot carries an HTML comment stating
 what its answer must contain; grill one section per round until every comment is
 discharged.
 

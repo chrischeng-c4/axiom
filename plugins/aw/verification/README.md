@@ -74,8 +74,8 @@ directory for a file none of them owns.
 | `check_coverage_rule_negative_control.py` | a coverage gate that measures the population instead of the rule |
 | `check_engine_split.py` | an engine that has learned which work-item type it is serving |
 | `check_engine_split_negative_control.py` | a split gate whose extractor reports "clean" because it found nothing |
-| `check_change_schema.py` | a change facade whose reading of the GHAN schema has drifted from the crate that owns it |
-| `check_change_schema_negative_control.py` | a port gate that stays green while one ported rule quietly stops firing |
+| `check_change_schema.py` | a change schema that has narrowed, widened, or grown a rule nothing is ever seen refusing |
+| `check_change_schema_negative_control.py` | a schema gate that stays green while one rule quietly stops firing |
 | `check_epic_order.py` | an epic sequence that was guessed — a cycle answered with an arbitrary order, a child appended to the end because nothing placed it, or a declared dependency dropped because it could not be parsed |
 | `probe_plugin_root.py` | a script that only resolves the repository when it happens to live inside one |
 | `probe_local_verbs.py` | an `adopt` that overwrites, or an id parser that invents a number |
@@ -323,73 +323,76 @@ and duplication are judgements about the *set* and asking child-by-child hides
 both; then each accepted child is grilled and landed before the next begins, so
 an interrupted reconcile leaves whole work items behind rather than fragments.
 
-## The change schema is ported, not authored
+## The change schema was ported, and now it is owned
 
-The two schemas here have different owners, and that difference decides how each
-one is verified. The epic schema is this plugin's own invention, so `epic.py`
-holds it as declarative `Section` data and the gates check that data against
-live epics. The change schema is not ours:
-`apps/agentic-workflow/src/issues/ghan.rs` owns it, `aw wi validate` enforces
-it, and 640 live work items are already judged by it. A hand-written second
-reading of those rules would not be a schema — it would be a fork with a delay
-fuse, invisible for exactly as long as both sides happen to agree.
+The two schemas here arrived by different routes, and the difference still
+decides how each is verified. The epic schema is this plugin's own invention, so
+`epic.py` holds it as declarative `Section` data and the gates check that data
+against live epics. The change schema was not ours: it was written in
+`apps/agentic-workflow/src/issues/ghan.rs`, `aw wi validate` enforced it, and
+640 live work items were judged by it. While that crate existed, `change.py` was
+a **port**, and every gate on it read the crate as the oracle through three
+channels — constants extracted from `ghan.rs`, the empty template extracted from
+`issues.rs`, and a replay of all 18 `#[test]` functions.
 
-So `change.py` is a **port**, and every gate on it reads the crate as the
-oracle. Nothing about the change schema is authored plugin-side:
+The crate is gone. There is no upstream left, so the port is the original and
+`change.py` owns the schema outright. Deleting an oracle costs discrimination
+unless something replaces it, and what the crate actually caught was *narrowing*
+— a word list re-typed one entry shorter, invisible because both sides get
+edited together. Three replacements carry that load, and each catches something
+a crate channel did not:
 
-| channel | oracle | catches |
+| replacement | what it is | catches |
 |---|---|---|
-| constants | the four H2s, six H3s, 15 hedge words and 7 failure assertions extracted from `ghan.rs` | a re-typed word list that silently narrowed |
-| template | the 987B empty body extracted from `issues.rs` | two surfaces handing a human two different forms |
-| corpus | all 18 `#[test]` functions in `ghan.rs`, replayed against the port | a rule the port reads differently from its author |
+| declared inventory | the four H2s, six H3s, 15 hedges and 7 failure assertions written as literals in `check_change_schema.py` and compared to `change.py` | narrowing **and** widening: the gate states the schema, so a diff has to go through it either way |
+| liveness | every declared entry is then used — each hedge refuses a premise, each failure assertion is accepted, each heading is load-bearing | an entry that sits in both lists doing nothing. Two identical dead lists agree perfectly, so the crate oracle never checked this |
+| refusal coverage | every `errors.append` site in the five `validate_*` functions must be reached by some case, found by AST walk and measured with `sys.settrace` | a rule that exists but is never observed firing. This replaces "every crate test has a replay": coverage of the rules that exist, not of a test list in another language |
 
-The corpus assertion is what makes the corpus non-optional: the replay count
-must equal the crate's `#[test]` count, so a rule added upstream turns this gate
-red until the port learns it — the one moment a drift is still cheap to fix.
+The inventory and the liveness probe travel together and neither is sufficient.
+A probe loop derived from the list cannot see the list shrink — delete a hedge
+and its probe deletes itself — which is the exact failure being defended
+against. The declared literals are what make the loop honest, and the
+`narrowed-vocab` mutation in the negative control is what proves the loop reads
+them: it must red **twice**, once for the inventory and once for that word's
+probe. Generate the loop from `change.py` instead and it reds once and looks
+fine.
 
-The port's Rust-vs-Python near misses are where a transliteration actually
-fails, so they are written as those Rust primitives rather than as the
-nearest Python idiom. `str::lines` splits on `\n` alone, while `splitlines`
-also breaks on `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029 — so a
-body containing one of them would be read as having more lines than the crate
-sees, and a line is what a section boundary is made of. `to_ascii_lowercase`
-touches `A-Z` and nothing else, while `.lower()` folds U+212A KELVIN SIGN to
-`k` and U+0130 to `i` plus a combining dot — either of which could make a
-hedge word match where the crate finds none. These differences are measured
-rather than assumed: `_lines`, `_ascii_lower` and `_split_on` each hold the
-Rust behaviour on exactly those inputs.
+Refusal coverage was not decoration on arrival. Its first run reported 19 of 24
+sites reached; six cases were added to close the gap, each naming a rule
+`validate_*` had always enforced and nothing had ever observed firing.
 
-### What the live differential does and does not reach
+The fixtures under `_fixtures/` — the sample body and the 987B skeleton — were
+lifted out of the crate before it was removed, at a point where crate and port
+were measured to agree on all five channels. They are the plugin's own now.
 
-`measure_change_agreement.py` runs the crate's own compiled rules against the
-port over every live change body. The result is 640 bodies, 6,280 error strings,
-zero divergence — but that number is breadth, not depth, and reading it as depth
-is the trap the gate now prints its way out of.
+The Rust-vs-Python near misses stay written as Rust primitives even though there
+is no longer a Rust side to match, because they are the behaviour 640 live
+bodies were judged by. `str::lines` splits on `\n` alone, while `splitlines`
+also breaks on `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029 — so a body
+containing one of them would be read as having more lines, and a line is what a
+section boundary is made of. `to_ascii_lowercase` touches `A-Z` and nothing
+else, while `.lower()` folds U+212A KELVIN SIGN to `k` and U+0130 to `i` plus a
+combining dot — either of which could make a hedge word match where the original
+found none. `_lines`, `_ascii_lower` and `_split_on` each hold that behaviour on
+exactly those inputs. Changing any of them now is a schema change, not a
+cleanup: it re-judges the existing population.
 
-Validation short-circuits: a body missing an H2 or carrying an unexpected one is
+### What the live differential reached, and what it never did
+
+`measure_change_agreement.py` compiled the crate's own rules and ran them
+against the port over every live change body: 640 bodies, 6,280 error strings,
+zero divergence. It died with the crate, but its finding outlives it and is the
+reason the cases in `check_change_schema.py` are the whole of the per-section
+evidence.
+
+Validation short-circuits. A body missing an H2 or carrying an unexpected one is
 refused structurally and never reaches `validate_goal` and its three siblings.
-Live, that is 619 of 640. The 21 that do get through pass every per-section rule,
-so **the live population compares the per-section rules only on their non-firing
-path** and contributes zero per-section error strings. A ported rule that is too
-strict surfaces there as a spurious error; one that is too lax is invisible
-there, and catchable only in the crate's own tests. The two gates cover
-different halves, and the differential asserts it reached the per-section tier
-at all rather than letting a five-figure count imply it.
-
-### Why the oracle is `rustc` and not `aw wi validate`
-
-The obvious oracle is the CLI the crate already ships, and it is disqualified:
-`ValidateArgs` (`cli/issues.rs:890`) has no `--body-file` mode, and its failure
-path calls `backend.update()` to write `validation_errors` back. Pointing it at
-640 work items is a write sweep wearing a measurement's clothes.
-
-So the differential extracts the rule half of `ghan.rs` mechanically — dropping
-only `use super::Issue` and `validate_ghan_body`, the two items that reach into
-the crate — compiles it with `rustc`, and runs it over bodies fetched with a
-plain `gh issue list` GET. That is both read-only *and* strictly stronger: both
-sides compute the same function, so the differential carries no excluded error
-class at all. Read-only is measured rather than asserted — the run is bracketed
-by an `updatedAt` census over all 640 items.
+Live, that was 619 of 640. The 21 that got through passed every per-section
+rule, so **the live population exercises the per-section rules almost entirely
+on their non-firing path** and contributed zero per-section error strings. That
+five-figure agreement was breadth, never depth. The gate's cases are the only
+place those rules are observed to fire at all — which was equally true while the
+crate existed; the crate was never what made it true.
 
 ## What decides the invocation
 
@@ -477,13 +480,13 @@ These hit the tracker and produce evidence, not a verdict. Run them in order:
 | `measure_population.py` | what do the two coupled sections contain across every live epic? |
 | `measure_spelling_tail.py` | which first-column spellings would a naive rule refuse? |
 | `measure_blast_radius.py` | how many currently-green epics would each candidate reading turn red? |
-| `measure_change_agreement.py` | do the crate's compiled rules and `change.py` return the same errors for every live change body? |
 
-`measure_change_agreement.py` also needs `rustc` on PATH, and re-derives its
-oracle from `ghan.rs` on every run, so it cannot go stale the way a transcribed
-copy would. Its extractor asserts what it removed and what survived — an
-extraction that silently produced an empty file would otherwise agree with
-everything.
+There was a fourth, `measure_change_agreement.py`, which compiled the crate's
+own rules and ran them against `change.py` over all 640 live change bodies. It
+was deleted with the crate — there is nothing left to differ from. What it
+measured is recorded above under "What the live differential reached", because
+the finding is what justifies the current gate's shape and would otherwise be
+lost with the tool.
 
 `measure_population.py` writes `_snapshots/`, which is gitignored: it is live
 tracker state, and a committed copy would let the regression assertion in

@@ -61,7 +61,15 @@ check("and it resolves to THIS checkout", out == expected_bodydir, f"got={out!r}
 # `aw.toml` per project under apps/ and libs/, and only the repository root's
 # holds the tracker configuration; taking the nearest would stage bodies under
 # apps/<name>/.aw/ and read a config with no tracker in it.
-code, out, err = run(REPO / "apps/agentic-workflow", "bodydir")
+#
+# Which project is used matters only in that it must have its own `aw.toml`:
+# without one there is no nearer marker to prefer, and the assertion passes for
+# the wrong reason. So that is checked rather than assumed.
+NESTED = REPO / "apps/preview"
+check("positive control: the nested project has its own `aw.toml`",
+      (NESTED / "aw.toml").is_file(), str(NESTED / "aw.toml"))
+
+code, out, err = run(NESTED, "bodydir")
 check("also from a subdirectory of the checkout", code == 0 and out == expected_bodydir,
       f"exit={code} got={out!r}")
 

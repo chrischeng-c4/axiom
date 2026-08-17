@@ -23,14 +23,14 @@ about it, and you do not decide the outcome.
 Three commands, in this order, none of them optional.
 
 ```
-uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py" review-prompt <iid> > <prompt-path>
+uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py" --project <name> review-prompt <iid> > <prompt-path>
 codex exec - < <prompt-path> > <transcript-path> 2>&1
-uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py" verdict <iid> --transcript <transcript-path>
+uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py" --project <name> verdict <iid> --transcript <transcript-path>
 ```
 
-Write both files under a scratch directory, not into the checkout. Pass
-`--project <name>` before the verb when the change is not in the default
-project.
+Write both files under a scratch directory, not into the checkout.
+`--project <name>` is required and must come before the verb: it sits on the
+top-level parser, so after the verb it exits 2. There is no default project.
 
 The subcommand is `exec`, not `review`, and that was measured rather than
 chosen. `codex review` emits a **fixed report schema** — priority-tagged

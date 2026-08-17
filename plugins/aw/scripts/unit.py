@@ -83,7 +83,6 @@ e2e_mod = leg.sibling("e2e", "e2emod")
 Check = leg.Check
 GIT = leg.GIT
 PHASE = "unit"
-DEFAULT_PROJECT = "agentic-workflow"
 
 # How to read test names out of a test runner's output. A closed table, not a
 # guess: a parser that fell back to "any line containing FAILED" would pick up
@@ -356,7 +355,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     print("The e2e cases above must still be red when you are done. If they go")
     print("green, the implementation was written in the phase whose only job was")
     print("to produce the thing that would refuse it.")
-    print(f"\nnext.command: unit.py verify {args.wi}")
+    print(f"\nnext.command: {leg.phase_command(PHASE, args.project, 'verify', args.wi)}")
     return 0
 
 
@@ -372,7 +371,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if chk.failed:
         print("\nnext.command: fix the FAIL rows above, then re-run this verb")
         return 1
-    print(f"\nnext.command: unit.py test {args.wi}")
+    print(f"\nnext.command: {leg.phase_command(PHASE, args.project, 'test', args.wi)}")
     return 0
 
 
@@ -386,7 +385,7 @@ def cmd_test(args: argparse.Namespace) -> int:
         return 1
     print(f"\nthe tests compile and {len(red)} of them refuse the skeleton: "
           f"{', '.join(red)}")
-    print(f"next.command: unit.py commit {args.wi}")
+    print(f"next.command: {leg.phase_command(PHASE, args.project, 'commit', args.wi)}")
     return 0
 
 
@@ -439,7 +438,13 @@ def cmd_commit(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="unit.py", description=__doc__.splitlines()[0])
-    parser.add_argument("--project", default=DEFAULT_PROJECT, help="project under apps/")
+    # Required, with no default. It used to default to `agentic-workflow`;
+    # that crate was removed, so the default became a write root that does
+    # not exist -- and a phase resolving a missing directory reports a
+    # project the caller never chose. There is no project this plugin can
+    # assume, so it is named or the run refuses.
+    parser.add_argument("--project", required=True,
+                        help="project under apps/; must precede the verb")
     sub = parser.add_subparsers(dest="verb", required=True)
 
     wi = argparse.ArgumentParser(add_help=False)
