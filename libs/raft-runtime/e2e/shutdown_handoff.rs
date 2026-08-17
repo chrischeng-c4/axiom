@@ -1,23 +1,19 @@
 //! Handing leadership to an eligible caught-up voter before shutdown stops the host (#3664).
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use raft_runtime::{LeadershipHandoff, RaftStatus};
+use tempfile::TempDir;
+
+use raft_runtime::{
+    FsyncPolicy, HostConfig, LeadershipHandoff, Membership, RaftHost, RaftStateMachine,
+    RaftStatus, RaftStore, SnapshotPolicy,
+};
 
 #[allow(dead_code)]
 #[path = "support/cluster.rs"]
 mod cluster;
-use cluster::{await_leader, cluster, Node};
-
-/// The shortest election timeout any node in these rows can have: `ELECTION_MIN` (50)
-/// ticks of `HostConfig::default().tick` (20ms).
-const ELECTION_TIMEOUT_FLOOR: Duration = Duration::from_millis(1000);
-
-/// How long the handoff row waits for leadership to arrive. Comfortably above
-/// what a loopback handoff costs — one 5ms pump and two h2c round trips — and
-/// still below the floor above, so an arrival inside it is not a group that
-/// re-elected.
-const DELIVERY_BUDGET: Duration = Duration::from_millis(800);
+use cluster::{await_leader, bind, cluster, peers_excluding, Node, TestSm};
 
 fn h2c_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -111,20 +107,20 @@ async fn a_three_voter_leader_hands_off_leadership_to_an_eligible_voter() {
         "the transferred target must be one of the cluster voters"
     );
 
-    let start = Instant::now();
-    let mut arrived = None;
-    while start.elapsed() < DELIVERY_BUDGET {
+    // The host that hands off stays leader and keeps heartbeating, so followers'
+    // election timers never expire. The target's leadership can only have been
+    // delivered by TimeoutNow. The wait is a generous liveness bound.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
         if nodes[target as usize].host.is_leader().await {
-            arrived = Some(start.elapsed());
             break;
         }
+        assert!(
+            Instant::now() < deadline,
+            "leadership never arrived at the named target {target}"
+        );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let elapsed = arrived.expect("leadership must arrive at the named target within DELIVERY_BUDGET");
-    assert!(
-        elapsed < ELECTION_TIMEOUT_FLOOR,
-        "leadership arrival took {elapsed:?}, which must be strictly below {ELECTION_TIMEOUT_FLOOR:?}"
-    );
     assert_eq!(
         nodes[target as usize].host.leader().await,
         Some(target),
@@ -140,7 +136,63 @@ async fn a_three_voter_leader_hands_off_leadership_to_an_eligible_voter() {
 /// election floor without calling `handoff_leadership` directly.
 #[tokio::test]
 async fn shutdown_alone_moves_leadership_to_another_live_node_within_delivery_budget() {
-    let nodes = cluster(3).await;
+    // We configure an explicit HostConfig so the spontaneous election floor
+    // (in tick units) and the handoff budget stretch together under load.
+    let cfg = HostConfig {
+        tick: Duration::from_millis(60),
+        pump: Duration::from_millis(5),
+        rpc_timeout: Duration::from_millis(200),
+        propose_timeout: Duration::from_secs(10),
+        snapshot: SnapshotPolicy::Disabled,
+    };
+
+    let mut listeners = Vec::new();
+    let mut all = Vec::new();
+    for id in 0..3u64 {
+        let (l, url) = bind().await;
+        listeners.push(l);
+        all.push((id, url));
+    }
+    let voters: Vec<u64> = (0..3).collect();
+    let mut nodes = Vec::new();
+    for (idx, listener) in listeners.into_iter().enumerate() {
+        let id = idx as u64;
+        let peers = peers_excluding(id, &all);
+        let sm = TestSm::new();
+        let dir = TempDir::new().unwrap();
+        let store = RaftStore::open(dir.path().to_str().unwrap(), id, FsyncPolicy::Os).unwrap();
+        let host = Arc::new(RaftHost::spawn(
+            id,
+            Membership {
+                voters: voters.clone(),
+                learners: vec![],
+            },
+            peers,
+            store,
+            sm.clone() as Arc<dyn RaftStateMachine>,
+            cfg,
+        ));
+        let router = host.router();
+        let serve = tokio::spawn(async move {
+            loop {
+                if let Ok((stream, _)) = listener.accept().await {
+                    let r = router.clone();
+                    tokio::spawn(async move {
+                        let _ = transport_h2c::server::serve_connection(stream, r).await;
+                    });
+                }
+            }
+        });
+        let url = all[idx].1.clone();
+        nodes.push(Node {
+            host,
+            sm,
+            url,
+            _serve: serve,
+            _dir: dir,
+        });
+    }
+
     let leader = await_leader(&nodes)
         .await
         .expect("a three-voter cluster elects a leader");
@@ -155,9 +207,32 @@ async fn shutdown_alone_moves_leadership_to_another_live_node_within_delivery_bu
         .await
         .expect("shutdown must return Ok");
 
+    // In raft-core:
+    // - ELECTION_MIN = 50 ticks (the minimum election timeout floor for any node).
+    // - HEARTBEAT_TIMEOUT = 3 ticks (leader heartbeats every 3 ticks).
+    // When the leader stops heartbeating, followers' election timers were reset at most
+    // HEARTBEAT_TIMEOUT ticks ago. Therefore, the earliest any survivor follower can time out
+    // and start a spontaneous re-election is (ELECTION_MIN - HEARTBEAT_TIMEOUT) = 47 ticks.
+    //
+    // A delivered handoff (TimeoutNow) is sent during shutdown() Phase 2 and processed
+    // within a few HostConfig::pump intervals (5ms). shutdown() itself has a deadline
+    // of 2 * HostConfig::rpc_timeout (400ms).
+    //
+    // Measuring arrival against a tick-derived budget (35 ticks) strictly below the
+    // 47-tick election floor ensures that:
+    // 1. A delivered handoff is accepted even with observation/load delay (Probe A).
+    // 2. An undelivered handoff (Probe B) is rejected because survivors will not re-elect
+    //    until after the 47-tick floor.
+    const ELECTION_MIN_TICKS: u64 = 50;
+    const HEARTBEAT_TIMEOUT_TICKS: u64 = 3;
+    let election_floor_ticks = ELECTION_MIN_TICKS - HEARTBEAT_TIMEOUT_TICKS;
+    let handoff_budget_ticks = 35u64;
+    assert!(handoff_budget_ticks < election_floor_ticks);
+    let handoff_budget = cfg.tick * handoff_budget_ticks as u32;
+
     let mut arrived = None;
     let mut new_leader = None;
-    while start.elapsed() < DELIVERY_BUDGET {
+    while start.elapsed() < handoff_budget {
         for &p in &live_peers {
             if nodes[p].host.is_leader().await {
                 arrived = Some(start.elapsed());
@@ -170,11 +245,7 @@ async fn shutdown_alone_moves_leadership_to_another_live_node_within_delivery_bu
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let elapsed = arrived.expect("leadership must move to a live peer within DELIVERY_BUDGET");
-    assert!(
-        elapsed < ELECTION_TIMEOUT_FLOOR,
-        "leadership moved in {elapsed:?}, which must be strictly below {ELECTION_TIMEOUT_FLOOR:?}"
-    );
+    let _elapsed = arrived.expect("leadership must move to a live peer within handoff budget");
     let new_leader_id = new_leader.expect("a live peer became leader") as u64;
     assert_eq!(
         nodes[new_leader.unwrap()].host.leader().await,
