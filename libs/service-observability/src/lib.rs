@@ -8,12 +8,14 @@
 //! crates.
 
 pub mod config;
+pub mod filesystem;
 pub mod jsonl;
 pub mod logging;
 pub mod metrics;
 pub mod process;
 
 pub use config::{LogFormat, ObservabilityConfig, ServiceIdentity};
+pub use filesystem::{filesystem_usage, FilesystemUsage};
 pub use jsonl::{
     collector_compatible, service_log_schema_v1, ServiceJsonFormatter, ServiceLogEventV1,
     ServiceLogIdentityV1, MAX_ATTRIBUTES, MAX_ATTRIBUTE_KEY_BYTES, MAX_ATTRIBUTE_VALUE_BYTES,
