@@ -72,6 +72,10 @@ path = "e2e/snapshot_peak_memory.rs"
 name = "membership_changes"
 path = "e2e/membership_changes.rs"
 
+[[test]]
+name = "member_admission"
+path = "e2e/member_admission.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }
