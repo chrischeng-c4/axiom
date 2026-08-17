@@ -425,7 +425,7 @@ Status: confirmed
 Type: DeveloperTool
 Required Verification: smoke
 Promise:
-Jet's project architecture and authoring guidance (the top-level path-role map plus crate/package naming conventions) lives in scoped project docs rather than a project-root uppercase meta doc. `projects/jet/docs/architecture/layout.md` is the discoverable, README-linked home for that guidance; `projects/jet/LAYOUT.md` no longer exists, and README/CAPABILITIES.md remain the only Jet project-root uppercase meta docs.
+Jet's project architecture and authoring guidance (the top-level path-role map plus crate/package naming conventions) lives in scoped project docs rather than a project-root uppercase meta doc. `projects/jet/docs/architecture/layout.md` is the discoverable, README-linked home for that guidance; `projects/jet/LAYOUT.md` no longer exists, and `README.md` plus `CONTRIBUTING.md` remain the only Jet project-root uppercase meta docs.
 Gate Inventory:
 - `projects/jet/docs/architecture/layout.md`
 - `test ! -e projects/jet/LAYOUT.md && ! grep -rl "projects/jet/LAYOUT.md" --include=*.md . | grep -v projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md`

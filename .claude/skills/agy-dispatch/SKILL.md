@@ -56,7 +56,7 @@ python3 .claude/skills/agy-dispatch/scripts/from_wi.py 1234
 
 # Or by hand, when there is no such work item.
 python3 .claude/skills/agy-dispatch/scripts/make_profile.py \
-    --scope libs/thing --issue 1234 --design-input libs/thing/CAPABILITIES.md \
+    --scope libs/thing --issue 1234 --design-input libs/thing/README.md \
     --write libs/thing/src/a.py:40 --gate "uv run pytest libs/thing"
     # --run-id + --intent instead of --issue if one-shot
     # prints the profile path; --root --repo --project-id --out --inject override

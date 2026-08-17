@@ -25,8 +25,10 @@ detects drift — so a rule that has stopped being true stays in every session's
 context until a human deletes it.
 
 Read `README.md` for repository inventory. Project promises live in each
-project's `CAPABILITIES.md`; local workflow and verification live in its
-`CONTRIBUTING.md`.
+project's own `README.md`, under `## Capabilities`; local workflow and
+verification live in its `CONTRIBUTING.md`. There is no third META-doc —
+`<project>/CAPABILITIES.md` was deleted on 2026-08-17 and its content merged
+into the README.
 
 ## `aw` is `plugins/aw`
 
@@ -75,7 +77,7 @@ skills are reached from the phase that prints them, not chosen.
 
 ## Authority Order
 
-- `<project>/CAPABILITIES.md` owns product promises, work roots, and gates.
+- `<project>/README.md` owns product promises, work roots, and gates.
 - `<project>/CONTRIBUTING.md` owns project-local edit and verification rules.
 - `.claude/rules/**/*.md` owns reusable agent instructions, one concern per
   semantic path.

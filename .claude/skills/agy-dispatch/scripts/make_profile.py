@@ -16,7 +16,7 @@ Usage
     python3 make_profile.py \
         --scope libs/service-auth \
         --issue 3368 \
-        --design-input libs/service-auth/CAPABILITIES.md \
+        --design-input libs/service-auth/README.md \
         --write libs/service-auth/external-contracts/tests/unit/test_runner_protocol.py:2 \
         --gate "uv run pytest libs/service-auth"
 

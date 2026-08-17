@@ -94,7 +94,7 @@ path = "tech-design"
 name = "todo-app"
 path = "examples/todo-app"
 td_path = "examples/todo-app/td"
-cap_path = "examples/todo-app/CAPABILITIES.md"
+cap_path = "examples/todo-app/README.md"
 label = "example:todo-app"
 spec_model = "python"
 
@@ -289,7 +289,7 @@ codegen.profile = "rust/score-crate"
 name = "mamba"
 path = "projects/mamba"
 td_path = "projects/mamba/tech-design"
-cap_path = "projects/mamba/CAPABILITIES.md"
+cap_path = "projects/mamba/README.md"
 label = "app:mamba"
 
 [[projects.workspaces]]
@@ -434,7 +434,7 @@ verify_cold = true
 name = "relay"
 path = "apps/relay"
 td_path = "apps/relay/tech-design"
-cap_path = "apps/relay/CAPABILITIES.md"
+cap_path = "apps/relay/README.md"
 label = "app:relay"
 # Relay EC dispatch is vat-isolated; meter owns performance evidence and guard
 # owns security evidence. Legacy arena comparison remains advisory dogfood until

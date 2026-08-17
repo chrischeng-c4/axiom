@@ -1254,9 +1254,8 @@ wrong until a human notices.
 | repo | `/CLAUDE.md` | the work-item lifecycle, per-phase write roots, and the rules that refuse against them | none | `.claude/rules/**/*.md`, loaded alongside it |
 | repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
 | repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
-| project | `<project>/README.md` | project identity and brief projections linking local contribution and goal contracts | `## Brief`<br>`## Contributing`<br>`## Capability Contract` | repo README + CONTRIBUTING |
+| project | `<project>/README.md` | project identity, product promises, work roots, and the gate that verifies each | `## Brief`<br>`## Capabilities` | repo README + CONTRIBUTING |
 | project | `<project>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules | `## Brief`<br>`## Authoritative Inputs`<br>`## Local Workflow`<br>`## Verification` | repo CONTRIBUTING |
-| project | `<project>/CAPABILITIES.md` | project product promises, work roots, and required verification | `## Brief`<br>`## Capabilities`<br>`### Capability Index`<br>`### Core Features`<br>`### Non-Core Features` | repo capability schema policy |
 
 The two root rows changed shape when the CLI went away, and the change is not
 cosmetic. `AGENTS.md` and `CLAUDE.md` were one document in two runtime flavors,
@@ -1266,11 +1265,23 @@ loads none of it, so editing `AGENTS.md` changes what the reviewer is told and
 nothing else. Neither file carries the `##` headings its old row demanded,
 because the producer that required them is gone.
 
+The project row lost a sibling for the same reason. `<project>/CAPABILITIES.md`
+was its own META-doc until 2026-08-17, when all 62 of them were deleted and the
+five that carried content merged into their project's `README.md`. The doc type
+failed on its own evidence: 57 of the 62 were the identical empty template with
+a zero-row Capability Index, the two largest (`apps/relay`, `projects/mamba`)
+had bypassed the template entirely, and `libs/service-http/CAPABILITIES.md`
+stated in its own prose that the real contract lived in the README. Nothing
+mechanical had ever read one — a repo-wide grep of `plugins/`, `.claude/`, and
+`scripts/` found two hits, both example strings inside help text. Product
+promises are now a `## Capabilities` section of the project README, which is
+where a reader looks for them.
+
 The `<!-- aw:meta:* -->` marker pairs still wrapping the first ~20 lines of most
-project `README.md`, `CONTRIBUTING.md`, and `CAPABILITIES.md` files are from the
-same producer and are equally inert — 126 of them, across 125 files. They mark
-where a splice used to land; nothing splices there now, and the content between
-them is ordinary hand-edited prose.
+project `README.md` and `CONTRIBUTING.md` files are from the same producer and
+are equally inert — 66 of them, across 65 files, down from 126 before the
+`CAPABILITIES.md` deletion. They mark where a splice used to land; nothing
+splices there now, and the content between them is ordinary hand-edited prose.
 
 The repo/global layer applies across the repository and teaches an agent how
 to operate in the checkout. `AGENTS.md` and `CLAUDE.md` exist only at this
@@ -1279,55 +1290,48 @@ without a `.md` extension.
 
 The project/app layer owns one deliverable's product contract and scoped local
 conventions. `apps/<name>` is for app-facing binaries/services; legacy and
-library-like deliverables may still live under `projects/<name>`. In a
-single-product repository the repo root is also the project root, so the
-project rows apply there and root `CAPABILITIES.md` is required. In a
-monorepo, root `CAPABILITIES.md` is forbidden because the root is not itself a
-product. Scoped convention docs remain allowed only next to the tree they
-govern; generated evidence/docs require an explicit producer, validator, or
-policy-only marker.
-
-`CAPABILITIES.md` is therefore a project-layer META-doc goal contract, not a
-separate lifecycle phase. Work items and the phase write roots resolve against
-it; they do not transfer ownership of the product promise out of the META-doc
-layer.
+library-like deliverables may still live under `projects/<name>`. Scoped
+convention docs remain allowed only next to the tree they govern; generated
+evidence/docs require an explicit producer, validator, or policy-only marker.
 
 Project-layer docs are written for agents first: they should answer "what is
 this project promising?", "where is the source of truth?", "what am I allowed
 to edit?", and "how do I prove the change?" without making the agent read a
 full design book.
 
-`apps/<name>/CAPABILITIES.md` / `projects/<name>/CAPABILITIES.md` is the
-product contract. It is hierarchical:
-a top-level capability may be a product area, a narrower capability may be a
-feature or surface, and the smallest useful capability may be one API endpoint,
-CLI command, event, background job, or documented behavior if it can be
-implemented and verified independently. Do not flatten agent-addressable
-endpoint/command promises into prose under a larger heading when a future work
-item, phase-1 case, or test gate will need to refer to them directly.
+`apps/<name>/README.md` / `projects/<name>/README.md` is the product contract
+as well as the front door. Its `## Capabilities` section is hierarchical: a
+top-level capability may be a product area, a narrower one a feature or
+surface, and the smallest useful one a single API endpoint, CLI command, event,
+background job, or documented behavior — if it can be implemented and verified
+independently. Do not flatten agent-addressable endpoint/command promises into
+prose under a larger heading when a future work item, phase-1 case, or test
+gate will need to refer to them directly.
 
 The required shape is:
 
-- `# <Project> Capabilities`
-- `## Brief` — one to three sentences, copied into the project README's
-  `## Capability Contract` section.
-- `## Capabilities`
-- `### Capability Index` — compact scan table for every release-significant or
-  agent-addressable capability.
-- `### <Capability>` roots — each root uses field-style lines for `ID`,
-  `Type`, `Surfaces`, `EC Dimensions`, `Root WI`, `Status`,
-  `Required Verification`, `Promise`, and `Gate Inventory`, followed by a
-  `Work Root` table for child work items, EC gates, tests, and evidence.
+- `# <project>`
+- `## Brief` — one to three sentences: what this project is, and what it is
+  deliberately not.
+- `## Capabilities` — an intro line stating that a promise with no gate under
+  it is not claimed, then `###`/`####` capability headings. Each carries its
+  promise as prose and a bullet list naming the root WI, the verbatim gate
+  command, and the source paths. A capability whose gate is not yet written
+  says so in place of naming one.
 
-Large capabilities should own child work roots or nested capability headings;
-small leaf capabilities can have one work-root row. The sizing rule is
-independent verification: if an agent can build, test, or close it separately,
-it is allowed to be a capability. Private implementation details stay out
-unless they are user-visible, release-blocking, or needed as named evidence.
+Large capabilities should own nested capability headings; small leaf
+capabilities are one heading with one gate. The sizing rule is independent
+verification: if an agent can build, test, or close it separately, it is
+allowed to be a capability. Private implementation details stay out unless they
+are user-visible, release-blocking, or needed as named evidence.
+
+Nothing validates this shape. A `## Capabilities` section listing a gate
+command that no suite runs, or omitting the "not claimed" line and then listing
+gateless promises, is a defect a reader has to catch.
 
 `apps/<name>/CONTRIBUTING.md` / `projects/<name>/CONTRIBUTING.md` is the local
 operating guide. It does not restate root authoring rules and does not carry
-product promises that belong in CAPABILITIES. It explains how an agent safely
+the product promises that belong in the README. It explains how an agent safely
 changes this deliverable. The required shape is:
 
 - `# <Project> Contributing`
@@ -1348,7 +1352,7 @@ CONTRIBUTING instead.
 
 `CLAUDE.md` and `AGENTS.md` are **not** project-layer docs. Project-specific
 agent behavior must be expressed through the project
-README/CONTRIBUTING/CAPABILITIES contract, scoped convention docs,
+README/CONTRIBUTING contract, scoped convention docs,
 skills/templates, or command output. Template sources may contain a
 `CLAUDE.md` filename when they are producer inputs, but they are not live
 project-layer meta docs.
@@ -1361,9 +1365,9 @@ Three rules govern every cell above:
   policy-only marker is a defect, not a stylistic choice; add whichever of
   the three fits before landing the fact.
 - **Level heuristic** — "how do all projects do X" belongs in CONTRIBUTING;
-  "what does this project promise" belongs in its own README/CAPABILITIES;
-  "how does an agent operate here" belongs in CLAUDE/AGENTS; "what exists"
-  belongs in the repo-root README.
+  "what does this project promise" belongs in its own README; "how does an
+  agent operate here" belongs in CLAUDE/AGENTS; "what exists" belongs in the
+  repo-root README.
 
 What still enforces any of this, and what does not:
 

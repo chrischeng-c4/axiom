@@ -7,8 +7,7 @@ Project-local contribution contract for Build Stamp.
 
 ## Authoritative Inputs
 
-- Product promises and work roots: [CAPABILITIES.md](CAPABILITIES.md)
-- Project orientation: [README.md](README.md)
+- Product promises, work roots, and orientation: [README.md](README.md)
 
 ## Local Workflow
 

@@ -68,8 +68,9 @@ short for the same reason.
 ## If you were not given a review prompt
 
 A human is driving you directly. Read `README.md` for repository inventory,
-`<project>/CAPABILITIES.md` for product promises, work roots, and gates, and
-`<project>/CONTRIBUTING.md` for project-local edit and verification rules.
+`<project>/README.md` for that project's product promises, work roots, and
+gates, and `<project>/CONTRIBUTING.md` for project-local edit and verification
+rules. There is no `CAPABILITIES.md`; it was deleted on 2026-08-17.
 
 Then read `CLAUDE.md`. It holds the work-item lifecycle, the per-phase write
 roots, and the rules that refuse against them, and it is the single copy of
