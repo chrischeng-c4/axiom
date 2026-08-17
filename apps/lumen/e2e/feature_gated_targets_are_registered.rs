@@ -50,6 +50,10 @@ const REGISTRY: &[GatedTarget] = &[
         path: "apps/lumen/e2e/capacity_retire_hpa.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
     },
+    GatedTarget {
+        path: "apps/lumen/e2e/body_limit_configurable.rs",
+        gate: r#"#![cfg(feature = "operator")]"#,
+    },
 ];
 
 fn repo_root() -> PathBuf {

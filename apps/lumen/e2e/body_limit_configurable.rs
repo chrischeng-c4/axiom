@@ -1,3 +1,5 @@
+#![cfg(feature = "operator")]
+
 //! End-to-end test suite for configurable request body limit (#2584).
 
 use std::sync::Arc;
