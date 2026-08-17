@@ -44,8 +44,8 @@ MARKETPLACE = REPO / ".claude-plugin/marketplace.json"
 # `plugin:skill` from the plugin name and the directory name, and ignores the
 # frontmatter `name:` entirely. Naming them here rather than globbing keeps a
 # stray directory from silently joining the population under test.
-SKILLS = ("codex-code-review", "codex-e2e-review", "wi-change-grill",
-          "wi-epic-grill", "wi-epic-reconcile", "wi-tdd")
+SKILLS = ("codex-code-review", "codex-e2e-review", "meta-check",
+          "wi-change-grill", "wi-epic-grill", "wi-epic-reconcile", "wi-tdd")
 
 # The `ec -> td -> cb` ladder is gone from this plugin: three scripts, three
 # gates, and the twelve `wi-{ec,td,cb}-*` wrappers, deleted rather than
@@ -82,7 +82,7 @@ SKILLS = ("codex-code-review", "codex-e2e-review", "wi-change-grill",
 # what remains is a fixed sequence of verbs and the exit codes they return, and
 # the only question a gate could raise is whether it counts.
 INTERVIEWING = ("wi-change-grill", "wi-epic-grill", "wi-epic-reconcile")
-PROCEDURAL = ("codex-code-review", "codex-e2e-review", "wi-tdd")
+PROCEDURAL = ("codex-code-review", "codex-e2e-review", "meta-check", "wi-tdd")
 
 # The scripts sit at the plugin root, not inside a skill. They were under
 # `wi-epic-grill/scripts/` while it was the only skill running them, which made
@@ -103,6 +103,19 @@ ENGINE = SCRIPTS / "workitem.py"
 E2E_SCRIPT = SCRIPTS / "e2e.py"
 UNIT_SCRIPT = SCRIPTS / "unit.py"
 LOGIC_SCRIPT = SCRIPTS / "logic.py"
+
+# The META-doc validator, which is not on the ladder and owns no work item. It
+# is named here for the same reason the three phases were: the gate goes red
+# with "the script is missing" before the script exists, rather than with an
+# AttributeError about this module.
+#
+# It validates and never writes. That is the whole of its difference from the
+# `aw meta` it replaces, and the difference is why the name is not reused: that
+# verb *spliced* generated content between `<!-- aw:meta:... -->` markers, and
+# deleting it left 132 markers across 65 files still asserting a producer. A
+# marker whose producer is gone is worse than plain prose, because a reader
+# takes it as evidence that something regenerates what sits inside it.
+META_SCRIPT = SCRIPTS / "meta.py"
 
 # The phase scripts read TOML, `tomllib` landed in 3.11, and `python3` is 3.9 on at least
 # one machine this runs on. Both the skills and the gates below have to invoke it

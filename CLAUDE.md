@@ -50,7 +50,7 @@ into the script that replaced it.
 
 ## Skills
 
-Six entry points. Each is invoked by a human, and each hands off to a script
+Seven entry points. Each is invoked by a human, and each hands off to a script
 that can refuse it.
 
 | Skill | Reach for it when | It does |
@@ -61,9 +61,11 @@ that can refuse it.
 | `/aw:wi-tdd` | the work item is ready to implement | drives one change — or an epic's children in dependency order — through the ladder below |
 | `/aw:codex-e2e-review` | the `e2e` phase printed it as the next command | routes the case to the other model and binds its verdict to the reviewed bytes |
 | `/aw:codex-code-review` | the `logic` phase printed it as the next command | the same, for the implementation and its colocated tests |
+| `/aw:meta-check` | before trusting a `CLAUDE.md`, `README.md` or `CONTRIBUTING.md`, and after editing one | `meta.py check` reports every doc fact whose owner is gone |
 
 The usual sequence is grill → reconcile (epics only) → `wi-tdd`; the two review
-skills are reached from the phase that prints them, not chosen.
+skills are reached from the phase that prints them, not chosen, and
+`meta-check` stands outside the lifecycle entirely.
 
 - A grill never writes product source and never invents an answer you did not
   give. It offers only gates the repository already runs, and it stops asking
@@ -74,6 +76,11 @@ skills are reached from the phase that prints them, not chosen.
   column. A line beginning `!` means there is no order to follow: report it and
   stop. An epic body you edited to make the graph parse is an epic whose
   dependencies you decided.
+- `meta-check` reads and never writes, and its baseline is **not** zero: 103
+  findings over 182 documents today, nearly all of them markers left behind by
+  the deleted CLI. So it is not yet wired into `run_all.py` as a ratchet — it
+  is a report you run over what you touched, and a rising count in a file you
+  edited is the signal.
 
 ## Authority Order
 

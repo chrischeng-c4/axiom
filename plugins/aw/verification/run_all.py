@@ -59,6 +59,16 @@ SUITE = [
     ("check_epic_order.py", None),
     ("probe_plugin_root.py", None),
     ("probe_local_verbs.py", None),
+    # The META-doc validator. Exempt from the ordering rule above for the same
+    # reason the flow gates are: its fixture is a `tempfile` git repository of
+    # its own, and the two tables it mutates are mutated in-process on a module
+    # it loaded, so it writes nothing any gate here reads.
+    #
+    # What it asserts is that each rule fires on its own defect and on nothing
+    # else. It deliberately does *not* assert that this checkout is clean --
+    # `meta.py check` reports 103 findings today, and pinning that number would
+    # make the gate go red on the fix.
+    ("check_meta_flow.py", None),
     # Exempt from the ordering rule above, and last because they are the
     # slowest. They mutate nothing in this checkout: each fixture is a
     # `tempfile` tree with its own `aw.toml` and its own git repository, so it

@@ -180,7 +180,7 @@ MUTATIONS = [
     (
         "unclassified",
         PATHS,
-        'PROCEDURAL = ("codex-code-review", "codex-e2e-review", "wi-tdd")',
+        'PROCEDURAL = ("codex-code-review", "codex-e2e-review", "meta-check", "wi-tdd")',
         "PROCEDURAL = ()",
         ["FAIL every skill is classified exactly once"],
     ),

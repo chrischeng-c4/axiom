@@ -79,6 +79,7 @@ directory for a file none of them owns.
 | `check_epic_order.py` | an epic sequence that was guessed — a cycle answered with an arbitrary order, a child appended to the end because nothing placed it, or a declared dependency dropped because it could not be parsed |
 | `probe_plugin_root.py` | a script that only resolves the repository when it happens to live inside one |
 | `probe_local_verbs.py` | an `adopt` that overwrites, or an id parser that invents a number |
+| `check_meta_flow.py` | a META-doc rule that fires on nothing, or on everything — a marker whose producer is gone, a command for a binary that is gone, a link to a file that is gone, a project README missing the section a reader goes there for |
 | `check_review_flow.py` | a verdict that outlives the bytes it was given — or one assembled from a transcript that never carried it |
 | `check_tdd_flow.py` | an `e2e → unit → logic` phase whose green is not attributable to a red the phase before it named |
 
@@ -251,6 +252,83 @@ The order refuses rather than guesses. A cycle yields *no* order at all, not a
 declaration-ordered fallback — a fallback would be indistinguishable from a
 computed answer, and the finding printed beside it would read as advisory.
 
+## What the META-docs are measured against
+
+`meta.py check` reads every tracked `CLAUDE.md`, `README.md` and
+`CONTRIBUTING.md` — **182** of them — and asks of each fact whether the thing
+that owns it still exists. Four rules, and each resolves against the filesystem
+rather than against a judgement: `M1` a generator marker whose producer is gone,
+`M2` a command naming the deleted CLI, `M3` a relative link whose target is not
+in the checkout, `M4` a project README missing `## Brief` or `## Capabilities`.
+The population is `git ls-files`, so it is the checkout you are standing in and
+never a scratch file under an ignored build directory.
+
+Today that is **103 findings across 80 files** — `M1` 66, `M2` 31, `M3` 6,
+`M4` 0 — over 182 documents and the 62 directories that hold both a `README.md`
+and a `CONTRIBUTING.md`. `check_meta_flow.py` deliberately does **not** pin any
+of those numbers. They are meant to fall, and a gate that pins them goes red on
+the fix. What it pins is that each rule fires on its own defect and on nothing
+else, in a `tempfile` git repository holding one rotten project, one clean one
+as the shared negative control, and one untracked directory that must not be
+scanned at all.
+
+`M1`'s population is the whole rule. `PRODUCERS` is empty — not as a stub, but
+because the verb that wrote those blocks was deleted with the crate that carried
+it — so all 66 marker pairs are orphaned *by derivation*. The gate declares a
+producer into that table and requires `M1` to stop firing for that name, which
+is the only way to tell "no producer exists" apart from "the lookup is broken".
+`M4`'s live population is 0, so its discrimination comes entirely from the
+fixture; a rule measured only against a repository that does not exhibit it is a
+rule nobody has watched fire.
+
+Three of the four rules were wrong when first run, and each was caught by
+running it rather than by reading it. All three are `M3`- and `M2`-shaped —
+a detector that reads syntax cannot tell a command from a sentence about one:
+
+- **`M3` reported markdown links that were Python.** `_b = _Box[int](42)` in a
+  fenced example matches a `[...](...)`  link exactly. The fix is a fence walker
+  the rules share, and `M3` fell from 8 to 6 — every one of the two removed was
+  a code sample.
+- **`M2` was blind to the most copy-and-run shape there is.** The detector was
+  anchored on backticks, which cannot see a ```` ```bash ```` block whose lines
+  begin bare. Measuring `^\s*aw [a-z]` across all 182 documents found exactly
+  two such lines, both fenced, both in `apps/jet/README.md`. The bare form is
+  now matched *only* inside a fence — outside one, a line starting "aw " is
+  English far more often than it is a command — and `M2` rose from 30 to 32.
+  The 30 it had before are the cross-check: they plus the 4 exempted lines are
+  exactly the 34 an independent hand count reached, so the scope did not shift
+  while the detector was widened. The 2 the widening added are beyond anything
+  that hand count could have reached, because it was grepping for backticks
+  too.
+- **A `--path` that matched nothing reported clean.** A mistyped path that
+  certifies the whole repository is worse than no run, so an empty selection is
+  now a usage error. That is also why exit `2` exists at all: before it, "three
+  files have rotted" and "you passed a rule that does not exist" were the same
+  exit code.
+
+Writing the two paragraphs above then produced a fourth. An *inline* code span
+is the same exemption a fence is — no renderer turns `` `[a](b)` `` into a link
+— and `M3` did not know that, so quoting its own false positives made it report
+them again, in this file. The live count did not move, which is the point worth
+recording: the only document in the repository that exercises the case is the
+one describing the case, so the three fixture rows are the entire measurement.
+They are one link written three times — spanned, spanned in a longer backtick
+run, and unspanned beside a span — because asserting only the suppression would
+also pass if the rule had learned to blank the whole line.
+
+The gate then caught a fifth defect in the script itself. `DEAD_COMMAND_EXEMPT`
+audits itself — an exemption that stops matching its line is reported, the same
+discipline `UNUSED` and `ADOPT_WHY` carry in `check_plugin.py` — but those
+fragments quote sentences in *this* checkout, so running that audit against the
+fixture produced four findings about the script's own data. It is now skipped
+when the scanned repository is not the one shipping the script, and a gate row
+asserts the skip.
+
+One assertion reaches across files: `meta.py` and `check_plugin.py` must share
+one `aw`-invocation detector, compared as source text. Two regexes for one
+question drift, and the drift is invisible — each file stays green against its
+own reading of what a dead command looks like.
+
 ## The engine/facade split
 
 `epic.py` is the epic-bound facade; `workitem.py` beside it is the engine that
@@ -311,8 +389,8 @@ pinned to the defect that was really there rather than to a caricature of it.
 The defect it refuses is not "a shortcut". A hand-opened child gets a real issue
 number and the right labels; what it does not get is a body any validator has
 seen. Reconcile described that body in prose ("its body is Goal / How /
-Acceptance / Never"), which is a fourth reading of a schema owned by
-`ghan.rs`, ported by `change.py`, and enforced by `aw wi validate`. Routing
+Acceptance / Never"), which is a second reading of a schema `change.py` owns
+outright and is the sole enforcement of. Routing
 creation through `/aw:wi-change-grill` means every child passes
 `change.py validate` before it is reported, and the prose summary disappears
 rather than being kept correct.

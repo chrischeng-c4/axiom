@@ -36,9 +36,9 @@ import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 from _paths import (CHANGE_SCRIPT, INTERVIEWING,  # noqa: E402
-                    MARKETPLACE, PINNED_PYTHON, PLUGIN_DIR, PLUGIN_JSON,
-                    E2E_SCRIPT, LOGIC_SCRIPT, PROCEDURAL, REPO, SCRIPT, SCRIPTS,
-                    SKILLS, UNIT_SCRIPT, pinned_interpreter)
+                    MARKETPLACE, META_SCRIPT, PINNED_PYTHON, PLUGIN_DIR,
+                    PLUGIN_JSON, E2E_SCRIPT, LOGIC_SCRIPT, PROCEDURAL, REPO,
+                    SCRIPT, SCRIPTS, SKILLS, UNIT_SCRIPT, pinned_interpreter)
 
 PLUGIN_NAME = "aw"
 
@@ -66,6 +66,10 @@ REQUIRED = {
     "e2e.py": {"start", "verify", "test", "commit", "review-prompt", "verdict"},
     "unit.py": {"start", "verify", "test", "commit"},
     "logic.py": {"start", "verify", "test", "commit", "review-prompt", "verdict"},
+    # The META-doc validator. One verb, and the singleton is the point: a
+    # second verb here would be a verb that writes, and the thing this replaces
+    # was deleted for writing.
+    "meta.py": {"check"},
 }
 
 # Which phase each reviewer skill drives, and -- for `unit.py` -- that it drives
@@ -77,12 +81,25 @@ REQUIRED = {
 # below is what refuses a constant pointing at a skill that is not in the
 # bundle.
 REVIEWED = {"e2e.py": "codex-e2e-review", "logic.py": "codex-code-review"}
-UNREVIEWED_WHY = ("the unit phase's tests are landed red and never read on "
-                  "their own: at `unit` only half the pair exists, and the "
-                  "question a reviewer would be asked -- do these tests admit "
-                  "an implementation that misses the requirement -- has no "
-                  "implementation to ask it about yet. It is asked at `logic`, "
-                  "over both halves at once.")
+
+# Why each unreviewed script is unreviewed, keyed by script so the reason is
+# the one that applies. It was a single string while `unit.py` was the only
+# entry whose absence was interesting, and it printed that unit-phase
+# reasoning under `epic.py` and `change.py` too. A default of "" is fine for a
+# script whose lack of a reviewer needs no argument; what is not fine is
+# printing an argument about a different script.
+UNREVIEWED_WHY = {
+    "unit.py": ("the unit phase's tests are landed red and never read on "
+                "their own: at `unit` only half the pair exists, and the "
+                "question a reviewer would be asked -- do these tests admit "
+                "an implementation that misses the requirement -- has no "
+                "implementation to ask it about yet. It is asked at `logic`, "
+                "over both halves at once."),
+    "meta.py": ("nothing here is a judgement. Every rule resolves against the "
+                "filesystem -- a marker's producer exists or it does not, a "
+                "link's target exists or it does not -- so there is no "
+                "question to route to a second model."),
+}
 
 # Verbs a script exposes that no skill drives, and why. A silent gap between
 # what a script can do and what any skill documents is how a verb rots; writing
@@ -100,10 +117,11 @@ UNUSED = {
     "e2e.py": {},
     "unit.py": {},
     "logic.py": {},
+    "meta.py": {},
 }
 SCRIPT_PATHS = {"epic.py": SCRIPT, "change.py": CHANGE_SCRIPT,
                 "e2e.py": E2E_SCRIPT, "unit.py": UNIT_SCRIPT,
-                "logic.py": LOGIC_SCRIPT}
+                "logic.py": LOGIC_SCRIPT, "meta.py": META_SCRIPT}
 
 # Scripts that cannot run under a bare `python3`, and the pin the skills must
 # carry. Derived from the source rather than listed by hand: a script that grows
@@ -116,7 +134,14 @@ SCRIPT_PATHS = {"epic.py": SCRIPT, "change.py": CHANGE_SCRIPT,
 # hardest to see by reading them, which is the opposite of what a derivation is
 # for. The edge is the `sibling("<name>", ...)` call, closed to a fixed point.
 SIBLING_EDGE = re.compile(r'sibling\(\s*"([a-z0-9_]+)"')
-SOURCES = {name: path.read_text(encoding="utf-8") for name, path in SCRIPT_PATHS.items()}
+# Tolerant of a missing file on purpose. A script is named in `SCRIPT_PATHS`
+# before it is written, so that the gate driving it can be watched going red
+# for the right reason first. Reading eagerly here would make that red a
+# `FileNotFoundError` traceback at import -- which takes every *other*
+# assertion in this file down with it, and reads as a broken gate rather than
+# as an absent script. The absence is asserted explicitly below instead.
+SOURCES = {name: (path.read_text(encoding="utf-8") if path.is_file() else "")
+           for name, path in SCRIPT_PATHS.items()}
 DEPENDS = {name: {f"{s}.py" for s in SIBLING_EDGE.findall(text)} & set(SCRIPT_PATHS)
            for name, text in SOURCES.items()}
 NEEDS_PIN = {name: path for name, path in SCRIPT_PATHS.items()
@@ -179,9 +204,24 @@ if isinstance(source, str):
 # -- the bundle ------------------------------------------------------------
 for skill in SKILLS:
     check(f"{skill}: SKILL.md is in the bundle", (PLUGIN_DIR / "skills" / skill / "SKILL.md").is_file())
-check("epic.py is in the bundle", SCRIPT.is_file())
+for name, path in sorted(SCRIPT_PATHS.items()):
+    check(f"{name} is in the bundle", path.is_file(), str(path))
 
-bodies = {s: (PLUGIN_DIR / "skills" / s / "SKILL.md").read_text(encoding="utf-8") for s in SKILLS}
+# Only the skills that are actually on disk, for the reason `SOURCES` above is
+# lenient: a skill is registered before its SKILL.md is written, so the gate
+# can be watched going red for "this file is missing" first. Reading eagerly
+# here raised `FileNotFoundError` at module scope and took every assertion
+# after this line down with it -- 60-odd of them, about six other skills --
+# leaving a run that looked like a broken gate rather than an absent skill.
+# The script side had already been fixed this way; this side had not.
+#
+# Downstream loops read `bodies` rather than `SKILLS`, or index it with a
+# default. A per-skill rule therefore says nothing about an absent skill
+# instead of crashing -- and cannot report a vacuous pass either, because the
+# absence itself is a FAIL row above.
+bodies = {s: path.read_text(encoding="utf-8")
+          for s in SKILLS
+          if (path := PLUGIN_DIR / "skills" / s / "SKILL.md").is_file()}
 joined = "\n".join(bodies.values())
 
 # -- the skill directories are the invocation names ------------------------
@@ -268,11 +308,13 @@ check("every skill is classified exactly once",
 # assertion from its detail, so a label containing it is truncated in every
 # downstream reading, including the negative control's isolation comparison.
 for skill in INTERVIEWING:
-    check(f"{skill}: names AskUserQuestion, so it reaches the human",
-          "AskUserQuestion" in bodies[skill])
+    if skill in bodies:
+        check(f"{skill}: names AskUserQuestion, so it reaches the human",
+              "AskUserQuestion" in bodies[skill])
 for skill in PROCEDURAL:
-    check(f"{skill}: names no AskUserQuestion, because a gate has nothing to ask",
-          "AskUserQuestion" not in bodies[skill])
+    if skill in bodies:
+        check(f"{skill}: names no AskUserQuestion, because a gate has nothing to ask",
+              "AskUserQuestion" not in bodies[skill])
 
 # -- the reviewer a phase names is a skill that exists ----------------------
 # The routing, end to end. Each reviewed phase holds its reviewer as a module
@@ -286,7 +328,8 @@ for name in sorted(SCRIPT_PATHS):
     found = REVIEWER_CONST.findall(SOURCES[name])
     if name not in REVIEWED:
         check(f"{name}: declares no reviewer, and the declaration holds",
-              not found, UNREVIEWED_WHY if not found else f"found {found}")
+              not found,
+              UNREVIEWED_WHY.get(name, "") if not found else f"found {found}")
         continue
     check(f"{name}: names exactly one reviewer", len(found) == 1, f"found={found}")
     if len(found) == 1:
