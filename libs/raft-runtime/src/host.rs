@@ -21,8 +21,9 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use raft_core::{
-    AppendReq, AppendResp, Index, InstallSnapshotReq, InstallSnapshotResp, Membership, NodeId,
-    RaftMsg, RaftNode, TimeoutNowReq, TransferRefused, VoteReq, VoteResp,
+    AppendReq, AppendResp, DemotionRefused, Index, InstallSnapshotReq, InstallSnapshotResp,
+    Membership, NodeId, PromotionRefused, RaftMsg, RaftNode, RemovalRefused, TimeoutNowReq,
+    TransferRefused, VoteReq, VoteResp,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Mutex, Notify};
@@ -753,6 +754,39 @@ impl RaftHost {
         target: NodeId,
     ) -> std::result::Result<(), TransferRefused> {
         let res = self.shared.node.lock().await.transfer_leadership(target);
+        if res.is_ok() {
+            self.shared.flush().await;
+        }
+        res
+    }
+    /// Promote a caught-up learner to voter (#3646).
+    pub async fn promote_learner(
+        &self,
+        target: NodeId,
+    ) -> std::result::Result<Index, PromotionRefused> {
+        let res = self.shared.node.lock().await.promote_learner(target);
+        if res.is_ok() {
+            self.shared.flush().await;
+        }
+        res
+    }
+    /// Demote a voter to a learner (#3646).
+    pub async fn demote_voter(
+        &self,
+        target: NodeId,
+    ) -> std::result::Result<Index, DemotionRefused> {
+        let res = self.shared.node.lock().await.demote_voter(target);
+        if res.is_ok() {
+            self.shared.flush().await;
+        }
+        res
+    }
+    /// Remove a member from the group (#3646).
+    pub async fn remove_member(
+        &self,
+        target: NodeId,
+    ) -> std::result::Result<Index, RemovalRefused> {
+        let res = self.shared.node.lock().await.remove_member(target);
         if res.is_ok() {
             self.shared.flush().await;
         }
