@@ -356,7 +356,7 @@ const KUBECTL_CANARY: &str = "canary-fleet-credential-2873";
 /// canary to any lookup, and — for `port-forward` — binds the requested local
 /// port so the CLI's readiness probe succeeds.
 #[cfg(unix)]
-fn install_fake_kubectl(dir: &Path, log: &Path) {
+fn install_fake_kubectl(dir: &Path, log: &Path, python: &str) {
     let script = format!(
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "{log}"
@@ -364,7 +364,7 @@ for a in "$@"; do
   if [ "$a" = "port-forward" ]; then
     for last in "$@"; do :; done
     port=${{last%%:*}}
-    exec python3 -c '
+    exec {python} -c '
 import socket, sys, time
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -384,6 +384,7 @@ exit 0
 "#,
         log = log.display(),
         canary = KUBECTL_CANARY,
+        python = python,
     );
     let path = dir.join("kubectl");
     std::fs::write(&path, script).expect("write fake kubectl");
@@ -410,6 +411,37 @@ json.dump({"env": dict(os.environ), "argv": sys.argv[1:]}, open(sys.argv[1], "w"
     path
 }
 
+/// Probes candidate python3 interpreters under the cleared test environment and
+/// returns the first that exits 0. If none succeed, panics naming every candidate
+/// and its exit code.
+#[cfg(unix)]
+fn resolve_python3(env: &[(String, String)]) -> String {
+    let candidates = [
+        "python3",
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3",
+    ];
+    let mut failures = Vec::new();
+    for candidate in candidates {
+        let mut cmd = Command::new(candidate);
+        cmd.env_clear();
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd.args(["-c", "import sys; sys.exit(0)"]);
+        match cmd.status() {
+            Ok(status) if status.success() => return candidate.to_string(),
+            Ok(status) => failures.push(format!("{candidate} exited {status}")),
+            Err(err) => failures.push(format!("{candidate} failed to spawn: {err}")),
+        }
+    }
+    panic!(
+        "no candidate python3 interpreter succeeded under the cleared test environment; tried:\n{}",
+        failures.join("\n")
+    );
+}
+
 /// AC2 (with R2 and R4): the child of `lumen connect` receives exactly one
 /// new environment variable, it is a URL, and Kubernetes was contacted once —
 /// for the port-forward and for nothing else.
@@ -420,9 +452,6 @@ fn connect_hands_the_child_a_url_and_never_reads_a_secret() {
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("create fake bin dir");
     let kubectl_log = tmp.path().join("kubectl.log");
-    install_fake_kubectl(&bin, &kubectl_log);
-    let recorder = install_env_recorder(tmp.path());
-    let child_out = tmp.path().join("child.json");
 
     // A deterministic, minimal environment: `env_clear` makes the "delta is
     // exactly one variable" assertion below exact instead of approximate.
@@ -438,6 +467,10 @@ fn connect_hands_the_child_a_url_and_never_reads_a_secret() {
             std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()),
         ),
     ];
+    let python = resolve_python3(&parent_env);
+    install_fake_kubectl(&bin, &kubectl_log, &python);
+    let recorder = install_env_recorder(tmp.path());
+    let child_out = tmp.path().join("child.json");
 
     // The baseline: the same recorder, the same environment, launched
     // directly. Diffing against this rather than against `parent_env`
@@ -445,7 +478,7 @@ fn connect_hands_the_child_a_url_and_never_reads_a_secret() {
     // version-manager shim injects several variables of its own, and blaming
     // those on the CLI would make this assertion a coin flip per machine.
     let baseline_out = tmp.path().join("baseline.json");
-    let mut baseline_cmd = Command::new("python3");
+    let mut baseline_cmd = Command::new(&python);
     baseline_cmd.env_clear();
     for (k, v) in &parent_env {
         baseline_cmd.env(k, v);
@@ -477,7 +510,7 @@ fn connect_hands_the_child_a_url_and_never_reads_a_secret() {
         "--cr",
         "search",
         "--",
-        "python3",
+        &python,
         recorder.to_str().unwrap(),
         child_out.to_str().unwrap(),
     ]);
