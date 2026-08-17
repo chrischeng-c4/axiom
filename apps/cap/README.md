@@ -24,12 +24,13 @@ Semantic coverage: 100.0%
 Traceability coverage: 100.0%
 External-contract gate: passed, 4/4
 Test gate: `cargo test -p cap` passed
-Health gate: `aw health cap --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec`
 
 
 ## Capabilities
 
-Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
+Nothing reads the tables below. The capability gate that validated their
+shape was deleted with the `aw` binary, so the shape is convention now and
+the commands named in each row are the only part that runs.
 
 ### Capability Index
 

@@ -322,14 +322,13 @@ Type: Service
 Root WI: #110
 Status: confirmed
 Surfaces: Raft: sharded workflow state primary/replica topology over `libs/raft-core` and `libs/raft-runtime`. K8s: dedicated StatefulSet/operator topology for workflow state under `apps/loom/k8s/`.
-EC Dimensions: behavior: `aw capability check --project loom --skip-issue-inventory` - the `stateful_storage` profile resolves its shared baseline; stability: raft failover, replica catch-up, snapshot restore, and committed-transition safety
+EC Dimensions: behavior: the `stateful_storage` profile had its shared baseline resolved by the `aw` capability gate, which was deleted with the binary; stability: raft failover, replica catch-up, snapshot restore, and committed-transition safety
 Required Verification: smoke
 Promise:
 Loom projects the shared stateful-service workload baseline without a duplicate service implementation. Its durable run store, stable StatefulSet identity, raft primary/replica topology, and snapshot/backup path are verified by the linked capability roots.
 Gate Inventory:
-- `aw capability check --project loom --skip-issue-inventory`
 - apps/loom/tests/integration/
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---|---|---|---|---|
-| stateful-service-workload-projection | change | #110 | implemented | passing | smoke | `aw capability check --project loom --skip-issue-inventory`; composes Workflow Orchestration, State Durability, Primary Replicas, and Kubernetes-Native Deployment without duplicating their claims |
+| stateful-service-workload-projection | change | #110 | implemented | passing | smoke | the `aw` capability gate, deleted with the binary; composes Workflow Orchestration, State Durability, Primary Replicas, and Kubernetes-Native Deployment without duplicating their claims |

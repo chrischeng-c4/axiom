@@ -22,8 +22,9 @@ Readiness rules for agents:
 
 - Treat Basic and Advanced as separate readiness tracks.
 - Do not use Advanced WASM progress to qualify Basic production readiness.
-- Do not treat `aw capability check --project jet` as runtime proof; it
-  validates README capability structure and TD refs.
+- Nothing validates the capability structure below. The `aw` gate that read
+  README shape and TD refs was deleted with the binary, and it was never
+  runtime proof even while it ran.
 - Basic gates compare function first and performance second. A faster run is
   still red when output, install tree, server behavior, browser action, or trace
   evidence differs from the oracle.
@@ -60,8 +61,6 @@ Primary verification:
 apps/jet/scripts/verify-basic-dom-gates.sh
 JET_BASIC_DOM_BUILD_SAMPLES=3 JET_BASIC_DOM_RUNTIME_SMOKE=required apps/jet/scripts/verify-basic-dom-gates.sh --all
 apps/jet/scripts/verify-advanced-wasm-gates.sh
-aw capability check --project jet --pretty
-aw health --project jet
 ```
 
 Source map:
@@ -82,7 +81,9 @@ Source map:
 
 ## Capabilities
 
-Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
+Nothing reads the tables below. The capability gate that validated their
+shape was deleted with the `aw` binary, so the shape is convention now and
+the commands named in each row are the only part that runs.
 
 ### Capability Index
 
@@ -425,7 +426,7 @@ Status: confirmed
 Type: DeveloperTool
 Required Verification: smoke
 Promise:
-Jet's project architecture and authoring guidance (the top-level path-role map plus crate/package naming conventions) lives in scoped project docs rather than a project-root uppercase meta doc. `projects/jet/docs/architecture/layout.md` is the discoverable, README-linked home for that guidance; `projects/jet/LAYOUT.md` no longer exists, and README/CAPABILITIES.md remain the only Jet project-root uppercase meta docs.
+Jet's project architecture and authoring guidance (the top-level path-role map plus crate/package naming conventions) lives in scoped project docs rather than a project-root uppercase meta doc. `projects/jet/docs/architecture/layout.md` is the discoverable, README-linked home for that guidance; `projects/jet/LAYOUT.md` no longer exists, and `README.md` plus `CONTRIBUTING.md` remain the only Jet project-root uppercase meta docs.
 Gate Inventory:
 - `projects/jet/docs/architecture/layout.md`
 - `test ! -e projects/jet/LAYOUT.md && ! grep -rl "projects/jet/LAYOUT.md" --include=*.md . | grep -v projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md`

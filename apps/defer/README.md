@@ -60,8 +60,8 @@ the GitHub label, AW project name, persistent branch convention, or TD bucket
 identity.
 Gate Inventory:
 - verified: apps/defer/tech-design/logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md
-- verified: `aw capability check --project defer`
-- verified: `aw wi list --project defer --state open`
+- verified: capability structure and the open-work inventory, by two `aw` gates
+  that were deleted with the binary; nothing re-runs them
 - verified: stale source-root scan permits only preserved TD-bucket references
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
@@ -312,7 +312,7 @@ Type: Service
 Root WI: #2170
 Status: auditing
 Surfaces: Shared mechanisms: `libs/raft-runtime`, `libs/service-backup`, `libs/service-auth`, and `libs/service-k8s`; Defer integration: Raft-backed scheduler state, admin snapshot backup, queue-scoped authorization, and operator-managed StatefulSet storage.
-EC Dimensions: behavior: `aw capability check --project defer --skip-issue-inventory` - the `stateful_storage` profile resolves its common workload baseline; stability and security remain owned by the linked Defer capability roots and their executable gates
+EC Dimensions: behavior: the `stateful_storage` profile resolved its common workload baseline under the `aw` capability gate, which was deleted with the binary; stability and security remain owned by the linked Defer capability roots and their executable gates
 Required Verification: conformance
 Promise:
 Defer composes its stateful production workload from shared Raft, backup,
@@ -320,7 +320,7 @@ authorization, and Kubernetes mechanisms while keeping delayed-task lifecycle,
 dispatch, rate-limit, failover, and recovery policy in the existing domain roots.
 This root is an integration map, not a second implementation of those contracts.
 Gate Inventory:
-- `aw capability check --project defer --skip-issue-inventory`
+- the `aw` capability gate, deleted with the binary; the rows below are what still runs
 - apps/defer/tests/direct_k8s_assets.rs; apps/defer/tests/raft_scheduler.rs; apps/defer/tests/service_auth.rs
 - apps/defer/src/raft.rs; apps/defer/src/bin/defer.rs; apps/defer/src/operator
 

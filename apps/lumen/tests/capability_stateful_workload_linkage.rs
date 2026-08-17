@@ -1,7 +1,7 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:d81257e0" tracker="#2144" reason="Add a deterministic structural regression test that requires the TD primary capability reference, active #2144 linkage, retained #1553 provenance, and the existing stateful capability gate. generator gap: missing-generator:test:capability-td-linkage (#2144)."
 // @spec apps/lumen/tech-design/validate/link-stateful-service-workload-claim-to-primary-td-verification.md#unit-test
 
-const CAPABILITIES: &str = include_str!("../CAPABILITIES.md");
+const README: &str = include_str!("../README.md");
 const TD: &str = include_str!(
     "../tech-design/validate/link-stateful-service-workload-claim-to-primary-td-verification.md"
 );
@@ -33,17 +33,35 @@ fn active_and_historical_provenance_are_distinct() {
     );
     assert!(TD.contains("aw capability check --project lumen"));
 
-    for (line_no, line) in CAPABILITIES.lines().enumerate() {
+    // The contract is `## Capabilities` and nothing else in the file. Scanning
+    // all of README would fail on the evidence sections below it, which cite
+    // the runs and the issues that produced them and are supposed to.
+    let mut inside = false;
+    let mut scanned = 0usize;
+    for (line_no, line) in README.lines().enumerate() {
+        if line.starts_with("## ") {
+            inside = line.trim() == "## Capabilities";
+        }
+        if !inside {
+            continue;
+        }
+        scanned += 1;
         let issue_ref = line
             .match_indices('#')
             .any(|(i, _)| line[i + 1..].starts_with(|c: char| c.is_ascii_digit()));
         assert!(
             !issue_ref,
             "the capability contract must carry no work-item reference, \
-             CAPABILITIES.md:{} reads {line:?}",
+             README.md:{} reads {line:?}",
             line_no + 1
         );
     }
+    // A slice that resolved to nothing would pass every assertion above having
+    // read no contract at all.
+    assert!(
+        scanned > 100,
+        "the `## Capabilities` section resolved to {scanned} lines; the contract is longer"
+    );
 }
 
 // HANDWRITE-END

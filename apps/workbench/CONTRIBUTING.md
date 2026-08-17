@@ -1,13 +1,13 @@
 # Workbench Contributing
 
-<!-- aw:meta:project-contributing:start -->
 ## Brief
 
 Project-local contribution contract for Workbench.
 
 ## Authoritative Inputs
 
-- Product promises and work roots: [CAPABILITIES.md](CAPABILITIES.md)
+- Product promises and work roots: [README.md](README.md), section
+  `## Capabilities`
 - Project orientation: [README.md](README.md)
 
 ## Local Workflow
@@ -16,8 +16,10 @@ Follow repository-level agent guidance and keep project-specific rules here.
 
 ## Verification
 
-List the narrow commands that prove changes to Workbench.
-<!-- aw:meta:project-contributing:end -->
+`cargo test -p workbench`. The README's capability index names the ten
+integration targets individually; running the crate rather than a selector
+avoids the failure where a target name that matches nothing exits 0 having
+measured nothing.
 
 ## Workbench Authoring Rules
 

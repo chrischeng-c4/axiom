@@ -1,6 +1,5 @@
 # Server Tcp
 
-<!-- aw:meta:project-readme:start -->
 ## Brief
 
 Describe the agent-readable purpose of Server Tcp.
@@ -9,7 +8,7 @@ Describe the agent-readable purpose of Server Tcp.
 
 Project-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Capability Contract
+## Capabilities
 
-Product promises and work roots live in [CAPABILITIES.md](CAPABILITIES.md).
-<!-- aw:meta:project-readme:end -->
+None claimed yet. A capability belongs here with the verbatim gate command that
+verifies it; a promise with no gate under it is not claimed.

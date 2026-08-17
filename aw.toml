@@ -47,7 +47,7 @@ path = "tech-design"
 #
 # Routing keys per `[[projects]]`:
 #
-#   • path     — source-tree root for the project (e.g. `apps/agentic-workflow`,
+#   • path     — source-tree root for the project (e.g. `apps/preview`,
 #                `projects/conductor`). Hooks route "which project
 #                owns this source file?" by longest-prefix match.
 #   • td_path  — Optional TD spec root override, full repo-relative path.
@@ -91,26 +91,10 @@ path = "tech-design"
 # ─────────────────────────────────────────────────────────────────────────────
 
 [[projects]]
-name = "agentic-workflow"
-aliases = ["aw"]
-path = "apps/agentic-workflow"
-td_path = "apps/agentic-workflow/tech-design"
-cap_path = "apps/agentic-workflow/CAPABILITIES.md"
-label = "app:agentic-workflow"
-
-[[projects.workspaces]]
-name = "agentic-workflow"
-paths = ["apps/agentic-workflow/**"]
-target = "rust"
-test_cmd = "cargo test -p agentic-workflow"
-verify_cold = true
-codegen.profile = "rust/score-crate"
-
-[[projects]]
 name = "todo-app"
 path = "examples/todo-app"
 td_path = "examples/todo-app/td"
-cap_path = "examples/todo-app/CAPABILITIES.md"
+cap_path = "examples/todo-app/README.md"
 label = "example:todo-app"
 spec_model = "python"
 
@@ -243,7 +227,7 @@ test_cmd = "true"
 name = "mesh"
 path = "apps/mesh"
 td_path = "apps/mesh/tech-design"
-cap_path = "apps/mesh/CAPABILITIES.md"
+cap_path = "apps/mesh/README.md"
 label = "app:mesh"
 
 [[projects.workspaces]]
@@ -269,7 +253,7 @@ test_cmd = "true"
 name = "workbench"
 path = "apps/workbench"
 td_path = "apps/workbench/tech-design"
-cap_path = "apps/workbench/CAPABILITIES.md"
+cap_path = "apps/workbench/README.md"
 label = "app:workbench"
 
 [[projects.workspaces]]
@@ -333,7 +317,7 @@ codegen.profile = "rust/score-crate"
 name = "mamba"
 path = "projects/mamba"
 td_path = "projects/mamba/tech-design"
-cap_path = "projects/mamba/CAPABILITIES.md"
+cap_path = "projects/mamba/README.md"
 label = "app:mamba"
 
 [[projects.workspaces]]
@@ -363,7 +347,7 @@ codegen.profile = "rust/score-crate"
 name = "lumen"
 path = "apps/lumen"
 td_path = "apps/lumen/tech-design"
-cap_path = "apps/lumen/CAPABILITIES.md"
+cap_path = "apps/lumen/README.md"
 label = "app:lumen"
 # EC tool bindings (contract before implementation). `aw health --verify-ec`
 # dispatches each bound dimension to its external tool; unbound categories
@@ -478,7 +462,7 @@ verify_cold = true
 name = "relay"
 path = "apps/relay"
 td_path = "apps/relay/tech-design"
-cap_path = "apps/relay/CAPABILITIES.md"
+cap_path = "apps/relay/README.md"
 label = "app:relay"
 # Relay EC dispatch is vat-isolated; meter owns performance evidence and guard
 # owns security evidence. Legacy arena comparison remains advisory dogfood until
@@ -736,16 +720,6 @@ path = "crates/cclab-schema-mamba"
 paths = ["crates/cclab-schema-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-schema-mamba"
-verify_cold = false
-
-[[projects]]
-name = "cclab-server"
-path = "crates/cclab-server"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-server/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-server"
 verify_cold = false
 
 [[projects]]

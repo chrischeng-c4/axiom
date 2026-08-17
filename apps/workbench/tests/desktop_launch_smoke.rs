@@ -77,11 +77,9 @@ fn desktop_configuration_is_local_and_bounded() {
 /// @spec apps/workbench/tech-design/interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md#unit-test
 #[test]
 fn product_contract_keeps_native_agents_authoritative() {
-    let contract = format!(
-        "{}\n{}",
-        include_str!("../README.md"),
-        include_str!("../CAPABILITIES.md")
-    );
+    // README holds the capability contract in its `## Capabilities` section;
+    // the separate CAPABILITIES.md this used to concatenate no longer exists.
+    let contract = include_str!("../README.md");
     for agent in ["Claude Code", "Codex", "AGY"] {
         assert!(
             contract.contains(agent),

@@ -1545,12 +1545,13 @@ const WEAKENINGS: [&str; 6] = [
 #[test]
 fn operator_tls_ownership_is_consistently_documented_across_surfaces() {
     let deployment_md = llm_deployment_md();
+    // README carries the capability contract; there is no separate
+    // CAPABILITIES.md to read, so the two canonical surfaces are these.
     let readme = std::fs::read_to_string("README.md").expect("read README.md");
-    let capabilities = std::fs::read_to_string("CAPABILITIES.md").expect("read CAPABILITIES.md");
 
-    // All three canonical surfaces describe externally provisioned TLS and no
+    // Both canonical surfaces describe externally provisioned TLS and no
     // longer teach the retired operator issuer/CAS/controller path.
-    for doc in [&deployment_md, &readme, &capabilities] {
+    for doc in [&deployment_md, &readme] {
         assert!(
             (doc.contains("servingTlsSecret") && doc.contains("peerTlsSecret"))
                 || (doc.contains("serving") && doc.contains("peer") && doc.contains("TLS Secrets")),

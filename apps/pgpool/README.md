@@ -261,7 +261,7 @@ Gate Inventory:
 ID: ec-gates-configured
 Type: Devops
 Surfaces: Config: `apps/pgpool/aw.toml` - AW EC inventory and generated dispatch commands (pending).; Config: pending `apps/pgpool/vat.toml` - vat-managed meter/guard runners.
-EC Dimensions: behavior: pending `aw ec gen --verify` inventory - EC dimensions configured and dispatchable for the pooler capability set
+EC Dimensions: behavior: pending a phase-1 project at `apps/pgpool/e2e/` - no black-box case exists yet for the pooler capability set
 Root WI: 1285
 Status: candidate
 Required Verification: conformance

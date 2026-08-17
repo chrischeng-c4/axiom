@@ -1,20 +1,17 @@
-# Cclab Ctx Inf Db Contributing
+# Contributing to cclab-ctx-inf-db
 
-<!-- aw:meta:project-contributing:start -->
 ## Brief
 
-Project-local contribution contract for Cclab Ctx Inf Db.
+How to change `crates/cclab-ctx-inf-db`. What it promises and the work roots it
+owns live in [README.md](README.md); repository-wide authoring and verification
+rules live in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-## Authoritative Inputs
-
-- Product promises and work roots: [CAPABILITIES.md](CAPABILITIES.md)
-- Project orientation: [README.md](README.md)
-
-## Local Workflow
-
-Follow repository-level agent guidance and keep project-specific rules here.
+There is no phase ladder here. `leg.leg_root` resolves `apps/<project>` and
+nothing else, so a change to this crate is authored and committed directly
+rather than driven through `e2e -> unit -> logic`.
 
 ## Verification
 
-List the narrow commands that prove changes to Cclab Ctx Inf Db.
-<!-- aw:meta:project-contributing:end -->
+| Gate | Command |
+|---|---|
+| unit + colocated tests | `cargo test -p cclab-ctx-inf-db` |

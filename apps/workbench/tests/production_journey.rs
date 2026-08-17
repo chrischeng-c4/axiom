@@ -784,7 +784,7 @@ fn retained_production_evidence_manifest_is_complete() {
     assert_eq!(context["renderers"]["aw"], "aw-typed");
     assert_eq!(context["provenance"]["authority"], "canonical");
 
-    let capability = include_str!("../CAPABILITIES.md");
+    let capability = include_str!("../README.md");
     let external_contract =
         include_str!("../external-contracts/behavior/folder-agent-artifact-journey.md");
     assert!(capability.contains(PRODUCTION_COMMAND));

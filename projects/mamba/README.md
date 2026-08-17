@@ -12,10 +12,223 @@ Canonical supporting docs:
 - Native runtime integration: [docs/integration/native-runtime-integration.md](docs/integration/native-runtime-integration.md)
 - Archived autonomous notes: [docs/notes/archive/autonomous-loop-scratchpad.md](docs/notes/archive/autonomous-loop-scratchpad.md)
 
-## Capability Contract
+## Capabilities
 
-Machine-readable capability contract for Mamba. Full contract:
-[CAPABILITIES.md](CAPABILITIES.md).
+Each capability states its promise and names the gate that verifies it. A
+promise with no gate line under it is not claimed — and most of the tier
+promises below are exactly that today: planned, with the gate still to be
+written. Measured state lives in
+[Capability status — the four axes](#capability-status--the-four-axes-measured);
+those are Type/Behavior/Perf/Safety and are a different cut from the C1-C4
+axes here.
+
+### Roadmap tiers
+
+Execution order — Mamba Core Semantics → Language Core → Built-ins → C-backed
+stdlibs → Hot stdlibs → Third-party → Other stdlibs (7a vendor, then 7b native
+rewrite). This is policy, enforced operationally by the GitHub tier labels and
+the #1996 Delivery Queue rather than by any checker. A later tier is not
+dependency-ready while a required earlier-tier contract is red.
+
+#### T1. Mamba Core Semantics — #1996
+
+Mamba is force typed and always free-threaded. Type inference failure is a
+compile error and `Any` is available only when explicitly requested; ingress,
+egress, generic, subtype, union, and widening walls must reject invalid values
+without rejecting valid subtypes. The runtime has no GIL: threads, thread
+pools, and executors provide real CPU multicore execution, while ordinary tasks
+on one event loop remain cooperatively serial. One built-in container mutation
+is memory-safe and atomic; compound operations are not transactionally atomic
+and require caller locking when a multi-step invariant matters. Readiness needs
+correctness plus race, deadlock, leak, CPU, peak-RSS, and multicore evidence.
+
+- Surfaces: `mamba check|build|run`; `threading`, `concurrent.futures`,
+  `asyncio`, built-in container mutation
+- Contracts: `projects/mamba/external-contracts/{type-system,concurrency}.md`
+- Exit gate: #2028 (fail-closed rollup that releases Tier 2) — **not written**
+
+#### T2. CPython-compatible Language Core — #2002
+
+After Tier 1 establishes Mamba's intentional divergences, parsing, ASTs, scope,
+calls, objects, exceptions, generators, coroutines, dynamic code, imports,
+introspection, operator dispatch, compiler lowering, native codegen, and
+optimizer passes preserve CPython 3.12-visible behavior. Tier 2 never restores
+implicit `Any` or GIL-dependent execution.
+
+- Contracts: `projects/mamba/external-contracts/{frontend,codegen,name-resolution,calling-convention,object-model,exceptions,iterators,import-system}.md`
+- Oracle: `projects/mamba/tests/harness/cpython`
+- Exit gate: #2035 — **not written**
+
+#### T3. Built-ins and Core Value Model — #2001
+
+Numeric values, mappings, sequences, sets, Unicode and binary values,
+iterators, reductions, reflection, codecs, and built-in errors match CPython
+3.12 except for the declared Tier 1 type divergences. Built-in operations
+retain Tier 1 single-mutation memory safety and free-threaded execution.
+
+- Contracts: `projects/mamba/external-contracts/{numbers,collections,strings,iterators}.md`
+- Exit gate: #2056 — **not written**
+
+#### T4. C-backed Stdlib Compatibility — #2003
+
+Required CPython modules backed by C or operating-system facilities work
+through real macOS/Linux backends with explicit platform classification,
+correct resource lifetime, and blocking/cancellation behavior. No stub or mock
+success; unsupported platform rows stay visible and issue-owned.
+
+- Contract: `projects/mamba/external-contracts/stdlib.md`
+- Platform matrix: `projects/mamba/tests/harness/cpython/tools/platform_readiness.py`
+- Exit gate: #2061 — **not written**
+
+#### T5. Hot Stdlib Native/Hybrid Paths — #1103
+
+The selected import- and request-hot pure-Python stdlib paths (`re`,
+`posixpath`, `functools`, `urllib.parse`, `json`, `typing`, `enum`, `pathlib`,
+`logging`, `dataclasses`, `heapq`, `bisect`, `copy`) run natively only when
+they preserve complete CPython behavior **and** demonstrate module-specific
+CPU, RSS, or startup value. Unimplemented tails resolve through one proven
+vendored module identity, never a native shell or sentinel stub.
+
+- Perf config: `projects/mamba/tests/harness/cpython/config/perf`
+- Source: `projects/mamba/src/runtime/stdlib`, `.../vendor_lib.rs`
+- Exit gate: #2080 — **not written**
+
+#### T6. Third-party Ecosystem — #1119
+
+Selected real third-party packages install or build on Mamba and complete
+nontrivial user journeys through an explicit route: pure-Python, native SDK,
+replacement, bounded emulation, or unsupported. Import-only probes, sentinel
+shims, and fake modules never count as readiness.
+
+- Contract: `projects/mamba/external-contracts/third-party.md`
+- Exit gate: #2096 — **not written**
+
+#### T7. Other Stdlib: Vendor then Rewrite — #2004
+
+Every remaining supported pure-Python stdlib module ships first from a
+governed, version-pinned CPython `Lib` tree. Only after a module's vendored row
+is green may a measured candidate move to a native or hybrid implementation,
+and the vendored path stays the oracle and the rollback until promotion is
+proven.
+
+- Source: `projects/mamba/src/runtime/stdlib/vendor_lib.rs`, `projects/mamba/vendor`
+- Exit gates: 7a #2104, 7b #2116 — **not written**
+
+### C1. Py3.12 functional parity
+
+Run real Python 3.12 programs without semantic divergence across language core,
+PEP syntax/semantics, builtins and stdlib, plus selected third-party libraries.
+CPython `Lib/test` and typeshed are the authoritative denominators; declared
+force-typing divergences must be explicit rather than hidden as ordinary
+behavior failures.
+
+- Root WI: #702
+- Gates: `cargo test -p mamba --test conformance_cpython_lib_test`;
+  `--test conformance_contract`; `--test conformance_real_world`;
+  `--test conformance_runtime_shutdown`; `projects/mamba/tests/PRODUCTION-GATE.md`
+- Surfaces: `mamba build|check|run|test|test-batch|pytest|surface-report`
+
+The CPython oracle gate itself remains open — the tier exit gates above are
+what would close it.
+
+### C2. Less CPU time AND less memory than CPython
+
+Performance is a committed capability: for the same program, mamba targets
+strictly less CPU time **and** strictly less peak RSS than CPython 3.12. The v1
+bar is staged, not one-shot: at least 1.5x where force typing pays, no worse
+than roughly 0.8x on CPython-tuned C hot paths, and both CPU and RSS measured
+externally before claiming progress.
+
+- Root WI: #707
+- Gates: `cargo test -p mamba --release --test perf_pin -- perf_pin`;
+  `cargo bench -p mamba --bench mamba_bench`;
+  `projects/mamba/benches/3p/cross_runtime.rs`;
+  `projects/mamba/tests/harness/cpython/config/perf/pins`
+- Surfaces: `mamba bench --compare cpython|--fixtures|--check`
+
+Measured state is bimodal — see
+[Performance data](#performance-data--measured-mamba-vs-cpython-312). The ratio
+gates remain open.
+
+### C3. mambalibs end-to-end
+
+A statically linked set of Rust-native libraries exposed as importable Python
+modules inside mamba. Each kit registers via `MambaModule` plus the `linkme`
+distributed slice and is force-linked into the final mamba binary, with
+import/callable coverage for native kits instead of a separate ABI or dynamic
+plugin layer.
+
+- Root WI: #714
+- Gates: `cargo test -p mamba --test mambalibs`;
+  `cargo test -p mambalibs-http --test client_http2_test` (httpkit HTTP/2, #526,
+  the one verified child)
+- Source: `projects/mamba/mambalibs`,
+  `projects/mamba/src/pkgmanage/builder/force_link.rs`
+
+### C4. Package manager — uv-like
+
+**Verified.** A built-in package manager for project scaffold, dependency
+add/remove, lockfile generation, sync/install, cache, and validation workflows —
+`uv`-style ergonomics over the mamba runtime, with `mamba.toml` and
+`mamba.lock` as the agent-readable project contract.
+
+- Root WI: #459 (parity #519, `mamba run` command mode #525)
+- Gates: `cargo test -p mamba --test pkgmgr`;
+  `cargo test -p mamba --test schema_gates pkgmgr`;
+  `./target/debug/mamba pkgmgr-validate --json`
+- Source: `projects/mamba/src/pkgmanage`, `projects/mamba/tests/pkgmgr`
+
+`mamba init/auth/index/add/remove/lock/export/tree/version/package/publish/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache`
+plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
+local wheel paths, explicit registry URL tests, lockfile export to
+requirements.txt / pylock.toml, dependency-tree rendering, PEP 621 version
+bumping, and pip-compatible requirements compile plus installed-environment
+install/sync/uninstall/list/freeze/show/tree/check inspection.
+
+`mamba audit` checks `mamba.lock` against an offline advisory database, and
+`mamba lock --check` / `mamba sync --check` provide CI-friendly drift gates
+without mutating lockfiles or environments. `mamba package build` emits
+deterministic pure-Python wheel and sdist artifacts from PEP 621
+`pyproject.toml` projects, and `mamba publish` / `mamba package publish` upload
+PyPI legacy multipart payloads with `.pypirc`/CLI credential precedence,
+CA-bundle support, JSON summaries, and `--dry-run` validation without leaking
+tokens. `mamba venv` exposes create/remove safety around PEP 405 environments,
+and `mamba cache` reports exact size/category info plus dry-run, age, size, and
+package-targeted pruning. `mamba python` exposes local interpreter list/find,
+`.python-version` pinning, managed Python directory resolution, local-source
+registration, standalone archive download/install via explicit URL or
+python-build-standalone release-tag composition, sha256 verification,
+uninstall, and shell PATH setup for managed launchers. `mamba workspace
+list/dir/metadata` inspects uv-compatible `[tool.uv.workspace]` membership,
+member paths, root paths, and exclusion patterns. `mamba index build`
+materializes a frozen local index from wheel files or directories for `mamba
+add --index` / `mamba lock --index`. `mamba shell path/init` emits managed PATH
+snippets for mamba tool bin directories, and `mamba
+generate-shell-completion` emits clap-derived bash/zsh/fish/powershell/elvish
+completion scripts from the live command tree. `mamba auth
+dir/login/token/logout` manages plaintext package-index credentials under an
+overrideable credentials directory, and stored credentials feed explicit-index
+metadata requests, resolver requests, and locked artifact downloads. `mamba
+tool run/install/upgrade/list/uninstall/dir/update-shell` wraps the
+tool-install workflow behind a uv-style `tool` command family.
+
+The validation profile requires twenty-one offline workflow families and keeps
+live network coverage opt-in and report-only. `mamba add` / `mamba lock` do not
+treat public PyPI as an implicit default source; callers must provide a frozen
+local index, a direct local wheel file, or an explicit registry URL.
+First-party pure-Python replacement packages use an explicit provider path:
+`mamba add --provider mamba mamba-httpx-compat` records the mamba-owned
+distribution name, preserves `provides`/compatibility metadata in `mamba.lock`,
+and `mamba sync` installs real pure-Python files into `.venv` so the provided
+import alias (for example `import httpx`) resolves without confusing the
+package with the upstream PyPI distribution. This provider path is separate
+from C3 `mambalibs`, which are Rust/native runtime modules. `mamba run
+<file.py|file.tp>` remains the mamba runtime/compiler path, while `mamba run --
+<cmd> [args...]` runs arbitrary commands inside the synced project environment
+with `.venv` executables and site-packages preferred before host fallbacks.
+
+No known release-blocking command-family gaps remain under #519; follow-up
+parity work is tracked as focused hardening or live-network fixtures.
 
 ## Test Completeness — what we tested, against what authority
 
@@ -758,9 +971,9 @@ Mamba is an existing-project takeover under Agentic Workflow. Beyond the four us
 
 | Layer        | What it means                                                                   | Current  | Gate                                       | Epic |
 |--------------|---------------------------------------------------------------------------------|----------|--------------------------------------------|------|
-| **managed**     | Every in-scope file is marked `CODEGEN` or `HANDWRITE`. No unmarked files.       | **5.1%** (119 / 2343; 90 HANDWRITE + 29 CODEGEN + 2224 unmarked) | `aw standardize managed report mamba` | [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |
-| **semantic**    | Source behavior is covered by semantic TD (claim TDs do not count).              | **0.7%** (17 semantic / 2343 units) | `aw standardize semantic report mamba` | [#3883](https://github.com/chrischeng-c4/cclab/issues/3883) |
-| **regenerable** | Every in-scope file is fully `CODEGEN`-owned (no remaining `HANDWRITE` regions). | **0.1%** maturity; 27 audit/replay drift | `aw standardize regenerable report mamba` | [#3884](https://github.com/chrischeng-c4/cclab/issues/3884) |
+| **managed**     | Every in-scope file is marked `CODEGEN` or `HANDWRITE`. No unmarked files.       | **5.1%** (119 / 2343; 90 HANDWRITE + 29 CODEGEN + 2224 unmarked) | no gate; the reporting verb went with the `aw` binary | [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |
+| **semantic**    | Source behavior is covered by semantic TD (claim TDs do not count).              | **0.7%** (17 semantic / 2343 units) | no gate; the reporting verb went with the `aw` binary | [#3883](https://github.com/chrischeng-c4/cclab/issues/3883) |
+| **regenerable** | Every in-scope file is fully `CODEGEN`-owned (no remaining `HANDWRITE` regions). | **0.1%** maturity; 27 audit/replay drift | no gate; the reporting verb went with the `aw` binary | [#3884](https://github.com/chrischeng-c4/cclab/issues/3884) |
 
 Layer order is **managed → semantic → regenerable** — you cannot specify what to generate before you know which files are in scope, and you cannot regenerate before the spec is semantic. There is **no skip state for source ownership**: if codegen can't generate a region yet, mark it `HANDWRITE`, name the concrete generator gap, and feed the gap back into Agentic Workflow until it can become `CODEGEN`.
 
@@ -790,5 +1003,7 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 Engineering doctrine, build/test/verification rules, and the working-tree
 discipline live in [CONTRIBUTING.md](CONTRIBUTING.md). The orchestration
 playbook and bootstrap prompt for agent sessions: tracker issue #1134.
-Open work is tracked exclusively in GitHub issues (`aw wi list --project
-mamba`); the tracker is the source of truth.
+Open work is tracked exclusively in GitHub issues (`gh issue list --repo
+chrischeng-c4/axiom --label app:mamba --state open`); the tracker is the source
+of truth. The label is `app:mamba` even though the source is under `projects/`,
+which is why deriving it from the directory finds nothing.

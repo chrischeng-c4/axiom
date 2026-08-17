@@ -77,7 +77,6 @@ fn shipped_files() -> Vec<PathBuf> {
     }
     for file in [
         "README.md",
-        "CAPABILITIES.md",
         "CONTRIBUTING.md",
         "Cargo.toml",
         "aw.toml",

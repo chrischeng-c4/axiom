@@ -66,13 +66,14 @@ Tech design root: `apps/guard/tech-design`
 Source ownership: TD-first source snapshots
 Test gate: `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`
 CLI smoke: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command`
-Health gate: `aw health --project guard`
 Explicit non-goals: AST ownership, env isolation, e2e orchestration, profiling, benchmark comparison
 
 
 ## Capabilities
 
-Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
+Nothing reads the tables below. The capability gate that validated their
+shape was deleted with the `aw` binary, so the shape is convention now and
+the commands named in each row are the only part that runs.
 
 ### Capability Index
 
@@ -185,10 +186,8 @@ apps/guard/build.sh debug
 - Profiling/resource measurement. `meter` owns runtime/resource attribution.
 - Benchmark comparison. `arena` owns N-target comparison and budgets.
 
-<!-- aw:meta:project-readme:start -->
 ## Brief
 
-<!-- aw:meta:project-brief:start -->
 Security posture gate for the cclab ecosystem.
 
 `guard` owns security policy and gate semantics. It does not replace
@@ -198,13 +197,12 @@ security evidence composes through the existing execution tools: `vat` for
 isolated runs, `rig` for exploit/e2e journeys, `meter` for resource-abuse
 evidence. Legacy `arena` flags remain accepted for compatibility, but arena is
 no longer a required production evidence adapter.
-<!-- aw:meta:project-brief:end -->
 
 ## Contributing
 
 Project-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Capability Contract
+## Capabilities
 
-Product promises and work roots live in [CAPABILITIES.md](CAPABILITIES.md).
-<!-- aw:meta:project-readme:end -->
+None claimed yet. A capability belongs here with the verbatim gate command that
+verifies it; a promise with no gate under it is not claimed.

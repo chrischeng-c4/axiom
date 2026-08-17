@@ -46,42 +46,429 @@ Project-local authoring and verification rules live in
 [`CONTRIBUTING.md`](CONTRIBUTING.md). Repository-wide rules remain
 authoritative when the two differ.
 
-## Capability Contract
+## Capabilities
 
-Lumen is a derived-index service. Its core job is to build indexes over
-caller-owned data and query those indexes. Lumen is not a system of record,
-analytics engine, identity provider, or certificate authority.
+Every capability belongs to exactly one of two feature roots:
 
-The canonical contract is [`CAPABILITIES.md`](CAPABILITIES.md). It has two
-feature roots only. Core means the capability changes what Lumen indexes or
-how it answers queries. Non-core means the capability makes those jobs usable
-in production; it does not mean optional.
+- **Core Features** define what Lumen fundamentally does: Indexing and
+  Querying.
+- **Non-Core Features** make those two jobs deployable, secure, scalable,
+  recoverable, observable, and integrable. Non-core does not mean optional.
+
+This section contains stable product promises, claim IDs, and verification
+surfaces. Delivery planning lives outside this contract and references these
+IDs one way.
+
+### Capability Index
+
+| Class | ID | Capability | State |
+|---|---|---|---|
+| Core | `indexing` | Indexing | ready |
+| Core | `querying` | Querying | ready |
+| Non-Core | `kubernetes-native-deployment` | Kubernetes-Native Deployment | ready |
+| Non-Core | `security-hardening` | Security & Access | not ready |
+| Non-Core | `scaling-availability` | Scaling & Availability | ready |
+| Non-Core | `durability-recovery` | Durability & Recovery | ready |
+| Non-Core | `operations-observability` | Operations & Observability | ready |
+| Non-Core | `api-cli-agent-integration` | API, CLI & Agent Integration | ready |
 
 ### Core Features
 
-- **Indexing** — schema validation, ingestion, mutation, derived-index
-  persistence, checkpointing, and rebuild over caller-owned data.
-- **Querying** — lexical, exact/filter, vector/hash, hybrid, duplicate/nested,
-  pagination, sort, and read-consistency semantics.
+#### Indexing
+
+ID: `indexing`
+
+Status: ready
+
+Promise: Build and maintain rebuildable indexes over caller-owned
+`external_id` values. The caller supplies source data, embeddings, and
+perceptual hashes; Lumen owns schema validation, lexical analysis, index
+mutation, segment/checkpoint persistence, and deterministic rebuild.
+
+Claims:
+
+- `schema-and-index-lifecycle` — schemas and mutations are validated and
+  applied consistently.
+- `derived-index-storage` — retained index state survives restart and can be
+  rebuilt without becoming the source of truth.
+- `indexing-quality` — indexing meets the declared throughput, footprint, and
+  long-running stability floors.
+
+Verification:
+
+- `cargo test -p lumen --test api_e2e --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e`
+- `cargo test -p lumen --test perf_gate --test perf_gate_vs_db`
+- `apps/lumen/tests/rig/cases`
+
+#### Querying
+
+ID: `querying`
+
+Status: ready
+
+Promise: Query Lumen indexes and return ranked or filtered caller-owned
+`external_id` values. Supported semantics include lexical BM25, exact and
+range filters, vector kNN, Hamming hash search, hybrid RRF, duplicates,
+nested/group/collapse behavior, pagination, sorting, and explicit read
+consistency.
+
+Claims:
+
+- `lexical-and-structured-query` — lexical, exact, range, pagination, and sort
+  behavior is deterministic.
+- `semantic-and-similarity-query` — vector, hash, hybrid, duplicate, and nested
+  queries preserve their documented semantics.
+- `query-quality` — unsafe shapes are rejected and query latency, throughput,
+  and footprint stay within the declared floors.
+
+Verification:
+
+- `cargo test -p lumen --test api_e2e --test coverage_gaps_e2e`
+- `cargo test -p lumen --test vector_e2e --test hash_hamming --test hybrid_rrf --test collapse_nested`
+- `cargo test -p lumen --test perf_gate --test perf_gate_vs_db`
 
 ### Non-Core Features
 
-- **Kubernetes-Native Deployment** — independently rendered image, CRD,
-  operator, and instance layers with declarative reconciliation.
-- **Security & Access** — Kubernetes ServiceAccount TokenReview/SAR for client
-  requests plus separate instance-scoped mTLS for Raft peers. This capability
-  is being replaced and is not production-ready.
-- **Scaling & Availability** — elastic segments, shard topology, replicas,
-  failover, and replacement bootstrap.
-- **Durability & Recovery** — WAL/checkpoint recovery, backup/restore, and cold
-  seed.
-- **Operations & Observability** — health, readiness, conditions, metrics,
-  events, alerts, tracing, and long-running-operation state.
-- **API, CLI & Agent Integration** — HTTP/1.1 and HTTP/2, OpenAPI, clients,
-  standard CLI surfaces, chainable output, and offline agent guidance.
+#### Kubernetes-Native Deployment
 
-Stable capability and claim IDs live in `CAPABILITIES.md`. Delivery planning
-lives in GitHub and references those IDs one way.
+ID: `kubernetes-native-deployment`
+
+Status: ready
+
+Promise: Render the image, CRD, operator, and instance layers independently,
+then reconcile each Lumen instance into stable Kubernetes workloads,
+networking, conditions, disruption protection, and optional isolation.
+Reusable Kubernetes mechanics stay in shared libraries; Lumen owns its CRD
+policy and app wiring.
+
+Claims:
+
+- `layered-deployment-artifacts` — Dockerfile, CRD, operator, and instance
+  renderers remain independently usable.
+- `live-operator-reconciliation` — desired state converges and owned resources
+  are repaired without taking over unrelated objects.
+
+Verification:
+
+- `cargo test -p lumen --features operator --test operator_render --test operator_backup_kubernetes_wiring`
+- `apps/lumen/scripts/kind-e2e.sh`
+- `acceptance/gcp/scripts/run.sh`
+
+#### Security & Access
+
+ID: `security-hardening`
+
+Status: not ready
+
+Promise: Use Kubernetes as the client request identity and authorization
+boundary, a separate X.509 identity plane for replicated Raft traffic, and
+rustls for serving transport confidentiality.
+
+Request path:
+
+```text
+Google user or Google service account
+  -> kube-apiserver authentication through kubeconfig / GKE credential plugin
+  -> RBAC permits TokenRequest for one named client KSA
+  -> short-lived, Lumen-audience KSA token
+  -> Lumen TokenReview
+  -> strict system:serviceaccount:<namespace>:<name> principal
+  -> Lumen SubjectAccessReview for lumencollections / lumenadmin
+```
+
+Peer path:
+
+```text
+Lumen peer pod
+  -> instance-scoped X.509 certificate
+  -> mandatory mTLS on :7374
+```
+
+Serving path:
+
+```text
+in-cluster caller
+  -> https://<instance>.<namespace>.svc:7373 (ClusterIP, never published)
+  -> TLS terminated by the serving pod itself, ALPN h2 / http/1.1
+  -> leaf verified against the externally distributed public CA
+```
+
+Invariants:
+
+- Serving TLS terminates in the Lumen process. No Ingress, Gateway,
+  LoadBalancer, NodePort, or service mesh terminates it on Lumen's behalf, so
+  no hop between a caller and Lumen carries a request token in the clear.
+- The serving leaf asserts the instance's own Kubernetes Service DNS names and
+  nothing else.
+- A configured serving certificate never degrades to plaintext; the client port
+  refuses connections while no valid leaf is active.
+- Deployment administrators or an external certificate platform distribute the
+  public CA separately from the private-key-bearing serving Secret; clients
+  pass it as `--ca-file` and replace the public roots rather than joining them.
+- Serving and peer certificates are distinct material. Neither authenticates on
+  the other's port.
+- Clients authenticate the server with the trust anchor and authenticate
+  themselves with a KSA token; client certificates are not an identity source.
+- GCP credentials stop at kube-apiserver. Lumen rejects Google access tokens,
+  Google ID tokens, ADC/GSA credentials, and metadata-server identity tokens.
+- TokenReview must return the expected audience and an exact Kubernetes
+  ServiceAccount principal.
+- SubjectAccessReview is authoritative. Lumen only maps its operations to
+  `lumencollections` and `lumenadmin`.
+- Serving, operator/reshard, backup, and external-client ServiceAccounts are
+  distinct least-privilege identities.
+- TokenRequest permission names one client ServiceAccount; it is never granted
+  namespace-wide.
+- No long-lived ServiceAccount token Secret, shared bearer/Google registry,
+  token environment injection, or metadata-token path remains.
+- KSA tokens never authenticate Raft peers. Peer certificates never grant API
+  access. Raft `:7374` never falls back to plaintext.
+- Delegated-auth, RBAC rendering, projected-token, and TLS mechanics belong in
+  shared libraries; Lumen owns domain policy and wiring.
+- Deployment administrators or an external platform provision the serving and
+  peer TLS Secrets named by each Lumen instance. The operator only consumes
+  those Secrets and does not resolve issuers or perform CAS automation.
+
+Claims:
+
+- `kubernetes-native-request-identity-and-authorization` — permitted KSA
+  requests pass TokenReview/SAR and invalid or denied requests fail closed.
+- `instance-scoped-raft-peer-identity` — only valid instance peers can use the
+  Raft transport, including through rotation and failover.
+- `serving-transport-tls` — the rustls-backed serving transport terminates
+  private ClusterIP TLS in-process and admits no plaintext or unverified path.
+
+Verification:
+
+- `cargo test -p lumen -p service-auth -p service-k8s -p peer-tls`
+- `apps/lumen/tests/auth_e2e.rs`
+- `apps/lumen/tests/authz_matrix_e2e.rs`
+- `apps/lumen/tests/operator_render.rs`
+- `apps/lumen/tests/security_lumen_claim_security_tls_rustls.rs`
+- `apps/lumen/tests/serving_tls_rotation.rs`
+- `acceptance/gcp/scripts/run.sh`
+- `acceptance/gcp/scripts/verify-lumen-auth.sh`
+
+Ready when one retained GKE evidence bundle proves KSA allow/deny, direct
+Google rejection, peer mTLS positive/negative behavior, credential rotation,
+failover, and cleanup. Retired bearer/Google-registry evidence cannot close
+this capability.
+
+#### Scaling & Availability
+
+ID: `scaling-availability`
+
+Status: ready
+
+Promise: Scale index state and serving capacity without changing indexing or
+query semantics. Lumen uses RAM-hot/disk-all segments, a versioned
+virtual-bucket shard map, checkpointed reshard transitions, one Raft group per
+shard, explicit replica policy, failover, and replacement bootstrap.
+
+Claims:
+
+- `elastic-segment-tier` — hot memory and retained disk tiers obey their
+  resource contract.
+- `dynamic-shard-topology` — resharding converges without losing readable
+  indexed data.
+- `primary-replica-failover-and-bootstrap` — replicas synchronize, fail over,
+  and replace failed members.
+
+Verification:
+
+- `cargo test -p lumen --test reshard_admin_e2e`
+- `cargo test -p lumen --test efficiency_lumen_claim_elastic_disk_tier`
+- `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync --test stability_lumen_claim_dynamic_multi_shard_replica_kind`
+- `apps/lumen/scripts/kind-e2e.sh`
+
+#### Durability & Recovery
+
+ID: `durability-recovery`
+
+Status: ready
+
+Promise: Recover derived index state through WAL/checkpoint replay, Raft
+replication, backup/restore, and cold seed without claiming ownership of the
+caller's source data.
+
+Claims:
+
+- `wal-checkpoint-and-raft-recovery` — committed index mutations survive
+  restart and member replacement.
+- `backup-restore-and-cold-seed` — a retained snapshot restores into a fresh
+  instance and remains readable after restart.
+
+Verification:
+
+- `cargo test -p lumen --test backup_restore_e2e`
+- `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync`
+- `acceptance/gcp/scripts/run.sh`
+
+#### Operations & Observability
+
+ID: `operations-observability`
+
+Status: ready
+
+Promise: Expose health, readiness, conditions, metrics, events, alerts,
+tracing, and long-running-operation state for both serving and control-plane
+behavior.
+
+Claims:
+
+- `standard-operational-surfaces` — health, readiness, metrics, and status
+  reflect real service state.
+- `control-plane-observability` — reconciliation, leadership, errors, and
+  alerts are externally observable.
+- `long-running-stability` — retained workloads stay within declared resource
+  and correctness bounds.
+
+Verification:
+
+- `cargo test -p lumen --test api_e2e`
+- `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`
+- `apps/lumen/tests/rig/cases`
+- `apps/lumen/k8s/components/operator-monitoring`
+
+#### API, CLI & Agent Integration
+
+ID: `api-cli-agent-integration`
+
+Status: ready
+
+Promise: Expose the two core jobs through HTTP/1.1 and HTTP/2, served and
+offline OpenAPI, generated clients, the standard `llm`/`upgrade`/`issue`
+surface, deployment commands, chainable output, and offline agent guidance.
+
+Claims:
+
+- `http2-openapi-and-client-interface` — wire behavior and published schemas
+  stay aligned.
+- `standard-cli-and-agent-interface` — commands remain discoverable,
+  executable, and explicit about their next step or terminal state.
+
+Verification:
+
+- `cargo test -p lumen --test spec_cli --test api_e2e`
+- `cargo test -p lumen --test cli_convention`
+- `cargo test -p lumen --test behavior_lumen_claim_cli_deployment_operator_command_surface`
+
+## Verified Cloud Evidence
+
+Standard GKE operator acceptance evidence for Lumen (epic #2434 ordered service
+1, before Tape run `0723135853`). This section records real-cloud proof runs;
+the capability contract itself is the `## Capabilities` section above. Harness:
+`benchmarks/gcp-operator-acceptance` (mode noted per run).
+
+### GKE acceptance run 0724105144 (2026-07-24, PASSED — auth+CSI Secret Manager stack proven, #2457/#2456)
+
+Full two-service digest-mode run (GHCR `sha-54742a8d6e40` images — zero
+Cloud Build) adding the first live validation of the auth+CSI regression
+leg: a `lumen-authcsi` CR with `auth: required`,
+`tokensSecretProviderClass`, and `tokensSecretCsiDriver:
+secrets-store-gke.csi.k8s.io` against a run-scoped Secret Manager secret
+(SecretProviderClass `provider: gke`, `principal://` secretAccessor grant,
+no GSA). Proven: CSI volume mounted with the GKE driver name, pod Ready
+with **zero FailedMount events** (the exact #2456 failure signature),
+tokens genuinely loaded from the CSI mount — authenticated search returns
+the seeded document (`total: 1`) while unauthenticated returns exactly 401
+`{"error":"unauthenticated"}`. All prior legs re-passed on the 0.4.26
+candidate HEAD (cold-restore, admission, backup, auto-split 1→2), and
+verified cleanup covers the new Secret Manager resources. Cluster
+prerequisite recorded: the GKE Secret Manager add-on
+(`--enable-secret-manager`) registers the CSIDriver; the leg self-skips
+with evidence when absent. Evidence root:
+`axiom-gcp-run-backup/evidence/0724105144/` (`kubernetes/lumen-authcsi-*`).
+
+### GKE acceptance run 0724061548 (2026-07-24, PASSED — #2489 fix + cold-restore #2492 proven)
+
+- Full two-service mode (Lumen and Sift both passed; the Sift rows live in
+  the shared `acceptance.json`). Cluster: persistent Standard GKE
+  `axiom-operator-acceptance` (`asia-east1-a`, project `axiom-502607`),
+  run-scoped bucket/GSA/Workload-Identity bindings plus the restore-reader
+  grant created and destroyed by the run.
+- Image: Cloud Build from commit `70fd48ca5c44` (the `lumen@0.4.25`
+  candidate — carries the #2489 scatter fix `9ffdb30513`, #2497
+  `spec.serviceAccountName`, and the #2487 alert fix), tag
+  `70fd48ca5c44-0724061548`, dirty-tree gate clean.
+- Terminal artifacts: `lumen-acceptance.json`
+  (`axiom.gcp.lumen.acceptance.v1`, every claimed proof `passed`) and
+  `cleanup.json` (`status: clean`, verified `2026-07-24T06:56:11Z`).
+  Evidence root: `axiom-gcp-run-backup/evidence/0724061548/`.
+
+| Proof | Result | Artifact |
+|---|---|---|
+| Post-split read visibility (#2489): after the CONVERGED 1→2 auto-split, the pre-split collection is searchable through the client Service immediately — readability lag 0 s (vs `collection not found` for 180 s+ on both 0.4.24 retest runs). Restores the Dynamic Shard Topology GKE claim. | passed | `kubernetes/lumen-search-after-split.json`; `kubernetes/lumen-split-readable-after-seconds.txt` (`0`) |
+| Cold-restore onto a fresh PVC (#2492): a second `lumen-restore` CR with `spec.serving.bootstrap.seedUri` pointed at the run's backup object (271 B, carries the `acceptance` collection) boots a genuinely fresh PVC and the seeded document is queryable (`total: 1`) | passed | `kubernetes/lumen-restore-search.json`; `gcs/lumen-first-object.json` |
+| Seed-set restart retention: the restored instance keeps the seeded document across a serving-pod replacement | passed | `kubernetes/lumen-restore-after-restart-search.json` |
+| Admission CR exposure (#2477): patching `spec.admission` renders the five `LUMEN_ADMISSION_*` env vars onto the StatefulSet pod spec (operator-propagation-aware poll), and removing the block rolls them back off | passed | `kubernetes/lumen-admission-env.txt` |
+| Re-proven from `0723041614`: 1x1 reconcile, domain lifecycle (create/index/search), pod-restart data retention, Workload-Identity GCS backup (271-byte object) | passed | `kubernetes/…` per the matching rows in the `0723041614` table below |
+| Verified cleanup: 6 run-scoped resources destroyed; "no run-tagged Lumen/Sift operator acceptance resources remain"; persistent cluster and Artifact Registry preserved | passed | `cleanup.json`; `run.log` |
+
+Exclusions unchanged from `0723041614` (`cpu_memory_actuator`,
+`live_replica_membership`: `not_claimed`). Deployer note for cold-restore:
+the SERVING ServiceAccount of a `seedUri` instance reads GCS itself — it
+needs `roles/storage.objectViewer` on the seed bucket (the backup GSA's
+write grant does not cover it). The harness provisions this via
+`storage.tf`'s `lumen_restore_reader` principal binding; real deployments
+carry the same responsibility.
+
+### GKE retest runs 0723160506 / 0723163748 (2026-07-23, FAILED — post-split read visibility, #2489)
+
+Retest with the released `lumen@0.4.24` GHCR image
+(`ghcr.io/chrischeng-c4/lumen@sha256:f460c6cf…493e90`, pulled anonymously —
+the GHCR distribution path itself works). Passed on both runs: 1x1
+reconcile, operator cell, index/search, Workload-Identity GCS backup,
+pod-restart retention, and the 1→2 split convergence with a fully converged
+post-cutover fence. FAILED both runs at post-split read visibility:
+searching the pre-split collection through the client Service returns
+`collection not found` and stays unreadable through a bounded 180-second
+poll while `phase: Complete` and `convergedShardMapVersion ==
+shardMap.version` — tracked as #2489. The prior run `0723041614`'s
+post-split pass asserted a single probe and cannot stand as disproof;
+treat the Dynamic Shard Topology GKE claim as NOT proven until #2489
+closes. Default 1-shard deployments (no reshardPolicy) are unaffected.
+Evidence: `axiom-gcp-run-backup/evidence/<run>/`. Resolution: the #2489
+scatter fix (`9ffdb30513`) is proven by run `0724061548` above — the claim
+is restored there.
+
+### GKE acceptance run 0723041614 (2026-07-23, PASSED)
+
+- Cluster: persistent Standard GKE `axiom-operator-acceptance`
+  (`asia-east1-a`, project `axiom-502607`), run-scoped
+  bucket/GSA/Workload-Identity binding created and destroyed by the run.
+- Image: pinned immutable
+  `courier/lumen@sha256:da154652ff3fdf16fb406674240f0a3f4567047d5eb6e0e547bee0f389c68b1b`
+  built from commit `f4762759d810` (`git_dirty: false`, `image_provenance:
+  prebuilt`, tag `f4762759d810-0723041614`).
+- Terminal artifacts: `acceptance.json`
+  (`axiom.gcp.lumen.acceptance.v1`, every claimed proof `passed`) and
+  `cleanup.json` (`status: clean`, verified `2026-07-23T04:25:33Z`).
+  Evidence root: `axiom-gcp-run-backup/evidence/0723041614/` (home-dir
+  mirror of the volatile `/tmp` tree); `run.log` carries the full
+  transcript.
+
+Proven in this run (each row names its artifact under the evidence root):
+
+| Proof | Result | Artifact |
+|---|---|---|
+| Operator cell: RBAC, Lease creation, steady-state drift repair, leader-takeover reconcile (holder `...rrc6f` → `...5mlwx`) | passed | `lumen-operator-cell.json`; `kubernetes/lumen-lease-holder-*.txt` |
+| 1x1 reconcile: one `Lumen` CR drives exactly one StatefulSet/shard to `Ready` on Standard GKE | passed | `kubernetes/lumen-crs.json`; `kubernetes/workloads-after-lumen-deploy.json` |
+| Domain lifecycle through the client Service: create collection, index one document, search hit | passed | `kubernetes/lumen-create-collection.json`; `kubernetes/lumen-index.json`; `kubernetes/lumen-search-before-restart.json` |
+| Pod-restart data retention: the indexed document survives a serving-pod replacement and is still searchable via the PVC-backed segment/WAL | passed | `kubernetes/lumen-search-after-restart.json` |
+| Workload-Identity GCS backup: CronJob-triggered backup writes a non-empty 271-byte snapshot object; readback is non-empty | passed | `kubernetes/lumen-backup.log`; `gcs/lumen-first-object.json` (`gs://axiom-502607-axo-0723041614-backup/lumen/0723041614-1784780377.json`) |
+| Acceptance-only disk-pressure auto-split: `reshardPolicy.maxShardBytes: 1` (a test-only trigger, not a production threshold) drives shard count 1 → 2, 2 ready pods, at least 2 PVCs, and the document stays searchable post-split | passed | `kubernetes/lumen-after-split.json`; `kubernetes/lumen-search-after-split.json` |
+| Shard-map fence convergence: post-split CR status settles at `reshard.phase: Complete`, `targetShardCount` == `shardCount` == 2, `usageMeasuredAtMapVersion: 1`, `convergenceRemediationRestartCount: 0` (no remediation restarts needed) | passed | `kubernetes/lumen-after-split.json` |
+| Verified cleanup: run-scoped GCS bucket, backup GSA, IAM bindings destroyed (`Destroy complete! Resources: 4 destroyed`, "no run-tagged Lumen/Sift operator acceptance resources remain"); persistent cluster, Artifact Registry, and pre-existing APIs preserved | passed | `cleanup.json`; `run.log` |
+
+Exclusions (recorded, not claimed): CPU/memory pressure actuation
+(`cpu_memory_actuator: not_claimed`) and live in-place replica-membership
+change (`live_replica_membership: not_claimed`) — neither is exercised by
+this harness. `reshardPolicy.maxShardBytes: 1` is an acceptance-only
+trigger value chosen to force a split deterministically inside a short
+run; it is not evidence of any production disk-pressure threshold. Sift
+was deferred from this run (`sift_collection_deferred`); Tape's own run
+(`0723135853`) is recorded in `apps/tape/README.md`.
 
 ## Benchmarks
 

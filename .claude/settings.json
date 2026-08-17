@@ -1,9 +1,4 @@
 {
-  "statusLine": {
-    "type": "command",
-    "command": ".claude/statusline.sh"
-  },
-  "enableAllProjectMcpServers": true,
   "env": {
     "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1"
   },
@@ -165,6 +160,7 @@
       "Bash(reboot *)"
     ]
   },
+  "enableAllProjectMcpServers": true,
   "hooks": {
     "PreToolUse": [
       {
@@ -189,5 +185,12 @@
         "hooks": []
       }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": ".claude/statusline.sh"
+  },
+  "enabledPlugins": {
+    "aw@axiom": true
   }
 }

@@ -1,20 +1,22 @@
-# Pg Contributing
+# Contributing to pgkit
 
-<!-- aw:meta:project-contributing:start -->
 ## Brief
 
-Project-local contribution contract for Pg.
+How to change `projects/mamba/mambalibs/pgkit`. What it promises lives in
+[README.md](README.md); mamba's own engineering doctrine and working-tree
+discipline live in [projects/mamba/CONTRIBUTING.md](../../CONTRIBUTING.md);
+repository-wide authoring and verification rules live in the root
+[CONTRIBUTING.md](../../../../CONTRIBUTING.md).
 
-## Authoritative Inputs
-
-- Product promises and work roots: [CAPABILITIES.md](CAPABILITIES.md)
-- Project orientation: [README.md](README.md)
-
-## Local Workflow
-
-Follow repository-level agent guidance and keep project-specific rules here.
+There is no phase ladder here. `leg.leg_root` resolves `apps/<project>` and
+nothing else, so a change to this crate is authored and committed directly
+rather than driven through `e2e -> unit -> logic`.
 
 ## Verification
 
-List the narrow commands that prove changes to Pg.
-<!-- aw:meta:project-contributing:end -->
+`projects/mamba/mambalibs/pgkit` is a container of 3 crates rather than one, so
+the gate names all of them.
+
+| Gate | Command |
+|---|---|
+| unit + colocated tests | `cargo test -p cclab-pg -p cclab-pg-cli -p pgkit-binding` |
