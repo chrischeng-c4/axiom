@@ -19,6 +19,7 @@
 //! matching the BM25 contract used by the text path.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 
 use anyhow::{anyhow, bail, Result};
@@ -364,6 +365,7 @@ impl VectorStore {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub struct HnswCpuIndex {
     inner: RwLock<HnswCpuInner>,
+    exact_scan_fallbacks: AtomicU64,
 }
 
 struct HnswCpuInner {
@@ -486,6 +488,7 @@ impl HnswCpuIndex {
                 hnsw: HnswBackend::new(spec.metric, HNSW_DEFAULT_MAX_ELEMENTS),
                 ef_search: hnsw_search_ef(),
             }),
+            exact_scan_fallbacks: AtomicU64::new(0),
         }
     }
 
@@ -523,6 +526,11 @@ impl HnswCpuIndex {
         if let Ok(mut inner) = self.inner.write() {
             inner.ef_search = ef.max(1);
         }
+    }
+
+    /// Returns the monotonic count of queries that fell through to the exact store scan.
+    pub fn exact_scan_fallbacks(&self) -> u64 {
+        self.exact_scan_fallbacks.load(Ordering::Relaxed)
     }
 }
 
@@ -563,6 +571,24 @@ impl VectorIndex for HnswCpuIndex {
             inner.id_to_eid.remove(&old_id);
         }
         inner.id_to_eid.insert(id, external_id.to_string());
+
+        let live_len = inner.store.len();
+        if inner.next_id >= 2 * live_len && live_len > 0 {
+            let fresh_hnsw = HnswBackend::new(inner.store.spec.metric, HNSW_DEFAULT_MAX_ELEMENTS);
+            inner.eid_to_id.clear();
+            inner.id_to_eid.clear();
+            inner.next_id = 0;
+            let mut live_vecs: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
+            live_vecs.sort_by(|a, b| a.0.cmp(&b.0));
+            for (eid, v) in live_vecs {
+                let new_id = inner.next_id;
+                inner.next_id += 1;
+                fresh_hnsw.insert(&v, new_id);
+                inner.eid_to_id.insert(eid.clone(), new_id);
+                inner.id_to_eid.insert(new_id, eid);
+            }
+            inner.hnsw = fresh_hnsw;
+        }
         Ok(())
     }
 
@@ -602,8 +628,9 @@ impl VectorIndex for HnswCpuIndex {
         // hnsw_rs exposes no mid-traversal filter hook and does not support node
         // removal. When a query cannot be answered conclusively from the graph
         // (due to filter selectivity or orphan interference), the candidate pool
-        // widens up to the total graph capacity (`inner.next_id`). For clean
-        // graphs without orphan interference, the traversal answers directly.
+        // widens up to the total graph capacity (`inner.next_id`). When enough
+        // allowed candidates are found without orphan interference, the traversal
+        // answers directly; otherwise it falls back to an exact scan over the store.
         let graph_len = inner.next_id;
         let mut pool = (k * 4 + k).min(graph_len);
         let ef = inner.ef_search;
@@ -613,7 +640,7 @@ impl VectorIndex for HnswCpuIndex {
             let mut has_unresolved_orphan = false;
             for (id, dist) in &raw {
                 let Some(eid) = inner.id_to_eid.get(id) else {
-                    if out.len() < k || *dist <= -out.last().unwrap().1 {
+                    if out.len() < k {
                         has_unresolved_orphan = true;
                     }
                     continue; // orphaned by a replace
@@ -627,7 +654,7 @@ impl VectorIndex for HnswCpuIndex {
                 }
             }
 
-            if out.len() == k && !has_unresolved_orphan && pool < graph_len {
+            if out.len() == k && !has_unresolved_orphan {
                 return Ok(out);
             }
 
@@ -640,6 +667,7 @@ impl VectorIndex for HnswCpuIndex {
         // When the candidate pool covers the graph or orphans prevent a conclusive
         // approximate answer, fall back to an exact filtered scan over the live store
         // rather than returning a short or degraded result.
+        self.exact_scan_fallbacks.fetch_add(1, Ordering::Relaxed);
         let metric = inner.store.spec.metric;
         let mut cand: Vec<(String, f32)> = inner
             .store
