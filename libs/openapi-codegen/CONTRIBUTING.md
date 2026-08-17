@@ -1,19 +1,17 @@
-# Openapi Codegen Contributing
+# Contributing to openapi-codegen
 
-<!-- aw:meta:project-contributing:start -->
 ## Brief
 
-Project-local contribution contract for Openapi Codegen.
+How to change `libs/openapi-codegen`. What it promises and the work roots it
+owns live in [README.md](README.md); repository-wide authoring and verification
+rules live in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-## Authoritative Inputs
-
-- Product promises, work roots, and orientation: [README.md](README.md)
-
-## Local Workflow
-
-Follow repository-level agent guidance and keep project-specific rules here.
+There is no phase ladder here. `leg.leg_root` resolves `apps/<project>` and
+nothing else, so a change to this crate is authored and committed directly
+rather than driven through `e2e -> unit -> logic`.
 
 ## Verification
 
-List the narrow commands that prove changes to Openapi Codegen.
-<!-- aw:meta:project-contributing:end -->
+| Gate | Command |
+|---|---|
+| unit + colocated tests | `cargo test -p openapi-codegen` |

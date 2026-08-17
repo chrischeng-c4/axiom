@@ -1,19 +1,22 @@
-# Agentkit Contributing
+# Contributing to agentkit
 
-<!-- aw:meta:project-contributing:start -->
 ## Brief
 
-Project-local contribution contract for Agentkit.
+How to change `projects/mamba/mambalibs/agentkit`. What it promises lives in
+[README.md](README.md); mamba's own engineering doctrine and working-tree
+discipline live in [projects/mamba/CONTRIBUTING.md](../../CONTRIBUTING.md);
+repository-wide authoring and verification rules live in the root
+[CONTRIBUTING.md](../../../../CONTRIBUTING.md).
 
-## Authoritative Inputs
-
-- Product promises, work roots, and orientation: [README.md](README.md)
-
-## Local Workflow
-
-Follow repository-level agent guidance and keep project-specific rules here.
+There is no phase ladder here. `leg.leg_root` resolves `apps/<project>` and
+nothing else, so a change to this crate is authored and committed directly
+rather than driven through `e2e -> unit -> logic`.
 
 ## Verification
 
-List the narrow commands that prove changes to Agentkit.
-<!-- aw:meta:project-contributing:end -->
+`projects/mamba/mambalibs/agentkit` is a container of 8 crates rather than one,
+so the gate names all of them.
+
+| Gate | Command |
+|---|---|
+| unit + colocated tests | `cargo test -p agent -p agent-derive -p agentkit-backend -p agentkit-binding -p agentkit-frontend -p agentkit-graph -p agentkit-llm -p agentkit-tools` |

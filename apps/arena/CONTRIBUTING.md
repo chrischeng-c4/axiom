@@ -1,19 +1,18 @@
-# Arena Contributing
+# Contributing to arena
 
-<!-- aw:meta:project-contributing:start -->
 ## Brief
 
-Project-local contribution contract for Arena.
+How to change `apps/arena`. What it promises and the work roots it owns live in
+[README.md](README.md); repository-wide authoring and verification rules live
+in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-## Authoritative Inputs
-
-- Product promises, work roots, and orientation: [README.md](README.md)
-
-## Local Workflow
-
-Follow repository-level agent guidance and keep project-specific rules here.
+Changes here are authored one phase at a time, red first: `e2e` writes
+`apps/arena/e2e/`, then `unit` and `logic` write `apps/arena/src/`.
+`/aw:wi-tdd` drives the ladder, and every phase refuses a dirty path outside
+its own write root.
 
 ## Verification
 
-List the narrow commands that prove changes to Arena.
-<!-- aw:meta:project-contributing:end -->
+| Gate | Command |
+|---|---|
+| unit + colocated tests | `cargo test -p arena` |

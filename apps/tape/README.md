@@ -478,8 +478,9 @@ Status: verified
 Surfaces: Durable journal state plus stateful deployment: `apps/tape/src/lib.rs`,
 `libs/raft-core`, `libs/raft-host`, `apps/tape/src/backup.rs`, and the dedicated
 StatefulSet/operator rendering surface under `apps/tape/k8s/`.
-EC Dimensions: behavior: `aw capability check --project tape --skip-issue-inventory` -
-the `stateful_storage` profile resolves its shared baseline; stability: raft
+EC Dimensions: behavior: the `stateful_storage` profile resolved its shared
+baseline under the `aw` capability gate, which was deleted with the binary;
+stability: raft
 failover/restart, backup snapshot, Kind dogfood, authenticated peer mTLS, and
 the shared security boundary remain authoritative in their linked capability
 roots.
@@ -491,14 +492,14 @@ raft primary-replica recovery, snapshot/backup path, deployment artifacts, and
 security boundary are owned by the linked capability roots below; domain
 retention/backfill and subscription behavior remain separately verified roots.
 Gate Inventory:
-- `aw capability check --project tape --skip-issue-inventory`
+- the `aw` capability gate, deleted with the binary; the rows below are what still runs
 - apps/tape/tests/{raft_cluster,raft_failover,raft_persistence}.rs
 - apps/tape/tests/{backup,deploy_cli,operator}.rs
 - apps/tape/k8s/operator/{crd,rbac,deployment}.yaml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| stateful-service-workload-projection | change | #1554 | implemented | passing | smoke | `aw capability check --project tape --skip-issue-inventory`; composes Topic Replay Journal, Primary Replicas, HTTP/2 API List, Kubernetes-Native Deployment, and Security Hardening without duplicating their claims |
+| stateful-service-workload-projection | change | #1554 | implemented | passing | smoke | the `aw` capability gate, deleted with the binary; composes Topic Replay Journal, Primary Replicas, HTTP/2 API List, Kubernetes-Native Deployment, and Security Hardening without duplicating their claims |
 
 ### Backup & Restore
 

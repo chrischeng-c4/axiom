@@ -55,7 +55,7 @@ cargo build --release -p mamba
 | `2>/dev/null` stdout-only compare while other agents build | debug stderr pollutes diffs; the grading harness is stdout-only anyway |
 | Memory claims: `/usr/bin/time -l` at **two scales** | superlinear/leak classes look flat at small N |
 | Perf claims: run the pins yourself | ratios drift under box contention |
-| Confirm the issue number after `aw wi create` | the too-large phrase check (`whole`/`entire`/`everything`/`from scratch` **substrings** — "wholesale" trips it) fails silently in batches |
+| Open changes through `/aw:wi-change-grill`, never by hand | `change.py create` refuses a body that fails the GHAN schema and renames the staged file to the number it got back; a hand-filed issue is one nothing validated |
 
 ## Doctrines (check these FIRST when diagnosing)
 

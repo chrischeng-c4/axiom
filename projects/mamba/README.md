@@ -971,9 +971,9 @@ Mamba is an existing-project takeover under Agentic Workflow. Beyond the four us
 
 | Layer        | What it means                                                                   | Current  | Gate                                       | Epic |
 |--------------|---------------------------------------------------------------------------------|----------|--------------------------------------------|------|
-| **managed**     | Every in-scope file is marked `CODEGEN` or `HANDWRITE`. No unmarked files.       | **5.1%** (119 / 2343; 90 HANDWRITE + 29 CODEGEN + 2224 unmarked) | `aw standardize managed report mamba` | [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |
-| **semantic**    | Source behavior is covered by semantic TD (claim TDs do not count).              | **0.7%** (17 semantic / 2343 units) | `aw standardize semantic report mamba` | [#3883](https://github.com/chrischeng-c4/cclab/issues/3883) |
-| **regenerable** | Every in-scope file is fully `CODEGEN`-owned (no remaining `HANDWRITE` regions). | **0.1%** maturity; 27 audit/replay drift | `aw standardize regenerable report mamba` | [#3884](https://github.com/chrischeng-c4/cclab/issues/3884) |
+| **managed**     | Every in-scope file is marked `CODEGEN` or `HANDWRITE`. No unmarked files.       | **5.1%** (119 / 2343; 90 HANDWRITE + 29 CODEGEN + 2224 unmarked) | no gate; the reporting verb went with the `aw` binary | [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |
+| **semantic**    | Source behavior is covered by semantic TD (claim TDs do not count).              | **0.7%** (17 semantic / 2343 units) | no gate; the reporting verb went with the `aw` binary | [#3883](https://github.com/chrischeng-c4/cclab/issues/3883) |
+| **regenerable** | Every in-scope file is fully `CODEGEN`-owned (no remaining `HANDWRITE` regions). | **0.1%** maturity; 27 audit/replay drift | no gate; the reporting verb went with the `aw` binary | [#3884](https://github.com/chrischeng-c4/cclab/issues/3884) |
 
 Layer order is **managed → semantic → regenerable** — you cannot specify what to generate before you know which files are in scope, and you cannot regenerate before the spec is semantic. There is **no skip state for source ownership**: if codegen can't generate a region yet, mark it `HANDWRITE`, name the concrete generator gap, and feed the gap back into Agentic Workflow until it can become `CODEGEN`.
 
@@ -1003,5 +1003,7 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 Engineering doctrine, build/test/verification rules, and the working-tree
 discipline live in [CONTRIBUTING.md](CONTRIBUTING.md). The orchestration
 playbook and bootstrap prompt for agent sessions: tracker issue #1134.
-Open work is tracked exclusively in GitHub issues (`aw wi list --project
-mamba`); the tracker is the source of truth.
+Open work is tracked exclusively in GitHub issues (`gh issue list --repo
+chrischeng-c4/axiom --label app:mamba --state open`); the tracker is the source
+of truth. The label is `app:mamba` even though the source is under `projects/`,
+which is why deriving it from the directory finds nothing.

@@ -790,9 +790,9 @@ Surfaces: Durable index and checkpoint state plus stateful deployment:
 `apps/lumen/src/storage.rs`, `libs/raft-core`, `libs/raft-runtime`,
 `apps/lumen/src/backup.rs`, and the operator-owned StatefulSet rendering
 surface under `apps/lumen/src/operator/` and `apps/lumen/k8s/`.
-EC Dimensions: behavior: `aw capability check --project lumen
---skip-issue-inventory` confirms the `stateful_storage` profile has its
-required root; stability: existing replica recovery, snapshot/restore, and
+EC Dimensions: behavior: the `stateful_storage` profile had its required root
+confirmed by the `aw` capability gate, which was deleted with the binary;
+stability: existing replica recovery, snapshot/restore, and
 kind operator gates remain authoritative, while their unfinished dogfood or
 security work remains explicit in those linked capability roots.
 Required Verification: smoke
@@ -804,14 +804,14 @@ security, and StatefulSet lifecycle remain owned by the linked capability roots
 below; this baseline does not turn their remaining planned work into a completed
 claim.
 Gate Inventory:
-- `aw capability check --project lumen --skip-issue-inventory`
+- the `aw` capability gate, deleted with the binary; the rows below are what still runs
 - apps/lumen/tests/{backup_restore_e2e,api_e2e,operator_render}.rs
 - apps/lumen/scripts/kind-e2e.sh
 - apps/lumen/k8s/components/observability
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| stateful-service-workload-projection | change | #2144 | implemented | passing | smoke | `aw capability check --project lumen --skip-issue-inventory`; primary TD verification linkage is #2144; closed #1553 remains historical projection provenance; composes Backup & Restore, Replica Sync & Bootstrap, Dynamic Shard Topology, Observability, Security Hardening, and Kubernetes-Native Deployment without duplicating their claims |
+| stateful-service-workload-projection | change | #2144 | implemented | passing | smoke | the `aw` capability gate, deleted with the binary; primary TD verification linkage is #2144; closed #1553 remains historical projection provenance; composes Backup & Restore, Replica Sync & Bootstrap, Dynamic Shard Topology, Observability, Security Hardening, and Kubernetes-Native Deployment without duplicating their claims |
 
 ### Developer & Agent Experience
 
