@@ -92,9 +92,14 @@ path = "e2e/proposal_outcomes.rs"
 name = "shutdown_handoff"
 path = "e2e/shutdown_handoff.rs"
 
+[[test]]
+name = "host_shutdown_deadline"
+path = "e2e/host_shutdown_deadline.rs"
+
 
 [dependencies]
 raft-core = { path = "../raft-core" }
+server-lifecycle = { path = "../server-lifecycle" }
 storage-durable = { path = "../storage-durable" }
 transport-h2c = { path = "../transport-h2c", features = ["server"] }
 peer-tls = { path = "../peer-tls" }

@@ -26,6 +26,7 @@ use raft_core::{
     TransferRefused, VoteReq, VoteResp,
 };
 use serde::{Deserialize, Serialize};
+use server_lifecycle::ShutdownDeadline;
 use tokio::sync::{watch, Mutex, Notify};
 use tokio::task::JoinHandle;
 
@@ -253,6 +254,41 @@ pub enum LeadershipHandoff {
     NotLeader,
     SoleVoter,
     NoCaughtUpVoter { voters: usize },
+}
+
+/// The four sequential phases of host shutdown (#3672).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShutdownPhase {
+    Quiesce,
+    LeadershipHandoff,
+    BackgroundTasks,
+    PeerRpcDrain,
+}
+
+/// The status of an individual shutdown phase (#3672).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PhaseStatus {
+    Completed,
+    DeadlineExpired,
+    StorageFailed,
+}
+
+/// A record of one shutdown phase execution (#3672).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhaseRecord {
+    pub phase: ShutdownPhase,
+    pub status: PhaseStatus,
+    pub elapsed: Duration,
+}
+
+/// The terminal report returned by `shutdown_within` (#3672).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostShutdownReport {
+    pub phases: Vec<PhaseRecord>,
+    pub handoff: LeadershipHandoff,
+    pub incomplete_phase: Option<ShutdownPhase>,
+    pub peer_listener_close_safe: bool,
+    pub storage_failure: Option<StorageFailed>,
 }
 
 /// Why a leader refused a learner admission request.
@@ -844,26 +880,237 @@ impl RaftHost {
             .is_ok()
     }
 
+    /// Run host shutdown bounded by the caller's shared absolute deadline (#3672).
+    ///
+    /// Executes the four shutdown phases in fixed sequential order:
+    /// 1. `Quiesce` — stop accepting new proposals
+    /// 2. `LeadershipHandoff` — hand off leadership to a caught-up peer
+    /// 3. `BackgroundTasks` — abort and await the tick and pump loops
+    /// 4. `PeerRpcDrain` — wait for in-flight peer RPCs to finish
+    ///
+    /// Every phase is bounded by `deadline.usable_remaining()` read at the start
+    /// of that phase. If usable budget expires, the run stops immediately,
+    /// later phases are neither run nor recorded, and `incomplete_phase` names
+    /// that phase.
+    pub async fn shutdown_within(&self, deadline: ShutdownDeadline) -> HostShutdownReport {
+        let mut phases = Vec::with_capacity(4);
+        let mut handoff = LeadershipHandoff::NotLeader;
+        let mut observed_storage_failure = None;
+
+        // Phase 1: Quiesce
+        let start = Instant::now();
+        let budget = deadline.usable_remaining();
+        if budget.is_zero() {
+            phases.push(PhaseRecord {
+                phase: ShutdownPhase::Quiesce,
+                status: PhaseStatus::DeadlineExpired,
+                elapsed: start.elapsed(),
+            });
+            return HostShutdownReport {
+                phases,
+                handoff,
+                incomplete_phase: Some(ShutdownPhase::Quiesce),
+                peer_listener_close_safe: false,
+                storage_failure: self.shared.latched_failure.lock().unwrap().clone(),
+            };
+        }
+        self.quiesce_proposals();
+        let current_failure = self.shared.latched_failure.lock().unwrap().clone();
+        let status = if observed_storage_failure.is_none() && current_failure.is_some() {
+            observed_storage_failure = current_failure;
+            PhaseStatus::StorageFailed
+        } else {
+            PhaseStatus::Completed
+        };
+        phases.push(PhaseRecord {
+            phase: ShutdownPhase::Quiesce,
+            status,
+            elapsed: start.elapsed(),
+        });
+
+        // Phase 2: LeadershipHandoff
+        let start = Instant::now();
+        let budget = deadline.usable_remaining();
+        if budget.is_zero() {
+            phases.push(PhaseRecord {
+                phase: ShutdownPhase::LeadershipHandoff,
+                status: PhaseStatus::DeadlineExpired,
+                elapsed: start.elapsed(),
+            });
+            return HostShutdownReport {
+                phases,
+                handoff,
+                incomplete_phase: Some(ShutdownPhase::LeadershipHandoff),
+                peer_listener_close_safe: false,
+                storage_failure: observed_storage_failure
+                    .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
+            };
+        }
+        match tokio::time::timeout(budget, self.handoff_leadership()).await {
+            Ok(outcome) => {
+                handoff = outcome;
+                let current_failure = self.shared.latched_failure.lock().unwrap().clone();
+                let status = if observed_storage_failure.is_none() && current_failure.is_some() {
+                    observed_storage_failure = current_failure;
+                    PhaseStatus::StorageFailed
+                } else {
+                    PhaseStatus::Completed
+                };
+                phases.push(PhaseRecord {
+                    phase: ShutdownPhase::LeadershipHandoff,
+                    status,
+                    elapsed: start.elapsed(),
+                });
+            }
+            Err(_) => {
+                phases.push(PhaseRecord {
+                    phase: ShutdownPhase::LeadershipHandoff,
+                    status: PhaseStatus::DeadlineExpired,
+                    elapsed: start.elapsed(),
+                });
+                return HostShutdownReport {
+                    phases,
+                    handoff,
+                    incomplete_phase: Some(ShutdownPhase::LeadershipHandoff),
+                    peer_listener_close_safe: false,
+                    storage_failure: observed_storage_failure
+                        .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
+                };
+            }
+        }
+
+        // Phase 3: BackgroundTasks
+        let start = Instant::now();
+        let budget = deadline.usable_remaining();
+        if budget.is_zero() {
+            phases.push(PhaseRecord {
+                phase: ShutdownPhase::BackgroundTasks,
+                status: PhaseStatus::DeadlineExpired,
+                elapsed: start.elapsed(),
+            });
+            return HostShutdownReport {
+                phases,
+                handoff,
+                incomplete_phase: Some(ShutdownPhase::BackgroundTasks),
+                peer_listener_close_safe: false,
+                storage_failure: observed_storage_failure
+                    .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
+            };
+        }
+        let tasks = self.tasks.lock().expect("raft task mutex poisoned").take();
+        let timed_out = if let Some((tick, pump)) = tasks {
+            tick.abort();
+            pump.abort();
+            let join_all = async move {
+                let _ = tick.await;
+                let _ = pump.await;
+            };
+            tokio::time::timeout(budget, join_all).await.is_err()
+        } else {
+            false
+        };
+        if timed_out {
+            phases.push(PhaseRecord {
+                phase: ShutdownPhase::BackgroundTasks,
+                status: PhaseStatus::DeadlineExpired,
+                elapsed: start.elapsed(),
+            });
+            return HostShutdownReport {
+                phases,
+                handoff,
+                incomplete_phase: Some(ShutdownPhase::BackgroundTasks),
+                peer_listener_close_safe: false,
+                storage_failure: observed_storage_failure
+                    .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
+            };
+        }
+        let current_failure = self.shared.latched_failure.lock().unwrap().clone();
+        let status = if observed_storage_failure.is_none() && current_failure.is_some() {
+            observed_storage_failure = current_failure;
+            PhaseStatus::StorageFailed
+        } else {
+            PhaseStatus::Completed
+        };
+        phases.push(PhaseRecord {
+            phase: ShutdownPhase::BackgroundTasks,
+            status,
+            elapsed: start.elapsed(),
+        });
+
+        // Phase 4: PeerRpcDrain
+        let start = Instant::now();
+        let budget = deadline.usable_remaining();
+        if budget.is_zero() {
+            phases.push(PhaseRecord {
+                phase: ShutdownPhase::PeerRpcDrain,
+                status: PhaseStatus::DeadlineExpired,
+                elapsed: start.elapsed(),
+            });
+            return HostShutdownReport {
+                phases,
+                handoff,
+                incomplete_phase: Some(ShutdownPhase::PeerRpcDrain),
+                peer_listener_close_safe: false,
+                storage_failure: observed_storage_failure
+                    .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
+            };
+        }
+        if tokio::time::timeout(budget, self.shared.rpc_tracker.wait_idle())
+            .await
+            .is_err()
+        {
+            phases.push(PhaseRecord {
+                phase: ShutdownPhase::PeerRpcDrain,
+                status: PhaseStatus::DeadlineExpired,
+                elapsed: start.elapsed(),
+            });
+            return HostShutdownReport {
+                phases,
+                handoff,
+                incomplete_phase: Some(ShutdownPhase::PeerRpcDrain),
+                peer_listener_close_safe: false,
+                storage_failure: observed_storage_failure
+                    .or_else(|| self.shared.latched_failure.lock().unwrap().clone()),
+            };
+        }
+        let current_failure = self.shared.latched_failure.lock().unwrap().clone();
+        let status = if observed_storage_failure.is_none() && current_failure.is_some() {
+            observed_storage_failure = current_failure;
+            PhaseStatus::StorageFailed
+        } else {
+            PhaseStatus::Completed
+        };
+        phases.push(PhaseRecord {
+            phase: ShutdownPhase::PeerRpcDrain,
+            status,
+            elapsed: start.elapsed(),
+        });
+
+        HostShutdownReport {
+            phases,
+            handoff,
+            incomplete_phase: None,
+            peer_listener_close_safe: true,
+            storage_failure: observed_storage_failure,
+        }
+    }
+
     /// Stop the periodic host loops and wait for every already-dispatched peer
     /// RPC to finish before the h2 client is dropped. Service shutdown should
     /// stop public ingress first, call this method, then close the peer
     /// listener. The bounded wait prevents active HTTP/2 streams from being
     /// torn down with the Tokio runtime.
     pub async fn shutdown(&self) -> Result<()> {
-        self.quiesce_proposals();
-        self.handoff_leadership().await;
-        let tasks = self.tasks.lock().expect("raft task mutex poisoned").take();
-        if let Some((tick, pump)) = tasks {
-            tick.abort();
-            pump.abort();
-            let _ = tick.await;
-            let _ = pump.await;
-        }
-
         let timeout = self.shared.cfg.rpc_timeout + self.shared.cfg.rpc_timeout;
-        tokio::time::timeout(timeout, self.shared.rpc_tracker.wait_idle())
-            .await
-            .map_err(|_| anyhow!("raft: peer RPC drain timed out after {timeout:?}"))?;
+        let deadline = ShutdownDeadline::from_now(timeout, Duration::ZERO)
+            .map_err(|e| anyhow!("{e}"))?;
+        let report = self.shutdown_within(deadline).await;
+        if let Some(failure) = report.storage_failure {
+            return Err(anyhow!("{failure}"));
+        }
+        if report.incomplete_phase == Some(ShutdownPhase::PeerRpcDrain) {
+            return Err(anyhow!("raft: peer RPC drain timed out after {timeout:?}"));
+        }
         Ok(())
     }
 
