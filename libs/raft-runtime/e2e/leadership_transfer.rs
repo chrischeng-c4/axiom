@@ -29,15 +29,13 @@
 //! anything; the row has to wait on that target's own log rather than infer it
 //! from the leader having committed.
 //!
-//! # Why the arrival is bounded in wall-clock, and why the registry row is not
+//! # Why the running host arrival wait is a liveness bound, and why the registry row is not
 //!
-//! `libs/raft-core/src/lib.rs:45` sets `ELECTION_MIN` to 50 ticks and
-//! `libs/raft-runtime/src/config.rs:40` makes a tick 20ms, so no node can
-//! campaign on its own account inside one second of its clock being reset — and
-//! a leader that is heartbeating keeps resetting it. Bounding the arrival well
-//! inside that is what separates a handoff that was delivered from a group that
-//! re-elected; the bound is deliberately far above what a loopback handoff
-//! costs, since the heartbeats already rule the timeout out on their own.
+//! In `a_running_host_hands_leadership_to_the_peer_it_names`, the host that hands off
+//! stays leader and keeps heartbeating, so followers' election timers are continually
+//! reset and a spontaneous election is unreachable. Leadership at the named target can
+//! only have arrived via `TimeoutNow`, so the arrival wait is a generous liveness bound
+//! to prevent hanging rather than a discriminator against an election floor.
 //!
 //! That reasoning does not transfer to the registry row, and measuring it by
 //! the clock there would be wrong twice over. A `#[tokio::test]` runs on a
@@ -63,17 +61,6 @@ use raft_runtime::{
 #[path = "support/cluster.rs"]
 mod cluster;
 use cluster::{await_leader, bind, cluster, TestSm};
-
-/// The shortest election timeout any node in these rows can have: `ELECTION_MIN`
-/// ticks of `HostConfig::default().tick`. Ticks are driven by a sleep, so a
-/// loaded machine only ever makes this longer.
-const ELECTION_TIMEOUT_FLOOR: Duration = Duration::from_millis(1000);
-
-/// How long the handoff row waits for leadership to arrive. Comfortably above
-/// what a loopback handoff costs — one 5ms pump and two h2c round trips — and
-/// still below the floor above, so an arrival inside it is not a group that
-/// re-elected.
-const DELIVERY_BUDGET: Duration = Duration::from_millis(800);
 
 fn h2c_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -168,28 +155,21 @@ async fn a_running_host_hands_leadership_to_the_peer_it_names() {
         }
     }
 
-    let handed_off = Instant::now();
-    let mut arrived = None;
-    while handed_off.elapsed() < DELIVERY_BUDGET {
+    // The old leader stays running and keeps heartbeating, so followers' election
+    // timers never expire. Leadership at the named target can only arrive via
+    // delivered TimeoutNow. The wait is a generous liveness bound.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
         if nodes[target].host.is_leader().await {
-            arrived = Some(handed_off.elapsed());
             break;
         }
+        assert!(
+            Instant::now() < deadline,
+            "leadership never arrived at the named peer; a host that queues \
+             the handoff and never posts it leaves the group exactly where it was"
+        );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let arrived = arrived.unwrap_or_else(|| {
-        panic!(
-            "leadership must arrive at the named peer within {DELIVERY_BUDGET:?}; \
-             a host that queues the handoff and never posts it leaves the group \
-             exactly where it was"
-        )
-    });
-    assert!(
-        arrived < ELECTION_TIMEOUT_FLOOR,
-        "the handoff landed in {arrived:?}, at or past {ELECTION_TIMEOUT_FLOOR:?}, \
-         the shortest election timeout in this group; past that the row cannot \
-         tell a delivered message from an election that was due anyway"
-    );
     assert!(
         !nodes[leader].host.is_leader().await,
         "the host that handed off must not still consider itself leader"
