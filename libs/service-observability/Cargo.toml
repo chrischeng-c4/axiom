@@ -25,6 +25,7 @@ otlp = [
 [dependencies]
 anyhow = { workspace = true }
 http = { workspace = true }
+rustix = { version = "0.38", features = ["fs"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -40,3 +41,7 @@ tracing-opentelemetry = { version = "0.22", optional = true }
 [[test]]
 name = "service_log_jsonl"
 path = "e2e/service_log_jsonl.rs"
+
+[[test]]
+name = "filesystem_usage_is_physical"
+path = "e2e/filesystem_usage_is_physical.rs"

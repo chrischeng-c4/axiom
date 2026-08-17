@@ -57,6 +57,7 @@ IDs one way.
 | Degraded Telemetry Fallback | - | implemented | verified | smoke | ready | non-core; a missing, malformed, or uncompiled trace exporter downgrades to structured logs instead of failing startup |
 | Connection Lifecycle Metrics | - | implemented | verified | smoke | ready | non-core; accepted, rejected, and closed connections are counted behind the lifecycle seam and rendered as canonical Prometheus text, so every runtime that links this crate exposes the same three series |
 | Portable Process Sampling | - | implemented | verified | smoke | ready | non-core; resident memory and CPU time are read through one portable surface whose macOS and Linux output shapes both parse exactly |
+| Physical Filesystem Usage | - | implemented | verified | smoke | ready | non-core; total, used, and available bytes are read through safe statvfs without external binaries or unsafe FFI |
 
 ### Core Features
 
@@ -275,5 +276,35 @@ EC Dimensions:
 | Errors instead of zero samples | change | - | implemented | verified | smoke | `cargo test -p service-observability --lib`; a missing, non-numeric, or unrecognized field is an error, so a failed sample cannot be read as an idle process and quietly pass a resource budget |
 | Saturating unit conversion | change | - | implemented | verified | smoke | `cargo test -p service-observability --lib`; the KiB-to-byte multiplication saturates, so an implausible reading clamps at the maximum instead of wrapping to a small number |
 | Soak runner parses | change | - | implemented | verified | smoke | `bash -n libs/service-observability/scripts/soak-metrics.sh`; the shared soak runner that consumes these samples is syntax-checked, so a broken runner fails here rather than part-way through a long soak |
+
+#### Physical Filesystem Usage
+
+ID: physical-filesystem-usage
+Root WI: -
+Status: verified
+Type: Feature
+Feature Class: non-core
+Required Verification: smoke
+Promise:
+Total, used, and available bytes for the filesystem carrying a given path are
+read through one safe surface, with no unsafe FFI, no external binary
+invocation, and no platform-specific branch in the caller. Total space is
+derived from total blocks, available headroom from unprivileged unreserved
+blocks, and used space from the difference between total and free blocks. A
+path that does not exist or cannot be queried is an error the caller sees, not
+a zero it might mistake for an empty or full volume.
+Surfaces:
+- Rust API: `service_observability::FilesystemUsage` - the sample, as total, used, and available bytes.
+- Rust API: `service_observability::filesystem_usage` - sample filesystem usage for a path.
+Rust internal: the conversion of kernel statvfs block counts and fragment size into byte counts with saturating arithmetic.
+EC Dimensions:
+- behavior: `cargo test -p service-observability --test filesystem_usage_is_physical` - total bytes matches independent filesystem accounting, and writing bytes to the sampled filesystem reduces available bytes by the written size.
+- security: `cargo test -p service-observability --test filesystem_usage_is_physical` - an unreadable or non-existent path produces an error rather than a zeroed sample.
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Physical write tracking | change | - | implemented | verified | smoke | `cargo test -p service-observability --test filesystem_usage_is_physical`; writing bytes to the mounted filesystem reduces available bytes, proving the reading reflects physical storage |
+| Independent accounting agreement | change | - | implemented | verified | smoke | `cargo test -p service-observability --test filesystem_usage_is_physical`; total bytes matches independent df block accounting on the same path |
+| Errors instead of zeroed samples | change | - | implemented | verified | smoke | `cargo test -p service-observability --test filesystem_usage_is_physical`; a missing or unreadable path is an error, so a capacity controller cannot mistake a failure for a full volume |
 
 <!-- HANDWRITE-END -->
