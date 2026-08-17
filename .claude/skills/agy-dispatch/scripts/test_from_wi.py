@@ -85,6 +85,13 @@ class ProjectionTest(unittest.TestCase):
         self.fields = from_wi.project(BODY, self.root)
 
     def profile(self) -> dict:
+        # `oracle_findings` cross-checks the oracle's `## Scope` table against
+        # the profile's write scope, so a stub carrying no scope keys reads as
+        # a profile that authorizes nothing and every scope row is a mismatch.
+        # Derived from the same `fields["writes"]` the oracle table is rendered
+        # from, because that is what the real pipeline does: `make_profile.py`
+        # takes those paths as `--write` and emits all three keys together.
+        # A hand-copied list here would pass while the projection drifted.
         return {
             "root": str(self.root),
             "task_contract": {
@@ -93,6 +100,11 @@ class ProjectionTest(unittest.TestCase):
             "task_commands": {
                 "allow": ["cargo test -p target --lib some_gate"]
             },
+            # No budget and no range, matching the `| path | none |` rows
+            # `render_oracle` writes when the change points carry neither.
+            "allowed_repo_writes": list(self.fields["writes"]),
+            "path_change_budgets": {},
+            "path_line_ranges": {},
         }
 
     # -- what the round is bounded by -------------------------------------
