@@ -15,7 +15,7 @@ refuse them:
 
   The unit tests live in `src/**/tests.rs`, wired in with `#[cfg(test)] mod
   tests;`. This is what makes the `unit` and `logic` phases separable at all.
-  They write the same tree -- `AGENTS.md` sends anything observable only from
+  They write the same tree -- `CLAUDE.md` sends anything observable only from
   inside the implementation to colocated tests, so moving them to `tests/`
   would cost the private access that is the whole point -- and a scope check
   that had to tell them apart *within* a file would need to decide what a

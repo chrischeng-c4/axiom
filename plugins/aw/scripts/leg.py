@@ -716,12 +716,13 @@ def c7_verdict(chk: Check, repo: Path, phase: str, iid: int, dirty: list[str],
 def c0_scope(chk: Check, repo: Path, root: Path, dirty: list[str], leg: str) -> None:
     """Every changed path is inside the one directory this leg may write.
 
-    `CLAUDE.md` fixes the order -- external-contracts, then tech-design, then
-    src -- and each `start` skill has always carried "never write the next
-    leg's tree here" as prose. Prose in a skill body is a request. This is the
-    same sentence with a consumer that can refuse it, and it works only because
-    `start` demanded a clean tree: from a clean start, a path from another leg
-    showing up here was written by this one.
+    `CLAUDE.md` fixes the order -- `e2e/`, then `src/` for the colocated tests,
+    then `src/` for the implementation -- and each `start` skill has always
+    carried "never write the next leg's tree here" as prose. Prose in a skill
+    body is a request. This is the same sentence with a consumer that can
+    refuse it, and it works only because `start` demanded a clean tree: from a
+    clean start, a path from another leg showing up here was written by this
+    one.
     """
     prefix = f"{root.relative_to(repo)}/"
     if not dirty:
