@@ -7,6 +7,7 @@ import base64
 import difflib
 import hashlib
 import json
+import os
 import re
 import shlex
 import sqlite3
@@ -16,15 +17,100 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+_CLAUDE_DIR = str(Path(__file__).resolve().parents[3])
+if _CLAUDE_DIR not in sys.path:
+    sys.path.insert(0, _CLAUDE_DIR)
 
-HOME = Path.home()
+from dispatch.core.cli import EXIT_FINDINGS
+from dispatch.core.documents import (
+    BACKTICKED,
+    ELISION,
+    FENCE_BEARING_SECTIONS,
+    FILL_MARKER,
+    INFO_FENCE,
+    INJECTION_SECTIONS,
+    INJECTION_SKELETON,
+    LINE_SUFFIX,
+    LIST_ITEM,
+    NEGATIVE_CONTROL,
+    NUMBERED_STEP,
+    ORACLE_FENCE,
+    ORACLE_HEADING,
+    ORACLE_SECTIONS,
+    ORACLE_SKELETON,
+    SHAPE_LINE_BUDGET,
+    TABLE_DIVIDER,
+    TABLE_ROW,
+    TRANSCRIPT_COMMAND,
+    TRANSCRIPT_INFO,
+    blank_round_forms,
+    capture_path,
+    document_findings,
+    extract_exec_report,
+    gate_commands_in,
+    injection_findings,
+    injection_path,
+    lint,
+    load_captures,
+    marks_a_negative_control,
+    missing_or_misordered,
+    oracle_findings,
+    oracle_path,
+    oracle_sections,
+    reads_as_numbered_steps,
+    referenced_paths,
+    round_findings,
+    scaffold,
+    transcript_body,
+    transcript_findings,
+    unjudged_gate_commands,
+    unquoted_current_behavior_lines,
+)
+from dispatch.core.identity import (
+    TASK_KEY_PATTERN,
+    revision_origin,
+    task_session_policy,
+    validate_task_identity,
+    validate_task_key,
+)
+from dispatch.core.rules import (
+    command_rule_matches,
+    rule_matches,
+    split_rule_tokens,
+    task_allowlist_admits,
+    task_allowlist_families,
+)
+from dispatch.core.scope import parse_line_ranges
+
+
+# Where AGY keeps its installation. `AGY_DISPATCH_HOME` exists so a test can
+# stand up a whole fixture installation and have every caller find it -- the
+# ones running in this process and the ones running in a child.
+#
+# Assigning the four globals below is the older route and still works, but it
+# reaches only this process. `make_profile.py` runs as a subprocess and imports
+# this module inside it, so a suite that monkeypatched the globals watched the
+# child resolve the operator's real `~/.gemini`, look for a fixture project that
+# could only ever exist in the temporary one, and fail on every machine there is
+# (#3495). An environment variable is inherited across that boundary, which is
+# the only property being asked for here.
+HOME = Path(os.environ.get("AGY_DISPATCH_HOME") or Path.home())
 SETTINGS = HOME / ".gemini" / "antigravity-cli" / "settings.json"
 GLOBAL = HOME / ".gemini" / "config" / "config.json"
 PROJECT_DIR = HOME / ".gemini" / "config" / "projects"
 CONVERSATION_DIR = HOME / ".gemini" / "antigravity-cli" / "conversations"
 TEMP_ROOT = Path("/tmp").resolve()
 PERMISSION_KINDS = ("allow", "deny", "ask")
-TASK_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# The two kinds whose loss widens the worker. Dropping an `allow` narrows it,
+# which is the safe direction and is already refused elsewhere if it goes too
+# far; dropping a `deny` or an `ask` removes a guard, and nothing noticed.
+PROTECTIVE_KINDS = ("deny", "ask")
+# `allow` is one exact command line; `allow_prefix` is an open family, matched
+# the way the permission layer itself matches. A controller means one or the
+# other, and until both were sayable only the first was: a read-only verb such
+# as `git log` went into `allow`, where no real invocation ever equals it and
+# every real invocation is admitted by the prefix rule beside it.
+TASK_COMMAND_KINDS = ("allow", "allow_prefix", "deny")
 
 # Every git call below reads or writes state directly and none of them needs
 # the fsmonitor daemon's cache. That daemon is a liability here: on a large
@@ -46,7 +132,34 @@ DERIVED_BRANCH_PREFIX = "agy/"
 # dead conversation once its logs move here.
 ABANDONED_RUNS = "abandoned"
 EXIT_VOID = 1
-EXIT_FINDINGS = 2
+
+
+
+# AGY's conversation store records a shell command as two rows: the request and
+# what became of it. The request always carries status 3, so the outcome row is
+# the only place that says whether the command ran.
+RUN_COMMAND_REQUEST_STEP = 15
+RUN_COMMAND_OUTCOME_STEP = 21
+RUN_COMMAND_DENIED_STATUS = 7
+
+# A file edit is recorded the same way, and step 15 is the request row for both:
+# it is the generic "the worker asked for a tool" step, not a run_command step.
+# The outcome of an edit lands at 5, or at 17 in a small tail of rounds -- 3883
+# and 13 rows respectively across the 477 conversations on this machine.
+#
+# These rows are read for one purpose: to place each write in the same total
+# order as the command runs, so a gate result can be told from the tree it
+# describes. The store carries no timestamp, so `idx` is the only clock there is.
+FILE_WRITE_OUTCOME_STEPS = (5, 17)
+FILE_WRITE_TOOLS = frozenset(
+    {"replace_file_content", "multi_replace_file_content", "write_to_file"}
+)
+# The tool name is a length-delimited protobuf string field at the head of the
+# step payload: the field tag `\x12`, a single length byte, then the name. The
+# length is re-checked against the name because the tag byte alone matches
+# often inside the file content these payloads also carry.
+TOOL_NAME_FIELD = re.compile(rb"\x12([\x03-\x28])([a-z_]{3,40})")
+TOOL_ARGUMENT_DECODER = json.JSONDecoder()
 
 
 def resolved_under(path: Path, root: Path) -> bool:
@@ -97,67 +210,15 @@ def normalize_permission_surface(value: dict | None) -> dict[str, list[str]]:
     }
 
 
-def task_session_policy(profile: dict) -> str:
-    task = profile.get("task_contract")
-    if not isinstance(task, dict):
-        raise SystemExit("profile missing task_contract")
-    policy = task.get("session_policy", "ticketed")
-    if policy not in ("ticketed", "one-shot"):
-        raise SystemExit(
-            "task_contract.session_policy must be ticketed or one-shot"
-        )
-    return policy
 
-
-def validate_task_identity(profile: dict) -> str:
-    task = profile.get("task_contract")
-    if not isinstance(task, dict):
-        raise SystemExit("profile missing task_contract")
-    policy = task_session_policy(profile)
-    issue = str(task.get("issue", "")).strip()
-    run_id = str(task.get("run_id", "")).strip()
-    if policy == "ticketed":
-        if not issue:
-            raise SystemExit(
-                "ticketed task requires task_contract.issue"
-            )
-        if run_id:
-            raise SystemExit(
-                "ticketed task must not set task_contract.run_id"
-            )
-        expected = issue
-    else:
-        if issue:
-            raise SystemExit(
-                "one-shot task must not set task_contract.issue"
-            )
-        if not run_id:
-            raise SystemExit(
-                "one-shot task requires task_contract.run_id"
-            )
-        intent = task.get("intent")
-        if not isinstance(intent, str) or not intent.strip():
-            raise SystemExit(
-                "one-shot task requires non-empty task_contract.intent"
-            )
-        expected = run_id
-    if not TASK_KEY_PATTERN.fullmatch(expected):
-        raise SystemExit(
-            "task identity must match [A-Za-z0-9][A-Za-z0-9._-]{0,127}"
-        )
-    return expected
-
-
-def validate_task_key(profile: dict, task_key: str) -> None:
-    expected = validate_task_identity(profile)
-    if expected != str(task_key):
-        raise SystemExit(
-            f"task identity {expected} does not match requested key={task_key}"
-        )
 
 
 def load_profile(
-    path: str, *, validate_design: bool = True, require_injection: bool | None = None
+    path: str,
+    *,
+    validate_design: bool = True,
+    require_injection: bool | None = None,
+    task_key: str | None = None,
 ) -> dict:
     if require_injection is None:
         require_injection = validate_design
@@ -268,20 +329,46 @@ def load_profile(
         raise SystemExit("project_permissions.require_empty_global must be boolean")
     project_permissions["require_empty_global"] = require_empty
 
+    # A protective rule the Project holds and this profile omits is dropped by
+    # `grant`, which installs the declared surface verbatim. Dropping one can be
+    # right, so the escape hatch is not a flag: each rule given up is named,
+    # in the `<kind> <rule>` form the refusal prints, so it can be copied across
+    # and so a rule added to the Project later shows up as a new, unnamed loss
+    # rather than disappearing under a blanket permission.
+    revocations = validate_rule_list(
+        project_permissions.get("intentional_revocations", []),
+        "project_permissions.intentional_revocations",
+    )
+    for entry in revocations:
+        kind = entry.split(" ", 1)[0]
+        if kind not in PROTECTIVE_KINDS or " " not in entry:
+            raise SystemExit(
+                "project_permissions.intentional_revocations entries are "
+                f"`<{'|'.join(PROTECTIVE_KINDS)}> <rule>`, not: {entry}"
+            )
+    project_permissions["intentional_revocations"] = revocations
+
     task_commands = profile["task_commands"]
     if not isinstance(task_commands, dict):
         raise SystemExit("task_commands must be an object")
-    for kind in ("allow", "deny"):
+    for kind in TASK_COMMAND_KINDS:
         task_commands[kind] = validate_rule_list(
             task_commands.get(kind, []),
             f"task_commands.{kind}",
         )
     overlap = sorted(
-        set(task_commands["allow"]) & set(task_commands["deny"])
+        (set(task_commands["allow"]) | set(task_commands["allow_prefix"]))
+        & set(task_commands["deny"])
     )
     if overlap:
         raise SystemExit(
             "task_commands cannot both allow and deny: " + ", ".join(overlap)
+        )
+    both = sorted(set(task_commands["allow"]) & set(task_commands["allow_prefix"]))
+    if both:
+        raise SystemExit(
+            "task_commands entries must be exact or a prefix family, not both: "
+            + ", ".join(both)
         )
 
     profile["snapshot_paths"] = [
@@ -302,6 +389,21 @@ def load_profile(
             "path_change_budgets contains non-writable paths: "
             + ", ".join(unknown_budget_paths)
         )
+
+    ranges = profile.get("path_line_ranges", {})
+    if not isinstance(ranges, dict):
+        raise SystemExit("path_line_ranges must be an object")
+    unknown_range_paths = sorted(set(ranges) - set(profile["allowed_repo_writes"]))
+    if unknown_range_paths:
+        raise SystemExit(
+            "path_line_ranges contains non-writable paths: "
+            + ", ".join(unknown_range_paths)
+        )
+    for rel, rspec in ranges.items():
+        try:
+            parse_line_ranges(rspec)
+        except (ValueError, TypeError) as exc:
+            raise SystemExit(f"invalid range for {rel}: {exc}")
 
     protected = profile["protected_artifacts"]
     if not isinstance(protected, list):
@@ -330,8 +432,14 @@ def load_profile(
         if validate_design:
             if not artifact.is_file():
                 raise SystemExit(f"protected artifact is missing: {artifact}")
-            if sha256(artifact) != entry["sha256"]:
-                raise SystemExit(f"protected artifact hash mismatch: {artifact}")
+            actual = sha256(artifact)
+            if actual != entry["sha256"]:
+                if task_key and has_valid_adjudication(
+                    state_dir, task_key, str(artifact), actual
+                ):
+                    pass
+                else:
+                    raise SystemExit(f"protected artifact hash mismatch: {artifact}")
 
     # Every verb that runs at or before authoring time — `doctor` preflights the
     # round, `scaffold` is what creates the injection, `lint` grades it — sees a
@@ -446,52 +554,7 @@ def global_permission_surface() -> dict[str, list[str]]:
     )
 
 
-def split_rule_tokens(pattern: str) -> list[str]:
-    tokens: list[str] = []
-    current: list[str] = []
-    escaped = False
-    for character in pattern.strip():
-        if character.isspace() and not escaped:
-            if current:
-                tokens.append("".join(current))
-                current = []
-            continue
-        current.append(character)
-        if escaped:
-            escaped = False
-        elif character == "\\":
-            escaped = True
-    if current:
-        tokens.append("".join(current))
-    return tokens
 
-
-def rule_matches(rule: str, command: str, prefix: str = "command") -> bool:
-    match = re.fullmatch(rf"{prefix}\((.*)\)", rule)
-    if not match:
-        return False
-    pattern = match.group(1)
-    if pattern == "*":
-        return True
-    try:
-        command_tokens = shlex.split(command)
-    except ValueError:
-        return False
-    rule_tokens = split_rule_tokens(pattern)
-    if not rule_tokens or len(command_tokens) < len(rule_tokens):
-        return False
-    for rule_token, command_token in zip(rule_tokens, command_tokens):
-        try:
-            if re.fullmatch(rule_token, command_token) is None:
-                return False
-        except re.error:
-            if rule_token != command_token:
-                return False
-    return True
-
-
-def command_rule_matches(rule: str, command: str) -> bool:
-    return rule_matches(rule, command, "command")
 
 
 def unsandboxed_rules(allow: list[str]) -> list[str]:
@@ -603,6 +666,18 @@ def project_policy_report(profile: dict) -> dict:
         blockers.append(
             "Project-scope permission rules differ from project_permissions"
         )
+    # The same two omissions `grant` refuses on. Repeated here because a
+    # surface can reach the Project by a route `grant` never saw, and every
+    # other check in this report iterates a list those omissions leave empty.
+    blockers.extend(unauthorized_surface_refusals(profile))
+    dropped = unnamed_protective_revocations(profile)
+    if dropped:
+        blockers.append(
+            f"the declared surface drops {len(dropped)} guard(s) the Project "
+            "held at the start of this round, unnamed in "
+            "`project_permissions.intentional_revocations`: "
+            + ", ".join(dropped)
+        )
     if global_broadening:
         blockers.append(
             "inherited global rules allow "
@@ -625,28 +700,86 @@ def project_policy_report(profile: dict) -> dict:
             "twin and can never fire: " + ", ".join(inert_escapes)
         )
 
-    for expected_decision in ("allow", "deny"):
-        for command in profile["task_commands"].get(expected_decision, []):
-            decision, rule = permission_decision(actual, global_surface, command)
-            command_checks.append(
-                {
-                    "command": command,
-                    "expected": expected_decision,
-                    "decision": decision,
-                    "matched_rule": rule,
-                    # Reported, never blocked: whether a command needs to leave
-                    # the sandbox depends on whether it touches the network or
-                    # writes outside the worktree, which the profile cannot
-                    # state. A sandboxed `cargo` is the failure that reads like
-                    # a product defect, so the controller sees this per command.
-                    "unsandboxed": runs_unsandboxed(actual, global_surface, command),
-                }
+    # A path cannot be both the round's write target and frozen against
+    # writing. `make_profile.py` cannot emit this, because it freezes the
+    # complement of the write set; a profile derived from an earlier round's
+    # can, because deriving edits the write set and leaves the complement
+    # describing the round it came from. The result is a finding that fires on
+    # correct work, and a finding that always fires is one the controller
+    # learns to skim past (#3428).
+    root = Path(profile["root"])
+    write_map = {}
+    for write in profile["allowed_repo_writes"]:
+        w_path = Path(write)
+        if not w_path.is_absolute():
+            w_path = root / w_path
+        write_map[w_path.resolve()] = write
+
+    frozen_targets_list = []
+    for entry in profile["protected_artifacts"]:
+        p_path = Path(entry["path"])
+        if not p_path.is_absolute():
+            p_path = root / p_path
+        if p_path.resolve() in write_map:
+            frozen_targets_list.append(write_map[p_path.resolve()])
+    frozen_targets = sorted(set(frozen_targets_list))
+    if frozen_targets:
+        blockers.append(
+            f"{len(frozen_targets)} declared write target(s) are also frozen "
+            "as protected artifacts, so writing them is a finding and not "
+            "writing them is a finding: " + ", ".join(frozen_targets)
+        )
+
+    # A prefix family is probed as an expected-allow under its own text, which
+    # is the shortest line the family admits: a surface that refuses that
+    # refuses every member. Leaving `allow_prefix` out of this loop would let a
+    # round declare a family the worker's permission surface never grants and
+    # still report dispatch_ready.
+    task_commands = profile.get("task_commands", {})
+    probes = (
+        [(command, "allow", "allow") for command in task_commands.get("allow", [])]
+        + [
+            (command, "allow", "allow_prefix")
+            for command in task_commands.get("allow_prefix", [])
+        ]
+        + [(command, "deny", "deny") for command in task_commands.get("deny", [])]
+    )
+    for command, expected_decision, kind in probes:
+        decision, rule = permission_decision(actual, global_surface, command)
+        check = {
+            "command": command,
+            "kind": kind,
+            "expected": expected_decision,
+            "decision": decision,
+            "matched_rule": rule,
+            # Reported, never blocked: whether a command needs to leave
+            # the sandbox depends on whether it touches the network or
+            # writes outside the worktree, which the profile cannot
+            # state. A sandboxed `cargo` is the failure that reads like
+            # a product defect, so the controller sees this per command.
+            "unsandboxed": runs_unsandboxed(actual, global_surface, command),
+        }
+        if kind == "allow":
+            # The question `doctor` could not previously ask: not whether the
+            # declared command is allowed, which was never in doubt, but whether
+            # the surface also admits argument forms past it. Probing one token
+            # past the entry answers it. The answer is normally yes -- every
+            # permission rule is a token prefix, so nothing on that layer can
+            # express "this line and no longer one" -- and that is precisely the
+            # fact an author needs at authoring time: an exact entry states the
+            # controller's intent, and the surface will not enforce it. Reported,
+            # never blocked, because blocking on it would block every round.
+            probe = f"{command} agy-dispatch-argument-probe"
+            check["argument_forms_admitted"] = (
+                permission_decision(actual, global_surface, probe)[0] == "allow"
+                and not task_allowlist_admits(profile, probe)
             )
-            if decision != expected_decision:
-                blockers.append(
-                    f"task command expected {expected_decision} but resolves "
-                    f"{decision}: {command}"
-                )
+        command_checks.append(check)
+        if decision != expected_decision:
+            blockers.append(
+                f"task command expected {expected_decision} but resolves "
+                f"{decision}: {command}"
+            )
 
     return {
         "project_id": state["project_id"],
@@ -670,16 +803,65 @@ def project_policy_report(profile: dict) -> dict:
         "extra_project_rules": extra,
         "global_rules": global_surface,
         "global_broadening_rules": global_broadening,
+        "unnamed_protective_revocations": dropped,
         "task_command_checks": command_checks,
         "dispatch_ready": not blockers,
         "blockers": blockers,
     }
 
 
+def pending_dispatch_steps(profile: dict, task_key: str) -> list[str]:
+    """What `dispatch` refuses without, that the round has simply not done yet.
+
+    Deliberately not blockers, and deliberately not in `project_policy_report`.
+    A blocker is something configured wrong, fixed with `/permissions`, and
+    `doctor` exits 2 on one. These are steps of the round's own authoring, and
+    `doctor` is documented to run before all three of them -- so reporting them
+    as blockers would make it exit 2 at exactly the point in the flow it exists
+    to serve. Worse, `snapshot` itself goes through the same readiness report:
+    the verb that creates the snapshot would refuse to run for want of one.
+
+    Where they do belong is `dispatch_ready`, which claims something specific
+    and is read as permission to spend the round -- that running `dispatch` now
+    would work. Each entry names the verb that clears it.
+    """
+    pending = []
+    if not oracle_path(profile, task_key).exists():
+        pending.append(
+            f"no oracle yet: run `scaffold PROFILE {task_key}` and fill both "
+            "documents"
+        )
+    else:
+        findings = round_findings(profile, task_key)
+        if findings:
+            pending.append(
+                f"{len(findings)} round-document finding(s), which `dispatch` "
+                f"refuses on: run `lint PROFILE {task_key}`"
+            )
+    if not snapshot_path(profile, task_key).is_file():
+        pending.append(
+            f"no pre-dispatch snapshot: run `snapshot PROFILE {task_key}`"
+        )
+    return pending
+
+
 def doctor(profile: dict) -> dict:
+    """Preflight: what is configured wrong, and what has not been done yet.
+
+    `dispatch_ready` is read as permission to dispatch, so it has to answer the
+    question its name asks -- would `dispatch` work now -- and not the narrower
+    one the permission surface can answer by itself. It used to answer the
+    narrow one and print `true` for a round `dispatch` refused outright.
+    """
     report = project_policy_report(profile)
+    report["pending_steps"] = pending_dispatch_steps(
+        profile, validate_task_identity(profile)
+    )
+    report["dispatch_ready"] = not report["blockers"] and not report["pending_steps"]
     print(json.dumps(report, indent=2))
-    if not report["dispatch_ready"]:
+    # On the blockers alone. A pending step is the flow working as designed, and
+    # a non-zero exit there reads as a fault the controller must go and fix.
+    if report["blockers"]:
         raise SystemExit(2)
     return report
 
@@ -731,12 +913,20 @@ def frozen_task_state(profile: dict, task_key: str) -> dict:
     if task_session_policy(profile) == "ticketed":
         return validate_live_issue(profile, task_key)
     task = profile["task_contract"]
-    return {
+    state = {
         "run_id": task_key,
         "state": "ONE_SHOT",
         "kind": task["kind"],
         "intent": task["intent"].strip(),
     }
+    origin = revision_origin(profile)
+    if origin:
+        # Recorded rather than re-fetched. The revision is judged against the
+        # oracle copied from the round it continues, not against the ticket
+        # text, so reaching the tracker here would add a network dependency to
+        # a path whose whole point is that it has none.
+        state["revision_of"] = origin
+    return state
 
 
 def dispatch_contract(profile: dict) -> dict:
@@ -879,6 +1069,20 @@ def snapshot(profile: dict, task_key: str) -> Path:
         entry["path"]: base64.b64encode(Path(entry["path"]).read_bytes()).decode()
         for entry in profile["protected_artifacts"]
     }
+    # Recorded for the same reason the protected ones are: a design input is a
+    # path frozen at bytes the worker must not change, and on a revision those
+    # bytes are the candidate it carried, not HEAD. Without them the round
+    # baseline is missing exactly the paths a narrowing revision moved out of
+    # `allowed_repo_writes`.
+    design_contents = {}
+    for entry in profile["task_contract"].get("design_inputs", []):
+        design = Path(entry["path"])
+        if not design.is_absolute():
+            design = root / design
+        if design.is_file():
+            design_contents[entry["path"]] = base64.b64encode(
+                design.read_bytes()
+            ).decode()
     writable_contents = {}
     for relative in profile["allowed_repo_writes"]:
         path = root / relative
@@ -895,6 +1099,7 @@ def snapshot(profile: dict, task_key: str) -> Path:
         "manifest": manifest(root, profile["snapshot_paths"]),
         "protected_artifacts": artifact_hashes,
         "protected_contents_base64": protected_contents,
+        "design_input_contents_base64": design_contents,
         "writable_contents": writable_contents,
         "dispatch_contract": dispatch_contract(profile),
         "round_documents": round_document_digests(profile, task_key),
@@ -944,12 +1149,17 @@ def render_prompt(
 ) -> str:
     writes = profile["allowed_repo_writes"] or ["none"]
     allowed = profile["task_commands"].get("allow", [])
+    families = profile["task_commands"].get("allow_prefix", [])
     denied = profile["task_commands"].get("deny", [])
     # A worker with no ticket command and no project allow rule cannot observe
     # anything. Demanding PASS/FAIL per criterion from it manufactures the exact
     # fabrication the controller then has to detect, so the report contract asks
     # for a description of the work instead of a verdict on it.
-    no_shell = not allowed and not profile["project_permissions"].get("allow", [])
+    no_shell = (
+        not allowed
+        and not families
+        and not profile["project_permissions"].get("allow", [])
+    )
     report_contract = (
         NO_SHELL_REPORT_CONTRACT if no_shell else VERDICT_REPORT_CONTRACT
     )
@@ -970,11 +1180,20 @@ def render_prompt(
             "Execute exactly one bounded one-shot task. This session will not "
             "be resumed."
         )
-    identity = (
-        f"Ticket: #{task_key}."
-        if policy == "ticketed"
-        else f"One-shot run id: {task_key}."
-    )
+    origin = revision_origin(profile)
+    if policy == "ticketed":
+        identity = f"Ticket: #{task_key}."
+    elif origin:
+        # A revision is one-shot only because the ticket number is the ticketed
+        # identity and it is spent. Announcing just the run id would tell the
+        # worker it is on a round with no ticket behind it, which is the one
+        # thing a revision is not.
+        identity = (
+            f"One-shot run id: {task_key}, revising the round dispatched for "
+            f"issue #{origin}."
+        )
+    else:
+        identity = f"One-shot run id: {task_key}."
     state_label = (
         "Controller-validated live ticket snapshot"
         if policy == "ticketed"
@@ -987,6 +1206,30 @@ def render_prompt(
             for entry in design_inputs
         )
         or "- none; this is a read-only evidence task"
+    )
+    # A family is only shown when one was declared. Printing an empty heading
+    # would invite the worker to read the absence as permission to invent a
+    # prefix, which is the failure this whole section exists to prevent.
+    family_block = (
+        "Shell command prefixes authorized for this task, each of which may be "
+        "followed\nby further arguments:\n"
+        + "\n".join(f"- {command} ..." for command in families)
+        + "\n\n"
+        if families
+        else ""
+    )
+    copy_rule = (
+        "Every Bash tool call must either copy one exact command line "
+        "byte-for-byte, or\nbegin with one of the authorized prefixes above and "
+        "add only arguments after it.\nA reordered flag, changed quote or escape "
+        "form, appended pipeline, or\nsemantically equivalent helper is a "
+        "different command, and so is anything\nthat starts with no listed "
+        "prefix."
+        if families
+        else "Every Bash tool call must copy one authorized command line "
+        "byte-for-byte. A\nnarrower `sed` range, reordered flag, changed quote "
+        "or escape form, appended\npipeline, or semantically equivalent helper "
+        "is a different command."
     )
     return f"""{phase} {identity}
 Repository root: {profile['root']}
@@ -1017,7 +1260,7 @@ Exact repository write allowlist:
 Exact shell command lines authorized for this task:
 {chr(10).join(f"- {command}" for command in allowed) or "- none"}
 
-Shell command lines explicitly forbidden for this task:
+{family_block}Shell command lines explicitly forbidden for this task:
 {chr(10).join(f"- {command}" for command in denied) or "- none"}
 
 Do not change branches, create worktrees, commit, push, mutate a tracker, or
@@ -1026,9 +1269,7 @@ are permitted only when explicitly listed above. Use absolute paths. If a
 command is unavailable, a path is missing, or the task conflicts with the
 injected contract, stop and report FAIL instead of improvising.
 
-Every Bash tool call must copy one authorized command line byte-for-byte. A
-narrower `sed` range, reordered flag, changed quote or escape form, appended
-pipeline, or semantically equivalent helper is a different command. Use the
+{copy_rule} Use the
 built-in read-file tool for additional source inspection; do not synthesize a
 new shell command.
 
@@ -1088,14 +1329,6 @@ def conversation_id_from_log(path: Path) -> str | None:
     return matches[-1] if matches else None
 
 
-def extract_exec_report(raw: str) -> str | None:
-    stripped = raw.lstrip()
-    markers = list(re.finditer(r"^## EXEC REPORT", stripped, flags=re.MULTILINE))
-    if not markers:
-        return None
-    return stripped[markers[-1].start() :].lstrip()
-
-
 def extract_run_command_lines(payload: bytes) -> list[str]:
     text = payload.decode(errors="replace")
     values = re.findall(
@@ -1110,6 +1343,108 @@ def requested_run_commands(
     *,
     after_step: int = -1,
 ) -> list[dict]:
+    """Every shell command AGY asked for after the floor, with its outcome.
+
+    A request (`step_type` 15) and what became of it (`step_type` 21) are two
+    rows. The request row's status is 3 for all of them -- it records that a
+    request was made, not what happened next -- so reading it alone cannot tell
+    a command that ran from one the permission layer refused (#3427). The
+    outcome row is the next one, and status 7 there means denied.
+
+    `denied` is asserted only on that positive evidence. An outcome row that is
+    missing, because the process died mid-command, reads as *ran*: the caller
+    treats an unaudited execution as fatal, and the conservative direction for
+    an unknown is the fatal one.
+    """
+    database = conversation_database(conversation_id)
+    if not database.is_file():
+        raise SystemExit(
+            f"conversation state is missing for {conversation_id}: {database}"
+        )
+    connection = connect_conversation(database)
+    try:
+        rows = connection.execute(
+            "select idx, status, step_type, step_payload from steps "
+            "where idx > ? order by idx",
+            (after_step,),
+        ).fetchall()
+    finally:
+        connection.close()
+    outcomes = {}
+    for position, (idx, status, step_type, _payload) in enumerate(rows):
+        if int(step_type) != RUN_COMMAND_REQUEST_STEP:
+            continue
+        following = rows[position + 1] if position + 1 < len(rows) else None
+        if following and int(following[2]) == RUN_COMMAND_OUTCOME_STEP:
+            outcomes[int(idx)] = int(following[1])
+    return [
+        {
+            "step": int(idx),
+            "status": int(status),
+            "command": command,
+            "denied": outcomes.get(int(idx)) == RUN_COMMAND_DENIED_STATUS,
+        }
+        for idx, status, step_type, payload in rows
+        if int(step_type) == RUN_COMMAND_REQUEST_STEP
+        for command in extract_run_command_lines(payload or b"")
+    ]
+
+
+def step_tool_name(payload: bytes) -> str | None:
+    """Which tool this step is about, read from the payload's own field tag."""
+    for length, name in TOOL_NAME_FIELD.findall(payload or b""):
+        if length[0] == len(name):
+            return name.decode()
+    return None
+
+
+def step_tool_arguments(payload: bytes) -> dict | None:
+    """The tool's arguments, parsed rather than pattern-matched.
+
+    The arguments arrive as one JSON object embedded in the payload with its
+    keys in alphabetical order, so every content-bearing key
+    (`ReplacementChunks`, `ReplacementContent`) is decoded before `TargetFile`
+    and gets first refusal on any pattern looking for one.
+
+    File *content* cannot exploit that: JSON escapes the quotes, so the bytes
+    `"TargetFile":"` never appear inside a string value, and over the 3896 write
+    steps on this machine parsing and a naive regex agree on all 3894 that
+    record a target. A nested *object* is the case that differs -- a chunk
+    carrying a key of the same name is not escaped, and a pattern would take it
+    in preference to the real one. No such row exists here, which is exactly why
+    this reads the structure instead of trusting that to hold.
+    """
+    text = (payload or b"").decode(errors="replace")
+    start = text.find('{"')
+    if start < 0:
+        return None
+    try:
+        arguments, _ = TOOL_ARGUMENT_DECODER.raw_decode(text[start:])
+    except ValueError:
+        return None
+    return arguments if isinstance(arguments, dict) else None
+
+
+def recorded_file_writes(
+    conversation_id: str,
+    *,
+    after_step: int = -1,
+) -> list[dict]:
+    """Every file the worker wrote after the floor, in the order it wrote them.
+
+    A write that the store says did not apply is not a write: status 7 on an
+    outcome row carries the model's failed-edit text -- "Could not successfully
+    apply any edits" -- and 12 of the 3896 rows here are that. Every other
+    status counts, including the 502 that carry status 5 with no error text at
+    all, because this list feeds a refusal and an unexplained status is exactly
+    the case where guessing "nothing happened" turns a real staleness into a
+    green round. `requested_run_commands` resolves its own unknowns the same
+    way and for the same reason.
+
+    `path` is None when the store recorded no target for a write it recorded --
+    two rows here. Those are kept rather than dropped so a caller can say the
+    tree moved without being able to say where, instead of saying nothing.
+    """
     database = conversation_database(conversation_id)
     if not database.is_file():
         raise SystemExit(
@@ -1119,23 +1454,45 @@ def requested_run_commands(
     try:
         rows = connection.execute(
             "select idx, status, step_payload from steps "
-            "where step_type = 15 and idx > ? order by idx",
-            (after_step,),
+            "where idx > ? and step_type in ({}) order by idx".format(
+                ",".join("?" * len(FILE_WRITE_OUTCOME_STEPS))
+            ),
+            (after_step, *FILE_WRITE_OUTCOME_STEPS),
         ).fetchall()
     finally:
         connection.close()
-    return [
-        {"step": int(idx), "status": int(status), "command": command}
-        for idx, status, payload in rows
-        for command in extract_run_command_lines(payload or b"")
-    ]
+    writes = []
+    for idx, status, payload in rows:
+        tool = step_tool_name(payload or b"")
+        if tool not in FILE_WRITE_TOOLS:
+            continue
+        if int(status) == RUN_COMMAND_DENIED_STATUS:
+            continue
+        arguments = step_tool_arguments(payload or b"") or {}
+        target = arguments.get("TargetFile")
+        writes.append(
+            {
+                "step": int(idx),
+                "tool": tool,
+                "path": target if isinstance(target, str) else None,
+            }
+        )
+    return writes
 
 
 def audit_task_commands(
     profile: dict,
     task_key: str,
     snapshot_data: dict,
-) -> list[dict]:
+) -> tuple[list[dict], list[str], list[str], list[dict]]:
+    """The commands that ran, the ones worth adjudicating, and the ones to note.
+
+    Findings block the round at `review`; notes do not. The split is by which
+    permission surface admitted a command, not by whether the controller wrote
+    it down: an unlisted command the round's own `project_permissions` grant is
+    a vocabulary gap in the profile, while one only an inherited global rule
+    allowed means the worker had a surface the round never declared.
+    """
     current_id = conversation_id_for_task(profile, task_key)
     snapshot_id = snapshot_data.get("conversation_id")
     if snapshot_id and current_id != snapshot_id:
@@ -1144,25 +1501,180 @@ def audit_task_commands(
             f"{snapshot_id} -> {current_id or '<missing>'}"
         )
     if not current_id:
-        return []
+        # Four, matching the audited/findings/notes/every-command shape below.
+        # This branch is the one a fixture with a conversation never reaches,
+        # which is how it went out of step with the other return in the first
+        # place and took `verify` down with a ValueError for four rounds.
+        return [], [], [], []
     commands = requested_run_commands(
         current_id,
         after_step=int(snapshot_data.get("conversation_step_floor", -1)),
     )
-    allowed = set(profile["task_commands"]["allow"])
     denied_commands = set(profile["task_commands"]["deny"])
     forbidden = [item for item in commands if item["command"] in denied_commands]
-    unlisted = [item for item in commands if item["command"] not in allowed]
-    if forbidden or unlisted:
-        details = {
-            "forbidden": forbidden,
-            "unlisted": unlisted,
-        }
-        raise SystemExit(
-            "VOID: AGY requested shell commands outside the task-local "
-            "exact allowlist: " + json.dumps(details, sort_keys=True)
+    unlisted = [
+        item
+        for item in commands
+        if not task_allowlist_admits(profile, item["command"])
+        and item["command"] not in denied_commands
+    ]
+    executed = [item for item in unlisted if not item["denied"]]
+    refused = [item for item in unlisted if item["denied"]]
+
+    # A command that ran was, by definition, permitted by something. Judging it
+    # solely against the exact allowlist made VOID report the controller's
+    # vocabulary rather than the worker's conduct: an entry the permission layer
+    # reads as a prefix admits argument forms no exact entry can equal, so the
+    # command executes and the whole round dies at the end for it. Ask instead
+    # which surface admitted it, because that is the question integrity turns on.
+    declared = expected_project_surface(profile)
+    empty = {kind: [] for kind in PERMISSION_KINDS}
+    global_surface = global_permission_surface()
+    under_declared, escaped, unauthorized = [], [], []
+    for item in executed:
+        if permission_decision(declared, empty, item["command"])[0] == "allow":
+            under_declared.append(item)
+        elif permission_decision(empty, global_surface, item["command"])[0] == "allow":
+            escaped.append(item)
+        else:
+            unauthorized.append(item)
+
+    if forbidden or unauthorized:
+        # A deny-listed line is fatal whether it ran or was refused, but those
+        # are not the same act and the sentence has to say which one happened.
+        # The rows carry `denied`, so a message reading "ran" above a row reading
+        # `"denied": true` is the controller contradicting its own evidence in
+        # the one place a human reads before deciding what the tree now holds.
+        ran_forbidden = [item for item in forbidden if not item["denied"]]
+        refused_forbidden = [item for item in forbidden if item["denied"]]
+        parts = []
+        if ran_forbidden:
+            parts.append(
+                "ran command(s) this round's `task_commands.deny` forbids: "
+                + json.dumps(ran_forbidden, sort_keys=True)
+            )
+        if refused_forbidden:
+            parts.append(
+                "asked for command(s) this round's `task_commands.deny` "
+                "forbids, and the permission layer refused them: "
+                + json.dumps(refused_forbidden, sort_keys=True)
+            )
+        if unauthorized:
+            parts.append(
+                "ran command(s) nothing authorized: "
+                + json.dumps(unauthorized, sort_keys=True)
+            )
+        raise SystemExit("VOID: AGY " + "; ".join(parts))
+
+    findings = [
+        f"AGY asked for `{item['command']}` at step {item['step']}, which the "
+        "task allowlist does not name; the permission layer refused it and "
+        "nothing ran. Tighten the prompt, or add the command to the profile "
+        "and re-snapshot, before dispatching again."
+        for item in refused
+    ] + [
+        f"AGY ran `{item['command']}` at step {item['step']}, which neither "
+        "`task_commands` nor this round's `project_permissions` names. Only a "
+        "permission rule inherited from outside the round let it through, so "
+        "the round's declared surface is not the surface the worker had. "
+        "Adjudicate what it observed before accepting."
+        for item in escaped
+    ]
+    notes = [
+        f"AGY ran `{item['command']}` at step {item['step']}: this round's "
+        "`project_permissions` authorize it, but `task_commands` does not name "
+        "it. Add it to `task_commands.allow` if the exact line matters, or to "
+        "`task_commands.allow_prefix` if any argument form is intended."
+        for item in under_declared
+    ]
+    audited = [
+        item for item in commands if task_allowlist_admits(profile, item["command"])
+    ]
+    return audited, findings, notes, commands
+
+
+def stale_gate_findings(
+    profile: dict,
+    task_key: str,
+    snapshot_data: dict,
+    commands: list[dict],
+) -> list[str]:
+    """Did the tree move under the gate result the round is reporting?
+
+    A green gate is evidence about the tree it ran against, and nothing says it
+    is evidence about the tree that stands now. The worker can run the gate,
+    read it as done, and keep editing; the round then carries a pass that
+    describes a candidate no longer on disk.
+
+    The digest this would ideally compare cannot be taken: the dispatcher is not
+    running while the worker works, it reads the conversation store afterwards,
+    so there is no moment at which it could have hashed the writable paths as
+    the gate saw them. What the store does have is `idx`, which orders the write
+    rows and the command rows together. "The gate ran, then this path was
+    written" is the same question the digest was for, and it can be asked of
+    rounds already on disk.
+
+    Scope: the contract-writable set, because that is what the round's evidence
+    is about. A post-gate write *outside* that set is already refused, by the
+    scope findings that fire on any undeclared path -- so between the two, no
+    in-tree write by an editing tool goes unremarked. A write performed by a
+    shell command instead of an editing tool is invisible to both.
+    """
+    gate = (profile.get("task_contract") or {}).get("gate_command")
+    if not gate:
+        return []
+    runs = [
+        item for item in commands if item["command"] == gate and not item["denied"]
+    ]
+    if not runs:
+        # The gate never ran. That the round reports a result anyway is a
+        # separate failure with its own issue; this check has nothing to say.
+        return []
+    last_run = runs[-1]
+    conversation_id = conversation_id_for_task(profile, task_key)
+    if not conversation_id:
+        return []
+    writes = recorded_file_writes(
+        conversation_id,
+        after_step=int(snapshot_data.get("conversation_step_floor", -1)),
+    )
+    root = Path(profile["root"]).resolve()
+    writable = set(profile["allowed_repo_writes"])
+    moved: dict[str, int] = {}
+    unnamed: list[int] = []
+    for write in writes:
+        if write["step"] <= last_run["step"]:
+            continue
+        if write["path"] is None:
+            unnamed.append(write["step"])
+            continue
+        try:
+            relative = str(Path(write["path"]).resolve().relative_to(root))
+        except ValueError:
+            continue
+        if relative in writable:
+            moved.setdefault(relative, write["step"])
+    findings = []
+    if moved:
+        where = ", ".join(
+            f"`{path}` at step {step}" for path, step in sorted(moved.items())
         )
-    return commands
+        findings.append(
+            f"the gate `{gate}` last ran at step {last_run['step']}, and "
+            f"{len(moved)} contract-writable path(s) were written after it: "
+            f"{where}. Whatever that run reported describes a tree that no "
+            "longer exists. Re-run the gate against the candidate as it stands, "
+            "or send the round back."
+        )
+    if unnamed:
+        steps = ", ".join(str(step) for step in unnamed)
+        findings.append(
+            f"the gate `{gate}` last ran at step {last_run['step']}, and "
+            f"{len(unnamed)} later write step(s) ({steps}) record no target "
+            "path, so the store can neither place them inside the "
+            "contract-writable set nor rule them out. Re-run the gate."
+        )
+    return findings
 
 
 def denied(profile: dict, task_key: str) -> None:
@@ -1185,7 +1697,8 @@ def denied(profile: dict, task_key: str) -> None:
     try:
         rows = connection.execute(
             "select idx, step_payload from steps "
-            "where status = 7 order by idx"
+            "where status = ? order by idx",
+            (RUN_COMMAND_DENIED_STATUS,),
         ).fetchall()
     finally:
         connection.close()
@@ -1203,10 +1716,23 @@ def denied(profile: dict, task_key: str) -> None:
         print(f"step {idx}: {command}")
 
 
+def snapshot_path(profile: dict, task_key: str) -> Path:
+    return Path(profile["state_dir"]) / "snapshots" / f"{task_key}.json"
+
+
 def load_snapshot(profile: dict, task_key: str) -> dict:
-    path = Path(profile["state_dir"]) / "snapshots" / f"{task_key}.json"
+    path = snapshot_path(profile, task_key)
     if not path.is_file():
-        raise SystemExit("missing pre-dispatch snapshot")
+        # Names the verb, not only the absence. `snapshot` takes the same two
+        # positional arguments as whatever refused, and a message that says
+        # only what is missing leaves the controller reading source to find
+        # out what produces it.
+        raise SystemExit(
+            f"missing pre-dispatch snapshot at {path}\n"
+            f"run `snapshot PROFILE {task_key}` first: it freezes the "
+            "contract, the tree, and the permission surface this round is "
+            "judged against"
+        )
     return json.loads(path.read_text())
 
 
@@ -1274,663 +1800,6 @@ def validate_conversation_action(
     return conversation_id
 
 
-ORACLE_SECTIONS = ("Claim", "Measurements", "Gate", "Fabrication tells")
-INJECTION_SECTIONS = (
-    "Task",
-    "Current behavior",
-    "Required change",
-    "Shape to follow",
-    "Reference",
-    "Out of scope",
-    "Definition of done",
-)
-# Only the section quoting what already exists, and the one naming the gate, may
-# carry a fenced block.  Anywhere else a fence means the controller pasted the
-# answer, and a round whose answer is already written has nothing left to
-# dispatch.
-FENCE_BEARING_SECTIONS = ("Current behavior", "Definition of done")
-NUMBERED_STEP = re.compile(r"^[ \t]*\d+[.)][ \t]+\S", re.MULTILINE)
-# Enough to name a convention and say to follow it; not enough to describe one.
-SHAPE_LINE_BUDGET = 4
-ORACLE_HEADING = re.compile(r"^##[ \t]+(.+?)[ \t]*$", re.MULTILINE)
-ORACLE_FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
-NEGATIVE_CONTROL = re.compile(r"negative control", re.IGNORECASE)
-LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S", re.MULTILINE)
-TABLE_ROW = re.compile(r"^[ \t]*\|.*\|[ \t]*$", re.MULTILINE)
-TABLE_DIVIDER = re.compile(r"^[ \t]*\|[\s:|-]+\|[ \t]*$")
-FILL_MARKER = re.compile(r"<!--[ \t]*fill\b.*?-->", re.DOTALL)
-BACKTICKED = re.compile(r"`([^`\n]+)`")
-LINE_SUFFIX = re.compile(r":\d+(?:[:-]\d+)?$")
-# A quoted excerpt may skip lines; the marker for that is not itself a quote.
-ELISION = re.compile(r"(?://|#)?[ \t]*(?:\.{3}|…|snip|omitted)[ \t]*", re.IGNORECASE)
-
-
-def oracle_sections(text: str) -> dict[str, str]:
-    """Split an oracle into its `## ` sections, preserving document order."""
-    matches = list(ORACLE_HEADING.finditer(text))
-    sections: dict[str, str] = {}
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        sections[match.group(1).strip()] = text[match.end() : end].strip()
-    return sections
-
-
-def missing_or_misordered(text: str, required: tuple[str, ...], label: str) -> list[str]:
-    """Which required `## ` sections are absent, and are the rest in order."""
-    sections = oracle_sections(text)
-    findings = [
-        f"{label} is missing the `## {name}` section"
-        for name in required
-        if name not in sections
-    ]
-    present = [name for name in sections if name in required]
-    if present != [name for name in required if name in sections]:
-        findings.append(
-            f"{label} sections are out of order; expected "
-            + " -> ".join(f"## {name}" for name in required)
-        )
-    return findings
-
-
-def gate_commands_in(section: str) -> list[str]:
-    """The command lines inside a section's fenced blocks, in order."""
-    return [
-        line.strip()
-        for block in ORACLE_FENCE.findall(section)
-        for line in block.splitlines()
-        if line.strip()
-    ]
-
-
-def unjudged_gate_commands(profile: dict, gate_commands: list[str]) -> list[str]:
-    """Which of an oracle's `## Gate` commands `prove` will never run.
-
-    `prove` runs `task_contract.gate_command` and nothing else -- one command,
-    whose red decides the round. An oracle's `## Gate` block is free to list
-    several, and `lint` already checks each one is authorized, so a second
-    command reads as judged when it is only authorized. The round then carries
-    a row whose observation no proof ever makes, which is the false green this
-    whole scaffold exists to refuse: the documents say two things decide the
-    round and the machinery lets one decide it.
-
-    The way out is to name the compound command in the profile, or to state the
-    extra observation as prose the controller checks by hand and keep the fence
-    to the one command that is actually judged.
-    """
-    judged = profile.get("task_contract", {}).get("gate_command")
-    if not judged:
-        return []
-    return [command for command in gate_commands if command != judged]
-
-
-def unquoted_current_behavior_lines(
-    root: str | None, section: str, candidates: list[str]
-) -> list[str]:
-    """Lines an injection quotes as current behavior that no candidate file has.
-
-    `injection_findings` already refuses a `## Current behavior` with no fenced
-    quote, on the reasoning that a round should be grounded in what was read
-    rather than what was remembered. That check reaches the form and stops: a
-    block pasted from an earlier round, from a base two commits back, or from
-    memory satisfies it exactly as well as a block copied out of the file.
-
-    A stale quote is worse than no quote. It is the one part of the injection a
-    worker is entitled to treat as ground truth -- it is labelled as the code as
-    it stands -- so a worker that greps for it, finds nothing, and improvises has
-    been sent to do that by the document. Rounds are re-based often here (a
-    follow-up reuses the previous worktree block; documents get drafted while an
-    earlier round is still in flight), which is exactly when a quote goes stale
-    without anyone editing it.
-
-    Matching is on the stripped line, so re-indenting a quote is not a finding:
-    the dangerous class is content that is gone, not content that moved. Lines
-    that are only an elision marker are skipped for the same reason.
-    """
-    if not root:
-        return []
-    haystacks: list[set[str]] = []
-    for rel in candidates:
-        path = Path(rel) if Path(rel).is_absolute() else Path(root) / rel
-        try:
-            haystacks.append({line.strip() for line in path.read_text().splitlines()})
-        except (OSError, UnicodeDecodeError):
-            continue
-    if not haystacks:
-        return []
-    missing: list[str] = []
-    for block in ORACLE_FENCE.findall(section):
-        for line in block.splitlines():
-            bare = line.strip()
-            if not bare or ELISION.fullmatch(bare):
-                continue
-            if any(bare in hay for hay in haystacks):
-                continue
-            if bare not in missing:
-                missing.append(bare)
-    return missing
-
-
-def referenced_paths(text: str) -> list[str]:
-    """Backticked tokens that name a repository path.
-
-    A token qualifies only when it carries a separator, which keeps Rust module
-    paths, flag names, field accesses, and prose identifiers out of the check.
-    An optional `:line` or `:line-line` suffix is dropped so the usual
-    `path:line` citation form resolves.
-    """
-    tokens: list[str] = []
-    for token in BACKTICKED.findall(text):
-        if " " in token or "/" not in token:
-            continue
-        if token.startswith(("http://", "https://", "-")) or "*" in token:
-            continue
-        bare = LINE_SUFFIX.sub("", token)
-        if bare and bare not in tokens:
-            tokens.append(bare)
-    return tokens
-
-
-def document_findings(
-    root: str | None,
-    text: str,
-    label: str,
-    declared: set[str] | None = None,
-) -> list[str]:
-    """Checks that apply to any controller-authored round document.
-
-    Both defects here are of one kind: the document says something the
-    controller never actually established. An unfilled slot is a form dispatched
-    before it was written; a path that does not resolve is a citation from
-    memory rather than from the checkout the worker is about to see.
-
-    A path the round declares writable is exempt: a round may create a file, and
-    naming the file it is about to create is the opposite of citing from memory.
-    """
-    findings: list[str] = []
-    if FILL_MARKER.search(text):
-        findings.append(
-            f"{label} still carries {len(FILL_MARKER.findall(text))} unfilled "
-            "`<!-- fill -->` slot(s) from the scaffold"
-        )
-    if root:
-        declared = declared or set()
-        missing = [
-            token
-            for token in referenced_paths(text)
-            if token not in declared
-            and not (Path(token) if Path(token).is_absolute() else Path(root) / token).exists()
-        ]
-        if missing:
-            findings.append(
-                f"{label} cites path(s) that do not exist in the worker's "
-                "checkout: " + ", ".join(missing)
-            )
-    return findings
-
-
-def marks_a_negative_control(row: str) -> bool:
-    """Whether this table row is itself the control, not prose about one.
-
-    A row is a negative control because of what it *feeds* and what that must
-    not produce, so the marker belongs in its input or its expected
-    observation. It does not belong in a trailing rationale cell, which is
-    where a controller naturally writes about a *different* row: "row 7 is the
-    negative control for the new row" is a true sentence that leaves the table
-    without a control of its own. Matching the row as one string accepted that
-    sentence and reported the table conformant.
-
-    A rationale cell is one past `# | input | expected observation`, so it is
-    dropped only when the row actually has one. In the three-column table the
-    last cell is the observation and stays in scope.
-    """
-    cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
-    identity = cells[:-1] if len(cells) > 3 else cells
-    return any(NEGATIVE_CONTROL.search(cell) for cell in identity)
-
-
-def oracle_findings(profile: dict, text: str) -> list[str]:
-    """Structural check on the injected oracle. Never reads for meaning.
-
-    The generic scaffold around the oracle has always had a fixed shape while
-    the oracle itself was free prose, and every false green so far entered
-    through that prose: a gate nobody cross-checked against the authorized
-    commands, a table with no control row, no statement of what fabrication
-    would look like. These four sections are expressible for any bounded task,
-    so requiring them costs no project knowledge and closes that gap.
-    """
-    sections = oracle_sections(text)
-    findings = missing_or_misordered(text, ORACLE_SECTIONS, "oracle")
-    findings.extend(
-        document_findings(
-            profile.get("root"), text, "oracle", set(profile.get("allowed_repo_writes") or [])
-        )
-    )
-
-    # A missing section is one defect. Reporting its emptiness and its missing
-    # rows as further defects inflates the count and buries the real fix, so
-    # each section's content checks run only once the section exists.
-    if "Claim" in sections and not sections["Claim"]:
-        findings.append("`## Claim` is empty: state one falsifiable sentence")
-
-    if "Measurements" in sections:
-        rows = [
-            row
-            for row in TABLE_ROW.findall(sections["Measurements"])
-            if not TABLE_DIVIDER.match(row)
-        ]
-        data_rows = rows[1:] if rows else []
-        if len(data_rows) < 2:
-            findings.append(
-                f"`## Measurements` needs at least 2 measured rows, found "
-                f"{len(data_rows)}"
-            )
-        elif not any(marks_a_negative_control(row) for row in data_rows):
-            findings.append(
-                "`## Measurements` has no row marked `negative control`: "
-                "without one, an implementation that changes nothing can "
-                "satisfy the table. Mark the control in its input or its "
-                "expected observation -- naming one in a rationale cell "
-                "describes a control, it does not add one"
-            )
-
-    if "Gate" in sections:
-        gate_commands = gate_commands_in(sections["Gate"])
-        allowed = profile["task_commands"].get("allow", [])
-        if not gate_commands:
-            findings.append(
-                "`## Gate` has no fenced command block: put each gate command "
-                "on its own line inside one ``` fence"
-            )
-        else:
-            if allowed:
-                undeclared = [c for c in gate_commands if c not in allowed]
-                if undeclared:
-                    findings.append(
-                        "`## Gate` names command(s) the worker is not "
-                        "authorized to run: " + ", ".join(undeclared)
-                    )
-            unjudged = unjudged_gate_commands(profile, gate_commands)
-            if unjudged:
-                findings.append(
-                    "`## Gate` names command(s) `prove` will never run, so no "
-                    "proof covers what they observe: "
-                    + ", ".join(unjudged)
-                    + ". `prove` runs `task_contract.gate_command` alone "
-                    f"(`{profile.get('task_contract', {}).get('gate_command')}`). "
-                    "Name the compound command in the profile, or keep the "
-                    "fence to the judged command and state the rest as prose "
-                    "the controller checks by hand."
-                )
-
-    if "Fabrication tells" in sections and not LIST_ITEM.search(
-        sections["Fabrication tells"]
-    ):
-        findings.append(
-            "`## Fabrication tells` needs at least one list item naming what a "
-            "fabricated pass would look like"
-        )
-    return findings
-
-
-def injection_findings(profile: dict, text: str, oracle_text: str) -> list[str]:
-    """Structural check on the round-specific injection.
-
-    The oracle says how the round will be judged; this document says what to do
-    and what to read, and it is the half a controller is most tempted to write
-    from memory. Requiring a verbatim quote of the current behavior means the
-    round cannot be dispatched without the controller having opened the file,
-    and requiring the same gate as the oracle means the instruction and the
-    judgement cannot drift apart the way they did when each was free prose.
-
-    The remaining rules all defend the same thing: a dispatched round is only
-    worth its cost if the worker still has the design left to do.  A pasted
-    implementation, a numbered recipe, or a `## Shape to follow` that grew into
-    a plan all mean the controller already did the work and is paying a second
-    time to have it typed out.
-    """
-    sections = oracle_sections(text)
-    findings = missing_or_misordered(text, INJECTION_SECTIONS, "injection")
-    findings.extend(
-        document_findings(
-            profile.get("root"), text, "injection", set(profile.get("allowed_repo_writes") or [])
-        )
-    )
-
-    for name in ("Task", "Required change"):
-        if name in sections and not sections[name]:
-            findings.append(f"`## {name}` is empty")
-
-    for name, body in sections.items():
-        if name in FENCE_BEARING_SECTIONS or name not in INJECTION_SECTIONS:
-            continue
-        if ORACLE_FENCE.search(body):
-            findings.append(
-                f"`## {name}` contains a fenced block: quote existing code only "
-                "under `## Current behavior`. State the requirement; handing the "
-                "worker the implementation leaves it nothing to design"
-            )
-
-    for name in ("Required change", "Shape to follow"):
-        if name in sections and NUMBERED_STEP.search(sections[name]):
-            findings.append(
-                f"`## {name}` reads as numbered steps: say what must become "
-                "true, not the order to type it in"
-            )
-
-    if "Current behavior" in sections:
-        quotes = [b for b in ORACLE_FENCE.findall(sections["Current behavior"]) if b.strip()]
-        if not quotes:
-            findings.append(
-                "`## Current behavior` has no non-empty fenced quote: paste the "
-                "code as it stands today so the round is grounded in what was "
-                "read rather than what was remembered"
-            )
-        else:
-            candidates = list(profile.get("allowed_repo_writes") or [])
-            candidates += [p for p in referenced_paths(text) if p not in candidates]
-            stale = unquoted_current_behavior_lines(
-                profile.get("root"), sections["Current behavior"], candidates
-            )
-            if stale:
-                shown = ", ".join(f"`{line}`" for line in stale[:3])
-                more = f" (+{len(stale) - 3} more)" if len(stale) > 3 else ""
-                findings.append(
-                    "`## Current behavior` quotes line(s) that appear in none of "
-                    f"the round's files: {shown}{more}. The worker is entitled to "
-                    "treat that block as the code as it stands; re-read the file "
-                    "at this round's base and paste what is actually there"
-                )
-
-    if "Shape to follow" in sections:
-        body = sections["Shape to follow"]
-        lines = [line for line in body.splitlines() if line.strip()]
-        if not BACKTICKED.search(body):
-            findings.append(
-                "`## Shape to follow` names no existing symbol or file: point at "
-                "the convention already in the tree that the change must match, "
-                "so the worker does not invent a second one"
-            )
-        if len(lines) > SHAPE_LINE_BUDGET:
-            findings.append(
-                f"`## Shape to follow` is {len(lines)} lines; keep it within "
-                f"{SHAPE_LINE_BUDGET}. Past that it stops being a constraint and "
-                "becomes the design the worker was dispatched to produce"
-            )
-
-    if "Reference" in sections:
-        rows = [
-            row
-            for row in TABLE_ROW.findall(sections["Reference"])
-            if not TABLE_DIVIDER.match(row)
-        ]
-        if not LIST_ITEM.search(sections["Reference"]) and len(rows[1:]) < 1:
-            findings.append(
-                "`## Reference` names nothing to read: list each path the "
-                "worker must consult and why"
-            )
-
-    if "Out of scope" in sections and not LIST_ITEM.search(sections["Out of scope"]):
-        findings.append(
-            "`## Out of scope` needs at least one list item; the write "
-            "allowlist bounds where the worker may write, not what it may "
-            "redesign"
-        )
-
-    if "Definition of done" in sections:
-        declared = gate_commands_in(sections["Definition of done"])
-        judged = gate_commands_in(oracle_sections(oracle_text).get("Gate", ""))
-        if not declared:
-            findings.append(
-                "`## Definition of done` has no fenced command block: name the "
-                "gate the worker must leave green"
-            )
-        elif judged and declared != judged:
-            findings.append(
-                "`## Definition of done` names a different gate than the "
-                f"oracle judges by: {declared} vs {judged}"
-            )
-        prose = ORACLE_FENCE.sub("", sections["Definition of done"])
-        if not BACKTICKED.search(prose):
-            findings.append(
-                "`## Definition of done` names the gate but not where its check "
-                "lands: name the module, file, or suite the new check joins, or "
-                "the worker guesses and the diff arrives in the wrong place"
-            )
-    return findings
-
-
-def injection_path(profile: dict, task_key: str) -> Path:
-    """Where this round's injection lives.
-
-    A profile may point `inject_prompt_file` anywhere; when it does not, the
-    scaffold has a deterministic home beside the oracle so the two halves of a
-    round stay together.
-    """
-    declared = profile.get("inject_prompt_file")
-    if declared:
-        return Path(declared)
-    return Path(profile["state_dir"]) / "injections" / f"{task_key}.md"
-
-
-def oracle_path(profile: dict, task_key: str) -> Path:
-    return Path(profile["state_dir"]) / "oracles" / f"{task_key}.md"
-
-
-ORACLE_SKELETON = """\
-## Claim
-
-<!-- fill: one falsifiable sentence about behavior observable from outside the
-     change; not a description of the edit. Revert the change in your head: a
-     claim that stays true either way is not this round's claim. -->
-
-## Measurements
-
-<!-- fill: the rows the gate has to make. At least two, at least one of them
-     the negative control, and the control marked in its input or its expected
-     observation -- a control named only in the rationale cell is a sentence
-     about a control, and the table passes lint while measuring nothing.
-
-     Every row must be a state the product can actually reach. A row resting on
-     a value the product never produces is vacuous: it stays green whatever the
-     worker writes, and that is how this round most plausibly ends green and
-     empty. Where a row rests on something you measured, measure it against the
-     base this round starts from -- a stale "measured" is worse than silence,
-     because the worker builds on it. -->
-
-| # | input | expected observation | why it cannot hold by accident |
-|---|---|---|---|
-| 1 | <!-- fill --> | <!-- fill --> | <!-- fill --> |
-| 2 | <!-- fill --> | <!-- fill --> | <!-- fill --> |
-| 3 | <!-- fill --> (negative control) | <!-- fill: must FAIL --> | <!-- fill --> |
-
-## Gate
-
-<!-- fill: prefilled from the profile. `prove` runs this one command and
-     nothing else, so a second command here creates a row no proof ever
-     makes. -->
-
-```
-{gate}
-```
-
-## Fabrication tells
-
-<!-- fill: what a passing report would look like if the worker faked it. Not
-     the worker lying -- the shapes you would otherwise accept. A gate green
-     because its rows are unreachable. An assertion on a value the check itself
-     just wrote. A name borrowed from a vocabulary the code under test never
-     reads. One list item each. -->
--
-"""
-
-INJECTION_SKELETON = """\
-## Task
-
-<!-- fill: one imperative sentence naming the change. The worker reads this
-     first and reads it as the whole job, so a sentence naming two things buys
-     a diff that does one of them. -->
-
-## Current behavior
-
-<!-- fill: quote the code as it stands, citing the file and line in backticks.
-     Lint checks that every quoted line still exists, because the worker is
-     told this block is the code as it stands and will go looking for it: a
-     quote that was true at an earlier base sends the worker off to improvise.
-     Re-indenting is fine, content that has moved is not. Quote what the change
-     must displace, not the whole neighbourhood. -->
-
-```
-```
-
-## Required change
-
-<!-- fill: what becomes true afterwards, as conditions someone outside the
-     change could check. No code and no numbered steps: the worker is being
-     paid to derive the implementation, so writing it here buys nothing and
-     costs twice. A condition you can only state by naming the lines that
-     satisfy it is a measurement -- it belongs in the oracle. -->
--
-
-## Shape to follow
-
-<!-- fill: at most {shape_budget} lines. Name the convention already in the
-     tree that this change must match -- an existing function, module, type, or
-     error shape, in backticks -- and say to follow it rather than invent a
-     second one. Where two conventions in the tree could both apply, saying
-     which one wins is exactly this slot's job. A constraint on the answer, not
-     the answer. -->
-
-## Reference
-
-<!-- fill: one row per file, and the reason must say what the worker will learn
-     there. "Relevant context" is not a reason and gets the file skimmed. -->
-
-| path | why the worker must read it |
-|---|---|
-{reference}
-
-## Out of scope
-
-<!-- fill: what must not be touched, beyond what the write allowlist already
-     blocks mechanically. The allowlist bounds where the worker may write; this
-     bounds what it may redesign, rename, or clean up on the way past. Do not
-     restate the allowlists, the report shape, or the stop-and-report rule --
-     the dispatcher already sends those, and a second copy is one that
-     drifts. -->
--
-
-## Definition of done
-
-<!-- fill: name in backticks where the gate's check lands -- the module, file,
-     or suite it joins. The gate says what to run; without this the worker
-     guesses and a correct diff arrives in the wrong place. The fence must
-     match the oracle's `## Gate` exactly. -->
-
-```
-{gate}
-```
-"""
-
-
-def scaffold(profile: dict, task_key: str) -> None:
-    """Write the blank round form for the controller to fill.
-
-    The structural contract used to be enforced only after the fact, which put
-    the controller in the position of authoring from memory and learning what
-    was required from a rejection. Handing out the slots first makes the same
-    contract constructive: the form states what a round must say, and the
-    remaining `<!-- fill -->` markers are themselves a finding, so a form that
-    was never filled cannot be dispatched.
-    """
-    gate = profile["task_contract"].get("gate_command") or (
-        "<!-- fill: the exact command that must be green -->"
-    )
-    design_inputs = profile["task_contract"].get("design_inputs", [])
-    reference = "\n".join(
-        f"| `{entry['path']}` | <!-- fill --> |" for entry in design_inputs
-    ) or "| `<!-- fill: path -->` | <!-- fill --> |"
-
-    written, kept = [], []
-    for path, body in (
-        (oracle_path(profile, task_key), ORACLE_SKELETON.format(gate=gate)),
-        (
-            injection_path(profile, task_key),
-            INJECTION_SKELETON.format(
-                gate=gate, reference=reference, shape_budget=SHAPE_LINE_BUDGET
-            ),
-        ),
-    ):
-        if path.exists():
-            kept.append(path)
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body)
-        written.append(path)
-
-    for path in written:
-        print(f"wrote  {path}")
-    for path in kept:
-        print(f"kept   {path} (already authored; scaffold never overwrites)")
-    if not profile.get("inject_prompt_file"):
-        print(
-            "\nnote: this profile declares no `inject_prompt_file`, so the "
-            "injection above is not read at dispatch and not checked. Point "
-            "`inject_prompt_file` at it to make it part of the round."
-        )
-    print("\nfill both files, then run `lint` before `dispatch`.")
-
-
-def round_findings(profile: dict, task_key: str) -> list[str]:
-    """Every structural finding across both halves of the round document."""
-    oracle = oracle_path(profile, task_key)
-    if not oracle.exists():
-        raise SystemExit(f"no oracle at {oracle}")
-    oracle_text = oracle.read_text()
-    findings = oracle_findings(profile, oracle_text)
-    # An injection is optional: a measure-only round can carry its whole
-    # instruction in the oracle. Declaring one and leaving it unstructured is
-    # not, because that is the half where the last false green entered.
-    if profile.get("inject_prompt_file"):
-        injection = injection_path(profile, task_key)
-        if not injection.exists():
-            findings.append(f"declared injection is missing at {injection}")
-        else:
-            findings.extend(
-                injection_findings(profile, injection.read_text(), oracle_text)
-            )
-    return findings
-
-
-def lint(profile: dict, task_key: str) -> None:
-    """Report the round document's structural findings without dispatching."""
-    oracle = oracle_path(profile, task_key)
-    findings = round_findings(profile, task_key)
-    allowed = profile["task_commands"].get("allow", [])
-    print(f"oracle   : {oracle}")
-    print(f"sections : {', '.join(oracle_sections(oracle.read_text())) or 'none'}")
-    injection = profile.get("inject_prompt_file")
-    print(f"injection: {injection or 'none declared; oracle carries the round'}")
-    if injection and Path(injection).exists():
-        print(
-            "sections : "
-            + (", ".join(oracle_sections(Path(injection).read_text())) or "none")
-        )
-    print(
-        "gate cross-check: "
-        + (
-            f"against {len(allowed)} authorized command(s)"
-            if allowed
-            else "skipped; this round grants the worker no shell"
-        )
-    )
-    if not findings:
-        print("\nfindings: none")
-        return
-    print(f"\nfindings ({len(findings)}):")
-    for item in findings:
-        print(f"  - {item}")
-    sys.exit(EXIT_FINDINGS)
-
 
 def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
     require_project_ready(profile)
@@ -1941,7 +1810,9 @@ def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
     assert_snapshot_identity(profile, task_key, snapshot_data)
     assert_permission_state_unchanged(profile, snapshot_data)
     assert_round_documents_unchanged(profile, task_key, snapshot_data)
-    audited_commands = audit_task_commands(profile, task_key, snapshot_data)
+    # Called for its VOID: a refused request is `verify`'s to report, not a
+    # reason to refuse the dispatch that has not happened yet.
+    audit_task_commands(profile, task_key, snapshot_data)
     conversation_id = validate_conversation_action(
         profile,
         task_key,
@@ -2089,6 +1960,148 @@ def resume(profile: dict, task_key: str) -> None:
     run_agent(profile, task_key, resume=True)
 
 
+def revise(
+    profile: dict,
+    raw_path: str,
+    task_key: str,
+    next_key: str,
+    injection: str | None = None,
+) -> None:
+    """Mint a new run id for a round that must go back, keeping its checkout.
+
+    A one-shot run id is spent the moment a conversation exists, and the refusal
+    says only "create a new run id" -- so the obvious next move is to author a
+    new round and run `worktree`. That throws the candidate away: the worker's
+    work is uncommitted in the very worktree `worktree` would re-create from
+    HEAD, and nothing warns first.
+
+    A ticketed round is revised the same way, and has to be. `resume` is not the
+    alternative it looks like: it re-renders the *same* injection under a
+    continuation framing, so it can say "finish what you started" and cannot say
+    "that was wrong". Sending a correction therefore needs a fresh dispatch, and
+    a fresh dispatch needs a key that is not spent -- which a ticketed round
+    does not have, because its identity is the issue number itself. So the
+    revision converts to one-shot and records the descent in
+    `task_contract.revision_of`, which is where the ticket stays visible to the
+    worker, to the frozen task state the snapshot seals, and to the reader of
+    the profile. Writing `run_id` beside `issue` instead produced a profile
+    every verb refused to load.
+
+    A revision is two changes and no more: a fresh run id, and the delta
+    contract that says what was wrong. Everything else is deliberately carried
+    over -- root, worktree, policy, protected artifacts, budgets -- so the next
+    round measures the same tree under the same rules. The oracle is copied
+    unchanged, because a revision exists to satisfy the sealed claim rather than
+    to move it; `lint` still grades the new pair against the checkout.
+
+    The budget is carried too, and that is the point of carrying it: the
+    revision's diff is judged against the same ceiling as the round it
+    continues, not given a second one.
+
+    The delta contract is handed out as the same blank form `scaffold` writes,
+    unless one is passed in. `revise` used to copy whatever markdown it was
+    given, which made the revision the one round authored from memory: the
+    author holds the previous round in their head and writes only what changed,
+    so the slot that goes missing is `## Current behavior` -- the slot carrying
+    the check that every quoted line exists in the round's own files. A passed
+    file is held to the section list before it is copied, so the structure is
+    refused here rather than at `lint`, after a snapshot.
+    """
+    validate_task_key(profile, task_key)
+    if next_key == task_key:
+        raise SystemExit(
+            "the revision needs its own run id: a one-shot id is spent once a "
+            "conversation exists, so reusing it cannot dispatch"
+        )
+    spec = worktree_spec(profile)
+    if str(Path(profile["root"])) != str(Path(spec["path"])):
+        raise SystemExit(
+            f"profile root {profile['root']} is not the worker checkout "
+            f"{spec['path']}: there is no round in progress to revise. Author "
+            "a fresh round and run `worktree` instead"
+        )
+    touched = worker_touched_paths(profile)
+    if not touched:
+        raise SystemExit(
+            f"refusing to revise {task_key}: the worker changed nothing, so "
+            "there is no candidate to carry forward and a fresh round costs "
+            "nothing to author"
+        )
+    source = Path(injection) if injection else None
+    if source is not None and not source.is_file():
+        raise SystemExit(f"revision injection does not exist: {injection}")
+
+    state = Path(profile["state_dir"])
+    target = state / "rounds" / f"{next_key}.profile.json"
+    if target.exists():
+        raise SystemExit(
+            f"refusing to overwrite an existing round: {target}. A round in "
+            "flight owns its profile; choose a run id that is not taken"
+        )
+    oracle = oracle_path(profile, task_key)
+    if not oracle.is_file():
+        raise SystemExit(
+            f"the round being revised has no oracle at {oracle}, so there is "
+            "no sealed claim for the revision to inherit"
+        )
+
+    # Last, so a round that cannot be revised at all says so before the delta is
+    # graded: the structural finding is about the document, and it is only worth
+    # printing once there is a round for the document to belong to.
+    delta = blank_round_forms(profile)[1]
+    if source is not None:
+        delta = source.read_text()
+        structural = missing_or_misordered(delta, INJECTION_SECTIONS, "injection")
+        if structural:
+            raise SystemExit(
+                f"refusing to carry {injection} as the delta contract:\n  - "
+                + "\n  - ".join(structural)
+                + "\n\nOmit the argument to be handed the blank form instead."
+            )
+
+    revised = json.loads(Path(raw_path).read_text())
+    contract = revised["task_contract"]
+    origin = revision_origin(profile)
+    if task_session_policy(profile) == "ticketed":
+        origin = str(contract.pop("issue", "")).strip()
+        contract["session_policy"] = "one-shot"
+    if origin:
+        contract["revision_of"] = origin
+        # Machine-owned, and rewritten on every revision rather than carried,
+        # so the sentence never disagrees with the two fields it is derived
+        # from. An author's own intent is left alone; a round that descends
+        # from no ticket has nothing here to say.
+        contract["intent"] = (
+            f"Revision {next_key} of round {task_key}, which descends from "
+            f"issue #{origin}. The sealed claim is the oracle copied from "
+            f"{task_key}; the delta contract says what was wrong with the "
+            "candidate."
+        )
+    contract["run_id"] = next_key
+    next_injection = state / "injections" / f"{next_key}.md"
+    next_injection.parent.mkdir(parents=True, exist_ok=True)
+    next_injection.write_text(delta)
+    revised["inject_prompt_file"] = str(next_injection)
+    (state / "oracles" / f"{next_key}.md").write_text(oracle.read_text())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(revised, indent=2) + "\n")
+
+    print(f"carried  : {len(touched)} changed path(s) in {profile['root']}")
+    if origin:
+        print(
+            f"descends : issue #{origin}, as a one-shot revision -- the ticket "
+            "id is spent, so the round cannot keep it as its identity"
+        )
+    print(
+        f"injection: {next_injection}"
+        + ("" if injection else " (blank delta form; fill it)")
+    )
+    print(f"oracle   : copied unchanged from {task_key}")
+    print(f"profile  : {target}")
+    prefix = "" if injection else "fill the injection, then "
+    print(f"next     : {prefix}lint, grant, doctor, snapshot, dispatch -- {next_key}")
+
+
 def abandon(profile: dict, task_key: str) -> None:
     """Release a run id whose dispatch produced nothing.
 
@@ -2124,10 +2137,14 @@ def abandon(profile: dict, task_key: str) -> None:
             "not discarded as dead"
         )
     snapshot_data = load_snapshot(profile, task_key)
-    commands = requested_run_commands(
-        conversation_id,
-        after_step=int(snapshot_data.get("conversation_step_floor", -1)),
-    )
+    commands = [
+        item
+        for item in requested_run_commands(
+            conversation_id,
+            after_step=int(snapshot_data.get("conversation_step_floor", -1)),
+        )
+        if not item["denied"]
+    ]
     if commands:
         raise SystemExit(
             f"refusing to abandon {task_key}: the worker ran "
@@ -2194,6 +2211,332 @@ def park_original(
     )
 
 
+def decisions_path(state_dir: Path, task_key: str) -> Path:
+    return state_dir / "decisions" / f"{task_key}.json"
+
+
+def load_decisions(state_dir: Path, task_key: str) -> list[dict]:
+    path = decisions_path(state_dir, task_key)
+    if not path.is_file():
+        return []
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def has_valid_adjudication(
+    state_dir: Path,
+    task_key: str,
+    artifact_path_str: str,
+    current_hash: str | None,
+) -> bool:
+    decisions = load_decisions(state_dir, task_key)
+    if not decisions or current_hash is None:
+        return False
+
+    target_path = Path(artifact_path_str).resolve()
+
+    for dec in decisions:
+        if not isinstance(dec, dict) or "path" not in dec:
+            continue
+        try:
+            dec_path = Path(dec["path"]).resolve()
+        except Exception:
+            continue
+        if dec_path == target_path:
+            if dec.get("action") in ("admit", "reject") and dec.get("sha256") == current_hash:
+                return True
+    return False
+
+
+def scope_decision(state_dir: Path, task_key: str, finding: str) -> str | None:
+    """The recorded decision on one scope finding, or None if never judged.
+
+    A protected artifact binds its decision to a content hash. A scope finding
+    has no content to hash, but its own text already carries the measurement --
+    `442 changed lines exceeds the 60-line budget` names the number it was
+    judged at. Keying on the whole string therefore binds the decision the same
+    way: one more write changes the delta, changes the string, and the earlier
+    decision stops matching instead of silently covering a bigger overrun.
+    """
+    for dec in load_decisions(state_dir, task_key):
+        if not isinstance(dec, dict) or dec.get("kind") != "scope":
+            continue
+        if dec.get("finding") == finding and dec.get("action") in ("admit", "reject"):
+            return dec["action"]
+    return None
+
+
+def split_scope_findings(
+    profile: dict, task_key: str, findings: list[str]
+) -> tuple[list[str], list[str], list[str]]:
+    """Partition findings into unjudged, admitted, and refused.
+
+    `admit` clears a finding; `reject` records that a human read it and refused
+    it, which is not the same as never having looked. Both are worth keeping:
+    the first is what lets a round proceed, the second is what stops a rejected
+    round from being accepted by a later verb that only counted open findings.
+    """
+    state_dir = Path(profile["state_dir"])
+    open_, admitted, rejected = [], [], []
+    for finding in findings:
+        decision = scope_decision(state_dir, task_key, finding)
+        if decision == "admit":
+            admitted.append(finding)
+        elif decision == "reject":
+            rejected.append(finding)
+        else:
+            open_.append(finding)
+    return open_, admitted, rejected
+
+
+def scope_decision_reason(state_dir: Path, task_key: str, finding: str) -> str | None:
+    for dec in load_decisions(state_dir, task_key):
+        if not isinstance(dec, dict) or dec.get("kind") != "scope":
+            continue
+        if dec.get("finding") == finding and dec.get("action") in ("admit", "reject"):
+            return dec.get("reason")
+    return None
+
+
+def print_scope_findings(
+    open_: list[str],
+    admitted: list[str],
+    rejected: list[str],
+    profile: dict | None = None,
+    task_key: str | None = None,
+) -> None:
+    """Report the three states separately, because they mean different things.
+
+    An admitted finding is a judgement already on record. A rejected one is a
+    judgement too, and still blocks -- `reject` on a scope finding has nothing
+    to restore, so the only thing it can mean is that the round must be revised.
+    An open one is the only state where nobody has looked yet, and the hint line
+    names the command that changes that.
+    """
+    if admitted:
+        print(f"\nscope findings admitted ({len(admitted)}), not blocking:")
+        for item in admitted:
+            reason = None
+            if profile and task_key:
+                reason = scope_decision_reason(Path(profile["state_dir"]), task_key, item)
+            if reason:
+                print(f"  - {item} (reason: {reason})")
+            else:
+                print(f"  - {item}")
+    blocking = open_ + rejected
+    if not blocking:
+        print("scope findings: none open")
+        return
+    print(f"\nscope findings ({len(blocking)}) blocking `accept`:")
+    for item in open_:
+        print(f"  - {item}")
+    for item in rejected:
+        reason = None
+        if profile and task_key:
+            reason = scope_decision_reason(Path(profile["state_dir"]), task_key, item)
+        if reason:
+            print(f"  - [rejected, revise or re-admit] {item} (reason: {reason})")
+        else:
+            print(f"  - [rejected, revise or re-admit] {item}")
+    print(
+        '\n  adjudicate <profile> <key> admit|reject "<finding text, verbatim>" "<reason>"'
+    )
+
+
+def round_scope_findings(profile: dict, task_key: str) -> list[str]:
+    """The scope findings this round currently has, whichever mode it runs in."""
+    if profile.get("worktree"):
+        return scope_findings(
+            profile, worker_touched_paths(profile, task_key), task_key
+        )
+    return inplace_budget_findings(profile, load_snapshot(profile, task_key))
+
+
+def adjudicate_scope(
+    profile: dict, task_key: str, action: str, finding_input: str, reason: str
+) -> None:
+    """Record a decision on one scope finding.
+
+    A protected artifact is adjudicated against its bytes, and `reject` restores
+    them. A scope finding has no bytes to restore: `reject` therefore records
+    that a controller read the finding and refused it, and leaves it blocking,
+    because the only thing that clears a refused overrun is the worker writing
+    less. That is why the two actions are not symmetric here and are in
+    `adjudicate`.
+    """
+    if not reason or not reason.strip():
+        raise SystemExit("refused: adjudicate requires a non-empty reason")
+    state_dir = Path(profile["state_dir"])
+    current = round_scope_findings(profile, task_key)
+    if finding_input not in current:
+        listing = (
+            "\n  the round's current scope findings are:\n"
+            + "\n".join(f"    - {item}" for item in current)
+            if current
+            else "\n  the round has no scope findings"
+        )
+        raise SystemExit(
+            f"refused: no such finding exists in round {task_key}: "
+            f"{finding_input}{listing}"
+        )
+
+    decisions = [
+        d
+        for d in load_decisions(state_dir, task_key)
+        if not (
+            isinstance(d, dict)
+            and d.get("kind") == "scope"
+            and d.get("finding") == finding_input
+        )
+    ]
+    decisions.append(
+        {
+            "finding": finding_input,
+            "kind": "scope",
+            "action": action,
+            "reason": reason.strip(),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    d_path = decisions_path(state_dir, task_key)
+    d_path.parent.mkdir(parents=True, exist_ok=True)
+    d_path.write_text(json.dumps(decisions, indent=2) + "\n")
+
+    print(
+        f"adjudicated {task_key}: "
+        f"{'admitted' if action == 'admit' else 'rejected'} scope finding\n"
+        f"  {finding_input}"
+    )
+    if action == "reject":
+        print("  a rejected scope finding still blocks `accept`; revise the round")
+
+
+def adjudicate(
+    profile: dict,
+    task_key: str,
+    action: str,
+    finding_input: str,
+    reason: str,
+) -> None:
+    validate_task_key(profile, task_key)
+    if action not in ("admit", "reject"):
+        raise SystemExit("action must be admit or reject")
+    if not reason or not reason.strip():
+        raise SystemExit("refused: adjudicate requires a non-empty reason")
+
+    root = Path(profile["root"])
+    state_dir = Path(profile["state_dir"])
+
+    matched_entry = None
+    matched_artifact = None
+    matched_actual = None
+
+    for entry in profile["protected_artifacts"]:
+        artifact = Path(entry["path"])
+        actual = sha256(artifact) if artifact.is_file() else None
+        if actual != entry["sha256"]:
+            finding_str = f"protected artifact changed: {entry['path']}"
+            rel_str = (
+                str(artifact.relative_to(root))
+                if resolved_under(artifact, root)
+                else entry["path"]
+            )
+            candidates = {
+                finding_str,
+                entry["path"],
+                str(artifact),
+                rel_str,
+                f"protected artifact changed: {rel_str}",
+                f"protected artifact changed: {str(artifact)}",
+            }
+            if (
+                finding_input in candidates
+                or (
+                    Path(finding_input).is_absolute()
+                    and Path(finding_input).resolve() == artifact.resolve()
+                )
+                or (root / finding_input).resolve() == artifact.resolve()
+            ):
+                matched_entry = entry
+                matched_artifact = artifact
+                matched_actual = actual
+                break
+
+    if matched_entry is None or matched_artifact is None or matched_actual is None:
+        # Not a protected artifact. The other kind of finding this round can
+        # raise is a scope finding, which `verify` and `review` both name as
+        # something to adjudicate; until it could be recorded here, that
+        # instruction pointed at a verb that refused every input it was given.
+        return adjudicate_scope(profile, task_key, action, finding_input, reason)
+
+    decisions = load_decisions(state_dir, task_key)
+    decisions = [
+        d
+        for d in decisions
+        if isinstance(d, dict)
+        and Path(d.get("path", "")).resolve() != matched_artifact.resolve()
+    ]
+
+    if action == "admit":
+        record = {
+            "finding": f"protected artifact changed: {matched_entry['path']}",
+            "path": str(matched_artifact),
+            "action": "admit",
+            "sha256": matched_actual,
+            "reason": reason.strip(),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        decisions.append(record)
+        d_path = decisions_path(state_dir, task_key)
+        d_path.parent.mkdir(parents=True, exist_ok=True)
+        d_path.write_text(json.dumps(decisions, indent=2) + "\n")
+        print(
+            f"adjudicated {task_key}: admitted {matched_entry['path']} "
+            f"(sha256 {matched_actual[:12]})"
+        )
+    elif action == "reject":
+        snapshot_data = load_snapshot(profile, task_key)
+        protected_contents = snapshot_data.get("protected_contents_base64", {})
+        encoded = (
+            protected_contents.get(matched_entry["path"])
+            or protected_contents.get(str(matched_artifact))
+        )
+        if encoded is None:
+            try:
+                rel = str(matched_artifact.relative_to(root))
+                encoded = protected_contents.get(rel)
+            except ValueError:
+                pass
+        if encoded is not None:
+            park_original(state_dir, str(matched_artifact), encoded)
+            parked = recovery_path(state_dir, str(matched_artifact))
+            if parked.is_file():
+                matched_artifact.write_bytes(parked.read_bytes())
+        elif matched_artifact.is_file():
+            matched_artifact.unlink()
+
+        restored_hash = (
+            sha256(matched_artifact) if matched_artifact.is_file() else None
+        )
+        record = {
+            "finding": f"protected artifact changed: {matched_entry['path']}",
+            "path": str(matched_artifact),
+            "action": "reject",
+            "sha256": restored_hash or matched_entry["sha256"],
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        decisions.append(record)
+        d_path = decisions_path(state_dir, task_key)
+        d_path.parent.mkdir(parents=True, exist_ok=True)
+        d_path.write_text(json.dumps(decisions, indent=2) + "\n")
+        print(
+            f"adjudicated {task_key}: rejected {matched_entry['path']}; "
+            "restored to snapshot content"
+        )
+
+
 def git_output(root: Path, *args: str) -> str:
     result = subprocess.run(
         [*GIT, "-C", str(root), *args],
@@ -2258,6 +2601,38 @@ def restore_grants_baseline(state_dir: Path, project_id: str) -> dict | None:
     }
 
 
+def unnamed_protective_revocations(profile: dict) -> list[str]:
+    """Guards the Project holds that this profile would silently drop.
+
+    `grant` installs the declared surface verbatim, so a generated profile's
+    empty `deny` did not add this round's allow rules to the Project -- it
+    replaced the Project's twenty deny rules with none, which is the inverse of
+    what a bounded-write round is for. #3479 fixed the same shape on the `allow`
+    side, where an empty list left the worker unable to work and so announced
+    itself within one round; an empty `deny` leaves the worker able to do
+    anything and announces nothing.
+
+    Measured against the recorded baseline rather than the live Project, so a
+    second `grant` on an already-narrowed Project still reports what the round
+    started from. Returns the `<kind> <rule>` lines the profile has not named in
+    `intentional_revocations`.
+    """
+    project_id = agy_project_id(profile)
+    state_dir = Path(profile["state_dir"])
+    path = grants_baseline_path(state_dir, project_id)
+    if not path.exists():
+        return []
+    baseline = normalize_permission_surface(json.loads(path.read_text()))
+    declared = expected_project_surface(profile)
+    named = set(profile["project_permissions"].get("intentional_revocations", []))
+    return [
+        entry
+        for kind in PROTECTIVE_KINDS
+        for rule in sorted(set(baseline[kind]) - set(declared[kind]))
+        if (entry := f"{kind} {rule}") not in named
+    ]
+
+
 def uncovered_task_commands(profile: dict, surface: dict[str, list[str]]) -> list[str]:
     """Which `task_commands` a permission surface would still refuse.
 
@@ -2270,13 +2645,64 @@ def uncovered_task_commands(profile: dict, surface: dict[str, list[str]]) -> lis
     run the only command it is being judged on. Resolving through
     `permission_decision`, the same function `doctor` uses, is deliberate: a
     second coverage rule here would be the same defect one layer down.
+
+    A prefix family is probed by its own text, which is the shortest command
+    line the family admits. A surface that refuses that refuses the whole
+    family; one that admits it may still refuse a longer member, but no
+    surface-level check can enumerate an open family, and reporting the
+    shortest member is the honest half of the answer rather than a guess.
     """
     global_surface = global_permission_surface()
     return [
         command
-        for command in profile["task_commands"].get("allow", [])
+        for command in (
+            *profile["task_commands"].get("allow", []),
+            *profile["task_commands"].get("allow_prefix", []),
+        )
         if permission_decision(surface, global_surface, command)[0] != "allow"
     ]
+
+
+def unauthorized_surface_refusals(profile: dict) -> list[str]:
+    """Ways a declared surface authorizes nothing the round is judged by.
+
+    `grant` installs the declared surface verbatim, so it cannot tell a profile
+    that *declares* the empty surface from one that never declared a surface at
+    all — and `make_profile.py` used to emit the second. Installing it revoked
+    every command the Project held, and the checks downstream then all iterate
+    `task_commands.allow`: an empty allow leaves nothing uncovered, matches the
+    live surface it just overwrote, and probes zero commands, so `doctor`
+    printed `dispatch_ready: true` for a worker that could not run its own gate.
+
+    The two omissions are named here once. `grant` refuses on them, so a round
+    cannot start beneath them, and `doctor` blocks on them, so a surface
+    installed by some route other than `grant` is caught too.
+    """
+    findings = []
+    declared = expected_project_surface(profile)
+    permissions = profile.get("project_permissions", {})
+    if not declared["allow"] and not permissions.get("no_shell", False):
+        findings.append(
+            "`project_permissions.allow` is empty, so the declared surface "
+            "authorizes no command at all; a round whose worker genuinely "
+            'needs no shell must say so with `"no_shell": true`'
+        )
+    gate = profile.get("task_contract", {}).get("gate_command")
+    # A `no_shell` round is exempt because its gate is the controller's own
+    # instrument, not the worker's: `prove` runs it here, after the worker is
+    # done. `oracle_findings` already skips its gate cross-check for the same
+    # reason, and refusing here would make measure-only rounds unrunnable.
+    if (
+        gate
+        and not permissions.get("no_shell", False)
+        and not task_allowlist_admits(profile, gate)
+    ):
+        findings.append(
+            "`task_commands` names the round's own gate command neither exactly "
+            "nor by prefix, so the worker cannot run what it is judged by: "
+            f"{gate}"
+        )
+    return findings
 
 
 def grant(profile: dict) -> None:
@@ -2297,6 +2723,25 @@ def grant(profile: dict) -> None:
             "could not restore the Project. Run `worktree` first."
         )
     declared = expected_project_surface(profile)
+    refusals = unauthorized_surface_refusals(profile)
+    if refusals:
+        raise SystemExit(
+            "refusing to install this surface, because it would leave the "
+            "worker unable to work:\n"
+            + "\n".join(f"  - {finding}" for finding in refusals)
+            + "\n\nThe Project's live grants are unchanged."
+        )
+    dropped = unnamed_protective_revocations(profile)
+    if dropped:
+        raise SystemExit(
+            "refusing to install this surface, because it would revoke guards "
+            "the Project holds and this profile does not name:\n"
+            + "\n".join(f"  - {entry}" for entry in dropped)
+            + "\n\nThe Project's live grants are unchanged. Either add these to "
+            "`project_permissions.deny`/`.ask`, or, if the round means to give "
+            "them up, copy the lines above into "
+            "`project_permissions.intentional_revocations`."
+        )
     uncovered = uncovered_task_commands(profile, declared)
     if uncovered:
         raise SystemExit(
@@ -2319,7 +2764,20 @@ def grant(profile: dict) -> None:
     for kind in PERMISSION_KINDS:
         for rule in sorted(set(declared[kind]) - set(before[kind])):
             print(f"+ {kind} {rule}")
-        for rule in sorted(set(before[kind]) - set(declared[kind])):
+    # A removal used to print as `- allow command(sed)`, shaped exactly like an
+    # addition and reading as a deliberate narrowing whether or not it was one.
+    # Narrowing stays legal; it just has to announce itself as a revocation.
+    revoked = [
+        (kind, rule)
+        for kind in PERMISSION_KINDS
+        for rule in sorted(set(before[kind]) - set(declared[kind]))
+    ]
+    if revoked:
+        print(
+            f"\nrevocations ({len(revoked)}) — the Project held these and this "
+            "round's profile does not:"
+        )
+        for kind, rule in revoked:
             print(f"- {kind} {rule}")
     print(f"\n`discard` restores the baseline at {grants_baseline_path(state_dir, project_id)}")
 
@@ -2424,9 +2882,27 @@ def worktree(profile_path: str, task_key: str) -> None:
 
     baseline = capture_grants_baseline(Path(raw["state_dir"]), project_id)
     home_root = spec.get("project_home_root")
+    if home_root and Path(home_root).resolve() == path:
+        # A profile already carrying this defect's output. Grafting the spent
+        # round's `worktree` block is what SKILL.md prescribes when a write set
+        # has to widen, so a wrong value propagates by the documented route.
+        home_root = None
     previous = repoint_project_root(project_id, path)
     if home_root is None:
-        home_root = str(previous) if previous else str(controller_root)
+        # `previous` is where the project was pointed a moment ago: the
+        # controller checkout on a first run, and this very worktree on a
+        # second. Regenerating a profile mid-round drops the `worktree` block
+        # that would have carried the answer forward, so the second run is the
+        # ordinary case, not the exotic one. A `previous` equal to `path` says
+        # only that this round already ran -- it says nothing about where the
+        # project came from, and recording it makes `discard` restore the
+        # project into the directory it is about to remove.
+        # Both sides are already resolved -- `project_root` resolves what it
+        # reads and `path` was resolved above -- so this compares what it looks
+        # like it compares on a platform where /tmp is a symlink.
+        home_root = str(previous) if previous and previous != path else str(
+            controller_root
+        )
     print(f"AGY project {project_id} now runs in {path}")
     print(f"  (its home root {home_root} is restored by `discard`)")
     if baseline:
@@ -2463,6 +2939,24 @@ def worktree_spec(profile: dict) -> dict:
     return spec
 
 
+def repo_relative(root: Path, path: str) -> str:
+    """One path as `git diff --name-only` would name it, or unchanged.
+
+    The snapshot's maps disagree on this by construction: `writable_contents`
+    is keyed by the repo-relative strings the profile declares, while the
+    protected and design-input maps are keyed by the absolute paths
+    `load_profile` normalizes to. Anything comparing them against a git path
+    has to pick one, and git's is the only one every producer can reach.
+    """
+    p = Path(path)
+    if not p.is_absolute():
+        p = (root / p).resolve()
+    try:
+        return str(p.relative_to(root))
+    except ValueError:
+        return path
+
+
 def round_baseline(profile: dict, task_key: str) -> dict[str, str | None]:
     """Pre-round content of every path the snapshot recorded, by repo path.
 
@@ -2472,16 +2966,27 @@ def round_baseline(profile: dict, task_key: str) -> dict[str, str | None]:
     charges this worker for its predecessor's diff. The snapshot is the tree as
     it stood when this round was dispatched, which is what "what did this worker
     change" means for both cases. `None` marks a path absent before the round.
+
+    "Every path" has to mean every path, not every *writable* path. A revision
+    that narrows its write set is the normal case -- a revision adding a test
+    should not be allowed to edit the files it asserts about -- so the paths it
+    carried leave `allowed_repo_writes` and are frozen as design inputs or
+    protected artifacts instead. Those are exactly the paths whose bytes then
+    sit in the tree, outside the declared set, looking like the thing a scope
+    finding exists to catch.
     """
     try:
         snap = load_snapshot(profile, task_key)
     except SystemExit:
         return {}
+    root = Path(profile["root"]).resolve()
     baseline: dict[str, str | None] = dict(snap.get("writable_contents") or {})
-    for relative, encoded in (snap.get("protected_contents_base64") or {}).items():
-        baseline.setdefault(
-            relative, base64.b64decode(encoded).decode(errors="surrogateescape")
-        )
+    for key in ("protected_contents_base64", "design_input_contents_base64"):
+        for path, encoded in (snap.get(key) or {}).items():
+            baseline.setdefault(
+                repo_relative(root, path),
+                base64.b64decode(encoded).decode(errors="surrogateescape"),
+            )
     return baseline
 
 
@@ -2512,6 +3017,53 @@ def worker_touched_paths(profile: dict, task_key: str | None = None) -> list[str
     return sorted(touched)
 
 
+def budget_overrun(relative: str, delta: int, budget: int | str) -> str:
+    """The one sentence a budget overrun is ever written as.
+
+    Two paths measure this -- `scope_findings` from the round's base commit,
+    the in-place branch of `verify` from the snapshot -- and they will not
+    always agree on `delta`, because an in-place round has no base commit to
+    diff against. What they must agree on is the shape of the sentence, because
+    that sentence is the ledger key: a decision recorded from one path has to
+    be findable from the other, and a decision recorded at one delta must stop
+    matching when the worker writes more.
+    """
+    return f"{relative}: {delta} changed lines exceeds the {budget}-line budget"
+
+
+def hunk_out_of_range(relative: str, span: tuple[int, int]) -> str:
+    """Sentence builder for an out-of-range hunk."""
+    start, end = span
+    span_str = f"{start}-{end}" if start != end else f"{start}"
+    return f"{relative}: hunk at baseline lines {span_str} falls outside declared ranges"
+
+
+def inplace_budget_findings(profile: dict, snapshot_data: dict) -> list[str]:
+    """Budget overruns measured against the snapshot, for in-place rounds.
+
+    Derived-worktree rounds get this from `scope_findings`; an in-place round
+    has no worktree to diff, so the before is the snapshot's recorded text.
+    """
+    root = Path(profile["root"])
+    findings = []
+    for relative, budget in (profile.get("path_change_budgets") or {}).items():
+        before_text = snapshot_data.get("writable_contents", {}).get(relative)
+        path = root / relative
+        after_text = (
+            path.read_text(errors="surrogateescape") if path.is_file() else None
+        )
+        before_lines = [] if before_text is None else before_text.splitlines()
+        after_lines = [] if after_text is None else after_text.splitlines()
+        delta = sum(
+            1
+            for line in difflib.ndiff(before_lines, after_lines)
+            if line.startswith("+ ") or line.startswith("- ")
+        )
+        if delta > int(budget):
+            findings.append(budget_overrun(relative, delta, budget))
+    return findings
+
+
 def scope_findings(
     profile: dict, touched: list[str], task_key: str | None = None
 ) -> list[str]:
@@ -2520,33 +3072,63 @@ def scope_findings(
     In derived-worktree mode these are review inputs, not verdicts. The
     worker's tree is its own, so writing outside the declared set costs the
     controller a read, never a lost round.
+
+    The parts ask different questions and are measured differently.
+    "Wrote outside the declared set" is about this worker, so it reads the
+    per-revision `touched` its caller passed. "Declared but did not write" is
+    about the candidate: `revise` carries uncommitted work forward, so a path
+    written in an earlier revision is in the tree and absent from `touched`,
+    and charging the revision for it fires the finding on correct work. A
+    budget overrun is about the round -- see `changed_line_count`, which is the
+    one measurement here that spans every revision.
     """
     findings = []
-    root = Path(profile["root"])
+    root = Path(profile["root"]).resolve()
     allowed = set(profile["allowed_repo_writes"])
-    outside = [path for path in touched if path not in allowed]
+    protected_rel = {
+        repo_relative(root, entry["path"])
+        for entry in profile.get("protected_artifacts", [])
+    }
+
+    outside = [path for path in touched if path not in allowed and path not in protected_rel]
     if outside:
         findings.append(
             f"wrote {len(outside)} path(s) outside allowed_repo_writes: "
             + ", ".join(outside)
         )
-    unwritten = sorted(allowed - set(touched))
+    candidate = worker_touched_paths(profile) if profile.get("worktree") else touched
+    unwritten = sorted(allowed - set(candidate))
     if unwritten:
         findings.append(
             f"declared but did not write {len(unwritten)} path(s): "
             + ", ".join(unwritten)
         )
     for relative, budget in (profile.get("path_change_budgets") or {}).items():
-        delta = changed_line_count(profile, relative, task_key)
+        delta = changed_line_count(profile, relative)
         if delta > int(budget):
-            findings.append(
-                f"{relative}: {delta} changed lines exceeds the "
-                f"{budget}-line budget"
+            findings.append(budget_overrun(relative, delta, budget))
+    for relative, rspec in (profile.get("path_line_ranges") or {}).items():
+        if relative not in allowed:
+            continue
+        parsed = parse_line_ranges(rspec)
+        if parsed in ("any", "new"):
+            continue
+        hunk_spans = diff_hunk_spans(profile, relative)
+        for h_start, h_end in hunk_spans:
+            in_range = any(
+                h_start >= (r_start - r_slack) and h_end <= (r_end + r_slack)
+                for (r_start, r_end, r_slack) in parsed
             )
+            if not in_range:
+                findings.append(hunk_out_of_range(relative, (h_start, h_end)))
     for entry in profile["protected_artifacts"]:
         artifact = Path(entry["path"])
         actual = sha256(artifact) if artifact.is_file() else None
         if actual != entry["sha256"]:
+            if task_key and has_valid_adjudication(
+                Path(profile["state_dir"]), task_key, str(artifact), actual
+            ):
+                continue
             findings.append(f"protected artifact changed: {entry['path']}")
     head = git_output(root, "rev-parse", "HEAD").strip()
     if head != worktree_spec(profile)["base_sha"]:
@@ -2557,20 +3139,24 @@ def scope_findings(
     return findings
 
 
-def changed_line_count(profile: dict, relative: str, task_key: str | None = None) -> int:
+def changed_line_count(profile: dict, relative: str) -> int:
+    """The round's whole diff for one path, across every revision of it.
+
+    Measured from `base_sha` and never from the round baseline, which is the
+    one measurement in this file that must not be per-revision. A budget is a
+    total: re-baselining it on each revision hands back the full allowance, so
+    an overrun nobody withdrew stops being reported, and a revision that
+    *removes* the excess is charged for the removal and reported instead. Both
+    were live -- the first hid a 33-line diff under a 25-line budget on #3468
+    R1b, and the second is what a round doing exactly what it was sent back to
+    do would have been told.
+
+    The attribution the round baseline exists for is a different question, and
+    `worker_touched_paths` still answers it: which paths *this* worker wrote,
+    so `review` can separate them from the ones it carried. Who wrote a line
+    and how many lines the round has spent are not the same measurement.
+    """
     root = Path(profile["root"])
-    baseline = round_baseline(profile, task_key) if task_key else {}
-    if relative in baseline:
-        # Same reason as `worker_touched_paths`: on a revision the git baseline
-        # is the commit before the *previous* round, so an untracked file the
-        # predecessor created bills its whole length to this worker.
-        before = (baseline[relative] or "").splitlines()
-        after = (current_text(root, relative) or "").splitlines()
-        return sum(
-            1
-            for line in difflib.unified_diff(before, after, n=0, lineterm="")
-            if line[:1] in "+-" and line[:3] not in ("+++", "---")
-        )
     base = worktree_spec(profile)["base_sha"]
     numstat = git_output(root, "diff", "--numstat", base, "--", relative)
     for line in numstat.splitlines():
@@ -2584,6 +3170,25 @@ def changed_line_count(profile: dict, relative: str, task_key: str | None = None
     return 0
 
 
+def diff_hunk_spans(profile: dict, relative: str) -> list[tuple[int, int]]:
+    """The old-side baseline spans of git diff -U0 <base_sha> -- <relative>."""
+    root = Path(profile["root"])
+    base = worktree_spec(profile)["base_sha"]
+    diff_text = git_output(root, "diff", "-U0", base, "--", relative)
+    spans = []
+    for line in diff_text.splitlines():
+        if line.startswith("@@ "):
+            m = re.match(r"^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@", line)
+            if m:
+                old = int(m.group(1))
+                count = int(m.group(2)) if m.group(2) is not None else 1
+                if count > 0:
+                    spans.append((old, old + count - 1))
+                else:
+                    spans.append((old, old))
+    return spans
+
+
 def review(profile: dict, task_key: str) -> None:
     """Print the candidate diff and its scope classification.
 
@@ -2594,22 +3199,34 @@ def review(profile: dict, task_key: str) -> None:
     spec = worktree_spec(profile)
     root = Path(profile["root"])
     touched = worker_touched_paths(profile, task_key)
-    findings = scope_findings(profile, touched, task_key)
+    open_, admitted, rejected = split_scope_findings(
+        profile, task_key, scope_findings(profile, touched, task_key)
+    )
+    findings = open_ + rejected
     allowed = set(profile["allowed_repo_writes"])
+    # On a revised round the diff below spans every revision while `touched`
+    # names only this one. Naming the difference keeps the header from reading
+    # as the whole candidate, which is how a two-file candidate got reviewed
+    # as one file on #3351 R6.
+    carried = [
+        path for path in worker_touched_paths(profile) if path not in touched
+    ]
 
     print(f"worktree : {root}")
     print(f"branch   : {spec['branch']}")
     print(f"base     : {spec['base_sha']}")
-    print(f"touched  : {len(touched)} path(s)")
+    print(f"touched  : {len(touched)} path(s) written this revision")
     for path in touched:
         mark = "  " if path in allowed else "! "
         print(f"  {mark}{path}")
-    if findings:
-        print(f"\nfindings ({len(findings)}):")
-        for item in findings:
-            print(f"  - {item}")
-    else:
-        print("\nfindings: none")
+    if carried:
+        print(
+            f"carried  : {len(carried)} path(s) from an earlier revision, "
+            "committed by `accept` with the rest"
+        )
+        for path in carried:
+            print(f"    {path}")
+    print_scope_findings(open_, admitted, rejected, profile, task_key)
 
     print("\n" + git_output(root, "diff", "--stat", spec["base_sha"]).rstrip())
     print("\n" + git_output(root, "diff", spec["base_sha"]).rstrip())
@@ -2628,6 +3245,9 @@ def review(profile: dict, task_key: str) -> None:
 
 
 PROOF_LABELS = ("mutant", "candidate")
+# How many failing test names go to the terminal. The record keeps all of them;
+# a mutant that breaks four hundred rows should not bury the lines around it.
+PROOF_NAMES_SHOWN = 10
 
 
 def candidate_tree_digest(profile: dict) -> str:
@@ -2636,6 +3256,112 @@ def candidate_tree_digest(profile: dict) -> str:
     return json_digest(
         manifest(Path(profile["root"]), profile["allowed_repo_writes"])
     )
+
+
+# Verbs that run before the freeze means anything: `scaffold` and `lint` are how
+# the round gets authored, and the rest read a tree they are not deciding on.
+UNFROZEN_VERBS = (
+    "verify",
+    "status",
+    "denied",
+    "review",
+    "grant",
+    "scaffold",
+    "lint",
+    "capture",
+    "adjudicate",
+)
+
+
+def validates_freeze(verb: str, label: str | None) -> bool:
+    """Whether this invocation must refuse a tree that drifted from its freeze.
+
+    `prove mutant` is the one invocation that must not. It is the step where the
+    controller deliberately breaks the tree to show the gate notices, and it
+    plants that break itself, after the worker is gone. A round whose claim is
+    about a frozen file -- a signature the worker must not edit, a scanner that
+    reads the rest of the tree -- has its only real falsifier out there, so
+    refusing it leaves the round with nothing to record but a weaker mutant
+    inside the write scope, measuring something adjacent to the claim.
+
+    The strictness is not weakened, only moved off the one step that cannot
+    survive it. `prove candidate` still refuses, which is what forces the
+    perturbation to be restored before the pair can be completed; `verify` and
+    `accept` still refuse, which is what keeps a worker's overreach out of a
+    commit. Nothing that decides anything about the worker's tree runs relaxed.
+    """
+    if verb in UNFROZEN_VERBS:
+        return False
+    return not (verb == "prove" and label == "mutant")
+
+
+def frozen_paths(profile: dict) -> list[tuple[str, str]]:
+    """Every path this round froze, with the digest it was frozen at.
+
+    Two declarations, one meaning. `protected_artifacts` is the complement of
+    the write set; `task_contract.design_inputs` is the subset of it the worker
+    was told to read. `load_profile` refuses drift in either, so anything asking
+    "what is this round not allowed to differ in" has to ask both or it asks
+    half -- which is how the same defect came in twice, as #3484 against the
+    protected list and #3489 against the design inputs.
+    """
+    root = Path(profile["root"])
+    frozen: dict[str, str] = {}
+    for entry in (
+        *profile.get("protected_artifacts", []),
+        *((profile.get("task_contract") or {}).get("design_inputs") or []),
+    ):
+        path = Path(entry["path"])
+        if not path.is_absolute():
+            path = root / path
+        frozen.setdefault(str(path), entry["sha256"])
+    return sorted(frozen.items())
+
+
+def frozen_digest(profile: dict) -> str:
+    """Identify the frozen half of the tree, as `candidate_tree_digest` does the
+    writable half.
+
+    `candidate_tree_digest` hashes `allowed_repo_writes` and nothing else, which
+    is right for naming a candidate and wrong for telling two proof runs apart.
+    A mutant planted outside the write scope leaves it byte-identical, so the
+    pair reads as "nothing was actually reverted between them" -- when living
+    out there was the whole point of that mutant.
+    """
+    root = Path(profile["root"])
+    return json_digest(
+        {
+            repo_relative(root, path): (
+                sha256(Path(path)) if Path(path).is_file() else "<missing>"
+            )
+            for path, _ in frozen_paths(profile)
+        }
+    )
+
+
+def frozen_drift(profile: dict) -> list[dict[str, str | None]]:
+    """Which frozen paths do not currently hold the bytes they were frozen at.
+
+    Recorded on a proof rather than refused, because `prove mutant` is the one
+    invocation whose tree is deliberately not the one that was frozen. The
+    record names the paths; it does not claim to know who wrote them. A reader
+    tells a controller's planted falsifier from a worker's overreach by reading
+    this against `verify`'s scope findings, which is the check that owns that
+    question and still runs strict.
+    """
+    root = Path(profile["root"])
+    drift: list[dict[str, str | None]] = []
+    for path, expected in frozen_paths(profile):
+        actual = sha256(Path(path)) if Path(path).is_file() else None
+        if actual != expected:
+            drift.append(
+                {
+                    "path": repo_relative(root, path),
+                    "expected": expected,
+                    "actual": actual,
+                }
+            )
+    return drift
 
 
 def gate_command(profile: dict) -> str:
@@ -2650,6 +3376,71 @@ def gate_command(profile: dict) -> str:
 
 def proof_path(profile: dict, task_key: str, label: str) -> Path:
     return Path(profile["state_dir"]) / "proofs" / f"{task_key}.{label}.json"
+
+
+# The line shapes a red gate uses to name what failed. None of them is selected
+# by looking at the gate command -- `prove` stays ignorant of what the gate runs,
+# so this reads output and only output, and a gate matching none of these keeps
+# the positional tail it always had. Each pattern demands a fixed prefix or a
+# shape prose does not have, because a wrong name is worse than no name: the
+# field exists to say who killed the mutant.
+FAILURE_NAME_PATTERNS = (
+    # libtest: the per-test progress line, then the per-failure stdout header.
+    re.compile(r"^test (?P<name>\S+) \.\.\. FAILED\b"),
+    re.compile(r"^---- (?P<name>\S+) stdout ----$"),
+    # go test
+    re.compile(r"^\s*--- FAIL: (?P<name>\S+)"),
+    # pytest's short summary; the `::` is what keeps prose out of it.
+    re.compile(r"^FAILED (?P<name>\S+::\S+)"),
+    # python unittest, whose locator parenthesis plays the same role.
+    re.compile(r"^(?:FAIL|ERROR): (?P<name>\S+) \("),
+)
+
+
+def failing_test_names(output: str) -> list[str]:
+    """The tests a red gate named, harvested from what it printed.
+
+    A twenty-line tail keeps the wrong twenty lines. For this crate the last
+    twenty are cargo's closing warnings, the `Running unittests` banner,
+    incidental stderr, and `error: test failed`; libtest's `failures:` block
+    scrolled off long before. Measured over the 71 mutant proofs in the live
+    state directory -- 58 of them red and compiling -- not one names a test.
+
+    That makes a mutant killed by the round's own new rows byte-identical to one
+    killed by an unrelated flake, and this gate is known to flake under load. The
+    names are the only thing that separates them, and they have to be taken while
+    the mutation is still applied: once the tree is restored there is nothing left
+    to re-run.
+    """
+    names: list[str] = []
+
+    def add(name: str) -> None:
+        if name and name not in names:
+            names.append(name)
+
+    in_summary = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        # libtest closes with an indented list under a bare `failures:`. It
+        # repeats what the headers above already gave, and is read anyway
+        # because the two forms are lost separately: `--nocapture` drops the
+        # headers, a truncated capture can drop the list.
+        if stripped == "failures:":
+            in_summary = True
+            continue
+        if in_summary:
+            if not stripped:
+                continue
+            if line[:1].isspace() and " " not in stripped:
+                add(stripped)
+                continue
+            in_summary = False
+        for pattern in FAILURE_NAME_PATTERNS:
+            match = pattern.match(line)
+            if match:
+                add(match.group("name"))
+                break
+    return names
 
 
 def prove(profile: dict, task_key: str, label: str) -> None:
@@ -2669,20 +3460,41 @@ def prove(profile: dict, task_key: str, label: str) -> None:
     root = Path(profile["root"])
     print(f"gate  : {command}")
     print(f"tree  : {root}")
+    # Through a shell, because a gate is a command line and not an argv. A gate
+    # that says "build, and if that worked, test" is the ordinary shape here,
+    # and splitting it into tokens hands `&&` to the build as an argument: the
+    # build refuses it, nothing is ever tested, and the refusal carries no
+    # "could not compile", so `compiled` below comes out true precisely because
+    # nothing compiled. Every proof recorded that way is a red that says
+    # nothing about behaviour while claiming to say something.
     result = subprocess.run(
-        shlex.split(command),
+        command,
         cwd=root,
+        shell=True,
         text=True,
         capture_output=True,
     )
     output = (result.stdout + result.stderr).strip()
+    failing = failing_test_names(output)
     record = {
         "task_key": task_key,
         "label": label,
         "command": command,
+        # 127 is the shell saying it never found the gate. That red belongs with
+        # the build failures, not with the failed assertions, for the same
+        # reason: no behaviour was observed.
         "exit_code": result.returncode,
-        "compiled": "could not compile" not in output,
+        "compiled": result.returncode != 127 and "could not compile" not in output,
         "tree_digest": candidate_tree_digest(profile),
+        # The other half of the tree. A mutant whose falsifier lives outside the
+        # write scope moves nothing `tree_digest` covers, so without this the
+        # pair cannot be told from a controller who forgot to revert.
+        "frozen_digest": frozen_digest(profile),
+        "perturbed": frozen_drift(profile),
+        # Kept beside the tail, not instead of it: a gate that names nothing
+        # loses nothing, and a gate that names something stops depending on
+        # where in its output it happened to say so.
+        "failing_tests": failing,
         "output_tail": output.splitlines()[-20:],
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -2692,8 +3504,94 @@ def prove(profile: dict, task_key: str, label: str) -> None:
     print(f"exit  : {result.returncode}")
     if not record["compiled"]:
         print("note  : did not compile; this red says nothing about behaviour")
+    if failing:
+        print(f"failed: {len(failing)} named test(s)")
+        for name in failing[:PROOF_NAMES_SHOWN]:
+            print(f"        {name}")
+        if len(failing) > PROOF_NAMES_SHOWN:
+            print(
+                f"        ... and {len(failing) - PROOF_NAMES_SHOWN} more, "
+                "all in the record"
+            )
+    elif result.returncode != 0:
+        print("failed: the gate named no test; the record keeps the tail instead")
     print(f"digest: {record['tree_digest'][:12]}")
+    if record["perturbed"]:
+        # Named, not judged. `prove` cannot see who wrote these and does not
+        # guess; the reader compares them against `verify`'s scope findings.
+        print(
+            f"frozen: {len(record['perturbed'])} path(s) differ from this "
+            "round's freeze"
+        )
+        for entry in record["perturbed"][:PROOF_NAMES_SHOWN]:
+            print(f"        {entry['path']}")
+        if len(record["perturbed"]) > PROOF_NAMES_SHOWN:
+            print(
+                f"        ... and {len(record['perturbed']) - PROOF_NAMES_SHOWN} "
+                "more, all in the record"
+            )
     print(f"saved : {path}")
+
+
+def capture(profile: dict, task_key: str, command: str, cwd: str | None) -> None:
+    """Run a command and store what it printed, for `## Current behavior`.
+
+    The section quoting source is grounded by the checkout; the section showing
+    behavior had nothing, because there is no file holding what a binary prints.
+    The prompt line was meant to ground it and could not: it says a command was
+    run, and saying so is free. This makes the claim cost a run.
+
+    The record keeps the command, the directory, and the exit code, so a reader
+    who doubts the block can reproduce it instead of trusting it -- which is the
+    property the prompt line only ever promised.
+    """
+    validate_task_key(profile, task_key)
+    root = Path(cwd) if cwd else Path(profile["root"])
+    if not root.is_dir():
+        raise SystemExit(f"capture directory does not exist: {root}")
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        cwd=root,
+        text=True,
+        capture_output=True,
+    )
+    output = [
+        line.rstrip()
+        for line in (result.stdout + result.stderr).splitlines()
+        if line.strip()
+    ]
+    record = {
+        "task_key": task_key,
+        "command": command,
+        "cwd": str(root),
+        "exit_code": result.returncode,
+        "output": output,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = capture_path(profile, task_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = []
+    if path.exists():
+        try:
+            records = [
+                item
+                for item in json.loads(path.read_text())
+                if isinstance(item, dict) and item.get("command") != command
+            ]
+        except (OSError, json.JSONDecodeError):
+            records = []
+    records.append(record)
+    path.write_text(json.dumps(records, indent=2) + "\n")
+
+    print(f"cwd   : {root}")
+    print(f"exit  : {result.returncode}")
+    print(f"saved : {path}")
+    print("\npaste this into `## Current behavior`:\n")
+    print("```console")
+    print(f"$ {command}")
+    for line in output:
+        print(line)
+    print("```")
 
 
 def sweep_path(profile: dict, task_key: str) -> Path:
@@ -2752,13 +3650,19 @@ def sweep(profile: dict, task_key: str, script: str) -> None:
     for line in output.splitlines()[-30:]:
         print(f"  {line}")
     print(f"exit  : {result.returncode}")
-    if not record["restored"]:
-        print(
-            "note  : the tree digest changed across the sweep -- it did not "
-            "restore what it mutated, so every result after the first is "
-            "measured against a corrupted baseline"
-        )
     print(f"saved : {path}")
+    # Recorded first, then refused: the record is the evidence that the sweep
+    # went wrong, and discarding it would leave the controller with a refusal
+    # and nothing to diagnose it from.
+    if not record["restored"]:
+        raise SystemExit(
+            "the tree digest changed across the sweep: it did not restore what "
+            "it mutated, so every result after the first was measured against a "
+            "corrupted baseline and the kills it reports are unearned. Restore "
+            "the tree, fix the script's restore path -- `write_text`, never "
+            "`copy2`, whose preserved mtime makes cargo skip the rebuild -- and "
+            "record the sweep again"
+        )
 
 
 def proof_findings(profile: dict, task_key: str) -> list[str]:
@@ -2791,7 +3695,14 @@ def proof_findings(profile: dict, task_key: str) -> list[str]:
             f"the gate fails on the candidate (exit "
             f"{records['candidate']['exit_code']})"
         )
-    if records["mutant"]["tree_digest"] == records["candidate"]["tree_digest"]:
+    # Both halves of the tree, because a round is free to put its falsifier in
+    # either. `.get` rather than `[]`: a proof recorded before `frozen_digest`
+    # existed compares as it always did instead of reading as a moved tree.
+    if (
+        records["mutant"]["tree_digest"] == records["candidate"]["tree_digest"]
+        and records["mutant"].get("frozen_digest")
+        == records["candidate"].get("frozen_digest")
+    ):
         findings.append(
             "both proofs ran over an identical tree: nothing was actually "
             "reverted between them"
@@ -2823,6 +3734,22 @@ def proof_findings(profile: dict, task_key: str) -> list[str]:
     return findings
 
 
+def mutant_killers(profile: dict, task_key: str) -> list[str]:
+    """The tests the recorded `mutant` proof saw fail, if the gate named any.
+
+    Read back rather than recomputed: the gate ran against a tree that no longer
+    exists by the time anyone accepts, which is the whole reason the names are
+    written down.
+    """
+    path = proof_path(profile, task_key, "mutant")
+    if not path.exists():
+        return []
+    try:
+        return list(json.loads(path.read_text()).get("failing_tests") or [])
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
 def proof_notes(profile: dict, task_key: str) -> list[str]:
     """What the recorded proofs do not establish, short of blocking acceptance.
 
@@ -2847,12 +3774,52 @@ def proof_notes(profile: dict, task_key: str) -> list[str]:
             "the new symbol, not to measure its behaviour; discrimination "
             "rests on a sweep whose mutants still compile"
         )
-    if not sweep_path(profile, task_key).exists():
+    # A red mutant whose gate named nothing records the same bytes whether this
+    # round's own rows killed it or an unrelated flake did, and this gate is
+    # known to flake under load. Restoring the tree destroys the only thing that
+    # could have told them apart, so the ambiguity is said here instead of being
+    # left to look like attribution.
+    elif record["mutant"].get("exit_code") and not record["mutant"].get(
+        "failing_tests"
+    ):
+        notes.append(
+            "the `mutant` proof went red without the gate naming a failing "
+            "test, so the record cannot separate a kill by this round's rows "
+            "from a kill by something unrelated"
+        )
+    # Presence was the whole test, so a sweep that went wrong counted exactly
+    # as much as one that went right: `sweep` refuses an unrestored tree, but
+    # the record it wrote first is still on disk, and a controller who pressed
+    # on past that refusal had the note cleared by the very file proving the
+    # sweep was worthless.
+    recorded = sweep_path(profile, task_key)
+    if not recorded.exists():
         notes.append(
             "no mutation sweep is recorded, so the gate is shown to notice "
             "this change and nothing else; a constant standing in for a "
             "computed value, or an untouched arm of the same enum, would pass "
             "it unseen. Record one with `sweep PROFILE TASK_KEY SCRIPT`"
+        )
+        return notes
+    try:
+        sweep_record = json.loads(recorded.read_text())
+    except (OSError, json.JSONDecodeError):
+        notes.append(
+            f"the mutation sweep record at {recorded} cannot be read, so the "
+            "sweep counts for nothing; record it again"
+        )
+        return notes
+    if not sweep_record.get("restored"):
+        notes.append(
+            "the recorded mutation sweep did not restore the tree, so every "
+            "result after its first mutant was measured against a corrupted "
+            "baseline; the kills it reports are unearned"
+        )
+    elif sweep_record.get("exit_code"):
+        notes.append(
+            f"the recorded mutation sweep exited {sweep_record['exit_code']}: "
+            "either a mutant survived or the sweep itself failed, and the "
+            "round's evidence has to say which"
         )
     return notes
 
@@ -2862,13 +3829,41 @@ def accept(profile: dict, task_key: str) -> None:
 
     The controller commits; the worker never runs a git mutation. Integration
     into a persistent branch stays a separate, explicitly invoked command.
+
+    What is committed is the whole candidate, not this revision's writes. The
+    two differ the moment a round is revised: `revise` exists to carry the
+    worker's uncommitted work forward under a new run id, so a revised round's
+    candidate spans every revision while `task_key` names only the last. Passing
+    the key here once committed one file of a two-file candidate whose second
+    file defined a symbol the first called -- a commit that does not build, and
+    `discard` deletes the worktree holding the missing half. `review` still asks
+    the narrower question, because "what did this revision write" is exactly
+    what a scope finding is about.
     """
     validate_task_key(profile, task_key)
     spec = worktree_spec(profile)
     root = Path(profile["root"])
-    touched = worker_touched_paths(profile, task_key)
+    touched = worker_touched_paths(profile)
     if not touched:
         raise SystemExit("nothing to accept: the worker changed no files")
+    # `verify` reports scope findings and `accept` used to ignore them, so a
+    # round could be accepted and committed while `verify` went on exiting 2
+    # forever, with nothing anywhere recording which of the two a controller
+    # had believed. Refusing here is what makes the earlier report mean
+    # something: clearing it costs one `adjudicate`, and that decision is then
+    # on the record beside the commit.
+    open_, _admitted, rejected = split_scope_findings(
+        profile,
+        task_key,
+        scope_findings(profile, worker_touched_paths(profile, task_key), task_key),
+    )
+    if open_ or rejected:
+        raise SystemExit(
+            "refusing to accept: this round has scope findings nobody has "
+            "admitted:\n"
+            + "\n".join(f"  - {item}" for item in [*open_, *rejected])
+            + '\n  adjudicate <profile> <key> admit "<finding text, verbatim>" "<reason>"'
+        )
     if profile["mode"] == "bounded-write":
         unproven = proof_findings(profile, task_key)
         if unproven:
@@ -2877,13 +3872,26 @@ def accept(profile: dict, task_key: str) -> None:
                 "discriminate:\n"
                 + "\n".join(f"  - {item}" for item in unproven)
             )
+        # Named here so the accepted round's evidence carries the attribution
+        # with it. Whether the kill was targeted or coincidental is the reader's
+        # call, and until the names were recorded there was nothing to call it on.
+        killers = mutant_killers(profile, task_key)
+        if killers:
+            print(f"mutant killed by {len(killers)} named test(s):")
+            for name in killers[:PROOF_NAMES_SHOWN]:
+                print(f"  {name}")
+            if len(killers) > PROOF_NAMES_SHOWN:
+                print(f"  ... and {len(killers) - PROOF_NAMES_SHOWN} more")
         for note in proof_notes(profile, task_key):
             print(f"note: {note}")
     subprocess.run(
         [*GIT, "-C", str(root), "add", "--", *touched],
         check=True,
     )
-    issue = profile["task_contract"].get("issue")
+    # A revision of a ticketed round is one-shot, because the ticket id is its
+    # spent identity -- but the commit is still the ticket's, and this trailer
+    # is the only place the round's descent survives the state directory.
+    issue = profile["task_contract"].get("issue") or revision_origin(profile)
     trailer = f"\n\nRefs #{issue}" if issue else ""
     subprocess.run(
         [
@@ -2902,7 +3910,87 @@ def accept(profile: dict, task_key: str) -> None:
     print(f"  git -C {spec['derived_from']} cherry-pick {sha}")
 
 
-def discard(profile_path: str, task_key: str, *, keep_branch: bool = False) -> None:
+def uncommitted_candidate(worktree: Path) -> list[str]:
+    """Every path in the worker checkout that no commit on its branch holds.
+
+    Porcelain lines rather than bare paths: `?? ` and ` M ` are different
+    losses, and a controller deciding whether to spend `accept` first needs to
+    know which one it is looking at.
+    """
+    if not (worktree / ".git").exists():
+        return []
+    out = subprocess.run(
+        [*GIT, "-C", str(worktree), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        return []
+    return sorted(line for line in out.stdout.splitlines() if line.strip())
+
+
+def unreferenced_commits(controller_root: str, branch: str) -> list[str]:
+    """Commits on the worker branch the controller holds in no form at all.
+
+    The question `branch -D` does not ask. `accept` commits on the worker branch
+    and only *prints* a cherry-pick line; nothing enforces it was run. So the
+    documented round order minus one manual step leaves the accepted commit
+    referenced by the reflog alone, and by nothing once that expires.
+
+    Two questions, because reachability alone is the wrong one: cherry-picking
+    rewrites the committer timestamp, so the integrated commit is a different
+    object, and a guard asking only "does another ref reach this sha" would
+    refuse every round that did exactly what `accept` told it to. The second is
+    `git cherry`'s -- does an equivalent patch already sit on the other side --
+    asked against `HEAD` because that is where `accept`'s cherry-pick line lands.
+
+    Oldest first, so the list doubles as the cherry-pick argument order.
+    """
+    ref = f"refs/heads/{branch}"
+    listed = subprocess.run(
+        [*GIT, "-C", controller_root, "for-each-ref", "--format=%(refname)"],
+        capture_output=True,
+        text=True,
+    )
+    if listed.returncode != 0:
+        return []
+    others = [name for name in listed.stdout.split() if name != ref]
+    out = subprocess.run(
+        [*GIT, "-C", controller_root, "log", "--format=%H %s", "--reverse", ref,
+         "--not", *others],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        return []
+    unreachable = [line for line in out.stdout.splitlines() if line.strip()]
+    if not unreachable:
+        return []
+    # `git cherry` lists only what `HEAD` does not already reach, and marks `-`
+    # what it carries under a different sha. Both exclusions are wanted: the
+    # first covers a detached controller HEAD, which `for-each-ref` never named.
+    cherry = subprocess.run(
+        [*GIT, "-C", controller_root, "cherry", "HEAD", ref],
+        capture_output=True,
+        text=True,
+    )
+    if cherry.returncode != 0:
+        return unreachable
+    absent = {
+        line.split(" ", 1)[1].strip()
+        for line in cherry.stdout.splitlines()
+        if line.startswith("+")
+    }
+    return [line for line in unreachable if line.split(" ", 1)[0] in absent]
+
+
+def discard(
+    profile_path: str,
+    task_key: str,
+    *,
+    keep_branch: bool = False,
+    drop_uncommitted: bool = False,
+) -> None:
     """Return the AGY project home, then remove the round's worktree/branch.
 
     The project binding is restored first so an interrupted cleanup never
@@ -2914,8 +4002,61 @@ def discard(profile_path: str, task_key: str, *, keep_branch: bool = False) -> N
     if not controller_root:
         raise SystemExit("profile has no derived worktree to discard")
 
+    # Before anything is restored or removed. The refusal has to leave the round
+    # exactly as it found it -- a `discard` that repointed the project and then
+    # stopped would strand the candidate in a checkout the project no longer
+    # opens, which is the failure this check exists to prevent, one step over.
+    worktree_path = spec.get("path")
+    if worktree_path and Path(worktree_path).exists():
+        pending = uncommitted_candidate(Path(worktree_path))
+        if pending and not drop_uncommitted:
+            listed = "\n".join(f"  {line}" for line in pending)
+            raise SystemExit(
+                f"refusing to discard: {len(pending)} path(s) in "
+                f"{worktree_path} are in no commit\n"
+                f"{listed}\n"
+                "this worktree is the only copy of them -- `accept` is the "
+                "only verb that commits, and `revise` carries the candidate "
+                "across run ids uncommitted on purpose\n"
+                f"commit them with `accept PROFILE {task_key}`, carry them "
+                f"with `revise`, or destroy them with "
+                f"`discard PROFILE {task_key} --drop-uncommitted`"
+            )
+
+    # Work in a commit no ref reaches, which the check above cannot see: a clean
+    # worktree is exactly what `accept` leaves behind. No opt-in flag of its own
+    # -- `--keep-branch` already keeps the commits, and a flag that destroyed
+    # them would be a second way to lose an accepted candidate.
+    branch = spec.get("branch", "")
+    if branch.startswith(DERIVED_BRANCH_PREFIX) and not keep_branch:
+        stranded = unreferenced_commits(controller_root, branch)
+        if stranded:
+            listed = "\n".join(f"  {line}" for line in stranded)
+            shas = " ".join(line.split(" ", 1)[0] for line in stranded)
+            raise SystemExit(
+                f"refusing to discard: {controller_root} holds {len(stranded)} "
+                f"commit(s) on {branch} in no form -- no ref reaches them and "
+                "HEAD carries no equivalent patch\n"
+                f"{listed}\n"
+                "deleting the branch leaves them in the reflog only -- `accept` "
+                "prints a cherry-pick line and nothing enforces that it was run\n"
+                f"integrate them with `git -C {controller_root} cherry-pick "
+                f"{shas}` and discard again, or keep them where they are with "
+                f"`discard PROFILE {task_key} --keep-branch`"
+            )
+
     project_id = raw.get("agy_project_id")
     home_root = spec.get("project_home_root") or controller_root
+    if worktree_path and Path(home_root).resolve() == Path(worktree_path).resolve():
+        # Written by a `worktree` run predating #3445, or hand-edited. Restoring
+        # the project into the directory this call is about to remove leaves the
+        # shared work area bound to nothing, and the next `agy` session opens
+        # there. `controller_root` is the only other answer the profile carries.
+        print(
+            f"note: recorded home root is the worktree itself; restoring to "
+            f"{controller_root}"
+        )
+        home_root = controller_root
     if project_id:
         repoint_project_root(project_id, Path(home_root).resolve())
         print(f"AGY project {project_id} restored to {home_root}")
@@ -2933,14 +4074,21 @@ def discard(profile_path: str, task_key: str, *, keep_branch: bool = False) -> N
             for rule in withdrawn:
                 print(f"    - {rule}")
 
-    branch = spec.get("branch", "")
     path = spec.get("path")
     if path and Path(path).exists():
+        destroyed = uncommitted_candidate(Path(path))
         subprocess.run(
             [*GIT, "-C", controller_root, "worktree", "remove", "--force", path],
             check=True,
         )
         print(f"removed worktree {path}")
+        # Named on the way out too. The opt-in was given once, possibly before
+        # the last thing the worker wrote; the log is where the loss is read
+        # back from afterwards.
+        if destroyed:
+            print(f"  destroyed {len(destroyed)} uncommitted path(s):")
+            for line in destroyed:
+                print(f"    {line}")
     subprocess.run(
         [*GIT, "-C", controller_root, "worktree", "prune"],
         check=True,
@@ -2974,7 +4122,15 @@ def verify(profile: dict, task_key: str) -> None:
     documents_frozen = assert_round_documents_unchanged(
         profile, task_key, snapshot_data
     )
-    audited_commands = audit_task_commands(profile, task_key, snapshot_data)
+    audited_commands, denial_findings, command_notes, all_commands = (
+        audit_task_commands(profile, task_key, snapshot_data)
+    )
+    # A gate result the tree has moved out from under is reported beside the
+    # permission findings because it fails the round the same way: something the
+    # controller would have to read before believing the candidate.
+    denial_findings = denial_findings + stale_gate_findings(
+        profile, task_key, snapshot_data, all_commands
+    )
     documents = (
         "oracle and injection unchanged since snapshot"
         if documents_frozen
@@ -3005,8 +4161,12 @@ def verify(profile: dict, task_key: str) -> None:
         # worker did to its own checkout is a diff for the controller to read.
         # A write outside the declared set costs a read, not the round, so it
         # is reported here and adjudicated by `review`.
-        findings = scope_findings(
-            profile, worker_touched_paths(profile, task_key), task_key
+        open_, admitted, rejected = split_scope_findings(
+            profile,
+            task_key,
+            scope_findings(
+                profile, worker_touched_paths(profile, task_key), task_key
+            ),
         )
         oracle = state / "oracles" / f"{task_key}.md"
         if not oracle.exists():
@@ -3016,12 +4176,17 @@ def verify(profile: dict, task_key: str) -> None:
             f"{len(audited_commands)} task-local shell command(s) match; "
             f"{documents}; oracle sha256={sha256(oracle)}"
         )
-        if findings:
-            print(f"\nscope findings ({len(findings)}) for `review` to adjudicate:")
-            for item in findings:
+        if command_notes:
+            print(f"\ncommand notes ({len(command_notes)}), not blocking:")
+            for item in command_notes:
                 print(f"  - {item}")
+        if denial_findings:
+            print(f"\ncommand findings ({len(denial_findings)}):")
+            for item in denial_findings:
+                print(f"  - {item}")
+        print_scope_findings(open_, admitted, rejected, profile, task_key)
+        if open_ or rejected or denial_findings:
             sys.exit(EXIT_FINDINGS)
-        print("scope findings: none")
         return
 
     if profile["mode"] == "measure-only" and (after != before or changed_files):
@@ -3055,30 +4220,30 @@ def verify(profile: dict, task_key: str) -> None:
                 + "\n".join(f"  {hint}" for hint in hints)
             )
 
-    budgets = profile.get("path_change_budgets", {})
-    for relative, budget in budgets.items():
-        before_text = snapshot_data.get("writable_contents", {}).get(relative)
-        path = root / relative
-        after_text = (
-            path.read_text(errors="surrogateescape") if path.is_file() else None
+    # An in-place overrun is a write into the controller's own checkout, so it
+    # stays fatal -- but adjudicable, exactly like the protected-artifact check
+    # immediately below, which is the other in-place VOID a controller can
+    # knowingly waive. Both read the same ledger; neither can be waived by
+    # accident, because an admitted decision names the delta it was given.
+    overruns = inplace_budget_findings(profile, snapshot_data)
+    unwaived = [
+        item
+        for item in overruns
+        if scope_decision(state, task_key, item) != "admit"
+    ]
+    if unwaived:
+        raise SystemExit(
+            "VOID: diff budget exceeded:\n"
+            + "\n".join(f"  - {item}" for item in unwaived)
+            + '\n  waive with: adjudicate <profile> <key> admit "<finding>" "<reason>"'
         )
-        before_lines = [] if before_text is None else before_text.splitlines()
-        after_lines = [] if after_text is None else after_text.splitlines()
-        delta = sum(
-            1
-            for line in difflib.ndiff(before_lines, after_lines)
-            if line.startswith("+ ") or line.startswith("- ")
-        )
-        if delta > int(budget):
-            raise SystemExit(
-                f"VOID: diff budget exceeded for {relative}: "
-                f"{delta} changed lines > {budget}"
-            )
 
     protected = snapshot_data.get("protected_contents_base64", {})
     for path, expected in snapshot_data["protected_artifacts"].items():
         actual = sha256(Path(path))
         if actual != expected:
+            if has_valid_adjudication(state, task_key, path, actual):
+                continue
             hint = park_original(state, path, protected.get(path))
             raise SystemExit(
                 f"VOID: protected artifact changed: {path}\n  {hint}"
@@ -3091,6 +4256,15 @@ def verify(profile: dict, task_key: str) -> None:
         f"{len(audited_commands)} task-local shell command(s) match; "
         f"{documents}; oracle sha256={sha256(oracle)}"
     )
+    if command_notes:
+        print(f"\ncommand notes ({len(command_notes)}), not blocking:")
+        for item in command_notes:
+            print(f"  - {item}")
+    if denial_findings:
+        print(f"\nfindings ({len(denial_findings)}) for you to adjudicate:")
+        for item in denial_findings:
+            print(f"  - {item}")
+        sys.exit(EXIT_FINDINGS)
 
 
 def status(profile: dict) -> None:
@@ -3118,14 +4292,17 @@ TASK_KEY_VERBS = (
     "worktree",
     "scaffold",
     "lint",
+    "capture",
     "prove",
     "sweep",
     "dispatch",
     "resume",
+    "revise",
     "abandon",
     "snapshot",
     "verify",
     "review",
+    "adjudicate",
     "accept",
     "discard",
     "denied",
@@ -3141,14 +4318,17 @@ def main() -> None:
         "doctor",
         "scaffold",
         "lint",
+        "capture",
         "prove",
         "sweep",
         "dispatch",
         "resume",
+        "revise",
         "abandon",
         "snapshot",
         "verify",
         "review",
+        "adjudicate",
         "accept",
         "discard",
         "status",
@@ -3167,6 +4347,36 @@ def main() -> None:
                 action="store_true",
                 help="release the worktree but retain the worker branch",
             )
+            item.add_argument(
+                "--drop-uncommitted",
+                action="store_true",
+                help="destroy work no commit holds; without it discard "
+                "refuses and lists what it would have removed",
+            )
+        if verb == "revise":
+            item.add_argument(
+                "next_key",
+                help="run id for the revision; a spent one-shot id cannot "
+                "dispatch again",
+            )
+            item.add_argument(
+                "injection",
+                nargs="?",
+                help="delta contract naming what was wrong and what must "
+                "become true; omit to be handed the blank form, as `scaffold` "
+                "hands out the round form",
+            )
+        if verb == "capture":
+            item.add_argument(
+                "command",
+                help="shell command to run; what it prints becomes the "
+                "transcript `## Current behavior` may show",
+            )
+            item.add_argument(
+                "--cwd",
+                default=None,
+                help="directory to run in; defaults to the round root",
+            )
         if verb == "prove":
             item.add_argument(
                 "label",
@@ -3179,23 +4389,41 @@ def main() -> None:
                 help="mutation sweep the controller wrote; its text is stored "
                 "with its result so the published claim can be re-run",
             )
+        if verb == "adjudicate":
+            item.add_argument(
+                "action",
+                choices=("admit", "reject"),
+                help="admit the write into the candidate, or reject it: a "
+                "protected artifact is restored, a scope finding keeps blocking",
+            )
+            item.add_argument(
+                "finding",
+                help="protected artifact path, or a scope finding copied "
+                "verbatim from `verify`/`review`",
+            )
+            item.add_argument(
+                "reason",
+                help="stated reason for admitting or rejecting this finding",
+            )
     args = parser.parse_args()
 
     if args.verb in RAW_PROFILE_VERBS:
         {
             "worktree": lambda: worktree(args.profile, args.task_key),
             "discard": lambda: discard(
-                args.profile, args.task_key, keep_branch=args.keep_branch
+                args.profile,
+                args.task_key,
+                keep_branch=args.keep_branch,
+                drop_uncommitted=args.drop_uncommitted,
             ),
         }[args.verb]()
         return
 
+    task_key = getattr(args, "task_key", None)
+
     profile = load_profile(
         args.profile,
-        # `scaffold` and `lint` run while the round is still being authored, so
-        # they must not require the design inputs to be frozen yet.
-        validate_design=args.verb
-        not in ("verify", "status", "denied", "review", "grant", "scaffold", "lint"),
+        validate_design=validates_freeze(args.verb, getattr(args, "label", None)),
         # `doctor` preflights the round before `scaffold` writes the injection.
         require_injection=args.verb
         not in (
@@ -3207,21 +4435,33 @@ def main() -> None:
             "doctor",
             "scaffold",
             "lint",
+            "capture",
+            "adjudicate",
         ),
+        task_key=task_key,
     )
     {
         "grant": lambda: grant(profile),
         "doctor": lambda: doctor(profile),
         "scaffold": lambda: scaffold(profile, args.task_key),
         "lint": lambda: lint(profile, args.task_key),
+        "capture": lambda: capture(
+            profile, args.task_key, args.command, args.cwd
+        ),
         "prove": lambda: prove(profile, args.task_key, args.label),
         "sweep": lambda: sweep(profile, args.task_key, args.script),
         "snapshot": lambda: snapshot(profile, args.task_key),
         "dispatch": lambda: dispatch(profile, args.task_key),
         "resume": lambda: resume(profile, args.task_key),
+        "revise": lambda: revise(
+            profile, args.profile, args.task_key, args.next_key, args.injection
+        ),
         "abandon": lambda: abandon(profile, args.task_key),
         "verify": lambda: verify(profile, args.task_key),
         "review": lambda: review(profile, args.task_key),
+        "adjudicate": lambda: adjudicate(
+            profile, args.task_key, args.action, args.finding, args.reason
+        ),
         "accept": lambda: accept(profile, args.task_key),
         "status": lambda: status(profile),
         "denied": lambda: denied(profile, args.task_key),
@@ -3230,3 +4470,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

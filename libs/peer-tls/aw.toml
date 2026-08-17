@@ -1,6 +1,6 @@
 [project]
 name = "peer-tls"
-cap_path = "CAPABILITIES.md"
+cap_path = "README.md"
 label = "lib:peer-tls"
 
 [[workspaces]]

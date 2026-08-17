@@ -749,7 +749,7 @@ Gate Inventory:
 | guard-security-contract-runner | change | 1607 | implemented | passing | negative | projects/sift/guard.toml |
 | rig-resilience-contract-runner | change | 1607 | implemented | passing | dogfood | projects/sift/rig.toml |
 | meter-stability-contract-runner | change | 1607 | implemented | passing | conformance | projects/sift/meter-stability.toml |
-| domain-v1-claim-closure-and-performance | change | 1676 | planned | planned | dogfood | full `aw ec gen --verify` and retained performance gate |
+| domain-v1-claim-closure-and-performance | change | 1676 | planned | planned | dogfood | a full black-box case set and a retained performance gate |
 
 ### CLI Interface
 

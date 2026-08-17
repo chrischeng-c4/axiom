@@ -1,6 +1,6 @@
 [project]
 name = "mamba"
-cap_path = "projects/mamba/CAPABILITIES.md"
+cap_path = "projects/mamba/README.md"
 
 # AW-EC-BEGIN
 [aw.ec.generated]

@@ -2,7 +2,7 @@ ec_review_backing = "agent"
 
 [project]
 name = "workbench"
-cap_path = "CAPABILITIES.md"
+cap_path = "README.md"
 label = "app:workbench"
 
 [[workspaces]]

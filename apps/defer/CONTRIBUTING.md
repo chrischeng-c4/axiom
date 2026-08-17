@@ -1,20 +1,18 @@
-# Defer Contributing
+# Contributing to defer
 
-<!-- aw:meta:project-contributing:start -->
 ## Brief
 
-Project-local contribution contract for Defer.
+How to change `apps/defer`. What it promises and the work roots it owns live in
+[README.md](README.md); repository-wide authoring and verification rules live
+in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-## Authoritative Inputs
-
-- Product promises and work roots: [CAPABILITIES.md](CAPABILITIES.md)
-- Project orientation: [README.md](README.md)
-
-## Local Workflow
-
-Follow repository-level agent guidance and keep project-specific rules here.
+Changes here are authored one phase at a time, red first: `e2e` writes
+`apps/defer/e2e/`, then `unit` and `logic` write `apps/defer/src/`.
+`/aw:wi-tdd` drives the ladder, and every phase refuses a dirty path outside
+its own write root.
 
 ## Verification
 
-List the narrow commands that prove changes to Defer.
-<!-- aw:meta:project-contributing:end -->
+| Gate | Command |
+|---|---|
+| unit + colocated tests | `cargo test -p defer` |

@@ -6,10 +6,8 @@ details.
 
 ## Projects
 
-<!-- aw:projects-table:start -->
 | Project | What it is |
 |---------|------------|
-| [agentic-workflow](apps/agentic-workflow/README.md) | Agentic Workflow (`aw`) is a project-iteration CLI that lets coding agents ship bounded, verified work without a human steering every step. |
 | [cap](apps/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
 | [vat](apps/vat/README.md) | `vat` is a headless local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
 | [courier](apps/courier/README.md) | `courier` is a stateless, GCP-hosted proxy that centralizes GitHub-issue access for every axiom CLI. |
@@ -32,7 +30,9 @@ details.
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
 | [pgpool](apps/pgpool/README.md) | `pgpool` is the working app id for Axiom's Kubernetes-native PostgreSQL connection pooler. |
 | [meter](apps/meter/README.md) | Local resource measurement for agent-driven Rust development. |
-<!-- aw:projects-table:end -->
+
+This table is hand-maintained. It used to be spliced in from a generator that no
+longer exists, so adding a project under `apps/` adds no row on its own.
 
 ## Shared Libraries
 
@@ -82,7 +82,6 @@ an installer yet are marked _coming soon_.
 
 | Project | Binary | Install |
 |---------|--------|---------|
-| [agentic-workflow](apps/agentic-workflow/README.md) | `aw` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/agentic-workflow/install.sh \| sh` |
 | [arena](apps/arena/README.md) | `arena` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/arena/install.sh \| sh` |
 | [cap](apps/cap/README.md) | `cap` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/cap/install.sh \| sh` |
 | [courier](apps/courier/README.md) | `courier` | _coming soon_ |

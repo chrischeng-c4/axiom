@@ -1,0 +1,36 @@
+---
+id: authoring.agent-instruction-ghan
+scope: []
+activation: always
+targets: [claude, codex, agy]
+enforcement: advisory
+required_references:
+  - CONTRIBUTING.md
+---
+# Agent instructions are Goal / How / Acceptance / Never
+
+## Intent
+
+Give every instruction addressed to an agent — a `type=change` work item, a `SKILL.md`, a dispatch injection — one structure whose every section has a consumer that can refuse it.
+
+## Rules
+
+- Write `## Goal` as exactly one observable-difference sentence naming a trigger, an observation point, a current value, and a target value.
+- Write `## How` as verified premises carrying `file:line`, then the change-point list that doubles as the write allowlist, then frozen decisions and exclusions.
+- Write `## Acceptance` as a gate table whose columns are the verbatim command, current observation, target observation, and why it cannot hold by accident — plus a mandatory negative control naming the mutation, requiring verbatim failure output, and requiring a byte-for-byte restore verified by sha256.
+- Measure the gate's baseline before authoring it, and when that baseline is not green, name every tolerated pre-existing failure verbatim instead of stating a failure count.
+- Write `## Never` with a first line fixing the addressee, then both a must-not-touch list naming the near misses and a must-not-do list covering the false-green moves.
+- Do not add a section that no consumer refuses; an unrefusable section degenerates into a title echo.
+- Keep lifecycle progress out of authored prose: EC/TD/CB submission and verification belong to the `ChangeLifecycle` carrier, whose evidence binds to an artifact digest tuple rather than a boolean.
+- Treat the gate command named in `## Acceptance` as the verifier that produces the lifecycle evidence binding; the two layers meet nowhere else.
+
+## Verification
+
+- Read back the authored artifact and confirm each section states its refusal condition rather than restating the title.
+- Run the `## Acceptance` negative control and confirm the gate goes red before accepting it as green.
+- Run `aw wi validate` for a work item, and `aw meta check` after editing this rule.
+
+## References
+
+- `CONTRIBUTING.md` section “Authoring convention: every agent instruction is Goal / How / Acceptance / Never”.
+- `.agents/rules/authoring/artifact-layout.md` for the file-shape principle this rule composes with.

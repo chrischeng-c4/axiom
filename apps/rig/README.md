@@ -50,7 +50,9 @@ rig run --dir tests/rig/scenarios [--vat] [--pins tests/rig/config/pins]
 
 ## Capabilities
 
-Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
+Nothing reads the tables below. The capability gate that validated their
+shape was deleted with the `aw` binary, so the shape is convention now and
+the commands named in each row are the only part that runs.
 
 ### Capability Index
 

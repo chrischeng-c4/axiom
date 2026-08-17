@@ -1,5 +1,0 @@
-| Symbol | Spec |
-| --- | --- |
-{%- for s in symbols %}
-| `{{ s.symbol }}` | [{{ s.spec_path }}]({{ s.spec_path }}) |
-{%- endfor %}

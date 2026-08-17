@@ -108,6 +108,14 @@ it does not silently create a second worker interpretation of the same ticket.
 An unticketed task maps to one one-shot conversation that is retained for audit
 but never resumed. A follow-up one-shot receives a new run id and conversation.
 
+Minting that new run id is a revision, not a fresh round. The prior round's
+candidate is uncommitted in the worker's checkout, so re-deriving the worktree
+would discard it. `revise` carries the checkout, the write contract, the
+protected set, and the budgets forward and changes only the run id and the
+injected delta, so the revision is judged against the same tree under the same
+ceiling. The oracle is inherited unchanged: a revision exists to satisfy the
+sealed claim, not to move it.
+
 ### Baseline snapshot
 
 - Worktree status and revision before the run.
@@ -569,6 +577,8 @@ reject these operations:
 6. `snapshot(workspace_binding, task_contract) -> baseline`
 7. `start(task_contract, baseline) -> run_handle`
 8. `resume(run_handle, revision_contract) -> run_handle` (ticketed only)
+8a. `revise(run_handle, revision_contract) -> task_contract` (one-shot; mints
+    the next run id on the same checkout)
 9. `poll(run_handle) -> progress_or_terminal`
 10. `collect_audit(run_handle, event_floor) -> commands, denials, tools, writes`
 11. `normalize_report(run_handle) -> normalized_report`
@@ -600,6 +610,7 @@ the UI.
 | Baseline | `agy_dispatch.py snapshot` |
 | Start | `agy_dispatch.py dispatch` |
 | Resume | Ticketed-only `agy_dispatch.py resume` using stored conversation id |
+| Revise | One-shot `agy_dispatch.py revise` — new run id, same checkout and contract |
 | Progress/terminal | Direct long-lived process and same host session polling |
 | Audit | Conversation database command requests plus filesystem snapshot |
 | Normalize | Raw log and final `## EXEC REPORT` under `state_dir/runs/` |

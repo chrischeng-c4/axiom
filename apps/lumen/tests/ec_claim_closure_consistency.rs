@@ -114,16 +114,18 @@ fn generated_inventory_matches_claim_commands_and_test_dispatch() {
     );
 }
 
-/// The capability contract moved out of README into CAPABILITIES.md (#2887),
-/// and its work-root tables -- which carried the claim ids this gate used to
-/// match -- became `Claims:` bullets under each capability. A case that closes
-/// a claim nobody declares is evidence for nothing, so both ends still have to
-/// resolve; only the document and the marker shape changed.
+/// The capability contract's work-root tables -- which carried the claim ids
+/// this gate used to match -- became `Claims:` bullets under each capability
+/// (#2887). The document moved too: out of README into CAPABILITIES.md, then
+/// back into README's `## Capabilities` when the repository settled on three
+/// META-docs. A case that closes a claim nobody declares is evidence for
+/// nothing, so both ends still have to resolve; only the document and the
+/// marker shape changed.
 #[test]
 fn claim_closure_document_maps_to_capability_contract_claims() {
     let root = workspace_root();
     let authored = authored_cases(&root);
-    let contract_path = root.join("apps/lumen/CAPABILITIES.md");
+    let contract_path = root.join("apps/lumen/README.md");
     let contract = fs::read_to_string(&contract_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", contract_path.display()));
 

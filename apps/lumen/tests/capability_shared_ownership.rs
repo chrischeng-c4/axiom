@@ -5,12 +5,12 @@ use std::collections::BTreeSet;
 
 const AW_TOML: &str = include_str!("../aw.toml");
 const README: &str = include_str!("../README.md");
-/// The canonical capability contract. It used to be README — capability
-/// headings, claims, and verification all lived there. #2887 moved the contract
-/// here and left README a human-readable summary that links to it, so a gate
-/// that still read README would be asserting on prose whose job is now to be
-/// readable rather than to be exact.
-const CAPABILITIES: &str = include_str!("../CAPABILITIES.md");
+/// The canonical capability contract. #2887 moved it out of README into
+/// `CAPABILITIES.md`; the three-META-doc decision moved it back, into README's
+/// own `## Capabilities` section. The shape #2887 gave it — stable IDs, claim
+/// bullets, per-capability verification — is unchanged, so this gate reads the
+/// same text from the file that now holds it.
+const CAPABILITIES: &str = README;
 const CARGO_TOML: &str = include_str!("../Cargo.toml");
 const CLI: &str = include_str!("../src/bin/lumen.rs");
 const API: &str = include_str!("../src/api.rs");
@@ -100,9 +100,19 @@ fn trait_profile_requires_shared_service_baselines() {
         );
     }
 
+    // This used to require README to point at `CAPABILITIES.md` rather than
+    // restate it. With the contract back in README the risk inverts: not that
+    // the pointer is missing, but that a second copy appears — a re-created
+    // `CAPABILITIES.md`, or an index pasted in beside the real one. Either
+    // gives a reader two contracts and no way to tell which one binds.
+    assert_eq!(
+        README.matches("### Capability Index").count(),
+        1,
+        "the capability index must appear exactly once"
+    );
     assert!(
-        README.contains("[`CAPABILITIES.md`](CAPABILITIES.md)"),
-        "README must point at the canonical contract rather than restate it"
+        !README.contains("CAPABILITIES.md"),
+        "the contract lives in this file; a pointer at a separate one means there are two"
     );
 }
 

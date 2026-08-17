@@ -1,7 +1,27 @@
 # FocusFlow Todo
 
 A full-stack Todo web app. A Rust (Axum) API serves the browser UI from the
-same process; tasks persist in SQLite through `rusqlite`.
+same process; tasks persist in SQLite through `rusqlite`. It exists to dogfood
+a Python external-contract and tech-design inventory against a Rust codebase.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Todo HTTP API | — | Rust Axum + SQLite | EC behavior/security/stability/efficiency | dogfood | no | CRUD API and static web UI |
+
+### Todo HTTP API
+
+ID: todo-http-api
+
+Type: DeveloperTool
+
+Promise: Create, list, update, and delete persisted Todo records through a
+stable browser-facing HTTP API.
+
+Required Verification: Python EC case inventory in `external-contracts/`.
 
 ## Run
 

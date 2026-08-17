@@ -61,17 +61,19 @@ against an HTTP/1.1-only fixture, and default HTTP/1.1 behavior.
 
 ## Registered symbols
 
-<!-- SPEC-MANAGED: generated/readme#mamba-symbols -->
-<!-- CODEGEN-BEGIN -->
-| Symbol | Spec |
+| Symbol | Defined in |
 | --- | --- |
-| `Cookie` | [.aw/tech-design/projects/httpkit/request-response.md](.aw/tech-design/projects/httpkit/request-response.md) |
-| `HTTPException` | [.aw/tech-design/projects/httpkit/http-exception.md](.aw/tech-design/projects/httpkit/http-exception.md) |
-| `HealthCheck` | [.aw/tech-design/projects/httpkit/health.md](.aw/tech-design/projects/httpkit/health.md) |
-| `HealthManager` | [.aw/tech-design/projects/httpkit/health.md](.aw/tech-design/projects/httpkit/health.md) |
-| `Request` | [.aw/tech-design/projects/httpkit/request-response.md](.aw/tech-design/projects/httpkit/request-response.md) |
-| `Response` | [.aw/tech-design/projects/httpkit/request-response.md](.aw/tech-design/projects/httpkit/request-response.md) |
-<!-- CODEGEN-END -->
+| `Cookie` | [src/request_response.rs](src/request_response.rs) |
+| `HTTPException` | [src/http_exception.rs](src/http_exception.rs) |
+| `HealthCheck` | [src/health.rs](src/health.rs) |
+| `HealthManager` | [src/health.rs](src/health.rs) |
+| `Request` | [src/request_response.rs](src/request_response.rs) |
+| `Response` | [src/request_response.rs](src/request_response.rs) |
+
+The column pointed at `.aw/tech-design/projects/httpkit/*.md` until 2026-08-17.
+Those files were never in this checkout, and the generator that wrote this table
+between `CODEGEN` markers was deleted with the `aw` binary, so the markers went
+with it. The `.rs` file is the authoring surface now.
 
 ## Native Host Boundary
 

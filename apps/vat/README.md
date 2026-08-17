@@ -28,7 +28,9 @@ cleans up according to the run policy.
 
 ## Capabilities
 
-Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
+Nothing reads the tables below. The capability gate that validated their
+shape was deleted with the `aw` binary, so the shape is convention now and
+the commands named in each row are the only part that runs.
 
 ### Capability Index
 
@@ -123,7 +125,6 @@ Gate Inventory:
 | Traceability coverage | 95.6% |
 | External-contract gate | passed, 6/6 |
 | Test gate | `cargo test -p vat` passed |
-| Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
 
 ## What vat is *not*
 
