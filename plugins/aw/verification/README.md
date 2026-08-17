@@ -80,6 +80,8 @@ directory for a file none of them owns.
 | `probe_plugin_root.py` | a script that only resolves the repository when it happens to live inside one |
 | `probe_local_verbs.py` | an `adopt` that overwrites, or an id parser that invents a number |
 | `check_meta_flow.py` | a META-doc rule that fires on nothing, or on everything — a marker whose producer is gone, a command for a binary that is gone, a link to a file that is gone, a project README missing the section a reader goes there for |
+| `check_meta_clean.py` | a META-doc in *this* checkout that has rotted — and a certification issued over a population that was never read |
+| `check_meta_clean_negative_control.py` | a ratchet that reports zero because a rule stopped running |
 | `check_review_flow.py` | a verdict that outlives the bytes it was given — or one assembled from a transcript that never carried it |
 | `check_tdd_flow.py` | an `e2e → unit → logic` phase whose green is not attributable to a red the phase before it named |
 
@@ -263,23 +265,40 @@ in the checkout, `M4` a project README missing `## Brief` or `## Capabilities`.
 The population is `git ls-files`, so it is the checkout you are standing in and
 never a scratch file under an ignored build directory.
 
-Today that is **103 findings across 80 files** — `M1` 66, `M2` 31, `M3` 6,
-`M4` 0 — over 182 documents and the 62 directories that hold both a `README.md`
-and a `CONTRIBUTING.md`. `check_meta_flow.py` deliberately does **not** pin any
-of those numbers. They are meant to fall, and a gate that pins them goes red on
+The first run reported **103 findings across 80 files** — `M1` 66, `M2` 31,
+`M3` 6, `M4` 0 — over 182 documents and the 62 directories that hold both a
+`README.md` and a `CONTRIBUTING.md`. That is **0** now, and the difference
+between those two states is why there are two gates rather than one.
+
+`check_meta_flow.py` measures the **detector** and deliberately pins none of
+those numbers: they were meant to fall, and a gate that pins them goes red on
 the fix. What it pins is that each rule fires on its own defect and on nothing
 else, in a `tempfile` git repository holding one rotten project, one clean one
 as the shared negative control, and one untracked directory that must not be
 scanned at all.
 
+`check_meta_clean.py` measures the **tree**, and it exists only because the
+count reached zero. A ratchet authored while its subject is red is a ratchet
+with a tolerated-failure list, and a tolerated-failure list is where a genuine
+regression goes to hide; this one has none and the tolerated set stays empty.
+Its own false-green modes are the two that a zero cannot distinguish itself
+from. A population that collapsed — `git ls-files` returning nothing prints
+`=> CLEAN` and exits 0 having read no document at all — is refused by
+cross-checking the reported count against a second listing and against a floor.
+A rule that stopped running is refused by proving, in the same invocation and
+before the tree is certified, that all four still reach a throwaway repository
+carrying one defect apiece. Its sibling control then rots two real `apps/cube`
+documents, one rule at a time, and requires exactly that rule's row plus the
+exit-code row to go red, restoring each by sha256.
+
 `M1`'s population is the whole rule. `PRODUCERS` is empty — not as a stub, but
 because the verb that wrote those blocks was deleted with the crate that carried
-it — so all 66 marker pairs are orphaned *by derivation*. The gate declares a
+it — so all 66 marker pairs were orphaned *by derivation*. The gate declares a
 producer into that table and requires `M1` to stop firing for that name, which
 is the only way to tell "no producer exists" apart from "the lookup is broken".
-`M4`'s live population is 0, so its discrimination comes entirely from the
-fixture; a rule measured only against a repository that does not exhibit it is a
-rule nobody has watched fire.
+`M4`'s live population was 0 even before the cleanup, so its discrimination
+comes entirely from the fixture; a rule measured only against a repository that
+does not exhibit it is a rule nobody has watched fire.
 
 Three of the four rules were wrong when first run, and each was caught by
 running it rather than by reading it. All three are `M3`- and `M2`-shaped —

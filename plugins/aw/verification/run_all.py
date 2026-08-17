@@ -65,10 +65,25 @@ SUITE = [
     # it loaded, so it writes nothing any gate here reads.
     #
     # What it asserts is that each rule fires on its own defect and on nothing
-    # else. It deliberately does *not* assert that this checkout is clean --
-    # `meta.py check` reports 103 findings today, and pinning that number would
-    # make the gate go red on the fix.
+    # else -- the detector, not the tree.
     ("check_meta_flow.py", None),
+    # The tree, which is the pair above's answer applied to this checkout: no
+    # findings, over a population that is checked for having been read at all.
+    # It is a separate gate rather than four more rows on `check_meta_flow.py`
+    # because the two reds mean opposite things -- one says the detector broke
+    # and nothing it reported can be trusted, the other says the detector is
+    # fine and a document rotted -- and the suite's output is a filename.
+    #
+    # It is also the one ratchet here that could not be written until its
+    # subject was already green: `meta.py check` reported 103 findings when the
+    # validator landed, and a gate that lands red is a gate that joins the pile
+    # of pre-existing failures nobody reads. So it went in one commit later,
+    # with no tolerated-failure list, and the tolerated set stays empty.
+    #
+    # Exempt from the ordering rule for a different reason than the flow gates:
+    # its control does mutate real tracked files, but they are two `apps/cube`
+    # documents that nothing else in this suite reads or writes.
+    ("check_meta_clean.py", "check_meta_clean_negative_control.py"),
     # Exempt from the ordering rule above, and last because they are the
     # slowest. They mutate nothing in this checkout: each fixture is a
     # `tempfile` tree with its own `aw.toml` and its own git repository, so it
