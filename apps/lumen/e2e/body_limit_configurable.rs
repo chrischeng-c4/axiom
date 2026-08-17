@@ -167,3 +167,26 @@ fn crd_validation_rejects_out_of_range_body_limit() {
         assert!(err.contains(&MAX_BODY_LIMIT_BYTES.to_string()));
     }
 }
+
+#[tokio::test]
+async fn under_limit_body_is_not_refused_by_body_limit_layer() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let limit_1mib = 1024 * 1024;
+    std::env::set_var("LUMEN_BODY_LIMIT_BYTES", limit_1mib.to_string());
+
+    let app = app_router();
+
+    let under_limit_len = 4096;
+    let req = Request::builder()
+        .method("POST")
+        .uri("/admin/reshard:apply")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, under_limit_len.to_string())
+        .body(Body::from(vec![b'a'; under_limit_len]))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_ne!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    std::env::remove_var("LUMEN_BODY_LIMIT_BYTES");
+}
