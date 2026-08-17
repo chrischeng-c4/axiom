@@ -248,3 +248,7 @@ path = "e2e/vector_filtered_recall_after_replace.rs"
 name = "feature_gated_targets_are_registered"
 path = "e2e/feature_gated_targets_are_registered.rs"
 
+[[test]]
+name = "capacity_catalog_client"
+path = "e2e/capacity_catalog_client.rs"
+
