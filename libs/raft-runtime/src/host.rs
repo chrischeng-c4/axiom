@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -223,17 +223,39 @@ impl std::fmt::Display for StorageFailed {
 
 impl std::error::Error for StorageFailed {}
 
+/// Why a leader refused a learner admission request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AdmissionRefused {
+    Unroutable { target: NodeId },
+    NotLeaderOrTransferInFlight,
+}
+
+impl std::fmt::Display for AdmissionRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AdmissionRefused::Unroutable { target } => {
+                write!(f, "no address registered for peer {target}")
+            }
+            AdmissionRefused::NotLeaderOrTransferInFlight => {
+                write!(f, "not leader or leadership transfer in flight")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AdmissionRefused {}
+
 pub(crate) struct Shared {
     pub(crate) id: NodeId,
     pub(crate) group_id: GroupId,
     pub(crate) node: Mutex<RaftNode>,
     pub(crate) store: RaftStore,
     pub(crate) sm: Arc<dyn RaftStateMachine>,
-    pub(crate) peers: HashMap<NodeId, String>,
+    pub(crate) peers: StdRwLock<HashMap<NodeId, String>>,
     /// One coalescing RPC lane per peer. Raft's latest AppendEntries contains
     /// the complete missing suffix, so retaining every intermediate request
     /// only creates out-of-order progress and repeated durable writes.
-    pub(crate) peer_lanes: HashMap<NodeId, Arc<PeerLane>>,
+    pub(crate) peer_lanes: StdRwLock<HashMap<NodeId, Arc<PeerLane>>>,
     pub(crate) client: reqwest::Client,
     pub(crate) peer_transport: Option<PeerTransport>,
     /// Fires (with the SM's applied head) whenever apply advances.
@@ -357,7 +379,13 @@ impl Shared {
 
     fn leader_url(&self, node: &RaftNode) -> (Option<NodeId>, Option<String>) {
         let leader = node.leader();
-        let url = leader.and_then(|l| self.peers.get(&l).cloned());
+        let url = leader.and_then(|l| {
+            self.peers
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&l)
+                .cloned()
+        });
         (leader, url)
     }
 
@@ -369,7 +397,29 @@ impl Shared {
             n.take_outgoing()
         };
         for o in outs {
-            let Some(lane) = self.peer_lanes.get(&o.to).cloned() else {
+            let lane = {
+                let lanes = self.peer_lanes.read().unwrap_or_else(|p| p.into_inner());
+                if let Some(l) = lanes.get(&o.to).cloned() {
+                    Some(l)
+                } else if self
+                    .peers
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .contains_key(&o.to)
+                {
+                    drop(lanes);
+                    let mut lanes = self.peer_lanes.write().unwrap_or_else(|p| p.into_inner());
+                    Some(
+                        lanes
+                            .entry(o.to)
+                            .or_insert_with(|| Arc::new(PeerLane::default()))
+                            .clone(),
+                    )
+                } else {
+                    None
+                }
+            };
+            let Some(lane) = lane else {
                 continue;
             };
             let spawn_worker = {
@@ -408,7 +458,13 @@ impl Shared {
     }
 
     async fn send_request(self: Arc<Self>, to: NodeId, msg: RaftMsg) {
-        let Some(base) = self.peers.get(&to).cloned() else {
+        let Some(base) = self
+            .peers
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&to)
+            .cloned()
+        else {
             return;
         };
         let reply: Option<RaftMsg> = match msg {
@@ -679,8 +735,8 @@ impl RaftHost {
             node: Mutex::new(node),
             store,
             sm,
-            peers,
-            peer_lanes,
+            peers: StdRwLock::new(peers),
+            peer_lanes: StdRwLock::new(peer_lanes),
             client,
             peer_transport,
             applied_tx,
@@ -787,6 +843,53 @@ impl RaftHost {
         target: NodeId,
     ) -> std::result::Result<Index, RemovalRefused> {
         let res = self.shared.node.lock().await.remove_member(target);
+        if res.is_ok() {
+            self.shared.flush().await;
+        }
+        res
+    }
+    /// Add or update the address of a peer (#3650).
+    pub async fn upsert_peer(&self, peer: NodeId, url: String) {
+        self.shared
+            .peers
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(peer, url);
+    }
+    /// Remove the address of a peer (#3650).
+    pub async fn forget_peer(&self, peer: NodeId) {
+        self.shared
+            .peers
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&peer);
+        self.shared
+            .peer_lanes
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&peer);
+    }
+    /// Admit a new learner to the group (#3650).
+    pub async fn add_learner(
+        &self,
+        target: NodeId,
+    ) -> std::result::Result<Index, AdmissionRefused> {
+        let is_routable = self
+            .shared
+            .peers
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(&target);
+        if !is_routable {
+            return Err(AdmissionRefused::Unroutable { target });
+        }
+        let res = {
+            let mut node = self.shared.node.lock().await;
+            match node.add_learner(target) {
+                Some(idx) => Ok(idx),
+                None => Err(AdmissionRefused::NotLeaderOrTransferInFlight),
+            }
+        };
         if res.is_ok() {
             self.shared.flush().await;
         }
