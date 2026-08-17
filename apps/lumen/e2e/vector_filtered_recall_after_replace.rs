@@ -202,3 +202,93 @@ async fn unfiltered_knn_returns_the_exact_top_k_after_one_replace() {
     let want: Vec<String> = (0..K).map(|i| format!("v{i:02}")).collect();
     assert_eq!(ids, want);
 }
+
+#[test]
+fn permissive_knn_after_replace_answers_from_graph_without_exact_scan() {
+    use lumen::types::{VectorBackend, VectorMetric, VectorSpec};
+    use lumen::vector_index::{HnswCpuIndex, VectorIndex};
+
+    let spec = VectorSpec {
+        dim: 3,
+        metric: VectorMetric::L2,
+        backend: VectorBackend::HnswCpu,
+        quantize: None,
+    };
+    let index = HnswCpuIndex::new(spec);
+
+    for i in 0..CORPUS {
+        let eid = format!("v{i:02}");
+        index
+            .add(&eid, &[i as f32, 0.0, 0.0])
+            .expect("initial insert");
+    }
+    for i in 0..CORPUS {
+        let eid = format!("v{i:02}");
+        index
+            .add(&eid, &[i as f32, 0.0, 0.0])
+            .expect("replace insert");
+    }
+
+    let before = index.exact_scan_fallbacks();
+    let hits = index
+        .search_knn_filtered(&[0.0, 0.0, 0.0], K, &|_| true)
+        .expect("search knn");
+    let after = index.exact_scan_fallbacks();
+
+    let ids: Vec<String> = hits.into_iter().map(|(eid, _)| eid).collect();
+    let expected = vec![
+        "v00".to_string(),
+        "v01".to_string(),
+        "v02".to_string(),
+        "v03".to_string(),
+        "v04".to_string(),
+    ];
+    assert_eq!(ids, expected);
+    assert_eq!(
+        after, before,
+        "permissive query on clean rebuilt graph must answer from traversal without exact scan fallback"
+    );
+}
+
+#[test]
+fn selective_knn_with_fewer_than_k_allowed_after_replace_falls_back_to_exact_scan() {
+    use lumen::types::{VectorBackend, VectorMetric, VectorSpec};
+    use lumen::vector_index::{HnswCpuIndex, VectorIndex};
+
+    let spec = VectorSpec {
+        dim: 3,
+        metric: VectorMetric::L2,
+        backend: VectorBackend::HnswCpu,
+        quantize: None,
+    };
+    let index = HnswCpuIndex::new(spec);
+
+    for i in 0..CORPUS {
+        let eid = format!("v{i:02}");
+        index
+            .add(&eid, &[i as f32, 0.0, 0.0])
+            .expect("initial insert");
+    }
+    for i in 0..CORPUS {
+        let eid = format!("v{i:02}");
+        index
+            .add(&eid, &[i as f32, 0.0, 0.0])
+            .expect("replace insert");
+    }
+
+    let allowed = ["v02", "v04", "v07"];
+    let before = index.exact_scan_fallbacks();
+    let hits = index
+        .search_knn_filtered(&[0.0, 0.0, 0.0], K, &|eid| allowed.contains(&eid))
+        .expect("search knn");
+    let after = index.exact_scan_fallbacks();
+
+    let ids: Vec<String> = hits.into_iter().map(|(eid, _)| eid).collect();
+    let expected = vec!["v02".to_string(), "v04".to_string(), "v07".to_string()];
+    assert_eq!(ids, expected);
+    assert_eq!(
+        after,
+        before + 1,
+        "allow-set smaller than k cannot satisfy out.len() == k and must fall back to exact scan"
+    );
+}
