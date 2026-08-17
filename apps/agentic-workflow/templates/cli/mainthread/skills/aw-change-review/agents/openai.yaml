@@ -1,4 +1,0 @@
-interface:
-  display_name: "AW Change Review"
-  short_description: "Independent review for multi-agent changes"
-  default_prompt: "Use $aw-change-review to independently review the current agent-authored change set."

@@ -76,9 +76,10 @@ roots, and the rules that refuse against them, and it is the single copy of
 those rules — they are deliberately not repeated here.
 
 Two things that will otherwise waste your time. First, `aw` names the plugin at
-`plugins/aw`, not the frozen Rust application at `apps/agentic-workflow` that
-used to carry the name — and that application still builds an `aw` binary that
-is on `PATH`, so an `aw` verb you reach for will run and change things rather
-than fail. Second, repo-wide `CONTRIBUTING.md` still documents that binary's
-lifecycle at length, so treat its lifecycle, CLI, and META-doc chapters as a
-record rather than as instructions.
+`plugins/aw` and nothing else. The Rust application that used to carry the name
+is deleted and its binary is uninstalled, so an `aw` verb you reach for fails
+with "command not found" — correct, but it tells you nothing about what to
+reach for instead. Second, repo-wide `CONTRIBUTING.md` still documents that
+binary's lifecycle at length, naming source files that no longer exist, so
+treat its lifecycle, CLI, and META-doc chapters as a record rather than as
+instructions.

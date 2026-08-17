@@ -39,10 +39,12 @@ TOML, `tomllib` is 3.11+, and a bare `python3` is 3.9 on at least one machine
 here — where the failure is a `ModuleNotFoundError` traceback that reads like a
 broken script rather than a wrong interpreter.
 
-**A binary named `aw` is nevertheless on `PATH`.** A stray `aw wi …` does not
-fail with "command not found" — it runs, mutates the tracker, and prints
-something plausible. There is no verb to reach for; the danger is that reaching
-for one appears to work.
+There is no `aw` binary. The Rust application at `apps/agentic-workflow` that
+carried the name is deleted, and `cargo uninstall agentic-workflow` removed the
+copy on `PATH` — so a stray `aw wi …` now fails with "command not found"
+instead of running, mutating the tracker, and printing something plausible.
+That failure is the whole of the enforcement; nothing rewrites an `aw` verb
+into the script that replaced it.
 
 ## Skills
 

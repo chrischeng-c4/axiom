@@ -46,10 +46,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agy_dispatch  # noqa: E402
 
-# The same grammar `apps/agentic-workflow/src/issues/ghan.rs` validates. It is
-# duplicated rather than shared because the validator is Rust in the product and
-# this is controller tooling; the coupling is the section names, and a rename
-# there turns into a refusal here rather than a wrong projection.
+# The same grammar `plugins/aw/scripts/change.py` validates -- it used to be
+# `apps/agentic-workflow/src/issues/ghan.rs`, which is deleted, and the plugin
+# is now the only copy. Duplicated rather than imported because that script is
+# a facade with its own repo resolution and this is controller tooling; the
+# coupling is the section names, and a rename there turns into a refusal here
+# rather than a wrong projection.
 GOAL = "## Goal"
 HOW = "## How"
 ACCEPTANCE = "## Acceptance"

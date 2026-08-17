@@ -47,7 +47,7 @@ path = "tech-design"
 #
 # Routing keys per `[[projects]]`:
 #
-#   • path     — source-tree root for the project (e.g. `apps/agentic-workflow`,
+#   • path     — source-tree root for the project (e.g. `apps/preview`,
 #                `projects/conductor`). Hooks route "which project
 #                owns this source file?" by longest-prefix match.
 #   • td_path  — Optional TD spec root override, full repo-relative path.
@@ -89,22 +89,6 @@ path = "tech-design"
 # every workspace it owns, and (if applicable) remove the auto entry
 # of the same name from the AW SYNC block below.
 # ─────────────────────────────────────────────────────────────────────────────
-
-[[projects]]
-name = "agentic-workflow"
-aliases = ["aw"]
-path = "apps/agentic-workflow"
-td_path = "apps/agentic-workflow/tech-design"
-cap_path = "apps/agentic-workflow/CAPABILITIES.md"
-label = "app:agentic-workflow"
-
-[[projects.workspaces]]
-name = "agentic-workflow"
-paths = ["apps/agentic-workflow/**"]
-target = "rust"
-test_cmd = "cargo test -p agentic-workflow"
-verify_cold = true
-codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "todo-app"
@@ -708,16 +692,6 @@ path = "crates/cclab-schema-mamba"
 paths = ["crates/cclab-schema-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-schema-mamba"
-verify_cold = false
-
-[[projects]]
-name = "cclab-server"
-path = "crates/cclab-server"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-server/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-server"
 verify_cold = false
 
 [[projects]]
