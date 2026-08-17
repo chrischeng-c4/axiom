@@ -508,6 +508,26 @@ impl RaftNode {
         self.conf_state.outgoing.is_some()
     }
 
+    /// Return an eligible caught-up voter to receive leadership, or `None` if
+    /// this node is not the leader, is the only voter, or no other voter has
+    /// replicated this node's whole log (#3664).
+    pub fn handoff_candidate(&self) -> Option<NodeId> {
+        if self.role != Role::Leader {
+            return None;
+        }
+        let last_index = self.last_index();
+        self.conf_state
+            .membership
+            .voters
+            .iter()
+            .copied()
+            .filter(|&id| id != self.id)
+            .find(|&id| {
+                let matched = self.match_index.get(&id).copied().unwrap_or(0);
+                matched >= last_index
+            })
+    }
+
     /// Transfer leadership to a named caught-up voter (#3571).
     pub fn transfer_leadership(&mut self, target: NodeId) -> Result<(), TransferRefused> {
         if self.role != Role::Leader {

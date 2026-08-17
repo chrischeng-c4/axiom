@@ -246,6 +246,15 @@ pub enum ProposalOutcome {
     },
 }
 
+/// The outcome of an attempt to hand off leadership before shutdown (#3664).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LeadershipHandoff {
+    Transferred { target: NodeId },
+    NotLeader,
+    SoleVoter,
+    NoCaughtUpVoter { voters: usize },
+}
+
 /// Why a leader refused a learner admission request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdmissionRefused {
@@ -842,6 +851,7 @@ impl RaftHost {
     /// torn down with the Tokio runtime.
     pub async fn shutdown(&self) -> Result<()> {
         self.quiesce_proposals();
+        self.handoff_leadership().await;
         let tasks = self.tasks.lock().expect("raft task mutex poisoned").take();
         if let Some((tick, pump)) = tasks {
             tick.abort();
@@ -867,6 +877,31 @@ impl RaftHost {
     }
     pub async fn leader(&self) -> Option<NodeId> {
         self.shared.node.lock().await.leader()
+    }
+    /// Hand leadership to an eligible caught-up voter before shutdown (#3664).
+    pub async fn handoff_leadership(&self) -> LeadershipHandoff {
+        let (outcome, transferred) = {
+            let mut node = self.shared.node.lock().await;
+            if !node.is_leader() {
+                (LeadershipHandoff::NotLeader, false)
+            } else {
+                let voters = node.conf_state().membership.voters.len();
+                if voters <= 1 {
+                    (LeadershipHandoff::SoleVoter, false)
+                } else if let Some(target) = node.handoff_candidate() {
+                    match node.transfer_leadership(target) {
+                        Ok(()) => (LeadershipHandoff::Transferred { target }, true),
+                        Err(_) => (LeadershipHandoff::NoCaughtUpVoter { voters }, false),
+                    }
+                } else {
+                    (LeadershipHandoff::NoCaughtUpVoter { voters }, false)
+                }
+            }
+        };
+        if transferred {
+            self.shared.flush().await;
+        }
+        outcome
     }
     /// Transfer leadership to a named caught-up voter (#3586).
     pub async fn transfer_leadership(

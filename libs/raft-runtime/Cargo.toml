@@ -88,6 +88,10 @@ path = "e2e/proposal_admission_boundary.rs"
 name = "proposal_outcomes"
 path = "e2e/proposal_outcomes.rs"
 
+[[test]]
+name = "shutdown_handoff"
+path = "e2e/shutdown_handoff.rs"
+
 
 [dependencies]
 raft-core = { path = "../raft-core" }

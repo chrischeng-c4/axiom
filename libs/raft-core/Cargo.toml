@@ -61,3 +61,7 @@ path = "e2e/leader_self_demotion.rs"
 name = "source_ownership"
 path = "e2e/source_ownership.rs"
 
+[[test]]
+name = "handoff_selection"
+path = "e2e/handoff_selection.rs"
+
