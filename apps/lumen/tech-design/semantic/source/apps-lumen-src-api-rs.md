@@ -80,6 +80,7 @@ Public API manifest for `apps/lumen/src/api.rs` generated from AST during Score 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
+
 ````rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#rust-source-unit
 // CODEGEN-BEGIN
@@ -946,16 +947,16 @@ pub fn router_with_admission(
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
         // guard); 8MiB is the broker payload budget. Enforces the cap at the HTTP
         // layer with a structured 413 envelope and streams/chunked bodies bounded
-        // mid-read, replacing the prior axum::extract::DefaultBodyLimit which only
-        // caught Content-Length headers. Shared with
-        // `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2) so the
-        // reshard driver's oversize-batch detection can never drift from the
+        // mid-read, disabling axum's extractor-side default so this layer governs.
+        // Shared with `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2)
+        // so the reshard driver's oversize-batch detection can never drift from the
         // limit actually enforced here. Probe routes (/healthz, /readyz, /metrics,
         // /version, /docs) are unaffected as they are merged separately and stay
         // unbounded.
         .layer(service_http::body_limit_layer(
             crate::reshard::body_limit_bytes_from_env(),
-        ));
+        ))
+        .layer(axum::extract::DefaultBodyLimit::disable());
     let data_plane = match admission {
         Some(controller) => data_plane.route_layer(from_fn_with_state(
             service_http::AdmissionMiddleware::new(controller, |request| {

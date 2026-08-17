@@ -163,7 +163,9 @@ fn crd_validation_rejects_out_of_range_body_limit() {
 
     for invalid in [0, 512, MIN_BODY_LIMIT_BYTES - 1, MAX_BODY_LIMIT_BYTES + 1] {
         spec.body_limit_bytes = Some(invalid);
-        let err = spec.validate().expect_err("should reject invalid body limit");
+        let err = spec
+            .validate()
+            .expect_err("should reject invalid body limit");
         assert!(err.contains("bodyLimitBytes"));
         assert!(err.contains(&MIN_BODY_LIMIT_BYTES.to_string()));
         assert!(err.contains(&MAX_BODY_LIMIT_BYTES.to_string()));
@@ -179,6 +181,29 @@ async fn under_limit_body_is_not_refused_by_body_limit_layer() {
     let app = app_router();
 
     let under_limit_len = 4096;
+    let req = Request::builder()
+        .method("POST")
+        .uri("/admin/reshard:apply")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, under_limit_len.to_string())
+        .body(Body::from(vec![b'a'; under_limit_len]))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_ne!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    std::env::remove_var("LUMEN_BODY_LIMIT_BYTES");
+}
+
+#[tokio::test]
+async fn configured_limit_above_two_mib_accepts_a_body_under_it() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let limit_4mib = 4 * 1024 * 1024;
+    std::env::set_var("LUMEN_BODY_LIMIT_BYTES", limit_4mib.to_string());
+
+    let app = app_router();
+
+    let under_limit_len = 3 * 1024 * 1024;
     let req = Request::builder()
         .method("POST")
         .uri("/admin/reshard:apply")
