@@ -10,6 +10,11 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::service::{ConditionFact, ConditionStatus};
+
+/// Condition type for termination budget policy validation.
+pub const TERMINATION_BUDGET_CONDITION: &str = "TerminationBudgetValid";
+
 /// Standard HTTP path for liveness probes.
 pub const HEALTH_ENDPOINT_PATH: &str = "/healthz";
 /// Standard HTTP path for readiness and startup probes.
@@ -166,6 +171,16 @@ impl TerminationBudget {
             "successThreshold": 1,
         })
     }
+
+    /// Return the Kubernetes condition representing this validated termination budget.
+    pub fn condition(&self) -> ConditionFact {
+        self.raw_policy().condition()
+    }
+
+    /// Return the condition set for this validated termination budget.
+    pub fn conditions(&self) -> Vec<ConditionFact> {
+        vec![self.condition()]
+    }
 }
 
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
@@ -201,7 +216,43 @@ pub enum LifecyclePolicyError {
     },
 }
 
+impl LifecyclePolicyError {
+    /// The stable machine-readable CamelCase reason for this validation error.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::ZeroTotalGrace => "ZeroTotalGrace",
+            Self::BudgetExceedsTotal { .. } => "BudgetExceedsTotal",
+            Self::RuntimeBelowMinimumHook { .. } => "RuntimeBelowMinimumHook",
+            Self::Overflow => "Overflow",
+            Self::InvalidProbeTiming { .. } => "InvalidProbeTiming",
+        }
+    }
+}
+
 impl LifecyclePolicy {
+    /// Return the Kubernetes condition describing this termination budget policy.
+    pub fn condition(&self) -> ConditionFact {
+        match self.validate() {
+            Ok(_) => ConditionFact::new(
+                TERMINATION_BUDGET_CONDITION,
+                ConditionStatus::True,
+                "Valid",
+                "termination budget is valid",
+            ),
+            Err(err) => ConditionFact::new(
+                TERMINATION_BUDGET_CONDITION,
+                ConditionStatus::False,
+                err.reason(),
+                err.to_string(),
+            ),
+        }
+    }
+
+    /// Return the condition set for this policy (a single [`ConditionFact`] in a [`Vec`]).
+    pub fn conditions(&self) -> Vec<ConditionFact> {
+        vec![self.condition()]
+    }
+
     pub fn validate(&self) -> Result<TerminationBudget, LifecyclePolicyError> {
         if self.total_grace_period_seconds == 0 {
             return Err(LifecyclePolicyError::ZeroTotalGrace);
