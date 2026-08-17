@@ -76,6 +76,10 @@ path = "e2e/membership_changes.rs"
 name = "member_admission"
 path = "e2e/member_admission.rs"
 
+[[test]]
+name = "undeliverable_messages"
+path = "e2e/undeliverable_messages.rs"
+
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }

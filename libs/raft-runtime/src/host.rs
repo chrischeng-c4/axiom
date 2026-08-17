@@ -10,7 +10,7 @@
 //! always sound.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
 
@@ -198,6 +198,8 @@ pub struct RaftStatus {
     pub incoming_voters: Option<Vec<NodeId>>,
     pub learners: Vec<NodeId>,
     pub membership_phase: MembershipPhase,
+    pub undeliverable_never_addressed: u64,
+    pub undeliverable_withdrawn_address: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,6 +265,8 @@ pub(crate) struct Shared {
     pub(crate) cfg: HostConfig,
     pub(crate) rpc_tracker: Arc<RpcTracker>,
     pub(crate) latched_failure: StdMutex<Option<StorageFailed>>,
+    pub(crate) undeliverable_never_addressed: AtomicU64,
+    pub(crate) undeliverable_withdrawn_address: AtomicU64,
 }
 
 #[derive(Default)]
@@ -420,6 +424,13 @@ impl Shared {
                 }
             };
             let Some(lane) = lane else {
+                self.undeliverable_never_addressed
+                    .fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(
+                    target = o.to,
+                    group = %self.group_id.0,
+                    "raft: discarded message to peer with no registered address"
+                );
                 continue;
             };
             let spawn_worker = {
@@ -465,6 +476,13 @@ impl Shared {
             .get(&to)
             .cloned()
         else {
+            self.undeliverable_withdrawn_address
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                target = to,
+                group = %self.group_id.0,
+                "raft: discarded in-flight message to withdrawn peer address"
+            );
             return;
         };
         let reply: Option<RaftMsg> = match msg {
@@ -743,6 +761,8 @@ impl RaftHost {
             cfg,
             rpc_tracker: Arc::new(RpcTracker::default()),
             latched_failure: StdMutex::new(None),
+            undeliverable_never_addressed: AtomicU64::new(0),
+            undeliverable_withdrawn_address: AtomicU64::new(0),
         });
 
         let s = Arc::clone(&shared);
@@ -1222,6 +1242,12 @@ pub(crate) async fn host_status(s: &Shared) -> RaftStatus {
         incoming_voters,
         learners,
         membership_phase,
+        undeliverable_never_addressed: s
+            .undeliverable_never_addressed
+            .load(Ordering::Relaxed),
+        undeliverable_withdrawn_address: s
+            .undeliverable_withdrawn_address
+            .load(Ordering::Relaxed),
     }
 }
 
