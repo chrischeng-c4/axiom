@@ -51,7 +51,10 @@ pub use store::{FsyncPolicy, RaftStore};
 pub use view::{ClusterStateView, PeerAddr, RaftRole};
 
 // Re-export the raft_core surface a host consumer needs (membership, ids).
-pub use raft_core::{auto_membership, Index, Membership, NodeId, Term, TransferRefused};
+pub use raft_core::{
+    auto_membership, DemotionRefused, Index, Membership, NodeId, PromotionRefused, RemovalRefused,
+    Term, TransferRefused,
+};
 
 #[cfg(test)]
 mod tests {
