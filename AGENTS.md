@@ -75,11 +75,13 @@ Then read `CLAUDE.md`. It holds the work-item lifecycle, the per-phase write
 roots, and the rules that refuse against them, and it is the single copy of
 those rules — they are deliberately not repeated here.
 
-Two things that will otherwise waste your time. First, `aw` names the plugin at
+One thing that will otherwise waste your time: `aw` names the plugin at
 `plugins/aw` and nothing else. The Rust application that used to carry the name
 is deleted and its binary is uninstalled, so an `aw` verb you reach for fails
 with "command not found" — correct, but it tells you nothing about what to
-reach for instead. Second, repo-wide `CONTRIBUTING.md` still documents that
-binary's lifecycle at length, naming source files that no longer exist, so
-treat its lifecycle, CLI, and META-doc chapters as a record rather than as
-instructions.
+reach for instead.
+
+Repo-wide `CONTRIBUTING.md` has been reconciled against that deletion, and the
+result is that several of its chapters now say plainly that a rule is policy
+with nothing enforcing it. Read those sentences literally. A checklist there
+that no longer has a checker behind it is not a gate you may cite as evidence.

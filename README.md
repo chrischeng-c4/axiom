@@ -6,7 +6,6 @@ details.
 
 ## Projects
 
-<!-- aw:projects-table:start -->
 | Project | What it is |
 |---------|------------|
 | [cap](apps/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
@@ -29,7 +28,9 @@ details.
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
 | [pgpool](apps/pgpool/README.md) | `pgpool` is the working app id for Axiom's Kubernetes-native PostgreSQL connection pooler. |
 | [meter](apps/meter/README.md) | Local resource measurement for agent-driven Rust development. |
-<!-- aw:projects-table:end -->
+
+This table is hand-maintained. It used to be spliced in from a generator that no
+longer exists, so adding a project under `apps/` adds no row on its own.
 
 ## Shared Libraries
 

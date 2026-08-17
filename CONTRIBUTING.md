@@ -209,8 +209,8 @@ headers, the CPython oracle, and the perf-baseline flow.
 ### Why a structure at all
 
 Sections without a machine consumer get filled with boilerplate. This is
-measured, not asserted. Across the 143 open `type=change` work items in this
-repository:
+measured, not asserted. Across the 143 open `type=change` work items this rule
+was written against:
 
 | Section | Filled with a pure title echo |
 |---|---|
@@ -221,12 +221,18 @@ repository:
 
 Only 7% carry an executable gate command and 41% carry a `file:line` coordinate.
 
-The cause is upstream of the authors: `default_structured_issue_body`
-(`apps/agentic-workflow/src/cli/issues.rs`) interpolates the title into every
-section it emits — `- AC1: {title} is implemented and verified.` — and the sole
-anti-boilerplate check, `is_real_planning_value`, rejects only seven literals
-(`(fill)`, `(replace-this)`, `tbd`, `todo`, `maybe`, `unclear`, `uncertain`). A
-title echo is accepted by construction.
+The cause was upstream of the authors: the generator those bodies came from,
+`default_structured_issue_body`, interpolated the title into every section it
+emitted — `- AC1: {title} is implemented and verified.` — and its sole
+anti-boilerplate check rejected only seven literals (`(fill)`,
+`(replace-this)`, `tbd`, `todo`, `maybe`, `unclear`, `uncertain`). A title echo
+was accepted by construction.
+
+That generator is deleted with the crate that held it. `plugins/aw/scripts/change.py
+skeleton` emits the empty GHAN template in its place and `change.py validate`
+is what refuses a body now. The numbers above still describe the tracker,
+though — those bodies were written under the old generator and nothing has
+rewritten them.
 
 So the rule that generates GHAN's shape is: **every section MUST name the
 consumer that reads it and the condition under which that consumer refuses it.**
@@ -234,33 +240,33 @@ A section with no refusal condition is decoration and MUST NOT be added.
 
 ### The layering GHAN sits in
 
-GHAN is the **authored** layer only. Lifecycle progress — whether EC, TD, and CB
-have been committed, and whether each was verified — is the **machine** layer and
-lives in the `ChangeLifecycle` carrier
-(`apps/agentic-workflow/src/cli/change_lifecycle.rs`, persisted at
-`<workspace runtime>/causal-lifecycle/<slug>.json`), never in authored prose:
+GHAN is the **authored** layer only. Phase progress — which of `e2e`, `unit`,
+and `logic` has landed, and what each was measured against — is the **machine**
+layer and lives in the trailers those phase commits carry, never in authored
+prose:
 
-- *submitted?* → `active_revisions: BTreeMap<ArtifactKind, Option<ArtifactRevision>>`
-  over `Wi` / `Ec` / `Td` / `Cb`
-- *verified?* → `EvidenceBinding { verifier, bound_tuple, passed, summary }`
-- *verified against which version?* → `bound_tuple.matches(active_tuple)`, where
-  the tuple is `ActiveDigestTuple { wi_digest, ec_digest, td_digest, cb_digest }`
+- *landed?* → the phase's `Refs #<iid>` commit exists in the tree, which is what
+  the next phase's predecessor check looks for.
+- *against which red?* → `E2E-Red:`, `Unit-Red:`, and `Logic-Contract:` name the
+  cases and tests observed failing immediately before, so the following phase's
+  green is attributable to something rather than merely asserted.
+  `plugins/aw/scripts/logic.py:142-153` parses `Unit-Red:` back out and refuses
+  a phase whose predecessor carries no trailer, and separately refuses one whose
+  trailer is empty.
+- *reviewed against which bytes?* → `E2E-Change-Digest:`, which carries
+  `leg.change_digest` — one sha256 over the work-item body **and** every path
+  under review (`plugins/aw/scripts/leg.py:331`).
 
-The third one is why evidence is a digest and not a boolean: change the work
-item, `wi_digest` changes, every binding goes stale, and the lifecycle demands a
-re-verify on its own. `ec: true` cannot un-set itself when its premise moves.
-`aw wi review` already enforces this and names which of the three failed:
-
-```
-stage `review` refused: missing `wi-test` evidence binding
-stage `review` refused: `wi-test` evidence binding is failing
-stage `review` refused: `wi-test` evidence binding is stale
-```
+Two properties of that layer are load-bearing. The digest covers the work item
+as well as the code because the question a reviewer answers is "does this change
+satisfy this work item", so an edit to either side can flip the answer: edit the
+body and the recorded verdict stops matching, and an approval cannot outlive the
+requirement it approved. And the record lives on the commit rather than in a
+state file, so a phase rebased away takes its record with it — a state file
+would go on asserting a red for history that no longer exists.
 
 The two layers meet at exactly one point: **the gate command named in
-`## Acceptance` is the verifier that produces the `EvidenceBinding`.** Everything
-else is independent — the digest is computed after `strip_aw_marker_blocks`, so
-hidden state blocks in a body never perturb it.
+`## Acceptance` is the command the phase runs.** Everything else is independent.
 
 ### The four sections
 
@@ -278,13 +284,20 @@ Each is specified as *required content · machine consumer · refusal conditions
 Not "improve X", not "support Y", not "make Z better". If there is no value to
 name on either side, the work is not yet bounded.
 
-**Consumer.** `looks_too_large_for_atomic_wi`
-(`apps/agentic-workflow/src/issues/planner.rs`) reads `title + goal`, and
-`LoopState.goal` (`apps/agentic-workflow/src/cli/loop_state.rs`), whose declared
-meaning is "the capability gap this loop is driving to closure".
+**Consumer.** `change.py validate` (`plugins/aw/scripts/change.py:289-294`).
 
-**Refused when** there is no observation point; no current value; two independent
-observation points in one sentence; or the text trips the too-large phrase set.
+**Refused when** the section still carries the skeleton placeholder, is written
+as a list, or runs to more than one paragraph. That is the whole of what a
+script can see. The rest of the shape — an observation point, a current value,
+a target value, and exactly one of each — is what `/aw:wi-change-grill`
+interviews for; nothing measures it, so a one-paragraph sentence naming nothing
+passes `validate` and is still an unbounded goal.
+
+The boundedness heuristic that used to back this section — `looks_too_large_for_atomic_wi`,
+a phrase set matched against `title + goal` — is gone rather than ported. It
+lived in the deleted crate's planner instead of in the section schema, and it is
+the single rule the plugin's validator deliberately does not reproduce
+(`change.py:31`).
 
 ---
 
@@ -305,9 +318,12 @@ Block 1 exists because an agent that re-derives what you already measured will
 sometimes derive it wrong, and you will not notice. It is the one thing both
 independently-designed dispatch briefs in this ecosystem put first and lint.
 
-**Consumer.** The change-point list feeds `aw guard` write adjudication and every
-dispatch write contract; the section as a whole feeds the canonical work-item
-digest used for lifecycle drift detection.
+**Consumer.** The change-point list *is* the write contract a dispatch round is
+built from: `.claude/skills/agy-dispatch/scripts/from_wi.py:533` projects each
+path straight into `make_profile.py --write`, and `oracle_findings` refuses a
+round whose brief and profile disagree about that set. The section as a whole
+feeds `leg.change_digest`, so an edit to it invalidates any review verdict
+recorded against the old bytes.
 
 **Refused when** a file path appears without a line or symbol; the current state
 is described with "should"/"probably"/"appears to"; there are zero premises; or
@@ -392,8 +408,8 @@ into one list and neither is enforceable.
   `branch`, `reset`. Restore files by editing them back, not with git.
 - **MUST NOT do.** The moves that manufacture a false green: editing the test
   instead of the implementation; weakening an existing assertion; adding
-  `#[ignore]`/`skip`; narrowing a test selector until it matches nothing; editing
-  a `SPEC-MANAGED` block in the `.rs` without its tech-design mirror.
+  `#[ignore]`/`skip`; narrowing a test selector until it matches nothing (a
+  `cargo test` filter that matches zero tests exits 0).
 
 **Consumer.** The touch list is the complement of the guard allowlist — an
 escaped write is a finding. The do list is the source of a dispatch round's
@@ -435,7 +451,7 @@ scheduler). Planned service placeholders follow the same archetype:
 **`tape`** (topic replay journal), **`defer`** (delayed task dispatch),
 **`cube`** (OLAP service), and **`beam`** (GPU vector database).
 
-Use these portfolio boundaries when creating TDs or assigning agents:
+Use these portfolio boundaries when scoping a work item or assigning an agent:
 
 | Service | Owns | Does not own |
 |---------|------|--------------|
@@ -449,12 +465,12 @@ Use these portfolio boundaries when creating TDs or assigning agents:
 | `lumen` | exact/lexical/semantic/perceptual/duplicate search in one service | OLAP aggregation, vector-only GPU DB ownership |
 
 Capability-profile traits (`[capability.profile].traits` in a project's
-`aw.toml`) derive a baseline of required capabilities from this archetype.
-This table is generated from the `aw` CLI's trait registry — do not hand-edit
-between the markers. Update `cli::doc_mirror::TRAITS` and run the relevant
-meta-doc producer/check after a trait changes.
+`aw.toml`) name a baseline of required capabilities from this archetype. The
+table below used to be spliced in from the `aw` CLI's trait registry; that CLI
+is deleted and nothing reads `[capability.profile]` today, so this is now
+hand-maintained policy — read it as a checklist an author applies, and expect
+no signal when a project drifts from it.
 
-<!-- aw:trait-table:start -->
 | Trait | Derives | Enforces | About |
 |---|---|---|---|
 | `http2_api` | `http2-api-list` | [Transport — h2c + OpenAPI on one port](#transport-h2c-openapi-on-one-port) | Project owes a public HTTP/2 (h2c) + OpenAPI transport baseline, not full OpenAPI completeness. |
@@ -471,15 +487,12 @@ meta-doc producer/check after a trait changes.
 | `agent_facing` | `developer-agent-experience` | [DX convention: every service and CLI ships a Developer & Agent Experience capability](#dx-convention-every-service-and-cli-ships-a-developer-agent-experience-capability) | Project is primarily driven by agents rather than humans and must own the Developer & Agent Experience capability baseline. |
 | `stateful_storage` | `stateful-service-workload` | [Service workload profiles — common, StatefulSet, Deployment](#service-workload-profiles-common-statefulset-deployment) | Service owns durable application state, so it selects the StatefulSet profile: stable identity, PVC/storage durability, peer topology, backup/restore, and an explicit workload-kind migration handoff. |
 | `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for the common service baseline; expands to transport, deploy artifacts, operational endpoints, EC gates, and CLI conventions. Without stateful_storage the primary workload is a Deployment; stateful_storage selects the StatefulSet profile. |
-<!-- aw:trait-table:end -->
 
 ### Shared-library naming grammar
 
-*(policy-only — the validator-backed naming grammar is a repository authoring
-policy, not a project capability trait.)*
-
-*(validator-backed —
-`apps/agentic-workflow/external-contracts/fixtures/shared_service_library_names/assert_semantic_names.sh`)*
+*(policy-only — a repository authoring policy, not a project capability trait.
+It had a validator, `assert_semantic_names.sh`, which is deleted with the crate
+that ran it; nothing checks the grammar now.)*
 
 `libs/<name>` must expose both the library's stable responsibility and its
 abstraction level before an agent opens `Cargo.toml`. A shared library is named
@@ -574,24 +587,24 @@ maintenance CronJobs are library contracts. Do not duplicate that YAML/JSON
 construction in `lumen`, `keep`, `relay`, or `loom`; extend `libs/service-k8s`
 when the helper is incomplete.
 
-### `aw review` rule catalog — architecture/profile conformance findings
+### Architecture/profile conformance checklist
 
-*(policy-only — this generated rule catalog governs repository architecture
-review; it is not a project capability trait.)*
+*(policy-only, and unenforced — read the paragraph below before using this
+table as a gate.)*
 
-`aw review --project <project>` resolves a project's reference profile shape
-(kind/surface, workload, state ownership, replication, serving role) and runs
-the rule catalog below against it, reporting shared-service-kit adoption
-gaps, profile-shape negative assertions, and observability/Raft telemetry
-conformance findings together in one envelope. This table is generated from
-the live rule registries (`review_rules::known_rule_docs()` +
-`review_obs_rules::known_rule_docs()`, in
-`apps/agentic-workflow/src/cli/review_doc_projection.rs`) and drift-tested
-against `cli::review_doc_projection::tests::contributing_review_rule_table_matches_live_registry`
-— never hand-edit the table between the markers; re-run the drift test after
-any rule id changes and re-splice its output here.
+A project's reference profile shape (kind/surface, workload, state ownership,
+replication, serving role) implies the conformance findings catalogued below:
+shared-service-kit adoption gaps, profile-shape negative assertions, and
+observability/Raft telemetry gaps.
 
-<!-- aw:review-rule-table:start -->
+**Nothing runs this catalogue.** It was `aw review --project <project>`, spliced
+in from two live rule registries and drift-tested against them; the command, the
+registries, and the drift test are all deleted. What is left is a hand-applied
+checklist — useful when reviewing a service against the archetype, and worth
+nothing as evidence. A rule below that a project violates produces no finding,
+no exit code, and no signal of any kind. Do not cite one as a gate in a
+`## Acceptance` table.
+
 | Rule ID | Family | Fires when |
 |---|---|---|
 | `shared-kit:server-tcp` | `shared-kit` | served-surface bind/listen setup |
@@ -610,11 +623,12 @@ any rule id changes and re-splice its output here.
 | `raft:trace-context-continuity-gap` | `raft` | raft leader-ingest surface has no trace-context continuity evidence (traceparent/trace_id/span_id propagation or tracing::instrument/info_span! spans) across the forwarded-proposal path |
 | `raft:follower-local-mutation-outside-consensus` | `raft` | a follower/replica-role marker co-occurs with an explicit consensus-bypass marker in the same file -- a follower appears to mutate local state outside raft consensus |
 | `raft:loss-of-leader-fail-open-bypass` | `raft` | an explicit fail-open marker allows accepting writes without a confirmed leader / bypassing the quorum check on loss-of-leader |
-<!-- aw:review-rule-table:end -->
 
-`aw health` owns readiness, gates, and production-blocker status; `aw
-review` owns architecture/profile-shape and this rule catalog. The two
-commands never overlap and never substitute for each other.
+The split this catalogue sat in is worth keeping even without the commands that
+implemented it: **readiness, gates, and production-blocker status** are one
+question, and **architecture/profile shape** is another. They never substitute
+for each other, so a project that satisfies its gates has said nothing about
+whether it matches the archetype.
 
 ### Service workload profiles — common, StatefulSet, Deployment
 
@@ -670,7 +684,7 @@ A service is not "done" until it satisfies every row:
 | **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. A production instance must configure a scheduled object-storage snapshot job; manual/local snapshots are break-glass or local-dev paths, not the service-archetype baseline. | `raft-runtime` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to `file://`, `s3://`, or `gs://` destinations (the GCS adapter is unconditional in `service-backup`, authenticates via workload-identity ADC in-cluster, and is GKE-proven); the operator schedules, wires secrets/IAM, reports status, and never serializes service data itself. |
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
 | **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; exactly one primary workload profile. StatefulSet identity/peers come from the downward API; Deployment Pods use ordinary identity plus drain-aware rollout. | Use **`libs/service-k8s`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
-| **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
+| **Authoring ladder** | `aw.toml` names the project; changes are authored one phase at a time through `e2e` → `unit` → `logic`, red first. | see the write-order table in `CLAUDE.md`. Any `tech-design/` tree and any `SPEC-MANAGED` / `HANDWRITE` marker still in source is residue — the producer that owned them is deleted, and the `.rs` is the authoring surface. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
 | **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
 
@@ -988,18 +1002,19 @@ named so `ls` tells you what is enforced before you open anything:
   run via `vat run guard-security`; evidence under
   `external-contracts/security-hardening/`.
 
-A breach is a non-zero-exit finding that blocks the terminal
-`aw cb check <slug>` gate. Keep these files `SPEC-MANAGED` — regenerate
-them from their contract; do not hand-edit the `AW-EC-TOOL` block.
+A breach is a non-zero-exit finding, and it blocks the phase that runs the gate.
+The `SPEC-MANAGED` marking on these files named a regenerator that no longer
+exists: nothing regenerates an `AW-EC-TOOL` block today, so the `.toml` is the
+authoring surface and editing the contract it cites propagates nowhere.
 
-Agentic Workflow itself uses the canonical Python EC project under
-`apps/agentic-workflow/external-contracts/`: `pyproject.toml` is the inventory,
-`src/cases/*.py` implements external black-box verifiers, and independent
-digest-bound review approves the exact Python source bundle. Do not create
-app-level Rust EC wrappers or delegate a Python EC to `cargo test`. Rules that
-can only be observed inside the Rust implementation are colocated Rust invariants
-under their semantic `src/**` owner and run separately with
-`cargo test -p agentic-workflow --lib`.
+The phase-1 shape those gates feed is the project-local Python project at
+`apps/<name>/e2e/`: `pyproject.toml` is the inventory, `src/cases/*.py` holds
+one black-box verifier per case, and the review verdict is bound to a digest
+over the exact source bundle it read. Do not wrap a Python phase-1 case in an
+app-level Rust tree and do not delegate one to `cargo test`. Rules observable
+only inside the Rust implementation are colocated tests under their semantic
+`src/**` owner, authored by the `unit` phase before the implementation exists.
+`CLAUDE.md` owns that ladder; this section owns only the gate files.
 
 ## CLI convention: every CLI ships `llm`, `upgrade`, `issue`
 
@@ -1137,30 +1152,30 @@ must exist on the real clap surface and chain-required positionals/flags must
 be present. A `next` that doesn't resolve against the binary's own `--help`
 is worse than no `next` at all.
 
-The reference implementation is `aw`'s `aw.cli.v1` envelope
-(`apps/agentic-workflow/src/runtime/envelope.rs`): `invoke.command` names
-the command an agent runs next, `next.command` carries the workflow loop's
-next step, and `completion.workflow_complete=true` is the only terminal
-marker — `action=done` on one child root is not workflow completion by
-itself. Executability is enforced, not just documented:
-`apps/agentic-workflow/src/cli/chain.rs`
-(`validate_aw_command_string` + the `EMIT_REGISTRY` catalogue of every
-command-emitting site) re-parses each emitted string through the real
-`Commands` clap tree plus a chain-policy table of positionals that are
-clap-optional but semantically required. This is chain-conformance tier 1a
-(aw only, today); per-CLI rollout WIs cite this section and its enforcement
-pattern as their acceptance contract.
+The working example in this repo is the `aw` plugin's phase scripts. Every one
+of `e2e.py`, `unit.py`, and `logic.py` ends by printing the command that follows
+it, and the last phase prints that the change is closed instead — so an agent
+driving the ladder never has to infer the next verb. That is the convention in
+its simplest conforming form: a fixed trailing stdout line, no envelope.
 
-Simple CLIs without a full envelope **MAY** use a lighter conforming form —
+The repo used to carry a stronger version of this, and it is worth naming what
+was lost. The `aw` CLI emitted an `aw.cli.v1` envelope, and a `chain.rs`
+registry re-parsed every command string it could emit back through the real
+clap tree, so an unrunnable `next` was a build failure rather than a runtime
+surprise. That CLI is deleted and nothing replaced the check: **no gate today
+asserts that a printed next command is runnable.** A phase script that prints a
+typo prints it green.
+
+Simple CLIs without a full envelope **MAY** use the lighter conforming form —
 a single `next` field in JSON output, or a fixed trailing stdout line. The
 wire format is free; the runnable-or-terminal semantics are not.
 
-`aw health` and this convention measure different things. `aw health` asks
-whether a project is *complete* (是否做完 — capability/managed/semantic/
-traceability coverage); this convention asks whether one command's output is
-*executable by the next agent* (轉不轉得動 — handoff, not completeness). A
-CLI can be 100% complete by `aw health` and still emit unchainable output,
-and vice versa.
+Completeness and chainability measure different things, and satisfying one says
+nothing about the other. *Complete* (是否做完) asks whether a project's
+capability, gate, and traceability coverage is finished; this convention asks
+whether one command's output is *executable by the next agent* (轉不轉得動 —
+handoff, not completeness). A CLI can be finished by every coverage measure and
+still emit unchainable output, and vice versa.
 
 ## DX convention: every service and CLI ships a Developer & Agent Experience capability
 
@@ -1227,24 +1242,35 @@ trait does not imply Kubernetes, HA, backup, or performance traits.
 > nothing catches the drift.
 
 Meta docs split by *layer*, not by topic. A fact belongs to exactly one layer.
-The machine-readable source is
-`apps/agentic-workflow/src/cli/meta_docs.rs`; its matrix drives placement and
-section validation as well as the projection below. The sole writer/checker
-registry is `apps/agentic-workflow/src/cli/meta.rs`; use `aw meta init`,
-`aw meta sync`, and read-only `aw meta check` instead of maintaining a second
-META-doc projector.
+There used to be a machine-readable source for the matrix below — `meta_docs.rs`
+drove placement and section validation, and `aw meta init` / `sync` / `check`
+were the sole writer and checker. Both are deleted. The matrix is hand-maintained
+now, and there is no `check` to run, so a doc that stops matching its row stays
+wrong until a human notices.
 
-<!-- aw:meta-doc-matrix:start -->
 | Layer | Doc | Fact owner | Required headings | Inherits |
 |---|---|---|---|---|
-| repo | `/AGENTS.md` | Codex checkout operations; CLAUDE projection plus the fixed Codex whitelist | `## Agentic Workflow CLI Surface` | none |
-| repo | `/CLAUDE.md` | Claude-only adapter importing AGENTS.md and generated Claude rule projections | `## Claude Runtime Adapter` | AGENTS.md + .claude/rules projections |
+| repo | `/AGENTS.md` | what a Codex reviewer may and may not do to this checkout | none | none — deliberately not a projection of anything |
+| repo | `/CLAUDE.md` | the work-item lifecycle, per-phase write roots, and the rules that refuse against them | none | `.claude/rules/**/*.md`, loaded alongside it |
 | repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
 | repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
 | project | `<project>/README.md` | project identity and brief projections linking local contribution and goal contracts | `## Brief`<br>`## Contributing`<br>`## Capability Contract` | repo README + CONTRIBUTING |
 | project | `<project>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules | `## Brief`<br>`## Authoritative Inputs`<br>`## Local Workflow`<br>`## Verification` | repo CONTRIBUTING |
 | project | `<project>/CAPABILITIES.md` | project product promises, work roots, and required verification | `## Brief`<br>`## Capabilities`<br>`### Capability Index`<br>`### Core Features`<br>`### Non-Core Features` | repo capability schema policy |
-<!-- aw:meta-doc-matrix:end -->
+
+The two root rows changed shape when the CLI went away, and the change is not
+cosmetic. `AGENTS.md` and `CLAUDE.md` were one document in two runtime flavors,
+kept in sync by a mirror test. They are now two documents with one reader each:
+`codex exec` loads `AGENTS.md` from its workdir automatically and Claude Code
+loads none of it, so editing `AGENTS.md` changes what the reviewer is told and
+nothing else. Neither file carries the `##` headings its old row demanded,
+because the producer that required them is gone.
+
+The `<!-- aw:meta:* -->` marker pairs still wrapping the first ~20 lines of most
+project `README.md`, `CONTRIBUTING.md`, and `CAPABILITIES.md` files are from the
+same producer and are equally inert — 126 of them, across 125 files. They mark
+where a splice used to land; nothing splices there now, and the content between
+them is ordinary hand-edited prose.
 
 The repo/global layer applies across the repository and teaches an agent how
 to operate in the checkout. `AGENTS.md` and `CLAUDE.md` exist only at this
@@ -1262,8 +1288,9 @@ govern; generated evidence/docs require an explicit producer, validator, or
 policy-only marker.
 
 `CAPABILITIES.md` is therefore a project-layer META-doc goal contract, not a
-separate lifecycle phase. WI, EC, and TD work roots resolve against it; they do
-not transfer ownership of the product promise out of the META-doc layer.
+separate lifecycle phase. Work items and the phase write roots resolve against
+it; they do not transfer ownership of the product promise out of the META-doc
+layer.
 
 Project-layer docs are written for agents first: they should answer "what is
 this project promising?", "where is the source of truth?", "what am I allowed
@@ -1276,8 +1303,8 @@ a top-level capability may be a product area, a narrower capability may be a
 feature or surface, and the smallest useful capability may be one API endpoint,
 CLI command, event, background job, or documented behavior if it can be
 implemented and verified independently. Do not flatten agent-addressable
-endpoint/command promises into prose under a larger heading when a future WI,
-TD, EC, or test gate will need to refer to them directly.
+endpoint/command promises into prose under a larger heading when a future work
+item, phase-1 case, or test gate will need to refer to them directly.
 
 The required shape is:
 
@@ -1290,7 +1317,7 @@ The required shape is:
 - `### <Capability>` roots — each root uses field-style lines for `ID`,
   `Type`, `Surfaces`, `EC Dimensions`, `Root WI`, `Status`,
   `Required Verification`, `Promise`, and `Gate Inventory`, followed by a
-  `Work Root` table for child WIs, TDs, EC gates, tests, and evidence.
+  `Work Root` table for child work items, EC gates, tests, and evidence.
 
 Large capabilities should own child work roots or nested capability headings;
 small leaf capabilities can have one work-root row. The sizing rule is
@@ -1338,31 +1365,32 @@ Three rules govern every cell above:
   "how does an agent operate here" belongs in CLAUDE/AGENTS; "what exists"
   belongs in the repo-root README.
 
-Enforcement, so this is a contract and not a reminder:
+What still enforces any of this, and what does not:
 
-- Root-doc producer/check tests — repo-root projections (the `aw:start` block,
-  generated command tables, and generated trait table) stay fresh against
-  their generators. `aw health` should route agents to those producer commands
-  as they are wired.
-- The repo-root doc allowlist test — the root carries only the doc files this
-  contract names; a stray file is a defect, not a new home.
-- The project/app-layer agent-doc test — `apps/**/{CLAUDE,AGENTS}.md` and
+- **Enforced.** `plugins/aw/verification/check_plugin.py` asserts the skills on
+  disk are exactly the registered set, so a skill directory nobody registered
+  fails rather than loading unnoticed. This is the only check in this chapter
+  with an exit code behind it.
+- **Policy, unenforced.** The root carries only the doc files this contract
+  names; a stray root doc is a defect, not a new home.
+- **Policy, unenforced.** `apps/**/{CLAUDE,AGENTS}.md` and
   `projects/**/{CLAUDE,AGENTS}.md` are forbidden except for declared
-  template-source files.
-- `root_doc_mirror_test` — CLAUDE and AGENTS stay one document in two
-  agent-runtime flavors via an explicit whitelist, not freehand divergence.
-- `aw capability check` plus rule R7g — a project's README-owned capability
-  contract stays internally consistent, including that TD capability refs
-  actually resolve against it.
-- The active-docs scanners — agent-facing docs and skills are re-scanned for
-  retired command literals on every change, including the negative case: a
-  doc that only explains a command was retired must not itself carry that
-  command's literal invocation text, or the scanner cannot tell "documents
-  the removal" from "still tells an agent to run it."
+  template-source files. Measured on 2026-08-17: zero violations, by hand.
+- **Retracted.** CLAUDE and AGENTS were held to one document in two runtime
+  flavors by a mirror test. They now diverge on purpose — see the two root rows
+  above — and the test that forbade it is deleted along with everything else in
+  this list: the root-doc producer/check tests, the capability-contract
+  consistency check, and the scanners that swept agent-facing docs for retired
+  command literals. That last one is why a doc explaining that a command was
+  retired can now carry the command's literal text with nothing objecting; the
+  distinction between "documents the removal" and "still tells an agent to run
+  it" is a reader's job again.
 
-Payload corollary: when a lifecycle section has a schema (e.g. TD `unit-test`),
-its agent payload is JSON data and the artifact's YAML frontmatter + mermaid
-diagram are CLI-rendered projections; prose-only payloads remain Markdown.
+Payload corollary: when a lifecycle section has a schema, its agent payload is
+data and the prose around it is a rendering of that data; prose-only payloads
+remain Markdown. There is no CLI doing the rendering any more, so today this
+means "write the schema-shaped part as data and do not let a hand-written
+summary drift from it", not "run a projector".
 
 ## Project build and release contract
 
