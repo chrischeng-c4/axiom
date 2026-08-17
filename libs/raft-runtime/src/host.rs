@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -226,6 +226,25 @@ impl std::fmt::Display for StorageFailed {
 }
 
 impl std::error::Error for StorageFailed {}
+
+/// Terminal outcome of a Raft proposal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposalOutcome {
+    Completed {
+        index: Index,
+    },
+    RejectedBeforeAdmission {
+        reason: String,
+    },
+    Ambiguous {
+        index: Option<Index>,
+        reason: String,
+    },
+    DurabilityFailure {
+        index: Option<Index>,
+        failure: StorageFailed,
+    },
+}
 
 /// Why a leader refused a learner admission request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -565,21 +584,26 @@ impl Shared {
     }
 
     /// Try a leader-side proposal and return its index once the **state machine
-    /// applies** it (read-your-write). `Ok(None)` means this node was no longer
+    /// applies** it (read-your-write). `None` means this node was no longer
     /// leader when the node lock was acquired, so the caller may safely
     /// re-route the command: it was not appended. Once an index is allocated,
     /// an apply timeout remains an error and must not be retried blindly.
-    async fn try_propose_applied(self: &Arc<Self>, command: Command) -> Result<Option<Index>> {
+    async fn try_propose_applied(self: &Arc<Self>, command: Command) -> Option<ProposalOutcome> {
         if self.lifecycle_generation.load(Ordering::Acquire) > 0 {
-            bail!("raft: proposal admission closed");
+            return Some(ProposalOutcome::RejectedBeforeAdmission {
+                reason: "raft: proposal admission closed".to_string(),
+            });
         }
         let index = {
             let mut n = self.node.lock().await;
             let Some(idx) = n.propose(command) else {
-                return Ok(None);
+                return None;
             };
             if let Err(e) = self.persist(&n) {
-                return Err(anyhow::anyhow!(e));
+                return Some(ProposalOutcome::DurabilityFailure {
+                    index: Some(idx),
+                    failure: e,
+                });
             }
             self.apply_ready(&mut n); // sole voter commits+applies here
             idx
@@ -587,7 +611,7 @@ impl Shared {
         self.flush().await;
 
         if self.sm.applied_index() >= index {
-            return Ok(Some(index));
+            return Some(ProposalOutcome::Completed { index });
         }
         let mut rx = self.applied_tx.subscribe();
         let deadline = Instant::now() + self.cfg.propose_timeout;
@@ -596,7 +620,7 @@ impl Shared {
                 let mut n = self.node.lock().await;
                 self.apply_ready(&mut n);
                 if self.sm.applied_index() >= index {
-                    return Ok(Some(index));
+                    return Some(ProposalOutcome::Completed { index });
                 }
             }
             tokio::select! {
@@ -604,7 +628,10 @@ impl Shared {
                 _ = tokio::time::sleep(Duration::from_millis(5)) => {}
             }
             if Instant::now() >= deadline {
-                bail!("raft: apply timeout at index {index}");
+                return Some(ProposalOutcome::Ambiguous {
+                    index: Some(index),
+                    reason: format!("raft: apply timeout at index {index}"),
+                });
             }
         }
     }
@@ -941,12 +968,30 @@ impl RaftHost {
     /// `/raft/publish` over h2c. Returns the assigned index once applied
     /// (read-your-write). Retries within the propose deadline while no leader.
     pub async fn propose(&self, command: Command) -> Result<Index> {
+        match self.propose_outcome(command).await {
+            ProposalOutcome::Completed { index } => Ok(index),
+            ProposalOutcome::RejectedBeforeAdmission { reason } => Err(anyhow!(reason)),
+            ProposalOutcome::Ambiguous { reason, .. } => Err(anyhow!(reason)),
+            ProposalOutcome::DurabilityFailure { failure, .. } => Err(anyhow!(failure)),
+        }
+    }
+
+    /// Propose on the leader (locally), else forward to the current leader's
+    /// `/raft/publish` over h2c. Returns a typed [`ProposalOutcome`]
+    /// classifying the terminal state of the proposal. Retries within the
+    /// propose deadline while no leader.
+    pub async fn propose_outcome(&self, command: Command) -> ProposalOutcome {
         let s = &self.shared;
         if s.lifecycle_generation.load(Ordering::Acquire) > 0 {
-            bail!("raft: proposal admission closed");
+            return ProposalOutcome::RejectedBeforeAdmission {
+                reason: "raft: proposal admission closed".to_string(),
+            };
         }
         if let Some(err) = s.latched_failure.lock().unwrap().clone() {
-            bail!(err);
+            return ProposalOutcome::DurabilityFailure {
+                index: None,
+                failure: err,
+            };
         }
         let deadline = Instant::now() + s.cfg.propose_timeout;
         let mut last_route_error = None;
@@ -964,21 +1009,43 @@ impl RaftHost {
             };
             match route {
                 Route::Local => {
-                    if let Some(index) = s.try_propose_applied(command.clone()).await? {
-                        return Ok(index);
+                    if let Some(outcome) = s.try_propose_applied(command.clone()).await {
+                        return outcome;
                     }
                 }
                 Route::Remote(url) => match self.forward(&url, &command).await {
-                    Ok(seq) => return Ok(seq),
-                    Err(error) => last_route_error = Some(error.to_string()),
+                    ProposalOutcome::Completed { index } => {
+                        return ProposalOutcome::Completed { index }
+                    }
+                    ProposalOutcome::Ambiguous {
+                        index: Some(seq),
+                        reason,
+                    } => {
+                        return ProposalOutcome::Ambiguous {
+                            index: Some(seq),
+                            reason,
+                        };
+                    }
+                    outcome @ ProposalOutcome::DurabilityFailure { .. } => return outcome,
+                    ProposalOutcome::RejectedBeforeAdmission { reason } => {
+                        last_route_error = Some(reason);
+                    }
+                    ProposalOutcome::Ambiguous { index: None, reason } => {
+                        last_route_error = Some(reason);
+                    }
                 },
                 Route::Unknown => {}
             }
             if Instant::now() >= deadline {
-                match last_route_error {
-                    Some(error) => bail!("raft: proposal routing timed out: {error}"),
-                    None => bail!("raft: no leader elected (cluster not ready)"),
-                }
+                return match last_route_error {
+                    Some(error) => ProposalOutcome::Ambiguous {
+                        index: None,
+                        reason: format!("raft: proposal routing timed out: {error}"),
+                    },
+                    None => ProposalOutcome::RejectedBeforeAdmission {
+                        reason: "raft: no leader elected (cluster not ready)".to_string(),
+                    },
+                };
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -986,8 +1053,8 @@ impl RaftHost {
 
     /// Forward a command to the leader and wait until **this node's** state
     /// machine applies the returned index (read-your-write on a follower).
-    async fn forward(&self, leader_url: &str, command: &[u8]) -> Result<Index> {
-        let resp = self
+    async fn forward(&self, leader_url: &str, command: &[u8]) -> ProposalOutcome {
+        let resp = match self
             .shared
             .http_client()
             .post(format!("{leader_url}/raft/publish"))
@@ -1000,15 +1067,40 @@ impl RaftHost {
                 command: command.to_vec(),
             })
             .send()
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return ProposalOutcome::Ambiguous {
+                    index: None,
+                    reason: e.to_string(),
+                };
+            }
+        };
         if resp.status() != StatusCode::OK {
-            bail!("raft: leader redirect returned {}", resp.status());
+            return ProposalOutcome::Ambiguous {
+                index: None,
+                reason: format!("raft: leader redirect returned {}", resp.status()),
+            };
         }
-        let v: serde_json::Value = resp.json().await?;
-        let seq = v
-            .get("seq")
-            .and_then(|s| s.as_u64())
-            .ok_or_else(|| anyhow!("raft: leader reply missing seq"))?;
+        let v: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                return ProposalOutcome::Ambiguous {
+                    index: None,
+                    reason: e.to_string(),
+                };
+            }
+        };
+        let seq = match v.get("seq").and_then(|s| s.as_u64()) {
+            Some(s) => s,
+            None => {
+                return ProposalOutcome::Ambiguous {
+                    index: None,
+                    reason: "raft: leader reply missing seq".to_string(),
+                };
+            }
+        };
         // Wait for our own apply (the leader's commit propagates via AppendEntries).
         let mut rx = self.shared.applied_tx.subscribe();
         let deadline = Instant::now() + self.shared.cfg.propose_timeout;
@@ -1018,10 +1110,13 @@ impl RaftHost {
                 _ = tokio::time::sleep(Duration::from_millis(5)) => {}
             }
             if Instant::now() >= deadline {
-                bail!("raft: follower apply timeout at index {seq}");
+                return ProposalOutcome::Ambiguous {
+                    index: Some(seq),
+                    reason: format!("raft: follower apply timeout at index {seq}"),
+                };
             }
         }
-        Ok(seq)
+        ProposalOutcome::Completed { index: seq }
     }
 
     /// Capture a state-machine snapshot and compact the log up to the applied
@@ -1196,8 +1291,10 @@ pub(crate) async fn publish_handler(
             .into_response();
     }
     match s.try_propose_applied(env.command).await {
-        Ok(Some(seq)) => (StatusCode::OK, Json(serde_json::json!({ "seq": seq }))).into_response(),
-        Ok(None) => {
+        Some(ProposalOutcome::Completed { index: seq }) => {
+            (StatusCode::OK, Json(serde_json::json!({ "seq": seq }))).into_response()
+        }
+        None => {
             let leader = {
                 let node = s.node.lock().await;
                 s.leader_url(&node).0
@@ -1211,9 +1308,19 @@ pub(crate) async fn publish_handler(
             )
                 .into_response()
         }
-        Err(e) => (
+        Some(ProposalOutcome::RejectedBeforeAdmission { reason }) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(serde_json::json!({ "error": reason })),
+        )
+            .into_response(),
+        Some(ProposalOutcome::Ambiguous { reason, .. }) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": reason })),
+        )
+            .into_response(),
+        Some(ProposalOutcome::DurabilityFailure { failure, .. }) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": failure.to_string() })),
         )
             .into_response(),
     }

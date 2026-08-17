@@ -39,8 +39,8 @@ pub use fenced_assignment::{
 };
 pub use group::{GroupId, LEGACY_GROUP_ID};
 pub use host::{
-    AdmissionRefused, ChunkSink, MembershipPhase, RaftHost, RaftStatus, StorageFailed,
-    SNAPSHOT_CHUNK_SIZE,
+    AdmissionRefused, ChunkSink, MembershipPhase, ProposalOutcome, RaftHost, RaftStatus,
+    StorageFailed, SNAPSHOT_CHUNK_SIZE,
 };
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
 pub use peer_transport::PeerTransport;

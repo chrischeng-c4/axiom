@@ -84,6 +84,10 @@ path = "e2e/undeliverable_messages.rs"
 name = "proposal_admission_boundary"
 path = "e2e/proposal_admission_boundary.rs"
 
+[[test]]
+name = "proposal_outcomes"
+path = "e2e/proposal_outcomes.rs"
+
 
 [dependencies]
 raft-core = { path = "../raft-core" }
