@@ -2,11 +2,13 @@ use serde_json::json;
 use service_k8s::crd::normalize_unsigned_integer_formats;
 use service_k8s::lifecycle::{
     LifecyclePolicy, LifecyclePolicyError, ProbeTiming, TerminationBudget,
+    TERMINATION_BUDGET_CONDITION,
 };
 use service_k8s::render::common::ServicePodTemplate;
 use service_k8s::render::deployment::{service_deployment, ServiceDeployment};
 use service_k8s::render::guaranteed_resources;
 use service_k8s::render::{service_statefulset, RenderCtx, ServiceStatefulSet};
+use service_k8s::service::ConditionStatus;
 
 fn test_cx() -> RenderCtx<'static> {
     RenderCtx {
@@ -1370,4 +1372,253 @@ fn termination_contract_split_measurements() {
         .collect();
     assert_eq!(deadline_entries6.len(), 1);
     assert_eq!(deadline_entries6[0]["value"], "45");
+}
+
+#[test]
+fn invalid_status() {
+    // Measurement 1: five LifecyclePolicy values, each reaching one distinct LifecyclePolicyError arm
+    // Arm 1: ZeroTotalGrace
+    let p1_zero_grace = LifecyclePolicy {
+        total_grace_period_seconds: 0,
+        runtime_deadline_seconds: 0,
+        sigkill_reserve_seconds: 0,
+        min_hook_duration_seconds: 0,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming::default(),
+    };
+    let err1 = p1_zero_grace
+        .validate()
+        .expect_err("p1 must fail with ZeroTotalGrace");
+    assert_eq!(err1, LifecyclePolicyError::ZeroTotalGrace);
+
+    // Arm 2: BudgetExceedsTotal (runtime 55 + reserve 10 = 65 > 60)
+    let p2_budget_exceeds = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 55,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming::default(),
+    };
+    let err2 = p2_budget_exceeds
+        .validate()
+        .expect_err("p2 must fail with BudgetExceedsTotal");
+    assert_eq!(
+        err2,
+        LifecyclePolicyError::BudgetExceedsTotal {
+            total_grace_period_seconds: 60,
+            runtime_deadline_seconds: 55,
+            sigkill_reserve_seconds: 10,
+            prestop_cost_seconds: 0,
+        }
+    );
+
+    // Arm 3: RuntimeBelowMinimumHook (runtime 3 < min_hook 5)
+    let p3_below_min = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 3,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming::default(),
+    };
+    let err3 = p3_below_min
+        .validate()
+        .expect_err("p3 must fail with RuntimeBelowMinimumHook");
+    assert_eq!(
+        err3,
+        LifecyclePolicyError::RuntimeBelowMinimumHook {
+            runtime_deadline_seconds: 3,
+            min_hook_duration_seconds: 5,
+        }
+    );
+
+    // Arm 4: Overflow (u64::MAX + 10 overflows)
+    let p4_overflow = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: u64::MAX,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming::default(),
+    };
+    let err4 = p4_overflow
+        .validate()
+        .expect_err("p4 must fail with Overflow");
+    assert_eq!(err4, LifecyclePolicyError::Overflow);
+
+    // Arm 5: InvalidProbeTiming (period 0 is below Kubernetes minimum 1)
+    let p5_invalid_timing = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 45,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming {
+            period_seconds: 0,
+            timeout_seconds: 1,
+            failure_threshold: 3,
+            success_threshold: 1,
+        },
+    };
+    let err5 = p5_invalid_timing
+        .validate()
+        .expect_err("p5 must fail with InvalidProbeTiming");
+    assert_eq!(
+        err5,
+        LifecyclePolicyError::InvalidProbeTiming {
+            period_seconds: 0,
+            timeout_seconds: 1,
+            failure_threshold: 3,
+            success_threshold: 1,
+        }
+    );
+
+    let cond1 = p1_zero_grace.condition();
+    let cond2 = p2_budget_exceeds.condition();
+    let cond3 = p3_below_min.condition();
+    let cond4 = p4_overflow.condition();
+    let cond5 = p5_invalid_timing.condition();
+
+    // Measurement 1: Same type_ across all rejected conditions
+    assert_eq!(cond1.type_, "TerminationBudgetValid");
+    assert_eq!(cond1.type_, TERMINATION_BUDGET_CONDITION);
+    assert_eq!(cond2.type_, "TerminationBudgetValid");
+    assert_eq!(cond3.type_, "TerminationBudgetValid");
+    assert_eq!(cond4.type_, "TerminationBudgetValid");
+    assert_eq!(cond5.type_, "TerminationBudgetValid");
+
+    assert_eq!(cond1.type_, cond2.type_);
+    assert_eq!(cond1.type_, cond3.type_);
+    assert_eq!(cond1.type_, cond4.type_);
+    assert_eq!(cond1.type_, cond5.type_);
+
+    // Measurement 1: All rejected conditions carry status: ConditionStatus::False
+    assert_eq!(cond1.status, ConditionStatus::False);
+    assert_eq!(cond2.status, ConditionStatus::False);
+    assert_eq!(cond3.status, ConditionStatus::False);
+    assert_eq!(cond4.status, ConditionStatus::False);
+    assert_eq!(cond5.status, ConditionStatus::False);
+
+    // Measurement 1: Five reason values compared against string literals typed in the test
+    assert_eq!(cond1.reason, "ZeroTotalGrace");
+    assert_eq!(cond2.reason, "BudgetExceedsTotal");
+    assert_eq!(cond3.reason, "RuntimeBelowMinimumHook");
+    assert_eq!(cond4.reason, "Overflow");
+    assert_eq!(cond5.reason, "InvalidProbeTiming");
+
+    // Measurement 1: Five reasons are distinct values
+    let reasons = [
+        &cond1.reason,
+        &cond2.reason,
+        &cond3.reason,
+        &cond4.reason,
+        &cond5.reason,
+    ];
+    let distinct_reasons: std::collections::HashSet<_> = reasons.iter().copied().collect();
+    assert_eq!(distinct_reasons.len(), 5, "five reasons must be distinct");
+
+    assert_ne!(cond1.reason, cond2.reason);
+    assert_ne!(cond1.reason, cond3.reason);
+    assert_ne!(cond1.reason, cond4.reason);
+    assert_ne!(cond1.reason, cond5.reason);
+    assert_ne!(cond2.reason, cond3.reason);
+    assert_ne!(cond2.reason, cond4.reason);
+    assert_ne!(cond2.reason, cond5.reason);
+    assert_ne!(cond3.reason, cond4.reason);
+    assert_ne!(cond3.reason, cond5.reason);
+    assert_ne!(cond4.reason, cond5.reason);
+
+    // Measurement 2: No reason contains an ASCII digit
+    for (idx, cond) in [&cond1, &cond2, &cond3, &cond4, &cond5].iter().enumerate() {
+        assert!(
+            !cond.reason.chars().any(|c| c.is_ascii_digit()),
+            "reason {} ({:?}) must not contain ASCII digits",
+            idx + 1,
+            cond.reason
+        );
+    }
+
+    // Measurement 2: BudgetExceedsTotal message contains offending seconds, reason != error to_string()
+    assert!(
+        cond2.message.contains("55"),
+        "cond2 message must contain offending runtime deadline: {}",
+        cond2.message
+    );
+    assert!(
+        cond2.message.contains("10"),
+        "cond2 message must contain offending sigkill reserve: {}",
+        cond2.message
+    );
+    assert!(
+        cond2.message.contains("60"),
+        "cond2 message must contain offending total grace: {}",
+        cond2.message
+    );
+    assert_ne!(
+        cond2.reason,
+        err2.to_string(),
+        "reason must not equal error.to_string()"
+    );
+
+    // Measurement 2: RuntimeBelowMinimumHook message contains offending seconds, reason != error to_string()
+    assert!(
+        cond3.message.contains("3"),
+        "cond3 message must contain offending runtime deadline: {}",
+        cond3.message
+    );
+    assert!(
+        cond3.message.contains("5"),
+        "cond3 message must contain offending min hook duration: {}",
+        cond3.message
+    );
+    assert_ne!(
+        cond3.reason,
+        err3.to_string(),
+        "reason must not equal error.to_string()"
+    );
+
+    // Also check other error reasons != to_string()
+    assert_ne!(cond1.reason, err1.to_string());
+    assert_ne!(cond4.reason, err4.to_string());
+    assert_ne!(cond5.reason, err5.to_string());
+
+    // Measurement 3: Valid policy (total 60, runtime 40, reserve 10, min_hook 5, all probe timing >= 1)
+    let valid_policy = LifecyclePolicy {
+        total_grace_period_seconds: 60,
+        runtime_deadline_seconds: 40,
+        sigkill_reserve_seconds: 10,
+        min_hook_duration_seconds: 5,
+        prestop_cost_seconds: None,
+        probe_timing: ProbeTiming {
+            period_seconds: 10,
+            timeout_seconds: 1,
+            failure_threshold: 3,
+            success_threshold: 1,
+        },
+    };
+    let valid_budget = valid_policy
+        .validate()
+        .expect("valid policy must validate Ok");
+    assert_eq!(valid_budget.total_grace_period_seconds(), 60);
+    assert_eq!(valid_budget.runtime_deadline_seconds(), 40);
+    assert_eq!(valid_budget.sigkill_reserve_seconds(), 10);
+    assert_eq!(valid_budget.min_hook_duration_seconds(), 5);
+
+    let valid_cond = valid_policy.condition();
+    assert_eq!(valid_cond.type_, "TerminationBudgetValid");
+    assert_eq!(valid_cond.type_, cond1.type_);
+    assert_eq!(valid_cond.status, ConditionStatus::True);
+    assert_eq!(valid_cond.reason, "Valid");
+    assert!(!valid_cond.reason.chars().any(|c| c.is_ascii_digit()));
+
+    // Verify conditions() returns vec![condition()] on both LifecyclePolicy and TerminationBudget
+    assert_eq!(p1_zero_grace.conditions(), vec![cond1]);
+    assert_eq!(p2_budget_exceeds.conditions(), vec![cond2]);
+    assert_eq!(p3_below_min.conditions(), vec![cond3]);
+    assert_eq!(p4_overflow.conditions(), vec![cond4]);
+    assert_eq!(p5_invalid_timing.conditions(), vec![cond5]);
+    assert_eq!(valid_policy.conditions(), vec![valid_cond.clone()]);
+    assert_eq!(valid_budget.condition(), valid_cond);
+    assert_eq!(valid_budget.conditions(), vec![valid_budget.condition()]);
 }
