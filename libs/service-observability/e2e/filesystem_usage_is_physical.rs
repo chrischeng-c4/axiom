@@ -113,6 +113,42 @@ fn available_bytes_tracks_a_physical_write() {
 }
 
 #[test]
+fn used_bytes_tracks_a_physical_write() {
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let scratch = ScratchDir::new("used_physical_write");
+    let before = filesystem_usage(scratch.path()).expect("initial sample");
+
+    let file_path = scratch.path().join("16mib_payload.bin");
+    {
+        let mut file = fs::File::create(&file_path).expect("create test payload file");
+        let chunk = vec![0xAB_u8; 1024 * 1024]; // 1 MiB chunk
+        for _ in 0..16 {
+            file.write_all(&chunk).expect("write chunk");
+        }
+        file.sync_all().expect("sync file to disk");
+    }
+
+    let after = filesystem_usage(scratch.path()).expect("post-write sample");
+
+    let rise = after.used_bytes.saturating_sub(before.used_bytes);
+    const EIGHT_MIB: u64 = 8 * 1024 * 1024;
+    const SIXTY_FOUR_MIB: u64 = 64 * 1024 * 1024;
+
+    assert!(
+        rise >= EIGHT_MIB,
+        "used_bytes rise {rise} was less than 8 MiB (before: {}, after: {})",
+        before.used_bytes,
+        after.used_bytes
+    );
+    assert!(
+        rise <= SIXTY_FOUR_MIB,
+        "used_bytes rise {rise} was greater than 64 MiB (before: {}, after: {})",
+        before.used_bytes,
+        after.used_bytes
+    );
+}
+
+#[test]
 fn missing_path_is_an_error_not_a_zeroed_sample() {
     let scratch = ScratchDir::new("missing_path");
     let missing = scratch.path().join("never_created_path");
