@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-markdown-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Markdown symbol extraction (line-based)
 //!
@@ -11,7 +10,6 @@
 use super::{SymbolKind, SymbolTableBuilder};
 use crate::diagnostic::{Position, Range};
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-markdown-rs.md#source
 impl SymbolTableBuilder {
     pub(crate) fn visit_markdown_lines(&mut self, source: &str) {
         let mut in_code_block = false;

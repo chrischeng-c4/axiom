@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-kubernetes-rules-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Additional Kubernetes lint rules (K8002, K8005, K8008, K8009, K8010)
 

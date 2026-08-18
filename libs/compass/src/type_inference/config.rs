@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Configuration system for Argus type checker
 //!
@@ -18,7 +17,6 @@ use std::path::{Path, PathBuf};
 /// Python environment configuration for module resolution
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-config-rs.md#source
 pub struct PythonEnvConfig {
     /// Additional directories to search for modules
     pub search_paths: Vec<PathBuf>,
@@ -34,7 +32,6 @@ pub struct PythonEnvConfig {
 /// Configuration for Argus type checker
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-config-rs.md#source
 pub struct ArgusConfig {
     /// Python version to check against (e.g., "3.10")
     pub python_version: Option<String>,
@@ -121,7 +118,6 @@ fn default_stub_precedence() -> Vec<String> {
 /// Per-directory configuration override
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-config-rs.md#source
 pub struct OverrideConfig {
     /// Glob pattern to match files (e.g., "tests/**/*.py")
     pub pattern: String,
@@ -150,7 +146,6 @@ struct ToolSection {
     cclab_lens: Option<ArgusConfig>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-config-rs.md#source
 impl ArgusConfig {
     /// Create a new config with defaults
     pub fn new() -> Self {
@@ -290,7 +285,6 @@ impl ArgusConfig {
 
 /// Effective configuration for a specific file
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-config-rs.md#source
 pub struct EffectiveConfig {
     pub strict: bool,
     pub strict_optional: bool,

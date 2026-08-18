@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-type-env-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Type environment for name-to-type mappings
 
@@ -8,13 +7,11 @@ use super::ty::Type;
 
 /// Type environment mapping names to types
 #[derive(Debug, Clone, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-type-env-rs.md#source
 pub struct TypeEnv {
     /// Stack of scopes, innermost last
     scopes: Vec<HashMap<String, Type>>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-type-env-rs.md#source
 impl TypeEnv {
     pub fn new() -> Self {
         Self {

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-extract-helpers-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Helpers for extract refactoring: data-flow analysis, code generation,
 //! and position utilities.

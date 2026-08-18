@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-advanced-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Advanced Go type analysis
 //!
@@ -11,7 +10,6 @@ use super::go::{GoType, GoTypeInference};
 
 /// Result of checking whether a struct satisfies an interface
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-advanced-rs.md#source
 pub struct SatisfactionResult {
     pub struct_name: String,
     pub interface_name: String,
@@ -25,7 +23,6 @@ pub struct SatisfactionResult {
 /// Given a `GoTypeInference` that has already been populated (via `infer()`),
 /// this function iterates over all struct and interface types and checks whether
 /// each struct's method set includes all methods required by each interface.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-advanced-rs.md#source
 pub fn check_interface_satisfaction(inference: &GoTypeInference) -> Vec<SatisfactionResult> {
     let mut results = Vec::new();
 
@@ -73,7 +70,6 @@ pub fn check_interface_satisfaction(inference: &GoTypeInference) -> Vec<Satisfac
 /// Returns a list of (assertion_index, is_valid) pairs.
 /// An assertion is considered valid if the asserted type exists in
 /// the inference's type map.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-advanced-rs.md#source
 pub fn validate_type_assertions(inference: &GoTypeInference) -> Vec<(usize, bool)> {
     inference
         .type_assertions

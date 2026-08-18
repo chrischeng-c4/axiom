@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-nebula-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! cclab.nebula code generator
 //!
@@ -10,10 +9,8 @@ use crate::spec::ir::{DataModelSpec, FieldDef, ModelDef, StringFormat};
 use crate::type_inference::Type;
 
 /// Nebula (MongoDB ORM) code generator
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-nebula-rs.md#source
 pub struct NebulaGenerator;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-nebula-rs.md#source
 impl NebulaGenerator {
     pub fn new() -> Self {
         Self
@@ -214,14 +211,12 @@ impl NebulaGenerator {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-nebula-rs.md#source
 impl Default for NebulaGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-nebula-rs.md#source
 impl CodeGenerator for NebulaGenerator {
     fn name(&self) -> &str {
         "nebula"

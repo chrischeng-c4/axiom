@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-schemas-k8s-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Programmatic K8s JSON-Schema definitions for common resources.
 //!

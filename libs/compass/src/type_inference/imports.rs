@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Import resolution for cross-file type checking
 //!
@@ -20,7 +19,6 @@ use super::ty::Type;
 
 /// Represents an import statement
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub enum Import {
     /// import module
     Module {
@@ -38,7 +36,6 @@ pub enum Import {
 
 /// A single imported name with optional alias
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub struct ImportedName {
     pub name: String,
     pub alias: Option<String>,
@@ -46,7 +43,6 @@ pub struct ImportedName {
 
 /// Loading state for a module (for circular import detection)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub enum ModuleLoadState {
     /// Module not yet loaded
     #[default]
@@ -61,7 +57,6 @@ pub enum ModuleLoadState {
 
 /// Module information including exported types
 #[derive(Debug, Clone, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub struct ModuleInfo {
     /// Module path (e.g., "collections.abc")
     pub path: String,
@@ -82,7 +77,6 @@ pub struct ModuleInfo {
     pub submodules: Vec<String>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 impl ModuleInfo {
     pub fn new(path: &str) -> Self {
         Self {
@@ -129,7 +123,6 @@ impl ModuleInfo {
 
 /// Indexed module entry for quick lookups
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub struct ModuleIndexEntry {
     /// Full module path (e.g., "django.db.models")
     pub module_path: String,
@@ -143,7 +136,6 @@ pub struct ModuleIndexEntry {
 
 /// Import resolver that manages module loading and type resolution
 #[derive(Debug, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub struct ImportResolver {
     /// Loaded modules (module path -> info)
     modules: HashMap<String, ModuleInfo>,
@@ -159,7 +151,6 @@ pub struct ImportResolver {
     indexed: bool,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 impl ImportResolver {
     pub fn new() -> Self {
         Self {
@@ -525,7 +516,6 @@ impl ImportResolver {
 }
 
 /// Parse an import statement from a tree-sitter node
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub fn parse_import(source: &str, node: &tree_sitter::Node) -> Option<Import> {
     let node_text = |n: &tree_sitter::Node| -> String {
         n.utf8_text(source.as_bytes()).unwrap_or("").to_string()
@@ -599,7 +589,6 @@ pub fn parse_import(source: &str, node: &tree_sitter::Node) -> Option<Import> {
 
 /// Create module info for common Python builtins
 #[allow(dead_code)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub fn create_builtins_module() -> ModuleInfo {
     let mut info = ModuleInfo::new("builtins");
 
@@ -715,7 +704,6 @@ pub fn create_builtins_module() -> ModuleInfo {
 
 /// Create module info for typing module
 #[allow(dead_code)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-imports-rs.md#source
 pub fn create_typing_module() -> ModuleInfo {
     let mut info = ModuleInfo::new("typing");
 

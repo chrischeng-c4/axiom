@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-format-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Formatter integration — unified interface for external formatters
 //!
@@ -12,7 +11,6 @@ use std::process::Command;
 
 /// Result of formatting a file
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-format-mod-rs.md#source
 pub struct FormatResult {
     /// Original source (before formatting)
     pub original: String,
@@ -26,7 +24,6 @@ pub struct FormatResult {
 
 /// Configuration for a single formatter
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-format-mod-rs.md#source
 pub struct FormatterConfig {
     /// Name of the formatter binary
     pub binary_name: String,
@@ -39,7 +36,6 @@ pub struct FormatterConfig {
 }
 
 /// Registry of formatters per language
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-format-mod-rs.md#source
 pub struct FormatterRegistry {
     /// Language -> formatter config
     formatters: HashMap<String, FormatterConfig>,
@@ -47,7 +43,6 @@ pub struct FormatterRegistry {
     available: HashMap<String, PathBuf>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-format-mod-rs.md#source
 impl FormatterRegistry {
     /// Create a new registry with default formatter configs.
     /// Probes for binary availability using `detect::find_binary`.
@@ -254,7 +249,6 @@ impl FormatterRegistry {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-format-mod-rs.md#source
 impl Default for FormatterRegistry {
     fn default() -> Self {
         Self::new()

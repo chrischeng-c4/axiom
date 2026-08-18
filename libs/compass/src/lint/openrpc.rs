@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-openrpc-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! OpenRPC 1.x lint checker (line-based JSON analysis)
 
@@ -8,10 +7,8 @@ use crate::syntax::{Language, ParsedFile};
 use std::collections::HashMap;
 
 /// OpenRPC 1.x checker — line-based JSON analysis
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-openrpc-rs.md#source
 pub struct OpenRpcChecker;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-openrpc-rs.md#source
 impl OpenRpcChecker {
     pub fn new() -> Self {
         Self
@@ -304,14 +301,12 @@ fn line_range(line_num: usize, line: &str) -> Range {
     )
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-openrpc-rs.md#source
 impl Default for OpenRpcChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-openrpc-rs.md#source
 impl super::Checker for OpenRpcChecker {
     fn language(&self) -> Language {
         Language::Yaml

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-stubs-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Stub file (.pyi) support for type information
 //!
@@ -19,7 +18,6 @@ use super::ty::{Param, ParamKind, Type};
 
 /// Stub file loader and cache
 #[derive(Debug, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-stubs-rs.md#source
 pub struct StubLoader {
     /// Loaded stubs (module path -> module info)
     stubs: HashMap<String, ModuleInfo>,
@@ -29,7 +27,6 @@ pub struct StubLoader {
     builtins_loaded: bool,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-stubs-rs.md#source
 impl StubLoader {
     pub fn new() -> Self {
         Self {

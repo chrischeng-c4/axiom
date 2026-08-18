@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-test-extractor-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Extract Rust tests and convert to Python tests.
 //!
@@ -10,7 +9,6 @@ use std::path::Path;
 
 /// Configuration for test extraction
 #[derive(Debug, Clone, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-test-extractor-rs.md#source
 pub struct TestExtractorConfig {
     /// Rust struct name to Python class name mapping
     pub type_mapping: Vec<(String, String)>,
@@ -20,7 +18,6 @@ pub struct TestExtractorConfig {
 
 /// Extracted Rust test
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-test-extractor-rs.md#source
 pub struct RustTest {
     pub name: String,
     pub body: String,
@@ -30,12 +27,10 @@ pub struct RustTest {
 }
 
 /// Test extractor and translator
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-test-extractor-rs.md#source
 pub struct TestExtractor {
     config: TestExtractorConfig,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-test-extractor-rs.md#source
 impl TestExtractor {
     pub fn new(config: TestExtractorConfig) -> Self {
         Self { config }

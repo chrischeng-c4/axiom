@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-graphql-sym-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! GraphQL symbol extraction (line-based)
 //!
@@ -12,7 +11,6 @@
 use super::{SymbolKind, SymbolTableBuilder};
 use crate::diagnostic::{Position, Range};
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-graphql-sym-rs.md#source
 impl SymbolTableBuilder {
     /// Visit GraphQL source and extract symbols.
     pub(crate) fn visit_graphql_lines(&mut self, source: &str) {

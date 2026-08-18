@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rules-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Extended CSS lint rules (CSS006 - CSS010)
 //!
@@ -24,7 +23,6 @@ const SHORTHAND_GROUPS: &[(&str, &[&str])] = &[
     ]),
 ];
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rules-rs.md#source
 impl CssChecker {
     /// CSS006: Vendor prefix without standard property
     ///

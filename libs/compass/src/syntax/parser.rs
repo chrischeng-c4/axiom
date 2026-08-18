@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-syntax-parser-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Multi-language parser using tree-sitter
 
@@ -8,7 +7,6 @@ use tree_sitter::{Parser, Tree};
 
 /// Supported languages
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-syntax-parser-rs.md#source
 pub enum Language {
     Python,
     TypeScript,
@@ -29,7 +27,6 @@ pub enum Language {
     GraphQL,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-syntax-parser-rs.md#source
 impl Language {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -77,7 +74,6 @@ impl Language {
 }
 
 /// Multi-language parser
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-syntax-parser-rs.md#source
 pub struct MultiParser {
     python_parser: Parser,
     typescript_parser: Parser,
@@ -95,7 +91,6 @@ pub struct MultiParser {
     toml_parser: Parser,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-syntax-parser-rs.md#source
 impl MultiParser {
     pub fn new() -> Result<Self> {
         let mut python_parser = Parser::new();
@@ -253,7 +248,6 @@ impl MultiParser {
 
 /// Information about a parse error
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-syntax-parser-rs.md#source
 pub struct ParseError {
     /// Start byte offset of the error
     pub start_byte: usize,
@@ -268,7 +262,6 @@ pub struct ParseError {
 }
 
 /// Parsed file with AST
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-syntax-parser-rs.md#source
 pub struct ParsedFile {
     pub source: String,
     pub tree: Tree,
@@ -280,7 +273,6 @@ pub struct ParsedFile {
     pub is_line_based: bool,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-syntax-parser-rs.md#source
 impl ParsedFile {
     /// Create a ParsedFile for line-based analysis (no tree-sitter)
     /// Used for languages like Dockerfile that don't have compatible grammars

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-schemas-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Schema-based validation for Kubernetes manifests and GitLab CI configs.
 //!
@@ -16,7 +15,6 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// Schema registry — lazily compiles and caches JSON Schema validators.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-schemas-mod-rs.md#source
 pub struct SchemaRegistry {
     /// K8s validators keyed by (kind, version). Version is stored for future
     /// differentiation; currently all versions share the same schema.
@@ -30,7 +28,6 @@ pub struct SchemaRegistry {
 /// Global singleton so callers don't have to thread the registry everywhere.
 static GLOBAL_REGISTRY: OnceLock<SchemaRegistry> = OnceLock::new();
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-schemas-mod-rs.md#source
 impl SchemaRegistry {
     /// Build a new registry with compiled validators for all K8s resource
     /// kinds and the GitLab CI schema.

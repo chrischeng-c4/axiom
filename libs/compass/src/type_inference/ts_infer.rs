@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-infer-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! TypeScript type inference engine
 //!
@@ -18,7 +17,6 @@ use super::ts_types::{is_assignable_to, TsInterface, TsTypeContext};
 use super::ty::{LiteralValue, Param, ParamKind, Type, TypeVarId, Variance};
 
 /// TypeScript type inferencer
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-infer-rs.md#source
 pub struct TsTypeInferencer<'a> {
     /// Source code
     source: &'a str,
