@@ -96,6 +96,10 @@ path = "e2e/shutdown_handoff.rs"
 name = "host_shutdown_deadline"
 path = "e2e/host_shutdown_deadline.rs"
 
+[[test]]
+name = "shutdown_idempotency"
+path = "e2e/shutdown_idempotency.rs"
+
 
 [dependencies]
 raft-core = { path = "../raft-core" }

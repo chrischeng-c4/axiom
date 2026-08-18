@@ -281,9 +281,17 @@ pub struct PhaseRecord {
     pub elapsed: Duration,
 }
 
-/// The terminal report returned by `shutdown_within` (#3672).
+/// Which caller role this report represents in host shutdown (#3683).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShutdownCaller {
+    Executed,
+    Joined,
+}
+
+/// The terminal report returned by `shutdown_within` (#3672, #3683).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostShutdownReport {
+    pub caller: ShutdownCaller,
     pub phases: Vec<PhaseRecord>,
     pub handoff: LeadershipHandoff,
     pub incomplete_phase: Option<ShutdownPhase>,
@@ -334,6 +342,8 @@ pub(crate) struct Shared {
     pub(crate) undeliverable_never_addressed: AtomicU64,
     pub(crate) undeliverable_withdrawn_address: AtomicU64,
     pub(crate) lifecycle_generation: AtomicU64,
+    pub(crate) shutdown_started: AtomicBool,
+    pub(crate) shutdown_tx: watch::Sender<Option<HostShutdownReport>>,
 }
 
 #[derive(Default)]
@@ -820,6 +830,7 @@ impl RaftHost {
         let client =
             transport_h2c::h2c_client_with(Some(cfg.rpc_timeout), None).expect("h2c client");
         let (applied_tx, _rx) = watch::channel(sm.applied_index());
+        let (shutdown_tx, _shutdown_rx) = watch::channel(None);
         let peer_lanes = peers
             .keys()
             .copied()
@@ -842,6 +853,8 @@ impl RaftHost {
             undeliverable_never_addressed: AtomicU64::new(0),
             undeliverable_withdrawn_address: AtomicU64::new(0),
             lifecycle_generation: AtomicU64::new(0),
+            shutdown_started: AtomicBool::new(false),
+            shutdown_tx,
         });
 
         let s = Arc::clone(&shared);
@@ -880,7 +893,7 @@ impl RaftHost {
             .is_ok()
     }
 
-    /// Run host shutdown bounded by the caller's shared absolute deadline (#3672).
+    /// Run host shutdown bounded by the caller's shared absolute deadline (#3672, #3683).
     ///
     /// Executes the four shutdown phases in fixed sequential order:
     /// 1. `Quiesce` — stop accepting new proposals
@@ -888,11 +901,44 @@ impl RaftHost {
     /// 3. `BackgroundTasks` — abort and await the tick and pump loops
     /// 4. `PeerRpcDrain` — wait for in-flight peer RPCs to finish
     ///
-    /// Every phase is bounded by `deadline.usable_remaining()` read at the start
-    /// of that phase. If usable budget expires, the run stops immediately,
-    /// later phases are neither run nor recorded, and `incomplete_phase` names
-    /// that phase.
+    /// A host performs this shutdown sequence at most once across its whole lifetime.
+    /// The first caller executes the phases and receives a report with
+    /// [`ShutdownCaller::Executed`]; concurrent or repeat callers wait for completion
+    /// and receive the identical terminal outcome with [`ShutdownCaller::Joined`].
     pub async fn shutdown_within(&self, deadline: ShutdownDeadline) -> HostShutdownReport {
+        if self
+            .shared
+            .shutdown_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            let mut rx = self.shared.shutdown_tx.subscribe();
+            while rx.borrow().is_none() {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+            }
+            let terminal = rx
+                .borrow()
+                .as_ref()
+                .expect("shutdown report published")
+                .clone();
+            return HostShutdownReport {
+                caller: ShutdownCaller::Joined,
+                phases: terminal.phases,
+                handoff: terminal.handoff,
+                incomplete_phase: terminal.incomplete_phase,
+                peer_listener_close_safe: terminal.peer_listener_close_safe,
+                storage_failure: terminal.storage_failure,
+            };
+        }
+
+        let report = self.execute_shutdown(deadline).await;
+        self.shared.shutdown_tx.send_replace(Some(report.clone()));
+        report
+    }
+
+    async fn execute_shutdown(&self, deadline: ShutdownDeadline) -> HostShutdownReport {
         let mut phases = Vec::with_capacity(4);
         let mut handoff = LeadershipHandoff::NotLeader;
         let mut observed_storage_failure = None;
@@ -907,6 +953,7 @@ impl RaftHost {
                 elapsed: start.elapsed(),
             });
             return HostShutdownReport {
+                caller: ShutdownCaller::Executed,
                 phases,
                 handoff,
                 incomplete_phase: Some(ShutdownPhase::Quiesce),
@@ -938,6 +985,7 @@ impl RaftHost {
                 elapsed: start.elapsed(),
             });
             return HostShutdownReport {
+                caller: ShutdownCaller::Executed,
                 phases,
                 handoff,
                 incomplete_phase: Some(ShutdownPhase::LeadershipHandoff),
@@ -969,6 +1017,7 @@ impl RaftHost {
                     elapsed: start.elapsed(),
                 });
                 return HostShutdownReport {
+                    caller: ShutdownCaller::Executed,
                     phases,
                     handoff,
                     incomplete_phase: Some(ShutdownPhase::LeadershipHandoff),
@@ -989,6 +1038,7 @@ impl RaftHost {
                 elapsed: start.elapsed(),
             });
             return HostShutdownReport {
+                caller: ShutdownCaller::Executed,
                 phases,
                 handoff,
                 incomplete_phase: Some(ShutdownPhase::BackgroundTasks),
@@ -1016,6 +1066,7 @@ impl RaftHost {
                 elapsed: start.elapsed(),
             });
             return HostShutdownReport {
+                caller: ShutdownCaller::Executed,
                 phases,
                 handoff,
                 incomplete_phase: Some(ShutdownPhase::BackgroundTasks),
@@ -1047,6 +1098,7 @@ impl RaftHost {
                 elapsed: start.elapsed(),
             });
             return HostShutdownReport {
+                caller: ShutdownCaller::Executed,
                 phases,
                 handoff,
                 incomplete_phase: Some(ShutdownPhase::PeerRpcDrain),
@@ -1065,6 +1117,7 @@ impl RaftHost {
                 elapsed: start.elapsed(),
             });
             return HostShutdownReport {
+                caller: ShutdownCaller::Executed,
                 phases,
                 handoff,
                 incomplete_phase: Some(ShutdownPhase::PeerRpcDrain),
@@ -1087,6 +1140,7 @@ impl RaftHost {
         });
 
         HostShutdownReport {
+            caller: ShutdownCaller::Executed,
             phases,
             handoff,
             incomplete_phase: None,
