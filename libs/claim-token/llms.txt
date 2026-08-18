@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/claim-token/tech-design/semantic/claim-token-libs-claim-token.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # claimtoken Agent Context
 

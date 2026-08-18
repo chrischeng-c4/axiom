@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: apps/preview/tech-design/semantic/preview-projects-preview.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # preview Agent Context
 
