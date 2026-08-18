@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-signature-helpers-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Helpers for change-signature refactoring: parameter parsing, call-site
 //! rewriting, and span utilities.

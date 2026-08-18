@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-validator-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! State machine semantic validator
 //!
@@ -15,14 +14,12 @@ use std::collections::{HashMap, HashSet};
 
 /// Validation result
 #[derive(Debug, Clone, Serialize, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-validator-rs.md#source
 pub struct ValidationResult {
     pub valid: bool,
     pub errors: Vec<ValidationError>,
     pub warnings: Vec<ValidationError>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-validator-rs.md#source
 impl ValidationResult {
     pub fn ok() -> Self {
         Self {
@@ -46,7 +43,6 @@ impl ValidationResult {
 
 /// Validation error/warning
 #[derive(Debug, Clone, Serialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-validator-rs.md#source
 pub struct ValidationError {
     pub code: String,
     pub message: String,
@@ -57,7 +53,6 @@ pub struct ValidationError {
 /// Error severity
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-validator-rs.md#source
 pub enum Severity {
     Error,
     Warning,
@@ -75,13 +70,11 @@ struct StateInfo<'a> {
 }
 
 /// State machine validator
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-validator-rs.md#source
 pub struct StateMachineValidator {
     /// Strict mode: treats warnings as errors for certain checks
     strict: bool,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-validator-rs.md#source
 impl StateMachineValidator {
     pub fn new() -> Self {
         Self { strict: false }
@@ -725,7 +718,6 @@ impl StateMachineValidator {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-validator-rs.md#source
 impl Default for StateMachineValidator {
     fn default() -> Self {
         Self::new()

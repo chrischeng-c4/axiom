@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Type system for Argus
 //!

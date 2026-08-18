@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-annotation-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Type annotation parsing
 //!
@@ -9,7 +8,6 @@ use tree_sitter::Node;
 use super::ty::{Param, ParamKind, Type};
 
 /// Parse a type annotation from an AST node
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-annotation-rs.md#source
 pub fn parse_type_annotation(source: &str, node: &Node) -> Type {
     let text = node_text(source, node);
 
@@ -35,7 +33,6 @@ pub fn parse_type_annotation(source: &str, node: &Node) -> Type {
 }
 
 /// Parse a simple type name
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-annotation-rs.md#source
 pub fn parse_simple_type(name: &str) -> Type {
     match name {
         "int" => Type::Int,
@@ -59,7 +56,6 @@ pub fn parse_simple_type(name: &str) -> Type {
 }
 
 /// Parse a generic type like list[int], dict[str, int]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-annotation-rs.md#source
 pub fn parse_generic_type(source: &str, node: &Node) -> Type {
     let base = node
         .child_by_field_name("value")
@@ -168,7 +164,6 @@ pub fn parse_generic_type(source: &str, node: &Node) -> Type {
 }
 
 /// Parse type arguments from a subscript node
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-annotation-rs.md#source
 pub fn parse_type_args(source: &str, node: &Node) -> Vec<Type> {
     let mut args = Vec::new();
 

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-javascript-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! JavaScript code checker
 
@@ -7,10 +6,8 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Rang
 use crate::syntax::{Language, ParsedFile};
 
 /// JavaScript checker
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-javascript-rs.md#source
 pub struct JavaScriptChecker;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-javascript-rs.md#source
 impl JavaScriptChecker {
     pub fn new() -> Self {
         Self
@@ -410,14 +407,12 @@ impl JavaScriptChecker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-javascript-rs.md#source
 impl Default for JavaScriptChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-javascript-rs.md#source
 impl super::Checker for JavaScriptChecker {
     fn language(&self) -> Language {
         Language::JavaScript

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-search-query-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Query execution for the 6 search modes.
 //!
@@ -86,7 +85,6 @@ fn parse_params(s: &str) -> Vec<String> {
         .collect()
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-query-rs.md#source
 pub fn search_by_type_signature(index: &SearchIndex, q: &SearchQuery, pat: &str) -> SearchResult {
     let (qp, qr) = parse_type_pattern(pat);
     let start = std::time::Instant::now();
@@ -160,13 +158,11 @@ fn sig_score(qp: &[String], qr: &Option<String>, sig: &str) -> f64 {
 
 /// Lightweight call graph for BFS traversal.
 #[derive(Debug, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-query-rs.md#source
 pub struct CallGraphIndex {
     pub calls: std::collections::HashMap<String, Vec<String>>,
     pub called_by: std::collections::HashMap<String, Vec<String>>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-query-rs.md#source
 pub fn search_call_hierarchy(
     index: &SearchIndex,
     cg: &CallGraphIndex,
@@ -218,7 +214,6 @@ pub fn search_call_hierarchy(
 
 // -- 3. Implementations --
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-query-rs.md#source
 pub fn search_implementations(index: &SearchIndex, q: &SearchQuery, proto: &str) -> SearchResult {
     let start = std::time::Instant::now();
     let mut matches = Vec::new();
@@ -266,7 +261,6 @@ pub fn search_implementations(index: &SearchIndex, q: &SearchQuery, proto: &str)
 
 // -- 4. Usages --
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-query-rs.md#source
 pub fn search_usages(
     index: &SearchIndex,
     q: &SearchQuery,
@@ -296,7 +290,6 @@ pub fn search_usages(
 
 // -- 5. SimilarCode --
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-query-rs.md#source
 pub fn search_similar_code(index: &SearchIndex, q: &SearchQuery, pattern: &str) -> SearchResult {
     let start = std::time::Instant::now();
     let mut matches = Vec::new();
@@ -369,7 +362,6 @@ fn name_similarity(a: &str, b: &str) -> f64 {
 
 // -- 6. DocumentationSearch --
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-query-rs.md#source
 pub fn search_documentation(index: &SearchIndex, q: &SearchQuery, kw: &str) -> SearchResult {
     let start = std::time::Instant::now();
     let mut matches = Vec::new();

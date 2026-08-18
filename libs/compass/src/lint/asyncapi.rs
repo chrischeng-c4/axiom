@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-asyncapi-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! AsyncAPI 2.x/3.x lint checker (source-line analysis on YAML)
 
@@ -7,10 +6,8 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Posi
 use crate::syntax::{Language, ParsedFile};
 
 /// AsyncAPI 2.x/3.x checker — line-based YAML analysis
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-asyncapi-rs.md#source
 pub struct AsyncApiChecker;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-asyncapi-rs.md#source
 impl AsyncApiChecker {
     pub fn new() -> Self {
         Self
@@ -285,14 +282,12 @@ fn push_no_protocol(diagnostics: &mut Vec<Diagnostic>, line: usize, name: String
     ));
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-asyncapi-rs.md#source
 impl Default for AsyncApiChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-asyncapi-rs.md#source
 impl super::Checker for AsyncApiChecker {
     fn language(&self) -> Language {
         Language::Yaml

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-disk-cache-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Persistent AST index cache backed by bincode.
 //!
@@ -21,7 +20,6 @@ const SCHEMA_VERSION: u32 = 1;
 
 /// Data persisted to disk for a single source file.
 #[derive(Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-disk-cache-rs.md#source
 pub struct PersistedEntry {
     version: u32,
     pub content_hash: u64,
@@ -44,13 +42,11 @@ struct ManifestEntry {
 }
 
 /// Disk-backed index cache.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-disk-cache-rs.md#source
 pub struct DiskCache {
     cache_dir: PathBuf,
     manifest: RwLock<CacheManifest>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-disk-cache-rs.md#source
 impl DiskCache {
     /// Open (or create) the cache directory and load the manifest.
     pub fn new(cache_dir: PathBuf) -> Self {

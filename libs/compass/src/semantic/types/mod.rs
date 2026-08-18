@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Language-specific type inference for semantic analysis
 //!

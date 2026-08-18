@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-serde-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! serde code generator
 //!
@@ -10,10 +9,8 @@ use crate::spec::ir::{DataModelSpec, EnumDef, EnumValue, FieldDef, ModelDef, Str
 use crate::type_inference::Type;
 
 /// Serde code generator
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-serde-rs.md#source
 pub struct SerdeGenerator;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-serde-rs.md#source
 impl SerdeGenerator {
     pub fn new() -> Self {
         Self
@@ -242,14 +239,12 @@ impl SerdeGenerator {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-serde-rs.md#source
 impl Default for SerdeGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-serde-rs.md#source
 impl CodeGenerator for SerdeGenerator {
     fn name(&self) -> &str {
         "serde"

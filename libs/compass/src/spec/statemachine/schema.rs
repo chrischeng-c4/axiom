@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! State machine definition schema
 //!
@@ -10,7 +9,6 @@ use std::collections::HashMap;
 
 /// State machine definition (input from LLM)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 pub struct StateMachineDef {
     /// Machine identifier (required, alphanumeric + hyphen/underscore)
     pub id: String,
@@ -36,7 +34,6 @@ pub struct StateMachineDef {
 
 /// State node definition
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 pub struct StateNodeDef {
     /// State type: atomic, compound, parallel, final
     #[serde(rename = "type", default)]
@@ -70,7 +67,6 @@ pub struct StateNodeDef {
 /// State node types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 pub enum StateType {
     #[default]
     Atomic,
@@ -82,7 +78,6 @@ pub enum StateType {
 /// Transition definition (flexible format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 pub enum TransitionInput {
     /// Simple: just target state name
     Simple(String),
@@ -96,7 +91,6 @@ pub enum TransitionInput {
 
 /// Detailed transition definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 pub struct TransitionDetail {
     /// Target state ID
     #[serde(default)]
@@ -118,13 +112,11 @@ pub struct TransitionDetail {
 /// Action reference - single or multiple
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 pub enum ActionRef {
     Single(String),
     Multiple(Vec<String>),
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 impl ActionRef {
     pub fn to_vec(&self) -> Vec<String> {
         match self {
@@ -136,7 +128,6 @@ impl ActionRef {
 
 /// Guard condition definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 pub struct GuardDef {
     /// Guard description or expression
     pub condition: String,
@@ -148,7 +139,6 @@ pub struct GuardDef {
 
 /// Action definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-schema-rs.md#source
 pub struct ActionDef {
     /// Action description or implementation hint
     pub effect: String,

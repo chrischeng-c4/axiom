@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-output-reporter-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Output formatters for lint results
 
@@ -12,7 +11,6 @@ use serde::Serialize;
 
 /// Output format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-reporter-rs.md#source
 pub enum OutputFormat {
     Json,
     Markdown,
@@ -27,7 +25,6 @@ pub enum OutputFormat {
     Agent,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-reporter-rs.md#source
 impl OutputFormat {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
@@ -44,12 +41,10 @@ impl OutputFormat {
 }
 
 /// Reporter for generating output
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-reporter-rs.md#source
 pub struct Reporter {
     format: OutputFormat,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-reporter-rs.md#source
 impl Reporter {
     pub fn new(format: OutputFormat) -> Self {
         Self { format }

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Async FileWatcher Bridge
 //!
@@ -14,7 +13,6 @@ use crate::watch::{FileWatcher, WatchConfig, WatchEvent};
 
 /// Events from the watch bridge
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 pub enum BridgeEvent {
     /// Files were modified and need re-analysis
     FilesChanged(Vec<PathBuf>),
@@ -28,7 +26,6 @@ pub enum BridgeEvent {
 
 /// Configuration for the watch bridge
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 pub struct WatchBridgeConfig {
     /// Root directory to watch
     pub root: PathBuf,
@@ -38,7 +35,6 @@ pub struct WatchBridgeConfig {
     pub channel_buffer: usize,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 impl WatchBridgeConfig {
     /// Create a new config with default settings
     pub fn new(root: PathBuf) -> Self {
@@ -63,7 +59,6 @@ impl WatchBridgeConfig {
 }
 
 /// Handle to control the watch bridge
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 pub struct WatchBridgeHandle {
     /// Send stop signal
     stop_tx: Option<std::sync::mpsc::Sender<()>>,
@@ -71,7 +66,6 @@ pub struct WatchBridgeHandle {
     thread_handle: Option<std::thread::JoinHandle<()>>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 impl WatchBridgeHandle {
     /// Stop the watch bridge
     pub fn stop(&mut self) {
@@ -88,7 +82,6 @@ impl WatchBridgeHandle {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 impl Drop for WatchBridgeHandle {
     fn drop(&mut self) {
         self.stop();
@@ -96,12 +89,10 @@ impl Drop for WatchBridgeHandle {
 }
 
 /// Watch bridge that forwards sync FileWatcher events to async channels
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 pub struct WatchBridge {
     config: WatchBridgeConfig,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 impl WatchBridge {
     /// Create a new watch bridge
     pub fn new(config: WatchBridgeConfig) -> Self {
@@ -209,14 +200,12 @@ impl WatchBridge {
 }
 
 /// Builder for creating a watch bridge with async support
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 pub struct AsyncWatchBridgeBuilder {
     root: PathBuf,
     debounce: Duration,
     buffer_size: usize,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 impl AsyncWatchBridgeBuilder {
     /// Create a new builder
     pub fn new(root: PathBuf) -> Self {
@@ -251,7 +240,6 @@ impl AsyncWatchBridgeBuilder {
 }
 
 /// Convenience function to spawn a watch bridge
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-watch-bridge-rs.md#source
 pub fn spawn_watch_bridge(
     root: PathBuf,
     debounce: Duration,

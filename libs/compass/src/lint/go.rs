@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-go-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Go code checker (R5)
 //!
@@ -21,7 +20,6 @@ use crate::syntax::{Language, ParsedFile};
 /// perform impact analysis (e.g. "what re-exports a changed interface?").
 #[allow(dead_code)]
 #[derive(Debug, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-go-rs.md#source
 pub struct GoImportGraph {
     /// file path → list of import paths
     imports: HashMap<String, Vec<String>>,
@@ -30,7 +28,6 @@ pub struct GoImportGraph {
 }
 
 #[allow(dead_code)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-go-rs.md#source
 impl GoImportGraph {
     /// Create a new, empty import graph.
     pub fn new() -> Self {
@@ -562,14 +559,12 @@ impl GoChecker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-go-rs.md#source
 impl Default for GoChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-go-rs.md#source
 impl super::Checker for GoChecker {
     fn language(&self) -> Language {
         Language::Go

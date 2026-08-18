@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-tests-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Tests for type definitions
 

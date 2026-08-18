@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-yaml-dispatch-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! YAML/JSON dispatcher — routes to the appropriate sub-checker based on content
 
@@ -18,7 +17,6 @@ use crate::syntax::{Language, ParsedFile};
 /// 3. OpenRPC      — `"openrpc"` and `"methods"` in source
 /// 4. Kubernetes   — `apiVersion:` and `kind:` at line start
 /// 5. GitLab CI    — fallback
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-yaml-dispatch-rs.md#source
 pub struct YamlDispatcher {
     k8s: KubernetesChecker,
     gitlab: GitlabCiChecker,
@@ -27,7 +25,6 @@ pub struct YamlDispatcher {
     openrpc: OpenRpcChecker,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-yaml-dispatch-rs.md#source
 impl YamlDispatcher {
     pub fn new() -> Self {
         Self {
@@ -64,14 +61,12 @@ impl YamlDispatcher {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-yaml-dispatch-rs.md#source
 impl Default for YamlDispatcher {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-yaml-dispatch-rs.md#source
 impl Checker for YamlDispatcher {
     fn language(&self) -> Language {
         Language::Yaml

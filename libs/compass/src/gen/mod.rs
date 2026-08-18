@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Code generation module for spec-to-code
 //!

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-infer-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Type inference engine for Python
 
@@ -15,7 +14,6 @@ use super::ty::{Param, ParamKind, Type, TypeVarId, Variance};
 use super::type_env::TypeEnv;
 
 /// Type inferencer for Python code
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-infer-rs.md#source
 pub struct TypeInferencer<'a> {
     /// Source code
     source: &'a str,
@@ -1482,7 +1480,6 @@ impl<'a> TypeInferencer<'a> {
 
 /// Information extracted from a TypeVar(...) call
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-infer-rs.md#source
 pub struct TypeVarInfo {
     /// The name of the TypeVar (e.g., "T" from TypeVar("T", ...))
     pub name: String,

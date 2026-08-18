@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-inline-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Inline refactoring
 //!
@@ -19,10 +18,8 @@ use super::{FileContext, ProjectContext, RefactoringOp};
 // ============================================================================
 
 /// Engine that inlines a variable or simple function.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-inline-rs.md#source
 pub struct InlineEngine;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-inline-rs.md#source
 impl RefactoringOp for InlineEngine {
     fn apply(
         &self,

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-graphql-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! GraphQL lint checker — AST-based via tree-sitter-graphql (R3)
 //!
@@ -13,10 +12,8 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Posi
 use crate::syntax::{Language, ParsedFile};
 use std::collections::{HashMap, HashSet};
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-graphql-rs.md#source
 pub struct GraphqlChecker;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-graphql-rs.md#source
 impl GraphqlChecker {
     pub fn new() -> Self {
         Self
@@ -569,7 +566,6 @@ impl GraphqlChecker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-graphql-rs.md#source
 impl Default for GraphqlChecker {
     fn default() -> Self {
         Self::new()
@@ -580,7 +576,6 @@ fn lr(line: u32) -> Range {
     Range::new(Position::new(line, 0), Position::new(line, u32::MAX))
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-graphql-rs.md#source
 impl Checker for GraphqlChecker {
     fn language(&self) -> Language {
         Language::GraphQL

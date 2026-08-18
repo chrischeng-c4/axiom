@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lens-error-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Unified error handling for Argus
 //!
@@ -9,12 +8,10 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 /// Result type alias for Argus operations
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lens-error-rs.md#source
 pub type Result<T> = std::result::Result<T, ArgusError>;
 
 /// Unified error type for all Argus operations
 #[derive(Error, Debug)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lens-error-rs.md#source
 pub enum ArgusError {
     /// Parser initialization or operation failed
     #[error("Parser error: {0}")]
@@ -53,7 +50,6 @@ pub enum ArgusError {
     Other(String),
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lens-error-rs.md#source
 impl ArgusError {
     /// Create a parser error
     pub fn parser(msg: impl Into<String>) -> Self {

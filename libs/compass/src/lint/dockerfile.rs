@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-dockerfile-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Dockerfile lint checker (line-based, no tree-sitter)
 
@@ -7,10 +6,8 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Posi
 use crate::syntax::{Language, ParsedFile};
 
 /// Dockerfile checker — operates on source lines, not tree-sitter AST
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-dockerfile-rs.md#source
 pub struct DockerfileChecker;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-dockerfile-rs.md#source
 impl DockerfileChecker {
     pub fn new() -> Self {
         Self
@@ -362,14 +359,12 @@ impl DockerfileChecker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-dockerfile-rs.md#source
 impl Default for DockerfileChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-dockerfile-rs.md#source
 impl super::Checker for DockerfileChecker {
     fn language(&self) -> Language {
         Language::Dockerfile

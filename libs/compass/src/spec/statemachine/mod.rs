@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! State machine definition parsing, validation, and Mermaid+ generation
 //!

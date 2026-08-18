@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-shield-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! cclab.shield code generator
 //!
@@ -9,10 +8,8 @@ use crate::gen::traits::{CodeGenerator, GenContext, GenResult, GeneratedCode, La
 use crate::spec::ir::{DataModelSpec, EnumDef, FieldDef, ModelDef, StringFormat};
 
 /// Shield code generator
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-shield-rs.md#source
 pub struct ShieldGenerator;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-shield-rs.md#source
 impl ShieldGenerator {
     pub fn new() -> Self {
         Self
@@ -244,14 +241,12 @@ impl ShieldGenerator {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-shield-rs.md#source
 impl Default for ShieldGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-shield-rs.md#source
 impl CodeGenerator for ShieldGenerator {
     fn name(&self) -> &str {
         "shield"

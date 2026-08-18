@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-go-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Go symbol extraction visitor methods
 //!
@@ -16,7 +15,6 @@ use crate::syntax::ParsedFile;
 
 use super::{SymbolKind, SymbolTableBuilder, TypeInfo};
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-go-rs.md#source
 impl SymbolTableBuilder {
     pub(crate) fn visit_go_node(&mut self, node: &tree_sitter::Node<'_>, file: &ParsedFile) {
         if node.is_error() || node.is_missing() {

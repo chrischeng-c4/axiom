@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Rust-specific semantic search support
 //!
@@ -13,10 +12,8 @@ use super::mutable_ast::Span;
 use super::semantic_search::{CallSite, MatchKind, SearchMatch};
 
 /// Rust semantic search provider
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md#source
 pub struct RustSearchProvider;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md#source
 impl RustSearchProvider {
     pub fn new() -> Self {
         Self
@@ -397,7 +394,6 @@ impl RustSearchProvider {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md#source
 impl Default for RustSearchProvider {
     fn default() -> Self {
         Self::new()

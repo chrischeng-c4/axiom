@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-output-agent-types-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Serde-serializable types for agent output format.
 //!
@@ -13,7 +12,6 @@ use std::collections::BTreeMap;
 /// Required fields: `symbols`, `stats`.
 /// Optional (omitted when empty): `imports`, `issues`, `impact`.
 #[derive(Debug, Clone, Serialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-agent-types-rs.md#source
 pub struct AgentOutput {
     /// Map of symbol qualified name to definition info.
     pub symbols: BTreeMap<String, SymbolDef>,
@@ -36,7 +34,6 @@ pub struct AgentOutput {
 
 /// Definition info for a single symbol.
 #[derive(Debug, Clone, Serialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-agent-types-rs.md#source
 pub struct SymbolDef {
     /// Type signature string (e.g. "(int) -> User"). Omitted if unknown.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
@@ -54,7 +51,6 @@ pub struct SymbolDef {
 
 /// A diagnostic issue attributed to the nearest enclosing symbol.
 #[derive(Debug, Clone, Serialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-agent-types-rs.md#source
 pub struct AgentIssue {
     /// Severity: error, warning, info, hint.
     pub severity: String,
@@ -77,7 +73,6 @@ pub struct AgentIssue {
 
 /// Summary statistics for the agent output.
 #[derive(Debug, Clone, Serialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-agent-types-rs.md#source
 pub struct AgentStats {
     pub files_checked: usize,
     pub symbols_found: usize,

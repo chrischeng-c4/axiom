@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-advanced-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Advanced TypeScript type inference (R1)
 //!
@@ -28,7 +27,6 @@ use super::ty::{Type, TypeVarId};
 
 /// A concrete generic type application: `Promise<string>`, `Array<T>`.
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-advanced-rs.md#source
 pub struct TsGenericApplication {
     /// Name of the generic type (e.g. `"Promise"`, `"ReadonlyArray"`)
     pub name: String,
@@ -43,7 +41,6 @@ pub struct TsGenericApplication {
 /// Result of checking whether a concrete type satisfies a type-parameter
 /// constraint (`T extends Constraint`).
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-advanced-rs.md#source
 pub enum ConstraintResult {
     /// The type satisfies the constraint.
     Satisfied,
@@ -63,7 +60,6 @@ pub enum ConstraintResult {
 /// Create with [`AdvancedTsTypeInferencer::new`], passing a reference to the
 /// `TsTypeContext` populated by the base `TsTypeInferencer`, then call the
 /// resolution methods as needed.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-advanced-rs.md#source
 pub struct AdvancedTsTypeInferencer<'ctx> {
     ctx: &'ctx TsTypeContext,
 }

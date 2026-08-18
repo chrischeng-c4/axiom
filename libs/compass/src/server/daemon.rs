@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-daemon-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Argus Daemon - Long-running code analysis server
 
@@ -17,7 +16,6 @@ use super::watch_bridge::{spawn_watch_bridge, BridgeEvent, WatchBridgeHandle};
 
 /// Daemon configuration
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-daemon-rs.md#source
 pub struct DaemonConfig {
     /// Root directory to analyze
     pub root: PathBuf,
@@ -29,7 +27,6 @@ pub struct DaemonConfig {
     pub debounce: Duration,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-daemon-rs.md#source
 impl DaemonConfig {
     /// Create config with default socket path based on workspace hash
     pub fn new(root: PathBuf) -> Self {
@@ -71,7 +68,6 @@ impl DaemonConfig {
 
 /// Status of the analysis queue
 #[derive(Debug, Clone, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-daemon-rs.md#source
 pub struct AnalysisQueueStatus {
     /// Number of files pending analysis
     pub pending_count: usize,
@@ -80,7 +76,6 @@ pub struct AnalysisQueueStatus {
 }
 
 /// Argus Daemon server
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-daemon-rs.md#source
 pub struct ArgusDaemon {
     config: DaemonConfig,
     handler: Arc<RequestHandler>,
@@ -94,7 +89,6 @@ pub struct ArgusDaemon {
     queue_status: Arc<RwLock<AnalysisQueueStatus>>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-daemon-rs.md#source
 impl ArgusDaemon {
     /// Create a new daemon
     pub fn new(config: DaemonConfig) -> Result<Self, String> {
@@ -480,12 +474,10 @@ async fn process_request(line: &str, handler: &RequestHandler) -> Response {
 }
 
 /// Client for connecting to daemon
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-daemon-rs.md#source
 pub struct DaemonClient {
     socket_path: PathBuf,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-daemon-rs.md#source
 impl DaemonClient {
     /// Create a client for the given socket
     pub fn new(socket_path: PathBuf) -> Self {

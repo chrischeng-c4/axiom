@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-embedded-markdown-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Helper for extracting and linting Markdown content embedded in API specs
 //! (OpenAPI/AsyncAPI YAML or JSON description fields).
@@ -8,7 +7,6 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity};
 
 /// A description field extracted from a YAML/JSON spec.
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-embedded-markdown-rs.md#source
 pub struct DescriptionField {
     /// The raw markdown content.
     pub content: String,
@@ -23,7 +21,6 @@ pub struct DescriptionField {
 /// - Block:   `description: |`  followed by indented lines
 ///
 /// Returns one `DescriptionField` per occurrence found.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-embedded-markdown-rs.md#source
 pub fn extract_description_fields(source: &str) -> Vec<DescriptionField> {
     let mut results = Vec::new();
     let lines: Vec<&str> = source.lines().collect();

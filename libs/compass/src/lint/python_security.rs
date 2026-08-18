@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-python-security-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Python security lint rules (PY301-PY305)
 

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Incremental analysis (Sprint 5 - Track 1)
 //!
@@ -23,7 +22,6 @@ use crate::syntax::{Language, MultiParser};
 
 /// A change to a file.
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 pub struct FileChange {
     /// File that changed
     pub file: PathBuf,
@@ -37,7 +35,6 @@ pub struct FileChange {
 
 /// Type of file change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 pub enum ChangeKind {
     /// File created
     Created,
@@ -50,7 +47,6 @@ pub enum ChangeKind {
 }
 
 /// Tracks changes across files.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 pub struct ChangeTracker {
     /// Pending changes
     pending: Vec<FileChange>,
@@ -60,7 +56,6 @@ pub struct ChangeTracker {
     debounce: Duration,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 impl ChangeTracker {
     /// Create a new change tracker.
     pub fn new() -> Self {
@@ -122,7 +117,6 @@ impl ChangeTracker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 impl Default for ChangeTracker {
     fn default() -> Self {
         Self::new()
@@ -134,7 +128,6 @@ impl Default for ChangeTracker {
 // ============================================================================
 
 /// Graph of file dependencies for incremental analysis.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 pub struct DependencyGraph {
     /// Direct dependencies: file -> files it depends on
     dependencies: HashMap<PathBuf, HashSet<PathBuf>>,
@@ -142,7 +135,6 @@ pub struct DependencyGraph {
     dependents: HashMap<PathBuf, HashSet<PathBuf>>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 impl DependencyGraph {
     /// Create a new dependency graph.
     pub fn new() -> Self {
@@ -214,7 +206,6 @@ impl DependencyGraph {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 impl Default for DependencyGraph {
     fn default() -> Self {
         Self::new()
@@ -227,7 +218,6 @@ impl Default for DependencyGraph {
 
 /// Configuration for incremental analysis.
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 pub struct IncrementalConfig {
     /// Enable background analysis
     pub background_analysis: bool,
@@ -241,7 +231,6 @@ pub struct IncrementalConfig {
     pub cache_dir: Option<PathBuf>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 impl Default for IncrementalConfig {
     fn default() -> Self {
         Self {
@@ -256,7 +245,6 @@ impl Default for IncrementalConfig {
 
 /// Result of incremental analysis.
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 pub struct AnalysisResult {
     /// Files that were analyzed
     pub analyzed_files: Vec<PathBuf>,
@@ -268,7 +256,6 @@ pub struct AnalysisResult {
     pub total_time: Duration,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 impl AnalysisResult {
     /// Create empty result.
     pub fn empty() -> Self {
@@ -287,7 +274,6 @@ impl AnalysisResult {
 }
 
 /// Incremental type analyzer.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 pub struct IncrementalAnalyzer {
     /// Configuration
     #[allow(dead_code)]
@@ -302,7 +288,6 @@ pub struct IncrementalAnalyzer {
 
 /// Cached analysis result.
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 pub struct CachedAnalysis {
     /// Content hash when analyzed
     pub hash: ContentHash,
@@ -314,7 +299,6 @@ pub struct CachedAnalysis {
     pub success: bool,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-incremental-rs.md#source
 impl IncrementalAnalyzer {
     /// Create a new incremental analyzer.
     pub fn new(config: IncrementalConfig) -> Self {

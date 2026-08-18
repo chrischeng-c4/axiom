@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-toml-checker-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! TOML lint checker (line-based)
 //!
@@ -17,10 +16,8 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Posi
 use crate::syntax::{Language, ParsedFile};
 
 /// TOML checker (line-based analysis)
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-toml-checker-rs.md#source
 pub struct TomlChecker;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-toml-checker-rs.md#source
 impl TomlChecker {
     pub fn new() -> Self {
         Self
@@ -295,7 +292,6 @@ impl TomlChecker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-toml-checker-rs.md#source
 impl Default for TomlChecker {
     fn default() -> Self {
         Self::new()
@@ -352,7 +348,6 @@ fn extract_array_table_header(trimmed: &str) -> Option<&str> {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-toml-checker-rs.md#source
 impl Checker for TomlChecker {
     fn language(&self) -> Language {
         Language::Toml

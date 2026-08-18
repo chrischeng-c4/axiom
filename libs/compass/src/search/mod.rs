@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-search-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Semantic search engine with persistent index.
 //!
@@ -34,7 +33,6 @@ const INDEX_FILE: &str = "index.bin";
 // ============================================================================
 
 /// Top-level search engine managing the index and query dispatch.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-mod-rs.md#source
 pub struct SearchEngine {
     /// The inverted symbol index.
     index: SearchIndex,
@@ -42,7 +40,6 @@ pub struct SearchEngine {
     call_graph: CallGraphIndex,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-mod-rs.md#source
 impl SearchEngine {
     /// Create a new empty engine.
     pub fn new() -> Self {
@@ -217,7 +214,6 @@ impl SearchEngine {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-mod-rs.md#source
 impl Default for SearchEngine {
     fn default() -> Self {
         Self::new()
