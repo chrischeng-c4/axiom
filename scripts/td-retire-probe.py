@@ -16,17 +16,39 @@ Prints  md=<n> lock=<n> py=<n> hdr=<n> files=<n> other=<n>  for the listed trees
   other   lines naming a listed tree that are NOT standalone headers -- prose
           mentions and code string literals.  Deliberately out of scope.
   embed   compile-time embeds (`include_str!` and friends) whose argument
-          RESOLVES to a file under a listed tree.  Must be 0 before that
-          tree's Markdown may be deleted: such a file is a product input,
-          not documentation.  Resolution is relative to the embedding file,
-          because the one real instance in this repository is written
-          `include_str!("../tech-design/...")` and no string comparison
-          against a tree name would find it.
+          RESOLVES to a file this campaign would DELETE (`*.md`, `td.lock`)
+          under a listed tree.  Must be 0 before that tree's Markdown may be
+          deleted: such a file is a product input, not documentation.
+          Resolution is relative to the embedding file, because the instances
+          in this repository are written `include_str!("../tech-design/...")`
+          and no string comparison against a tree name would find them.
+          Embeds of a `.py` under a tree do not count: `py` is held fixed, so
+          the file is never deleted and the embed is not a hazard.  Counting
+          them would put `embed=0` permanently out of reach for
+          `apps/agentic-workflow`, whose `llm.rs` compiles in two of them.
 
 A header-shaped line that sits inside a Rust string literal is source code, not
 a comment: `apps/agentic-workflow` embeds 33 of them as codegen fixtures.  Such
 lines are excluded from `hdr` and counted in `other`, because deleting one
 edits the crate's behaviour rather than its documentation.
+
+Four comment syntaxes count, not three.  The generated `llms.txt` files carry
+their header as `<!-- SPEC-MANAGED: ... -->`, in a file type no earlier version
+of this probe scanned; 30 such lines were structurally invisible, one per tree,
+so every tree-keyed change reported `hdr=0` while its project root still
+pointed at the tree it had just deleted.
+
+A reference is matched against a tree TWICE: once as the literal prefix it
+carries, and, failing that, once resolved against the referring file's own
+directory.  Only the first test existed at first, so `../tech-design/x.md`
+matched no tree and fell out of `hdr` AND `other` alike -- seven such lines,
+none of them header-shaped.
+
+`include_` is matched against the whole file, not line by line.  Four of the
+five compile-time embeds in this repository put the macro and its string
+argument on separate lines, so a per-line scan reported `embed=0` for a tree
+that still compiles a `.md` in, which is the single thing that column exists
+to prevent.
 """
 from __future__ import annotations
 
@@ -40,9 +62,10 @@ ROOT = os.environ.get(
 )
 SKIP = {".git", "target", "node_modules", "__pycache__", ".venv",
         "site-packages", "dist", "build"}
-EXT = {".rs", ".py", ".toml", ".sh", ".yaml", ".yml"}
+EXT = {".rs", ".py", ".toml", ".sh", ".yaml", ".yml", ".txt", ".md"}
 REF = re.compile(r"((?:[\w./\-]*?)tech-design)/[\w./\-]+\.md")
-HEADER = re.compile(r"^(?:///|//!|//|#)\s*(?:SPEC-MANAGED:|SPEC-REF:|@spec)\s")
+HEADER = re.compile(
+    r"^(?:///|//!|//|#|<!--)\s*(?:SPEC-MANAGED:|SPEC-REF:|@spec)\s")
 RAW = re.compile("r" + "#" + "+" + chr(34))
 QUOTE = chr(34)
 INCL = re.compile(r"include_(?:str|bytes|dir)!\s*\(\s*" + QUOTE + r"([^" + QUOTE + r"]+)" + QUOTE)
@@ -52,6 +75,27 @@ def _tree(parts):
     """Tree key for a directory split, preserving a leading dot (`.aw`)."""
     key = "/".join(parts[:parts.index("tech-design") + 1])
     return key[2:] if key.startswith("./") else key
+
+
+def _deleted(path):
+    """True when this campaign would delete `path`, so embedding it is fatal."""
+    return path.endswith(".md") or os.path.basename(path) == "td.lock"
+
+
+def _hits(m, rd, want):
+    """True when a matched reference names a wanted tree, literally or resolved.
+
+    A reference is written either from the repository root or from the
+    referring file.  Testing only the literal prefix loses the second form;
+    testing only the resolved path loses the first, since `apps/x/tech-design`
+    named inside `apps/x/src/` resolves to a path that does not exist.
+    """
+    literal = m.group(1)
+    literal = literal[2:] if literal.startswith("./") else literal
+    if want(literal):
+        return True
+    parts = os.path.normpath(os.path.join(rd, m.group(0))).split("/")
+    return "tech-design" in parts and want(_tree(parts))
 
 
 def literal_lines(text):
@@ -98,14 +142,15 @@ def scan(want):
                 continue
             rel = os.path.normpath(os.path.join(rd, fn))
             masked = literal_lines(text) if fn.endswith(".rs") else set()
+            for im in INCL.finditer(text):
+                tgt = os.path.normpath(os.path.join(rd, im.group(1)))
+                parts = tgt.split("/")
+                if ("tech-design" in parts and want(_tree(parts))
+                        and _deleted(tgt)):
+                    embed += 1
             for n, line in enumerate(text.splitlines(), 1):
-                for im in INCL.finditer(line):
-                    tgt = os.path.normpath(os.path.join(rd, im.group(1)))
-                    parts = tgt.split("/")
-                    if "tech-design" in parts and want(_tree(parts)):
-                        embed += 1
                 m = REF.search(line)
-                if not m or not want((lambda g: g[2:] if g.startswith("./") else g)(m.group(1))):
+                if not m or not _hits(m, rd, want):
                     continue
                 if HEADER.match(line.strip()) and n not in masked:
                     hdr += 1
