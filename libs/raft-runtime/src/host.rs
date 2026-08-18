@@ -917,6 +917,11 @@ impl RaftHost {
     /// 3. `BackgroundTasks` — abort and await the tick and pump loops
     /// 4. `PeerRpcDrain` — wait for in-flight peer RPCs to finish
     ///
+    /// Every phase is bounded by `deadline.usable_remaining()` read at the start
+    /// of that phase. If usable budget expires, the run stops immediately,
+    /// later phases are neither run nor recorded, and `incomplete_phase` names
+    /// that phase.
+    ///
     /// A host performs this shutdown sequence at most once across its whole lifetime.
     /// The first caller executes the phases and receives a report with
     /// [`ShutdownCaller::Executed`]; concurrent or repeat callers wait for completion
