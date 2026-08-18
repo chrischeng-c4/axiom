@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Lock-free Prometheus metric primitives + text-format encoder.
 //!

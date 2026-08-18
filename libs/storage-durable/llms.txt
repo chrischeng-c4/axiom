@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/storage-durable/tech-design/semantic/storage-durable-libs-storage-durable.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Service Durability Agent Context
 

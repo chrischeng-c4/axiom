@@ -1,4 +1,3 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-capabilities-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat capabilities` — host/backend capability evidence for agents and CI.
 

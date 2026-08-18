@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Shared durable local storage primitives for axiom services.
 //!

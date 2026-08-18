@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/courier/tech-design/interfaces/rest/github-issues-proxy.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:logic:c0ur1e04" tracker="pending-tracker" reason="axum handlers for the four GitHub-issues-proxy endpoints: search/view/create/comment, each authorizing on the {owner}/{name} repo resource then forwarding through GithubClient."
 //! axum handlers for the GitHub-issues-proxy data plane.
 //!

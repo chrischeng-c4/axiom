@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/courier/tech-design/interfaces/rest/github-issues-proxy.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:logic:c0ur1e06" tracker="pending-tracker" reason="axum h2c app over the courier GithubClient: AppState (draining flag + verifier + GithubClient), router() composing the shared probe routes with the /v1 data plane behind the shared bearer-auth middleware, mirroring apps/relay/src/server.rs's shape."
 //! axum HTTP/2 (h2c) application: the GitHub-issues-proxy data plane.
 //!
@@ -82,7 +81,6 @@ impl service_http::ReadinessHook for AppState {
 
 /// Build the HTTP/2 router for the GitHub-issues-proxy data plane.
 ///
-/// @spec apps/courier/tech-design/interfaces/rest/github-issues-proxy.md#logic
 pub fn router(state: AppState) -> Router {
     let verifier = state.verifier();
     let data_plane = Router::new()

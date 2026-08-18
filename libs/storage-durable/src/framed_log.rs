@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
@@ -13,14 +12,12 @@ const HEADER_LEN: usize = 16;
 
 /// One validated log frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 pub struct LogFrame {
     pub seq: u64,
     pub payload: Vec<u8>,
 }
 
 /// CRC-framed append log with clean torn-tail recovery.
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 pub struct FramedLogWriter {
     path: PathBuf,
     file: BufWriter<File>,
@@ -30,7 +27,6 @@ pub struct FramedLogWriter {
     dirty: bool,
 }
 
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 impl FramedLogWriter {
     pub fn open(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> {
         let path = path.into();
@@ -163,10 +159,8 @@ impl FramedLogWriter {
 }
 
 /// Reader for CRC-framed append logs.
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 pub struct FramedLogReader;
 
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 impl FramedLogReader {
     pub fn replay(
         path: impl AsRef<Path>,

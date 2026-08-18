@@ -233,7 +233,6 @@ pub struct ArtifactRecord {
 }
 
 /// Opaque upstream plan file attached to a run.
-/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEvidence {
     pub source_path: String,
@@ -242,7 +241,6 @@ pub struct PlanEvidence {
 }
 
 /// Topology selected for one configured run.
-/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopologyEvidence {
     pub runners: Vec<String>,

@@ -27,12 +27,9 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 /// Stable node identity (in k8s, the StatefulSet ordinal).
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub type NodeId = u64;
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub type Term = u64;
 /// 1-based Raft log index; 0 means "before the first entry".
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub type Index = u64;
 
 /// Logical ticks before a voter starts an election (distinct per node so the
@@ -55,7 +52,6 @@ pub enum EntryKind {
 
 /// One replicated command entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct RaftEntry {
     pub term: Term,
     pub index: Index,
@@ -69,7 +65,6 @@ pub struct RaftEntry {
 /// the compaction point + snapshot bytes so a restarted node can still serve
 /// lagging followers.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct PersistedState {
     pub term: Term,
     pub voted_for: Option<NodeId>,
@@ -91,7 +86,6 @@ pub struct PersistedState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub enum Role {
     Follower,
     Candidate,
@@ -99,7 +93,6 @@ pub enum Role {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct VoteReq {
     pub term: Term,
     pub candidate: NodeId,
@@ -108,14 +101,12 @@ pub struct VoteReq {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct VoteResp {
     pub term: Term,
     pub granted: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct AppendReq {
     pub term: Term,
     pub leader: NodeId,
@@ -126,7 +117,6 @@ pub struct AppendReq {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct AppendResp {
     pub term: Term,
     pub success: bool,
@@ -137,7 +127,6 @@ pub struct AppendResp {
 /// Ship a state-machine snapshot to a follower whose needed entries have been
 /// compacted away. `data` is opaque (the consumer's serialized state machine).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct InstallSnapshotReq {
     pub term: Term,
     pub leader: NodeId,
@@ -147,7 +136,6 @@ pub struct InstallSnapshotReq {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct InstallSnapshotResp {
     pub term: Term,
     /// The snapshot index the follower now holds.
@@ -155,14 +143,12 @@ pub struct InstallSnapshotResp {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct TimeoutNowReq {
     pub term: Term,
     pub leader: NodeId,
 }
 
 #[derive(Clone, Debug)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub enum RaftMsg {
     Vote(VoteReq),
     VoteResp(VoteResp),
@@ -175,7 +161,6 @@ pub enum RaftMsg {
 
 /// A message the driver must deliver to node `to`.
 #[derive(Clone, Debug)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct Outgoing {
     pub to: NodeId,
     pub msg: RaftMsg,
@@ -183,7 +168,6 @@ pub struct Outgoing {
 
 /// How a driver delivers a node's outgoing messages. The production driver
 /// implements this over h2c; tests use an in-process bus.
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub trait RaftTransport {
     fn deliver(&mut self, from: NodeId, out: Outgoing);
 }
@@ -234,7 +218,6 @@ pub enum RemovalRefused {
 
 /// Cluster membership for one Raft group.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct Membership {
     pub voters: Vec<NodeId>,
     pub learners: Vec<NodeId>,
@@ -354,7 +337,6 @@ impl ConfState {
 /// (`n` if odd else `n-1`), the trailing even node becomes a non-voting learner.
 /// So the voter count is always odd (1,1,3,3,5,5,…) → clean majorities, and
 /// every extra even node is a read-only learner. `n == 0` is treated as 1.
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub fn auto_membership(n: u64) -> Membership {
     let n = n.max(1);
     let voters = if n % 2 == 1 { n } else { n - 1 };
@@ -365,7 +347,6 @@ pub fn auto_membership(n: u64) -> Membership {
 }
 
 /// A single Raft-group participant.
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct RaftNode {
     id: NodeId,
     peers: Vec<NodeId>, // all other members (voters + learners)
@@ -406,7 +387,6 @@ pub struct RaftNode {
     outbox: Vec<Outgoing>,
 }
 
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 impl RaftNode {
     /// Create a node `id` within `membership` (starts as Follower at term 0).
     pub fn new(id: NodeId, membership: &Membership) -> RaftNode {

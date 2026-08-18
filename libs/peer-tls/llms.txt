@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/peer-tls/tech-design/semantic/peer-tls-libs-peer-tls.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Service Tls Agent Context
 

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The generic auth rejection type — 401 / 403 / 503 with a small JSON body.
 //!
@@ -35,14 +34,12 @@ struct ErrorBody {
 ///   outage as "your credential is invalid", which sends every caller to
 ///   re-issue a credential that was fine.
 #[derive(Debug, Clone)]
-/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#source
 pub enum AuthError {
     Unauthenticated,
     Forbidden(String),
     Unavailable(String),
 }
 
-/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#source
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         match self {

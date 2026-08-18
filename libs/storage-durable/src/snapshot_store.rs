@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-snapshot_store-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 use std::path::{Path, PathBuf};
 
@@ -8,7 +7,6 @@ use crate::{atomic_write, FsyncPolicy};
 
 /// One sequence-named snapshot file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-snapshot_store-rs.md#source
 pub struct SnapshotFile {
     pub seq: u64,
     pub path: PathBuf,
@@ -16,7 +14,6 @@ pub struct SnapshotFile {
 
 /// Local sequence-named snapshot store.
 #[derive(Debug, Clone)]
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-snapshot_store-rs.md#source
 pub struct SnapshotFileStore {
     root: PathBuf,
     prefix: String,
@@ -24,7 +21,6 @@ pub struct SnapshotFileStore {
     policy: FsyncPolicy,
 }
 
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-snapshot_store-rs.md#source
 impl SnapshotFileStore {
     pub fn new(
         root: impl Into<PathBuf>,

@@ -16,7 +16,6 @@ struct Cluster {
     applied: HashMap<NodeId, Vec<Vec<u8>>>,
 }
 
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-tests-snapshot-rs.md#source
 impl Cluster {
     fn new(n: u64) -> Cluster {
         let m = auto_membership(n);
