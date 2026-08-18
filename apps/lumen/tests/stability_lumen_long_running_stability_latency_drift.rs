@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-long-running-stability-latency-drift
-// @capability long-running-stability
-// @claim no-latency-drift-over-soak
+// @capability operations-observability
+// @claim long-running-stability
 // @contract search-stability-latency-drift
 // @category stability
 // @required_for_production true

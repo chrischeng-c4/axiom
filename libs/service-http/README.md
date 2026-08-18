@@ -8,6 +8,15 @@ error envelope. Protocol-neutral logging, optional OTLP export, metric-provider
 semantics, and lifecycle counters belong to `service-observability`; listener
 admission and drain state belong to `server-http` and `server-lifecycle`.
 
+## Production lifecycle composition
+
+Create one `LifecycleController`, pass it to `lifecycle_probe_routes` (or the
+canonical JSON variant), and serve through `serve_with_lifecycle`. Use a
+cloneable `LifecycleShutdownTrigger` with `run_signal_bridge` or
+`shutdown_on_signal` so probes, admission, and the absolute deadline share one
+generation. `standard_probe_routes`, `ReadinessHook`, `serve`, and
+`shutdown_with_drain` are source-compatible legacy migration adapters only.
+
 ## Capabilities
 
 Each section names the gate that verifies it. A capability with no gate line is

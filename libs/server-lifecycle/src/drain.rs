@@ -1,7 +1,6 @@
-use tokio::sync::watch;
+use crate::lifecycle::{LifecycleController, LifecyclePhase, LifecycleSubscription};
 
-/// Server admission state.
-/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// Compatibility admission state projected from the authoritative lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrainState {
     Ready,
@@ -14,41 +13,54 @@ impl DrainState {
     }
 }
 
-/// Write-side drain controller owned by the server runtime.
 #[derive(Debug, Clone)]
 pub struct DrainController {
-    tx: watch::Sender<DrainState>,
+    lifecycle: LifecycleController,
 }
 
 impl DrainController {
     pub fn new() -> Self {
-        let (tx, _rx) = watch::channel(DrainState::Ready);
-        Self { tx }
+        Self {
+            lifecycle: LifecycleController::serving(),
+        }
+    }
+
+    pub fn from_lifecycle(lifecycle: LifecycleController) -> Self {
+        Self { lifecycle }
+    }
+
+    pub fn lifecycle(&self) -> LifecycleController {
+        self.lifecycle.clone()
     }
 
     pub fn signal(&self) -> DrainSignal {
         DrainSignal {
-            rx: self.tx.subscribe(),
+            subscription: self.lifecycle.subscribe(),
         }
     }
 
     pub fn state(&self) -> DrainState {
-        *self.tx.borrow()
+        if self.lifecycle.observation().phase.is_draining_or_later() {
+            DrainState::Draining
+        } else {
+            DrainState::Ready
+        }
     }
 
     pub fn is_draining(&self) -> bool {
         self.state().is_draining()
     }
 
-    // <HANDWRITE gap="missing-generator:logic" tracker="#1884" reason="logic section in drain.rs is hand-written pending codegen support">
     pub fn start_drain(&self) {
-        // `watch::Sender::send` declines to publish when every receiver has
-        // been dropped. Drain is process state, not a best-effort event: a
-        // SIGTERM that arrives before a plane subscribes must still be seen by
-        // that plane when it starts.
-        self.tx.send_replace(DrainState::Draining);
+        let phase = self.lifecycle.observation().phase;
+        if !phase.is_draining_or_later() {
+            let _ = self.lifecycle.transition(
+                LifecyclePhase::Draining,
+                "drain",
+                "compatibility drain requested",
+            );
+        }
     }
-    // </HANDWRITE>
 }
 
 impl Default for DrainController {
@@ -57,15 +69,18 @@ impl Default for DrainController {
     }
 }
 
-/// Read-side drain signal cloned into accept loops and connection tasks.
 #[derive(Debug, Clone)]
 pub struct DrainSignal {
-    rx: watch::Receiver<DrainState>,
+    subscription: LifecycleSubscription,
 }
 
 impl DrainSignal {
     pub fn state(&self) -> DrainState {
-        *self.rx.borrow()
+        if self.subscription.observation().phase.is_draining_or_later() {
+            DrainState::Draining
+        } else {
+            DrainState::Ready
+        }
     }
 
     pub fn is_draining(&self) -> bool {
@@ -73,12 +88,11 @@ impl DrainSignal {
     }
 
     pub async fn changed(&mut self) -> DrainState {
-        // A receiver subscribed after drain has already begun treats the
-        // current watch value as seen. Check it first so startup shutdown
-        // futures cannot miss an earlier SIGTERM/drain transition.
-        if !self.is_draining() {
-            let _ = self.rx.changed().await;
+        loop {
+            if self.is_draining() {
+                return DrainState::Draining;
+            }
+            let _ = self.subscription.changed().await;
         }
-        self.state()
     }
 }

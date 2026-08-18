@@ -17,7 +17,7 @@ echo "=== generating $ROWS-row CSV and PUTting to keep ==="
 gent0=$(python3 -c 'import time;print(time.time())')
 python3 -c "import sys;w=sys.stdout.write;[w(f'row{i},{i}\n') for i in range($ROWS)]" > /tmp/loom-1m/big.csv
 echo "CSV size: $(du -h /tmp/loom-1m/big.csv | cut -f1), gen $(python3 -c "import time;print(f'{time.time()-$gent0:.1f}s')")"
-curl -s -X PUT http://127.0.0.1:7390/v1/inputs/onemillion -H 'content-type: application/octet-stream' --data-binary @/tmp/loom-1m/big.csv -w 'PUT [%{http_code}]'; echo
+curl -s -X PUT http://127.0.0.1:7390/inputs/onemillion -H 'content-type: application/octet-stream' --data-binary @/tmp/loom-1m/big.csv -w 'PUT [%{http_code}]'; echo
 echo "=== submit csv-split over 1M rows → $((ROWS/CHUNK)) chunks of $CHUNK rows, $WORKERS workers ==="
 start=$(python3 -c 'import time;print(time.time())')
 curl -s -X POST http://127.0.0.1:7486/runs -H 'content-type: application/json' -d '{"run_id":"onemil","nodes":[{"id":"reader","task_name":"csv-split","input_refs":["onemillion"]}]}' >/dev/null
@@ -34,7 +34,7 @@ python3 - <<PY
 import urllib.request,json
 tot=0; nc=$((ROWS/CHUNK))
 for c in range(nc):
-    try: tot+=int(urllib.request.urlopen(f"http://127.0.0.1:7390/v1/results/onemil:rows-{c}:result",timeout=5).read())
+    try: tot+=int(urllib.request.urlopen(f"http://127.0.0.1:7390/results/onemil:rows-{c}:result",timeout=5).read())
     except Exception as e: print("miss",c,e)
 print(f"chunks={nc} total_rows_processed={tot} (expected {$ROWS}) -> {'OK' if tot==$ROWS else 'MISMATCH'}")
 PY

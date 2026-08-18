@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-competitor-performance-competitive
-// @capability competitor-performance
-// @claim competitive-regression-gate-beat-pg-os-per-cell-ratcheting
+// @capability querying
+// @claim query-quality
 // @contract search-efficiency-filtering-ranking-pagination
 // @category efficiency
 // @required_for_production true

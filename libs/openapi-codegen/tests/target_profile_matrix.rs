@@ -389,7 +389,7 @@ fn legacy_default_output_contract() {
         output_fingerprint(&typescript),
         vec![
             ("types.ts", 11271619169474842166),
-            ("runtime.ts", 285390319500007315),
+            ("runtime.ts", 7139633933126818586),
             ("client.ts", 2626699975202142277),
             ("index.ts", 14572872411216220858),
         ]
@@ -399,7 +399,7 @@ fn legacy_default_output_contract() {
         vec![
             ("models.py", 16913750451280483632),
             ("h2c_runtime.py", 15121160305850173931),
-            ("client.py", 12543613083860033109),
+            ("client.py", 10786669601410878341),
             ("__init__.py", 9994428160985782841),
         ]
     );
@@ -407,7 +407,7 @@ fn legacy_default_output_contract() {
         output_fingerprint(&rust),
         vec![
             ("models.rs", 9804341337094805699),
-            ("client.rs", 12802275446942953960),
+            ("client.rs", 10528869006445775057),
             ("mod.rs", 10596960125496975377),
         ]
     );

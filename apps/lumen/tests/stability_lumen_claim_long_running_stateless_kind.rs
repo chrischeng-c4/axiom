@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-long-running-stateless-kind
-// @capability long-running-stability
-// @claim kind-api-recovery-no-relay
+// @capability operations-observability
+// @claim long-running-stability
 // @contract long-running-stateless-kind-dogfood
 // @category stability
 // @required_for_production true

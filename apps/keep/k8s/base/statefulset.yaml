@@ -83,6 +83,11 @@ spec:
                 configMapKeyRef:
                   name: keep-config
                   key: KEEP_LOG_LEVEL
+            - name: KEEP_LOG_FORMAT
+              valueFrom:
+                configMapKeyRef:
+                  name: keep-config
+                  key: KEEP_LOG_FORMAT
           # QoS Guaranteed: requests == limits.
           resources:
             requests:

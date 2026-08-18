@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-standard-service-probe-routes
-// @capability standard-operational-endpoints
-// @claim service-http-standard-probe-routes
+// @capability operations-observability
+// @claim standard-operational-surfaces
 // @contract standard-service-probe-routes
 // @category behavior
 // @required_for_production true

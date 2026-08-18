@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-search-core-filter-sort
-// @capability search-core
-// @claim filter-sort-early-termination
+// @capability querying
+// @claim query-quality
 // @contract search-core-filter-sort
 // @category efficiency
 // @required_for_production true

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-long-running-stability-meta-api
-// @capability long-running-stability
-// @claim meta-api-health-ready-metrics-version
+// @capability operations-observability
+// @claim standard-operational-surfaces
 // @contract ops-meta-api-surface
 // @category behavior
 // @required_for_production true

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-observability-otlp
-// @capability observability
-// @claim otlp-traces-and-metrics
+// @capability operations-observability
+// @claim control-plane-observability
 // @contract observability-otlp
 // @category behavior
 // @required_for_production true

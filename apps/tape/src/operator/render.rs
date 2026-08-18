@@ -17,8 +17,12 @@
 
 use serde_json::{json, Value};
 
-use super::crd::Tape;
+use super::crd::{AuthMode, Tape};
 use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
+use service_k8s::service::PruneTarget;
+use service_k8s::stateful::{
+    resource_request_or_default, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST,
+};
 
 const APP: &str = "tape";
 const MANAGER: &str = "tape-operator";
@@ -45,6 +49,19 @@ fn instance(tape: &Tape) -> String {
         .name
         .clone()
         .unwrap_or_else(|| APP.to_string())
+}
+
+/// The shared name of every backup-scoped child: the CronJob, its
+/// ServiceAccount, and the CronJob's [`prunes`] target.
+///
+/// One spelling on purpose. [`prunes`] must name the exact object
+/// [`backup_cron_job`] rendered, and a prune that misses by one character is
+/// silent — the controller GETs a name that does not exist, finds nothing to
+/// delete, and reports success while the real CronJob keeps firing on its old
+/// schedule. Deriving both from here makes that class of drift a compile-time
+/// impossibility rather than something a test has to notice.
+fn backup_child(name: &str) -> String {
+    format!("{name}-backup")
 }
 
 /// Resolve the namespace (defaults to `default` for unit construction).
@@ -77,25 +94,33 @@ fn ctx<'a>(tape: &Tape, name: &'a str, ns: &'a str) -> RenderCtx<'a> {
 }
 
 /// Which shared projection source (if any) supplies the token registry file.
-/// `tokensSecret` wins over `tokensSecretProviderClass`; both are inactive
-/// unless the CR enables required bearer auth.
+/// Both are inactive unless the CR enables required bearer auth.
+///
+/// There is no precedence branch, and its absence is the point (#2765). The
+/// two fields are mutually exclusive by CRD schema, so a spec naming both
+/// never came from an API server; rendering *neither* is the safe answer,
+/// because it leaves `TAPE_AUTH=required` with no registry file and the pod
+/// fails startup naming the problem — instead of quietly serving whichever
+/// registry a precedence rule happened to pick while the operator reads the
+/// other one.
 fn token_registry_source(tape: &Tape) -> Option<render::TokenRegistrySource<'_>> {
-    if tape.spec.auth != "required" {
+    if tape.spec.auth != AuthMode::Required {
         return None;
     }
-    if let Some(secret) = tape.spec.tokens_secret.as_deref() {
-        return Some(render::TokenRegistrySource::Secret {
-            name: secret,
+    match (
+        tape.spec.tokens_secret.as_deref(),
+        tape.spec.tokens_secret_provider_class.as_deref(),
+    ) {
+        (Some(name), None) => Some(render::TokenRegistrySource::Secret {
+            name,
             key: TOKEN_REGISTRY_KEY,
-        });
-    }
-    tape.spec
-        .tokens_secret_provider_class
-        .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi {
+        }),
+        (None, Some(provider_class)) => Some(render::TokenRegistrySource::Csi {
             provider_class,
             driver: tape.spec.tokens_secret_csi_driver.as_deref(),
-        })
+        }),
+        _ => None,
+    }
 }
 
 // <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="#1805" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
@@ -108,24 +133,25 @@ pub fn render(tape: &Tape) -> Vec<Value> {
     let cx = ctx(tape, &name, &ns);
     let headless = format!("{name}-headless");
 
-    let mut objects = vec![
-        render::service_account(&cx, COMPONENT),
-        statefulset(tape, &cx, &headless),
-        render::headless_service_with_ports(
-            &cx,
-            &headless,
-            COMPONENT,
-            vec![
-                json!({ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }),
-                json!({ "name": "raft", "port": RAFT_PORT, "targetPort": "raft", "protocol": "TCP" }),
-            ],
-        ),
-        render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
-        // Keep a raft quorum during voluntary disruptions: at most one tape
-        // pod may be unavailable at a time.
-        render::pdb(&cx, &name, COMPONENT, 1),
-        backup_service_account(&cx),
-    ];
+    let mut objects = Vec::new();
+    if tape.spec.service_account_name.is_none() {
+        objects.push(render::service_account(&cx, COMPONENT));
+    }
+    objects.push(statefulset(tape, &cx, &headless));
+    objects.push(render::headless_service_with_ports(
+        &cx,
+        &headless,
+        COMPONENT,
+        vec![
+            json!({ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }),
+            json!({ "name": "raft", "port": RAFT_PORT, "targetPort": "raft", "protocol": "TCP" }),
+        ],
+    ));
+    objects.push(render::client_service(&cx, &name, COMPONENT, CLIENT_PORT));
+    // Keep a raft quorum during voluntary disruptions: at most one tape
+    // pod may be unavailable at a time.
+    objects.push(render::pdb(&cx, &name, COMPONENT, 1));
+    objects.push(backup_service_account(&cx));
     if tape.spec.observability {
         objects.push(service_monitor(&cx));
         objects.push(prometheus_rule(&cx));
@@ -134,6 +160,66 @@ pub fn render(tape: &Tape) -> Vec<Value> {
         objects.push(cron);
     }
     objects
+}
+
+/// Children a previous spec rendered that this one no longer wants (#3054).
+///
+/// The inverse of the `spec.backup` branch in [`render`] above, naming its
+/// target through the same [`instance`] / [`backup_child`] helpers the render
+/// path resolves its own name with rather than re-spelling it. Removing a
+/// backup schedule from the CR must actually stop the CronJob from existing —
+/// Server-Side Apply only reconciles fields on objects it is still given, it
+/// never deletes an object that stopped being rendered, so without this the
+/// CronJob keeps firing on its old schedule forever.
+///
+/// # Why the observability pair is not pruned
+///
+/// The `spec.observability` ServiceMonitor/PrometheusRule are the other two
+/// conditional children, and naming them here is actively wrong for two
+/// independent reasons.
+///
+/// The disqualifying one is that a `PruneTarget` costs a GET on every requeue,
+/// and both are `monitoring.coreos.com/v1` kinds. On a cluster without the
+/// Prometheus Operator CRDs that API group is not served at all, so the
+/// apiserver answers the GET with a plain-text `404 page not found` rather than
+/// a structured `NotFound`; `get_opt` keys off `reason == "NotFound"`, does not
+/// recognise it, and propagates it — failing the *entire* reconcile, including
+/// the apply and the status write, on a 15s retry loop that never converges.
+/// `spec.observability` is default-off precisely so a vanilla cluster stays
+/// installable (see its doc comment on `TapeSpec`); pruning on the `false`
+/// branch would reach for that API group in exactly the vanilla case the
+/// default exists to protect, inverting the invariant. Caught by the Kind gate,
+/// which is the only place a missing API group is real. Restoring these two
+/// targets is blocked on `get_opt` treating a bare 404 as absence (#3079).
+///
+/// The independent one is that they would not earn it anyway: lumen's
+/// `prunes()` draws the line at children whose *presence changes runtime
+/// behaviour*, and a stale ServiceMonitor only scrapes a metric nobody reads,
+/// where a stale CronJob keeps writing backups to a destination the spec has
+/// stopped naming.
+///
+/// [`backup_service_account`] is likewise never named, for a third reason: it
+/// is rendered *unconditionally* (`render`, above) as a stable per-instance
+/// identity for Workload Identity annotations, precisely so that identity
+/// survives toggling `spec.backup` on and off. Pruning it would break that
+/// guarantee in the other direction.
+///
+/// R4/AC6: this only *names* candidates; it does not itself verify ownership.
+/// The controller (`libs/service-k8s/src/controller.rs:198` `prune_object`)
+/// GETs the live object and only deletes it when a controller `ownerReference`
+/// UID matches this CR's UID, warning and skipping otherwise — so a
+/// same-named object this CR does not own is never touched. Tape does not
+/// reimplement that check here.
+pub fn prunes(tape: &Tape) -> Vec<PruneTarget> {
+    let mut targets = Vec::new();
+    if tape.spec.backup.is_none() {
+        targets.push(PruneTarget {
+            api_version: "batch/v1",
+            kind: "CronJob",
+            name: backup_child(&instance(tape)),
+        });
+    }
+    targets
 }
 
 /// Prometheus label-selector fragment scoping a *self-scraped tape* series to
@@ -210,6 +296,35 @@ fn service_monitor(cx: &RenderCtx<'_>) -> Value {
                 "honorLabels": true,
             }],
         },
+    })
+}
+
+/// Container resources for tape's workload: requests for both CPU and memory,
+/// plus a memory limit matching the request (#3051).
+///
+/// This is `render::requested_resources` plus the memory limit. Requests alone
+/// make the pod Burstable, and the kubelet then relieves node memory pressure
+/// by picking victims on QoS and usage — so a tape that grows without bound
+/// gets its neighbours evicted while it keeps running. Bounding memory makes
+/// the OOMKill land on the container that caused it.
+///
+/// Memory only, no CPU limit: tape is scheduled one pod per node and should be
+/// free to use idle CPU, and throttling the persist path would make the very
+/// latency this alert watches worse.
+///
+/// Do not raise the limit in response to an OOMKill. The growth it bounds is
+/// the whole-journal rewrite in `AppState::persist`, and #3052 (WAL + group
+/// commit) is what removes it.
+fn container_resources(cpu: &str, memory: &str) -> Value {
+    // Same defaulting as `render::requested_resources`, reused rather than
+    // re-spelled: a whitespace-only `spec.cluster.resources.cpu` must fall back
+    // to the shared baseline, not render as an unparseable quantity that makes
+    // the API server reject the StatefulSet on every reconcile.
+    let cpu = resource_request_or_default(cpu, DEFAULT_CPU_REQUEST);
+    let memory = resource_request_or_default(memory, DEFAULT_MEMORY_REQUEST);
+    json!({
+        "requests": { "cpu": cpu, "memory": memory },
+        "limits": { "memory": memory },
     })
 }
 
@@ -309,6 +424,29 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                             "runbook": SUBSCRIPTION_LAG_RUNBOOK,
                         },
                     },
+                    {
+                        // #3051: Memory headroom alert fires before the limit is
+                        // reached. Both series come from cAdvisor and carry identical
+                        // labels, so they divide directly. Guard divide-by-zero by
+                        // filtering the denominator: if no limit is set, the container
+                        // is unbounded and the gauge is 0, so the division yields +Inf
+                        // and the alert fires permanently.
+                        "alert": "TapeMemoryHeadroomLow",
+                        "expr": format!(
+                            "max by (pod) (\n\
+                             container_memory_working_set_bytes{{namespace=\"{}\",pod=~\"^{}-[0-9]+$\",container=\"{}\"}}\n\
+                             / (container_spec_memory_limit_bytes{{namespace=\"{}\",pod=~\"^{}-[0-9]+$\",container=\"{}\"}} > 0)\n\
+                             ) > 0.85",
+                            cx.ns, cx.name, COMPONENT,
+                            cx.ns, cx.name, COMPONENT
+                        ),
+                        "for": "10m",
+                        "labels": alert_labels(cx, "warning"),
+                        "annotations": {
+                            "summary": "tape container memory headroom below 15%",
+                            "runbook": MEMORY_HEADROOM_RUNBOOK,
+                        },
+                    },
                 ],
             }],
         },
@@ -333,6 +471,19 @@ const SUBSCRIPTION_LAG_RUNBOOK: &str = "#2485: Check if the consumer bound to th
 /// flap counter that distinguishes "recovered" from "recovering every 30s".
 const STORAGE_DEGRADED_RUNBOOK: &str = "#2573: The node hit ENOSPC on its journal persist path and latched degraded read-only mode — mutating requests answer 507 `storage_full`, reads keep serving. Check `tape_storage_full_errors_total`: a rising counter with the gauge back at 0 means the volume is flapping in and out of full, not that it recovered. Remedy is capacity — free objects via retention or expand the PVC on a resizable StorageClass. No restart is needed: the pod re-probes the store directory every `TAPE_STORAGE_FULL_REPROBE_SECS` (default 30s) and clears the flag itself. If the gauge stays 1 after the volume has room, read the pod log for the re-probe warning — the store directory can be unwritable for reasons other than capacity (read-only remount, permissions).";
 
+/// #3051 / #3052: Memory headroom runbook.
+///
+/// The one thing this text has to stop is the reflex fix. Raising the limit
+/// clears the alert and restores exactly the silent growth the limit was added
+/// to expose, so the runbook names the two causes that are actionable now
+/// (unbounded retention, a stalled consumer) and points the structural one at
+/// #3052 rather than at the person holding the pager.
+///
+/// It states no amplification ratio. The measured figure is from a macOS/APFS
+/// host and has not been re-taken on Linux; an unverified multiplier in a
+/// runbook is read as a fact about the cluster in front of you.
+const MEMORY_HEADROOM_RUNBOOK: &str = "#3051: The container's memory working set is within 15% of its limit, and the limit equals the request, so the next step is an OOMKill of this pod. Do NOT raise the limit as the remedy — it defers the wall and hides the growth again; the limit exists to make this growth visible. Act on the two causes you can fix now: (1) retention — `tape retention list` (or the CR's `spec.retention`); a topic with no entry is NEVER pruned and grows without bound, so give every active topic a byte or count bound; (2) a stalled consumer — check `tape_subscription_lag` and whether the bound consumer is still pulling, since a checkpoint that stops advancing pins events that retention would otherwise drop. If neither applies, the pod is holding more memory than its journal justifies: this is the whole-journal-rewrite persist path (`AppState::persist` serializes the entire journal on every mutation), which #3052 (WAL + group commit) removes. Capacity sizing is #2552 — do not derive a new limit from this alert alone.";
+
 /// A stable, per-instance identity for scheduled backup jobs (lumen's #808
 /// pattern, adopted for #2574).
 ///
@@ -340,7 +491,7 @@ const STORAGE_DEGRADED_RUNBOOK: &str = "#2573: The node hit ENOSPC on its journa
 /// cloud object store, so its ServiceAccount is the binding target for cloud
 /// IAM — GKE Workload Identity annotates it, and the GCP acceptance harness
 /// already pre-creates `<name>-backup` for exactly that
-/// (`benchmarks/gcp-operator-acceptance/scripts/render-manifests.sh`). An
+/// (`acceptance/gcp/scripts/render-manifests.sh`). An
 /// identity that blinked in and out with the schedule would drop that binding
 /// every time the policy was toggled off, so its lifecycle is deliberately
 /// decoupled from the policy's. Like every other child it is owned by the
@@ -353,7 +504,7 @@ fn backup_service_account(cx: &RenderCtx) -> Value {
     json!({
         "apiVersion": "v1",
         "kind": "ServiceAccount",
-        "metadata": cx.meta(&format!("{}-backup", cx.name), BACKUP_COMPONENT),
+        "metadata": cx.meta(&backup_child(cx.name), BACKUP_COMPONENT),
     })
 }
 
@@ -374,11 +525,13 @@ fn backup_service_account(cx: &RenderCtx) -> Value {
 /// `TAPE_BACKUP_TOKEN`, the env var `tape backup --token` already falls back
 /// to. `/admin/backup` requires `admin` on `*`, so an instance running
 /// `auth: required` without this field will render a CronJob whose runs fail
-/// 401 — the CR is accepted either way because `auth: off` instances
-/// legitimately need no token.
+/// 401 — the CR is accepted either way because `auth: disabled` instances
+/// legitimately need no token. Since #2765 made `required` the default, that
+/// combination is now the one a CR reaches by saying nothing, so a `backup`
+/// block with no `adminTokenSecret` is worth a second look.
 fn backup_cron_job(tape: &Tape, cx: &RenderCtx) -> Option<Value> {
     let backup = tape.spec.backup.as_ref()?;
-    let cron_name = format!("{}-backup", cx.name);
+    let cron_name = backup_child(cx.name);
 
     let mut args = vec![
         "backup".to_string(),
@@ -457,13 +610,21 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
 
     // tape runtime env layered on top of the downward-API quartet +
     // TAPE_PEER_SERVICE the helper injects: bind-all on the serve port, the
-    // /data disk tier, and the drain window. TAPE_AUTH wiring is opt-in.
+    // /data disk tier, the drain window, and the resolved auth mode.
+    //
+    // TAPE_AUTH is unconditional and comes from the mode, never from whether a
+    // registry source happens to be set (#2765). Deriving it from the source
+    // meant `auth: required` with no `tokensSecret` rendered a pod with no
+    // TAPE_AUTH at all -- an open data plane produced by a CR that explicitly
+    // asked for authentication. Now that same CR starts with
+    // TAPE_AUTH=required and no registry file, so it fails startup loudly.
     let mut extra_env = vec![
         json!({ "name": "TAPE_BIND", "value": format!("0.0.0.0:{CLIENT_PORT}") }),
         json!({ "name": "TAPE_RAFT_PORT", "value": RAFT_PORT.to_string() }),
         json!({ "name": "TAPE_DATA_DIR", "value": "/data" }),
         json!({ "name": "TAPE_GRACE_SECS", "value": s.grace_secs.to_string() }),
         json!({ "name": "TAPE_LOG_FORMAT", "value": "json" }),
+        json!({ "name": "TAPE_AUTH", "value": s.auth.as_env() }),
     ];
     if let Some(level) = &s.log_level {
         extra_env.push(json!({ "name": "RUST_LOG", "value": level }));
@@ -472,7 +633,6 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         extra_env.push(json!({ "name": "TAPE_BODY_LIMIT_BYTES", "value": limit.to_string() }));
     }
     if token_registry_source(tape).is_some() {
-        extra_env.push(json!({ "name": "TAPE_AUTH", "value": "required" }));
         extra_env.push(json!({ "name": "TAPE_TOKEN_REGISTRY_FILE", "value": TOKEN_REGISTRY_FILE }));
     }
     if let Some(seed_uri) = &s.bootstrap_seed_uri {
@@ -522,10 +682,10 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         replicas_per_shard: s.cluster.replicas_per_shard,
         voter_count: s.cluster.voter_count,
         headless_env_key: "TAPE_PEER_SERVICE",
-        service_account_name: Some(cx.name),
+        service_account_name: Some(s.service_account_name.as_deref().unwrap_or(cx.name)),
         env: extra_env,
         env_from: vec![],
-        resources: render::requested_resources(cpu, memory),
+        resources: container_resources(cpu, memory),
         pod_annotations: Some(json!({
             "prometheus.io/scrape": "true",
             "prometheus.io/port": CLIENT_PORT.to_string(),
@@ -549,6 +709,8 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         volumes,
         volume_mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
+        node_selector: None,
+        tolerations: vec![],
         topology_spread_constraints: vec![],
         revision_history_limit: Some(5),
         update_strategy: Some(json!({ "type": "RollingUpdate" })),

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-duplicates-group-by
-// @capability duplicate-nested-search
-// @claim duplicates-group-by
+// @capability querying
+// @claim semantic-and-similarity-query
 // @contract duplicates-group-by
 // @category behavior
 // @required_for_production true

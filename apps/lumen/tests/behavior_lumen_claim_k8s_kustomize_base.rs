@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-k8s-kustomize-base
 // @capability kubernetes-native-deployment
-// @claim kustomize-base-overlays-hpa
+// @claim layered-deployment-artifacts
 // @contract k8s-kustomize-base-overlays
 // @category behavior
 // @required_for_production true

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-serve-shard-map
-// @capability dynamic-shard-topology
-// @claim serve-consumes-delivered-shard-map
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-serve-shard-map
 // @category behavior
 // @required_for_production true

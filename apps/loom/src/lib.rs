@@ -15,7 +15,6 @@
 //! parties transfer directly (claim-check).
 
 pub mod canvas;
-pub mod cluster;
 pub mod deadline;
 pub mod fairness;
 pub mod gc;
@@ -32,3 +31,8 @@ pub mod controller;
 pub mod jobcontroller;
 pub mod runtask;
 pub mod worker;
+
+// K8s operator (CRD + reconcile) + backup runner. Behind the `operator` feature
+// so the serving binary never links kube-rs unless it's the operator image.
+#[cfg(feature = "operator")]
+pub mod operator;

@@ -45,7 +45,7 @@ Public API manifest for `apps/lumen/src/raft.rs` generated from AST during Score
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Per-shard replication surface.
@@ -165,14 +165,23 @@ impl From<raft_runtime::PeerAddr> for PeerAddr {
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 impl RaftGroup {
+    /// `fallback_prefix` is used only when `POD_NAME` carries no StatefulSet
+    /// name of its own. The pod's name wins for the same reason it does in
+    /// `ClusterTopology` — the operator names the StatefulSet after the custom
+    /// resource, so a caller's binary name is only ever a guess, and a wrong
+    /// guess here means `/debug/cluster` and read-consistency routing both
+    /// describe peers that do not exist.
     pub fn from_config(
         cfg: &ClusterConfig,
-        prefix: &str,
+        fallback_prefix: &str,
         headless_service: &str,
         raft_port: u16,
         client_port: u16,
     ) -> anyhow::Result<Self> {
         let shard = cfg.shard_index()?;
+        let prefix = cfg
+            .pod_prefix()
+            .unwrap_or_else(|_| fallback_prefix.to_string());
         let mut peers = Vec::with_capacity(cfg.replicas_per_shard as usize);
         for replica in 0..cfg.replicas_per_shard {
             // Pod-ordinal math shared with `raft_runtime::cluster::ClusterTopology`
@@ -532,6 +541,25 @@ mod tests {
     }
 
     #[test]
+    fn raft_group_peer_dns_follows_the_pod_not_the_binary_name() {
+        // Companion to raft-runtime's
+        // `peer_dns_prefix_follows_the_pod_not_the_callers_binary_name`. Both
+        // derivations must agree, because this one names the peers that
+        // `/debug/cluster` reports and that read-consistency routes to, while
+        // that one names the peers raft actually votes with. A CR named
+        // `quorum` produces pods `quorum-N`; addressing them as `lumen-N` is a
+        // well-formed URL for a host that does not exist.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_lumen_peers();
+        let g =
+            RaftGroup::from_config(&cfg(1, 2, 2, "quorum-0"), "lumen", "quorum-headless", 7374, 7373)
+                .unwrap();
+        assert_eq!(g.peers[0].pod_name, "quorum-0");
+        assert_eq!(g.peers[1].pod_name, "quorum-1");
+        assert_eq!(g.peers[1].host, "quorum-1.quorum-headless");
+    }
+
+    #[test]
     fn raft_group_lumen_peers_override_replaces_dns() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
@@ -591,7 +619,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

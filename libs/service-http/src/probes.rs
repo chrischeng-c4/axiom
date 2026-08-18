@@ -22,6 +22,7 @@ use axum::{
 
 use crate::metrics::MetricsProvider;
 use crate::readiness::ReadinessHook;
+use server_lifecycle::{LifecycleController, LifecycleObservation};
 
 /// State the probe handlers close over. Cheap to clone (two `Arc`s + a fn
 /// pointer); `axum` clones it per request.
@@ -99,6 +100,147 @@ pub fn standard_probe_routes_canonical_json<R: ReadinessHook + 'static>(
         .route("/openapi.json", get(openapi_spec))
         .route("/docs", get(docs_swagger))
         .with_state(state)
+}
+
+#[derive(Clone)]
+struct LifecycleProbeState {
+    lifecycle: LifecycleController,
+    metrics: Option<Arc<dyn MetricsProvider>>,
+    openapi: OpenapiSource,
+}
+
+/// Production probes backed by one caller-owned lifecycle controller.
+pub fn lifecycle_probe_routes(
+    lifecycle: LifecycleController,
+    metrics: Option<Arc<dyn MetricsProvider>>,
+    openapi: fn() -> utoipa::openapi::OpenApi,
+) -> Router {
+    lifecycle_probe_router(LifecycleProbeState {
+        lifecycle,
+        metrics,
+        openapi: OpenapiSource::Typed(openapi),
+    })
+}
+
+pub fn lifecycle_probe_routes_canonical_json(
+    lifecycle: LifecycleController,
+    metrics: Option<Arc<dyn MetricsProvider>>,
+    openapi_json: fn() -> String,
+) -> Router {
+    lifecycle_probe_router(LifecycleProbeState {
+        lifecycle,
+        metrics,
+        openapi: OpenapiSource::CanonicalJson(openapi_json),
+    })
+}
+
+fn lifecycle_probe_router(state: LifecycleProbeState) -> Router {
+    Router::new()
+        .route("/healthz", get(lifecycle_healthz))
+        .route("/readyz", get(lifecycle_readyz))
+        .route("/metrics", get(lifecycle_metrics))
+        .route("/openapi.json", get(lifecycle_openapi))
+        .route("/docs", get(lifecycle_docs))
+        .with_state(state)
+}
+
+fn evidence_headers(observation: &LifecycleObservation) -> [(axum::http::HeaderName, String); 3] {
+    [
+        (
+            axum::http::HeaderName::from_static("x-lifecycle-phase"),
+            format!("{:?}", observation.phase).to_ascii_lowercase(),
+        ),
+        (
+            axum::http::HeaderName::from_static("x-lifecycle-generation"),
+            observation.generation.to_string(),
+        ),
+        (
+            axum::http::HeaderName::from_static("x-lifecycle-reason-code"),
+            sanitize_header(&observation.reason_code),
+        ),
+    ]
+}
+
+fn sanitize_header(value: &str) -> String {
+    let value: String = value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+        .take(64)
+        .collect();
+    if value.is_empty() {
+        "unknown".into()
+    } else {
+        value
+    }
+}
+
+async fn lifecycle_healthz(State(state): State<LifecycleProbeState>) -> Response {
+    let observation = state.lifecycle.observation();
+    let status = if observation.is_healthy() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let body = if observation.is_healthy() {
+        "ok"
+    } else {
+        "unhealthy"
+    };
+    (status, evidence_headers(&observation), body).into_response()
+}
+
+async fn lifecycle_readyz(State(state): State<LifecycleProbeState>) -> Response {
+    let observation = state.lifecycle.observation();
+    let status = if observation.is_ready() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let body = if matches!(
+        observation.phase,
+        server_lifecycle::LifecyclePhase::Draining | server_lifecycle::LifecyclePhase::Stopping
+    ) {
+        "draining"
+    } else if observation.is_ready() {
+        "ok"
+    } else {
+        "unready"
+    };
+    (status, evidence_headers(&observation), body).into_response()
+}
+
+async fn lifecycle_metrics(State(state): State<LifecycleProbeState>) -> Response {
+    let observation = state.lifecycle.observation();
+    let body = state
+        .metrics
+        .as_ref()
+        .map(|m| m.render_metrics())
+        .unwrap_or_default();
+    (
+        StatusCode::OK,
+        evidence_headers(&observation),
+        [("content-type", "text/plain; version=0.0.4")],
+        body,
+    )
+        .into_response()
+}
+
+async fn lifecycle_openapi(State(state): State<LifecycleProbeState>) -> Response {
+    let headers = evidence_headers(&state.lifecycle.observation());
+    match state.openapi {
+        OpenapiSource::Typed(f) => (headers, Json(f())).into_response(),
+        OpenapiSource::CanonicalJson(f) => {
+            (headers, [("content-type", "application/json")], f()).into_response()
+        }
+    }
+}
+
+async fn lifecycle_docs(State(state): State<LifecycleProbeState>) -> Response {
+    (
+        evidence_headers(&state.lifecycle.observation()),
+        Html(SWAGGER_HTML),
+    )
+        .into_response()
 }
 
 /// `GET /healthz` — liveness. 200 as long as the process can answer.

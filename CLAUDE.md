@@ -91,6 +91,26 @@ skills are reached from the phase that prints them, not chosen, and
 - Skills are thin human-invoked entry points. Hard enforcement is the exit code
   of the phase scripts, not a guard binary.
 
+## External implementation workers
+
+Repository operating policy. It does not override a host's own approval gate
+for sending data outside the machine.
+
+`.claude/skills/agy-dispatch/` delegates one frozen, bounded task to an external
+worker from a clean isolated worktree. Send only task-required repository
+material, never secrets.
+
+The controller keeps the issue contract, the design, the oracle, the independent
+review, the tests, git integration, tracker mutation, and acceptance. A worker
+does not commit, push, approve itself, comment on an issue, or close one.
+Ticketed work reuses one worker conversation for that issue and its bounded
+corrections; unticketed work is one-shot and cannot resume. Do not run workers
+with overlapping write ownership in parallel.
+
+The `$copilot-dispatch` this paragraph named until 2026-08-17 has never existed
+in this checkout, so the policy covers `agy-dispatch` and whatever is added
+beside it, not a second adapter someone might go looking for.
+
 ## Work-item lifecycle
 
 The lifecycle is linear: `wi → e2e → unit → logic`. Each phase runs `start`,

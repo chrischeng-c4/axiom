@@ -224,6 +224,19 @@ target = "schemas"
 test_cmd = "true"
 
 [[projects]]
+name = "mesh"
+path = "apps/mesh"
+td_path = "apps/mesh/tech-design"
+cap_path = "apps/mesh/README.md"
+label = "app:mesh"
+
+[[projects.workspaces]]
+name = "mesh"
+paths = ["apps/mesh/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
 name = "beam"
 path = "apps/beam"
 td_path = "apps/beam/tech-design"
@@ -235,6 +248,21 @@ name = "beam"
 paths = ["apps/beam/**"]
 target = "schemas"
 test_cmd = "true"
+
+[[projects]]
+name = "workbench"
+path = "apps/workbench"
+td_path = "apps/workbench/tech-design"
+cap_path = "apps/workbench/README.md"
+label = "app:workbench"
+
+[[projects.workspaces]]
+name = "workbench"
+paths = ["apps/workbench/**"]
+target = "rust"
+test_cmd = "cargo test -p workbench --test desktop_launch_smoke -- --nocapture"
+verify_cold = true
+codegen.profile = "rust/score-crate"
 
 
 [[projects]]

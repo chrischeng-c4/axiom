@@ -85,7 +85,7 @@ id: lumen-stateful-service-workload-primary-verification
 requirements:
   active_and_historical_wi_provenance:
     id: R2
-    text: "The capability contract identifies #2144 as the active verification-link work while retaining closed #1553 as historical projection provenance."
+    text: "This TD is the active verification-link work for the claim and retains closed #1553 as historical projection provenance, while the capability contract itself names no work item (#1847)."
     kind: regression
     risk: medium
     verify: capability_stateful_workload_linkage::active_and_historical_provenance_are_distinct

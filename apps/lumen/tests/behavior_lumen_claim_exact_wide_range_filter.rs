@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-exact-wide-range-filter
-// @capability exact-filter-search
-// @claim wide-range-filter-index-on-disk-sorted-value-range
+// @capability querying
+// @claim lexical-and-structured-query
 // @contract exact-wide-range-filter
 // @category behavior
 // @required_for_production true

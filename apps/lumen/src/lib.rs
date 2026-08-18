@@ -43,9 +43,10 @@ pub mod metrics;
 /// over a lower fixed-cost transport than HTTP/JSON.
 pub mod native_wire;
 /// K8s Operator: the `Lumen` CRD plus the reconcile loop that renders + applies
-/// the Lumen serving/data-plane resources. Behind the `operator` feature so the
-/// serving binary never pulls in kube-rs.
-#[cfg(feature = "operator")]
+/// the Lumen serving/data-plane resources. The CRD and reconcile loop are behind
+/// the `operator` feature so the serving binary never pulls in kube-rs; pure
+/// configuration stays in the operator and shared libraries; Lumen consumes
+/// externally provisioned TLS Secrets rather than resolving issuers.
 pub mod operator;
 /// Cluster-state view types backing the read/admin API. This surface is the
 /// compatibility bridge for Lumen-owned primary/replica replication.

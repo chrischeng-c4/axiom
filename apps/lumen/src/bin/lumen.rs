@@ -27,7 +27,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "operator")]
 use tracing_subscriber::EnvFilter;
 
-use lumen::auth::{AuthConfig, TOKEN_REGISTRY_FILE_ENV};
+use lumen::auth::AuthConfig;
 use lumen::coordinator::WriteCoordinator;
 use lumen::rdb::{LocalFsRdbStore, RdbSnapshot, RdbStore};
 use lumen::storage::Engine;
@@ -106,9 +106,9 @@ enum Command {
     /// Manage a `kubectl port-forward` for the duration of a wrapped command
     /// against a k8s-deployed Lumen instance — no manually tracked
     /// port-forward process (`lumen llm --topic recipes` has a worked
-    /// example). Resolves a bearer token from the deployment's
-    /// token-registry Secret when `--secret`/`--cr` is given (see `lumen llm
-    /// --topic auth`).
+    /// example). Reachability only: the child is handed a URL and nothing
+    /// else. Obtaining a Kubernetes ServiceAccount token for it is #2878's
+    /// job, and until then there is no credential to obtain.
     // @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
     Connect(ConnectArgs),
     /// One-shot query wrappers against a reachable lumen node: `index`,
@@ -167,6 +167,58 @@ enum K8sCmd {
     Operator(K8sOperatorArgs),
     /// App namespace data-plane declaration: render a Lumen custom resource.
     Instance(K8sInstanceArgs),
+    /// Control-plane fleet declaration: render the one cluster-scoped
+    /// `LumenFleet` that names every data-plane namespace and its settings.
+    /// Use this instead of `instance` when the platform team owns
+    /// configuration centrally and app teams only own their own overrides.
+    Fleet(K8sFleetArgs),
+    /// Client access layer: render the RBAC that lets a named Kubernetes user
+    /// mint one client ServiceAccount's token, and that tells Lumen what that
+    /// ServiceAccount may do.
+    Access(K8sAccessArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sFleetArgs {
+    #[command(subcommand)]
+    cmd: K8sFleetCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sFleetCmd {
+    /// Render a cluster-scoped `kind: LumenFleet` declaration.
+    Render(K8sFleetRenderArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sFleetRenderArgs {
+    /// Built-in fleet profile.
+    #[arg(long, value_enum, default_value_t = K8sFleetProfile::Template)]
+    profile: K8sFleetProfile,
+    /// LumenFleet name. Also the default name of every `Lumen` it
+    /// materializes, so `kubectl get lumen -A` reads as one fleet spread
+    /// across namespaces.
+    #[arg(long)]
+    name: Option<String>,
+    /// Serving image for `spec.defaults`. Profile-specific default.
+    #[arg(long)]
+    image: Option<String>,
+    /// Write to this path instead of stdout. A directory receives
+    /// `lumenfleet.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum K8sFleetProfile {
+    /// One local/kind data plane in `default`, auth disabled.
+    Dev,
+    /// Two tenant namespaces on a dedicated node pool, auth required.
+    Prod,
+    /// Fill-in-the-blanks skeleton naming every knob a deployer owns:
+    /// node pool, StorageClass, ServiceAccount, per-tenant CPU/memory/disk,
+    /// and per-tenant credential source.
+    Template,
 }
 
 #[derive(clap::Args)]
@@ -181,16 +233,26 @@ enum K8sCrdCmd {
     Render(K8sFileOutputArgs),
 }
 
+#[derive(clap::Args, Clone, Debug, Default)]
+struct K8sOperatorRunArgs {}
+
 #[derive(clap::Args)]
 struct K8sOperatorArgs {
     #[command(subcommand)]
     cmd: Option<K8sOperatorCmd>,
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#rust-source-unit
+impl Default for K8sOperatorCmd {
+    fn default() -> Self {
+        Self::Run(K8sOperatorRunArgs::default())
+    }
+}
+
 #[derive(Subcommand)]
 enum K8sOperatorCmd {
     /// Container entrypoint: run the reconcile controller.
-    Run,
+    Run(K8sOperatorRunArgs),
     /// Render operator namespace/RBAC/deployment YAML.
     Render(K8sOperatorRenderArgs),
     /// One-shot: grow a running instance's `raft-<name>-<n>` PVCs to match
@@ -212,6 +274,14 @@ struct K8sOperatorRenderArgs {
     /// published GHCR release, matching the checked-in operator manifest.
     #[arg(long, default_value_t = format!("ghcr.io/chrischeng-c4/lumen:{}", env!("CARGO_PKG_VERSION")))]
     image: String,
+    /// Also emit the operator's ServiceMonitor and PrometheusRule (#2621).
+    /// Off by default because both are `monitoring.coreos.com/v1` CRDs and a
+    /// cluster without prometheus-operator rejects the whole apply; the
+    /// scrape *target* Service carries no CRD dependency and is always
+    /// rendered. Mirrors the opt-in `k8s/components/operator-monitoring`
+    /// kustomize component.
+    #[arg(long)]
+    monitoring: bool,
     /// Write to this path instead of stdout. A directory receives
     /// `operator.yaml`.
     #[arg(long)]
@@ -272,6 +342,58 @@ enum K8sInstanceProfile {
     Prod,
     /// Fill-in-the-blanks CR skeleton for app teams.
     Template,
+}
+
+#[derive(clap::Args)]
+struct K8sAccessArgs {
+    #[command(subcommand)]
+    cmd: K8sAccessCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sAccessCmd {
+    /// Render the client access bundle: a ServiceAccount, the RBAC that lets
+    /// named users mint its token, and the RBAC Lumen reads to authorize it.
+    Render(K8sAccessRenderArgs),
+}
+
+/// `lumen k8s access render` flags (#2889).
+///
+/// Everything here is a name. There is no flag that takes a credential,
+/// because the bundle this renders contains none: the caller's identity is
+/// minted by the API server on demand, and the only durable objects are the
+/// two grants that say who may ask for it and what it may then do.
+#[derive(clap::Args)]
+struct K8sAccessRenderArgs {
+    /// Namespace holding the Lumen instance. The whole bundle lands here:
+    /// both grants are namespaced, so an access decision never leaks past the
+    /// tenant that made it.
+    #[arg(long)]
+    namespace: String,
+    /// The one ServiceAccount every request to Lumen is made as. Lumen sees
+    /// this name — `system:serviceaccount:<namespace>:<name>` — and nothing
+    /// about whoever minted the token.
+    #[arg(long = "client-sa")]
+    client_sa: String,
+    /// A Kubernetes user allowed to mint that ServiceAccount's token, spelled
+    /// exactly as `kubectl auth whoami` prints it for that principal.
+    /// Repeatable. A Google account and a Google service account are both just
+    /// strings here: they authenticate to the API server, never to Lumen.
+    #[arg(long = "issuer", required = true)]
+    issuers: Vec<String>,
+    /// `<collection-id>=read|write|admin`. Repeatable, one collection each.
+    /// A level grants every verb at or below it, so `write` can read what it
+    /// writes.
+    #[arg(long = "grant")]
+    grants: Vec<String>,
+    /// Also grant the instance-wide administrative surface — backup, restore,
+    /// reshard, checkpoint. Separate from any collection grant on purpose.
+    #[arg(long)]
+    instance_admin: bool,
+    /// Write to this path instead of stdout. A directory receives
+    /// `access.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -398,14 +520,18 @@ struct BackupArgs {
     /// GCE/GKE metadata-server Workload Identity token.
     #[arg(long)]
     dest: String,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
-    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
-    token: Option<String>,
     /// Drop backup objects older than this many seconds after a successful
     /// put. Omit to keep everything.
     #[arg(long)]
     retention_secs: Option<u64>,
+    /// File holding this runner's own audience-bound ServiceAccount token,
+    /// read fresh for this run (#2877). In-cluster this is the projected
+    /// volume the operator's backup CronJob mounts. A path, never the token:
+    /// a credential passed as an argument is visible in the pod spec, in
+    /// `ps`, and in every shell history that ever typed it. Omit against a
+    /// fleet whose `spec.auth` is `disabled` — it rejects a presented bearer.
+    #[arg(long, value_name = "PATH")]
+    token_file: Option<std::path::PathBuf>,
 }
 
 /// `lumen connect` flags (#1321): manage a `kubectl port-forward` around a
@@ -424,8 +550,7 @@ struct ConnectArgs {
     #[arg(long)]
     service: Option<String>,
     /// `Lumen` CR name. When set (and `--service` is omitted) the Service
-    /// name defaults to this CR's own name, and its `spec.tokensSecret` (if
-    /// any) auto-resolves `--secret`.
+    /// name defaults to this CR's own name.
     #[arg(long)]
     cr: Option<String>,
     /// Local port to forward to. Omit to pick a free ephemeral port.
@@ -434,53 +559,79 @@ struct ConnectArgs {
     /// Remote (Service) port.
     #[arg(long, default_value_t = 7373)]
     remote_port: u16,
-    /// Secret name holding a `token-registry.json` key (see `lumen llm
-    /// --topic auth`). Auto-resolved from `--cr`'s `spec.tokensSecret` when
-    /// omitted and `--cr` is set.
+    /// ServiceAccount to authenticate as (#2878). Named, never inferred: this
+    /// CLI will not pick one by listing the namespace or by falling back to
+    /// `default`, because a token minted for an account nobody chose is
+    /// exactly as authorized as one somebody did choose.
+    ///
+    /// With it, a short-lived audience-bound token is minted through your
+    /// kubeconfig and held in this process, and the wrapped command talks to a
+    /// loopback proxy that attaches it — so the token is in no environment
+    /// variable, no argument list, and no file. Without it the port-forward
+    /// carries no credential at all, which only works against a fleet whose
+    /// `spec.auth` is `disabled`.
+    ///
+    /// You need `create` on this ServiceAccount's `token` subresource; `lumen
+    /// k8s access render` emits that grant.
+    #[arg(long, value_name = "NAME")]
+    client_sa: Option<String>,
+    /// PEM bundle of the private CA that signed the fleet's serving certificate
+    /// (#3113 R6). The deployment administrator or external certificate
+    /// platform distributes this public CA separately from the serving Secret.
+    ///
+    /// With it, the forwarded socket is spoken to over TLS addressed as
+    /// `--server-name`, verified against this bundle and against no public root.
+    /// The port-forward is transport; the identity being checked is the
+    /// Kubernetes Service's, which is what the certificate actually names.
+    ///
+    /// Requires `--client-sa`: the verifying connection is made by the local
+    /// proxy, and the proxy exists to hold a token. A TLS fleet that accepts no
+    /// credential is not a deployment this command has to serve.
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with = "plaintext",
+        requires = "client_sa"
+    )]
+    ca_file: Option<std::path::PathBuf>,
+    /// The DNS name the serving certificate must present. Defaults to
+    /// `<service>.<namespace>.svc`, which is what the operator requests.
+    ///
+    /// Override it only when the Service is reached under another of its
+    /// certified names (its cluster FQDN, say). `localhost` and `127.0.0.1` are
+    /// not among them, and a leaf that carried either would be a leaf usable
+    /// against every port-forward anyone ever opens.
+    #[arg(long, value_name = "DNS")]
+    server_name: Option<String>,
+    /// Talk to the forwarded port in cleartext — local and kind development,
+    /// where no serving certificate has been issued (#3113 R1).
+    ///
+    /// Required to be said out loud, because the alternative is a default that
+    /// downgrades silently: a production fleet reached without `--ca-file`
+    /// would fail somewhere inside the wrapped command's first request instead
+    /// of here, and the fix would look like a networking problem.
     #[arg(long)]
-    secret: Option<String>,
-    /// Minimum role the resolved token must cover.
-    #[arg(long, value_enum, default_value_t = TokenRole::Admin)]
-    role: TokenRole,
-    /// Collection id the resolved token must be authorized against. Omit for
-    /// the wildcard `*` grant.
-    #[arg(long)]
-    collection: Option<String>,
-    /// The command to run with `LUMEN_URL` (and `LUMEN_TOKEN`, when
-    /// resolved) set to the local end of the port-forward. Everything after
-    /// `--`, e.g. `lumen connect --namespace prod --cr search -- lumen query
-    /// collections list`.
+    plaintext: bool,
+    /// The command to run with `LUMEN_URL` set to the local end of the
+    /// port-forward — and nothing else. Everything after `--`, e.g. `lumen
+    /// connect --namespace prod --cr search --ca-file ca.crt --client-sa agent
+    /// -- lumen query collections list`.
     #[arg(last = true, required = true)]
     command: Vec<String>,
 }
 
-/// Bearer-token role required for `lumen connect`/`lumen query`'s Secret
-/// token resolution (R2). Mirrors `service_auth::Role`; lumen's own role
-/// mapping into `cli_std::connect::Role` (#1376) — every k8s-native service
-/// CLI adopting `cli_std::connect` supplies its own such mapping.
-#[derive(Clone, Copy, ValueEnum)]
-enum TokenRole {
-    Read,
-    Write,
-    Admin,
-}
-
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-impl From<TokenRole> for cli_std::connect::Role {
-    fn from(role: TokenRole) -> Self {
-        match role {
-            TokenRole::Read => cli_std::connect::Role::Read,
-            TokenRole::Write => cli_std::connect::Role::Write,
-            TokenRole::Admin => cli_std::connect::Role::Admin,
-        }
-    }
-}
-
-/// Shared k8s-aware token/target resolution for `lumen connect` and `lumen
-/// query *` (R2): an explicit `--token`/`LUMEN_TOKEN` wins; otherwise, when
-/// `--namespace`/`--secret` are set, resolve one bearer token from the
-/// deployment's token-registry Secret (see `lumen llm --topic auth`) whose
-/// role covers `--role` for the query's collection (or the wildcard `*`).
+/// Where `lumen query *` sends its request, and whose token it carries.
+///
+/// #2873 removed the bearer flag, the environment variable behind it, and the
+/// kubectl Secret lookup behind that — every mechanism whose job was to *find*
+/// a credential lying around. #2878 restores a `--context`/`--namespace` pair
+/// that looks superficially similar and is not the same thing: nothing here
+/// reads a stored credential. `--client-sa` names a ServiceAccount, and the
+/// token is minted for it, in memory, for this one command, through the
+/// identity already in your kubeconfig.
+///
+/// There is deliberately no environment variable for `--client-sa`. Which
+/// account you act as is a decision each invocation makes out loud.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[derive(clap::Args, Clone)]
 struct QueryTarget {
@@ -488,22 +639,18 @@ struct QueryTarget {
     /// — what `lumen connect` sets for the wrapped command.
     #[arg(long, env = "LUMEN_URL")]
     url: Option<String>,
-    /// Explicit bearer token. Falls back to `LUMEN_TOKEN`, then to the
-    /// token-registry Secret named by `--namespace`/`--secret`.
-    #[arg(long, env = "LUMEN_TOKEN")]
-    token: Option<String>,
-    /// kubectl context for Secret resolution.
+    /// kubeconfig context to mint the token through. Omit for the current one.
     #[arg(long)]
     context: Option<String>,
-    /// Namespace holding the token-registry Secret.
+    /// Namespace of the ServiceAccount named by `--client-sa`.
     #[arg(long)]
     namespace: Option<String>,
-    /// Secret name holding a `token-registry.json` key.
-    #[arg(long)]
-    secret: Option<String>,
-    /// Minimum role the resolved token must cover.
-    #[arg(long, value_enum, default_value_t = TokenRole::Admin)]
-    role: TokenRole,
+    /// ServiceAccount to authenticate as (#2878). Named, never inferred.
+    /// Omit to send no credential at all — correct only against a fleet whose
+    /// `spec.auth` is `disabled`, and what `lumen connect --client-sa` already
+    /// arranges for its wrapped command.
+    #[arg(long, value_name = "NAME", requires = "namespace")]
+    client_sa: Option<String>,
 }
 
 /// `lumen query <index|search|duplicates|collections>` flags (#1321): thin
@@ -594,7 +741,7 @@ struct QueryCollectionsArgs {
 
 #[derive(Subcommand)]
 enum QueryCollectionsCommand {
-    /// `GET /collections` — list collection ids visible to the resolved token.
+    /// `GET /collections` — list collection ids the serving node exposes.
     List(QueryCollectionsListArgs),
 }
 
@@ -614,10 +761,6 @@ struct SnapshotExportArgs {
     /// Write the SnapshotV1 JSON bytes to this path instead of stdout.
     #[arg(long)]
     out: Option<PathBuf>,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
-    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
-    token: Option<String>,
 }
 
 /// `lumen load|import` flags (#1095): reads SnapshotV1 JSON and posts it to
@@ -630,10 +773,6 @@ struct SnapshotImportArgs {
     /// Read SnapshotV1 JSON bytes from this path. Omit to read stdin.
     #[arg(long)]
     file: Option<PathBuf>,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
-    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
-    token: Option<String>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -648,12 +787,17 @@ enum LlmTopic {
     SelectQuery,
     /// Connect a source database, CDC stream, or outbox to Lumen.
     IntegrateSourceDb,
-    /// Configure or inspect bearer-token authentication.
+    /// Inspect the request-authentication contract: the Kubernetes
+    /// ServiceAccount identity Lumen accepts, and the credential kinds it
+    /// refuses.
     Authenticate,
     /// Use a bounded Kubernetes port-forward connection.
     ConnectKubernetes,
     /// Render image, CRD, operator, or instance deployment artifacts.
     DeployKubernetes,
+    /// Give an external Kubernetes user access to a Lumen instance through a
+    /// client ServiceAccount.
+    GrantAccess,
     /// Create or restore an administrative backup.
     BackupRestore,
     /// Generate a typed Rust, Python, or TypeScript client.
@@ -674,6 +818,7 @@ impl LlmTopic {
             Self::Authenticate => "authenticate",
             Self::ConnectKubernetes => "connect-kubernetes",
             Self::DeployKubernetes => "deploy-kubernetes",
+            Self::GrantAccess => "grant-access",
             Self::BackupRestore => "backup-restore",
             Self::GenerateClient => "generate-client",
             Self::Diagnose => "diagnose",
@@ -1159,10 +1304,10 @@ async fn k8s(args: K8sArgs) -> Result<()> {
                 kubectl_apply_next,
             ),
         },
-        K8sCmd::Operator(args) => match args.cmd.unwrap_or(K8sOperatorCmd::Run) {
-            K8sOperatorCmd::Run => run_operator().await,
+        K8sCmd::Operator(args) => match args.cmd.unwrap_or_default() {
+            K8sOperatorCmd::Run(run_args) => run_operator(run_args).await,
             K8sOperatorCmd::Render(args) => {
-                let yaml = render_operator_yaml(&args.namespace, &args.image)?;
+                let yaml = render_operator_yaml(&args)?;
                 write_or_print(
                     args.out.as_deref(),
                     "operator.yaml",
@@ -1178,21 +1323,44 @@ async fn k8s(args: K8sArgs) -> Result<()> {
                 write_or_print(args.out.as_deref(), "lumen.yaml", &yaml, kubectl_apply_next)
             }
         },
+        K8sCmd::Fleet(args) => match args.cmd {
+            K8sFleetCmd::Render(args) => {
+                let yaml = render_fleet_yaml(&args);
+                write_or_print(
+                    args.out.as_deref(),
+                    "lumenfleet.yaml",
+                    &yaml,
+                    kubectl_apply_next,
+                )
+            }
+        },
+        K8sCmd::Access(args) => match args.cmd {
+            K8sAccessCmd::Render(args) => {
+                let yaml = render_access_yaml(&args)?;
+                write_or_print(
+                    args.out.as_deref(),
+                    "access.yaml",
+                    &yaml,
+                    kubectl_apply_next,
+                )
+            }
+        },
     }
 }
 
 #[cfg(feature = "operator")]
-async fn run_operator() -> Result<()> {
+async fn run_operator(args: K8sOperatorRunArgs) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    let _ = args;
     lumen::operator::run().await
 }
 
 #[cfg(not(feature = "operator"))]
-async fn run_operator() -> Result<()> {
+async fn run_operator(_args: K8sOperatorRunArgs) -> Result<()> {
     anyhow::bail!(
         "this lumen build was compiled without operator support; rebuild with \
          `--features operator` (the published image includes it)"
@@ -1238,6 +1406,16 @@ fn crd_yaml() -> String {
     cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
+/// Whatever eventually authenticates `lumen backup` to the admin API, it will
+/// not be a string on the command line. #2871 took away the metadata-server
+/// fallback; #2873 takes away the bearer flag that was left, because a
+/// credential passed as an argument is a credential in `ps`, in shell history,
+/// and in the CronJob's own `kubectl describe` — the exact exposure R5 rules
+/// out. The `token` parameter on the `lumen::backup` calls below is the seam
+/// #2877 fills with a projected, audience-bound ServiceAccount token read from
+/// a file; until then it is `None` and the request carries no `Authorization`
+/// header at all.
+///
 /// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
 /// `dest` via `libs/service-backup`, printing the resulting
 /// `BackupRunResult` as JSON. This is what the operator's optional backup
@@ -1250,8 +1428,29 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
         Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
         None => service_backup::RetentionPolicy::default(),
     };
-    let result =
-        lumen::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
+    // Read here, not at parse time: one backup run is one read of the
+    // projected file, so a CronJob pod that starts minutes after the kubelet
+    // last rotated the token still presents the current one (#2877 R3).
+    // Missing, empty, expired, or minted for the wrong audience all fail the
+    // run before any bytes move, with a message naming the path rather than
+    // the material (#2877 R5).
+    let token = match args.token_file.as_deref() {
+        Some(path) => Some(
+            service_auth::k8s::ProjectedTokenFile::new(path, lumen::auth::AUDIENCE)
+                .read()
+                .with_context(|| "the backup runner cannot authenticate to this Lumen fleet")?,
+        ),
+        None => None,
+    };
+    let result = lumen::backup::run_backup(
+        &args.url,
+        token
+            .as_ref()
+            .map(service_auth::k8s::ProjectedToken::expose),
+        &dest,
+        &retention,
+    )
+    .await?;
     // Chainable output (#963): `lumen backup` always emits a single JSON
     // object, so the contract's "next" is a top-level field, not a text tail
     // line. `service_backup::BackupRunResult` stays untouched (shared type) —
@@ -1272,24 +1471,20 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
 /// Only `file://` destinations resolve to a concrete local path for a copyable
 /// restore command; cloud sinks remain shared `service-backup` behavior and
 /// fall back to a generic note here instead of guessing a wrong object-fetch
-/// command. The token, when set, is never echoed — the command references the
-/// same env var the flag reads.
+/// command. The command carries no `Authorization` header: there is no
+/// credential for it to carry (#2873), and a placeholder one would read as an
+/// instruction to go find a token that does not exist.
 #[cfg(feature = "backup")]
 fn restore_next_command(args: &BackupArgs, result: &service_backup::BackupRunResult) -> String {
     let url = args.url.trim_end_matches('/');
-    let auth = if args.token.is_some() {
-        " -H \"Authorization: Bearer $LUMEN_BACKUP_TOKEN\""
-    } else {
-        ""
-    };
     match result.object.sink.strip_prefix("local:") {
         Some(root) => format!(
-            "curl -sS -X POST {url}/admin/restore{auth} -H 'Content-Type: application/json' --data-binary @{}/{}",
+            "curl -sS -X POST {url}/admin/restore -H 'Content-Type: application/json' --data-binary @{}/{}",
             root.trim_end_matches('/'),
             result.object.key
         ),
         None => format!(
-            "fetch {} from {} then: curl -sS -X POST {url}/admin/restore{auth} -H 'Content-Type: application/json' --data-binary @<downloaded-file>",
+            "fetch {} from {} then: curl -sS -X POST {url}/admin/restore -H 'Content-Type: application/json' --data-binary @<downloaded-file>",
             result.object.key, result.object.sink
         ),
     }
@@ -1308,15 +1503,14 @@ async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
 /// SnapshotV1 JSON bytes to stdout or `--out`.
 #[cfg(feature = "backup")]
 async fn dispatch_snapshot_export(args: SnapshotExportArgs) -> Result<()> {
-    let payload = lumen::backup::fetch_snapshot_bytes(&args.url, args.token.as_deref()).await?;
+    let payload = lumen::backup::fetch_snapshot_bytes(&args.url, None).await?;
     if let Some(out) = args.out {
         if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create {}", parent.display()))?;
         }
         std::fs::write(&out, &payload).with_context(|| format!("write {}", out.display()))?;
-        let next =
-            restore_file_next_command(args.url.trim_end_matches('/'), &out, args.token.is_some());
+        let next = restore_file_next_command(args.url.trim_end_matches('/'), &out);
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
@@ -1356,7 +1550,7 @@ async fn dispatch_snapshot_import(args: SnapshotImportArgs) -> Result<()> {
             buf
         }
     };
-    lumen::backup::restore_snapshot_bytes(&args.url, args.token.as_deref(), &payload).await?;
+    lumen::backup::restore_snapshot_bytes(&args.url, None, &payload).await?;
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
@@ -1379,46 +1573,28 @@ async fn dispatch_snapshot_import(_args: SnapshotImportArgs) -> Result<()> {
 }
 
 #[cfg(feature = "backup")]
-fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String {
-    let auth = if has_token {
-        " --token $LUMEN_BACKUP_TOKEN"
-    } else {
-        ""
-    };
-    format!("lumen import --url {url}{auth} --file {}", path.display())
+fn restore_file_next_command(url: &str, path: &Path) -> String {
+    format!("lumen import --url {url} --file {}", path.display())
 }
 
 // ---------------------------------------------------------------------------
 // `lumen connect` / `lumen query` (#1321) — thin adapter over
 // `cli_std::connect` (#1376): the `kubectl port-forward` process lifecycle
-// (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) and the
-// token-registry Secret resolution chain (`kubectl_get_json`,
-// `resolve_cr_tokens_secret`, `resolve_token`) now live in
+// (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) lives in
 // `libs/cli-std/src/connect.rs`, reusable by any k8s-native service CLI.
-// This file keeps only its own flag surface (`ConnectArgs`/`QueryTarget`),
+// This file keeps only its own flag surface (`ConnectArgs`/`QueryTarget`) and
 // the `Lumen` CRD-name lookup convention (`"lumen"` passed as
-// `resource_kind`), and the `TokenRole` -> `cli_std::connect::Role` mapping.
+// `resource_kind`).
+//
+// #2873 cut the credential half away entirely. The shared module's resolver
+// chain — kubectl-get the Secret named by the CR, base64-decode the registry
+// key inside it, pick an entry whose role covers the request — is still there
+// for the services that have not migrated, but lumen no longer calls any of
+// it: the registry it decoded stopped existing in #2871, and the CR field
+// naming the Secret stopped existing in #2872. What remains here is a
+// port-forward, and nothing that reads, derives, prints, or passes on a
+// credential.
 // ---------------------------------------------------------------------------
-
-/// R2: resolve a usable bearer token without the caller decoding the
-/// Secret/JSON by hand. Precedence: `target.token` (explicit flag or
-/// `LUMEN_TOKEN`) wins; otherwise, when `--namespace`/`--secret` are both
-/// set, fetch the Secret via kubectl, decode its `token-registry.json` key
-/// (the same schema `lumen llm --topic auth` documents), and pick a token
-/// whose role covers `target.role` for `collection` (or `*`). Returns `None`
-/// when no token can be resolved (e.g. `spec.auth: off` deployments). Thin
-/// wrapper over `cli_std::connect::resolve_token` (#1376).
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-fn resolve_token(target: &QueryTarget, collection: Option<&str>) -> Result<Option<String>> {
-    cli_std::connect::resolve_token(
-        target.token.as_deref(),
-        target.context.as_deref(),
-        target.namespace.as_deref(),
-        target.secret.as_deref(),
-        target.role.into(),
-        collection,
-    )
-}
 
 // The body-builder / URL-resolution helpers below are exercised directly by
 // `dispatch_query`'s `backup`-gated real implementation and by this file's
@@ -1434,10 +1610,21 @@ fn resolve_base_url(target: &QueryTarget) -> Result<String> {
 }
 
 /// `lumen connect` (#1321, R1): spawn `kubectl port-forward`, wait until the
-/// local end is reachable, run the wrapped command with `LUMEN_URL` (and
-/// `LUMEN_TOKEN`, when resolved) set, then tear the port-forward down
-/// (`ChildGuard::drop`) once the wrapped command exits — regardless of its
-/// exit status — so no port-forward process is left for the caller to track.
+/// local end is reachable, run the wrapped command with `LUMEN_URL` set, then
+/// tear the port-forward down (`ChildGuard::drop`) once the wrapped command
+/// exits — regardless of its exit status — so no port-forward process is left
+/// for the caller to track.
+///
+/// The child's environment gains exactly one variable, and it is a URL. It
+/// used to also gain a bearer token, which meant every descendant of the
+/// wrapped command — and anything that could read `/proc/<pid>/environ` —
+/// inherited a bearer nobody had scoped to them. #2873 deleted that token;
+/// #2878 gives the credential back without giving it to the child: with
+/// `--client-sa`, the token is minted by `TokenRequest` through the caller's
+/// own kubeconfig, held in this process, and attached to the child's requests
+/// as they pass through a loopback proxy. The URL the child gets points at the
+/// proxy rather than at the port-forward, and that is the only difference the
+/// child can observe.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 async fn connect(args: ConnectArgs) -> Result<()> {
     let service = args
@@ -1446,20 +1633,28 @@ async fn connect(args: ConnectArgs) -> Result<()> {
         .or_else(|| args.cr.clone())
         .context("--service or --cr is required")?;
 
-    let secret = match args.secret.clone() {
-        Some(secret) => Some(secret),
-        None => match &args.cr {
-            // "lumen" is the `Lumen` CRD's kubectl resource name — lumen's
-            // own CR-kind lookup convention (R2).
-            Some(cr) => cli_std::connect::resolve_cr_tokens_secret(
-                args.context.as_deref(),
-                &args.namespace,
-                "lumen",
-                cr,
-            )?,
-            None => None,
-        },
-    };
+    // Which name this connection is *for*, as opposed to which socket it goes
+    // through (#3113 R6). In TLS mode the upstream URL carries the Service's
+    // own DNS name, so SNI, hostname verification, and the `Host` header all
+    // address the identity the serving certificate asserts; only address
+    // resolution points at the tunnel.
+    let server_name = args
+        .server_name
+        .clone()
+        .unwrap_or_else(|| format!("{service}.{}.svc", args.namespace));
+
+    // Settled before anything is spawned: a transport nobody chose is not a
+    // thing to discover after a port-forward is running.
+    if args.ca_file.is_none() && !args.plaintext {
+        anyhow::bail!(
+            "say how this connection is secured: `--ca-file <PATH>` verifies {server_name} \
+             against the fleet's published trust bundle, and `--plaintext` talks to a \
+             development instance that serves no certificate.\nThere is no default because the \
+             wrong one is silent: cleartext against a TLS fleet fails inside the wrapped \
+             command's first request, and reads as a networking problem rather than as a \
+             transport that was never chosen."
+        );
+    }
 
     let local_port = match args.local_port {
         Some(port) => port,
@@ -1484,34 +1679,365 @@ async fn connect(args: ConnectArgs) -> Result<()> {
 
     cli_std::connect::wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
 
-    let target = QueryTarget {
-        url: None,
-        token: None,
-        context: args.context.clone(),
-        namespace: Some(args.namespace.clone()),
-        secret,
-        role: args.role,
+    let trust = match &args.ca_file {
+        Some(path) => Some(serving_trust(path, &server_name, local_port)?),
+        None => None,
     };
-    let token = resolve_token(&target, args.collection.as_deref())?;
+    let upstream = match &trust {
+        Some(_) => format!("https://{server_name}"),
+        None => format!("http://127.0.0.1:{local_port}"),
+    };
 
-    let base_url = format!("http://127.0.0.1:{local_port}");
+    // One probe before anything else runs. Every way TLS goes wrong here —
+    // the wrong CA, the wrong name, an expired leaf, a fleet still serving
+    // cleartext — is a fact about the deployment, and it should be reported
+    // as one rather than surfacing as the wrapped command's first request
+    // failing with a transport error (#3113 R7).
+    if let Some(client) = &trust {
+        probe_serving_tls(client, &server_name, args.ca_file.as_deref()).await?;
+    }
+
+    // Mint before spawning anything. A missing RBAC grant is the most common
+    // way this command fails, and it should fail here — where the error can
+    // name the account and the check — rather than three layers down inside
+    // the child's first HTTP response (R6).
+    let mut proxy = match &args.client_sa {
+        Some(client_sa) => Some(start_client_proxy(&args, client_sa, &upstream, trust).await?),
+        None => None,
+    };
+
+    let child_url = match &proxy {
+        Some(proxy) => {
+            eprintln!(
+                "lumen connect: forwarding {} -> {upstream} -> svc/{service}:{} in {}, \
+                 authenticating as serviceaccount {}/{}{}. The token is held here; the wrapped \
+                 command sees only the local URL.",
+                proxy.local_url(),
+                args.remote_port,
+                args.namespace,
+                args.namespace,
+                args.client_sa.as_deref().unwrap_or_default(),
+                match &args.ca_file {
+                    Some(path) => format!(", verifying {server_name} against {}", path.display()),
+                    None => ", over cleartext (--plaintext)".to_string(),
+                },
+            );
+            proxy.local_url()
+        }
+        None => {
+            // R4: say out loud that this connection is unauthenticated, on
+            // stderr so the wrapped command's own stdout stays
+            // machine-readable. A caller who gets a 401 deserves to be told
+            // why here, not left to infer it from the server's response.
+            eprintln!(
+                "lumen connect: forwarding {upstream} -> svc/{service}:{} in {} with no \
+                 credential. Pass --client-sa <NAME> to authenticate as a ServiceAccount; \
+                 without it a serving instance with `auth: required` refuses every request, and \
+                 `auth: disabled` accepts them all.",
+                args.remote_port, args.namespace
+            );
+            upstream.clone()
+        }
+    };
+
     let (program, rest) = args
         .command
         .split_first()
         .context("wrapped command is empty")?;
-    let mut child_cmd = std::process::Command::new(program);
+    let mut child_cmd = tokio::process::Command::new(program);
     child_cmd.args(rest);
-    child_cmd.env("LUMEN_URL", &base_url);
-    if let Some(token) = &token {
-        child_cmd.env("LUMEN_TOKEN", token);
+    child_cmd.env("LUMEN_URL", &child_url);
+    let mut child = child_cmd.spawn().context("run wrapped command")?;
+
+    // Three ways this ends, and all three must tear down the port-forward and
+    // the proxy (R7). The child exiting is the ordinary one. A token refresh
+    // that fails means the grant was revoked mid-session: keeping the child
+    // alive would leave it talking to a proxy that can only answer 503, so we
+    // end it. Ctrl-C is the caller ending it.
+    enum Ending {
+        Child(std::process::ExitStatus),
+        Refresh(String),
+        Interrupted,
     }
-    let status = child_cmd.status().context("run wrapped command")?;
-    // `_forward` drops here (end of scope), tearing the port-forward down
-    // whether the wrapped command succeeded or not (AC1).
-    if !status.success() {
-        anyhow::bail!("wrapped command exited with {status}");
+    let ending = tokio::select! {
+        status = child.wait() => Ending::Child(status.context("wait for the wrapped command")?),
+        fatal = next_fatal(proxy.as_mut()) => Ending::Refresh(fatal),
+        signal = tokio::signal::ctrl_c() => {
+            signal.context("listen for interrupt")?;
+            Ending::Interrupted
+        }
+    };
+
+    // `_forward` and `proxy` drop at the end of this scope on every path, so
+    // the port-forward process and the loopback listener go with them.
+    match ending {
+        Ending::Child(status) if status.success() => Ok(()),
+        Ending::Child(status) => anyhow::bail!("wrapped command exited with {status}"),
+        Ending::Refresh(detail) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            anyhow::bail!(
+                "the wrapped command was stopped because its token could not be renewed: {detail}"
+            )
+        }
+        Ending::Interrupted => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            anyhow::bail!("interrupted")
+        }
     }
+}
+
+/// The proxy's fatal-error arm of `connect`'s `select!`. Without a proxy there
+/// is nothing to wait for, and a future that never resolves is the honest way
+/// to say so — `select!` then simply has one fewer way to finish.
+async fn next_fatal(proxy: Option<&mut service_auth::k8s::LoopbackProxy>) -> String {
+    match proxy {
+        Some(proxy) => match proxy.next_fatal().await {
+            Some(error) => error.to_string(),
+            None => std::future::pending().await,
+        },
+        None => std::future::pending().await,
+    }
+}
+
+/// Mint a token for `client_sa` and stand up the loopback proxy that lends it
+/// to the wrapped command (#2878, R1/R2/R4).
+///
+/// The first mint happens here rather than lazily on the first proxied
+/// request, so `lumen connect --client-sa` fails immediately and legibly when
+/// the caller lacks the grant.
+#[cfg(feature = "delegated-auth")]
+async fn start_client_proxy(
+    args: &ConnectArgs,
+    client_sa: &str,
+    upstream: &str,
+    trust: Option<ServingTrust>,
+) -> Result<service_auth::k8s::LoopbackProxy> {
+    let tokens = client_token_source(args.context.as_deref(), &args.namespace, client_sa).await?;
+    first_mint(&tokens, &args.namespace, client_sa).await?;
+    match trust {
+        Some(client) => {
+            service_auth::k8s::LoopbackProxy::start_with_client(upstream, tokens, client).await
+        }
+        None => service_auth::k8s::LoopbackProxy::start(upstream, tokens).await,
+    }
+    .context("start the local authenticated proxy")
+}
+
+/// The verifying client, where there is one to have.
+///
+/// `--ca-file` requires `--client-sa`, and `--client-sa` requires the
+/// `delegated-auth` feature, so a build without it cannot reach a state where
+/// this holds anything — which is why the placeholder is a unit rather than a
+/// second implementation to keep in step.
+#[cfg(feature = "delegated-auth")]
+type ServingTrust = reqwest::Client;
+#[cfg(not(feature = "delegated-auth"))]
+type ServingTrust = ();
+
+/// The client the proxy forwards through when the fleet serves TLS (#3113 R6).
+///
+/// Two things are deliberately absent. There is no option to skip verification:
+/// the failure this command is most likely to hit is a *correct* refusal, and a
+/// flag that turned it off would turn the private trust domain into decoration.
+/// And the public root store is not merely augmented but switched off — with it
+/// on, any public CA could still vouch for this name.
+#[cfg(feature = "delegated-auth")]
+fn serving_trust(
+    ca_file: &std::path::Path,
+    server_name: &str,
+    local_port: u16,
+) -> Result<ServingTrust> {
+    let pem = std::fs::read_to_string(ca_file).with_context(|| {
+        format!(
+            "read the serving trust bundle {}. Obtain the public CA separately \
+             from the deployment administrator or external certificate platform",
+            ca_file.display()
+        )
+    })?;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], local_port));
+    service_auth::k8s::verifying_client(&pem, server_name, addr).with_context(|| {
+        format!(
+            "build a client that verifies {server_name} against {}",
+            ca_file.display()
+        )
+    })
+}
+
+/// Reach the far end once, and turn whatever went wrong into something the
+/// caller can act on (#3113 R7).
+///
+/// Each branch names a different deployment fact, because they have different
+/// fixes and a single "handshake failed" would send a caller looking in the
+/// wrong place. None of them offers to stop verifying, and none of them
+/// suggests a certificate for `localhost` — that leaf would be valid against
+/// every port-forward anyone opens, which is the opposite of what naming the
+/// Service buys.
+#[cfg(feature = "delegated-auth")]
+async fn probe_serving_tls(
+    client: &ServingTrust,
+    server_name: &str,
+    ca_file: Option<&std::path::Path>,
+) -> Result<()> {
+    let ca = ca_file
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    let error = match client
+        .get(format!("https://{server_name}/healthz"))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+    {
+        // Any HTTP answer means the handshake completed, which is all this
+        // probe is about. `/healthz` needs no credential, so a status other
+        // than 200 is the fleet's business and not this command's.
+        Ok(_) => return Ok(()),
+        Err(error) => error,
+    };
+
+    // The useful text is in the source chain — rustls' rejection reason is
+    // several layers below reqwest's "error sending request".
+    let mut detail = error.to_string();
+    let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&error);
+    while let Some(inner) = source {
+        detail = format!("{detail}: {inner}");
+        source = inner.source();
+    }
+    let lowered = detail.to_ascii_lowercase();
+
+    let diagnosis = if lowered.contains("unknownissuer") || lowered.contains("unknown issuer") {
+        format!(
+            "the certificate {server_name} presented was not signed by anything in {ca}. Either \
+             the bundle is from another cluster or CA pool, or the fleet's leaf was issued \
+             outside it — obtain the public CA separately from the deployment administrator"
+        )
+    } else if lowered.contains("notvalidforname") || lowered.contains("not valid for name") {
+        format!(
+            "the far end holds a certificate that does not name {server_name}. Pass \
+             `--server-name` with one of the names it does hold (the operator requests \
+             `<service>.<namespace>.svc` and its cluster FQDN), or check that `--service`/`--cr` \
+             names the Service you meant"
+        )
+    } else if lowered.contains("expired") {
+        format!(
+            "the certificate {server_name} presented has expired. Ask the deployment administrator \
+             or external certificate platform to rotate the externally provisioned serving Secret \
+             and distribute its public CA; keep verification enabled and do not downgrade to plaintext"
+        )
+    } else if lowered.contains("corrupt message")
+        || lowered.contains("handshake eof")
+        || lowered.contains("unexpected eof")
+        || lowered.contains("http instead of https")
+    {
+        // The far end read a ClientHello, made nothing of it, and hung up.
+        // That is overwhelmingly one thing: a port serving cleartext.
+        format!(
+            "svc/{server_name} did not complete a TLS handshake and closed the connection, which \
+             is what a port still answering in cleartext does. Use `--plaintext` if that is a \
+             development instance; in production, have the deployment administrator or external \
+             certificate platform provision the serving TLS Secret and set `spec.servingTlsSecret`"
+        )
+    } else {
+        format!("could not complete a TLS handshake with {server_name}: {detail}")
+    };
+
+    anyhow::bail!(
+        "{diagnosis}.\n\
+         The port-forward is only transport: the socket is on 127.0.0.1, but the identity being \
+         verified is the Kubernetes Service's, and that is the one the certificate names. There \
+         is no option to skip that check."
+    )
+}
+
+/// Without `delegated-auth` there is no token to carry and so no proxy to
+/// verify through. Refusing here keeps the flag from looking like it worked.
+#[cfg(not(feature = "delegated-auth"))]
+fn serving_trust(
+    _ca_file: &std::path::Path,
+    _server_name: &str,
+    _local_port: u16,
+) -> Result<ServingTrust> {
+    anyhow::bail!(
+        "--ca-file needs the `delegated-auth` feature (rebuild with \
+         `cargo build -p lumen --features delegated-auth`); this binary has no client that can \
+         verify a private serving certificate"
+    )
+}
+
+/// Unreachable: the only producer of a [`ServingTrust`] in this build fails.
+#[cfg(not(feature = "delegated-auth"))]
+async fn probe_serving_tls(
+    _client: &ServingTrust,
+    _server_name: &str,
+    _ca_file: Option<&std::path::Path>,
+) -> Result<()> {
     Ok(())
+}
+
+/// The first mint, with Lumen's own remediation attached (#2878, R6).
+///
+/// `service-auth` already names the caller, the ServiceAccount, and the
+/// `kubectl auth can-i` question — everything a provider-neutral library can
+/// know. What it cannot know is that this repository ships a command that
+/// writes the missing grant, so the CLI adds that here rather than teaching the
+/// library about Lumen.
+#[cfg(feature = "delegated-auth")]
+async fn first_mint(
+    tokens: &service_auth::k8s::TokenSource,
+    namespace: &str,
+    client_sa: &str,
+) -> Result<service_auth::k8s::ProjectedToken> {
+    match tokens.token().await {
+        Ok(token) => Ok(token),
+        Err(error @ service_auth::k8s::TokenRequestError::Forbidden { .. }) => {
+            anyhow::bail!(
+                "{error}. `lumen k8s access render --namespace {namespace} --client-sa \
+                 {client_sa} --issuer <you>` emits exactly that grant"
+            )
+        }
+        Err(other) => Err(other.into()),
+    }
+}
+
+/// Same signature, no minter: a build without `delegated-auth` has no
+/// TokenRequest client linked in, and pretending otherwise would mean either
+/// running unauthenticated behind the caller's back or inventing a credential.
+/// Naming the missing feature is the only honest answer.
+#[cfg(not(feature = "delegated-auth"))]
+async fn start_client_proxy(
+    _args: &ConnectArgs,
+    _client_sa: &str,
+    _upstream: &str,
+    _trust: Option<ServingTrust>,
+) -> Result<service_auth::k8s::LoopbackProxy> {
+    anyhow::bail!(
+        "--client-sa needs the `delegated-auth` feature (rebuild with \
+         `cargo build -p lumen --features delegated-auth`); this binary cannot mint a \
+         ServiceAccount token"
+    )
+}
+
+/// One short-lived audience-bound token, minted for an explicitly named
+/// ServiceAccount through whatever identity the kubeconfig already holds
+/// (#2878, R1/R3).
+///
+/// The audience is `lumen`'s own, not a parameter: a token a serving node will
+/// accept is exactly a token minted for that audience, and letting a flag
+/// choose otherwise would only produce credentials that fail at the far end.
+#[cfg(feature = "delegated-auth")]
+async fn client_token_source(
+    context: Option<&str>,
+    namespace: &str,
+    client_sa: &str,
+) -> Result<std::sync::Arc<service_auth::k8s::TokenSource>> {
+    let target =
+        service_auth::k8s::TokenRequestTarget::new(namespace, client_sa, lumen::auth::AUDIENCE)?;
+    let minter = service_auth::k8s::KubeTokenMinter::from_context(context).await?;
+    Ok(std::sync::Arc::new(service_auth::k8s::TokenSource::new(
+        std::sync::Arc::new(minter),
+        target,
+    )))
 }
 
 /// Parse a CLI-supplied value into a `FieldValue`: JSON first (so
@@ -1623,18 +2149,24 @@ fn build_duplicates_body(args: &QueryDuplicatesArgs) -> Result<(String, serde_js
     Ok((format!("/collections/{}/duplicates", args.collection), body))
 }
 
+/// The `token` parameter is the whole of `lumen query`'s credential handling
+/// (#2878). It is a value passed in, minted moments earlier for this one
+/// command: there is no environment variable, no file, and no Secret lookup
+/// behind it. #2873 removed all three, and the parameter is deliberately
+/// explicit rather than ambient so that a future change which starts sending a
+/// credential from somewhere else has to say so in this signature.
 #[cfg(feature = "backup")]
 async fn http_post_json(
     base_url: &str,
-    token: Option<&str>,
     path: &str,
     body: serde_json::Value,
+    token: Option<&service_auth::k8s::ProjectedToken>,
 ) -> Result<serde_json::Value> {
     let url = format!("{}{path}", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
     let mut req = client.post(&url).json(&body);
     if let Some(token) = token {
-        req = req.bearer_auth(token);
+        req = req.bearer_auth(token.expose());
     }
     let resp = req.send().await.with_context(|| format!("POST {url}"))?;
     let status = resp.status();
@@ -1648,14 +2180,14 @@ async fn http_post_json(
 #[cfg(feature = "backup")]
 async fn http_get_json(
     base_url: &str,
-    token: Option<&str>,
     path: &str,
+    token: Option<&service_auth::k8s::ProjectedToken>,
 ) -> Result<serde_json::Value> {
     let url = format!("{}{path}", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
     let mut req = client.get(&url);
     if let Some(token) = token {
-        req = req.bearer_auth(token);
+        req = req.bearer_auth(token.expose());
     }
     let resp = req.send().await.with_context(|| format!("GET {url}"))?;
     let status = resp.status();
@@ -1666,42 +2198,87 @@ async fn http_get_json(
     Ok(payload)
 }
 
-/// `lumen query` dispatch (#1321, R3): resolves `--url`/token via
-/// `QueryTarget` (R2, shared with `lumen connect`), assembles the exact wire
-/// body, and POSTs/GETs it. No REPL, no new HTTP endpoint.
+/// Mint the token `lumen query` will carry, if the caller named an account to
+/// mint it for (#2878, R3/R4).
+///
+/// The token is returned by value and lives only as long as the command that
+/// asked for it. It is never written anywhere: not to a cache file, not to an
+/// environment variable, not to stdout.
+#[cfg(all(feature = "backup", feature = "delegated-auth"))]
+async fn query_token(target: &QueryTarget) -> Result<Option<service_auth::k8s::ProjectedToken>> {
+    let Some(client_sa) = target.client_sa.as_deref() else {
+        return Ok(None);
+    };
+    // clap's `requires = "namespace"` already guarantees this pair arrives
+    // together; the message is for the code path, not for the user.
+    let namespace = target
+        .namespace
+        .as_deref()
+        .context("--client-sa requires --namespace")?;
+    let tokens = client_token_source(target.context.as_deref(), namespace, client_sa).await?;
+    Ok(Some(first_mint(&tokens, namespace, client_sa).await?))
+}
+
+/// Without `delegated-auth` there is no TokenRequest client to mint with, so
+/// `--client-sa` is refused rather than silently ignored. Sending an
+/// unauthenticated request in response to an explicit request to authenticate
+/// is the one behaviour that must not happen.
+#[cfg(all(feature = "backup", not(feature = "delegated-auth")))]
+async fn query_token(target: &QueryTarget) -> Result<Option<service_auth::k8s::ProjectedToken>> {
+    if target.client_sa.is_some() {
+        anyhow::bail!(
+            "--client-sa needs the `delegated-auth` feature (rebuild with \
+             `cargo build -p lumen --features delegated-auth`); this binary cannot mint a \
+             ServiceAccount token"
+        );
+    }
+    Ok(None)
+}
+
+/// `lumen query` dispatch (#1321, R3): resolves `--url` via `QueryTarget`,
+/// assembles the exact wire body, and POSTs/GETs it. No REPL, no new HTTP
+/// endpoint.
+///
+/// Credential resolution is a single line and it is not a lookup (#2878): with
+/// `--client-sa`, a token is minted for the named account, carried in memory
+/// for this one request, and dropped with the command. Without it the request
+/// goes out as whoever the network says it is and a serving instance under
+/// `auth: required` answers 401 — the honest failure (AC4). What #2873 removed
+/// and did not come back is the silent path: quietly reaching into a Secret
+/// for a shared token nobody named.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[cfg(feature = "backup")]
 async fn dispatch_query(args: QueryArgs) -> Result<()> {
     match args.command {
         QueryCommand::Index(args) => {
             let base = resolve_base_url(&args.target)?;
-            let token = resolve_token(&args.target, Some(&args.collection))?;
+            let token = query_token(&args.target).await?;
             let (path, body) = build_index_body(&args.collection, &args.items)?;
-            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            let resp = http_post_json(&base, &path, body, token.as_ref()).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Search(args) => {
             let base = resolve_base_url(&args.target)?;
-            let token = resolve_token(&args.target, Some(&args.collection))?;
+            let token = query_token(&args.target).await?;
             let (path, body) = build_search_body(&args)?;
-            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            let resp = http_post_json(&base, &path, body, token.as_ref()).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Duplicates(args) => {
             let base = resolve_base_url(&args.target)?;
-            let token = resolve_token(&args.target, Some(&args.collection))?;
+            let token = query_token(&args.target).await?;
             let (path, body) = build_duplicates_body(&args)?;
-            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            let resp = http_post_json(&base, &path, body, token.as_ref()).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Collections(args) => match args.command {
             QueryCollectionsCommand::List(args) => {
                 let base = resolve_base_url(&args.target)?;
-                let token = resolve_token(&args.target, None)?;
-                let resp = http_get_json(&base, token.as_deref(), "/collections").await?;
+                let token = query_token(&args.target).await?;
+                let resp = http_get_json(&base, "/collections", token.as_ref()).await?;
                 println!("{}", serde_json::to_string_pretty(&resp)?);
                 Ok(())
             }
@@ -1745,7 +2322,10 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
+fn render_operator_yaml(args: &K8sOperatorRenderArgs) -> Result<String> {
+    let namespace = &args.namespace;
+    let image = &args.image;
+    let monitoring = args.monitoring;
     if image.is_empty()
         || image.starts_with('-')
         || image
@@ -1765,21 +2345,102 @@ fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
         namespace,
     ));
     out.push_str("\n---\n");
-    let deployment = cli_std::artifact::replace_kubernetes_namespace(
+    let mut deployment = cli_std::artifact::replace_kubernetes_namespace(
         &cli_std::artifact::strip_source_ownership_markers(include_str!(
             "../../k8s/operator/deployment.yaml"
         )),
         "lumen-system",
         namespace,
     );
-    let checked_in_image = "          image: ghcr.io/chrischeng-c4/lumen:0.4.24";
-    if !deployment.contains(checked_in_image) {
-        anyhow::bail!("checked-in operator manifest is missing its canonical image field");
+
+    // Derived, not hardcoded (#2532): the checked-in manifest pins this
+    // workspace's own version, so a release bump that misses `deployment.yaml`
+    // fails this render instead of silently handing out a stale image.
+    let checked_in_image = format!(
+        "          image: ghcr.io/chrischeng-c4/lumen:{}",
+        env!("CARGO_PKG_VERSION")
+    );
+    if !deployment.contains(&checked_in_image) {
+        anyhow::bail!(
+            "checked-in operator manifest does not pin this build's image \
+             (`{checked_in_image}`) — bump k8s/operator/deployment.yaml with the release"
+        );
     }
-    out.push_str(&deployment.replacen(checked_in_image, &format!("          image: {image}"), 1));
+    out.push_str(&deployment.replacen(&checked_in_image, &format!("          image: {image}"), 1));
+    // The operator's own scrape target (#2621). Unconditional: it is plain
+    // core/v1, so it applies on a cluster with no monitoring stack at all, and
+    // shipping it always means turning monitoring on later never has to come
+    // back and add the target. Kept in the same order as
+    // k8s/operator/kustomization.yaml so the two paths stay comparable.
+    out.push_str("\n---\n");
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/service.yaml"
+        )),
+        "lumen-system",
+        namespace,
+    ));
+    // The PDB ships with the Deployment: `replicas: 2` only survives a node
+    // drain if evictions are serialized (#2602). Render consumers get the same
+    // operator layer the kustomize consumers get.
+    out.push_str("\n---\n");
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/pdb.yaml"
+        )),
+        "lumen-system",
+        namespace,
+    ));
+    // Opt-in tail, byte-identical to the `operator-monitoring` component so a
+    // kustomize consumer and a render consumer get the same alerts. Gated
+    // because these two are monitoring.coreos.com CRDs: emitting them
+    // unconditionally would make `kubectl apply` of the whole render fail on
+    // any cluster without prometheus-operator, taking the operator down with
+    // the alerts.
+    if monitoring {
+        for manifest in [
+            include_str!("../../k8s/components/operator-monitoring/servicemonitor.yaml"),
+            include_str!("../../k8s/components/operator-monitoring/prometheusrule.yaml"),
+        ] {
+            out.push_str("\n---\n");
+            out.push_str(&rewrite_monitoring_namespace(
+                &cli_std::artifact::strip_source_ownership_markers(manifest),
+                namespace,
+            ));
+        }
+    }
     Ok(cli_std::artifact::ensure_trailing_newline(&out))
 }
 
+/// Rewrite the control-plane namespace in the two monitoring manifests.
+///
+/// `cli_std::artifact::replace_kubernetes_namespace` rewrites the `name:` and
+/// `namespace:` keys, which is everything the RBAC/Deployment/Service/PDB
+/// layer carries. The monitoring layer carries the namespace in three further
+/// shapes, and every one of them fails *silently* if left behind on a
+/// `--namespace` render:
+///
+/// - the ServiceMonitor's `namespaceSelector.matchNames` list item — a
+///   selector pointed at an empty namespace discovers no target, so the
+///   operator simply never appears in Prometheus;
+/// - the PromQL `namespace="..."` matchers in both alert expressions — an
+///   expression that matches nothing can never fire, which is exactly the
+///   false green row 4 exists to prevent;
+/// - the `-n <ns>` in the runbook annotations — commands an on-call would
+///   paste against the wrong namespace mid-incident.
+fn rewrite_monitoring_namespace(manifest: &str, namespace: &str) -> String {
+    cli_std::artifact::replace_kubernetes_namespace(manifest, "lumen-system", namespace)
+        .replace("- lumen-system", &format!("- {namespace}"))
+        .replace(
+            "namespace=\"lumen-system\"",
+            &format!("namespace=\"{namespace}\""),
+        )
+        .replace("-n lumen-system", &format!("-n {namespace}"))
+}
+
+/// Standalone custom resource manifests for `--profile <dev|staging|prod|template>`.
+///
+/// Shared by `lumen k8s instance render` and by tests asserting the four profile shapes.
 fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     let default_version = env!("CARGO_PKG_VERSION");
     let (default_name, default_namespace, default_image, body) = match args.profile {
@@ -1816,31 +2477,507 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
     let image = args.image.as_deref().unwrap_or(&default_image);
 
-    let mut yaml = format!(
-        "apiVersion: lumen.dev/v1alpha1\nkind: Lumen\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
+    let header_comment = "# TLS Secrets are provisioned by the deployment administrator or an external platform.\n# The operator consumes named serving/peer Secrets and performs no issuance.\n";
+
+    let yaml = format!(
+        "{header_comment}apiVersion: lumen.dev/v1alpha1\nkind: Lumen\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n{}",
+        profile_spec_body(body, image)
     );
-    match body {
-        InstanceBody::Dev => {
-            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
-        }
-        InstanceBody::Staging => {
-            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
-        }
-        InstanceBody::Prod => {
-            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
-        }
-        InstanceBody::Template => {
-            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
-        }
-    }
     cli_std::artifact::ensure_trailing_newline(&yaml)
 }
 
+/// The `spec:` body for one profile, at two-space indent. Shared by
+/// `k8s instance render` and `k8s fleet render` so a fleet's `defaults` and a
+/// standalone CR cannot drift into disagreeing about what "prod" means.
+fn profile_spec_body(body: InstanceBody, image: &str) -> String {
+    let mut yaml = format!("  image: {image}\n");
+    match body {
+        InstanceBody::Dev => {
+            // Every profile states its auth posture out loud, even when it
+            // agrees with the CRD default (#2678). `auth` fails closed, so a
+            // rendered CR that stayed silent would be a `required` instance
+            // with no token source: a pod that never passes readiness.
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  auth: disabled\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
+        }
+        InstanceBody::Staging => {
+            // #3113 R8: `servingTlsSecret` is stated for the same reason as
+            // `peerTlsSecret` below, but the failure it prevents is the
+            // opposite one. An unstated peer Secret fails closed — the pods
+            // refuse to start and say so. An unstated serving Secret fails
+            // *open*: the client port quietly stays h2c, and a fleet serves
+            // KSA-bearing requests in cleartext while looking healthy.
+            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  auth: required\n  peerTlsSecret: lumen-peer-tls\n  servingTlsSecret: lumen-serving-tls\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
+        }
+        InstanceBody::Prod => {
+            // #2890 R7: `peerTlsSecret` is stated, not defaulted. A replicated
+            // profile that stayed silent about it would render a CR whose pods
+            // refuse to start — the same reasoning as `auth` above, one port
+            // over.
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  peerTlsSecret: lumen-peer-tls\n  servingTlsSecret: lumen-serving-tls\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
+        }
+        InstanceBody::Template => {
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  peerTlsSecret: REPLACE_ME__PEER_TLS_SECRET\n  servingTlsSecret: REPLACE_ME__SERVING_TLS_SECRET\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
+        }
+    }
+    yaml
+}
+
+#[derive(Clone, Copy)]
 enum InstanceBody {
     Dev,
     Staging,
     Prod,
     Template,
+}
+
+/// `spec.defaults` for `k8s fleet render --profile template`, at four-space
+/// indent.
+///
+/// Names no token source, because there is no longer one to name: a caller's
+/// identity comes from the cluster's TokenRequest/TokenReview path, not from
+/// anything a fleet or its instances configure (#2872). A template that still
+/// carried a credential field would hand every app team a spec the API server
+/// now rejects outright.
+const FLEET_TEMPLATE_DEFAULTS: &str = "\
+    \x20   image: __IMAGE__\n\
+    \x20   imagePullPolicy: IfNotPresent\n\
+    \x20   shardCount: REPLACE_ME__SHARD_COUNT\n\
+    \x20   replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n\
+    \x20   voterCount: REPLACE_ME__VOTER_COUNT\n\
+    \x20   logFormat: json\n\
+    \x20   auth: required\n\
+    \x20   # Serving leaf every data plane presents on :7373, one Secret name\n\
+    \x20   # per tenant namespace. Stated rather than left out: an unset\n\
+    \x20   # serving Secret is not an error, it is cleartext (#3113).\n\
+    \x20   servingTlsSecret: REPLACE_ME__SERVING_TLS_SECRET\n\
+    \x20   # Workload Identity KSA every data plane runs as.\n\
+    \x20   serviceAccountName: REPLACE_ME__WORKLOAD_IDENTITY_KSA\n\
+    \x20   placement:\n\
+    \x20     # Which node pool every data plane lands on.\n\
+    \x20     nodeSelector:\n\
+    \x20       REPLACE_ME__NODE_POOL_LABEL: REPLACE_ME__NODE_POOL_VALUE\n\
+    \x20     # Uncomment when the pool is tainted to repel other workloads.\n\
+    \x20     # tolerations:\n\
+    \x20     #   - key: REPLACE_ME__TAINT_KEY\n\
+    \x20     #     operator: Equal\n\
+    \x20     #     value: REPLACE_ME__TAINT_VALUE\n\
+    \x20     #     effect: NoSchedule\n\
+    \x20   serving:\n\
+    \x20     cpu: \"1\"\n\
+    \x20     memory: 4Gi\n\
+    \x20     # SSD vs standard disk is the StorageClass; omit to take the\n\
+    \x20     # cluster default.\n\
+    \x20     raftStorageClass: REPLACE_ME__STORAGE_CLASS\n";
+
+/// Render a `LumenFleet` — the single cluster-scoped object the platform team
+/// applies into the control-plane namespace to declare every data plane.
+///
+/// The split the document is built to teach: `defaults` holds what the
+/// platform owns and every tenant shares (image, node pool, StorageClass,
+/// ServiceAccount); each `instances[].spec` holds what one app team owns (its
+/// CPU/memory request — which is what makes replica-shard autoscaling
+/// trigger — its disk size, and its credential source).
+fn render_fleet_yaml(args: &K8sFleetRenderArgs) -> String {
+    let default_version = env!("CARGO_PKG_VERSION");
+    let (default_name, default_image, body) = match args.profile {
+        K8sFleetProfile::Dev => ("search", "lumen:latest".to_string(), InstanceBody::Dev),
+        K8sFleetProfile::Prod => (
+            "lumen",
+            format!("ghcr.io/chrischeng-c4/lumen:{default_version}"),
+            InstanceBody::Prod,
+        ),
+        K8sFleetProfile::Template => (
+            "REPLACE_ME__FLEET_NAME",
+            "REPLACE_ME__REGISTRY/lumen:REPLACE_ME__IMAGE_TAG".to_string(),
+            InstanceBody::Template,
+        ),
+    };
+    let name = args.name.as_deref().unwrap_or(default_name);
+    let image = args.image.as_deref().unwrap_or(&default_image);
+
+    // `defaults` is a whole LumenSpec. dev/prod reuse the instance profile
+    // bodies verbatim, one level deeper, so a fleet's "prod" and a standalone
+    // "prod" CR cannot come to disagree. `template` gets its own body: every
+    // value there is a REPLACE_ME with no semantics to keep in step, and it
+    // has to name knobs (node pool, StorageClass, ServiceAccount) that only
+    // make sense on the fleet — appending them to the shared body would emit
+    // `serving:` twice and silently drop the first one.
+    let defaults: String = match args.profile {
+        K8sFleetProfile::Template => FLEET_TEMPLATE_DEFAULTS.replace("__IMAGE__", image),
+        _ => profile_spec_body(body, image)
+            .lines()
+            .map(|line| format!("  {line}\n"))
+            .collect(),
+    };
+
+    let mut yaml = format!(
+        "# One object, applied once by the platform team. Every data-plane\n\
+         # namespace this cluster serves is declared below; the operator\n\
+         # materializes one `Lumen` per entry into the namespace named.\n\
+         #\n\
+         # The namespaces must already exist — the fleet never creates them.\n\
+         apiVersion: lumen.dev/v1alpha1\n\
+         kind: LumenFleet\n\
+         metadata:\n  name: {name}\n\
+         spec:\n\
+         \x20 # Platform-owned: what every tenant shares.\n\
+         \x20 defaults:\n{defaults}"
+    );
+
+    match args.profile {
+        K8sFleetProfile::Dev => {
+            yaml.push_str(
+                "  instances:\n\
+                 \x20   - namespace: default\n",
+            );
+        }
+        K8sFleetProfile::Prod => {
+            yaml.push_str(
+                "    placement:\n\
+                 \x20     nodeSelector:\n\
+                 \x20       cloud.google.com/gke-nodepool: lumen\n\
+                 \x20 # App-team-owned: what one tenant sets for itself. Each\n\
+                 \x20 # `spec` is a merge patch over `defaults` above — name only\n\
+                 \x20 # what differs; everything unnamed is inherited.\n\
+                 \x20 instances:\n\
+                 \x20   - namespace: team-a\n\
+                 \x20     spec:\n\
+                 \x20       serving:\n\
+                 \x20         cpu: \"4\"\n\
+                 \x20         memory: 16Gi\n\
+                 \x20         raftStorage: 200Gi\n\
+                 \x20   - namespace: team-b\n\
+                 \x20     spec:\n\
+                 \x20       serving:\n\
+                 \x20         cpu: \"1\"\n\
+                 \x20         memory: 4Gi\n",
+            );
+        }
+        K8sFleetProfile::Template => {
+            yaml.push_str(
+                "  # App-team-owned: what one tenant sets for itself. Each\n\
+                 \x20 # `spec` is a merge patch over `defaults` above — name only\n\
+                 \x20 # what differs; everything unnamed is inherited. A `null`\n\
+                 \x20 # value removes an inherited field.\n\
+                 \x20 instances:\n\
+                 \x20   - namespace: REPLACE_ME__APP_NAMESPACE\n\
+                 \x20     spec:\n\
+                 \x20       serving:\n\
+                 \x20         # Requests, not just limits: replica-shard\n\
+                 \x20         # autoscaling triggers off these.\n\
+                 \x20         cpu: REPLACE_ME__CPU\n\
+                 \x20         memory: REPLACE_ME__MEMORY\n\
+                 \x20         raftStorage: REPLACE_ME__DISK\n\
+                 \x20 # Retain (default) leaves an instance running when its entry\n\
+                 \x20 # is removed; Delete removes it and its PVCs.\n\
+                 \x20 prunePolicy: Retain\n",
+            );
+        }
+    }
+    cli_std::artifact::ensure_trailing_newline(&yaml)
+}
+
+/// `lumen k8s access render` (#2889) — the client access handoff, as five
+/// objects and no credential.
+///
+/// The boundary this renders has two hops, and the reason to render it rather
+/// than describe it in a runbook is that the two are easy to collapse into
+/// one:
+///
+/// 1. a human account or a Google service account authenticates to
+///    *kube-apiserver* through its kubeconfig credential plugin, and
+///    Kubernetes RBAC decides whether that principal may create a TokenRequest
+///    for one named ServiceAccount;
+/// 2. the short-lived, audience-bound token that comes back is the only
+///    credential Lumen ever sees, and Lumen asks Kubernetes RBAC what *that
+///    ServiceAccount* may do.
+///
+/// Binding the Google principal straight to the Lumen role authorizes the same
+/// human and looks like it worked — right until the first request, which
+/// arrives carrying a ServiceAccount token nobody granted anything to. The two
+/// RoleBindings here take deliberately different subject kinds so that
+/// shortcut is not expressible.
+///
+/// `serviceaccounts/token` is the namespace's privilege-escalation surface:
+/// `create` on it without `resourceNames` mints a token for *every*
+/// ServiceAccount in the namespace, the operator's included. So the issuer
+/// Role always names its ServiceAccount, and the bundle is scanned with
+/// [`service_k8s::render::rbac::first_wildcard`] before it is emitted — a
+/// wildcard that reached any field of any object is a bug in this function,
+/// and the render fails rather than hands one out.
+#[cfg(feature = "operator")]
+fn render_access_yaml(args: &K8sAccessRenderArgs) -> Result<String> {
+    use service_k8s::render::rbac::{
+        first_wildcard, role, role_binding, NamedRule, Role, RoleBinding, RoleSubject,
+        ServiceAccountSubject,
+    };
+
+    let namespace = object_name("--namespace", &args.namespace)?;
+    let client = object_name("--client-sa", &args.client_sa)?;
+    let issuers = parse_issuers(&args.issuers)?;
+    let grants = parse_grants(&args.grants)?;
+    if grants.is_empty() && !args.instance_admin {
+        anyhow::bail!(
+            "nothing would be granted: pass at least one `--grant \
+             <collection-id>=read|write|admin` or `--instance-admin`"
+        );
+    }
+
+    let issuer_role_name = format!("{client}-token-issuer");
+    let lumen_role_name = format!("{client}-lumen-access");
+    let labels = serde_json::json!({
+        "app.kubernetes.io/name": "lumen",
+        "app.kubernetes.io/instance": client,
+        "app.kubernetes.io/component": "access",
+        "app.kubernetes.io/managed-by": "lumen-cli",
+        "app.kubernetes.io/part-of": "lumen",
+    });
+
+    // Hop 1: who may mint this ServiceAccount's token.
+    let issuer_rules = [NamedRule {
+        api_groups: &[""],
+        resources: &["serviceaccounts/token"],
+        resource_names: &[client],
+        verbs: &["create"],
+    }];
+    let issuer_subjects: Vec<RoleSubject<'_>> =
+        issuers.iter().copied().map(RoleSubject::User).collect();
+
+    // Hop 2: what that ServiceAccount may do, in Lumen's own vocabulary. The
+    // resource and verb names come from `lumen::auth`, which is what the
+    // serving side puts in its SubjectAccessReview — one definition, so a
+    // rendered grant cannot describe a check Lumen does not make.
+    let api_groups = [lumen::auth::API_GROUP];
+    let collections = [lumen::auth::COLLECTIONS_RESOURCE];
+    let admin = [lumen::auth::ADMIN_RESOURCE];
+    let admin_verbs = [lumen::auth::verb(service_auth::role_map::Role::Admin)];
+    let grant_names: Vec<[&str; 1]> = grants
+        .iter()
+        .map(|grant| [grant.collection.as_str()])
+        .collect();
+    let mut lumen_rules: Vec<NamedRule<'_>> = grants
+        .iter()
+        .zip(&grant_names)
+        .map(|(grant, names)| NamedRule {
+            api_groups: &api_groups,
+            resources: &collections,
+            resource_names: names,
+            verbs: &grant.verbs,
+        })
+        .collect();
+    if args.instance_admin {
+        lumen_rules.push(NamedRule {
+            api_groups: &api_groups,
+            resources: &admin,
+            // The admin surface is one namespace-wide object, not a set of
+            // named ones — `AuthTarget::Admin` sends no resource name — so
+            // there is nothing to enumerate here.
+            resource_names: &[],
+            // And it is checked at exactly one role: every `ensure_admin` call
+            // site asks for `Role::Admin`. Granting the lower verbs too would
+            // widen the grant past anything Lumen can ask for.
+            verbs: &admin_verbs,
+        });
+    }
+
+    let documents = vec![
+        serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": { "name": client, "namespace": namespace, "labels": labels },
+        }),
+        role(Role {
+            name: &issuer_role_name,
+            namespace,
+            labels: labels.clone(),
+            rules: &issuer_rules,
+        }),
+        role_binding(RoleBinding {
+            name: &issuer_role_name,
+            namespace,
+            labels: labels.clone(),
+            role: &issuer_role_name,
+            subjects: &issuer_subjects,
+        }),
+        role(Role {
+            name: &lumen_role_name,
+            namespace,
+            labels: labels.clone(),
+            rules: &lumen_rules,
+        }),
+        role_binding(RoleBinding {
+            name: &lumen_role_name,
+            namespace,
+            labels,
+            role: &lumen_role_name,
+            subjects: &[RoleSubject::ServiceAccount(ServiceAccountSubject {
+                namespace,
+                name: client,
+            })],
+        }),
+    ];
+
+    let mut out = String::from(ACCESS_BUNDLE_HEADER);
+    for (index, document) in documents.iter().enumerate() {
+        if let Some(field) = first_wildcard(document) {
+            anyhow::bail!(
+                "refusing to render a wildcard RBAC grant: `{}` in the {} object",
+                field,
+                document["kind"].as_str().unwrap_or("rendered")
+            );
+        }
+        if index > 0 {
+            out.push_str("---\n");
+        }
+        out.push_str(&serde_yaml::to_string(document).context("render access bundle YAML")?);
+    }
+    Ok(cli_std::artifact::ensure_trailing_newline(&out))
+}
+
+/// Leads the rendered bundle so the object list is readable without the
+/// issue that produced it. Comments, not a wrapper: the body stays raw
+/// multi-document YAML that `kubectl apply -f -` accepts unchanged.
+#[cfg(feature = "operator")]
+const ACCESS_BUNDLE_HEADER: &str = "\
+# Lumen client access (#2889). Two hops, five objects, no credential.
+#
+#   1. `<client-sa>-token-issuer` lets the named Kubernetes users create a
+#      TokenRequest for exactly one ServiceAccount. Those users authenticate
+#      to kube-apiserver, never to Lumen.
+#   2. `<client-sa>-lumen-access` is what Lumen's SubjectAccessReview reads
+#      once that ServiceAccount's token arrives.
+#
+# Mint a token with:
+#   kubectl create token <client-sa> -n <namespace> \\
+#     --audience lumen.axiom.dev --duration 10m
+";
+
+#[cfg(not(feature = "operator"))]
+fn render_access_yaml(_args: &K8sAccessRenderArgs) -> Result<String> {
+    anyhow::bail!(
+        "this lumen build was compiled without operator support; rebuild with \
+         `--features operator` (the published binary and image include it)"
+    )
+}
+
+/// A Kubernetes object name (RFC 1123 label), checked here rather than left to
+/// `kubectl apply`. A rejected name is a CLI error; an accepted-but-wrong one
+/// becomes a `resourceNames` entry that matches nothing, which RBAC reports as
+/// an ordinary denial with no hint that the grant was misspelled.
+#[cfg(feature = "operator")]
+fn object_name<'a>(flag: &str, value: &'a str) -> Result<&'a str> {
+    let shaped = !value.is_empty()
+        && value.len() <= 63
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !value.starts_with('-')
+        && !value.ends_with('-');
+    if !shaped {
+        anyhow::bail!(
+            "{flag} must be a DNS-1123 label — 1-63 lowercase letters, digits, \
+             or `-`, not starting or ending with `-` — got `{value}`"
+        );
+    }
+    Ok(value)
+}
+
+/// One collection's grant: the id RBAC will match on, and the verbs it earns.
+#[cfg(feature = "operator")]
+struct CollectionGrant {
+    collection: String,
+    verbs: Vec<&'static str>,
+}
+
+/// Parse `--grant <collection-id>=read|write|admin`, rejecting duplicates.
+///
+/// Two `--grant` flags for one collection would render two rules that RBAC
+/// unions, so the narrower one is silently irrelevant — exactly the case where
+/// a deployer believes they tightened a grant and did not.
+#[cfg(feature = "operator")]
+fn parse_grants(specs: &[String]) -> Result<Vec<CollectionGrant>> {
+    let mut grants: Vec<CollectionGrant> = Vec::new();
+    for spec in specs {
+        let (collection, level) = spec.split_once('=').ok_or_else(|| {
+            anyhow::anyhow!("--grant expects `<collection-id>=read|write|admin`, got `{spec}`")
+        })?;
+        if collection.is_empty()
+            || collection.len() > 253
+            || collection
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control() || c == '*')
+        {
+            anyhow::bail!(
+                "--grant collection id must be 1-253 characters with no whitespace \
+                 and no `*` — got `{collection}` in `{spec}`"
+            );
+        }
+        let level = match level {
+            "read" => service_auth::role_map::Role::Read,
+            "write" => service_auth::role_map::Role::Write,
+            "admin" => service_auth::role_map::Role::Admin,
+            other => anyhow::bail!(
+                "--grant level must be `read`, `write`, or `admin` — got `{other}` in `{spec}`"
+            ),
+        };
+        if grants.iter().any(|grant| grant.collection == collection) {
+            anyhow::bail!(
+                "--grant names `{collection}` twice; RBAC unions the rules, so the \
+                 narrower grant would have no effect"
+            );
+        }
+        grants.push(CollectionGrant {
+            collection: collection.to_string(),
+            verbs: granted_verbs(level),
+        });
+    }
+    Ok(grants)
+}
+
+/// Every verb Lumen can ask for at or below `level`.
+///
+/// The role-to-verb mapping is one-to-one (`read` -> `get`, `write` ->
+/// `update`, `admin` -> `delete`) and lives in `lumen::auth`; the *grant* is
+/// cumulative because `Role::covers` is — a writer that could not read the
+/// collection it writes would be denied by the same check that lets it write.
+#[cfg(feature = "operator")]
+fn granted_verbs(level: service_auth::role_map::Role) -> Vec<&'static str> {
+    use service_auth::role_map::Role;
+    [Role::Read, Role::Write, Role::Admin]
+        .into_iter()
+        .filter(|needed| level.covers(*needed))
+        .map(lumen::auth::verb)
+        .collect()
+}
+
+/// Validate `--issuer` names without interpreting them.
+///
+/// A Kubernetes username is whatever the API server's authenticator produced:
+/// a Google address, an OIDC subject, a certificate CN. Parsing it here would
+/// invent a distinction the authorizer does not make, so the only rejections
+/// are the ones that would produce a binding matching the wrong set of people
+/// — an empty name, a wildcard, stray control characters, or surrounding
+/// whitespace that YAML would keep and the API server would not.
+#[cfg(feature = "operator")]
+fn parse_issuers(issuers: &[String]) -> Result<Vec<&str>> {
+    let mut names: Vec<&str> = Vec::new();
+    for issuer in issuers {
+        if issuer.is_empty()
+            || issuer.contains('*')
+            || issuer.chars().any(char::is_control)
+            || issuer.trim() != issuer
+        {
+            anyhow::bail!(
+                "--issuer must be the username `kubectl auth whoami` prints, with no \
+                 `*`, no control characters, and no surrounding whitespace — got `{issuer}`"
+            );
+        }
+        if names.contains(&issuer.as_str()) {
+            anyhow::bail!("--issuer names `{issuer}` twice");
+        }
+        names.push(issuer);
+    }
+    Ok(names)
 }
 
 /// Write `body` to `--out` (or stream it to stdout when `out` is `None`).
@@ -1996,9 +3133,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         WalBackend::Raft => {
             // Topology from the StatefulSet downward API via the shared helper
             // (node id + membership + peers — no hand-rolled ordinal/DNS math).
-            // A configured peer identity uses the dedicated authenticated Raft
-            // port. Unconfigured local/existing deployments retain the public
-            // h2c compatibility path until their TLS material is projected.
+            // Peers are always addressed on the dedicated authenticated Raft
+            // port over `https`.
             let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
                 .unwrap_or_else(|_| "lumen-headless".to_string());
             let peer_transport = lumen::tls::PeerTlsConfig::from_env()
@@ -2006,17 +3142,28 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 .map(|config| config.peer_transport())
                 .transpose()
                 .context("raft: build shared peer mTLS transport")?;
-            let (peer_port, peer_scheme) = if peer_transport.is_some() {
-                (args.raft_port, "https")
-            } else {
-                (args.port, "http")
+            // #2890 R3/R4: no plaintext fallback. This used to route peer RPCs
+            // at the *client* port over h2c whenever TLS material was absent —
+            // a replicated group replicating committed index mutations between
+            // pods with nothing on the wire saying who either end is, reachable
+            // by anything that can open a TCP connection to the Service. The
+            // failure it replaced (a pod that will not start) is loud, local,
+            // and names the field to set; the one it created was silent.
+            let Some(peer_transport) = peer_transport else {
+                anyhow::bail!(
+                    "raft: replicated mode needs peer mTLS material — set \
+                     LUMEN_PEER_TLS_CERT / LUMEN_PEER_TLS_KEY / LUMEN_PEER_TLS_CA \
+                     (+ LUMEN_PEER_MTLS=on), or under Kubernetes name a Secret with \
+                     tls.crt/tls.key/ca.crt in the Lumen CR's spec.peerTlsSecret. \
+                     Raft peer traffic has no plaintext path"
+                );
             };
             let topo = raft_runtime::ClusterTopology::from_env_with_scheme(
                 "lumen",
                 &headless,
-                peer_port,
+                args.raft_port,
                 "LUMEN_PEERS",
-                peer_scheme,
+                "https",
             )
             .context("raft: cluster topology from env")?;
             tracing::info!(
@@ -2041,26 +3188,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 snapshot: raft_runtime::SnapshotPolicy::External,
                 ..Default::default()
             };
-            let host = Arc::new(match peer_transport.clone() {
-                Some(transport) => raft_runtime::RaftHost::spawn_with_peer_transport(
-                    topo.node_id,
-                    topo.membership,
-                    topo.peers,
-                    store,
-                    sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
-                    host_config,
-                    transport,
-                ),
-                None => raft_runtime::RaftHost::spawn(
-                    topo.node_id,
-                    topo.membership,
-                    topo.peers,
-                    store,
-                    sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
-                    host_config,
-                ),
-            });
-            raft_peer_transport = peer_transport;
+            let host = Arc::new(raft_runtime::RaftHost::spawn_with_peer_transport(
+                topo.node_id,
+                topo.membership,
+                topo.peers,
+                store,
+                sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
+                host_config,
+                peer_transport.clone(),
+            ));
+            raft_peer_transport = Some(peer_transport);
 
             // Live cluster state (#1349): the same `ClusterConfig`/`RaftGroup`
             // shape `AppState::with_cluster`'s consumer (`enforce_read_consistency`,
@@ -2216,12 +3353,50 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     };
 
-    let auth = Arc::new(AuthConfig::from_env()?);
-    if auth.required {
-        tracing::info!(tokens = auth.tokens.len(), "auth required");
-    } else {
-        tracing::warn!("auth=off — set LUMEN_AUTH=required for production");
+    // `LUMEN_AUTH=required` delegates both halves of the decision to the
+    // apiserver: TokenReview says who is calling, SubjectAccessReview says
+    // whether they may (#2869). Building the verifier proves both grants before
+    // the listener opens, so a missing `system:auth-delegator` binding is a
+    // startup failure rather than a fleet that serves 503s while looking ready.
+    //
+    // The transport lives behind the `delegated-auth` feature. A build without
+    // it can still *parse* `LUMEN_AUTH=required` — and must refuse to start
+    // rather than quietly serve unauthenticated traffic under that setting.
+    #[cfg(feature = "delegated-auth")]
+    async fn serving_verifier(
+        auth: &AuthConfig,
+    ) -> anyhow::Result<Arc<lumen::auth::LumenVerifier>> {
+        Ok(Arc::new(lumen::auth::LumenVerifier::connect(auth).await?))
     }
+    #[cfg(not(feature = "delegated-auth"))]
+    async fn serving_verifier(
+        _auth: &AuthConfig,
+    ) -> anyhow::Result<Arc<lumen::auth::LumenVerifier>> {
+        anyhow::bail!(
+            "LUMEN_AUTH=required needs the Kubernetes TokenReview/SubjectAccessReview transport, \
+             which this binary was built without. Rebuild with `--features delegated-auth`, or \
+             unset LUMEN_AUTH to serve without authentication. Refusing to start."
+        )
+    }
+
+    let auth = Arc::new(AuthConfig::from_env()?);
+    let verifier = if auth.required {
+        let verifier = serving_verifier(&auth).await?;
+        tracing::info!(
+            namespace = %auth.namespace,
+            audience = lumen::auth::AUDIENCE,
+            "auth=required — every request is authenticated by Kubernetes TokenReview and \
+             authorized by SubjectAccessReview; only audience-bound ServiceAccount tokens are \
+             accepted"
+        );
+        Some(verifier)
+    } else {
+        tracing::warn!(
+            "auth=off — requests are not authenticated. Set LUMEN_AUTH=required (plus \
+             LUMEN_AUTH_NAMESPACE when not running in-cluster) to delegate to Kubernetes"
+        );
+        None
+    };
     let admission = service_http::AdmissionConfig::from_env("LUMEN")?.controller(
         "lumen.read",
         "lumen.write",
@@ -2232,18 +3407,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
 
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
-    if let Some(path) = std::env::var_os(TOKEN_REGISTRY_FILE_ENV) {
-        let path = PathBuf::from(path);
-        // `AppState` owns the exact verifier its router uses, so a
-        // Secret/CSI replacement becomes visible to live requests without a
-        // Lumen restart. Invalid replacements remain on the shared
-        // last-known-good snapshot and emit redacted auth audit events.
-        let _ =
-            service_auth::spawn_registry_file_watcher(state.verifier().registry_verifier(), &path);
-        tracing::info!(
-            path = %path.display(),
-            "watching bearer token registry for credential rotation"
-        );
+    if let Some(verifier) = verifier {
+        state = state.with_verifier(verifier);
     }
     // #1389: wire a real on-demand checkpoint (`POST /admin/checkpoint`) only
     // when segment persistence is actually configured — the raft path has
@@ -2532,11 +3697,37 @@ async fn serve(args: ServeArgs) -> Result<()> {
         });
     }
 
+    // #3113 R1: the client port's own identity, loaded before the socket binds
+    // so a pod with unusable material fails startup instead of accepting
+    // connections it cannot serve. `None` is the h2c posture — local and kind
+    // development, and the only path to cleartext on this port.
+    let serving_tls = lumen::tls::ServingTlsConfig::from_env()
+        .context("load serving TLS configuration")?
+        .map(|config| {
+            let names = config.dns_names.clone();
+            config.reloadable().map(|tls| (tls, names))
+        })
+        .transpose()
+        .context("activate the serving certificate")?;
+
     let bind = format!("{}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
         .with_context(|| format!("bind {bind}"))?;
-    tracing::info!(addr = %bind, shard_count = args.shard_count.unwrap_or(1), "lumen serve listening");
+    match &serving_tls {
+        Some((tls, names)) => tracing::info!(
+            addr = %bind,
+            shard_count = args.shard_count.unwrap_or(1),
+            tls_generation = tls.generation(),
+            server_names = %names.join(","),
+            "lumen serve listening over TLS"
+        ),
+        None => tracing::info!(
+            addr = %bind,
+            shard_count = args.shard_count.unwrap_or(1),
+            "lumen serve listening"
+        ),
+    }
 
     #[cfg(feature = "raft-wal")]
     let peer_server = if let (Some(host), Some(transport)) =
@@ -2571,27 +3762,38 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // the *start* of termination, not after the full drain window: the pod's
     // termination grace can equal that window, so a post-drain sync may lose
     // the race with Kubernetes' SIGKILL.
-    service_http::serve(
-        listener,
-        app,
-        service_http::shutdown_with_drain(
-            move || {
-                shutdown_engine.start_drain();
-                if let Some(aof) = shutdown_aof {
-                    match aof.lock() {
-                        Ok(mut writer) => {
-                            if let Err(e) = writer.sync() {
-                                tracing::warn!(error = %e, "sync local AOF during shutdown failed");
-                            }
+    let shutdown = service_http::shutdown_with_drain(
+        move || {
+            shutdown_engine.start_drain();
+            if let Some(aof) = shutdown_aof {
+                match aof.lock() {
+                    Ok(mut writer) => {
+                        if let Err(e) = writer.sync() {
+                            tracing::warn!(error = %e, "sync local AOF during shutdown failed");
                         }
-                        Err(_) => tracing::warn!("local AOF writer poisoned during shutdown"),
                     }
+                    Err(_) => tracing::warn!("local AOF writer poisoned during shutdown"),
                 }
-            },
-            grace,
-        ),
-    )
-    .await;
+            }
+        },
+        grace,
+    );
+    match serving_tls {
+        // #3113 R1/R9: the configuration is read per accepted connection, so a
+        // renewed leaf reaches connection N+1 with no rebind and no restart.
+        // `None` from the source refuses the connection — there is deliberately
+        // no branch here that answers it in cleartext instead.
+        Some((tls, _)) => {
+            service_http::serve_tls(
+                listener,
+                app,
+                service_http::config_source(move || tls.server_config()),
+                shutdown,
+            )
+            .await;
+        }
+        None => service_http::serve(listener, app, shutdown).await,
+    }
     #[cfg(feature = "raft-wal")]
     if let Some((shutdown_tx, task)) = peer_server {
         let _ = shutdown_tx.send(());
@@ -2920,6 +4122,84 @@ mod tests {
     };
     use std::collections::BTreeMap;
 
+    /// Every handed-out `LumenFleet` must actually materialize. A rendered
+    /// template is the first thing a deployer applies, so a duplicated
+    /// `serving:` key (last wins, the CPU/memory request silently gone) or a
+    /// `defaults`/`instances` pair that merges into two conflicting shard
+    /// topologies would ship as a cluster that comes up wrong — or not at all —
+    /// with the
+    /// mistake in our YAML rather than theirs.
+    #[cfg(feature = "operator")]
+    #[test]
+    fn every_rendered_fleet_profile_materializes_its_instances() {
+        use lumen::operator::fleet::{plan, PlanOutcome};
+
+        for profile in [
+            K8sFleetProfile::Dev,
+            K8sFleetProfile::Prod,
+            K8sFleetProfile::Template,
+        ] {
+            let yaml = render_fleet_yaml(&K8sFleetRenderArgs {
+                profile,
+                name: None,
+                image: None,
+                out: None,
+            });
+            // The template is meant to be edited before it applies, so its
+            // required-decision placeholders are filled in here rather than
+            // pretending an unedited skeleton is deployable. Everything else
+            // about it — key structure, the defaults/instances merge, the
+            // per-instance topology pairing — is exactly what ships.
+            let yaml = yaml
+                .replace("REPLACE_ME__SHARD_COUNT", "1")
+                .replace("REPLACE_ME__REPLICAS_PER_SHARD", "1")
+                .replace("REPLACE_ME__VOTER_COUNT", "1");
+            // Parsing is itself the duplicate-key check: serde_yaml rejects a
+            // mapping that names one key twice, which is how a second
+            // `serving:` block silently eating the CPU/memory request gets
+            // caught rather than shipped.
+            let fleet: lumen::operator::LumenFleet = serde_yaml::from_str(&yaml)
+                .unwrap_or_else(|err| panic!("profile does not parse: {err}\n{yaml}"));
+
+            let planned = plan(&fleet);
+            assert!(
+                !planned.is_empty(),
+                "a fleet that declares no data plane is not a usable starting point\n{yaml}"
+            );
+            for instance in &planned {
+                if let PlanOutcome::Rejected(reason) = &instance.outcome {
+                    panic!(
+                        "namespace {} would be rejected: {reason}\n{yaml}",
+                        instance.namespace
+                    );
+                }
+            }
+        }
+    }
+
+    /// The template exists to name the knobs a deployer owns; a knob that
+    /// silently drops out of it is a knob nobody knows to set.
+    #[test]
+    fn the_fleet_template_names_every_deployer_owned_knob() {
+        let yaml = render_fleet_yaml(&K8sFleetRenderArgs {
+            profile: K8sFleetProfile::Template,
+            name: None,
+            image: None,
+            out: None,
+        });
+        for knob in [
+            "nodeSelector",       // which node pool
+            "raftStorageClass",   // SSD vs standard disk
+            "serviceAccountName", // the KSA the data plane runs as
+            "cpu:",               // request — what triggers shard autoscaling
+            "memory:",
+            "raftStorage:", // per-tenant disk size
+            "prunePolicy",
+        ] {
+            assert!(yaml.contains(knob), "template lost `{knob}`\n{yaml}");
+        }
+    }
+
     #[test]
     fn bootstrap_seed_file_restores_snapshot_before_catchup() {
         let source = Engine::new();
@@ -2999,11 +4279,9 @@ mod tests {
     fn test_query_target() -> QueryTarget {
         QueryTarget {
             url: None,
-            token: None,
             context: None,
             namespace: None,
-            secret: None,
-            role: TokenRole::Admin,
+            client_sa: None,
         }
     }
 
@@ -3150,12 +4428,15 @@ mod tests {
         assert_eq!(body["offset"], 0);
     }
 
-    // `select_token`/`cr_tokens_secret`/`secret_data_bytes`/
     // `wait_for_local_port_ready`/`ChildGuard` unit tests moved to
     // `libs/cli-std/src/connect.rs` (#1376) along with the primitives
     // themselves; lumen's own coverage is the thin-adapter tests above
     // (`resolve_base_url_requires_explicit_url`, `build_*_body_*`) plus
-    // `cargo test -p cli-std --features k8s`.
+    // `cargo test -p cli-std --features k8s`. The credential half of that
+    // shared module (`select_token`, `cr_tokens_secret`, `secret_data_bytes`)
+    // keeps its own tests there and is simply no longer called from here
+    // (#2873) — the integration gate for that is
+    // `tests/cli_credential_paths_retired.rs`.
 
     // -----------------------------------------------------------------
     // `spawn_cluster_state_poller` (#1349)

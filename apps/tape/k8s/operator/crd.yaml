@@ -32,8 +32,16 @@ spec:
             description: '`tape.dev/v1alpha1` `Tape`. Namespaced: every child object the operator renders lands in this object''s namespace, so independent tape deployments coexist by name.'
             properties:
               auth:
-                default: "off"
-                description: 'Request-auth mode for the data plane: `off` (default) or `required`. A flat string, not an enum with divergent variant schemas (Kubernetes structural schemas cannot represent those). `required` takes effect only together with [`Self::tokens_secret`].'
+                default: required
+                description: |-
+                  Request-auth mode for the data plane: `required` (the default — supply a token registry via `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+
+                  `required` is the default because the other way round, forgetting this field ships an open cluster and nothing says so; forgetting it now fails startup with a message naming the field to set. `disabled` remains a one-word opt-out for local development (#2765).
+
+                  Spelled `disabled`, not `off`: YAML 1.1 reads a bare `off` as the boolean `false`. (`off` is what the serving process's own `TAPE_AUTH` env var takes — the two spellings are not interchangeable.)
+                enum:
+                - disabled
+                - required
                 type: string
               backup:
                 description: |-
@@ -43,7 +51,7 @@ spec:
                 nullable: true
                 properties:
                   adminTokenSecret:
-                    description: 'Name of a Secret holding a bearer token with `admin` on `*`, projected into the CronJob as `TAPE_BACKUP_TOKEN` (key `token`). Required when the instance runs `auth: required`; omit for `auth: off`.'
+                    description: 'Name of a Secret holding a bearer token with `admin` on `*`, projected into the CronJob as `TAPE_BACKUP_TOKEN` (key `token`). Required when the instance runs `auth: required`; omit for `auth: disabled`.'
                     nullable: true
                     type: string
                   destination:
@@ -109,6 +117,10 @@ spec:
                     default: ''
                     type: string
                 type: object
+              serviceAccountName:
+                description: Optional external ServiceAccount name for the workload StatefulSet. When set, the operator skips rendering the `<instance>` ServiceAccount entirely and configures the workload StatefulSet to use this name instead (#2581). `<name>-backup` identity is unaffected.
+                nullable: true
+                type: string
               shardCount:
                 default: 1
                 type: integer
@@ -122,7 +134,7 @@ spec:
                 nullable: true
                 type: string
               tokensSecret:
-                description: 'Name of the Secret carrying the bearer-token registry (key `token-registry.json`). When set with `auth: required`, the render mounts it read-only at `/var/run/secrets/tape` and injects `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen''s pattern; off unless the CR asks). Tape watches a changed projection and atomically applies only a valid replacement without a pod restart.'
+                description: 'Name of the Secret carrying the bearer-token registry (key `token-registry.json`). When set with `auth: required`, the render mounts it read-only at `/var/run/secrets/tape` and injects `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen''s pattern). Tape watches a changed projection and atomically applies only a valid replacement without a pod restart. Ignored when `auth: disabled`. Setting **both** this and `tokensSecretProviderClass` is rejected by the CRD schema (#2765), because silently preferring one leaves an operator reading credentials that are not the ones being served.'
                 nullable: true
                 type: string
               tokensSecretCsiDriver:
@@ -130,7 +142,7 @@ spec:
                 nullable: true
                 type: string
               tokensSecretProviderClass:
-                description: 'Name of a Secrets Store CSI `SecretProviderClass` that projects the same `token-registry.json` file as [`Self::tokens_secret`]. When the CSI driver refreshes that file, Tape''s watcher applies valid rotations without a pod restart. It is used only with `auth: required`; when both sources are set, `tokensSecret` wins for backward compatibility.'
+                description: 'Name of a Secrets Store CSI `SecretProviderClass` that projects the same `token-registry.json` file as [`Self::tokens_secret`]. When the CSI driver refreshes that file, Tape''s watcher applies valid rotations without a pod restart. Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is enforced by the CRD schema (`x-kubernetes-validations`), so setting both is rejected at `kubectl apply` rather than resolved by a precedence rule nothing surfaces (#2765).'
                 nullable: true
                 type: string
               topics:
@@ -159,10 +171,52 @@ spec:
             required:
             - image
             type: object
+            x-kubernetes-validations:
+            - rule: '!(has(self.tokensSecret) && has(self.tokensSecretProviderClass))'
+              message: set at most one of spec.tokensSecret (a Kubernetes Secret) or spec.tokensSecretProviderClass (a Secret Manager CSI projection); with both set there is no way to tell which registry is actually being served
           status:
             description: Status subresource, written back by the reconcile loop.
             nullable: true
             properties:
+              conditions:
+                description: |-
+                  Kubernetes-convention convergence conditions (#3054): `Ready`, `Progressing`, `StorageHealthy`, `BackupConfigured`. This is the surface `kubectl wait --for=condition=Ready`, Argo CD health assessment, and Flux readiness gates read; `phase` is unchanged and still populated, so nothing already consuming it breaks.
+
+                  `lastTransitionTime` is stamped by the reconcile loop, not here — see [`super::reconcile`]'s no-I/O `status_patch` contract.
+                items:
+                  description: |-
+                    One entry of a Kubernetes `status.conditions[]` array, in the shape every controller-aware tool already reads — `kubectl wait --for=condition=…`, Argo CD health assessment, Flux readiness gates.
+
+                    Hand-written rather than reused from `k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition` because that type does not derive `JsonSchema`, so it cannot be embedded in a CRD schema generated by `kube`'s derive. @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 instant the status last *changed* — not the last time it was observed. Carried across reconciles by [`project`].
+                      type: string
+                    message:
+                      default: ''
+                      description: Human-readable detail. May be empty.
+                      type: string
+                    observedGeneration:
+                      description: The `.metadata.generation` this condition was computed from.
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: CamelCase machine-readable cause of the current status.
+                      type: string
+                    status:
+                      description: '`"True" | "False" | "Unknown"`.'
+                      type: string
+                    type:
+                      description: CamelCase condition name, e.g. `Ready`.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
               desiredReplicas:
                 default: 0
                 description: Desired replicas (`replicasPerShard`; tape is single-group).

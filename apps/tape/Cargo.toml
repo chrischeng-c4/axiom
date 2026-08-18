@@ -76,14 +76,19 @@ service-backup = { path = "../../libs/service-backup" }
 # Shared durable file replacement for Tape's Raft marker and journal snapshot
 # bytes. Tape retains the domain serialization and recovery ordering.
 storage-durable = { path = "../../libs/storage-durable" }
+# WI #3052 AC1: `bench::run_durable_benchmark` drives the real WAL commit
+# coordinator over a real HTTP socket, so it needs a real temp dir and a real
+# HTTP client from the library itself (not just from tests) -- both `tape-bench`
+# (a normal [[bin]], which cargo never grants dev-dependencies) and
+# `tests/tape_perf_gate.rs` call into it.
+tempfile = "3"
+reqwest = { workspace = true }
 
 [dev-dependencies]
 async-nats = { workspace = true }
 futures = { workspace = true }
 rig = { path = "../rig" }
-tempfile = "3"
 tokio = { workspace = true, features = ["full"] }
-reqwest = { workspace = true }
 transport-h2c = { path = "../../libs/transport-h2c" }
 http-body-util = "0.1"
 tower = { workspace = true, features = ["util"] }

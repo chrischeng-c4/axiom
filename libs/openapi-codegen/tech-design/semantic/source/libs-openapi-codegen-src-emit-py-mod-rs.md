@@ -362,7 +362,7 @@ QueryNode.model_json_schema()
         assert!(client.contains("client: Optional[SupportsRequest] = None"));
         assert!(client.contains("default_headers: Optional[Mapping[str, Any]] = None"));
         assert!(client.contains("auth_token: Optional[str] = None"));
-        assert!(client.contains("self._client = client or H2CClient()"));
+        assert!(client.contains("self._client = client or H2CClient(ssl_context=ssl_context)"));
         assert!(
             client.contains("self._default_headers: dict[str, Any] = dict(default_headers or {})")
         );
@@ -378,7 +378,7 @@ QueryNode.model_json_schema()
         assert!(client.contains("return Pet.model_validate(_resp.json())"));
         assert!(client.contains("class AsyncSupportsRequest(Protocol):"));
         assert!(client.contains("class AsyncClient:"));
-        assert!(client.contains("self._client = client or AsyncH2CClient()"));
+        assert!(client.contains("self._client = client or AsyncH2CClient(ssl_context=ssl_context)"));
         assert!(client.contains("async def __aenter__(self) -> \"AsyncClient\":"));
         assert!(client.contains("async def aclose(self) -> None:"));
         assert!(client.contains("async def get_pet_by_id(self, *, pet_id: int) -> Pet:"));
@@ -1550,7 +1550,6 @@ assert rest == b"ack:two\n"
         out.push(value as u8);
     }
 }
-
 ````
 
 ## Changes

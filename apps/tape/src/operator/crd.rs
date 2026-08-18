@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:bfdc7475" tracker="pending-tracker" reason="TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (flat string off|required) + tokensSecret (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
+// HANDWRITE-BEGIN gap="missing-generator:logic:bfdc7475" tracker="pending-tracker" reason="TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (closed AuthMode enum disabled|required, defaulting to required) + tokensSecret (Option<String>) + serviceAccountName (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message, conditions }."
 //! The `Tape` custom resource (`tape.dev/v1alpha1`).
 //!
 //! One `Tape` object declares a tape deployment's HA topology. The spec
@@ -64,27 +64,41 @@ pub struct TapeSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Request-auth mode for the data plane: `off` (default) or `required`.
-    /// A flat string, not an enum with divergent variant schemas
-    /// (Kubernetes structural schemas cannot represent those). `required`
-    /// takes effect only together with [`Self::tokens_secret`].
-    #[serde(default = "default_auth")]
-    pub auth: String,
+    /// Request-auth mode for the data plane: `required` (the default — supply
+    /// a token registry via `tokensSecret` or `tokensSecretProviderClass`) or
+    /// `disabled`.
+    ///
+    /// `required` is the default because the other way round, forgetting this
+    /// field ships an open cluster and nothing says so; forgetting it now
+    /// fails startup with a message naming the field to set. `disabled`
+    /// remains a one-word opt-out for local development (#2765).
+    ///
+    /// Spelled `disabled`, not `off`: YAML 1.1 reads a bare `off` as the
+    /// boolean `false`. (`off` is what the serving process's own `TAPE_AUTH`
+    /// env var takes — the two spellings are not interchangeable.)
+    #[serde(default)]
+    pub auth: AuthMode,
 
     /// Name of the Secret carrying the bearer-token registry (key
     /// `token-registry.json`). When set with `auth: required`, the render
     /// mounts it read-only at `/var/run/secrets/tape` and injects
-    /// `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen's
-    /// pattern; off unless the CR asks). Tape watches a changed projection
-    /// and atomically applies only a valid replacement without a pod restart.
+    /// `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen's pattern). Tape watches a
+    /// changed projection and atomically applies only a valid replacement
+    /// without a pod restart. Ignored when `auth: disabled`. Setting **both**
+    /// this and `tokensSecretProviderClass` is rejected by the CRD schema
+    /// (#2765), because silently preferring one leaves an operator reading
+    /// credentials that are not the ones being served.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret: Option<String>,
 
     /// Name of a Secrets Store CSI `SecretProviderClass` that projects the
     /// same `token-registry.json` file as [`Self::tokens_secret`]. When the
     /// CSI driver refreshes that file, Tape's watcher applies valid rotations
-    /// without a pod restart. It is used only with `auth: required`; when both
-    /// sources are set, `tokensSecret` wins for backward compatibility.
+    /// without a pod restart. Ignored when `auth: disabled`. Mutual exclusion
+    /// with `tokensSecret` is enforced by the CRD schema
+    /// (`x-kubernetes-validations`), so setting both is rejected at
+    /// `kubectl apply` rather than resolved by a precedence rule nothing
+    /// surfaces (#2765).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret_provider_class: Option<String>,
 
@@ -153,6 +167,13 @@ pub struct TapeSpec {
     /// then did not track the CR's image, ServiceAccount, or auth wiring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<TapeBackupSpec>,
+
+    /// Optional external ServiceAccount name for the workload StatefulSet.
+    /// When set, the operator skips rendering the `<instance>` ServiceAccount
+    /// entirely and configures the workload StatefulSet to use this name
+    /// instead (#2581). `<name>-backup` identity is unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_account_name: Option<String>,
 }
 
 /// Scheduled-backup projection: the shared
@@ -175,7 +196,7 @@ pub struct TapeBackupSpec {
 
     /// Name of a Secret holding a bearer token with `admin` on `*`, projected
     /// into the CronJob as `TAPE_BACKUP_TOKEN` (key `token`). Required when
-    /// the instance runs `auth: required`; omit for `auth: off`.
+    /// the instance runs `auth: required`; omit for `auth: disabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_token_secret: Option<String>,
 }
@@ -217,6 +238,16 @@ pub struct TapeStatus {
     /// Last human-readable reconcile message.
     #[serde(default)]
     pub message: String,
+    /// Kubernetes-convention convergence conditions (#3054): `Ready`,
+    /// `Progressing`, `StorageHealthy`, `BackupConfigured`. This is the
+    /// surface `kubectl wait --for=condition=Ready`, Argo CD health
+    /// assessment, and Flux readiness gates read; `phase` is unchanged and
+    /// still populated, so nothing already consuming it breaks.
+    ///
+    /// `lastTransitionTime` is stamped by the reconcile loop, not here — see
+    /// [`super::reconcile`]'s no-I/O `status_patch` contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<service_k8s::Condition>,
 }
 
 fn default_storage() -> String {
@@ -225,7 +256,43 @@ fn default_storage() -> String {
 fn default_grace_secs() -> u64 {
     10
 }
-fn default_auth() -> String {
-    "off".into()
+
+/// Whether the data-plane API requires a bearer token.
+///
+/// A closed enum, not a flat string: as a `String` every value except the
+/// exact literal `"required"` rendered an open data plane, so `auth: requried`
+/// applied cleanly and the only signal was the *absence* of an env var in a
+/// pod nobody inspects (#2765). The API server now rejects anything outside
+/// this set, naming the field.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    /// Open API (dev / trusted network) — an explicit opt-out, never the
+    /// default. Serialized as `disabled` — NOT `off`, which YAML 1.1
+    /// (kubectl / go-yaml) would parse as the boolean `false` and corrupt the
+    /// CRD enum/default.
+    #[serde(rename = "disabled")]
+    Off,
+    /// Bearer token required; the registry file comes from `tokensSecret` or
+    /// `tokensSecretProviderClass`. The default, so a `Tape` that omits
+    /// `spec.auth` fails startup asking for credentials instead of serving an
+    /// open API silently.
+    #[default]
+    Required,
+}
+
+impl AuthMode {
+    /// The `TAPE_AUTH` value the serving binary expects.
+    ///
+    /// Deliberately *not* the CRD spelling: the wire keeps `off` (see
+    /// `auth::AUTH_MODE_ENV` and `tape serve --auth`), the schema uses
+    /// `disabled`. An env var is never parsed as YAML, so `off` is safe there
+    /// and changing it would break every existing deployment's serving args.
+    pub fn as_env(self) -> &'static str {
+        match self {
+            AuthMode::Off => "off",
+            AuthMode::Required => "required",
+        }
+    }
 }
 // HANDWRITE-END

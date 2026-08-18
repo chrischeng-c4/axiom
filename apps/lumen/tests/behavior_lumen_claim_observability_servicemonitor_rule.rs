@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-observability-servicemonitor-rule
-// @capability observability
-// @claim servicemonitor-prometheusrule-bundle
+// @capability operations-observability
+// @claim control-plane-observability
 // @contract observability-servicemonitor-rule
 // @category behavior
 // @required_for_production true

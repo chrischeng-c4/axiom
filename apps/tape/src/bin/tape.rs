@@ -357,7 +357,7 @@ struct BackupArgs {
     #[arg(long)]
     dest: String,
     /// Bearer token for `/admin/backup` (needs `admin` on `*`). Falls back to
-    /// `TAPE_BACKUP_TOKEN`; omit entirely when the node runs `--auth off`.
+    /// `TAPE_BACKUP_TOKEN`; omit entirely when the node runs `--auth disabled`.
     #[arg(long, env = "TAPE_BACKUP_TOKEN")]
     token: Option<String>,
     /// Drop backup objects older than this many seconds after a successful
@@ -506,6 +506,14 @@ struct K8sOperatorRenderArgs {
     /// Namespace that owns the operator control plane.
     #[arg(long, default_value = "tape-system")]
     namespace: String,
+    /// Also emit the operator's ServiceMonitor and PrometheusRule.
+    /// Off by default because both are `monitoring.coreos.com/v1` CRDs and a
+    /// cluster without prometheus-operator rejects the whole apply; the
+    /// scrape *target* Service carries no CRD dependency and is always
+    /// rendered. Mirrors the opt-in `k8s/components/operator-monitoring`
+    /// kustomize component.
+    #[arg(long)]
+    monitoring: bool,
     /// Write to this path instead of stdout. A directory receives
     /// `operator.yaml`.
     #[arg(long)]
@@ -632,15 +640,27 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
             Deploy artifacts are offline renders; the checked-in files under `apps/tape/` \
             are the fixtures, and these commands are their in-binary form (#1328):\n\n\
             - `tape k8s crd render` — the Tape CustomResourceDefinition (tape.dev/v1alpha1).\n\
-            - `tape k8s operator render [--namespace tape-system]` — operator RBAC + \
-              Deployment; `tape k8s operator run` runs the reconcile controller (needs a \
-              build with `--features operator`).\n\
+            - `tape k8s operator render [--namespace tape-system] [--monitoring]` — the \
+              operator control plane: RBAC, Deployment, the metrics Service and the PDB. \
+              `--monitoring` appends the ServiceMonitor + PrometheusRule, off by default \
+              because both are `monitoring.coreos.com/v1` CRDs a vanilla cluster rejects. \
+              `tape k8s operator run` runs the reconcile controller (needs a build with \
+              `--features operator`).\n\
             - `tape k8s instance render --profile dev|staging|prod|template` — a `kind: \
               Tape` CR; prod is the 3-replica raft-HA shape (the operator renders the \
               StatefulSet topology — `k8s/` base stays a single-node direct install for \
               kind/smoke).\n\
             - `tape dockerfile render --variant source|release [--version]` — the \
               from-source and published-release images.\n\n\
+            `spec.auth` is a closed enum, `disabled` or `required`, and **omitting it means \
+            `required`** (#2765): a typo or an omission is rejected by the API server instead \
+            of quietly serving open. Under `required` the CR must name exactly one token \
+            source — `tokensSecret` or `tokensSecretProviderClass`, never both — or the pod \
+            fails startup for want of a registry. Spell the off-state `disabled`, not `off`: \
+            YAML 1.1 reads a bare `off` as the boolean `false` and the API server rejects it. \
+            (`off` is what the serving process's own `TAPE_AUTH` env var takes — the two \
+            spellings are not interchangeable.) Every profile states its mode: dev and \
+            staging render `auth: disabled`, prod and template render `auth: required`.\n\n\
             HA is auto-mode raft: scale the StatefulSet and set `REPLICAS_PER_SHARD` > 1 \
             (plus `POD_NAME`, `SHARD_COUNT=1`, `VOTER_COUNT` from the downward API) and the \
             same `tape` bin runs a raft group; `--peer-service` (`TAPE_PEER_SERVICE`) names \
@@ -959,16 +979,35 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // still wins, and replica mode continues to keep journal durability in
     // the Raft state machine instead of a second local store.
     let replica_mode = raft_runtime::cluster::replica_mode();
-    let store = resolve_journal_store(args.store.clone(), args.data_dir.as_deref(), replica_mode);
-    let journal = match &store {
-        Some(path) => load_journal(path)?,
-        None => TapeJournal::default(),
+    let store_kind =
+        resolve_journal_store(args.store.clone(), args.data_dir.as_deref(), replica_mode);
+    // #3052: the WAL arm additionally needs a `probe_dir` for the periodic
+    // ENOSPC re-probe and a `CommitCoordinator` wired in after the `AppState`
+    // exists (its dedicated commit thread must share the exact
+    // `Arc<Mutex<TapeJournal>>` the state reads through, which only exists
+    // once the state is constructed).
+    let (journal, legacy_store_path, wal_dir) = match &store_kind {
+        JournalStoreKind::LegacyFile(path) => (load_journal(path)?, Some(path.clone()), None),
+        JournalStoreKind::Wal(dir) => {
+            // Never touches/deletes journal.json -- see `migrate_legacy_journal_file`'s
+            // own docs for the exact no-op/rollback conditions.
+            tape::wal::migrate_legacy_journal_file(dir)?;
+            let (wal_store, journal) = tape::wal::WalStore::open(dir)?;
+            (journal, None, Some((dir.clone(), wal_store)))
+        }
+        JournalStoreKind::None => (TapeJournal::default(), None, None),
     };
-    let probe_dir = store
-        .as_deref()
-        .and_then(|path| path.parent())
-        .map(std::path::Path::to_path_buf);
-    let mut state = tape::server::AppState::with_auth(journal, store, auth, args.body_limit_bytes);
+    let probe_dir = match &store_kind {
+        JournalStoreKind::LegacyFile(path) => path.parent().map(std::path::Path::to_path_buf),
+        JournalStoreKind::Wal(dir) => Some(dir.clone()),
+        JournalStoreKind::None => None,
+    };
+    let mut state =
+        tape::server::AppState::with_auth(journal, legacy_store_path, auth, args.body_limit_bytes);
+    if let Some((_dir, wal_store)) = wal_dir {
+        let coordinator = tape::wal::CommitCoordinator::spawn(wal_store, state.journal_handle());
+        state = state.with_wal(std::sync::Arc::new(coordinator));
+    }
     spawn_storage_full_reprobe(state.metrics(), probe_dir);
     if let Some(path) = args.token_registry_file.as_deref() {
         // `AppState` owns this exact verifier instance, so a Secret/CSI file
@@ -1208,21 +1247,45 @@ fn spawn_storage_full_reprobe(
 }
 
 // <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="#1805" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">
-/// Resolve the local journal path for a serving process. Replica mode owns
-/// durability through Raft; only a single-node process derives a store from
-/// its mounted data directory.
+/// Which durable backend a single-node serving process resolves to, given
+/// `--store`, `--data-dir`, and replica mode. #3052: `--data-dir` (only
+/// `serve` has this flag) now resolves to the WAL group-commit store rather
+/// than the old whole-file `journal.json` under that directory; an explicit
+/// `--store` keeps every offline CLI verb (and any caller that still passes
+/// one to `serve`) on the unchanged legacy whole-file path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JournalStoreKind {
+    /// `tape serve --data-dir <dir>`: the WAL + snapshot directory.
+    Wal(PathBuf),
+    /// An explicit `--store <file>` (any verb) or a serving process with
+    /// neither `--store` nor `--data-dir`... this variant always carries a
+    /// concrete file path; see `None` for "no journal store at all".
+    LegacyFile(PathBuf),
+    /// Replica mode (Raft owns durability), or neither `--store` nor
+    /// `--data-dir` was given.
+    None,
+}
+
+/// Resolve the local journal store for a serving process. Priority: an
+/// explicit `--store` always wins (legacy whole-file path, unchanged
+/// semantics); replica mode owns durability through Raft and never gets a
+/// local store; otherwise `--data-dir`, when present, resolves to the WAL
+/// group-commit store; absent all three, there is no local durable store.
 fn resolve_journal_store(
     explicit_store: Option<PathBuf>,
     data_dir: Option<&std::path::Path>,
     replica_mode: bool,
-) -> Option<PathBuf> {
-    explicit_store.or_else(|| {
-        if replica_mode {
-            None
-        } else {
-            data_dir.map(|dir| dir.join("journal.json"))
-        }
-    })
+) -> JournalStoreKind {
+    if let Some(path) = explicit_store {
+        return JournalStoreKind::LegacyFile(path);
+    }
+    if replica_mode {
+        return JournalStoreKind::None;
+    }
+    match data_dir {
+        Some(dir) => JournalStoreKind::Wal(dir.to_path_buf()),
+        None => JournalStoreKind::None,
+    }
 }
 
 /// Reuse the public listener's host portion for the dedicated peer port.
@@ -1462,7 +1525,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
         K8sCmd::Operator(a) => match a.cmd.unwrap_or(K8sOperatorCmd::Run) {
             K8sOperatorCmd::Run => run_operator().await,
             K8sOperatorCmd::Render(a) => {
-                let yaml = render_operator_yaml(&a.namespace);
+                let yaml = render_operator_yaml(&a.namespace, a.monitoring);
                 write_or_print(a.out.as_deref(), "operator.yaml", &yaml)
             }
         },
@@ -1501,9 +1564,11 @@ fn crd_yaml() -> String {
     cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
-/// Render the operator control-plane manifests (RBAC + Deployment) with the
-/// namespace substituted, from the checked-in fixtures.
-fn render_operator_yaml(namespace: &str) -> String {
+/// Render the operator control-plane manifests -- RBAC, Deployment, the
+/// metrics Service, and the PDB, plus the ServiceMonitor/PrometheusRule pair
+/// when `monitoring` is set -- with the namespace substituted, from the
+/// checked-in fixtures. Same set, same order as `k8s/operator/kustomization.yaml`.
+fn render_operator_yaml(namespace: &str, monitoring: bool) -> String {
     let mut out = String::new();
     out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/rbac.yaml"),
@@ -1516,7 +1581,75 @@ fn render_operator_yaml(namespace: &str) -> String {
         "tape-system",
         namespace,
     ));
+    // The operator's own scrape target. Unconditional: it is plain
+    // core/v1, so it applies on a cluster with no monitoring stack at all, and
+    // shipping it always means turning monitoring on later never has to come
+    // back and add the target. Kept in the same order as
+    // k8s/operator/kustomization.yaml so the two paths stay comparable.
+    out.push_str("\n---\n");
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/service.yaml"
+        )),
+        "tape-system",
+        namespace,
+    ));
+    // The PDB ships with the Deployment: `replicas: 2` only survives a node
+    // drain if evictions are serialized. Render consumers get the same
+    // operator layer the kustomize consumers get.
+    out.push_str("\n---\n");
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/pdb.yaml"
+        )),
+        "tape-system",
+        namespace,
+    ));
+    // Opt-in tail, byte-identical to the `operator-monitoring` component so a
+    // kustomize consumer and a render consumer get the same alerts. Gated
+    // because these two are monitoring.coreos.com CRDs: emitting them
+    // unconditionally would make `kubectl apply` of the whole render fail on
+    // any cluster without prometheus-operator, taking the operator down with
+    // the alerts.
+    if monitoring {
+        for manifest in [
+            include_str!("../../k8s/components/operator-monitoring/servicemonitor.yaml"),
+            include_str!("../../k8s/components/operator-monitoring/prometheusrule.yaml"),
+        ] {
+            out.push_str("\n---\n");
+            out.push_str(&rewrite_monitoring_namespace(manifest, namespace));
+        }
+    }
     cli_std::artifact::ensure_trailing_newline(&out)
+}
+
+/// Rewrite the control-plane namespace in the two monitoring manifests.
+///
+/// `cli_std::artifact::replace_kubernetes_namespace` rewrites the `name:` and
+/// `namespace:` keys. The monitoring pair needs additional rewrites because the
+/// ServiceMonitor's selector and the PrometheusRule's PromQL expressions embed
+/// namespace values in contexts that are not metadata labels: the
+/// `namespaceSelector.matchNames` list item `- tape-system`, the PromQL label
+/// matcher `namespace="tape-system"`, and the runbook annotation `-n tape-system`.
+/// Without these, a ServiceMonitor living in the target namespace selects
+/// Services in the wrong namespace, and alerts reference the wrong namespace in
+/// their PromQL and remediation steps.
+fn rewrite_monitoring_namespace(manifest: &str, namespace: &str) -> String {
+    let mut out = cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(manifest),
+        "tape-system",
+        namespace,
+    );
+    // ServiceMonitor namespaceSelector: the list item `- tape-system`.
+    out = out.replace("    - tape-system\n", &format!("    - {namespace}\n"));
+    // PromQL expressions: label matcher `namespace="tape-system"`.
+    out = out.replace(
+        r#"namespace="tape-system""#,
+        &format!(r#"namespace="{}""#, namespace),
+    );
+    // Runbook annotations: kubectl command `-n tape-system`.
+    out = out.replace("-n tape-system ", &format!("-n {namespace} "));
+    out
 }
 
 /// Render a `kind: Tape` custom resource for the selected profile.
@@ -1556,14 +1689,19 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
         "apiVersion: tape.dev/v1alpha1\nkind: Tape\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
     );
     match body {
+        // `auth: disabled` is spelled out, not omitted: since #2765 an absent
+        // `auth` defaults to `required`, so a tokenless profile that stayed
+        // silent would render a CR whose pod refuses to start for want of a
+        // token registry. Tokenless is a choice these two profiles make, and
+        // the CR should say so.
         InstanceBody::Dev => {
             yaml.push_str(
-                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  auth: disabled\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Staging => {
             yaml.push_str(
-                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  auth: disabled\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Prod => {
@@ -1571,9 +1709,12 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
                 "  imagePullPolicy: Always\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  storage: 100Gi\n  graceSecs: 30\n  auth: required\n  tokensSecret: tape-token-registry\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
+        // The template carries `auth`/`tokensSecret` explicitly even though
+        // `required` is now the default, so the token registry the CR needs is
+        // a visible REPLACE_ME rather than a startup failure discovered later.
         InstanceBody::Template => {
             yaml.push_str(
-                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
+                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  auth: required\n  tokensSecret: REPLACE_ME__TOKEN_REGISTRY_SECRET\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
     }
@@ -1702,11 +1843,13 @@ mod tests {
     }
 
     #[test]
-    fn single_node_data_dir_resolves_to_the_pvc_journal_store() {
+    fn single_node_data_dir_resolves_to_the_wal_journal_store() {
         let data_dir = PathBuf::from("/data");
         assert_eq!(
             resolve_journal_store(None, Some(&data_dir), false),
-            Some(PathBuf::from("/data/journal.json"))
+            JournalStoreKind::Wal(PathBuf::from("/data")),
+            "#3052: --data-dir alone now resolves to the WAL group-commit store, not the \
+             old whole-file journal.json"
         );
         assert_eq!(
             resolve_journal_store(
@@ -1714,13 +1857,19 @@ mod tests {
                 Some(&data_dir),
                 false,
             ),
-            Some(PathBuf::from("/tmp/override.json")),
-            "an explicit --store must keep precedence over TAPE_DATA_DIR"
+            JournalStoreKind::LegacyFile(PathBuf::from("/tmp/override.json")),
+            "an explicit --store must keep precedence over --data-dir, and stays on the \
+             unchanged legacy whole-file path"
         );
         assert_eq!(
             resolve_journal_store(None, Some(&data_dir), true),
-            None,
-            "replica mode persists through Raft rather than a parallel journal file"
+            JournalStoreKind::None,
+            "replica mode persists through Raft rather than a parallel local store"
+        );
+        assert_eq!(
+            resolve_journal_store(None, None, false),
+            JournalStoreKind::None,
+            "no --store and no --data-dir means no local durable store"
         );
     }
 

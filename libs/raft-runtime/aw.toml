@@ -9,25 +9,3 @@ paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p raft-runtime"
 verify_cold = true
-
-# AW-EC-BEGIN
-[aw.ec.generated]
-version = 1
-project = "raft-runtime"
-generated_from_td_digest = "sha256:d09f19bd1a0a3c90d174b0dfc28163aaf11cc58fa028254f5708f45070bf5b53"
-
-[[aw.ec.generated.cases]]
-id = "shared-raft-runtime-driver-contract"
-capability_id = "shared-raft-runtime-driver"
-claim_id = "shared-raft-runtime-driver-contract"
-contract_id = "shared-raft-runtime-driver-contract"
-category = "behavior"
-td_ref = "libs/raft-runtime/external-contracts/behavior/shared-raft-runtime-driver-contract.md#shared-raft-runtime-driver-contract"
-test_path = "libs/raft-runtime/tests/behavior_shared_raft_runtime_driver_contract.rs"
-command = "cargo test -p raft-runtime"
-required_for_production = true
-assertions = [
-    "Shared Raft Host Driver public Rust API behavior remains covered by the configured library test suite.",
-    "The library contract stays usable through its documented README capability surface.",
-]
-# AW-EC-END

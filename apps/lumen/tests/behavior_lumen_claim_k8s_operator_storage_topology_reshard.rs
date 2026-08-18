@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-k8s-operator-storage-topology-reshard
 // @capability kubernetes-native-deployment
-// @claim operator-owned-storage-topology-and-reshard-status
+// @claim live-operator-reconciliation
 // @contract k8s-operator-storage-topology-reshard
 // @category behavior
 // @required_for_production true

@@ -26,7 +26,9 @@ parking_lot.workspace = true
 # Lock-free read of the persistence handle on the write hot path.
 arc-swap = "1"
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
+# Tracing init moved to the shared observability shell (`service_http::
+# init_tracing_with_identity`, #2414), which owns the subscriber and the
+# RUST_LOG precedence — keep no longer builds one of its own.
 futures.workspace = true
 # Scoped claim-check token verification (#446).
 claim-token = { path = "../../libs/claim-token" }

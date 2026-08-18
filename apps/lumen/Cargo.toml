@@ -51,8 +51,10 @@ transport-h2c = { path = "../../libs/transport-h2c", features = ["server"] }
 # (#1376) — `lumen connect`'s port-forward lifecycle + token-registry Secret
 # resolution, always built (not behind a lumen feature flag).
 cli-std = { path = "../../libs/cli-std", default-features = false, features = ["k8s"] }
-# Shared request-auth plumbing: Lumen supplies only the static role-map verifier
-# and per-collection RBAC policy.
+# Shared request-auth plumbing. Lumen holds no credentials: `service_auth::k8s`
+# delegates authentication to TokenReview and authorization to
+# SubjectAccessReview, and Lumen supplies only the mapping from its own
+# operations onto Kubernetes resource attributes (#2869).
 service-auth = { path = "../../libs/service-auth" }
 # Shared k8s-native HTTP service shell: standard probe routes, request tracing,
 # h2c serve wrapper, and SIGTERM drain sequencing.
@@ -98,9 +100,13 @@ memmap2 = "0.9"
 moka = { version = "0.12", features = ["sync"] }
 serde = { workspace = true }
 serde_json.workspace = true
+serde_path_to_error.workspace = true
 rustc-hash = "2.1"
+# Types only — `ServerConfig` / `ClientConfig` appear in `tls.rs`'s signatures.
+# Every builder, PEM loader, and client verifier lives in `libs/peer-tls`
+# (#2890 R6), which is why there is no `rustls-pemfile` here to parse anything
+# locally.
 rustls = "0.23"
-rustls-pemfile = "2"
 # Shared peer-mTLS material loading (PEM cert/key/CA + rustls builders +
 # crypto-provider install); lumen keeps a thin adapter with its
 # `LUMEN_PEER_TLS_*`/`LUMEN_PEER_MTLS` env names (#971).
@@ -151,6 +157,20 @@ issue = ["cli-std/online"]
 # `lumen issue`, not `lumen report-issue`.
 report-issue = ["issue"]
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s", "backup"]
+# delegated-auth — the live TokenReview/SubjectAccessReview transport for
+# `LUMEN_AUTH=required` (#2869). Separate from `operator` on purpose: serving
+# auth is not a control-plane concern, and a serving binary should not have to
+# link the CRD/controller stack to authenticate its callers. The whole decision
+# path (audience binding, ServiceAccount-only admission, the resource mapping,
+# the fail-closed outage arm) compiles and is tested without this feature; only
+# the socket is behind it, so a build that omits it refuses to start under
+# `LUMEN_AUTH=required` rather than serving with authentication it cannot do.
+#
+# It carries `reqwest` because `lumen connect --ca-file` verifies the fleet's
+# serving certificate through the same client the loopback proxy forwards with
+# (#3113 R6); that client is only reachable on this path, which is also the only
+# path that can mint the token it carries.
+delegated-auth = ["service-auth/k8s", "dep:reqwest"]
 # OTLP domain metrics plus service-http's shared trace exporter. Runtime export
 # remains dormant unless LUMEN_OTLP_ENDPOINT is set.
 otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "service-http/otlp"]
@@ -163,6 +183,9 @@ rand = "0.8"
 rig = { path = "../rig" }
 serde_json.workspace = true
 tempfile = "3"
+# Shared observability layer: JSON formatter + service-identity for subscriber-capture tests.
+service-observability = { path = "../../libs/service-observability" }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter", "registry"] }
 # HTTP client for the perf-gate / write-qps harness (drives lumen + OpenSearch).
 # DEV-ONLY on purpose: the serving binary speaks REST/OpenAPI and ships no Rust
 # client SDK, so it never links an HTTP client → no openssl → clean cross-compile.
@@ -183,6 +206,15 @@ libc = "0.2"
 # Mock HTTP server for the `backup` feature's unit tests (stands in for the
 # admin API's `/admin/backup`).
 wiremock = { workspace = true }
+# Mints the projected ServiceAccount tokens the control-plane identity tests
+# rotate, expire, and mis-audience (#2877). Real JWTs, not stand-in strings:
+# `ProjectedTokenFile` inspects the claims, so a fixture that is not a token
+# would only ever exercise the malformed branch.
+jsonwebtoken = { workspace = true }
+# Mints the throwaway CA + leaf certificates the peer-mTLS tests dial with
+# (#2890). Real X.509 material, not fixtures: the negative cases turn on chain
+# validation and SAN matching, which a hand-written PEM constant cannot vary.
+rcgen = "0.13"
 
 [[bench]]
 name = "bench_index"

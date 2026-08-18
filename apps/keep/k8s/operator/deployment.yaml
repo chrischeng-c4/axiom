@@ -39,6 +39,10 @@ spec:
           env:
             - name: RUST_LOG
               value: "info"
+            # Operator logs use the same schema-valid JSONL contract as the
+            # data plane; collection and Sift routing stay deployment-owned.
+            - name: KEEP_LOG_FORMAT
+              value: "json"
             # Leader-election identity + the namespace the Lease lives in.
             - name: POD_NAME
               valueFrom:

@@ -1,21 +1,24 @@
-//! Raft-replicated workflow state (#110) — the replicated state machine over
-//! `raft_core`.
+//! Raft-replicated workflow state (#110) — loom's `RunStore` over the shared
+//! [`raft_host`] driver.
 //!
 //! loom's durable state is its run map. A raft group replicates it: each `put`
-//! is a [`Command::PutRun`] proposed to the leader; once committed (majority),
-//! every node applies it via `take_committed`, so all replicas converge. This
-//! is the HA tier of the durability ADR (`docs/adr/0001`); the single-node
-//! tier is [`crate::store::FileStore`].
+//! is a [`Command::PutRun`] proposed to the leader via [`raft_host::RaftHost`];
+//! `propose` returns only after the local state machine applies it
+//! (read-your-write), so a subsequent `get` sees it. Every replica converges.
 //!
-//! `raft_core` is **step-driven** (no timers/threads), so consensus is tested
-//! in-process here (a message-routing cluster). The production driver — a tick
-//! loop + h2c transport + a `RaftStore` for `PersistedState`, modelled on
-//! relay's `raft_driver` — is the remaining wiring to expose this as a
-//! `RunStore`.
+//! [`raft_host`] owns the tick/pump loop, the h2c peer transport (Vote /
+//! Append / InstallSnapshot), the single apply loop, and snapshot + log
+//! compaction — loom supplies only the [`LoomSm`] state machine
+//! (`apply`/`snapshot`/`restore`/`applied_index`) and gets HA + the backup
+//! layer for free. This converged loom's two hand-rolled raft stacks into one
+//! and wired install-snapshot (#546).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
-use raft_core::RaftEntry;
+use axum::Router;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{WorkflowRun, WorkflowRunId};
@@ -37,201 +40,234 @@ impl Command {
     }
 }
 
-/// The replicated workflow-state machine: applies committed commands to the run
-/// map. Every node in the raft group converges to the same map.
-#[derive(Default)]
-pub struct LoomStateMachine {
-    runs: BTreeMap<WorkflowRunId, WorkflowRun>,
-    applied: u64,
+/// The materialized snapshot wire/disk form: the run map + the log index it
+/// covers. The `up_to` index travels with the map so install-snapshot (follower
+/// catch-up) and cold-start recovery both set the applied index correctly.
+#[derive(Serialize, Deserialize, Default)]
+struct LoomSnapshot {
+    up_to: u64,
+    runs: Vec<WorkflowRun>,
 }
 
-impl LoomStateMachine {
-    pub fn new() -> Self {
-        Self::default()
+/// loom's [`raft_runtime::RaftStateMachine`]: the replicated run map. `apply` folds
+/// committed [`Command`]s into the map; `snapshot`/`restore` carry the map +
+/// applied index (for compaction, install-snapshot, and durable recovery).
+///
+/// Unlike a memory-only SM, [`LoomSm`] persists its materialized snapshot to
+/// disk on every apply (`snap_path`), so a cold start recovers the run map
+/// without replaying the whole log or waiting for a fresh-term commit.
+pub struct LoomSm {
+    runs: Mutex<BTreeMap<WorkflowRunId, WorkflowRun>>,
+    applied: AtomicU64,
+    snap_path: Option<std::path::PathBuf>,
+}
+
+impl LoomSm {
+    /// Build the state machine, restoring the on-disk materialized snapshot when
+    /// `snap_path` is set and present (durable recovery). Pass `None` for an
+    /// in-process (test) SM with no disk persistence.
+    pub fn new(snap_path: Option<std::path::PathBuf>) -> Arc<Self> {
+        let sm = LoomSm {
+            runs: Mutex::new(BTreeMap::new()),
+            applied: AtomicU64::new(0),
+            snap_path,
+        };
+        if let Some(p) = &sm.snap_path {
+            if let Ok(bytes) = std::fs::read(p) {
+                sm.load_snapshot(&bytes);
+            }
+        }
+        Arc::new(sm)
     }
 
-    /// Apply one committed raft entry. The leader's blank term-marker entry
-    /// (empty command) is a no-op.
-    pub fn apply(&mut self, entry: &RaftEntry) {
-        if !entry.command.is_empty() {
-            match Command::decode(&entry.command) {
+    fn load_snapshot(&self, bytes: &[u8]) {
+        if let Ok(snap) = serde_json::from_slice::<LoomSnapshot>(bytes) {
+            *self.runs.lock().unwrap() =
+                snap.runs.into_iter().map(|r| (r.id.clone(), r)).collect();
+            self.applied.store(snap.up_to, Ordering::Release);
+        }
+    }
+
+    fn encode_snapshot(&self) -> Vec<u8> {
+        let runs = self.runs.lock().unwrap();
+        let snap = LoomSnapshot {
+            up_to: self.applied.load(Ordering::Acquire),
+            runs: runs.values().cloned().collect(),
+        };
+        serde_json::to_vec(&snap).unwrap_or_default()
+    }
+
+    /// Atomically write the materialized snapshot to `snap_path` (temp + rename).
+    fn persist_snapshot(&self) {
+        let Some(p) = &self.snap_path else { return };
+        let bytes = self.encode_snapshot();
+        let tmp = p.with_extension("json.tmp");
+        if std::fs::write(&tmp, &bytes).is_ok() {
+            let _ = std::fs::rename(&tmp, p);
+        }
+    }
+
+    /// Read a run from the applied map (local read — no raft round-trip).
+    pub fn get(&self, id: &WorkflowRunId) -> Option<WorkflowRun> {
+        self.runs.lock().unwrap().get(id).cloned()
+    }
+    /// The ids of all applied runs (ordered).
+    pub fn run_ids(&self) -> Vec<WorkflowRunId> {
+        self.runs.lock().unwrap().keys().cloned().collect()
+    }
+    /// Applied run count.
+    pub fn len(&self) -> usize {
+        self.runs.lock().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl raft_runtime::RaftStateMachine for LoomSm {
+    fn apply(&self, index: raft_runtime::Index, command: &[u8]) -> anyhow::Result<()> {
+        // The leader's blank term-marker entry (empty command) is a no-op.
+        if !command.is_empty() {
+            match Command::decode(command) {
                 Ok(Command::PutRun(run)) => {
-                    self.runs.insert(run.id.clone(), run);
+                    self.runs.lock().unwrap().insert(run.id.clone(), run);
                 }
                 Ok(Command::DeleteRun(id)) => {
-                    self.runs.remove(&id);
+                    self.runs.lock().unwrap().remove(&id);
                 }
+                // A malformed command must not stall the apply loop.
                 Err(_) => {}
             }
         }
-        self.applied = entry.index;
-    }
-
-    pub fn get(&self, id: &WorkflowRunId) -> Option<&WorkflowRun> {
-        self.runs.get(id)
-    }
-    pub fn len(&self) -> usize {
-        self.runs.len()
-    }
-    pub fn applied_index(&self) -> u64 {
-        self.applied
-    }
-
-    pub fn run_ids(&self) -> Vec<WorkflowRunId> {
-        self.runs.keys().cloned().collect()
-    }
-
-    /// Snapshot the whole run map (for raft log compaction + durable recovery).
-    pub fn snapshot(&self) -> Vec<u8> {
-        let runs: Vec<&WorkflowRun> = self.runs.values().collect();
-        serde_json::to_vec(&runs).unwrap_or_default()
-    }
-
-    /// Restore the run map from a [`snapshot`](Self::snapshot).
-    pub fn restore(&mut self, bytes: &[u8]) {
-        if let Ok(runs) = serde_json::from_slice::<Vec<WorkflowRun>>(bytes) {
-            self.runs = runs.into_iter().map(|r| (r.id.clone(), r)).collect();
-        }
-    }
-}
-
-/// A single-voter raft-backed [`RunStore`] (#110): puts go through the raft log
-/// (durable, and the basis for HA by adding voters). A single voter is its own
-/// majority, so commit is local and the store is fully synchronous + in-process
-/// — no transport. The raft log persists to disk; on restart the state machine
-/// rebuilds by replaying the committed log. Multi-voter HA adds a driver + h2c
-/// transport (relay's `raft_driver` pattern); the consensus itself is the same.
-pub struct RaftRunStore {
-    inner: std::sync::Mutex<RaftInner>,
-    path: std::path::PathBuf,
-    snap_path: std::path::PathBuf,
-}
-
-struct RaftInner {
-    node: raft_core::RaftNode,
-    sm: LoomStateMachine,
-}
-
-impl RaftRunStore {
-    /// Open (or recover) a single-voter raft store under `dir`.
-    pub fn open(node_id: u64, dir: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
-        let dir = dir.as_ref();
-        std::fs::create_dir_all(dir)?;
-        let path = dir.join("raft.json");
-        let snap_path = dir.join("runs.snapshot.json");
-        let membership = raft_core::auto_membership(1);
-        let node = match std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-        {
-            Some(state) => raft_core::RaftNode::from_persisted(node_id, &membership, state),
-            None => raft_core::RaftNode::new(node_id, &membership),
-        };
-        let mut sm = LoomStateMachine::new();
-        // Durable recovery: restore the materialized state from the snapshot
-        // (the raft log provides consensus ordering; the snapshot is the
-        // materialized run map — the standard raft + snapshot pattern).
-        if let Ok(bytes) = std::fs::read(&snap_path) {
-            sm.restore(&bytes);
-        }
-        let mut inner = RaftInner { node, sm };
-        // Drive to leadership and apply any newly committed entries.
-        for _ in 0..500 {
-            inner.node.tick();
-            for entry in inner.node.take_committed() {
-                inner.sm.apply(&entry);
-            }
-        }
-        Ok(Self {
-            inner: std::sync::Mutex::new(inner),
-            path,
-            snap_path,
-        })
-    }
-
-    fn persist(&self, inner: &RaftInner) -> anyhow::Result<()> {
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec(&inner.node.persisted())?)?;
-        std::fs::rename(&tmp, &self.path)?;
-        // Snapshot the materialized state for durable recovery.
-        let snap_tmp = self.snap_path.with_extension("json.tmp");
-        std::fs::write(&snap_tmp, inner.sm.snapshot())?;
-        std::fs::rename(&snap_tmp, &self.snap_path)?;
+        self.applied.store(index, Ordering::Release);
+        self.persist_snapshot();
         Ok(())
     }
+
+    fn snapshot(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(self.encode_snapshot())
+    }
+
+    fn restore(&self, snapshot: &[u8]) -> anyhow::Result<()> {
+        self.load_snapshot(snapshot);
+        self.persist_snapshot();
+        Ok(())
+    }
+
+    fn applied_index(&self) -> raft_runtime::Index {
+        self.applied.load(Ordering::Acquire)
+    }
+}
+
+/// A raft-replicated [`RunStore`](crate::store::RunStore) over the shared
+/// [`raft_runtime::RaftHost`]. Writes (`put`/`delete`) propose a [`Command`] and
+/// return after the local SM applies it (read-your-write); reads serve from the
+/// applied map. Single-node by default (its own majority, no transport); pass
+/// peers for a multi-voter HA group. Peer transport, snapshot, and log
+/// compaction come from the host.
+pub struct RaftRunStore {
+    host: Arc<raft_runtime::RaftHost>,
+    sm: Arc<LoomSm>,
 }
 
 impl RaftRunStore {
-    /// Propose a command on the (single-voter) node and drive to commit+apply.
-    fn propose_and_commit(&self, cmd: Command) -> anyhow::Result<()> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
-        let inner = &mut *guard;
-        for _ in 0..500 {
-            if inner.node.is_leader() {
-                break;
-            }
-            inner.node.tick();
-        }
-        let idx = inner
-            .node
-            .propose(cmd.encode())
-            .ok_or_else(|| anyhow::anyhow!("not leader; cannot propose"))?;
-        for _ in 0..500 {
-            if inner.sm.applied_index() >= idx {
-                break;
-            }
-            inner.node.tick();
-            for entry in inner.node.take_committed() {
-                inner.sm.apply(&entry);
-            }
-        }
-        anyhow::ensure!(
-            inner.sm.applied_index() >= idx,
-            "raft command did not commit"
+    /// Build a raft store for node `id` with `membership` + `peers`, persisting
+    /// the raft log and the materialized snapshot under `dir`.
+    pub fn new(
+        id: raft_runtime::NodeId,
+        membership: raft_runtime::Membership,
+        peers: HashMap<raft_runtime::NodeId, String>,
+        dir: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        let dir = dir.as_ref();
+        std::fs::create_dir_all(dir)?;
+        let dir_str = dir
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("raft dir path is not valid UTF-8"))?;
+        let sm = LoomSm::new(Some(dir.join("runs.snapshot.json")));
+        let store = raft_runtime::RaftStore::open(dir_str, id, raft_runtime::FsyncPolicy::Always)?;
+        let host = raft_runtime::RaftHost::spawn(
+            id,
+            membership,
+            peers,
+            store,
+            sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
+            raft_runtime::HostConfig::default(),
         );
-        self.persist(inner)
+        Ok(Self { host: Arc::new(host), sm })
+    }
+
+    /// Single-node raft store: node 0 is its own majority, no peers. The archetype
+    /// default for local/dev; k8s flips to replica mode on scale-out.
+    pub fn single_node(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
+        Self::new(
+            0,
+            raft_runtime::Membership { voters: vec![0], learners: vec![] },
+            HashMap::new(),
+            dir,
+        )
+    }
+
+    /// Multi-voter cluster from an explicit peer map (local multi-node testing,
+    /// `LOOM_CLUSTER_PEERS`): voters `0..n_voters`.
+    pub fn cluster(
+        id: raft_runtime::NodeId,
+        n_voters: u64,
+        peers: HashMap<raft_runtime::NodeId, String>,
+        dir: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        Self::new(id, raft_runtime::auto_membership(n_voters), peers, dir)
+    }
+
+    /// k8s auto-mode: derive node id / membership / peers from the StatefulSet
+    /// downward API via [`raft_runtime::ClusterTopology`].
+    pub fn from_topology(
+        topo: raft_runtime::ClusterTopology,
+        dir: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        Self::new(topo.node_id, topo.membership, topo.peers, dir)
+    }
+
+    /// The peer-transport + `/raftz` router to merge into the controller's h2c
+    /// port (Vote / Append / InstallSnapshot / publish).
+    pub fn router(&self) -> Router {
+        self.host.router()
+    }
+
+    async fn propose(&self, cmd: Command) -> anyhow::Result<()> {
+        self.host.propose(cmd.encode()).await?;
+        Ok(())
     }
 }
 
 #[async_trait::async_trait]
 impl crate::store::RunStore for RaftRunStore {
     async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
-        self.propose_and_commit(Command::PutRun(run))
+        self.propose(Command::PutRun(run)).await
     }
-
     async fn delete(&self, id: &WorkflowRunId) -> anyhow::Result<()> {
-        self.propose_and_commit(Command::DeleteRun(id.clone()))
+        self.propose(Command::DeleteRun(id.clone())).await
     }
-
     async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
-        Ok(guard.sm.get(id).cloned())
+        Ok(self.sm.get(id))
     }
-
     async fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
-        Ok(guard.sm.run_ids())
+        Ok(self.sm.run_ids())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raft_core::{auto_membership, NodeId, RaftNode};
+    use raft_core::{auto_membership, NodeId, RaftEntry, RaftNode};
+    // Bring the SM trait into scope so the in-process cluster can call `apply`.
+    use raft_runtime::RaftStateMachine as _;
 
-    /// An in-process raft cluster with a loom state machine per node.
+    /// An in-process raft cluster with a [`LoomSm`] per node — proves loom's
+    /// command semantics replicate + converge under `raft_core` consensus.
     struct Cluster {
         nodes: BTreeMap<NodeId, RaftNode>,
-        sms: BTreeMap<NodeId, LoomStateMachine>,
+        sms: BTreeMap<NodeId, Arc<LoomSm>>,
     }
 
     impl Cluster {
@@ -239,7 +275,7 @@ mod tests {
             let m = auto_membership(n);
             Self {
                 nodes: (0..n).map(|i| (i, RaftNode::new(i, &m))).collect(),
-                sms: (0..n).map(|i| (i, LoomStateMachine::new())).collect(),
+                sms: (0..n).map(|i| (i, LoomSm::new(None))).collect(),
             }
         }
 
@@ -265,9 +301,9 @@ mod tests {
                 committed.push((*id, node.take_committed()));
             }
             for (id, entries) in committed {
-                let sm = self.sms.get_mut(&id).unwrap();
+                let sm = self.sms.get(&id).unwrap();
                 for entry in &entries {
-                    sm.apply(entry);
+                    let _ = sm.apply(entry.index, &entry.command);
                 }
             }
         }
@@ -287,6 +323,11 @@ mod tests {
                 self.step();
             }
             panic!("no leader elected");
+        }
+
+        fn run_until_leader_count(&mut self) -> usize {
+            self.run_until_leader();
+            self.nodes.values().filter(|n| n.is_leader()).count()
         }
 
         fn propose(&mut self, cmd: Command) {
@@ -329,13 +370,6 @@ mod tests {
         }
     }
 
-    impl Cluster {
-        fn run_until_leader_count(&mut self) -> usize {
-            self.run_until_leader();
-            self.nodes.values().filter(|n| n.is_leader()).count()
-        }
-    }
-
     #[tokio::test]
     async fn raft_run_store_persists_and_recovers() {
         use crate::store::RunStore;
@@ -344,14 +378,14 @@ mod tests {
         let id = WorkflowRunId::new("rr1");
 
         {
-            let store = RaftRunStore::open(0, &dir).unwrap();
+            let store = RaftRunStore::single_node(&dir).unwrap();
             store.put(WorkflowRun::new(id.clone())).await.unwrap();
             assert_eq!(store.get(&id).await.unwrap().unwrap().id, id);
             assert_eq!(store.list().await.unwrap(), vec![id.clone()]);
-        } // drop: only the raft log on disk remains
+        } // drop: the raft log + materialized snapshot on disk remain
 
-        // reopen: replaying the committed raft log rebuilds the state machine.
-        let recovered = RaftRunStore::open(0, &dir).unwrap();
+        // reopen: the materialized snapshot restores the run map (no write needed).
+        let recovered = RaftRunStore::single_node(&dir).unwrap();
         assert_eq!(recovered.get(&id).await.unwrap().unwrap().id, id);
         let _ = std::fs::remove_dir_all(&dir);
     }

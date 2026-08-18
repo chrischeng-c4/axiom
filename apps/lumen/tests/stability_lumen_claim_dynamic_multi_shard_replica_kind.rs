@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-multi-shard-replica-kind
-// @capability dynamic-shard-topology
-// @claim multi-shard-replica-kind-e2e
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-multi-shard-replica-kind
 // @category stability
 // @required_for_production true

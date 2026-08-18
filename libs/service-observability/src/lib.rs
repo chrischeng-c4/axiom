@@ -24,6 +24,6 @@ pub use logging::extract_trace_context;
 pub use logging::{
     init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode,
 };
-pub use metrics::{LifecycleMetrics, MetricsProvider};
+pub use metrics::{LifecycleMetrics, LifecycleMetricsSnapshot, MetricsProvider};
 pub use process::{process_usage, ProcessUsage};
 // HANDWRITE-END

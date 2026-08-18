@@ -113,50 +113,40 @@ async fn stream_skips_blank_lines_and_reports_parse_errors() {
     assert_eq!(done["indexed_total"], 2);
 }
 
+/// #2871: the write-role half of this gate cannot be produced — there is no
+/// registry to mint a read-only credential from, and the
+/// SubjectAccessReview that answers "may they write?" is exercised in
+/// `authz_matrix_e2e.rs` (#2869).
+/// What is still worth pinning is that the streaming ingest route is not an
+/// exception to the auth middleware: an unauthenticated stream must be
+/// refused before a single NDJSON line is read, not after.
 #[tokio::test]
-async fn stream_requires_write_role_under_auth() {
-    use lumen::auth::{AuthConfig, Role, TokenClaims};
-    use std::collections::HashMap;
+async fn stream_is_refused_without_an_identity_under_required_auth() {
+    use lumen::auth::AuthConfig;
 
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig {
-        required: true,
-        tokens: HashMap::from([
-            (
-                "tok-r".to_string(),
-                TokenClaims {
-                    subject: "viewer".into(),
-                    roles: HashMap::from([("u".to_string(), Role::Read)]),
-                },
-            ),
-            (
-                "tok-a".to_string(),
-                TokenClaims {
-                    subject: "ops".into(),
-                    roles: HashMap::from([("*".to_string(), Role::Admin)]),
-                },
-            ),
-        ]),
-    };
+    let cfg = AuthConfig::required_in("serving");
     let app = router(AppState::new(engine, Arc::new(cfg)));
     let s = TestServer::new(app).unwrap();
 
-    s.put("/collections/u")
-        .add_header("authorization", "Bearer tok-a")
-        .json(&json!({ "fields": { "email": { "type": "keyword" } } }))
-        .await
-        .assert_status_ok();
+    let line = format!(
+        "{}\n",
+        json!({"external_id":"u1","field":"email","value":"a@x.com"})
+    );
 
-    // Read-only token is forbidden.
-    let resp = s
-        .post("/collections/u/reindex/stream")
-        .add_header("authorization", "Bearer tok-r")
+    s.post("/collections/u/reindex/stream")
         .content_type("application/x-ndjson")
-        .text(format!(
-            "{}\n",
-            json!({"external_id":"u1","field":"email","value":"a@x.com"})
-        ))
-        .await;
-    resp.assert_status_forbidden();
+        .text(line.clone())
+        .await
+        .assert_status_unauthorized();
+
+    // A presented-but-unresolvable credential is not treated as better than
+    // none: both are unknown identities.
+    s.post("/collections/u/reindex/stream")
+        .add_header("authorization", "Bearer tok-a")
+        .content_type("application/x-ndjson")
+        .text(line)
+        .await
+        .assert_status_unauthorized();
 }
 // CODEGEN-END

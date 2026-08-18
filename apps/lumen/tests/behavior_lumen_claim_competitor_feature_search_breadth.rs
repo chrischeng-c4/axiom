@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-competitor-feature-search-breadth
-// @capability competitor-feature-parity
-// @claim search-feature-breadth
+// @capability querying
+// @claim query-quality
 // @contract competitor-feature-search-breadth
 // @category behavior
 // @required_for_production true

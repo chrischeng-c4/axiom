@@ -15,7 +15,7 @@ for i in $(seq 1 $WORKERS); do LOOM_RELAY=http://127.0.0.1:7407 LOOM_KEEP=http:/
 trap 'kill $R $K $C ${WP[*]} 2>/dev/null' EXIT
 for i in $(seq 1 30); do curl -sf http://127.0.0.1:7484/healthz>/dev/null 2>&1 && curl -sf http://127.0.0.1:7386/healthz>/dev/null 2>&1 && break; sleep 0.5; done
 # build an N-row CSV and PUT it to keep
-python3 -c "import sys;sys.stdout.write(''.join(f'row{i},{i}\n' for i in range($ROWS)))" | curl -s -X PUT http://127.0.0.1:7386/v1/inputs/bigcsv -H 'content-type: application/octet-stream' --data-binary @- >/dev/null
+python3 -c "import sys;sys.stdout.write(''.join(f'row{i},{i}\n' for i in range($ROWS)))" | curl -s -X PUT http://127.0.0.1:7386/inputs/bigcsv -H 'content-type: application/octet-stream' --data-binary @- >/dev/null
 CHUNKS=$(( (ROWS+1)/2 ))
 echo "=== scale: $ROWS-row CSV → $CHUNKS chunks (2 rows each), $WORKERS workers ==="
 start=$(python3 -c 'import time;print(time.time())')
@@ -29,4 +29,4 @@ d=json.load(sys.stdin); print(d["status"], len(d["nodes"]))' 2>/dev/null)
   sleep 1
 done
 echo "=== spot-check a few chunk results (row counts) ==="
-for c in 0 10 $((CHUNKS-1)); do echo -n "rows-$c = "; curl -s http://127.0.0.1:7386/v1/results/scale:rows-$c:result; echo; done
+for c in 0 10 $((CHUNKS-1)); do echo -n "rows-$c = "; curl -s http://127.0.0.1:7386/results/scale:rows-$c:result; echo; done

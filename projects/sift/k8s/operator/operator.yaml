@@ -33,6 +33,13 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "create", "update"]
+  # Reconcile narration on the CR itself (#2620). `create` writes a new Event,
+  # `patch` updates the EventSeries count when the Recorder's 6-minute dedup
+  # window collapses a repeating event — without `patch`, a repeatedly failing
+  # reconcile would fail to report the repetition.
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

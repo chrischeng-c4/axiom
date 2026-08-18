@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-hybrid-rrf
-// @capability hybrid-search
-// @claim rrf-fusion-node-planner-integration
+// @capability querying
+// @claim semantic-and-similarity-query
 // @contract hybrid-rrf-planner
 // @category behavior
 // @required_for_production true

@@ -31,28 +31,34 @@
 //! use std::sync::Arc;
 //! use std::time::Duration;
 //! use service_http::{
-//!     HttpConfig, LogFormat, MetricsProvider, ReadinessHook,
-//!     init_tracing, serve, server_timing_middleware, shutdown_with_drain,
-//!     standard_probe_routes, trace_layer,
+//!     HttpConfig, init_tracing, lifecycle_probe_routes, serve_with_lifecycle,
+//!     LifecycleShutdownTrigger, run_signal_bridge, server_timing_middleware,
+//!     trace_layer,
 //! };
 //!
-//! # async fn run(cfg: HttpConfig, readiness: Arc<R>, data_plane: axum::Router) -> anyhow::Result<()>
-//! # where R: ReadinessHook + 'static {
+//! # async fn run(cfg: HttpConfig, data_plane: axum::Router) -> anyhow::Result<()>
+//! # {
 //! init_tracing(&cfg)?;
-//!
-//! let app = standard_probe_routes(readiness.clone(), None, my_service::openapi)
+//! let lifecycle = server_lifecycle::LifecycleController::new();
+//! lifecycle.transition(server_lifecycle::LifecyclePhase::Serving, "ready", "startup complete")?;
+//! let app = lifecycle_probe_routes(lifecycle.clone(), None, my_service::openapi)
 //!     .merge(data_plane)
 //!     .layer(trace_layer())
 //!     .layer(axum::middleware::from_fn(server_timing_middleware));
 //!
 //! let listener = tokio::net::TcpListener::bind(cfg.bind_addr()).await?;
 //! let grace = Duration::from_secs(cfg.grace_secs);
-//! serve(
+//! let trigger = LifecycleShutdownTrigger::new(lifecycle.clone(), grace, std::time::Duration::ZERO)?;
+//! let signal_task = tokio::spawn(run_signal_bridge(trigger.clone(), async {
+//!     tokio::signal::ctrl_c().await.expect("signal");
+//! }));
+//! let report = serve_with_lifecycle(
 //!     listener,
 //!     app,
-//!     shutdown_with_drain(move || readiness.start_drain(), grace),
-//! )
-//! .await;
+//!     server_http::HttpServerOptions::default(),
+//!     lifecycle.clone(),
+//! );
+//! let (_http_report, _shutdown_report) = tokio::join!(report, signal_task);
 //! # Ok(()) }
 //! # fn openapi() -> utoipa::openapi::OpenApi { unimplemented!() }
 //! ```
@@ -109,10 +115,19 @@ pub use logging::{
     init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode,
 };
 pub use metrics::MetricsProvider;
-pub use probes::{standard_probe_routes, standard_probe_routes_canonical_json};
+pub use probes::{
+    lifecycle_probe_routes, lifecycle_probe_routes_canonical_json, standard_probe_routes,
+    standard_probe_routes_canonical_json,
+};
 pub use readiness::ReadinessHook;
+/// Re-exported so a service can build a [`serve_tls`] configuration source
+/// without depending on `server-http` directly (#3113 R1).
+pub use server_http::{config_source, ServerConfigSource};
 pub use server_timing::{server_timing_middleware, ServerTimingDisclosure, ServerTimingExt};
 pub use service_observability::LifecycleMetrics;
-pub use signal::{shutdown_with_drain, wait_shutdown_signal};
-pub use transport::{serve, trace_layer, PropagatingMakeSpan};
+pub use signal::{
+    run_signal_bridge, shutdown_on_signal, shutdown_with_drain, wait_shutdown_signal,
+    LifecycleShutdownTrigger,
+};
+pub use transport::{serve, serve_tls, serve_with_lifecycle, trace_layer, PropagatingMakeSpan};
 // CODEGEN-END

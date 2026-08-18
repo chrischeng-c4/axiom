@@ -52,8 +52,10 @@ deployment:
           - ../../base
         
         # prod runs the prometheus-operator, so pull in the ServiceMonitor +
-        # PrometheusRule SLO alerts.
+        # PrometheusRule SLO alerts, and isolates the serving pod with a NetworkPolicy
+        # (enforced only where the CNI supports it — see components/network-policy).
         components:
+          - ../../components/network-policy
           - ../../components/observability
         
         # The ServiceMonitor's own metadata.namespace already follows the `namespace:`
@@ -97,15 +99,11 @@ deployment:
               - op: add
                 path: /data/LUMEN_AUTH
                 value: "required"
+          # Strict auth: project LUMEN_AUTH from the ConfigMap into the serving process.
           - target:
               kind: Deployment
               name: lumen
             patch: |-
-              # Strict auth: a Secret named `lumen-tokens` with key
-              # `token-registry.json` must be supplied out-of-band, commonly from GCP
-              # Secret Manager via External Secrets Operator / Secret Store CSI. Lumen
-              # reads only the mounted file path at startup, so rotate by rolling pods
-              # or running a Secret reloader controller.
               - op: add
                 path: /spec/template/spec/containers/0/env/-
                 value:
@@ -114,26 +112,6 @@ deployment:
                     configMapKeyRef:
                       name: lumen-config
                       key: LUMEN_AUTH
-              - op: add
-                path: /spec/template/spec/containers/0/env/-
-                value:
-                  name: LUMEN_TOKEN_REGISTRY_FILE
-                  value: /var/run/secrets/lumen/token-registry.json
-              - op: add
-                path: /spec/template/spec/containers/0/volumeMounts/-
-                value:
-                  name: lumen-token-registry
-                  mountPath: /var/run/secrets/lumen
-                  readOnly: true
-              - op: add
-                path: /spec/template/spec/volumes/-
-                value:
-                  name: lumen-token-registry
-                  secret:
-                    secretName: lumen-tokens
-                    items:
-                      - key: token-registry.json
-                        path: token-registry.json
         # CODEGEN-END
 ```
 

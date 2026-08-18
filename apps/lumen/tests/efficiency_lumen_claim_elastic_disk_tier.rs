@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-elastic-disk-tier
-// @capability elastic-scale
-// @claim ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log
+// @capability scaling-availability
+// @claim elastic-segment-tier
 // @contract elastic-disk-tier
 // @category efficiency
 // @required_for_production true

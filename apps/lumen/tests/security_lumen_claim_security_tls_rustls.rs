@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-security-tls-rustls
 // @capability security-hardening
-// @claim tls-rustls
+// @claim serving-transport-tls
 // @contract security-tls-rustls
 // @category security
 // @required_for_production true

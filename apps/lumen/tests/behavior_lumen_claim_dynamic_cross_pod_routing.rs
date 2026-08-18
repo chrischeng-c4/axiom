@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-cross-pod-routing
-// @capability dynamic-shard-topology
-// @claim cross-pod-shard-routing
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-cross-pod-routing
 // @category behavior
 // @required_for_production true

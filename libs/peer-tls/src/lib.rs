@@ -16,6 +16,17 @@
 //! over this crate with its `LUMEN_PEER_TLS_*`/`LUMEN_PEER_MTLS` env names
 //! and pub API unchanged. keep/relay/beam adoption is out of scope here.
 
+pub mod material;
+pub mod reload;
+
+pub use material::{
+    validate, IdentityExpectation, MaterialPem, Rejection, RejectionReason, ValidatedMaterial,
+};
+pub use reload::{
+    spawn_material_watcher, FileMaterialSource, MaterialSource, MemoryMaterialSource,
+    ReloadableTls, TlsReloadStatus, TlsRuntimeProfile, DEFAULT_MATERIAL_POLL_INTERVAL,
+};
+
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};

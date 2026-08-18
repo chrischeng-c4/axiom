@@ -102,22 +102,34 @@ fn help_ships_snapshot_data_movement_verbs() {
 
     for command in ["dump", "export"] {
         let help = run_lumen(&[command, "--help"]);
-        for expected in ["--url", "--out", "--token", "SnapshotV1"] {
+        for expected in ["--url", "--out", "SnapshotV1"] {
             assert!(
                 help.contains(expected),
                 "missing `{expected}` in `lumen {command} --help`:\n{help}"
             );
         }
+        // #2873: the credential these verbs used to take on the command line
+        // is gone. Asserted here as well as in the residue gate because help
+        // text is what a caller copies, and a flag that still appears in
+        // `--help` is a flag someone will keep passing.
+        assert!(
+            !help.contains("--token"),
+            "`lumen {command} --help` still advertises a credential flag:\n{help}"
+        );
     }
 
     for command in ["load", "import"] {
         let help = run_lumen(&[command, "--help"]);
-        for expected in ["--url", "--file", "--token", "/admin/restore"] {
+        for expected in ["--url", "--file", "/admin/restore"] {
             assert!(
                 help.contains(expected),
                 "missing `{expected}` in `lumen {command} --help`:\n{help}"
             );
         }
+        assert!(
+            !help.contains("--token"),
+            "`lumen {command} --help` still advertises a credential flag:\n{help}"
+        );
     }
 }
 
@@ -129,8 +141,8 @@ fn llm_outline_advertised_topic_commands_parse() {
     let commands = outline_llm_topic_commands();
     assert_eq!(
         commands.len(),
-        10,
-        "outline should advertise the ten DX task topics: {commands:?}"
+        11,
+        "outline should advertise the eleven DX task topics: {commands:?}"
     );
 
     for command in commands {
@@ -322,6 +334,43 @@ fn k8s_instance_render_prod_accepts_app_namespace_overrides() {
             rendered.contains(expected),
             "missing `{expected}` in:\n{rendered}"
         );
+    }
+}
+
+/// #2678: `spec.auth` fails closed, so every profile states its posture
+/// explicitly rather than relying on a reader knowing the default.
+///
+/// #2872 inverted the second half of this check. A `required` profile used to
+/// have to name a token source; now it must name none, because the fields that
+/// did are gone from the schema and a CR carrying one is rejected outright.
+#[test]
+fn k8s_instance_render_every_profile_states_its_auth_posture() {
+    for profile in ["dev", "staging", "prod", "template"] {
+        let rendered = run_lumen(&["k8s", "instance", "render", "--profile", profile]);
+        let auth = rendered
+            .lines()
+            .find_map(|line| line.strip_prefix("  auth: "))
+            .unwrap_or_else(|| panic!("profile `{profile}` renders no `auth:` line:\n{rendered}"));
+
+        assert!(
+            matches!(auth, "required" | "disabled"),
+            "profile `{profile}`: `auth: {auth}` is not a CRD enum value"
+        );
+        // A profile must name *no* token source. The retired fields are gone
+        // from the schema (#2872), so a rendered CR that still carried one
+        // would be rejected by the API server at `kubectl apply` — the check
+        // that used to demand one now proves the opposite.
+        for retired in [
+            "tokensSecret",
+            "tokensSecretProviderClass",
+            "identities",
+            "identityAudiences",
+        ] {
+            assert!(
+                !rendered.contains(&format!("\n  {retired}:")),
+                "profile `{profile}` renders retired field `{retired}`:\n{rendered}"
+            );
+        }
     }
 }
 

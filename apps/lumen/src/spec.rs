@@ -46,80 +46,11 @@ fn openapi_value() -> Value {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn json_schema_json() -> String {
     let api = crate::api::openapi();
-    serde_json::to_string_pretty(&json!({
-        "components": api.components,
-        "operationalSchemas": {
-            "TokenRegistry": token_registry_schema()
-        }
-    }))
-    .expect("components serialize to JSON")
-}
-
-/// The deployment-side token registry file schema. This is not an HTTP request
-/// body, so it lives under `operationalSchemas` in `lumen spec --format
-/// json-schema` and in `lumen llm --topic auth`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
-pub fn token_registry_schema() -> Value {
-    json!({
-        "description": "JSON object mounted as token-registry.json; each property name is the bearer token string.",
-        "type": "object",
-        "additionalProperties": {
-            "type": "object",
-            "required": ["subject"],
-            "additionalProperties": false,
-            "properties": {
-                "subject": {
-                    "type": "string",
-                    "description": "Human-readable or service-account identity attached to requests authenticated with this token."
-                },
-                "roles": {
-                    "type": "object",
-                    "description": "Map collection id to the maximum role. The literal key `*` grants the role across all collections.",
-                    "additionalProperties": {
-                        "type": "string",
-                        "enum": ["read", "write", "admin"]
-                    },
-                    "default": {}
-                }
-            }
-        },
-        "examples": [
-            {
-                "admin-token": {
-                    "subject": "platform-admin",
-                    "roles": { "*": "admin" }
-                },
-                "product-reader-token": {
-                    "subject": "products-reader",
-                    "roles": { "products": "read" }
-                },
-                "product-writer-token": {
-                    "subject": "products-writer",
-                    "roles": { "products": "write" }
-                }
-            }
-        ]
-    })
-}
-
-/// Pretty JSON example for `token-registry.json`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
-pub fn token_registry_example_json() -> String {
-    serde_json::to_string_pretty(&json!({
-        "admin-token": {
-            "subject": "platform-admin",
-            "roles": { "*": "admin" }
-        },
-        "product-reader-token": {
-            "subject": "products-reader",
-            "roles": { "products": "read" }
-        },
-        "product-writer-token": {
-            "subject": "products-writer",
-            "roles": { "products": "write" }
-        }
-    }))
-    .expect("token registry example serializes")
+    // #2871 retired the bearer/identity registry, so `operationalSchemas` no
+    // longer carries a `TokenRegistry` entry: nothing reads that file, and a
+    // published schema for it would read as a supported deployment shape.
+    serde_json::to_string_pretty(&json!({ "components": api.components }))
+        .expect("components serialize to JSON")
 }
 
 /// A cookbook of canonical query shapes. Each entry is a ready-to-POST
@@ -236,8 +167,10 @@ Use the smallest topic that answers the task:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
 - `lumen llm --topic quickstart` — copy-paste local create → index → search flow.
-- `lumen llm --topic auth` — bearer-token auth contract, token-registry.json schema,
-  Secret Manager / Kubernetes Secret projection, and client header wiring.
+- `lumen llm --topic auth` — request-authentication contract: private ClusterIP
+  TLS and a short-lived Kubernetes ServiceAccount token as two independent
+  checks, `required` vs `disabled`, and the TokenReview/SubjectAccessReview
+  model that replaced the retired bearer/Google registry.
 - `lumen llm --topic deployment` — Kubernetes-native deployment topology:
   StatefulSet, shardCount, replicasPerShard, HPA boundary, reshard workflow,
   and empty-PVC bootstrap.
@@ -250,11 +183,15 @@ Use the smallest topic that answers the task:
   vector metric catalogs.
 - `lumen connect` — manage a `kubectl port-forward` for the duration of a
   wrapped command against a k8s-deployed Lumen instance (`--cr`/`--service` +
-  `--namespace`); resolves a bearer token from the deployment's
-  token-registry Secret and tears the port-forward down when the command exits.
+  `--namespace`), tearing it down when the command exits. Against an
+  `auth: required` fleet, add `--client-sa` to mint a short-lived
+  audience-bound token and `--ca-file` to verify the server against the
+  externally distributed public CA; the token is attached by a loopback proxy, so it
+  reaches no environment variable and no child process.
 - `lumen query index|search|duplicates|collections list` — one-shot query
-  wrappers against a reachable node (`--url`/`LUMEN_URL`,
-  `--token`/`LUMEN_TOKEN`); request bodies match `lumen spec --shapes`.
+  wrappers against a reachable node (`--url`/`LUMEN_URL`); request bodies match
+  `lumen spec --shapes`. There is no credential flag by design — run them under
+  `lumen connect`, which owns minting and attaching. See `--topic auth`.
 "#
     .to_string()
 }
@@ -280,6 +217,59 @@ lumen k8s instance render --profile prod --out lumen.yaml
 registries all consume the same image artifact. `k8s crd render` is the
 cluster-scoped API layer, `k8s operator render|run` is the control plane, and
 `k8s instance render` is the app-namespace custom resource.
+
+## Externally Provisioned TLS Secrets
+Deployment administrators or an external platform provision the serving and peer TLS Secrets named by each Lumen instance. The operator only consumes those Secrets and does not resolve issuers or perform CAS automation.
+
+The deployment administrator or an external platform provisions the named
+`servingTlsSecret` and `peerTlsSecret` in the instance namespace. The operator
+consumes those Secrets through the existing TLS loaders and never resolves an
+issuer, contacts CAS, selects a trust domain, or obtains certificate tokens.
+
+## Serving transport: private ClusterIP TLS
+Production traffic is **not** published. A Lumen instance is reached at its
+Service DNS name inside the cluster and nowhere else:
+
+```
+LUMEN_URL=https://<instance>.<namespace>.svc:7373
+```
+
+There is no Ingress, no Gateway, no LoadBalancer, no NodePort, and no service
+mesh terminating TLS on lumen's behalf. The serving pod holds the private key
+itself, so the connection a caller authenticates is the connection lumen
+serves. An edge that terminated TLS and re-originated plaintext would leave the
+last hop unauthenticated while every client-side check still passed — and the
+KSA token in `Authorization` would cross that hop in the clear.
+
+Set `spec.servingTlsSecret` to a Secret holding `tls.crt`, `tls.key`, and
+`ca.crt`. The operator projects it into every serving pod and switches the
+client port from h2c to TLS with ALPN `h2, http/1.1`:
+
+```env
+LUMEN_TLS=on
+LUMEN_TLS_CERT=/var/run/secrets/lumen-serving/tls.crt
+LUMEN_TLS_KEY=/var/run/secrets/lumen-serving/tls.key
+LUMEN_TLS_CA=/var/run/secrets/lumen-serving/ca.crt
+LUMEN_TLS_SERVER_NAMES=<instance>.<namespace>.svc,<instance>.<namespace>.svc.cluster.local
+```
+
+The leaf asserts the Service's own two DNS spellings and nothing else. A name
+in the certificate is a name this instance can impersonate, so no node name and
+no external name belongs there. While no valid leaf is active the port refuses
+connections rather than falling back to plaintext.
+
+Callers verify against the anchor alone. The deployment administrator or
+external certificate platform distributes the public CA separately from the
+private-key-bearing serving Secret. Pass it to `lumen connect --ca-file`, or
+as `PrivateTrust` in a generated client; it replaces the public roots rather
+than joining them.
+
+`spec.peerTlsSecret` is a separate field for a separate decision — mutual,
+instance-scoped Raft identity on `:7374`. Sharing one Secret between the two
+would let either listener's material authenticate on the other's port.
+
+Omit `spec.servingTlsSecret` only for local and kind development, where the
+client port stays h2c and `spec.auth` is `disabled`.
 
 ## Storage topology knobs
 The operator-owned storage topology has two independent knobs:
@@ -394,72 +384,184 @@ live replica synchronization mechanism.
     out
 }
 
-/// Bearer-token auth + deployment secret contract (`lumen llm --topic auth`)
-/// as Markdown.
+/// Request-authentication contract (`lumen llm --topic auth`) as Markdown.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_auth_md() -> String {
-    let mut out = format!(
+    let mut out = String::from(
         r#"# lumen auth
 
 ## Runtime contract
-Production servers should run with:
+Two independent checks stand between a caller and a collection, and neither
+substitutes for the other:
+
+- **Transport.** In production the serving port is private TLS on a ClusterIP
+  Service, signed by a private CA. A caller verifies the server; the server does
+  not verify the caller's certificate.
+- **Request identity.** A short-lived, audience-bound Kubernetes ServiceAccount
+  token in `Authorization: Bearer`, answered by the cluster.
+
+Server modes:
 
 ```env
-LUMEN_AUTH=required
-LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
+LUMEN_AUTH=required        # production: every request is TokenReview'd
+LUMEN_AUTH=disabled        # local and kind only: every request resolves to open
 ```
 
-Clients only need:
+`LUMEN_AUTH=required` proves both delegation grants at startup — that it can
+reach kube-apiserver, and that its own ServiceAccount may create `TokenReview`
+and `SubjectAccessReview` in this namespace. If either fails the process **does
+not start**, naming the missing `system:auth-delegator` binding. Discovering it
+on the first request would mean serving 503s while looking healthy.
+
+There is no third mode and no degradation: a `required` process that loses its
+verifier rejects requests rather than falling back to open.
+
+Probe/spec/scrape routes stay auth-exempt regardless: `/healthz`, `/readyz`,
+`/metrics`, `/openapi.json`, and `/docs`.
+
+## Transport: private ClusterIP TLS, terminated by lumen
+Production traffic is **not** published. There is no Ingress, no Gateway, no
+LoadBalancer, no NodePort, and no service mesh terminating TLS on lumen's
+behalf. The listener holds the private key itself, so the connection a caller
+authenticates is the connection lumen serves — an edge that terminates TLS and
+re-originates plaintext would leave the last hop unauthenticated while the
+client's own check still passed.
 
 ```env
-LUMEN_URL=http://lumen.<namespace>.svc.cluster.local:7373
-LUMEN_TOKEN=<token>
+LUMEN_URL=https://<instance>.<namespace>.svc:7373
 ```
 
-Send the token on data/admin API calls:
+Set `spec.servingTlsSecret` on the `Lumen` CR and the operator projects the
+leaf, key, and CA into the pods and turns the listener on:
 
-```http
-Authorization: Bearer <LUMEN_TOKEN>
+```env
+LUMEN_TLS=on
+LUMEN_TLS_CERT=/var/run/secrets/lumen-serving/tls.crt
+LUMEN_TLS_KEY=/var/run/secrets/lumen-serving/tls.key
+LUMEN_TLS_CA=/var/run/secrets/lumen-serving/ca.crt
+LUMEN_TLS_SERVER_NAMES=<instance>.<namespace>.svc,<instance>.<namespace>.svc.cluster.local
 ```
 
-Probe/spec/scrape routes stay auth-exempt: `/healthz`, `/readyz`, `/metrics`,
-`/openapi.json`, and `/docs`.
+The names in `LUMEN_TLS_SERVER_NAMES` are the Service's own two spellings and
+nothing else. No node name, no external name: a name in the leaf is a name this
+instance can impersonate.
 
-## token-registry.json
-The registry file is a JSON object. Each top-level key is the exact bearer token
-string. Each value declares the authenticated subject and optional collection
-roles:
+Callers verify against the public CA distributed separately by the deployment
+administrator or external certificate platform. Pass that PEM file with
+`lumen connect --ca-file`; it replaces the public roots and is never read from
+the private-key-bearing serving Secret.
 
-```json
-{}
+Peer traffic on `:7374` is a separate trust decision with its own material
+(`spec.peerTlsSecret`) — mutual, instance-scoped, and never interchangeable
+with the serving anchor.
+
+## Kubernetes: who a caller is, is the cluster's answer
+The CRD configures **no** credential source. `spec.tokensSecret`,
+`spec.identities` and `spec.identityAudiences` are gone (#2872): a Lumen CR
+that sets any of them is rejected by the API server's strict decoding rather
+than applied and quietly ignored.
+
+Every request under `auth: required` carries a short-lived, audience-bound
+ServiceAccount token obtained from the TokenRequest API, and lumen answers two
+questions with the cluster rather than with a file it was handed:
+
+- **Who is this?** `TokenReview`, with the audience `lumen.axiom.dev` checked.
+  The principal it returns must be exactly
+  `system:serviceaccount:<namespace>:<name>`; nothing else is accepted as an
+  identity.
+- **May they do this?** `SubjectAccessReview` against the virtual resources
+  `lumencollections` and `lumenadmin` in API group `lumen.axiom.dev`, scoped to
+  the serving instance's own namespace. RBAC in the cluster is the
+  authorization source of truth, so a grant is a Role a reviewer can read,
+  `kubectl auth can-i` can answer, and the audit log records.
+
+| Action | Resource | Name | Verb |
+|--------|----------|------|------|
+| read a collection | `lumencollections` | collection id | `get` |
+| write a collection | `lumencollections` | collection id | `update` |
+| administer a collection | `lumencollections` | collection id | `delete` |
+| instance admin | `lumenadmin` | — | per role |
+
+There is no role precedence. `delete` does not imply `get` unless the
+RoleBinding says so.
+
+Nothing is a long-lived secret: tokens are minted per use and expire, so there
+is no registry to rotate, no Secret to sync from Secret Manager, and no CSI
+mount whose refresh behaviour has to be reasoned about. Google user and GSA
+credentials authenticate to the kube-apiserver only — lumen never sees one, and
+never verifies a Google-issued token itself.
+
+## The CLI: kubeconfig authenticates you to Kubernetes, not to Lumen
+Two boundaries, two credentials, and they are never the same string.
+
+- **To the cluster:** your kubeconfig — a Google user, a GSA, or the GKE
+  credential plugin. This is what `kubectl` and `lumen connect` already use.
+- **To Lumen:** a short-lived, audience-bound ServiceAccount token that the
+  cluster mints. Never a Google access token, a Google ID token, an ADC
+  credential, a GSA key, or a metadata-server token. Those authenticate to
+  kube-apiserver and stop there; sent to Lumen they are rejected, and submitted
+  to `TokenReview` a Google ID token comes back `{"user": {}, "error":
+  "invalid bearer token"}`.
+
+The bridge between the two is the TokenRequest API: your kubeconfig identity is
+RBAC-authorized to request a token for one explicitly named client
+ServiceAccount, and that token — not your own credential — is what reaches
+Lumen.
+
+`lumen connect` does exactly that (#2878): it mints the token through your
+kubeconfig, holds it in memory, and attaches it on a loopback proxy so the
+child process is handed `LUMEN_URL` and never the token itself. There is no
+token flag, no token environment variable, and no Kubernetes Secret standing
+behind either.
+
+The port-forward it opens is transport only. The upstream URL keeps the
+Service's real DNS name, so SNI, hostname verification, and `:authority` all
+target the name the certificate asserts while only address resolution points at
+the forwarded loopback socket — `--ca-file` supplies the anchor:
+
+```sh
+lumen connect --namespace search --cr lumen \
+  --client-sa agent --ca-file ./ca.crt -- ./my-app
 ```
 
-Role values are `read`, `write`, or `admin`; `admin` covers `write` and `read`,
-and `write` covers `read`. Role keys are collection ids. The literal key `*`
-grants the role across all collections. A missing collection role rejects that
-request with 403.
-
-## Kubernetes / cloud secret ownership
-The Lumen CRD field `spec.tokensSecret` names a Kubernetes Secret containing a
-`token-registry.json` key. The operator mounts that key at
-`/var/run/secrets/lumen/token-registry.json` and sets
-`LUMEN_TOKEN_REGISTRY_FILE` for serving pods when `auth: required`.
-Alternatively, `spec.tokensSecretProviderClass` names an existing
-`SecretProviderClass` mounted via the Secrets Store CSI driver at that same
-path, so the registry content never becomes a Secret or ConfigMap object at
-all; `tokensSecret` wins when both are set.
-
-On GKE, keep GCP Secret Manager as the source of truth and materialize the file
-through External Secrets Operator, Secret Store CSI, or a platform-approved
-Secret sync. Lumen reads the registry at startup; token rotation should roll the
-serving pods or use a Secret reloader controller.
+Verification is never the thing to switch off. There is no insecure flag: a
+server that cannot be verified is a wrong anchor or a wrong name, and both are
+fixable.
 
 ## Generated clients
-Generated Python clients accept either `auth_token="<token>"` or
-`default_headers={{"Authorization": "Bearer <token>"}}` in `Client` and
-`AsyncClient`. Other clients send the same `Authorization: Bearer` header.
+`lumen spec gen --lang rust|py|ts` emits a client that takes the same two
+values — the CA bundle and the name it expects the server to assert — and
+verifies against that anchor *instead of* the public roots:
+
+```rust
+Client::with_private_ca(
+    "https://lumen.search.svc:7373",
+    TransportPolicy::default(),
+    PrivateTrust { ca_bundle: "/etc/lumen/ca.crt".into(), server_name: "lumen.search.svc".into() },
+)?
+```
+
+```python
+Client("https://lumen.search.svc:7373",
+       trust=PrivateTrust(ca_bundle="/etc/lumen/ca.crt", server_name="lumen.search.svc"),
+       auth_token=token)
+```
+
+```ts
+const trust = { caBundle: "/etc/lumen/ca.crt", serverName: "lumen.search.svc" };
+const config = { baseUrl: "https://lumen.search.svc:7373",
+                 trust, fetch: await privateCaFetch(trust) };
+```
+
+Construction fails if `server_name` is not the host the base URL addresses: a
+client that verified one name while addressing another would be checking a
+certificate it never actually relies on. No generated client offers a way to
+skip verification.
+
+The KSA token travels as it always did — `auth_token="<token>"` or
+`default_headers={"Authorization": "Bearer <token>"}` on `Client` and
+`AsyncClient`.
 "#,
-        token_registry_example_json()
     );
     out.push_str("\n## Shared auth primitive\n");
     out.push_str(service_auth::llm::topic().body);
@@ -682,16 +784,25 @@ each with a documented alternative:
   itself.
 
 ## Connection
-HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. HTTP/1.1
-is the compatibility/smoke path; the performance target is high-QPS, large
-corpus traffic over pooled HTTP/2 streams, where multiplexing and connection
-reuse dominate per-request overhead. When the node runs with
-`LUMEN_AUTH=required`, send `Authorization: Bearer <LUMEN_TOKEN>`.
-Production server pods load the token registry from
-`LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; on GKE
-that file should be materialized from GCP Secret Manager through Kubernetes
-Secret projection, External Secrets Operator, or Secret Store CSI. Sharded
-deployments route on the client: `crc32(collection_id) % shard_count`.
+Any REST client, no driver. HTTP/1.1 is the compatibility/smoke path; the
+performance target is high-QPS, large corpus traffic over pooled HTTP/2 streams,
+where multiplexing and connection reuse dominate per-request overhead.
+
+- **Production** — `https://<instance>.<namespace>.svc:7373`, a private
+  ClusterIP whose TLS the serving pod terminates itself (ALPN `h2,
+  http/1.1`). Nothing published sits in front of it, so the connection you
+  authenticate is the connection lumen serves. Verify the server against the
+  public CA distributed separately by the deployment administrator, in place of
+  the public roots; authenticate yourself with a short-lived, audience-bound
+  Kubernetes ServiceAccount token, sent as the request's bearer credential,
+  which lumen resolves through TokenReview and SubjectAccessReview. The exact
+  header form and how to mint the token are `--topic auth`.
+- **Local / kind development** — `http://localhost:7373`, h2c, `spec.auth:
+  disabled`. Every reachable node serves everyone; keep it off shared
+  networks.
+
+Sharded deployments route on the client:
+`crc32(collection_id) % shard_count`.
 
 ## Do NOT ask lumen to
 - store or return documents — it returns `external_id`s; hydrate them yourself
@@ -758,11 +869,17 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
-Assumes a node at `http://localhost:7373` (`lumen serve`). Add
-`-H 'authorization: Bearer <LUMEN_TOKEN>'` when `LUMEN_AUTH=required`. In
-production the server-side `.env` contract is `LUMEN_AUTH=required` plus
-`LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; clients
-only need `LUMEN_URL` and `LUMEN_TOKEN`.
+Assumes a local node at `http://localhost:7373` (`lumen serve`), which is h2c
+and `LUMEN_AUTH=disabled` — every reachable node serves everyone, so keep it
+off shared networks. Clients need `LUMEN_URL` and nothing else.
+
+A production fleet is not reached this way. It answers only at
+`https://<instance>.<namespace>.svc:7373` inside the cluster, verified against
+the public CA distributed separately by the deployment administrator, and each request carries a short-lived
+Kubernetes ServiceAccount token that lumen resolves through
+TokenReview/SubjectAccessReview. The bodies below are unchanged; the URL and
+the `Authorization` header are what differ. See `lumen llm --topic auth` and
+`lumen connect`.
 
 ## 1. Declare a collection
 ```bash
@@ -819,9 +936,10 @@ lumen query duplicates --collection products --field email
 lumen query collections list
 ```
 
-`lumen connect` manages the `kubectl port-forward` and sets
-`LUMEN_URL`/`LUMEN_TOKEN` for the wrapped command; `lumen query *` assembles
-the exact wire body (same shapes as `lumen spec --shapes`).
+`lumen connect` manages the `kubectl port-forward` and sets `LUMEN_URL` — and
+only `LUMEN_URL` — for the wrapped command; `lumen query *` assembles the exact
+wire body (same shapes as `lumen spec --shapes`). Neither carries a credential:
+see `lumen llm --topic auth`.
 "#
     .to_string()
 }
@@ -1145,8 +1263,10 @@ lumen import --url http://localhost:7373 --file snapshot.json
 `import`. With no `--out`, dump/export write the exact SnapshotV1 JSON bytes to
 stdout; with no `--file`, load/import read SnapshotV1 JSON from stdin. These
 verbs do not add a new format, merge mode, or partial import semantics:
-load/import still replace all engine state via `/admin/restore`. `--token`
-uses the same `LUMEN_BACKUP_TOKEN` fallback as `lumen backup`.
+load/import still replace all engine state via `/admin/restore`. Neither verb
+acquires a credential of its own: the metadata-server ID token they used to
+mint is gone (#2871), because a Google-issued token is not something the
+Kubernetes-native verifier can ever accept.
 
 ### Required production scheduled backup: `spec.serving.backup`
 Production Lumen CRs set `spec.serving.backup` so the operator renders a
@@ -1162,7 +1282,7 @@ spec:
       schedule: "0 * * * *"        # CronJob.spec.schedule
       destination: "gs://my-bucket/lumen-backups"  # file:// | s3:// | gs://
       retentionSecs: 604800        # optional; drop objects older than this
-      adminTokenSecret: lumen-backup-token  # optional Secret{token: ...}
+      adminTokenSecret: lumen-backup-token  # deprecated no-op; kept so pre-#2764 CRs still apply
 ```
 
 Use `s3://` or `gs://` for production object-storage snapshots. GCS accepts an
@@ -1170,6 +1290,12 @@ explicit `GOOGLE_OAUTH_ACCESS_TOKEN`/`GCS_ACCESS_TOKEN` and otherwise resolves
 the GCE/GKE metadata-server token used by Workload Identity. `file://` remains
 a local-dev, migration, or break-glass sink and does not satisfy the production
 service archetype.
+
+`adminTokenSecret` (the Secret name above) is deprecated and has no effect as of
+#2764; setting it generates no error but no bearer token is injected. The
+backup runner authenticates as its own ServiceAccount, with a projected
+audience-bound token the cluster mints for it — there is no Secret, and no
+Google-issued token, anywhere on that path.
 
 Omitting `spec.serving.backup` renders no CronJob. That is acceptable for local
 development or manual recovery exercises, but a production Lumen instance is not
@@ -1181,14 +1307,17 @@ The CronJob (and any ad hoc invocation) drives the same verb:
 ```
 lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 \
   --dest s3://my-bucket/lumen-backups \
-  [--token <admin-bearer-token>] \
   [--retention-secs 604800]
 ```
 
-`--url` points at the serving Service (not a specific pod); `--token` falls
-back to the `LUMEN_BACKUP_TOKEN` env var, which is how the CronJob injects
-`spec.serving.backup.adminTokenSecret` (`secretKeyRef` into that env var —
-skip it when `spec.auth: off`). The verb GETs `/admin/backup`, hands the
+`--url` points at the serving Service (not a specific pod). There is no
+credential flag: #2871 removed the metadata-server ID token this used to mint,
+and #2873 removed the bearer flag that was left, because a credential passed as
+an argument is a credential in `ps` and in `kubectl describe`. The request
+carries no `Authorization` header, which is correct against today's only
+startable mode (`auth: disabled`); the projected, audience-bound ServiceAccount
+token the backup runner will present instead is #2877. The verb GETs
+`/admin/backup`, hands the
 bytes to the `libs/service-backup` destination sink named by `--dest`, prunes
 by `--retention-secs` if given, and prints the resulting `BackupRunResult` as
 JSON. It needs the `backup` Cargo feature (pulled in transitively by

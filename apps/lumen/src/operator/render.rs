@@ -19,8 +19,12 @@
 
 use serde_json::{json, Value};
 
-use super::crd::Lumen;
-use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
+use super::crd::{AuthMode, Lumen};
+use service_k8s::render::{
+    self, projected_token::ProjectedServiceAccountToken, rbac, RenderCtx, ServiceStatefulSet,
+    WorkloadVolumeClaim,
+};
+use service_k8s::service::PruneTarget;
 
 const APP: &str = "lumen";
 const MANAGER: &str = "lumen-operator";
@@ -30,16 +34,60 @@ const COMPONENT: &str = "server";
 const CLIENT_PORT: i32 = 7373;
 const RAFT_PORT: i32 = 7374;
 const BACKUP_COMPONENT: &str = "backup";
+/// Component label for the cluster-scoped auth-delegation binding (#2876). Its
+/// own value, not `server`: the sweep in [`super::reconcile`] selects on it,
+/// and sharing a component with the namespaced serving children would make
+/// that selector match objects the sweep has no business deleting.
+const AUTH_DELEGATION_COMPONENT: &str = "auth-delegation";
+/// The built-in ClusterRole granting `create` on `tokenreviews` and
+/// `subjectaccessreviews` — the two APIs delegated request auth is made of.
+/// Kubernetes ships and maintains it; lumen binds it rather than copying it.
+const AUTH_DELEGATOR_ROLE: &str = "system:auth-delegator";
+/// Which namespace a cluster-scoped child belongs to (#2876). The recommended
+/// label set has no equivalent, and the object has no `metadata.namespace` of
+/// its own to read.
+const OWNER_NAMESPACE_LABEL: &str = "lumen.dev/owner-namespace";
 const HEADLESS_ENV_KEY: &str = "LUMEN_HEADLESS_SERVICE";
-const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
-const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
-const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
-const TOKEN_REGISTRY_FILE: &str = "/var/run/secrets/lumen/token-registry.json";
 // #1387: embedded-mode persistence subtree, disjoint from the raft backend's
 // `/var/lib/lumen/raft` default (`LUMEN_RAFT_DATA_DIR` in `bin/lumen.rs`) so
 // both can coexist on the one `raft` PVC mount across a `replicasPerShard`
 // change without colliding.
 const EMBEDDED_DATA_DIR: &str = "/var/lib/lumen/data";
+/// Where `spec.peerTlsSecret` is projected into every Raft member (#2890).
+/// Lumen-specific and disjoint from `/var/lib/lumen`: peer identity is
+/// read-only credential material, not index state, and must not land on the
+/// PVC that survives a pod.
+const PEER_TLS_MOUNT_PATH: &str = "/var/run/secrets/lumen-peer";
+/// The pod-local volume carrying it.
+const PEER_TLS_VOLUME: &str = "lumen-peer-tls";
+/// The three keys the Secret must carry — the same contract Relay and Defer
+/// project, and exactly what `peer_tls::PeerTlsConfig` loads.
+pub const PEER_TLS_KEYS: [&str; 3] = ["tls.crt", "tls.key", "ca.crt"];
+/// Where `spec.servingTlsSecret` is projected (#3113 R2). A separate path from
+/// [`PEER_TLS_MOUNT_PATH`] because the two identities are separate: one mount
+/// per listener means a misconfiguration points a listener at nothing rather
+/// than at the other listener's key.
+const SERVING_TLS_MOUNT_PATH: &str = "/var/run/secrets/lumen-serving";
+/// The pod-local volume carrying it.
+const SERVING_TLS_VOLUME: &str = "lumen-serving-tls";
+/// The three keys the serving Secret must carry — same shape as the peer
+/// Secret, different subject.
+pub const SERVING_TLS_KEYS: [&str; 3] = ["tls.crt", "tls.key", "ca.crt"];
+/// The Kubernetes Service DNS names the serving leaf answers to (#3113 R2).
+///
+/// Both forms, because both are real: in-cluster callers resolve the short
+/// `<service>.<namespace>.svc` and `lumen connect` addresses the fully
+/// qualified one, and a certificate carrying only one of them fails hostname
+/// verification for half its callers. Kept identical to what
+/// [`super::certificate::serving_profile`] requests — the names the operator
+/// asks for and the names the pod is told to expect are one list, read twice.
+pub fn serving_dns_names(lumen: &Lumen) -> Vec<String> {
+    let (name, ns) = (instance(lumen), namespace(lumen));
+    vec![
+        format!("{name}.{ns}.svc"),
+        format!("{name}.{ns}.svc.cluster.local"),
+    ]
+}
 
 /// Resolve the instance name (defaults to `lumen` only when metadata is absent,
 /// which never happens for a real CR).
@@ -80,28 +128,6 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
     let uid = lumen.metadata.uid.clone()?;
     let name = lumen.metadata.name.clone()?;
     Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
-}
-
-/// Which shared projection source (if any) supplies the token registry file.
-/// `tokensSecret` wins over `tokensSecretProviderClass` when both are set.
-fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_>> {
-    if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
-        return None;
-    }
-    if let Some(secret) = lumen.spec.tokens_secret.as_deref() {
-        return Some(render::TokenRegistrySource::Secret {
-            name: secret,
-            key: TOKEN_REGISTRY_KEY,
-        });
-    }
-    lumen
-        .spec
-        .tokens_secret_provider_class
-        .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi {
-            provider_class,
-            driver: lumen.spec.tokens_secret_csi_driver.as_deref(),
-        })
 }
 
 /// Stateful data pods are never a direct HPA target. A vanilla HPA changes
@@ -156,11 +182,15 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
     // points at a pre-existing, externally-managed one (#2497): the operator
     // must never create, own, or delete an SA it doesn't render.
     if lumen.spec.service_account_name.is_none() {
-        out.push(render::service_account(&cx, COMPONENT));
+        let mut sa = render::service_account(&cx, COMPONENT);
+        attach_service_account_annotations(&mut sa, &lumen.spec.service_account_annotations);
+        out.push(sa);
     }
+    let mut bsa = backup_service_account(&cx);
+    attach_service_account_annotations(&mut bsa, &lumen.spec.service_account_annotations);
+    out.push(bsa);
+    out.push(serving_configmap(lumen, &cx));
     out.extend([
-        backup_service_account(&cx),
-        serving_configmap(lumen, &cx),
         serving_statefulset(lumen, &cx, &headless),
         render::headless_service_with_ports(
             &cx,
@@ -174,6 +204,9 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
     ]);
     out.push(render::pdb(&cx, &name, COMPONENT, 1));
+    if lumen.spec.network_policy {
+        out.push(serving_network_policy(&cx, &name));
+    }
     if lumen.spec.observability {
         out.push(service_monitor(&cx));
         out.push(prometheus_rule(&cx));
@@ -183,6 +216,183 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         out.push(cj);
     }
     out
+}
+
+/// Children a previous spec rendered that this one no longer wants (#2603).
+///
+/// Only the NetworkPolicy qualifies today, and it qualifies because it is the
+/// one conditional child whose *presence* changes runtime behavior rather than
+/// just adding an object. Leaving a stale ServiceMonitor around scrapes a
+/// metric nobody reads; leaving a stale NetworkPolicy around keeps dropping
+/// traffic the spec has stopped asking to drop. Flipping `networkPolicy` to
+/// `false` therefore has to actively remove it, or the field is opt-in only.
+///
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn prunes(lumen: &Lumen) -> Vec<PruneTarget> {
+    if lumen.spec.network_policy {
+        return Vec::new();
+    }
+    vec![PruneTarget {
+        api_version: "networking.k8s.io/v1",
+        kind: "NetworkPolicy",
+        // Resolved through the same `instance` helper `render` uses, so this is
+        // the exact inverse of the branch that creates it rather than an
+        // independent guess at the name.
+        name: instance(lumen),
+    }]
+}
+
+/// The ServiceAccount the serving pods actually run as (#2497, #2876).
+///
+/// Two callers depend on this being one answer: [`serving_statefulset`] puts it
+/// in the pod spec, and [`auth_delegator_binding`] grants it delegated review.
+/// If they resolved it separately, a spec that names an external SA would run
+/// pods as one identity and authorize a different one — and the symptom would
+/// be every request failing authentication, not an obviously wrong manifest.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub(crate) fn serving_service_account_name(lumen: &Lumen) -> String {
+    lumen
+        .spec
+        .service_account_name
+        .clone()
+        .unwrap_or_else(|| instance(lumen))
+}
+
+/// The cluster-scoped ClusterRoleBinding's name for this instance (#2876).
+///
+/// Dots, not dashes, join the two components. A cluster-scoped name has no
+/// namespace to disambiguate it, so `lumen-<ns>-<name>-…` would map
+/// `(a-b, c)` and `(a, b-c)` to one object — two Lumens in different
+/// namespaces silently sharing a binding, each granting the other's
+/// ServiceAccount delegated review. A namespace is a DNS-1123 *label* and
+/// cannot contain a dot, so splitting at the first dot recovers the namespace
+/// exactly and the mapping is injective.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn auth_delegator_binding_name(lumen: &Lumen) -> String {
+    format!(
+        "lumen.{}.{}.auth-delegator",
+        namespace(lumen),
+        instance(lumen)
+    )
+}
+
+/// The exact labels [`auth_delegator_binding`] stamps.
+///
+/// These are load-bearing, not decoration. A cluster-scoped object cannot be
+/// owned by a namespaced CR (see [`service_k8s::render::rbac`]), so labels are
+/// the only link back to the instance — and the only thing the cleanup sweep
+/// in [`super::reconcile`] can use to prove lumen rendered a binding before
+/// deleting it. `lumen.dev/owner-namespace` exists because the recommended
+/// label set has no way to say which namespace an object belongs *to* when the
+/// object itself has none.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn auth_delegator_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> {
+    let mut labels = std::collections::BTreeMap::new();
+    labels.insert("app.kubernetes.io/name".to_string(), APP.to_string());
+    labels.insert("app.kubernetes.io/instance".to_string(), instance(lumen));
+    labels.insert(
+        "app.kubernetes.io/component".to_string(),
+        AUTH_DELEGATION_COMPONENT.to_string(),
+    );
+    labels.insert(
+        "app.kubernetes.io/managed-by".to_string(),
+        MANAGER.to_string(),
+    );
+    labels.insert("app.kubernetes.io/part-of".to_string(), APP.to_string());
+    labels.insert(OWNER_NAMESPACE_LABEL.to_string(), namespace(lumen));
+    labels
+}
+
+/// The ClusterRoleBinding that lets the serving ServiceAccount ask the API
+/// server to validate a caller's token and authorize the request (#2876).
+///
+/// Lumen delegates both halves of request auth: `TokenReview` decides who the
+/// caller is, `SubjectAccessReview` decides what they may do. Both are
+/// cluster-scoped review APIs, so no namespaced RoleBinding can grant them —
+/// this has to be a ClusterRoleBinding or the serving process cannot
+/// authenticate anyone.
+///
+/// It binds the built-in `system:auth-delegator`. Rendering a replacement
+/// ClusterRole would mean maintaining a private copy of a grant Kubernetes
+/// already maintains, and every future upstream change to it would be a
+/// divergence nobody is watching for.
+///
+/// Exactly one subject, always: the resolved serving ServiceAccount. Not
+/// `system:authenticated`, not the namespace's ServiceAccount group, not the
+/// operator's own identity, not the backup runner's, not a client's. Each of
+/// those would hand delegated authentication review to a population rather
+/// than to a process.
+///
+/// This is deliberately *not* part of [`render`]. Everything that function
+/// returns is applied into the CR's namespace and owned by the CR; this object
+/// is neither, and mixing it in would either be applied to a namespaced
+/// endpoint that rejects it or stamped with an owner reference that gets it
+/// garbage collected. [`super::reconcile`] applies it on its own path and
+/// sweeps it on its own path.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn auth_delegator_binding(lumen: &Lumen) -> Value {
+    let sa = serving_service_account_name(lumen);
+    let ns = namespace(lumen);
+    let subjects = [rbac::ServiceAccountSubject {
+        namespace: &ns,
+        name: &sa,
+    }];
+    rbac::cluster_role_binding(rbac::ClusterRoleBinding {
+        name: &auth_delegator_binding_name(lumen),
+        labels: serde_json::to_value(auth_delegator_labels(lumen)).unwrap_or_else(|_| json!({})),
+        cluster_role: AUTH_DELEGATOR_ROLE,
+        subjects: &subjects,
+    })
+}
+
+/// The optional per-instance NetworkPolicy (#2603), rendered only when
+/// `spec.networkPolicy` is set.
+///
+/// Lumen's two ports have genuinely different audiences: `7373` is the search
+/// API any workload may call, `7374` carries Raft — append entries, vote
+/// requests, snapshot transfer — and must be reachable only from this
+/// instance's own pods. The shared helper expresses exactly that split, so the
+/// isolation posture is one contract across every service that adopts it
+/// rather than six hand-written policies that drift.
+///
+/// The backup CronJob is deliberately *not* selected: it runs under its own
+/// `<instance>-backup` component label, calls the client Service like any other
+/// in-cluster client, and needs egress to object storage — the serving pods'
+/// posture would be wrong for it in both directions.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+fn serving_network_policy(cx: &RenderCtx<'_>, name: &str) -> Value {
+    render::common::network_policy(render::common::NetworkPolicy {
+        cx,
+        name,
+        component: COMPONENT,
+        client_ports: vec![CLIENT_PORT],
+        peer_ports: vec![RAFT_PORT],
+        // Lumen's operator path never configures the NATS WAL relay; backups
+        // reach object storage over TLS, which the shared baseline already
+        // allows.
+        extra_egress: vec![],
+    })
+}
+
+fn attach_service_account_annotations(
+    sa: &mut Value,
+    annotations: &std::collections::BTreeMap<String, String>,
+) {
+    if annotations.is_empty() {
+        return;
+    }
+    if let Some(meta) = sa.get_mut("metadata").and_then(|m| m.as_object_mut()) {
+        if let Some(existing) = meta.get_mut("annotations").and_then(|a| a.as_object_mut()) {
+            for (k, v) in annotations {
+                existing.insert(k.clone(), Value::String(v.clone()));
+            }
+        } else {
+            meta.insert(
+                "annotations".to_string(),
+                serde_json::to_value(annotations).unwrap(),
+            );
+        }
+    }
 }
 
 /// A stable, per-instance identity for scheduled backup jobs.
@@ -200,6 +410,23 @@ fn backup_service_account(cx: &RenderCtx<'_>) -> Value {
         "kind": "ServiceAccount",
         "metadata": cx.meta(&name, BACKUP_COMPONENT),
     })
+}
+
+/// The credential a Lumen control-plane workload presents to a serving
+/// instance (#2877): the operator's reshard driver and the backup runner.
+///
+/// One definition, two consumers, and the mount path is the same constant
+/// [`crate::auth::control_plane_token_file`] reads — a renderer that invented
+/// its own path would produce a pod with a token mounted somewhere the client
+/// never looks, and the symptom would be an authentication failure rather than
+/// a missing file.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub(crate) fn control_plane_token() -> ProjectedServiceAccountToken<'static> {
+    ProjectedServiceAccountToken::new(
+        crate::auth::CONTROL_PLANE_TOKEN_VOLUME,
+        crate::auth::CONTROL_PLANE_TOKEN_MOUNT,
+        crate::auth::AUDIENCE,
+    )
 }
 
 /// The optional backup CronJob (#808): rendered only when
@@ -232,13 +459,26 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         args.push("--retention-secs".to_string());
         args.push(secs.to_string());
     }
-    let mut env = Vec::new();
-    if let Some(secret) = &policy.admin_token_secret {
-        env.push(json!({
-            "name": "LUMEN_BACKUP_TOKEN",
-            "valueFrom": { "secretKeyRef": { "name": secret, "key": "token" } },
-        }));
+    // The runner's own credential (#2877): a token minted for the backup
+    // ServiceAccount, bound to Lumen's audience, expiring in ten minutes, and
+    // rotated in place by the kubelet. The projection itself is
+    // unconditional — one pod shape whatever `spec.auth` says — because a
+    // mounted file nobody reads costs nothing, while a manifest that changes
+    // shape with an auth toggle is a second thing to get wrong.
+    //
+    // Presenting it is conditional. A fleet with `auth: disabled` rejects a
+    // *presented* bearer (#2871), so the flag that makes the runner read the
+    // file only appears when the fleet actually requires an identity.
+    //
+    // What travels on the CronJob is the path, not the token: the material
+    // never appears in the pod spec, in `kubectl describe`, or in whatever
+    // pipeline ships that manifest to the cluster.
+    let projection = control_plane_token();
+    if matches!(lumen.spec.auth, AuthMode::Required) {
+        args.push("--token-file".to_string());
+        args.push(projection.file_path());
     }
+    let env: Vec<serde_json::Value> = Vec::new();
     let image_pull_policy = lumen
         .spec
         .image_pull_policy
@@ -255,8 +495,8 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         args,
         env,
         env_from: vec![],
-        volumes: vec![],
-        volume_mounts: vec![],
+        volumes: vec![projection.volume()],
+        volume_mounts: vec![projection.mount()],
         service_account_name: Some(&cron_name),
         cpu: "100m",
         memory: "128Mi",
@@ -275,18 +515,61 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
 /// pod would be an uncoordinated shard-0 copy with no consensus link.
 fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Value {
     let s = &lumen.spec.serving;
+    let sa_name = serving_service_account_name(lumen);
     let res = render::requested_resources(&s.cpu, &s.memory);
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
-    if let Some(source) = token_registry_source(lumen) {
-        let projection = render::TokenRegistryProjection {
-            volume_name: TOKEN_REGISTRY_VOLUME,
-            mount_path: TOKEN_REGISTRY_MOUNT_DIR,
-            source,
-        };
-        volume_mounts.push(render::token_registry_mount(&projection));
-        volumes.push(render::token_registry_volume(&projection));
+    // #2890 R2: the instance's Raft identity, projected read-only. `items`
+    // rather than a whole-Secret mount so the three keys the peer transport
+    // loads are the three keys that reach the pod — an extra key added to the
+    // Secret later cannot silently become part of what the container sees.
+    if let Some(secret) = lumen.spec.peer_tls_secret.as_deref() {
+        volumes.push(json!({
+            "name": PEER_TLS_VOLUME,
+            "secret": {
+                "secretName": secret,
+                "items": PEER_TLS_KEYS
+                    .iter()
+                    .map(|key| json!({ "key": key, "path": key }))
+                    .collect::<Vec<_>>(),
+            },
+        }));
+        volume_mounts.push(json!({
+            "name": PEER_TLS_VOLUME,
+            "mountPath": PEER_TLS_MOUNT_PATH,
+            "readOnly": true,
+        }));
     }
+    // #3113 R2: the serving leaf, projected the same way and to its own path.
+    // Kubernetes refreshes a projected Secret in place, so a renewed leaf
+    // reaches the container without a new pod — which is what makes R9's
+    // "no Pod rollout" a property of the projection rather than of the
+    // controller's restraint.
+    if let Some(secret) = lumen.spec.serving_tls_secret.as_deref() {
+        volumes.push(json!({
+            "name": SERVING_TLS_VOLUME,
+            "secret": {
+                "secretName": secret,
+                "items": SERVING_TLS_KEYS
+                    .iter()
+                    .map(|key| json!({ "key": key, "path": key }))
+                    .collect::<Vec<_>>(),
+            },
+        }));
+        volume_mounts.push(json!({
+            "name": SERVING_TLS_VOLUME,
+            "mountPath": SERVING_TLS_MOUNT_PATH,
+            "readOnly": true,
+        }));
+    }
+    // Probes follow the port. A kubelet that spoke cleartext to a TLS listener
+    // would read every failed handshake as an unhealthy pod and restart a
+    // container that was serving correctly (#3113 R2/AC2).
+    let probe_scheme = if lumen.spec.serving_tls_secret.is_some() {
+        "HTTPS"
+    } else {
+        "HTTP"
+    };
     let spread = |key: &str| {
         json!({
             "maxSkew": 1,
@@ -327,14 +610,10 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         voter_count: lumen.spec.voter_count,
         headless_env_key: HEADLESS_ENV_KEY,
         // External SA name wins when configured (#2497); default to the
-        // operator-owned per-instance SA when unset.
-        service_account_name: Some(
-            lumen
-                .spec
-                .service_account_name
-                .as_deref()
-                .unwrap_or(cx.name),
-        ),
+        // operator-owned per-instance SA when unset. Resolved through the same
+        // helper the auth-delegator binding uses, so the identity the pods run
+        // as and the identity that is granted delegated review cannot diverge.
+        service_account_name: Some(&sa_name),
         env: serving_env(lumen),
         env_from: vec![],
         resources: res,
@@ -347,22 +626,34 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         container_security_context: Some(render::restricted_container_security_context()),
         termination_grace_period_seconds: Some(s.grace_secs),
         readiness_probe: Some(json!({
-            "httpGet": { "path": "/readyz", "port": "http" },
+            "httpGet": { "path": "/readyz", "port": "http", "scheme": probe_scheme },
             "initialDelaySeconds": 5, "periodSeconds": 10,
             "timeoutSeconds": 3, "failureThreshold": 60,
         })),
         liveness_probe: Some(json!({
-            "httpGet": { "path": "/healthz", "port": "http" },
+            "httpGet": { "path": "/healthz", "port": "http", "scheme": probe_scheme },
             "initialDelaySeconds": 15, "periodSeconds": 30,
             "timeoutSeconds": 5, "failureThreshold": 3,
         })),
         startup_probe: Some(json!({
-            "httpGet": { "path": "/healthz", "port": "http" },
+            "httpGet": { "path": "/healthz", "port": "http", "scheme": probe_scheme },
             "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
         })),
         volumes,
         volume_mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
+        // `spec.placement` names the node pool; the anti-affinity above stays
+        // operator-owned so asking for a pool can never cost the constraint
+        // that keeps two replicas of a shard off one host.
+        node_selector: (!lumen.spec.placement.node_selector.is_empty())
+            .then(|| json!(lumen.spec.placement.node_selector)),
+        tolerations: lumen
+            .spec
+            .placement
+            .tolerations
+            .iter()
+            .map(|t| json!(t))
+            .collect(),
         topology_spread_constraints: vec![
             spread("topology.kubernetes.io/zone"),
             spread("kubernetes.io/hostname"),
@@ -443,13 +734,6 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
     if !lumen.spec.shard_map.assignments.is_empty() {
         env.push(from_cfg("SHARD_MAP_ASSIGNMENTS"));
     }
-    // Strict auth: the registry is mounted from a Secret or CSI-provided projection.
-    if token_registry_source(lumen).is_some() {
-        env.push(json!({
-            "name": "LUMEN_TOKEN_REGISTRY_FILE",
-            "value": TOKEN_REGISTRY_FILE,
-        }));
-    }
     if let Some(bootstrap) = &lumen.spec.serving.bootstrap {
         env.push(json!({
             "name": "LUMEN_BOOTSTRAP_SEED_URI",
@@ -461,6 +745,34 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
                 "value": limit.to_string(),
             }));
         }
+    }
+    // #2890 R2: the four env vars `lumen::tls::PeerTlsConfig::from_env` reads,
+    // pointing at the projected Secret. `LUMEN_PEER_MTLS=on` is what makes the
+    // peer listener *require* a client certificate rather than merely offer
+    // TLS, so it is set alongside the paths and never on its own.
+    if lumen.spec.peer_tls_secret.is_some() {
+        env.push(json!({ "name": "LUMEN_PEER_MTLS", "value": "on" }));
+        env.push(json!({ "name": "LUMEN_PEER_TLS_CERT", "value": format!("{PEER_TLS_MOUNT_PATH}/tls.crt") }));
+        env.push(json!({ "name": "LUMEN_PEER_TLS_KEY", "value": format!("{PEER_TLS_MOUNT_PATH}/tls.key") }));
+        env.push(json!({ "name": "LUMEN_PEER_TLS_CA", "value": format!("{PEER_TLS_MOUNT_PATH}/ca.crt") }));
+    }
+    // #3113 R1: the serving listener's own four. `LUMEN_TLS=on` is what turns
+    // the client port from h2c into a TLS listener that refuses rather than
+    // downgrades; the paths alone would leave it cleartext, and the flag alone
+    // would leave it with nothing to serve, so all four move together.
+    if lumen.spec.serving_tls_secret.is_some() {
+        env.push(json!({ "name": "LUMEN_TLS", "value": "on" }));
+        env.push(json!({ "name": "LUMEN_TLS_CERT", "value": format!("{SERVING_TLS_MOUNT_PATH}/tls.crt") }));
+        env.push(json!({ "name": "LUMEN_TLS_KEY", "value": format!("{SERVING_TLS_MOUNT_PATH}/tls.key") }));
+        env.push(json!({ "name": "LUMEN_TLS_CA", "value": format!("{SERVING_TLS_MOUNT_PATH}/ca.crt") }));
+        // The names the leaf must answer to, from the operator that asked for
+        // it — the pod has no other way to learn which Service it fronts, and
+        // guessing from its own hostname would accept a certificate issued for
+        // a different Service in the same namespace.
+        env.push(json!({
+            "name": "LUMEN_TLS_SERVER_NAMES",
+            "value": serving_dns_names(lumen).join(","),
+        }));
     }
     // #1387: `LUMEN_WAL=auto` above resolves to `Embedded` (`MemWal::new()`,
     // RAM-only) whenever `resolve_wal_backend` sees no raft cluster context —
@@ -549,11 +861,9 @@ fn service_monitor(cx: &RenderCtx<'_>) -> Value {
 }
 
 // #2475: alerts are added here only when the metric an `expr` reads is
-// actually published today. `LumenRaftLeaderAbsent` and
-// `LumenAuthRegistryReloadFailing` read this pod's self-scraped
-// `lumen_raft_leader_known` / `lumen_auth_registry_reload_failures_total`
-// gauges/counters (`src/metrics.rs`, wired in `src/bin/lumen.rs` and
-// `src/auth.rs`). `LumenPvcNearFull` reads the kubelet's
+// actually published today. `LumenRaftLeaderAbsent` reads this pod's
+// self-scraped `lumen_raft_leader_known` gauge (`src/metrics.rs`, wired in
+// `src/bin/lumen.rs`). `LumenPvcNearFull` reads the kubelet's
 // `kubelet_volume_stats_*` series against the `raft-<name>-<ordinal>`
 // StatefulSet PVC name pattern (`volumeClaimTemplates` name is `raft`, see
 // `serving_statefulset`). `LumenStorageDegraded` (#2516) reads
@@ -674,19 +984,6 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                         "annotations": {
                             "summary": "lumen pod {{ $labels.pod }} is in ENOSPC degraded read-only mode in {{ $labels.namespace }} -- mutating writes are being fast-failed with 507 storage_full",
                             "runbook": "kubectl exec -n {{ $labels.namespace }} {{ $labels.pod }} -- df -h; a durable write (AOF append, segment/RDB checkpoint, or raft log append) hit ENOSPC on the raft-<ordinal> PVC -- LumenPvcNearFull should have fired earlier as the early warning, so also check why it didn't. Free space (prune old snapshots/segments, or expand volumeClaimTemplates if the StorageClass supports online resize); the pod's periodic re-probe (LUMEN_STORAGE_FULL_REPROBE_SECS, default 30s) clears this automatically once a probe write succeeds, or restart the pod. If disk pressure traces back to an unfinished reshard leaving stale buckets, see LumenReshardWorkflowStalled too.",
-                        },
-                    },
-                    {
-                        "alert": "LumenAuthRegistryReloadFailing",
-                        "expr": format!(
-                            "increase(lumen_auth_registry_reload_failures_total{{namespace=\"{}\"}}[15m]) > 0",
-                            cx.ns
-                        ),
-                        "for": "5m",
-                        "labels": { "severity": "warning" },
-                        "annotations": {
-                            "summary": "lumen bearer-token registry hot-reload is failing in {{ $labels.namespace }} -- serving the last known-good registry, not the latest rotation",
-                            "runbook": "kubectl logs -n {{ $labels.namespace }} <serving-pod> | grep credential_registry_reload; validate the mounted LUMEN_TOKEN_REGISTRY_FILE Secret/CSI projection is well-formed JSON.",
                         },
                     },
                     {

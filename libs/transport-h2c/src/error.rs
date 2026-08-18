@@ -2,6 +2,7 @@
 // CODEGEN-BEGIN
 //! Error type for the frame-level [`H2cManager`](crate::H2cManager).
 
+use http::Method;
 use std::io;
 use std::time::Duration;
 
@@ -33,6 +34,10 @@ pub enum H2cError {
     /// Building the outbound request failed (bad URI / header).
     #[error("invalid request: {0}")]
     Request(#[from] http::Error),
+    #[error("request {method} refused by the peer: {cause}")]
+    Refused { method: Method, cause: String },
+    #[error("request {method} outcome is ambiguous: {cause}")]
+    Ambiguous { method: Method, cause: String },
 }
 
 /// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-error-rs.md#source
@@ -45,6 +50,14 @@ impl H2cError {
             H2cError::Connect { .. } | H2cError::NoConnection(_) => true,
             _ => false,
         }
+    }
+
+    pub fn is_refused(&self) -> bool {
+        matches!(self, Self::Refused { .. })
+    }
+
+    pub fn is_ambiguous(&self) -> bool {
+        matches!(self, Self::Ambiguous { .. })
     }
 }
 

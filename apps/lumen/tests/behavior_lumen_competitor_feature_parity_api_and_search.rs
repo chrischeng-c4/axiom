@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-competitor-feature-parity-api-and-search
-// @capability competitor-feature-parity
-// @claim query-planner-boolean-eval-roaring-postings
+// @capability querying
+// @claim lexical-and-structured-query
 // @contract serve-functional-api-and-search-correctness
 // @category behavior
 // @required_for_production true

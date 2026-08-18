@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-k8s-topology-hpa-handoff
 // @capability kubernetes-native-deployment
-// @claim topology-transition-hpa-handoff-deletion
+// @claim live-operator-reconciliation
 // @contract k8s-topology-hpa-handoff
 // @category behavior
 // @required_for_production true

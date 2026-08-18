@@ -103,6 +103,84 @@ wait_for_ready_pod() {
   return 1
 }
 
+wait_for_cron_job_exists() {
+  local name="$1"
+  local deadline=$(( $(date +%s) + 60 ))
+  while [[ $(date +%s) -lt "$deadline" ]]; do
+    if kubectl -n "$NAMESPACE" get cronjob "$name" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "!! backup CronJob/$name was not rendered within 60s of enabling spec.backup" >&2
+  return 1
+}
+
+wait_for_cron_job_absent() {
+  local name="$1"
+  local deadline=$(( $(date +%s) + 60 ))
+  while [[ $(date +%s) -lt "$deadline" ]]; do
+    if ! kubectl -n "$NAMESPACE" get cronjob "$name" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "!! backup CronJob/$name was still present 60s after removing spec.backup" >&2
+  return 1
+}
+
+# AC3. The unit tests assert what `conditions()` computes; only a cluster
+# proves the result survives the round trip -- the CRD's status schema, the
+# status subresource, and the merge patch that writes it back.
+wait_for_conditions() {
+  local deadline=$(( $(date +%s) + 120 ))
+  local types=""
+  while [[ $(date +%s) -lt "$deadline" ]]; do
+    types="$(kubectl -n "$NAMESPACE" get tape "$TAPE_NAME" \
+      -o jsonpath='{.status.conditions[*].type}' 2>/dev/null || true)"
+    if [[ "$types" == *Ready* && "$types" == *Progressing* \
+       && "$types" == *StorageHealthy* && "$types" == *BackupConfigured* ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "!! status.conditions never carried all four types (last saw: '$types')" >&2
+  return 1
+}
+
+assert_conditions_carry_reason_and_message() {
+  local type_ reason message
+  for type_ in Ready Progressing StorageHealthy BackupConfigured; do
+    reason="$(kubectl -n "$NAMESPACE" get tape "$TAPE_NAME" \
+      -o jsonpath="{.status.conditions[?(@.type==\"$type_\")].reason}")"
+    message="$(kubectl -n "$NAMESPACE" get tape "$TAPE_NAME" \
+      -o jsonpath="{.status.conditions[?(@.type==\"$type_\")].message}")"
+    if [[ -z "$reason" || -z "$message" ]]; then
+      echo "!! condition $type_ carries reason='$reason' message='$message'" >&2
+      return 1
+    fi
+    echo "   $type_ = $reason -- $message"
+  done
+}
+
+# The condition tracks the live spec, not the spec at creation time. Pairing
+# this with the CronJob assertions makes the backup toggle prove both halves
+# of #3054 at once: the object lifecycle and the status projection.
+assert_condition_status() {
+  local type_="$1" want="$2" got=""
+  local deadline=$(( $(date +%s) + 60 ))
+  while [[ $(date +%s) -lt "$deadline" ]]; do
+    got="$(kubectl -n "$NAMESPACE" get tape "$TAPE_NAME" \
+      -o jsonpath="{.status.conditions[?(@.type==\"$type_\")].status}" 2>/dev/null || true)"
+    if [[ "$got" == "$want" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "!! condition $type_ is '$got' after 60s, expected '$want'" >&2
+  return 1
+}
+
 wait_for_api() {
   local deadline=$(( $(date +%s) + 120 ))
   while [[ $(date +%s) -lt "$deadline" ]]; do
@@ -174,6 +252,11 @@ spec:
   storage: 1Gi
   graceSecs: 1
   logLevel: info
+  # Stated, not omitted: since #2765 an absent spec.auth defaults to required,
+  # and a CR that asks for auth without naming a token source renders a pod
+  # that fails startup for want of a registry file. This leg proves PVC-retained
+  # replay across a pod replacement, not authentication, so it opts out by name.
+  auth: disabled
 EOF
   wait_for_statefulset
   kubectl -n "$NAMESPACE" rollout status statefulset/"$TAPE_NAME" --timeout=240s
@@ -228,6 +311,46 @@ step "confirm API after replacement" wait_for_api
 step "verify durable replay after replacement" assert_replay '["before-restart"]'
 step "append fresh post-restart event" append_event "after-restart"
 step "verify ordered replay across replacement" assert_replay '["before-restart","after-restart"]'
+
+# #3054 R5/AC1: prove the prunes() round trip in both directions on the same
+# CR this script already created -- adding spec.backup renders the CronJob,
+# removing it prunes the CronJob. Uses kubectl patch (no heredoc), so this is
+# not subject to the apply_tape_instance CR heredoc's unquoted-<<EOF trap
+# above.
+#
+# spec.observability's ServiceMonitor/PrometheusRule half (AC2) is not proven
+# here, and is not implemented either -- prunes() deliberately does not name
+# them. This cluster is exactly why. It has no prometheus-operator, so
+# monitoring.coreos.com/v1 is not served at all, and a PruneTarget in an
+# unserved group makes the apiserver answer the controller's GET with a
+# plain-text `404 page not found` that kube cannot parse as NotFound. The error
+# propagates out of prune_object and fails the whole reconcile -- apply and
+# status write included -- every 15s, forever. The first version of this change
+# did name them, and this gate is what caught it: the symptom was an empty
+# status.conditions, nothing mentioning pruning. See #3079 for the libs fix;
+# until it lands, tests/operator.rs's built-in-API-group allow-list is the
+# guard. Installing prometheus-operator here to manufacture coverage would hide
+# precisely the condition a real vanilla cluster has.
+BACKUP_CRON_JOB="${TAPE_NAME}-backup"
+step "wait for status.conditions on the Tape CR" wait_for_conditions
+step "confirm every condition carries a reason and a message" \
+  assert_conditions_carry_reason_and_message
+step "confirm BackupConfigured is False before a schedule exists" \
+  assert_condition_status BackupConfigured False
+step "enable spec.backup on the existing Tape CR" \
+  kubectl -n "$NAMESPACE" patch tape "$TAPE_NAME" --type=merge -p \
+  '{"spec":{"backup":{"schedule":"*/5 * * * *","destination":"file:///tmp/tape-backup"}}}'
+step "wait for the operator to render the backup CronJob" \
+  wait_for_cron_job_exists "$BACKUP_CRON_JOB"
+step "confirm BackupConfigured flipped to True" \
+  assert_condition_status BackupConfigured True
+step "remove spec.backup from the same Tape CR" \
+  kubectl -n "$NAMESPACE" patch tape "$TAPE_NAME" --type=json -p \
+  '[{"op":"remove","path":"/spec/backup"}]'
+step "confirm BackupConfigured returned to False" \
+  assert_condition_status BackupConfigured False
+step "confirm the operator prunes the backup CronJob" \
+  wait_for_cron_job_absent "$BACKUP_CRON_JOB"
 
 echo ">> Tape operator Kind recovery dogfood PASS"
 # HANDWRITE-END

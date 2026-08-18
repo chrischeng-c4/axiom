@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-http2-ops-route-list
-// @capability http2-api-list
-// @claim ops-metadata-probe-and-metrics-route-list
+// @capability api-cli-agent-integration
+// @claim http2-openapi-and-client-interface
 // @contract http2-ops-route-list
 // @category behavior
 // @required_for_production true

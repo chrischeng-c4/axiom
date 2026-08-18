@@ -215,6 +215,7 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
     let spec = LumenSpec {
         image: "lumen:latest".into(),
         image_pull_policy: None,
+        placement: Default::default(),
         shard_count: 1,
         shard_map: ShardMapSpec {
             version: 0,
@@ -226,17 +227,17 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
         log_format: Default::default(),
         log_level: None,
         auth: Default::default(),
-        tokens_secret: None,
-        tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
         serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy {
             max_shard_bytes,
             ..Default::default()
         },
         observability: false,
+        network_policy: false,
         admission: None,
         service_account_name: None,
+        service_account_annotations: std::collections::BTreeMap::new(),
+        peer_tls_secret: None,
     };
     let mut lumen = Lumen::new(NAME, spec);
     lumen.metadata.namespace = Some(NAMESPACE.to_string());
@@ -447,7 +448,7 @@ impl ClusterControl for FakeControl {
         &self,
         _namespace: &str,
         _lumen: &Lumen,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Option<service_auth::k8s::ProjectedToken>> {
         Ok(None)
     }
 

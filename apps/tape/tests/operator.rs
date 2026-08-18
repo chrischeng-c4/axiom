@@ -12,9 +12,9 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
-use service_k8s::{ClusterSpec, ManagedService, ReadyFacts};
-use tape::operator::render::render;
-use tape::operator::{crd_yaml, Tape, TapeSpec};
+use service_k8s::{ClusterSpec, ConditionStatus, ManagedService, ReadyFacts};
+use tape::operator::render::{prunes, render};
+use tape::operator::{crd_yaml, AuthMode, Tape, TapeBackupSpec, TapeSpec};
 
 fn spec(replicas: u32) -> TapeSpec {
     TapeSpec {
@@ -30,7 +30,10 @@ fn spec(replicas: u32) -> TapeSpec {
         storage_class: None,
         grace_secs: 10,
         log_level: None,
-        auth: "off".into(),
+        // Not a literal: the fixture must track the real default, so a future
+        // flip of `AuthMode::default()` shows up in every render test at once
+        // instead of leaving them asserting a shape no user ever gets (#2765).
+        auth: AuthMode::default(),
         tokens_secret: None,
         tokens_secret_provider_class: None,
         tokens_secret_csi_driver: None,
@@ -39,6 +42,7 @@ fn spec(replicas: u32) -> TapeSpec {
         topics: None,
         observability: false,
         backup: None,
+        service_account_name: None,
     }
 }
 
@@ -110,11 +114,25 @@ fn crd_flattens_cluster_spec() {
         yaml.contains("minimum"),
         "normalized uints keep a minimum floor"
     );
-    assert!(
-        yaml.contains("default: \"off\""),
-        "the auth default must remain a string when Kubernetes parses YAML 1.1"
+    // #2765 — `auth` is a closed enum defaulting to the required state. As an
+    // unconstrained string, every value except the exact literal `"required"`
+    // rendered an open data plane, so `auth: requried` applied cleanly and the
+    // only signal was the absence of an env var in a pod nobody inspects.
+    assert_eq!(props["auth"]["default"], "required");
+    assert_eq!(
+        props["auth"]["enum"]
+            .as_sequence()
+            .expect("auth carries a closed enum"),
+        &vec![
+            serde_yaml::Value::from("disabled"),
+            serde_yaml::Value::from("required"),
+        ],
     );
-    assert_eq!(props["auth"]["default"], "off");
+    assert_eq!(
+        props["auth"]["type"], "string",
+        "the off-state is spelled `disabled`, so nothing in this schema is \
+         YAML 1.1 boolean-like and the enum can never be coerced to a bool"
+    );
     assert_eq!(
         include_str!("../k8s/operator/crd.yaml"),
         yaml,
@@ -180,7 +198,11 @@ fn render_emits_expected_child_objects() {
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
     assert_eq!(container["resources"]["requests"]["cpu"], "1");
     assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
-    assert!(container["resources"].get("limits").is_none());
+    // #3051: memory limit is present and equals the request for attributed OOMKill.
+    assert!(container["resources"]["limits"].is_object());
+    assert_eq!(container["resources"]["limits"]["memory"], "4Gi");
+    // No CPU limit; Burstable QoS only bounds memory.
+    assert!(container["resources"]["limits"].get("cpu").is_none());
     assert_eq!(sts["spec"]["revisionHistoryLimit"], 5);
     assert_eq!(sts["spec"]["updateStrategy"]["type"], "RollingUpdate");
     assert_eq!(
@@ -238,17 +260,28 @@ fn render_emits_expected_child_objects() {
 }
 // </HANDWRITE>
 
-/// R6 — TAPE_AUTH / TAPE_TOKEN_REGISTRY_FILE + the Secret volume render only
-/// when the CR sets `auth: required` AND names a `tokensSecret` (off by
-/// default — relay/lumen's pattern).
+/// R6 — TAPE_AUTH always states the resolved mode; TAPE_TOKEN_REGISTRY_FILE +
+/// the volume render only when the CR also names a source.
+///
+/// The env var used to be derived from whether a source was set, which made
+/// `auth: required` with no `tokensSecret` render a pod with no TAPE_AUTH at
+/// all — an open data plane produced by a CR that explicitly asked for
+/// authentication (#2765).
 #[test]
 fn token_registry_secret_wiring_is_opt_in() {
-    // Default CR: no auth env, no token-registry volume.
+    // Default CR: authentication required, no registry file. This pod fails
+    // startup naming the field to set, which is the whole point of the flip —
+    // the previous default served an open API and said nothing.
     let plain = Tape::new("tape", spec(1));
     let objs = render(&plain);
     let sts = of_kind(&objs, "StatefulSet");
-    let keys: Vec<&str> = env_of(sts).iter().map(|(k, _)| *k).collect();
-    assert!(!keys.contains(&"TAPE_AUTH"), "auth env must be opt-in");
+    let env = env_of(sts);
+    let keys: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
+    assert_eq!(
+        env.iter().find(|(n, _)| *n == "TAPE_AUTH").unwrap().1["value"],
+        "required",
+        "omitting spec.auth must render authentication required"
+    );
     assert!(!keys.contains(&"TAPE_TOKEN_REGISTRY_FILE"));
     let vols = sts["spec"]["template"]["spec"]["volumes"]
         .as_array()
@@ -258,21 +291,25 @@ fn token_registry_secret_wiring_is_opt_in() {
         "no token-registry volume without tokensSecret"
     );
 
-    // auth: required alone (no Secret named) still renders nothing — a
-    // half-configured CR must not produce a pod that crash-loops on a missing
-    // registry file.
-    let mut half = spec(1);
-    half.auth = "required".into();
-    let objs = render(&Tape::new("tape", half));
-    let keys: Vec<String> = env_of(of_kind(&objs, "StatefulSet"))
-        .iter()
-        .map(|(k, _)| k.to_string())
-        .collect();
-    assert!(!keys.contains(&"TAPE_AUTH".to_string()));
+    // The explicit opt-out. Spelled `disabled` in the CR, `off` on the wire —
+    // both halves pinned here so neither spelling can drift into the other
+    // (a bare `off` in the CRD is read by YAML 1.1 as the boolean `false`).
+    let mut open = spec(1);
+    open.auth = AuthMode::Off;
+    let objs = render(&Tape::new("tape", open));
+    let sts = of_kind(&objs, "StatefulSet");
+    let env = env_of(sts);
+    assert_eq!(
+        env.iter().find(|(n, _)| *n == "TAPE_AUTH").unwrap().1["value"],
+        "off",
+        "the serving process's TAPE_AUTH keeps taking `off`, not `disabled`"
+    );
+    assert_eq!(AuthMode::Off.as_env(), "off");
+    assert!(!env.iter().any(|(n, _)| *n == "TAPE_TOKEN_REGISTRY_FILE"));
 
     // auth: required + tokensSecret: env + read-only Secret mount.
     let mut secured = spec(3);
-    secured.auth = "required".into();
+    secured.auth = AuthMode::Required;
     secured.tokens_secret = Some("tape-token-registry".into());
     let objs = render(&Tape::new("tape", secured));
     let sts = of_kind(&objs, "StatefulSet");
@@ -305,7 +342,7 @@ fn token_registry_secret_wiring_is_opt_in() {
     // Kubernetes Secret object; the shared projection helper emits the CSI
     // volume exactly once.
     let mut csi = spec(3);
-    csi.auth = "required".into();
+    csi.auth = AuthMode::Required;
     csi.tokens_secret_provider_class = Some("tape-registry-csi".into());
     let objs = render(&Tape::new("tape", csi));
     let sts = of_kind(&objs, "StatefulSet");
@@ -328,22 +365,101 @@ fn token_registry_secret_wiring_is_opt_in() {
         "tape-registry-csi"
     );
 
-    // Explicit Secret retains precedence over CSI, matching Lumen's
-    // backwards-compatible deployment contract.
+    // Naming both sources renders NEITHER — the replacement for the old
+    // "tokensSecret wins" precedence (#2765). Such a spec is rejected at
+    // `kubectl apply` by the CRD's CEL rule, so one that reaches the renderer
+    // never came from an API server. Rendering nothing leaves
+    // TAPE_AUTH=required with no registry file, so the pod fails startup
+    // instead of quietly serving whichever registry the precedence picked
+    // while the operator reads the other one.
     let mut both = spec(3);
-    both.auth = "required".into();
+    both.auth = AuthMode::Required;
     both.tokens_secret = Some("tape-registry-secret".into());
     both.tokens_secret_provider_class = Some("tape-registry-csi".into());
     let objs = render(&Tape::new("tape", both));
     let sts = of_kind(&objs, "StatefulSet");
-    let vol = sts["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
+    assert!(
+        sts["spec"]["template"]["spec"]["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["name"] != "tape-token-registry"),
+        "an ambiguous spec must render no registry at all, not an arbitrary one"
+    );
+    assert!(
+        !env_of(sts)
+            .iter()
+            .any(|(n, _)| *n == "TAPE_TOKEN_REGISTRY_FILE"),
+        "no registry file path without an unambiguous source"
+    );
+}
+
+/// #2765 — the CRD rejects an ambiguous token source at `kubectl apply`, and
+/// the rule is spelled with presence tests only.
+///
+/// The `!= null` shape a nullable field seems to want does not compile at the
+/// API server ("found no matching overload for '_!=_' applied to '(string,
+/// null)'"), producing a CRD that passes every local test and installs on no
+/// cluster. Lumen shipped exactly that once. Asserting the rule's TEXT here is
+/// the cheap half; `kubectl apply --dry-run=server` is the half that actually
+/// proves it.
+#[test]
+fn crd_rejects_naming_both_token_sources() {
+    let yaml = crd_yaml();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("CRD parses as YAML");
+    let rules = doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]
+        ["x-kubernetes-validations"]
+        .as_sequence()
+        .expect("spec carries validation rules");
+    let rule = rules
         .iter()
-        .find(|v| v["name"] == "tape-token-registry")
-        .expect("token-registry volume");
-    assert_eq!(vol["secret"]["secretName"], "tape-registry-secret");
-    assert!(vol.get("csi").is_none());
+        .find(|r| {
+            r["rule"]
+                .as_str()
+                .is_some_and(|s| s.contains("tokensSecretProviderClass"))
+        })
+        .expect("a rule covering the two token sources");
+    assert_eq!(
+        rule["rule"],
+        "!(has(self.tokensSecret) && has(self.tokensSecretProviderClass))"
+    );
+    assert!(
+        !rule["rule"].as_str().unwrap().contains("null"),
+        "CEL rules on nullable fields take presence tests only; a `!= null` \
+         guard fails compilation at the API server and installs on no cluster"
+    );
+    assert!(
+        rule["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("at most one")),
+        "the rejection must name the remedy, not just the violation"
+    );
+}
+
+/// #2765 — omitting `spec.auth` means authentication is required.
+///
+/// The direct analogue of lumen's `auth_defaults_to_required`: the other way
+/// round, forgetting the field ships an open cluster and nothing says so.
+#[test]
+fn auth_defaults_to_required() {
+    assert_eq!(AuthMode::default(), AuthMode::Required);
+    let parsed: TapeSpec = serde_json::from_value(serde_json::json!({
+        "image": "tape:test",
+        "storage": "10Gi",
+    }))
+    .expect("a spec omitting auth parses");
+    assert_eq!(parsed.auth, AuthMode::Required);
+
+    // And a typo is not silently the open state — it is not a state at all.
+    let typo: Result<TapeSpec, _> = serde_json::from_value(serde_json::json!({
+        "image": "tape:test",
+        "storage": "10Gi",
+        "auth": "requried",
+    }));
+    assert!(
+        typo.is_err(),
+        "an unknown auth value must be rejected, never read as disabled"
+    );
 }
 
 /// GKE's managed Secrets Store add-on registers a different CSI driver name
@@ -352,7 +468,7 @@ fn token_registry_secret_wiring_is_opt_in() {
 #[test]
 fn tokens_secret_csi_driver_overrides_the_default_csi_driver_name() {
     let mut csi = spec(3);
-    csi.auth = "required".into();
+    csi.auth = AuthMode::Required;
     csi.tokens_secret_provider_class = Some("tape-registry-csi".into());
     csi.tokens_secret_csi_driver = Some("secrets-store-gke.csi.k8s.io".into());
     let objs = render(&Tape::new("tape", csi));
@@ -406,8 +522,6 @@ fn bootstrap_seed_uri_wiring_is_opt_in() {
 /// render it rather than hand-author one alongside the CR.
 #[test]
 fn backup_cron_job_is_opt_in_and_invokes_the_backup_verb() {
-    use tape::operator::TapeBackupSpec;
-
     let plain = render(&Tape::new("tape", spec(3)));
     assert!(
         plain.iter().all(|o| o["kind"] != "CronJob"),
@@ -484,8 +598,6 @@ fn backup_cron_job_is_opt_in_and_invokes_the_backup_verb() {
 /// and the pre-existing identity assertion resolves through it.
 #[test]
 fn backup_service_account_exists_independently_of_the_schedule() {
-    use tape::operator::TapeBackupSpec;
-
     let names = |objs: &[Value]| -> Vec<String> {
         objs.iter()
             .filter(|o| o["kind"] == "ServiceAccount")
@@ -529,8 +641,6 @@ fn backup_service_account_exists_independently_of_the_schedule() {
 /// omitting them must not emit an empty flag or an unresolvable env var.
 #[test]
 fn backup_cron_job_omits_unset_retention_and_token() {
-    use tape::operator::TapeBackupSpec;
-
     let mut minimal = spec(1);
     minimal.backup = Some(TapeBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {
@@ -569,7 +679,7 @@ fn backup_cron_job_omits_unset_retention_and_token() {
 /// hypothetical: this test's byte-equality half caught the committed file
 /// still missing `spec.topics` from #2557, which had never been regenerated.
 /// The acceptance harness renders the CRD from the binary
-/// (`benchmarks/gcp-operator-acceptance/scripts/render-manifests.sh`), so the
+/// (`acceptance/gcp/scripts/render-manifests.sh`), so the
 /// stale file went unnoticed there.
 #[test]
 fn generated_crd_carries_the_backup_properties() {
@@ -738,13 +848,18 @@ fn prometheus_rule_exprs_keep_the_metrics_and_thresholds() {
     }
 
     /// Every literal a comparison operator is tested against.
+    ///
+    /// Fractional literals count (#3051): `TapeMemoryHeadroomLow` fires at
+    /// `> 0.85`, and stopping at the decimal point would reduce it to `0` —
+    /// the same value as its divide-by-zero guard — so the two files could
+    /// disagree on the actual headroom budget and this guard would pass.
     fn thresholds(expr: &str) -> Vec<String> {
         expr.split('>')
             .skip(1)
             .map(|tail| {
                 tail.trim_start()
                     .chars()
-                    .take_while(char::is_ascii_digit)
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
                     .collect::<String>()
             })
             .filter(|n| !n.is_empty())
@@ -812,6 +927,43 @@ fn prometheus_rule_exprs_keep_the_metrics_and_thresholds() {
     assert!(
         static_exprs["TapePodRestarting"].contains("container=\"tape\""),
         "the static component's container name changed — recheck the substitution"
+    );
+
+    // #3051: Memory headroom alert uses cAdvisor series that exist in both the
+    // operator-rendered and static paths, but they come from different scrapers.
+    // The operator path labels with `app.kubernetes.io/*` and container="server",
+    // the static path labels with `app="tape",role="server"` and container="tape".
+    let rendered_memory = &rendered_exprs
+        .get("TapeMemoryHeadroomLow")
+        .expect("operator must render TapeMemoryHeadroomLow");
+    let static_memory = &static_exprs
+        .get("TapeMemoryHeadroomLow")
+        .expect("static component must define TapeMemoryHeadroomLow");
+
+    // Both use the same cAdvisor metrics: working set and spec limit.
+    for metric in [
+        "container_memory_working_set_bytes",
+        "container_spec_memory_limit_bytes",
+    ] {
+        assert!(
+            rendered_memory.contains(metric),
+            "rendered TapeMemoryHeadroomLow must read metric {metric}"
+        );
+        assert!(
+            static_memory.contains(metric),
+            "static TapeMemoryHeadroomLow must read metric {metric}"
+        );
+    }
+
+    // Container name differs as expected: operator uses component name "server",
+    // static file uses the direct-install name "tape".
+    assert!(
+        rendered_memory.contains("container=\"server\""),
+        "operator TapeMemoryHeadroomLow must filter container=server: {rendered_memory}"
+    );
+    assert!(
+        static_memory.contains("container=\"tape\""),
+        "static TapeMemoryHeadroomLow must filter container=tape"
     );
 }
 
@@ -911,5 +1063,463 @@ fn status_patch_reports_pending_reconciling_ready() {
 fn rustls_provider_install_is_idempotent() {
     peer_tls::install_default_crypto_provider();
     peer_tls::install_default_crypto_provider();
+}
+
+// ---- #3054: prunes() ------------------------------------------------------
+
+fn configured_backup() -> TapeBackupSpec {
+    TapeBackupSpec {
+        policy: service_backup::ScheduledBackupPolicy {
+            schedule: "17 3 * * *".into(),
+            destination: "gs://tape-backups/orders".into(),
+            retention_secs: None,
+        },
+        admin_token_secret: None,
+    }
+}
+
+/// `api_version` is part of the identity, not decoration: the controller GETs
+/// each target by `(api_version, kind, name)`, so a wrong group/version makes
+/// the delete address an object that does not exist and the prune silently
+/// becomes a no-op. Assert all three.
+fn prune_names(
+    targets: &[service_k8s::service::PruneTarget],
+) -> Vec<(&'static str, &'static str, String)> {
+    targets
+        .iter()
+        .map(|t| (t.api_version, t.kind, t.name.clone()))
+        .collect()
+}
+
+/// The four `(observability, backup)` permutations, so every test below states
+/// its expectation against the whole spec space instead of one sample.
+fn permutations() -> Vec<(bool, bool, Tape)> {
+    let mut out = Vec::new();
+    for observability in [false, true] {
+        for backup in [false, true] {
+            let mut s = spec(3);
+            s.observability = observability;
+            s.backup = backup.then(configured_backup);
+            out.push((observability, backup, Tape::new("tape", s)));
+        }
+    }
+    out
+}
+
+/// R1/AC1 — no backup schedule: prune exactly the backup CronJob, whatever
+/// `spec.observability` says. The two are independent branches and the
+/// observability one deliberately prunes nothing (see
+/// [`prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve`]).
+#[test]
+fn prunes_names_the_cron_job_when_no_backup_is_configured() {
+    for (observability, backup, tape) in permutations() {
+        if backup {
+            continue;
+        }
+        assert_eq!(
+            prune_names(&prunes(&tape)),
+            vec![("batch/v1", "CronJob", "tape-backup".to_string())],
+            "at observability={observability} with no backup schedule"
+        );
+    }
+}
+
+/// R1/AC1 — a backup schedule is configured, so the CronJob is rendered and
+/// must not be pruned; nothing else is a prune candidate either.
+#[test]
+fn prunes_names_nothing_when_a_backup_schedule_is_configured() {
+    for (observability, backup, tape) in permutations() {
+        if !backup {
+            continue;
+        }
+        assert!(
+            prunes(&tape).is_empty(),
+            "at observability={observability} with a backup schedule, the CronJob is \
+             rendered and prunes() must name nothing"
+        );
+    }
+}
+
+/// The regression guard for the defect the Kind gate caught: a `PruneTarget`
+/// costs a GET on **every** requeue, so naming a kind whose API group the
+/// cluster does not serve fails the entire reconcile — the apply and the status
+/// write included — not just the prune.
+///
+/// A missing *object* comes back as a structured `NotFound` that `get_opt` maps
+/// to `Ok(None)`. A missing *API group* comes back as a plain-text
+/// `404 page not found` that kube cannot parse into an `ErrorResponse`, so its
+/// `reason == "NotFound"` arm never matches and the error propagates. The
+/// operator then retries every 15s, forever, and the CR's status stays empty.
+///
+/// This is why the `spec.observability` ServiceMonitor/PrometheusRule pair is
+/// absent from `prunes()`: both are `monitoring.coreos.com/v1`, and
+/// `spec.observability` is default-off precisely so a cluster without the
+/// Prometheus Operator CRDs stays installable — pruning on the `false` branch
+/// would reach for that group in exactly the vanilla case the default protects.
+/// Blocked on #3079; until then the allow-list below is the gate.
+#[test]
+fn prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve() {
+    // Groups every conformant Kubernetes apiserver serves without any CRD or
+    // add-on installed. Anything outside this set is only present if something
+    // installed it, which the operator cannot assume and must not GET.
+    const BUILT_IN: &[&str] = &[
+        "v1",
+        "apps/v1",
+        "batch/v1",
+        "policy/v1",
+        "networking.k8s.io/v1",
+        "rbac.authorization.k8s.io/v1",
+        "autoscaling/v2",
+        "coordination.k8s.io/v1",
+    ];
+    for (observability, backup, tape) in permutations() {
+        for target in prunes(&tape) {
+            assert!(
+                BUILT_IN.contains(&target.api_version),
+                "prunes() names {}/{} in group `{}`, which a cluster without add-on \
+                 CRDs does not serve; the GET returns an unparseable plain-text 404 \
+                 and fails the whole reconcile loop (observability={observability} \
+                 backup={backup})",
+                target.kind,
+                target.name,
+                target.api_version,
+            );
+        }
+    }
+}
+
+/// AC6 — the always-rendered `<name>-backup` ServiceAccount must never appear
+/// in `prunes()` under any spec, since it deliberately outlives the schedule
+/// toggle. The controller's own ownership re-check
+/// (`libs/service-k8s/src/controller.rs:198` `prune_object`) is a separate,
+/// already-exercised safety net this test does not reimplement.
+#[test]
+fn prunes_never_names_the_backup_service_account() {
+    for (observability, backup, tape) in permutations() {
+        assert!(
+            prunes(&tape)
+                .iter()
+                .all(|t| !(t.kind == "ServiceAccount" && t.name == "tape-backup")),
+            "the backup ServiceAccount is a stable identity rendered unconditionally; \
+             prunes() must never name it (observability={observability} backup={backup})"
+        );
+    }
+}
+
+/// The load-bearing invariant behind `prunes()`, asserted across all four spec
+/// permutations, in two halves that each catch a different failure.
+///
+/// - **Disjoint — holds for every target, unconditionally.** An identity that
+///   `prunes()` names while `render()` still emits it makes the controller
+///   delete an object it re-applies on the next pass, forever: a reconcile loop
+///   that never converges and a CronJob that fires or does not depending on
+///   where in the loop the clock lands.
+/// - **Total — holds for the CronJob.** It is rendered or pruned, never
+///   neither. Neither is the #3054 bug itself: SSA reconciles fields, not
+///   object lifetimes, so an object that stops being rendered and is never
+///   pruned simply stays. A future conditional branch added to `render()` and
+///   not mirrored into `prunes()` fails here rather than in a cluster months
+///   later — so a new entry belongs in `total` unless it has an explicit
+///   exemption below.
+///
+/// The `spec.observability` pair is the one exemption, and it is asserted as an
+/// exemption rather than omitted, so that deleting `prunes()`'s CronJob branch
+/// and "fixing" this test by moving the CronJob into the same list cannot pass
+/// quietly. Both are `monitoring.coreos.com/v1`; pruning them would GET an API
+/// group a vanilla cluster does not serve and fail every reconcile — see
+/// [`prunes_never_names_a_kind_a_vanilla_cluster_does_not_serve`]. Blocked on
+/// #3079.
+#[test]
+fn prunes_is_the_exact_inverse_of_the_conditional_render_branches() {
+    let total = [("batch/v1", "CronJob", "tape-backup")];
+    let exempt = [
+        ("monitoring.coreos.com/v1", "ServiceMonitor", "tape"),
+        ("monitoring.coreos.com/v1", "PrometheusRule", "tape"),
+    ];
+    for (observability, backup, tape) in permutations() {
+        let rendered: Vec<(String, String, String)> = render(&tape)
+            .iter()
+            .map(|o| {
+                (
+                    o["apiVersion"].as_str().unwrap().to_string(),
+                    o["kind"].as_str().unwrap().to_string(),
+                    o["metadata"]["name"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let pruned = prune_names(&prunes(&tape));
+        let is_rendered = |api_version: &str, kind: &str, name: &str| {
+            rendered.contains(&(api_version.to_string(), kind.to_string(), name.to_string()))
+        };
+        let is_pruned = |api_version: &str, kind: &str, name: &str| {
+            pruned
+                .iter()
+                .any(|(a, k, n)| *a == api_version && *k == kind && n == name)
+        };
+
+        for (api_version, kind, name) in &pruned {
+            assert!(
+                !is_rendered(api_version, kind, name),
+                "{kind}/{name} is both rendered and pruned at \
+                 observability={observability} backup={backup}; the controller \
+                 would delete and re-apply it on every pass"
+            );
+        }
+
+        for (api_version, kind, name) in total {
+            assert!(
+                is_rendered(api_version, kind, name) ^ is_pruned(api_version, kind, name),
+                "{kind}/{name} is rendered={} pruned={} at observability={observability} \
+                 backup={backup}; it must be in exactly one of the two sets",
+                is_rendered(api_version, kind, name),
+                is_pruned(api_version, kind, name),
+            );
+        }
+
+        for (api_version, kind, name) in exempt {
+            assert!(
+                !is_pruned(api_version, kind, name),
+                "{kind}/{name} is pruned at observability={observability} backup={backup}; \
+                 its API group is not served by a vanilla cluster, so the GET would fail \
+                 every reconcile (#3079)"
+            );
+        }
+    }
+}
+
+// ---- #3054: conditions() ---------------------------------------------------
+
+fn condition<'a>(
+    facts: &'a [service_k8s::ConditionFact],
+    type_: &str,
+) -> &'a service_k8s::ConditionFact {
+    facts
+        .iter()
+        .find(|c| c.type_ == type_)
+        .unwrap_or_else(|| panic!("expected a `{type_}` condition, got: {facts:?}"))
+}
+
+fn ready_facts(name: &str, count: i64) -> ReadyFacts {
+    let mut ready = HashMap::new();
+    ready.insert(name.to_string(), count);
+    ReadyFacts { ready }
+}
+
+/// R2/AC3 — all four conditions are present, each with a non-empty `reason`
+/// and `message`.
+#[test]
+fn conditions_reports_all_four_with_reason_and_message() {
+    let tape = Tape::new("tape", spec(3));
+    let facts = tape.conditions(&ready_facts("tape", 3), &Value::Null);
+    assert_eq!(facts.len(), 4, "got: {facts:?}");
+    for type_ in ["Ready", "Progressing", "StorageHealthy", "BackupConfigured"] {
+        let c = condition(&facts, type_);
+        assert!(!c.reason.is_empty(), "{type_} must carry a reason");
+        assert!(!c.message.is_empty(), "{type_} must carry a message");
+    }
+}
+
+/// R3/AC5 — `conditions()` is a pure function of `(spec, ready facts,
+/// context)`: identical inputs called twice produce identical output.
+///
+/// This is what makes `observed_conditions()` safe to diff against: the
+/// projection helper only preserves an existing `lastTransitionTime` when the
+/// newly computed fact equals the observed one, so a `conditions()` that
+/// varied per call — a clock read, a hash iteration order, a counter — would
+/// restamp every condition on every 30s requeue and make the transition time
+/// meaningless. `ConditionFact` carries no timestamp field of its own; the
+/// stamping is entirely [`service_k8s::service::project`]'s job.
+#[test]
+fn conditions_is_a_pure_function_of_spec_and_observed_facts() {
+    let tape = Tape::new("tape", spec(3));
+    let facts_a = tape.conditions(&ready_facts("tape", 2), &Value::Null);
+    let facts_b = tape.conditions(&ready_facts("tape", 2), &Value::Null);
+    assert_eq!(facts_a, facts_b);
+}
+
+/// R2 — a degraded-storage instance is out of the operator's observation
+/// reach today, so `StorageHealthy` reports `Unknown`/`NotObserved` rather
+/// than a `False` derived from a signal that does not mean "the disk is
+/// full". #3054's AC4 wanted the `False`; the observation path it needs is
+/// #3071. The reasoning is on the condition in `src/operator/reconcile.rs`.
+#[test]
+fn storage_healthy_reports_unknown_not_observed() {
+    let tape = Tape::new("tape", spec(3));
+    let facts = tape.conditions(&ready_facts("tape", 3), &Value::Null);
+    let storage = condition(&facts, "StorageHealthy");
+    assert_eq!(storage.status, ConditionStatus::Unknown);
+    assert_eq!(storage.reason, "NotObserved");
+}
+
+/// R2 — `BackupConfigured` names the schedule and destination when set, and
+/// reports `False`/`NotConfigured` when `spec.backup` is unset.
+#[test]
+fn backup_configured_reflects_spec_backup() {
+    let tape = Tape::new("tape", spec(3));
+    let facts = tape.conditions(&ready_facts("tape", 3), &Value::Null);
+    let backup = condition(&facts, "BackupConfigured");
+    assert_eq!(backup.status, ConditionStatus::False);
+    assert_eq!(backup.reason, "NotConfigured");
+
+    let mut configured = spec(3);
+    configured.backup = Some(configured_backup());
+    let tape = Tape::new("tape", configured);
+    let facts = tape.conditions(&ready_facts("tape", 3), &Value::Null);
+    let backup = condition(&facts, "BackupConfigured");
+    assert_eq!(backup.status, ConditionStatus::True);
+    assert_eq!(backup.reason, "ScheduleConfigured");
+    assert!(backup.message.contains("17 3 * * *"));
+    assert!(backup.message.contains("gs://tape-backups/orders"));
+}
+
+/// AC5 anti-drift assertion: the `Ready` condition's status agrees with
+/// `status_patch`'s `phase` for the same inputs, because both project from
+/// the same `Observation` — this is what makes the shared struct load-bearing
+/// rather than two independently-written computations that happen to agree
+/// today.
+#[test]
+fn ready_condition_agrees_with_status_patch_phase() {
+    let tape = Tape::new("tape", spec(3));
+    for count in [0i64, 1, 3] {
+        let facts = tape.conditions(&ready_facts("tape", count), &Value::Null);
+        let ready = condition(&facts, "Ready");
+        let patch = tape.status_patch(&ready_facts("tape", count));
+        let phase = patch["status"]["phase"].as_str().unwrap();
+        let expected_ready_status = phase == "Ready";
+        assert_eq!(
+            ready.status == ConditionStatus::True,
+            expected_ready_status,
+            "Ready condition ({:?}) disagrees with status_patch phase ({phase}) at count={count}",
+            ready.status
+        );
+    }
+}
+
+// ---- #2581: serviceAccountName --------------------------------------------
+
+/// #2581 E1 — A `Tape` CR without `serviceAccountName` renders the exact same
+/// object set it renders today (no diff).
+#[test]
+fn service_account_name_unset_renders_existing_shape() {
+    let tape = Tape::new("tape", spec(3));
+    let objs = render(&tape);
+
+    let kinds_names: Vec<(&str, &str)> = objs
+        .iter()
+        .map(|o| {
+            (
+                o["kind"].as_str().unwrap(),
+                o["metadata"]["name"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds_names,
+        vec![
+            ("ServiceAccount", "tape"),
+            ("StatefulSet", "tape"),
+            ("Service", "tape-headless"),
+            ("Service", "tape"),
+            ("PodDisruptionBudget", "tape"),
+            ("ServiceAccount", "tape-backup"),
+        ]
+    );
+
+    let sts = of_kind(&objs, "StatefulSet");
+    assert_eq!(
+        sts["spec"]["template"]["spec"]["serviceAccountName"],
+        "tape"
+    );
+}
+
+/// #2581 E2 — A CR with `serviceAccountName: platform-sa` renders no workload
+/// `ServiceAccount` named `<instance>` and a StatefulSet pointing to `platform-sa`.
+#[test]
+fn service_account_name_configured_omits_service_account_and_updates_statefulset() {
+    let mut configured = spec(3);
+    configured.service_account_name = Some("platform-sa".into());
+    let tape = Tape::new("tape", configured);
+    let objs = render(&tape);
+
+    let has_workload_sa = objs
+        .iter()
+        .any(|o| o["kind"] == "ServiceAccount" && o["metadata"]["name"] == "tape");
+    assert!(
+        !has_workload_sa,
+        "operator must not render workload ServiceAccount when serviceAccountName is set"
+    );
+
+    let sts = of_kind(&objs, "StatefulSet");
+    assert_eq!(
+        sts["spec"]["template"]["spec"]["serviceAccountName"],
+        "platform-sa"
+    );
+}
+
+/// #2581 E3 — `<name>-backup` is invariant: `<instance>-backup` ServiceAccount
+/// is rendered in both cases, and the backup CronJob pod serviceAccountName is
+/// `<instance>-backup`.
+#[test]
+fn service_account_name_does_not_affect_backup_identity() {
+    let mut unset = spec(3);
+    unset.backup = Some(configured_backup());
+    let tape_unset = Tape::new("tape", unset);
+    let objs_unset = render(&tape_unset);
+
+    let sa_backup_unset = objs_unset
+        .iter()
+        .find(|o| o["kind"] == "ServiceAccount" && o["metadata"]["name"] == "tape-backup")
+        .expect("tape-backup ServiceAccount must exist when serviceAccountName is unset");
+    assert_eq!(sa_backup_unset["metadata"]["name"], "tape-backup");
+
+    let cj_unset = of_kind(&objs_unset, "CronJob");
+    assert_eq!(
+        cj_unset["spec"]["jobTemplate"]["spec"]["template"]["spec"]["serviceAccountName"],
+        "tape-backup"
+    );
+
+    let mut set = spec(3);
+    set.service_account_name = Some("platform-sa".into());
+    set.backup = Some(configured_backup());
+    let tape_set = Tape::new("tape", set);
+    let objs_set = render(&tape_set);
+
+    let sa_backup_set = objs_set
+        .iter()
+        .find(|o| o["kind"] == "ServiceAccount" && o["metadata"]["name"] == "tape-backup")
+        .expect("tape-backup ServiceAccount must exist when serviceAccountName is set");
+    assert_eq!(sa_backup_set["metadata"]["name"], "tape-backup");
+
+    let cj_set = of_kind(&objs_set, "CronJob");
+    assert_eq!(
+        cj_set["spec"]["jobTemplate"]["spec"]["template"]["spec"]["serviceAccountName"],
+        "tape-backup"
+    );
+}
+
+/// #2581 E4 — `prunes()` is unchanged when `serviceAccountName` is configured:
+/// the workload ServiceAccount is never a prune target.
+#[test]
+fn service_account_name_does_not_affect_prunes() {
+    let mut configured = spec(3);
+    configured.service_account_name = Some("platform-sa".into());
+    configured.backup = Some(configured_backup());
+    let tape = Tape::new("tape", configured);
+
+    let targets = prunes(&tape);
+    assert!(
+        targets.is_empty(),
+        "prunes() must return empty vec when backup is configured, even with serviceAccountName set; got {targets:?}"
+    );
+
+    let mut no_backup = spec(3);
+    no_backup.service_account_name = Some("platform-sa".into());
+    let tape_no_backup = Tape::new("tape", no_backup);
+    let targets_no_backup = prunes(&tape_no_backup);
+    assert_eq!(
+        prune_names(&targets_no_backup),
+        vec![("batch/v1", "CronJob", "tape-backup".to_string())],
+        "prunes() must only name backup CronJob when backup is None, never a ServiceAccount"
+    );
 }
 // HANDWRITE-END

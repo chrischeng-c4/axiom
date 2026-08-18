@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-chainable-backup-export-import-next
-// @capability chainable-output-conformance
-// @claim backup-export-import-next-contract
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract chainable-backup-export-import-next
 // @category behavior
 // @required_for_production true

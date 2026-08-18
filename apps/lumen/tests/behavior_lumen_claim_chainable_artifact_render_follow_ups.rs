@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-chainable-artifact-render-follow-ups
-// @capability chainable-output-conformance
-// @claim artifact-render-follow-ups
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract chainable-artifact-render-follow-ups
 // @category behavior
 // @required_for_production true

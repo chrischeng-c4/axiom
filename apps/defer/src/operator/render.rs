@@ -272,6 +272,8 @@ fn statefulset(defer: &Defer, cx: &RenderCtx<'_>, headless: &str) -> Value {
         volumes,
         volume_mounts: mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
+        node_selector: None,
+        tolerations: vec![],
         topology_spread_constraints: vec![],
         revision_history_limit: Some(5),
         update_strategy: Some(json!({"type": "RollingUpdate"})),

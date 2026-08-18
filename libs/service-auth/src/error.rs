@@ -1,11 +1,12 @@
 // SPEC-MANAGED: libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! The generic auth rejection type — 401 / 403 with a small JSON body.
+//! The generic auth rejection type — 401 / 403 / 503 with a small JSON body.
 //!
 //! Mirrors lumen's `auth.rs` error shape (`{"error": "...", "message": "..."}`)
 //! so services that adopt this layer keep the same wire contract. Per-resource
 //! authorization (RBAC, scope-vs-key) is a service concern; this lib only owns
-//! the two transport-level outcomes a [`Verifier`](crate::Verifier) can produce.
+//! the transport-level outcomes a [`Verifier`](crate::Verifier) — or an
+//! [`AsyncVerifier`](crate::AsyncVerifier) — can produce.
 
 use axum::{
     http::StatusCode,
@@ -27,11 +28,18 @@ struct ErrorBody {
 /// - [`AuthError::Forbidden`] → `403 Forbidden` — a valid principal that lacks
 ///   the needed authorization. The string carries the human-readable reason; a
 ///   service decides per-resource policy and supplies the message.
+/// - [`AuthError::Unavailable`] → `503 Service Unavailable` — the credential
+///   could not be judged at all because the identity provider did not answer.
+///   Distinct from `401` on purpose: a verifier that reaches an external
+///   provider ([`crate::gcp::GoogleVerifier`]) would otherwise report its own
+///   outage as "your credential is invalid", which sends every caller to
+///   re-issue a credential that was fine.
 #[derive(Debug, Clone)]
 /// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#source
 pub enum AuthError {
     Unauthenticated,
     Forbidden(String),
+    Unavailable(String),
 }
 
 /// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#source
@@ -50,6 +58,14 @@ impl IntoResponse for AuthError {
                 StatusCode::FORBIDDEN,
                 Json(ErrorBody {
                     error: "forbidden".into(),
+                    message,
+                }),
+            )
+                .into_response(),
+            AuthError::Unavailable(message) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorBody {
+                    error: "auth_unavailable".into(),
                     message,
                 }),
             )
