@@ -1,18 +1,23 @@
 //! Bounding RaftHost shutdown by caller-supplied ShutdownDeadline and reporting
 //! terminal phase outcomes (#3672).
 
+use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tempfile::TempDir;
 
 use raft_runtime::{
-    LeadershipHandoff, PhaseStatus, ProposalOutcome, RaftStatus, ShutdownPhase,
+    FsyncPolicy, HostConfig, HostShutdownReport, LeadershipHandoff, Membership, PhaseStatus,
+    ProposalOutcome, RaftHost, RaftStateMachine, RaftStatus, RaftStore, ShutdownCaller,
+    ShutdownPhase,
 };
 use server_lifecycle::ShutdownDeadline;
 
 #[allow(dead_code)]
 #[path = "support/cluster.rs"]
 mod cluster;
-use cluster::{await_leader, cluster, Node};
+use cluster::{await_leader, bind, cluster, Node, TestSm};
 
 fn h2c_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -287,3 +292,99 @@ async fn healthy_three_voter_leader_legacy_shutdown_returns_ok_with_state_intact
         "store path must remain intact after shutdown"
     );
 }
+
+/// Converting a HostShutdownReport with any incomplete phase into a Result returns
+/// an Err identifying that specific phase, and all four variants produce distinct messages.
+#[test]
+fn report_into_result_returns_distinct_err_naming_phase_for_all_incomplete_phases() {
+    let variants = [
+        (ShutdownPhase::Quiesce, "Quiesce"),
+        (ShutdownPhase::LeadershipHandoff, "LeadershipHandoff"),
+        (ShutdownPhase::BackgroundTasks, "BackgroundTasks"),
+        (ShutdownPhase::PeerRpcDrain, "PeerRpcDrain"),
+    ];
+
+    let mut messages = HashSet::new();
+
+    for (phase, expected_name) in variants {
+        let report = HostShutdownReport {
+            caller: ShutdownCaller::Executed,
+            phases: vec![],
+            handoff: LeadershipHandoff::NotLeader,
+            incomplete_phase: Some(phase),
+            peer_listener_close_safe: false,
+            storage_failure: None,
+        };
+        let res = report.into_result();
+        assert!(
+            res.is_err(),
+            "into_result must return Err for incomplete phase {phase:?}"
+        );
+        let err_msg = res.unwrap_err().to_string();
+        assert!(
+            err_msg.contains(expected_name),
+            "error message for {phase:?} must contain '{expected_name}', got: '{err_msg}'"
+        );
+        messages.insert(err_msg);
+    }
+
+    assert_eq!(
+        messages.len(),
+        4,
+        "all four incomplete shutdown phases must render distinct error messages"
+    );
+}
+
+/// A host configured with a tiny rpc_timeout reaches the Quiesce-expiry branch on
+/// legacy shutdown() and returns an Err naming Quiesce.
+#[tokio::test]
+async fn tiny_rpc_timeout_legacy_shutdown_returns_err_naming_quiesce() {
+    let (listener, url) = bind().await;
+    let sm = TestSm::new();
+    let dir = TempDir::new().unwrap();
+    let store = RaftStore::open(dir.path().to_str().unwrap(), 0, FsyncPolicy::Os).unwrap();
+    let host = Arc::new(RaftHost::spawn(
+        0,
+        Membership {
+            voters: vec![0],
+            learners: vec![],
+        },
+        HashMap::new(),
+        store,
+        sm.clone() as Arc<dyn RaftStateMachine>,
+        HostConfig {
+            rpc_timeout: Duration::from_nanos(1),
+            ..Default::default()
+        },
+    ));
+    let router = host.router();
+    let serve = tokio::spawn(async move {
+        loop {
+            if let Ok((stream, _)) = listener.accept().await {
+                let r = router.clone();
+                tokio::spawn(async move {
+                    let _ = transport_h2c::server::serve_connection(stream, r).await;
+                });
+            }
+        }
+    });
+    let _node = Node {
+        host: host.clone(),
+        sm,
+        url,
+        _serve: serve,
+        _dir: dir,
+    };
+
+    let res = host.shutdown().await;
+    assert!(
+        res.is_err(),
+        "legacy shutdown() with tiny rpc_timeout must return Err"
+    );
+    let err_msg = res.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Quiesce"),
+        "error message must name Quiesce, got: '{err_msg}'"
+    );
+}
+

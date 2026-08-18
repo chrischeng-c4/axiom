@@ -299,6 +299,22 @@ pub struct HostShutdownReport {
     pub storage_failure: Option<StorageFailed>,
 }
 
+impl HostShutdownReport {
+    /// Convert this shutdown report into a `Result<()>`.
+    ///
+    /// Returns `Ok(())` if shutdown completed cleanly. Returns `Err` if a storage
+    /// failure was observed or if shutdown stopped early in any phase.
+    pub fn into_result(self) -> Result<()> {
+        if let Some(failure) = self.storage_failure {
+            return Err(anyhow!("{failure}"));
+        }
+        if let Some(phase) = self.incomplete_phase {
+            return Err(anyhow!("raft: shutdown stopped early in phase {phase:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// Why a leader refused a learner admission request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdmissionRefused {
@@ -1152,20 +1168,15 @@ impl RaftHost {
     /// Stop the periodic host loops and wait for every already-dispatched peer
     /// RPC to finish before the h2 client is dropped. Service shutdown should
     /// stop public ingress first, call this method, then close the peer
-    /// listener. The bounded wait prevents active HTTP/2 streams from being
-    /// torn down with the Tokio runtime.
+    /// listener only when `peer_listener_close_safe` is true. The bounded wait
+    /// prevents active HTTP/2 streams from being torn down with the Tokio
+    /// runtime.
     pub async fn shutdown(&self) -> Result<()> {
         let timeout = self.shared.cfg.rpc_timeout + self.shared.cfg.rpc_timeout;
         let deadline = ShutdownDeadline::from_now(timeout, Duration::ZERO)
             .map_err(|e| anyhow!("{e}"))?;
         let report = self.shutdown_within(deadline).await;
-        if let Some(failure) = report.storage_failure {
-            return Err(anyhow!("{failure}"));
-        }
-        if report.incomplete_phase == Some(ShutdownPhase::PeerRpcDrain) {
-            return Err(anyhow!("raft: peer RPC drain timed out after {timeout:?}"));
-        }
-        Ok(())
+        report.into_result()
     }
 
     /// Access the underlying raft store.
