@@ -11,7 +11,7 @@
     "issue": "1234",
     "design_inputs": []
   },
-  "model": "gemini-3.6-flash-high",
+  "model": "gemini-3.7-flash-high",
   "timeout": "30m",
   "inject_prompt_file": "/absolute/path/to/optional-round-prompt.md",
   "project_permissions": {

@@ -1859,7 +1859,7 @@ def run_agent(profile: dict, task_key: str, *, resume: bool) -> None:
             "-p",
             prompt,
             "--model",
-            profile.get("model", "gemini-3.6-flash-high"),
+            profile.get("model", "gemini-3.7-flash-high"),
             "--effort",
             "high",
             "--print-timeout",

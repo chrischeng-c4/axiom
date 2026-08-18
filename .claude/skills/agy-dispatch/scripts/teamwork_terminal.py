@@ -131,7 +131,7 @@ log_file -a {tcl_quote(str(launch_log))}
 set fh [open $prompt_file r]
 set prompt [read $fh]
 close $fh
-spawn -noecho {tcl_quote(agy)} --project {tcl_quote(profile["agy_project_id"])} --prompt-interactive --model {tcl_quote(profile.get("model", "gemini-3.6-flash-high"))} --effort high
+spawn -noecho {tcl_quote(agy)} --project {tcl_quote(profile["agy_project_id"])} --prompt-interactive --model {tcl_quote(profile.get("model", "gemini-3.7-flash-high"))} --effort high
 after 2000
 send -- "$prompt\\r"
 interact

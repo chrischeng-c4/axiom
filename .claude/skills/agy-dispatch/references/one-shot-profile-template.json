@@ -12,7 +12,7 @@
     "intent": "Inspect one bounded condition and return exact evidence.",
     "design_inputs": []
   },
-  "model": "gemini-3.6-flash-high",
+  "model": "gemini-3.7-flash-high",
   "timeout": "30m",
   "inject_prompt_file": "/absolute/path/to/optional-task-prompt.md",
   "project_permissions": {
