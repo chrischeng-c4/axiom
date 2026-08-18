@@ -55,23 +55,23 @@ import workitem  # noqa: E402
 # daemon blocks every command that reads the index, indefinitely and silently.
 GIT = ("git", "-c", "core.fsmonitor=false")
 
-# The legs, and their order, come from `workitem.py` -- which already owns them
+# The ladder, and its order, come from `workitem.py` -- which already owns them
 # because it renders the lifecycle block in a change body from them. Re-listing
 # them here would be a second copy of a closed enum, and the two could disagree
 # about what the order *is* without anything comparing them.
-LEGS = workitem.LEGS
-
-# The replacement ladder. `ec -> td -> cb` is being retired: the tech design
-# layer is removed, `ec` is renamed `e2e`, and the unit tests that `cb` only
-# ever *ran* get a phase of their own that has to author them before the
-# implementation exists.
 #
-# Both ladders are named here because both are live during the changeover, and
-# a checkout carrying two half-wired lifecycles is worse than one carrying two
-# whole ones. They are not merged into a single tuple: `P4` reads a ladder as
-# "everything before this", and a six-name ladder would have `unit` waiting on a
-# `td` commit that will never come.
-PHASES = ("e2e", "unit", "logic")
+# They did disagree, for exactly that reason. This module used to bind two
+# names: `LEGS = workitem.LEGS` for the retiring `ec -> td -> cb`, and a
+# separately written `PHASES = ("e2e", "unit", "logic")` for the ladder
+# replacing it. That was correct while both were live. When the changeover
+# finished and the three retired scripts were deleted, only the tuple written
+# here was updated -- the one imported from the engine still named the dead
+# ladder, and it is the one `change.py --leg` validates against.
+#
+# So there is one name now, and it is an alias rather than a tuple: a phase
+# renamed in the engine cannot leave this module still spelling it the old way,
+# because there is nothing here left to spell.
+PHASES = workitem.LEGS
 
 # The one directory each leg may write. This is a lookup table rather than a
 # second enum: it decides nothing about which legs exist or what order they run
@@ -81,9 +81,6 @@ PHASES = ("e2e", "unit", "logic")
 # refuses against this table, so the ordering rule has a consumer rather than
 # only a paragraph.
 LEG_ROOTS = {
-    "ec": "external-contracts",
-    "td": "tech-design",
-    "cb": "src",
     "e2e": "e2e",
     "unit": "src",
     "logic": "src",
@@ -114,6 +111,27 @@ TEST_FILES = ("tests.rs", "tests/mod.rs")
 # through would surface as an empty red set two rows later.
 LEG_TEST_FILES = {"unit": "requires", "logic": "refuses"}
 
+# Both tables are keyed by phase, and neither is a second enum -- so a phase
+# renamed in `workitem.LEGS` has to reach them, and nothing about a dict makes
+# it. `leg_root` refuses a phase the table has no entry for, which is one
+# direction; this is the other, and it is the direction the entries above rotted
+# in. `LEG_ROOTS` carried `ec`, `td` and `cb` alongside the live three for as
+# long as the ladder they belonged to had been deleted -- unreachable, because
+# `ladder_for` refuses those names, and therefore invisible.
+#
+# Checked at import rather than in a gate, so it is the exit code of whichever
+# script asked, not something a suite has to be run to learn. `LEG_TEST_FILES`
+# is a subset by design: `e2e` writes no Rust test file and has no entry. What
+# it may not contain is a key no phase answers to, which is how a renamed
+# `unit` would silently stop being required to write a test at all.
+if set(LEG_ROOTS) != set(PHASES) or not set(LEG_TEST_FILES) <= set(PHASES):
+    raise SystemExit(
+        "leg.py: a phase table names something the ladder does not\n"
+        f"  ladder:         {' -> '.join(PHASES)}\n"
+        f"  LEG_ROOTS:      {sorted(LEG_ROOTS)}\n"
+        f"  LEG_TEST_FILES: {sorted(LEG_TEST_FILES)}"
+    )
+
 
 def ladder_for(leg: str) -> tuple:
     """The ordered lifecycle `leg` belongs to.
@@ -123,12 +141,11 @@ def ladder_for(leg: str) -> tuple:
     disagreement would read as a missing predecessor rather than as a wiring
     mistake.
     """
-    for ladder in (PHASES, LEGS):
-        if leg in ladder:
-            return ladder
+    if leg in PHASES:
+        return PHASES
     raise SystemExit(
         f"no lifecycle names the leg {leg!r}\n"
-        f"known: {' -> '.join(PHASES)} and {' -> '.join(LEGS)}"
+        f"known: {' -> '.join(PHASES)}"
     )
 
 
@@ -300,7 +317,7 @@ def landed_paths(repo: Path, iid: int, leg: str) -> list[str]:
     return sorted(set(paths))
 
 
-def contract_set(repo: Path, ec: Path, iid: int, leg: str = "ec") -> list[str]:
+def contract_set(repo: Path, ec: Path, iid: int, leg: str) -> list[str]:
     """The case ids this work item's contract leg landed.
 
     Read out of that leg's commit, which is the same evidence `P4` accepted as
@@ -308,17 +325,17 @@ def contract_set(repo: Path, ec: Path, iid: int, leg: str = "ec") -> list[str]:
     when the EC leg finished -- would be a second answer to the same question,
     free to name a case the commit does not contain.
 
-    Both later legs ask this, and they must get the same answer: the TD leg
-    decides which cases may gate it from this set, and the CB leg measures the
-    same set at HEAD and in the working tree. Two copies of the derivation
-    could disagree about what the contract *is*, and the disagreement would
-    read as a coverage difference between the legs rather than as a bug.
+    Both later phases ask this, and they must get the same answer: `unit`
+    measures the set to establish what its skeleton has to fail against, and
+    `logic` measures it again at HEAD and in the working tree. Two copies of the
+    derivation could disagree about what the contract *is*, and the disagreement
+    would read as a coverage difference between the phases rather than as a bug.
 
-    `leg` is which of the two lifecycles is asking -- `ec` for the ladder being
-    retired, `e2e` for its replacement. It is a parameter rather than a lookup
-    because the case *layout* is the same in both and only the commit prefix
-    differs; folding it into a table would suggest the two could diverge in
-    ways they cannot.
+    `leg` is the commit-subject prefix to read the set out of, and it is passed
+    rather than defaulted. It used to default to `ec`, from when two ladders
+    were live at once; every caller now passes `e2e` and the default named a
+    phase that no longer exists, so a caller that forgot the argument would have
+    silently measured an empty set and reported "no cases" rather than failing.
     """
     prefix = f"{(ec / 'src' / 'cases').relative_to(repo)}/"
     return sorted({
@@ -687,7 +704,11 @@ def run_verdict(args: Any, phase: str, reviewer: str, chk: Check, repo: Path,
     if result != "accepted":
         print("\nnext.command: address the findings, then re-run the reviewer")
         return 1
-    print(f"\nnext.command: {phase}.py commit {args.wi}")
+    # Through `phase_command`, not spelled here. `--project` is required with no
+    # default on all three phase scripts and has to precede the verb, so the
+    # `f"{phase}.py commit {args.wi}"` this used to print exited 2 -- the review
+    # was accepted and the command offered to act on it could not run.
+    print(f"\nnext.command: {phase_command(phase, args.project, 'commit', args.wi)}")
     return 0
 
 

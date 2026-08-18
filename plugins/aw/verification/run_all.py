@@ -49,6 +49,14 @@ FLAG = "--with-negative-controls"
 # controls inside themselves -- each row already a declared mutation.
 SUITE = [
     ("check_manifests_cli.py", "check_manifests_cli_negative_control.py"),
+    # Second, and early on purpose. Its control is the only one here that
+    # mutates product scripts the rest of the suite depends on -- `workitem.py`,
+    # `leg.py` and `e2e.py` -- and `check_plugin.py`, `check_engine_split.py`,
+    # `check_review_flow.py` and `check_tdd_flow.py` all read at least one of
+    # them. Running it here means a restore that silently failed is caught by
+    # four later checkers rather than by the next session, which is the same
+    # reason the manifest pair runs ahead of `check_plugin.py`.
+    ("check_next_command.py", "check_next_command_negative_control.py"),
     ("check_plugin.py", "check_plugin_negative_control.py"),
     ("check_coverage_rule.py", "check_coverage_rule_negative_control.py"),
     ("check_engine_split.py", "check_engine_split_negative_control.py"),
@@ -107,6 +115,23 @@ SUITE = [
     # because a commit gate is what the verdict has to be able to stop.
     ("check_tdd_flow.py", None),
 ]
+
+# The list above is hand-maintained and nothing else reads it, so a gate that
+# was written and never registered runs in the session that wrote it and never
+# again -- which is worse than never writing it, because the directory listing
+# reads as coverage that exists. The listing is therefore the assertion, the
+# same way `check_plugin.py` asserts the skills on disk are exactly the ones
+# under test: every `check_*` and `probe_*` here must appear in exactly one slot
+# above. `measure_*` is excluded by name because it is deliberately not run --
+# those hit the network and produce evidence, not a verdict.
+on_disk = {p.name for pattern in ("check_*.py", "probe_*.py")
+           for p in HERE.glob(pattern)}
+registered = {name for pair in SUITE for name in pair if name}
+if on_disk != registered:
+    raise SystemExit(
+        "error: the suite and the directory disagree about what this is\n"
+        f"  on disk but never run:  {sorted(on_disk - registered) or 'none'}\n"
+        f"  run but not on disk:    {sorted(registered - on_disk) or 'none'}")
 
 unknown = [a for a in sys.argv[1:] if a != FLAG]
 if unknown:

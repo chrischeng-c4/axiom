@@ -612,7 +612,22 @@ LIFECYCLE_BEGIN = "<!-- aw:lifecycle:begin -->"
 LIFECYCLE_END = "<!-- aw:lifecycle:end -->"
 LIFECYCLE_NOTE = ("*Written by `aw` as each leg lands. Not authored content, and not "
                   "reviewed: edit the sections above, never this block.*")
-LEGS = ("ec", "td", "cb")
+# The ladder whose legs may appear as rows, in the order they are rendered.
+#
+# This read `("ec", "td", "cb")` for one commit past the changeover that deleted
+# those three scripts, which made every phase's closing step unreachable:
+# `e2e.py`, `unit.py` and `logic.py` all end by printing `change.py lifecycle
+# ... --leg <PHASE>`, and `change.py` takes its `--leg` choices from here, so all
+# three printed a command this parser exits 2 on. Eighteen gates were green over
+# it, because no gate compared a printed command with the parser receiving it.
+# `check_next_command.py` is now that comparison.
+#
+# The retired names are dropped rather than kept alongside. Keeping them would
+# preserve rows in bodies that predate the changeover, and the population of
+# those was measured before deciding: zero issues on the tracker carry the
+# lifecycle marker at all, because the verb that writes it has never once
+# succeeded. There is no history here to lose.
+LEGS = ("e2e", "unit", "logic")
 
 
 def lifecycle_rows(body: str) -> dict:

@@ -3,8 +3,8 @@
 Gates for the `aw` plugin and the two work-item schemas its scripts enforce.
 
 ```
-uv run --python 3.13 --no-project plugins/aw/verification/run_all.py                          # ~31s
-uv run --python 3.13 --no-project plugins/aw/verification/run_all.py --with-negative-controls  # ~62s
+uv run --python 3.13 --no-project plugins/aw/verification/run_all.py                          # ~38s
+uv run --python 3.13 --no-project plugins/aw/verification/run_all.py --with-negative-controls  # ~77s
 ```
 
 One interpreter, the same launcher the skills use to run the scripts. The gates
@@ -20,10 +20,10 @@ different question: can each checker be seen to fail at all? That one is about
 the gate rather than the tree, so its answer only changes when a gate changes,
 and it is expensive by construction — a control mutates the thing under test
 once per declared defect and re-runs the whole checker for each mutation.
-`check_plugin_negative_control.py` is eleven such rounds, ~24s of the ~31s the
+`check_plugin_negative_control.py` is eleven such rounds, ~23s of the ~39s the
 flag adds. The other big number is in the default run and is cargo:
 `check_tdd_flow.py` builds and tests a synthetic crate through all three phases,
-~25s of the ~31s there.
+~29s of the ~38s there.
 
 Run the full suite whenever a gate itself changes, and before reporting any
 claim of the form "this is verified". The default mode is not allowed to sound
@@ -68,6 +68,8 @@ directory for a file none of them owns.
 |---|---|
 | `check_manifests_cli.py` | a manifest Claude Code's own validator rejects — or merely warns about |
 | `check_manifests_cli_negative_control.py` | a manifest gate that reads only the exit code |
+| `check_next_command.py` | a phase that ends by printing the command that follows it, when the parser it names exits 2 on that line |
+| `check_next_command_negative_control.py` | a cross-check that is green because it stopped finding the commands it compares |
 | `check_plugin.py` | a manifest, bundled path, or skill cross-reference that does not resolve — a skill that has grown its own copy of a shared script, or one that reaches past its facade to `aw` or `gh` |
 | `check_plugin_negative_control.py` | a checker that cannot be seen to fail |
 | `check_coverage_rule.py` | a requirement with no `## Verification Inventory` row — and a rule that reddens epics which were already green |
@@ -103,7 +105,7 @@ crate, which is why it runs last and costs the most; `check_review_flow.py`'s
 is deliberately cargo-free, which is why it is a fifth of the cost for two
 thirds as many rows.
 
-Four of these encode defects that actually shipped and were caught late:
+Five of these encode defects that actually shipped and were caught late:
 
 - **`probe_plugin_root.py`.** `_repo_root()` walked up from `__file__`. A
   git-marketplace install puts the plugin under `~/.claude/plugins/`, where no
@@ -129,6 +131,23 @@ Four of these encode defects that actually shipped and were caught late:
   knows Claude Code's naming rules well enough to have caught a name that is
   accepted locally and rejected by the marketplace sync. Asking the tool is the
   only reading of that rule that cannot drift from it.
+- **`check_next_command.py`.** The ladder is driven by its own output — every
+  verb ends by printing the command that follows it, and an agent runs that line
+  verbatim. `workitem.LEGS` still read `("ec", "td", "cb")` one commit past the
+  changeover that deleted those three scripts, and `change.py` takes its `--leg`
+  choices from there, so all three phases ended `commit` by printing a line
+  `change.py` exits 2 on: the step that records a landed commit on the work item
+  was unreachable from every phase that is supposed to reach it. `leg.py` ended
+  an accepted review by printing `<phase>.py commit <wi>` without the
+  `--project` all three require, which broke the review-to-commit handoff the
+  same way. The eighteen gates in this directory were green over both, because
+  each half reads as consistent on its own and the flow gates construct argv
+  themselves rather than reading the line that gets printed. The first half of
+  that is now refused earlier than any gate: `leg.py` asserts at import that its
+  two phase-keyed tables name the phases `workitem.LEGS` declares, so the
+  vocabulary cannot drift at all. What the gate still owns is the drift no table
+  can see — a phase script's own `PHASE`, a flag the receiver requires, a script
+  name that is not on disk.
 
 ## The ladder, and what makes a phase's green mean anything
 

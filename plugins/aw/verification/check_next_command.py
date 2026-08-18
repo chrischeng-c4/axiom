@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Every `next.command:` a phase prints must be accepted by the parser it names.
+
+The ladder is driven by its own output. Each verb ends by printing the command
+that follows it, and an agent reading that line runs it verbatim -- so a printed
+command the receiving parser rejects is a dead end at the exact point where the
+work is supposed to continue, and it is invisible to every other gate here.
+
+That is not hypothetical. Both of the defects this gate was written to refuse
+were live in a tree whose eighteen other gates were all green:
+
+  * `e2e.py`, `unit.py` and `logic.py` each end their `commit` verb by printing
+    `change.py lifecycle <wi> --leg <PHASE> ...`, and `change.py` took its
+    `--leg` choices from `workitem.LEGS`, which still read `("ec", "td", "cb")`.
+    All three phases printed a command that exits 2. The one step that records a
+    landed commit on the work item could not be reached from any phase.
+  * `leg.py` ends an accepted review by printing `<phase>.py commit <wi>`, but
+    `--project` is `required=True` on all three phase scripts and has no
+    default. The review-to-commit handoff exited 2 as well.
+
+Nothing else could have caught either one. The strings are built in one module
+and parsed in another, so a reader of either half sees something consistent; the
+flow gates drive the verbs by constructing argv themselves, which measures the
+parser but never the printed line. This gate is the only place the two meet.
+
+It resolves each printed line using the emitting module's *own* constants --
+`PHASE` is read from the module, not restated here -- so a phase renamed in one
+place and not the other goes red rather than passing against a copy.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import contextlib
+import io
+import pathlib
+import re
+import sys
+
+import _paths
+
+SCRIPTS = _paths.SCRIPTS
+sys.path.insert(0, str(SCRIPTS))
+
+# Substituted into a printed command in place of a runtime value. `wi` has to
+# survive `type=int`, and the two digests have to look like what they are; the
+# rest only has to be one shell word, because what is under test is the fixed
+# text around them -- the verb, the flag names, and the values the emitter
+# hardcodes.
+PLACEHOLDERS = {"wi": "4242", "project": "demo", "iid": "4242",
+                "sha": "0" * 40, "digest": "f" * 64}
+GENERIC = "PLACEHOLDER"
+
+# A free name that ranges over the phases is expanded over all three rather than
+# stubbed. `leg.py` prints `f"{phase}.py commit {args.wi}"` from code shared by
+# every phase, so stubbing it would leave the line classified as prose and the
+# defect unmeasured.
+RANGES_OVER_PHASES = ("phase",)
+
+MARKER = "next.command:"
+SCRIPT_TOKEN = re.compile(r"^[a-z0-9_]+\.py$")
+
+
+class Args:
+    """Stands in for the parsed `args` a print site reads at runtime."""
+
+    def __getattr__(self, name: str) -> str:
+        return PLACEHOLDERS.get(name, GENERIC)
+
+
+def emitting_scripts() -> list[pathlib.Path]:
+    found = sorted(p for p in SCRIPTS.glob("*.py")
+                   if MARKER in p.read_text(encoding="utf-8"))
+    if not found:
+        raise SystemExit(f"error: no script under {SCRIPTS} prints `{MARKER}`; "
+                         f"this gate would pass having read nothing")
+    return found
+
+
+def print_sites(path: pathlib.Path) -> list[tuple[int, ast.expr]]:
+    """Every `print(...)` argument whose literal text carries the marker."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    sites = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "print" and node.args):
+            continue
+        for arg in node.args:
+            literal = "".join(
+                v.value for v in ast.walk(arg)
+                if isinstance(v, ast.Constant) and isinstance(v.value, str))
+            if MARKER in literal:
+                sites.append((node.lineno, arg))
+    return sites
+
+
+def free_names(expr: ast.expr, known: dict) -> set[str]:
+    return {n.id for n in ast.walk(expr)
+            if isinstance(n, ast.Name) and n.id not in known
+            and n.id not in dir(__builtins__)}
+
+
+def render(expr: ast.expr, module) -> list[str]:
+    """The strings this print site can emit, using the module's own constants."""
+    namespace = dict(vars(module))
+    namespace["args"] = Args()
+    names = free_names(expr, namespace)
+    phase_vars = [n for n in names if n in RANGES_OVER_PHASES]
+    for name in names - set(phase_vars):
+        namespace[name] = PLACEHOLDERS.get(name, GENERIC)
+
+    source = ast.unparse(expr)
+    if not phase_vars:
+        return [eval(source, namespace)]  # noqa: S307 -- repo-controlled source
+
+    # Resolved here rather than above, so a module printing only prose never
+    # reaches for the ladder at all. It used to be looked up unconditionally,
+    # which meant a scripts directory without a `leg.py` crashed the gate on
+    # lines that had no phase in them -- a traceback where the answer was
+    # "nothing to compare".
+    phases = getattr(module, "PHASES", None) or _paths.load_script_module(
+        SCRIPTS / "leg.py", "legmod").PHASES
+    out = []
+    for phase in phases:
+        for name in phase_vars:
+            namespace[name] = phase
+        out.append(eval(source, namespace))  # noqa: S307
+    return out
+
+
+def payload(text: str) -> str:
+    return text.split(MARKER, 1)[1].strip()
+
+
+def accepts(target: pathlib.Path, argv: list[str]) -> str | None:
+    """`None` if the target's parser accepts this argv, else why it refused.
+
+    Nothing is executed. A script exposing `build_parser` is parsed directly;
+    for the phase scripts, whose parser is local to `main`, every `cmd_*` global
+    is replaced by a stub first -- `set_defaults(func=cmd_x)` resolves the global
+    when `main` builds the parser, so the dispatch lands on the stub and the
+    verb's real body never runs.
+    """
+    module = _paths.load_script_module(target, f"probe_{target.stem}")
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            if hasattr(module, "build_parser"):
+                module.build_parser().parse_args(argv)
+            else:
+                for name in [n for n in vars(module) if n.startswith("cmd_")]:
+                    setattr(module, name, lambda *a, **k: 0)
+                module.main(argv)
+    except SystemExit as exit_:
+        if exit_.code:
+            reason = next((ln for ln in err.getvalue().splitlines()
+                           if "error:" in ln), f"exit {exit_.code}")
+            return reason.strip()
+    except Exception as exc:  # the parser itself broke, which is also a red
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
+def main() -> int:
+    failures, commands, prose = [], 0, 0
+    for path in emitting_scripts():
+        module = _paths.load_script_module(path, f"emit_{path.stem}")
+        for lineno, expr in print_sites(path):
+            for text in render(expr, module):
+                line = payload(text)
+                head = line.split()[0] if line.split() else ""
+                where = f"{path.name}:{lineno}"
+                if not SCRIPT_TOKEN.match(head):
+                    prose += 1
+                    continue
+                target = SCRIPTS / head
+                if not target.is_file():
+                    failures.append(f"FAIL {where}: names `{head}`, which is not "
+                                    f"a script under {SCRIPTS}")
+                    continue
+                commands += 1
+                why = accepts(target, line.split()[1:])
+                if why:
+                    failures.append(f"FAIL {where}: prints `{line}`\n"
+                                    f"       {head} refuses it -- {why}")
+
+    print(f"read {commands} printed command(s) and {prose} prose line(s)")
+    if commands == 0:
+        print("FAIL: no printed line resolved to a script under scripts/; "
+              "this gate asserted nothing")
+        failures.append("vacuous")
+    for f in failures:
+        print(f)
+    print(f"\n=> {'RED: ' + str(len(failures)) + ' defect(s)' if failures else 'GREEN'}")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
