@@ -14,9 +14,8 @@ use serde_json::{json, Value};
 
 use crate::types::FieldType;
 
-const DX_CONTRACT_REF: &str =
-    "apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md#dx-contract";
-const DX_CONTRACT_SOURCE: &str = include_str!("../tech-design/interfaces/dx/lumen-dx-contract.md");
+const DX_CONTRACT_REF: &str = "apps/lumen/src/dx-contract.yaml";
+const DX_CONTRACT_SOURCE: &str = include_str!("dx-contract.yaml");
 
 /// Field declarations and query operations emitted by `lumen spec --fields`.
 pub fn field_catalog() -> Value {
@@ -170,18 +169,7 @@ struct InputContract {
 }
 
 fn dx_contract() -> DxContract {
-    let source = DX_CONTRACT_SOURCE
-        .split_once("## DX Contract")
-        .expect("DX contract TD has a DX Contract section")
-        .1;
-    let yaml = source
-        .split_once("```yaml\n")
-        .expect("DX contract TD has YAML payload")
-        .1
-        .split_once("\n```")
-        .expect("DX contract TD closes YAML payload")
-        .0;
-    serde_yaml::from_str(yaml).expect("DX contract TD YAML is valid")
+    serde_yaml::from_str(DX_CONTRACT_SOURCE).expect("DX contract YAML is valid")
 }
 
 fn task_from_contract(contract: TaskContract) -> Topic {
