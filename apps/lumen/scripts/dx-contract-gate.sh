@@ -74,10 +74,19 @@ done
 # and leaves #3708 blocked exactly as it was.  `embed` is the column that
 # says the compile-time dependency actually went away; `md=102` says the
 # file itself is still here, because deleting it belongs to #3708, not here.
-# `other=17`, not 16: this script is itself a .sh file naming that path, so
-# the probe counts it -- correctly.  Base is 19 (two dx.rs lines + this one);
-# the change removes the two dx.rs lines and leaves this one standing.
-want='md=102 lock=1 py=51 hdr=588 files=104 other=17 embed=0'
+# `embed` targets 1, not 0.  `apps/lumen` compiles in TWO Markdown files under
+# the tree: this contract, and the TD that
+# `apps/lumen/tests/capability_stateful_workload_linkage.rs:5` embeds.  Only
+# the first is a product input and only the first moves here; the test's
+# assertions are about the TD document itself and are retired with it by #3708.
+# Round 1 of this issue asserted `embed=0` and passed, because the probe then
+# scanned `include_` line by line and that embed puts the macro and its string
+# on separate lines.
+#
+# `other` targets 19, from a base of 21: the change repoints both `dx.rs:18`
+# and `dx.rs:19`.  This script is itself a .sh file naming the old path, so the
+# probe counts it -- correctly -- and it stays standing until #3708 retires it.
+want='md=102 lock=1 py=51 hdr=589 files=105 other=19 embed=1'
 got=$(python3 scripts/td-retire-probe.py apps/lumen/tech-design)
 [ "$got" = "$want" ] && note PASS "probe" || note FAIL "probe: $got"
 
