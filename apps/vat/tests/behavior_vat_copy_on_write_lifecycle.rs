@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/external-contracts.md#vat-copy-on-write-lifecycle
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-copy-on-write-lifecycle

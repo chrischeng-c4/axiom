@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_pubsub-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Self-contained integration test for the built-in Pub/Sub gRPC emulator.
 //! Spawns `vat emulator pubsub` and drives CreateTopic -> CreateSubscription ->
@@ -37,7 +36,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_pubsub-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();

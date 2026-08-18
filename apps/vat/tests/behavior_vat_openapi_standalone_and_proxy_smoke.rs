@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-standalone-and-proxy-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-openapi-standalone-and-proxy-smoke

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_routing-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Integration test for http-mock host-routing (network sandbox v1).
 //! Spawns `vat emulator http-mock` with a route and asserts a proxied request to
@@ -37,7 +36,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_routing-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();

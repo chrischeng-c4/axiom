@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#vat-compose-mainstream-manual-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-compose-mainstream-manual-smoke

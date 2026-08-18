@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-rm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat rm <id>` — delete a vat and its workspace.
 
@@ -9,7 +8,6 @@ use anyhow::Result;
 use crate::event::{Event, EventKind};
 use crate::store;
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-rm-rs.md#source
 pub fn exec(id: String) -> Result<ExitCode> {
     // Best-effort: log the removal before the directory disappears, so a
     // shared events sink (future) still sees it.

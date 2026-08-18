@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-runscoped-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-cluster-runscoped-smoke

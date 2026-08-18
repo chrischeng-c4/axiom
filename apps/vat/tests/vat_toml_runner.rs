@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_toml_runner-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

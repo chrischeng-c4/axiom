@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Pluggable isolation backends.
 //!
@@ -28,7 +27,6 @@ use crate::spec::{EgressPolicy, EnvSpec, Isolation};
 /// An isolation backend resolves the user's command into the *actual* program
 /// + argv to exec (e.g. seatbelt wraps it in `sandbox-exec`). The caller then
 /// runs that resolved command inside the vat workspace with the spec env.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#source
 pub trait Sandbox {
     /// Short stable name, surfaced in events/state (`"process"`, `"seatbelt"`).
     fn name(&self) -> &'static str;
@@ -45,7 +43,6 @@ pub trait Sandbox {
 /// `EgressPolicy::Open` (today's common case) is unaffected and always
 /// succeeds; the workspace clone still applies regardless of isolation, so a
 /// vat is never *less* isolated than plain `cd` + run on that front.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#source
 // HANDWRITE-BEGIN gap="missing-generator:logic:pick-fail-closed" tracker="#1300" reason="Logic section edge: pick() must fail closed (return Err) instead of warn-and-continue when the selected backend cannot enforce a non-Open egress policy (isolation=none, or seatbelt requested but unavailable) — hand-written backend-selection logic per issue #1300."
 pub fn pick(spec: &EnvSpec) -> Result<Box<dyn Sandbox>, String> {
     match spec.isolation {

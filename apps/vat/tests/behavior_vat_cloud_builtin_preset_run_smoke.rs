@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-builtin-preset-run-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-cloud-builtin-preset-run-smoke

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_sandbox_egress-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Network sandbox v3: seatbelt egress policy.
 //!

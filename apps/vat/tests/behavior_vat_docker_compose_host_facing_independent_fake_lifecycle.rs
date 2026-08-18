@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-headless-docker-command-shim.md#vat-docker-compose-host-facing-independent-fake-lifecycle
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-docker-compose-host-facing-independent-fake-lifecycle

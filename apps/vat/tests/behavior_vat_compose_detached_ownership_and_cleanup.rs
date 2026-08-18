@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#vat-compose-detached-ownership-and-cleanup
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-compose-detached-ownership-and-cleanup

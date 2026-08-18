@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md#vat-doctor-selected-plan-docker-probe
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-doctor-selected-plan-docker-probe

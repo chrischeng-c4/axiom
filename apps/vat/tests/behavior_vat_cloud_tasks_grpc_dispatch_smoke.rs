@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-tasks-grpc-dispatch-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-cloud-tasks-grpc-dispatch-smoke

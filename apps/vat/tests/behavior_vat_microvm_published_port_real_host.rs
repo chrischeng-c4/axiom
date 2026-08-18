@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#vat-microvm-published-port-real-host
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-microvm-published-port-real-host

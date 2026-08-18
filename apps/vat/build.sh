@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# SPEC-MANAGED: apps/vat/tech-design/semantic/vat-build-script.md#text-source-unit
 # CODEGEN-BEGIN
 set -euo pipefail
 

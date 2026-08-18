@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-help-lists-all-three
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-cli-convention-help-lists-all-three

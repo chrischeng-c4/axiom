@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-emulator-grpc_mux-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Serve a tonic gRPC service and an axum REST router on ONE port.
 //!
@@ -11,7 +10,6 @@
 //! `CLOUD_TASKS_EMULATOR_HOST` / `CLOUD_SCHEDULER_EMULATOR_HOST` serves both
 //! protocols.
 //!
-//! @spec apps/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#logic
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -22,7 +20,6 @@ use axum::Router;
 /// Any tonic server qualifies: it is a `Service<Request, Error = Infallible>`
 /// whose response body is a tonic `BoxBody` (which axum renders via
 /// `IntoResponse`).
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-grpc_mux-rs.md#source
 pub async fn serve<S>(host_port: &str, rest: Router, grpc: S) -> Result<()>
 where
     S: tonic::codegen::Service<axum::extract::Request, Error = std::convert::Infallible>

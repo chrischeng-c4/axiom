@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_cli_convention-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Binary smoke test for the mandatory CLI convention: every CLI ships
 //! `llm`, `upgrade`, and `issue` (CONTRIBUTING.md).

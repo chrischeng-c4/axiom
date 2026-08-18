@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-process-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Host-process backend.
 //!
@@ -23,11 +22,9 @@ use std::path::Path;
 
 use crate::sandbox::Sandbox;
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-process-rs.md#source
 // HANDWRITE-BEGIN gap="missing-generator:logic:process-backend-no-egress-enforcement" tracker="pending-tracker" reason="Logic section edge: document that ProcessBackend has no egress-enforcement capability and that callers must go through sandbox::pick, which now fails closed instead of warning, per issue #1300."
 pub struct ProcessBackend;
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-process-rs.md#source
 impl Sandbox for ProcessBackend {
     fn name(&self) -> &'static str {
         "process"

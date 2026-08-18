@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-event-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Append-only structured event log.
 //!
@@ -16,7 +15,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// One logged event.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-event-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub ts: DateTime<Utc>,
@@ -29,7 +27,6 @@ pub struct Event {
 }
 
 /// Closed set of event kinds. Keep it small and meaningful.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-event-rs.md#source
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventKind {
@@ -42,7 +39,6 @@ pub enum EventKind {
     Removed,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-event-rs.md#source
 impl Event {
     pub fn new(kind: EventKind, message: impl Into<String>) -> Self {
         Event {
@@ -60,7 +56,6 @@ impl Event {
 }
 
 /// Append one event to a vat's `events.jsonl`, creating it if needed.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-event-rs.md#source
 pub fn append(events_path: &Path, event: &Event) -> Result<()> {
     let line = serde_json::to_string(event).context("serialize event")?;
     let mut f = OpenOptions::new()
@@ -75,7 +70,6 @@ pub fn append(events_path: &Path, event: &Event) -> Result<()> {
 /// Read up to the last `n` events (chronological order). Malformed lines are
 /// skipped rather than failing the whole read — the log must stay legible
 /// even if a write was once torn.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-event-rs.md#source
 pub fn tail(events_path: &Path, n: usize) -> Result<Vec<Event>> {
     if !events_path.exists() {
         return Ok(Vec::new());

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-ls-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat ls` — list all vats with a one-line status each.
 //!
@@ -12,7 +11,6 @@ use anyhow::Result;
 use crate::state::Status;
 use crate::store;
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-ls-rs.md#source
 pub fn exec(json: bool) -> Result<ExitCode> {
     let mut vats = store::list()?;
     // Newest first.

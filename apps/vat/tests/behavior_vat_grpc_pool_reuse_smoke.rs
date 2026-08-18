@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md#vat-grpc-pool-reuse-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-grpc-pool-reuse-smoke

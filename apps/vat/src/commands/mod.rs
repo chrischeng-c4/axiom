@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Command implementations, one file per verb.
 //!
@@ -31,7 +30,6 @@ use anyhow::Result;
 
 /// Print a value as JSON to stdout — pretty by default, single-line when
 /// `compact`. Used wherever a verb has a machine-readable mode.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-mod-rs.md#source
 pub fn print_json<T: serde::Serialize>(value: &T, compact: bool) -> Result<()> {
     let s = if compact {
         serde_json::to_string(value)?
@@ -42,7 +40,6 @@ pub fn print_json<T: serde::Serialize>(value: &T, compact: bool) -> Result<()> {
     Ok(())
 }
 // CODEGEN-END
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#cli
 // CODEGEN-BEGIN
 // Module registration and dispatch live in cli.rs
 // CODEGEN-END

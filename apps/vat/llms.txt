@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: apps/vat/tech-design/semantic/vat-projects-vat.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # vat Agent Context
 

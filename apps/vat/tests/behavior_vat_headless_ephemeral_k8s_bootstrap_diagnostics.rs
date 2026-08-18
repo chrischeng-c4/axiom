@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-headless-ephemeral-local-k8s.md#vat-headless-ephemeral-k8s-bootstrap-diagnostics
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-headless-ephemeral-k8s-bootstrap-diagnostics

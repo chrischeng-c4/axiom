@@ -1,5 +1,4 @@
 #!/usr/bin/env sh
-# SPEC-MANAGED: apps/vat/tech-design/semantic/vat-install-script.md#text-source-unit
 # CODEGEN-BEGIN
 # vat installer — downloads the right prebuilt binary from GitHub
 # Releases and drops it on your PATH.

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md#schema
 // CODEGEN-BEGIN
 //! MicroVM sandbox backend for Apple Silicon via the `container` CLI.
 
@@ -94,7 +93,6 @@ pub struct AppleContainerProbeError {
 }
 
 /// MicroVmBackend runs a workload inside an ephemeral Apple `container` microVM.
-/// @spec apps/vat/tech-design/logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md#schema
 #[derive(Debug, Clone)]
 pub struct MicroVmBackend {
     /// Network egress policy (Open or Deny; LocalhostOnly is rejected at pick() time).
@@ -635,11 +633,9 @@ mod tests {
     }
 }
 // CODEGEN-END
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/cli/vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli.md#schema
 // CODEGEN-BEGIN
 use serde::{Deserialize, Serialize};
 
-/// @spec apps/vat/tech-design/interfaces/cli/vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VatBuildPhase2DataModelAdditions {
     /// New apps/vat/src/commands/build.rs struct Args: file: Option<PathBuf> (defaults to `Dockerfile` inside the resolved context dir), context: Option<PathBuf> (defaults to the current directory), tag: Option<String> (defaults to `<context-dir-basename>:latest`, sanitized to a valid OCI reference — lowercased, non [a-z0-9._-] runs collapsed to `-` — resolved once in exec() before any subprocess is spawned; build_image() itself never guesses a tag, it always receives a concrete &str), build_args: Vec<(String,String)> (one pair per repeated --build-arg K=V flag, parsed via split_once('='), CLI-supplied order preserved — no BTreeMap reordering needed here since the input is already a deterministic Vec, unlike Phase 1's EnvSpec.env map), json: bool.

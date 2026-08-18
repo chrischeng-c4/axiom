@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-emulator-auth-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Built-in Firebase Auth (Identity Toolkit) emulator — a small axum REST server
 //! that the Firebase client/admin SDKs hit when `FIREBASE_AUTH_EMULATOR_HOST` is
@@ -7,7 +6,6 @@
 //! signInWithPassword, lookup, delete, secure-token refresh, plus the
 //! `/emulator` config + accounts endpoints.
 //!
-//! @spec apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -59,7 +57,6 @@ struct Claims {
 }
 
 /// Serve the Firebase Auth emulator until the process is killed.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-auth-rs.md#source
 pub async fn serve(host_port: &str) -> Result<()> {
     let state = AppState {
         inner: Arc::new(Mutex::new(Store::default())),

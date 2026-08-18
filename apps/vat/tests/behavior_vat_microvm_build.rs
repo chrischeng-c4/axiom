@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md#vat-microvm-build
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-microvm-build

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_runner_sandbox-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Integration test for #527: the sandbox (seatbelt isolation + the
 //! `[network].egress` policy) applies to RUNNER-mode commands, not just direct

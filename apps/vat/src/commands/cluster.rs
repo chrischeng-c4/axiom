@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-cluster-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat cluster` — manage standalone local Kubernetes clusters.
 //!
@@ -25,7 +24,6 @@ const CREATE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Persisted registry entry for a standalone cluster
 /// (`<root>/clusters/<name>/cluster.json`).
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterRecord {
     pub backend: String,
@@ -36,7 +34,6 @@ pub struct ClusterRecord {
 }
 
 /// `vat cluster create` — resolve a backend and create a standalone cluster.
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
 pub fn create(
     name: Option<String>,
     backend: ClusterBackend,
@@ -123,7 +120,6 @@ pub fn create(
 
 /// `vat cluster ls` — list registry clusters, marking any missing from their
 /// backend as stale.
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
 pub fn ls(json: bool) -> Result<ExitCode> {
     let records = read_registry()?;
     // Reconcile against each backend's live list once.
@@ -166,7 +162,6 @@ pub fn ls(json: bool) -> Result<ExitCode> {
 }
 
 /// `vat cluster kubeconfig` — print the isolated kubeconfig path for a cluster.
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
 pub fn kubeconfig(name: String, json: bool) -> Result<ExitCode> {
     let record = load_record(&name)?;
     if json {
@@ -179,7 +174,6 @@ pub fn kubeconfig(name: String, json: bool) -> Result<ExitCode> {
 
 /// `vat cluster delete` — delete the cluster via its backend, then remove the
 /// registry entry.
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
 pub fn delete(name: String, json: bool) -> Result<ExitCode> {
     let record = load_record(&name)?;
     if let Some(backend) = ResolvedBackend::from_name(&record.backend) {

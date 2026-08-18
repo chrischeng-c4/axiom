@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-emulator-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat emulator` — run one of vat's built-in Rust emulators.
 //!
@@ -14,7 +13,6 @@ use anyhow::Result;
 use crate::cli::EmulatorKind;
 
 /// Run the selected built-in emulator bound to `host_port`.
-/// @spec apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli
 #[cfg(feature = "emulator")]
 pub fn exec(
     kind: EmulatorKind,
@@ -64,7 +62,6 @@ fn parse_routes(routes: &[String]) -> Vec<(String, String)> {
 }
 
 /// Lean build (no `emulator` feature): the verb is present but inert.
-/// @spec apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli
 #[cfg(not(feature = "emulator"))]
 pub fn exec(
     _kind: EmulatorKind,

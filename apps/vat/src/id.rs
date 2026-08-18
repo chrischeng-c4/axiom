@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-id-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Vat identifiers.
 //!
@@ -13,7 +12,6 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Generate a fresh vat id, e.g. `vat-7f3k1q9`.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-id-rs.md#source
 pub fn fresh() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

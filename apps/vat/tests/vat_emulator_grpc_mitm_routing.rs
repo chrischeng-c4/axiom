@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_grpc_mitm_routing-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Integration test for network sandbox v2: transparent gRPC routing.
 //!
@@ -51,7 +50,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_grpc_mitm_routing-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();

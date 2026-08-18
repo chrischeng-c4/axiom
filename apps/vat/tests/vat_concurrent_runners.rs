@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_concurrent_runners-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat run a b` — concurrent runners share one workspace + service union,
 //! run side by side, and fold into one result with worst-wins exit.

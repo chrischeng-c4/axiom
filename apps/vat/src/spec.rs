@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Declarative environment spec.
 //!
@@ -13,7 +12,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Full declarative description of a vat's environment.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvSpec {
     /// Where the workspace is cloned from. `None` for an empty workspace.
@@ -56,7 +54,6 @@ pub struct EnvSpec {
     pub microvm_image: Option<String>,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#source
 impl Default for EnvSpec {
     fn default() -> Self {
         EnvSpec {
@@ -78,7 +75,6 @@ fn default_workdir() -> PathBuf {
 }
 
 /// Source of a vat's initial workspace.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "ref")]
 pub enum Base {
@@ -89,7 +85,6 @@ pub enum Base {
 }
 
 /// Process isolation strength. v1 ships `None` and `Seatbelt` (macOS).
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#source
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Isolation {
@@ -109,7 +104,6 @@ pub enum Isolation {
 /// Outbound network egress policy, enforced by the seatbelt backend
 /// (`sandbox-exec`). Only enforceable under `Isolation::Seatbelt`; with
 /// `Isolation::None` it is advisory (vat warns it cannot confine egress).
-/// @spec apps/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#schema
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EgressPolicy {
@@ -126,7 +120,6 @@ pub enum EgressPolicy {
 /// Whether the vat wants the GPU. Vat never *removes* GPU access (it can't —
 /// the process is native); this only drives a pre-flight check and what the
 /// agent is told.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#source
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum GpuRequest {
@@ -140,7 +133,6 @@ pub enum GpuRequest {
 }
 
 /// Advisory limits echoed in state for the agent or an external scheduler.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#source
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Limits {
     #[serde(default, skip_serializing_if = "Option::is_none")]

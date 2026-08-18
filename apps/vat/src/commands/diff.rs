@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-diff-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat diff <id>` — full filesystem changes vs. the vat's base.
 //!
@@ -11,7 +10,6 @@ use anyhow::Result;
 
 use crate::store;
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-diff-rs.md#source
 pub fn exec(id: String, json: bool) -> Result<ExitCode> {
     let vat = store::load(&id)?;
     let changes = vat.changes()?;

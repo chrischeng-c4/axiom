@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#vat-cli-std-parity
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-cli-std-parity

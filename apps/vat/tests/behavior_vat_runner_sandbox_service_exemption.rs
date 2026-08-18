@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-sandbox-extend-seatbelt-isolation-egress-coverage-to-runner.md#vat-runner-sandbox-service-exemption
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-runner-sandbox-service-exemption

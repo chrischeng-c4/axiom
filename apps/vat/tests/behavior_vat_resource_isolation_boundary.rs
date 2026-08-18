@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/external-contracts.md#vat-resource-isolation-boundary
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-resource-isolation-boundary
