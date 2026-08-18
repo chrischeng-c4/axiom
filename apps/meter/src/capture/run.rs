@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-capture-run-rs.md#source
 // CODEGEN-BEGIN
 //! `meter run` composite — the dual-mode sweep that folds every sub-verb into ONE
 //! [`MeterReport`].
@@ -41,7 +40,6 @@ use crate::report::producer::IntoFindings;
 /// sub-verb can be pruned with its `skip_*` flag; a pruned or un-driven sub-verb
 /// is recorded in `completion.missing` with a human reason.
 #[derive(Debug, Clone, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-run-rs.md#source
 pub struct RunOptions {
     /// The crate path the delegated/resource sub-verbs operate on.
     pub target: String,
@@ -75,7 +73,6 @@ pub struct RunOptions {
 /// sub-findings; the test child's exit is recorded in `last_run` but never
 /// forwarded (so a regression outranks a test failure per §4). Un-run sub-verbs
 /// are listed in `completion.missing`.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-run-rs.md#source
 pub fn run_sweep(opts: &RunOptions) -> MeterReport {
     let mut builder = ReportBuilder::new("run", opts.target.clone());
     builder.with_environment(EnvBlock::detect());

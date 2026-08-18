@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-examples-async-fuzzing-example-rs.md#source
 // CODEGEN-BEGIN
 use meter::{AsyncFuzzConfig, AsyncFuzzer};
 

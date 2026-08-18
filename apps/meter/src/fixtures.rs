@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 // CODEGEN-BEGIN
 //! Fixture system for cclab-probe
 //!
@@ -18,7 +17,6 @@ use std::str::FromStr;
 
 /// Fixture scope determines lifecycle and caching strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 pub enum FixtureScope {
     /// Function scope - executed once per test function (default)
     Function,
@@ -30,7 +28,6 @@ pub enum FixtureScope {
     Session,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 impl std::fmt::Display for FixtureScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -42,7 +39,6 @@ impl std::fmt::Display for FixtureScope {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 impl FromStr for FixtureScope {
     type Err = String;
 
@@ -57,7 +53,6 @@ impl FromStr for FixtureScope {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 impl FixtureScope {
     /// Check if this scope should be cleaned up before another scope
     pub fn should_cleanup_before(&self, other: &FixtureScope) -> bool {
@@ -81,7 +76,6 @@ impl FixtureScope {
 /// This is a pure Rust representation. The actual fixture function is stored
 /// as a Python object in the  binding layer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 pub struct FixtureMeta {
     /// Fixture name (function name)
     pub name: String,
@@ -95,7 +89,6 @@ pub struct FixtureMeta {
     pub has_teardown: bool,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 impl FixtureMeta {
     /// Create new fixture metadata
     pub fn new(name: impl Into<String>, scope: FixtureScope, autouse: bool) -> Self {
@@ -132,13 +125,11 @@ impl FixtureMeta {
 /// This is a pure Rust implementation. The  binding layer wraps this
 /// and handles Python-specific operations (calling functions, etc).
 #[derive(Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 pub struct FixtureRegistry {
     /// Registered fixtures by name
     fixtures: HashMap<String, FixtureMeta>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-fixtures-rs.md#source
 impl FixtureRegistry {
     /// Create a new fixture registry
     pub fn new() -> Self {

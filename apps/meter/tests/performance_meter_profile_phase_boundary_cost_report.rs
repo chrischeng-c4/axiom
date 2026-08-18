@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/logic/external-contracts.md#meter-profile-phase-boundary-cost-report
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec meter-profile-phase-boundary-cost-report

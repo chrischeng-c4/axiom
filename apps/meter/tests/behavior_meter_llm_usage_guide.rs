@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/logic/external-contracts.md#meter-llm-usage-guide
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec meter-llm-usage-guide

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-hooks-rs.md#source
 // CODEGEN-BEGIN
 //! Test lifecycle hooks system
 //!
@@ -15,7 +14,6 @@ use serde::{Deserialize, Serialize};
 
 /// Types of lifecycle hooks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-hooks-rs.md#source
 pub enum HookType {
     /// Run once before all tests in a class
     SetupClass,
@@ -31,7 +29,6 @@ pub enum HookType {
     TeardownMethod,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-hooks-rs.md#source
 impl std::fmt::Display for HookType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -45,7 +42,6 @@ impl std::fmt::Display for HookType {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-hooks-rs.md#source
 impl HookType {
     /// Check if this is a teardown hook
     pub fn is_teardown(&self) -> bool {

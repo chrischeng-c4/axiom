@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/logic/external-contracts.md#meter-capture-vitals-and-measurement-contract
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec meter-capture-vitals-and-measurement-contract

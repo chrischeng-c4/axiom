@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-performance-boundary-rs.md#source
 // CODEGEN-BEGIN
 //! binding boundary tracing infrastructure
 //!
@@ -61,7 +60,6 @@ use std::time::Instant;
 /// Records detailed timing information for each phase of a binding operation,
 /// enabling identification of bottlenecks and GIL contention issues.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-performance-boundary-rs.md#source
 pub struct BoundaryTiming {
     /// Operation name (e.g., "insert_many", "find")
     pub operation: String,
@@ -83,7 +81,6 @@ pub struct BoundaryTiming {
     pub parallel: bool,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-performance-boundary-rs.md#source
 impl BoundaryTiming {
     /// Get total GIL-held time in microseconds
     pub fn gil_held_us(&self) -> u64 {
@@ -139,7 +136,6 @@ impl BoundaryTiming {
 ///
 /// Tracks timing for each phase of a binding operation with minimal overhead.
 /// Uses `Instant` for high-resolution timing.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-performance-boundary-rs.md#source
 pub struct BoundaryTracer {
     operation: String,
     start: Instant,
@@ -156,7 +152,6 @@ pub struct BoundaryTracer {
     parallel: bool,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-performance-boundary-rs.md#source
 impl BoundaryTracer {
     /// Create a new boundary tracer for the given operation
     pub fn new(operation: impl Into<String>) -> Self {
@@ -264,7 +259,6 @@ impl BoundaryTracer {
 ///
 /// Aggregates timing data across multiple operations using atomic operations
 /// for lock-free updates.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-performance-boundary-rs.md#source
 pub struct BoundaryMetrics {
     total_operations: AtomicU64,
     total_extract_us: AtomicU64,
@@ -275,7 +269,6 @@ pub struct BoundaryMetrics {
     total_gil_releases: AtomicU64,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-performance-boundary-rs.md#source
 impl BoundaryMetrics {
     /// Create a new metrics collector
     pub fn new() -> Self {
@@ -408,7 +401,6 @@ impl BoundaryMetrics {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-performance-boundary-rs.md#source
 impl Default for BoundaryMetrics {
     fn default() -> Self {
         Self::new()

@@ -1,5 +1,4 @@
 #!/usr/bin/env sh
-# SPEC-MANAGED: apps/meter/tech-design/semantic/meter-install-script.md#text-source-unit
 # CODEGEN-BEGIN
 # meter installer — downloads the right prebuilt binary from GitHub
 # Releases and drops it on your PATH.

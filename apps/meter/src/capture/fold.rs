@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 // CODEGEN-BEGIN
 //! Fold folded stacks into ranked per-symbol hot spots — the C1 contract.
 //!
@@ -27,7 +26,6 @@ use super::sampler::FoldedStack;
 /// Per-symbol aggregated hot-spot metrics (the raw numbers behind a `Hotspot`
 /// finding's evidence).
 #[derive(Debug, Clone, PartialEq)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 pub struct Hotspot {
     /// The symbol (function) name.
     pub symbol: String,
@@ -51,7 +49,6 @@ pub struct Hotspot {
 /// `effective_hz` maps samples -> ns (`ns = samples * 1e9 / hz`). Returns an
 /// empty vec for empty input. Ordering is deterministic: primary key `self_ns`
 /// desc, ties broken by `symbol` asc so equal-weight symbols rank stably.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 pub fn aggregate(stacks: &[FoldedStack], effective_hz: f64) -> Vec<Hotspot> {
     let total_samples_overall: u64 = stacks.iter().map(|s| s.count).sum();
     if total_samples_overall == 0 {
@@ -126,7 +123,6 @@ pub fn aggregate(stacks: &[FoldedStack], effective_hz: f64) -> Vec<Hotspot> {
 /// This is the DEFAULT stdout of `meter measure --level sample`. The findings carry
 /// `evidence = {symbol, self_ns, total_ns, pct, samples, rank}` — the C1
 /// contract. `module_for` (optional) supplies a source symbol/location hint.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 pub fn fold_hotspots(
     stacks: &[FoldedStack],
     effective_hz: f64,
@@ -246,7 +242,6 @@ fn hotspot_finding(h: &Hotspot, fail_hot: Option<f64>) -> Finding {
 ///
 /// Returns a [`FlamegraphData`] ready for
 /// [`generate_flamegraph_svg`](crate::performance::profiler::generate_flamegraph_svg).
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 pub fn to_flamegraph(stacks: &[FoldedStack]) -> FlamegraphData {
     let mut data = FlamegraphData::new();
     for stack in stacks {

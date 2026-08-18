@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-registry-rs.md#source
 // CODEGEN-BEGIN
 //! Prompt template registry for managing multiple templates
 
@@ -9,12 +8,10 @@ use std::path::Path;
 
 /// Registry for managing prompt templates
 #[derive(Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-registry-rs.md#source
 pub struct PromptRegistry {
     templates: HashMap<String, PromptTemplate>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-registry-rs.md#source
 impl PromptRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {

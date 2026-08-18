@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 // CODEGEN-BEGIN
 //! Benchmark utilities for performance testing
 //!
@@ -17,7 +16,6 @@ use std::time::{Duration, Instant};
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 #[cfg_attr(feature = "rkyv", archive(check_bytes))]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct HistogramBucket {
     /// Minimum latency in bucket (ms)
     pub min_ms: f64,
@@ -36,7 +34,6 @@ pub struct HistogramBucket {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 #[cfg_attr(feature = "rkyv", archive(check_bytes))]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct BenchmarkStats {
     /// Number of iterations per round
     pub iterations: u32,
@@ -253,7 +250,6 @@ fn confidence_interval(mean: f64, stddev: f64, n: usize) -> (f64, f64) {
     (mean - margin, mean + margin)
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl BenchmarkStats {
     /// Create new stats from timing data
     pub fn from_times(times: Vec<f64>, iterations: u32, rounds: u32, warmup: u32) -> Self {
@@ -431,7 +427,6 @@ impl BenchmarkStats {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 #[cfg_attr(feature = "rkyv", archive(check_bytes))]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct BenchmarkResult {
     /// Name of this benchmark
     pub name: String,
@@ -443,7 +438,6 @@ pub struct BenchmarkResult {
     pub error: Option<String>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl BenchmarkResult {
     /// Create a successful benchmark result
     pub fn success(name: impl Into<String>, stats: BenchmarkStats) -> Self {
@@ -527,7 +521,6 @@ impl BenchmarkResult {
 
 /// Configuration for adaptive benchmark runs with early stopping
 #[derive(Debug, Clone)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct AdaptiveBenchmarkConfig {
     /// Enable adaptive sampling (if false, falls back to fixed iterations)
     pub enable_adaptive: bool,
@@ -547,7 +540,6 @@ pub struct AdaptiveBenchmarkConfig {
     pub timeout_ms: Option<f64>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl Default for AdaptiveBenchmarkConfig {
     fn default() -> Self {
         Self {
@@ -563,7 +555,6 @@ impl Default for AdaptiveBenchmarkConfig {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl AdaptiveBenchmarkConfig {
     /// Create a new adaptive benchmark configuration
     pub fn new() -> Self {
@@ -631,7 +622,6 @@ impl AdaptiveBenchmarkConfig {
 
 /// Configuration for benchmark runs
 #[derive(Debug, Clone)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct BenchmarkConfig {
     /// Number of iterations per round
     pub iterations: u32,
@@ -641,7 +631,6 @@ pub struct BenchmarkConfig {
     pub warmup: u32,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl Default for BenchmarkConfig {
     fn default() -> Self {
         Self {
@@ -652,7 +641,6 @@ impl Default for BenchmarkConfig {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl BenchmarkConfig {
     /// Create a new benchmark configuration
     pub fn new(iterations: u32, rounds: u32, warmup: u32) -> Self {
@@ -715,7 +703,6 @@ impl BenchmarkConfig {
 }
 
 /// Compare multiple benchmark results
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub fn compare_results(results: &[BenchmarkResult], baseline_name: Option<&str>) -> String {
     if results.is_empty() {
         return "No results to compare".to_string();
@@ -780,7 +767,6 @@ pub fn compare_results(results: &[BenchmarkResult], baseline_name: Option<&str>)
 /// cclab    1.234ms   1.200ms   1.500ms   1.800ms          2   (baseline)
 /// httpx          2.345ms   2.300ms   2.800ms   3.100ms          1   1.90x slower
 /// ```
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub fn print_comparison_table(results: &[BenchmarkResult], baseline_name: Option<&str>) {
     if results.is_empty() {
         println!("No results to compare");
@@ -837,12 +823,10 @@ pub fn print_comparison_table(results: &[BenchmarkResult], baseline_name: Option
 ///
 /// Note: For async operations, use the Python-side async benchmark function
 /// which wraps this for timing collection.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct Benchmarker {
     config: BenchmarkConfig,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl Benchmarker {
     /// Create a new benchmarker with the given configuration
     pub fn new(config: BenchmarkConfig) -> Self {
@@ -1021,7 +1005,6 @@ impl Benchmarker {
 
 /// Benchmark report for generating HTML/JSON output
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct BenchmarkReport {
     /// Report title
     pub title: String,
@@ -1039,7 +1022,6 @@ pub struct BenchmarkReport {
 
 /// A group of related benchmarks
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct BenchmarkReportGroup {
     /// Group name
     pub name: String,
@@ -1056,7 +1038,6 @@ pub struct BenchmarkReportGroup {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 #[cfg_attr(feature = "rkyv", archive(check_bytes))]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 pub struct BenchmarkEnvironment {
     pub python_version: Option<String>,
     pub rust_version: Option<String>,
@@ -1065,7 +1046,6 @@ pub struct BenchmarkEnvironment {
     pub hostname: Option<String>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl BenchmarkReport {
     /// Create a new benchmark report
     pub fn new(title: impl Into<String>) -> Self {
@@ -1496,7 +1476,6 @@ impl BenchmarkReport {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-benchmark-rs.md#source
 impl BenchmarkReportGroup {
     /// Create a new benchmark group
     pub fn new(name: impl Into<String>) -> Self {

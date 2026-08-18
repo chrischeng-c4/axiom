@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-capture-bench-rs.md#source
 // CODEGEN-BEGIN
 //! `meter bench` capture — delegate `cargo bench` and load a regression baseline.
 //!
@@ -23,7 +22,6 @@ use crate::baseline::RegressionReport;
 use crate::report::envelope::RunnerRecord;
 
 /// Outcome of a delegated `cargo bench` run.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-bench-rs.md#source
 pub struct BenchOutcome {
     /// The recorded child invocation (argv, timing, exit code).
     pub record: RunnerRecord,
@@ -41,7 +39,6 @@ pub struct BenchOutcome {
 /// == true`. A spawn failure (cargo missing / target unbuildable to the point of
 /// not launching) surfaces as `Err`, which the dispatch layer maps to a
 /// `ToolError(5)` report.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-bench-rs.md#source
 pub fn delegate_bench(target: impl AsRef<Path>) -> std::io::Result<BenchOutcome> {
     let target = target.as_ref();
     let argv: Vec<String> = vec![
@@ -98,7 +95,6 @@ fn manifest_path(target: &Path) -> String {
 /// The file is the JSON form produced by serializing a `RegressionReport` (the
 /// derives added in Wave 4). `Err(msg)` on a read or parse failure so the
 /// dispatch layer can surface a `ToolError` rather than a fake-clean report.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-capture-bench-rs.md#source
 pub fn load_regression_report(path: impl AsRef<Path>) -> Result<RegressionReport, String> {
     let path = path.as_ref();
     let raw = std::fs::read_to_string(path)

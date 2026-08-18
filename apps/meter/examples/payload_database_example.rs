@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-examples-payload-database-example-rs.md#source
 // CODEGEN-BEGIN
 use meter::{PayloadCategory, PayloadDatabase};
 

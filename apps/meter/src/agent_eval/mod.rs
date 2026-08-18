@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-mod-rs.md#source
 // CODEGEN-BEGIN
 //! Agent Evaluation Framework - Integration with cclab-probe
 //!

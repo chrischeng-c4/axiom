@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 // CODEGEN-BEGIN
 //! Cost calculation system for LLM model pricing
 
@@ -7,7 +6,6 @@ use std::collections::HashMap;
 
 /// Model pricing information
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 pub struct ModelPricing {
     /// Model identifier
     pub model: String,
@@ -22,7 +20,6 @@ pub struct ModelPricing {
     pub completion_price_per_1m: f64,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl ModelPricing {
     /// Create a new model pricing entry
     pub fn new(
@@ -42,19 +39,16 @@ impl ModelPricing {
 
 /// Registry of model pricing information
 #[derive(Debug, Clone)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 pub struct PricingRegistry {
     prices: HashMap<String, ModelPricing>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl Default for PricingRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl PricingRegistry {
     /// Create a new pricing registry with pre-populated common models
     pub fn new() -> Self {
@@ -137,19 +131,16 @@ impl PricingRegistry {
 }
 
 /// Cost calculator
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 pub struct CostCalculator {
     registry: PricingRegistry,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl Default for CostCalculator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl CostCalculator {
     /// Create a new cost calculator with default pricing registry
     pub fn new() -> Self {
@@ -230,7 +221,6 @@ impl CostCalculator {
 
 /// Detailed cost breakdown
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 pub struct CostBreakdown {
     /// Model used
     pub model: String,

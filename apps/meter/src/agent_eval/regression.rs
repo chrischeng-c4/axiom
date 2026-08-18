@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 // CODEGEN-BEGIN
 //! Agent evaluation regression detection
 
@@ -9,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 /// Thresholds for agent evaluation regression detection
 #[derive(Debug, Clone)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegressionThresholds {
     /// Pass rate decrease threshold as percentage (e.g., 5.0 = 5%)
     pub pass_rate_threshold_percent: f64,
@@ -27,7 +25,6 @@ pub struct AgentRegressionThresholds {
     pub quality_score_threshold: Option<f64>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 impl Default for AgentRegressionThresholds {
     fn default() -> Self {
         Self {
@@ -42,7 +39,6 @@ impl Default for AgentRegressionThresholds {
 
 /// A detected agent evaluation regression
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegression {
     /// Metric name
     pub metric: String,
@@ -65,7 +61,6 @@ pub struct AgentRegression {
 
 /// Agent regression detection report
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegressionReport {
     /// Baseline timestamp
     pub baseline_timestamp: String,
@@ -80,7 +75,6 @@ pub struct AgentRegressionReport {
     pub summary: AgentRegressionSummary,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 impl AgentRegressionReport {
     /// Check if any regressions were detected
     pub fn has_regressions(&self) -> bool {
@@ -98,7 +92,6 @@ impl AgentRegressionReport {
 
 /// Summary of regression analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegressionSummary {
     /// Total test cases compared
     pub total_cases: usize,
@@ -111,10 +104,8 @@ pub struct AgentRegressionSummary {
 }
 
 /// Agent regression detector
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegressionDetector;
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 impl AgentRegressionDetector {
     /// Detect regressions by comparing current results against baseline
     pub fn detect_regressions(
