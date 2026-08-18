@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-atomic-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -10,7 +9,6 @@ use crate::FsyncPolicy;
 
 /// Write `bytes` to `path` through a temp file, fsync according to `policy`,
 /// then atomically rename it into place.
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-atomic-rs.md#source
 pub fn atomic_write(path: impl AsRef<Path>, bytes: &[u8], policy: FsyncPolicy) -> Result<()> {
     let path = path.as_ref();
     if let Some(parent) = path.parent() {
@@ -45,7 +43,6 @@ pub fn atomic_write(path: impl AsRef<Path>, bytes: &[u8], policy: FsyncPolicy) -
 }
 
 /// Best-effort directory fsync on platforms that support opening directories.
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-atomic-rs.md#source
 pub fn sync_parent_dir(path: impl AsRef<Path>) -> Result<()> {
     let Some(parent) = path.as_ref().parent() else {
         return Ok(());

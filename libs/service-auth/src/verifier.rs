@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-auth/tech-design/semantic/source/libs-service-auth-src-verifier-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The [`Verifier`] trait — the one thing each service implements.
 //!
@@ -20,7 +19,6 @@ use crate::error::AuthError;
 /// [`required`](Verifier::required) to `false` and return the service's "open"
 /// principal value from [`authenticate`](Verifier::authenticate) when no
 /// credential is presented. The middleware does not special-case it.
-/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-verifier-rs.md#source
 pub trait Verifier: Send + Sync + 'static {
     /// The service's own principal type, injected into request extensions on
     /// success and read by handlers via `axum::extract::Extension`.

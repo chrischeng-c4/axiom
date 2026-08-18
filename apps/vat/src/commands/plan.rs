@@ -1,4 +1,3 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-plan-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat plan` — project the configured run topology without executing it.
 

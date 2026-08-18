@@ -1,8 +1,6 @@
-// SPEC-MANAGED: libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-fsync-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 /// Shared flush policy for local durable files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-fsync-rs.md#source
 pub enum FsyncPolicy {
     /// Flush and fsync at the durability boundary.
     #[default]
@@ -15,7 +13,6 @@ pub enum FsyncPolicy {
     Os,
 }
 
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-fsync-rs.md#source
 impl FsyncPolicy {
     pub fn should_sync_immediately(self) -> bool {
         matches!(self, Self::Always)

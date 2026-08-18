@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/build-stamp/tech-design/semantic/build-stamp-libs-build-stamp.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Build Stamp Agent Context
 

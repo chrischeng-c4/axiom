@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/metrics-prometheus/tech-design/semantic/metrics-prometheus-libs-metrics-prometheus.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Service Metrics Agent Context
 

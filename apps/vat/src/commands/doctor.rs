@@ -1,4 +1,3 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-doctor-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat doctor` — cheap host preflight for the selected vat.toml run.
 

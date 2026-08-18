@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/service-auth/tech-design/semantic/service-auth-libs-service-auth.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Service Auth Agent Context
 
