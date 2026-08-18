@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-orchestrates-sibling
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-cloud-workflows-orchestrates-sibling

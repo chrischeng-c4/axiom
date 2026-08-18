@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec scenario-failure-keeps-topology-and-logs

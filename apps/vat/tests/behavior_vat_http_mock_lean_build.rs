@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-lean-build
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-http-mock-lean-build

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-state-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat state <id>` — print the full agent-legible [`VatState`] as JSON.
 //!
@@ -11,7 +10,6 @@ use anyhow::Result;
 
 use crate::store;
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-state-rs.md#source
 pub fn exec(id: String, compact: bool) -> Result<ExitCode> {
     let vat = store::load(&id)?;
     let state = vat.project()?;

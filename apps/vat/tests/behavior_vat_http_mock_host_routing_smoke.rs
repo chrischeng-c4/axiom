@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#vat-http-mock-host-routing-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-http-mock-host-routing-smoke

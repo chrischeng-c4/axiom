@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Built-in HTTP mock + record/replay proxy — the mock-killer.
 //!
@@ -11,7 +10,6 @@
 //! records. `/__admin/*` origin-form requests are the control API (stubs +
 //! `/__admin/openapi`). HTTP/1.1; never panics on bad input.
 //!
-//! @spec apps/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic
 
 pub mod ca;
 pub mod cassette;
@@ -91,7 +89,6 @@ fn json_resp(status: StatusCode, v: serde_json::Value) -> Response<BoxBody> {
 /// Serve the HTTP mock proxy until the process is killed. `routes` seeds the
 /// host-routing table (`(host, local base URL)` pairs). When `forward` is false
 /// (hermetic mode) an unmatched request is blocked instead of forwarded.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-mod-rs.md#source
 pub async fn serve(
     host_port: &str,
     ca_path: &str,
@@ -140,7 +137,6 @@ pub async fn serve(
     }
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-mod-rs.md#source
 impl Proxy {
     /// Top-level routing by the request target form.
     async fn route(self: Arc<Self>, req: Request<Incoming>) -> Response<BoxBody> {

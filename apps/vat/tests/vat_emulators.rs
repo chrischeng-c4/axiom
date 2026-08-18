@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulators-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Integration coverage for the GCP / Firebase emulator presets.
 //!

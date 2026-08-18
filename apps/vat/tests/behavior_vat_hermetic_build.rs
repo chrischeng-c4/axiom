@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md#vat-hermetic-build
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-hermetic-build

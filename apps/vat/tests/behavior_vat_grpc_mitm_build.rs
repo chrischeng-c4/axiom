@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md#vat-grpc-mitm-build
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-grpc-mitm-build

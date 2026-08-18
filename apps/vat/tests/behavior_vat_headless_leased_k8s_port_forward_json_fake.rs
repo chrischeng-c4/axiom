@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-headless-ephemeral-local-k8s.md#vat-headless-leased-k8s-port-forward-json-fake
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-headless-leased-k8s-port-forward-json-fake

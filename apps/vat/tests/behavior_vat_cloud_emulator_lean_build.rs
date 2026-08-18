@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-emulator-lean-build
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-cloud-emulator-lean-build

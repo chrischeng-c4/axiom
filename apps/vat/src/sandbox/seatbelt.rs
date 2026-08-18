@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-seatbelt-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! macOS seatbelt backend.
 //!
@@ -17,19 +16,16 @@ use std::path::Path;
 use crate::sandbox::Sandbox;
 use crate::spec::EgressPolicy;
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-seatbelt-rs.md#source
 pub struct SeatbeltBackend {
     /// Outbound network egress policy baked into the generated profile.
     pub egress: EgressPolicy,
 }
 
 /// Is `sandbox-exec` present on this host?
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-seatbelt-rs.md#source
 pub fn available() -> bool {
     which("sandbox-exec").is_some()
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-seatbelt-rs.md#source
 impl Sandbox for SeatbeltBackend {
     fn name(&self) -> &'static str {
         "seatbelt"

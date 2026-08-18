@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_scheduler_grpc-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Integration test for the Cloud Scheduler emulator's gRPC front-end. Spawns
 //! `vat emulator cloud-scheduler`, drives the GENERATED gRPC client to
@@ -39,7 +38,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_scheduler_grpc-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();

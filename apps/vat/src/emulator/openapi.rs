@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-emulator-openapi-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! OpenAPI-driven mock HTTP service — read a spec, serve its responses.
 //!
@@ -12,7 +11,6 @@
 //! validation, no auth — enough to stand up a working fake. Never panics on bad
 //! input: an unmatched path is `None` (404), a malformed spec degrades to `{}`.
 //!
-//! @spec apps/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#logic
 
 use std::sync::{Arc, Mutex};
 
@@ -25,7 +23,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// A response generated from the spec for a matched operation.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-openapi-rs.md#source
 pub struct MockResponse {
     pub status: u16,
     pub content_type: String,
@@ -33,12 +30,10 @@ pub struct MockResponse {
 }
 
 /// A parsed OpenAPI document, walked as a generic value.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-openapi-rs.md#source
 pub struct OpenApiSpec {
     doc: Value,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-openapi-rs.md#source
 impl OpenApiSpec {
     /// Parse a spec from YAML or JSON text (YAML is a JSON superset, so one path).
     #[allow(clippy::should_implement_trait)]
@@ -276,12 +271,10 @@ fn path_matches(tmpl: &str, path: &str) -> bool {
 
 /// A set of registered specs, optionally host-bound, used by the http-mock proxy.
 #[derive(Default)]
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-openapi-rs.md#source
 pub struct SpecRegistry {
     specs: Mutex<Vec<(Option<String>, OpenApiSpec)>>,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-openapi-rs.md#source
 impl SpecRegistry {
     /// Register a spec, optionally bound to a host (else consulted for any host).
     pub fn add(&self, host: Option<String>, spec: OpenApiSpec) {
@@ -313,7 +306,6 @@ impl SpecRegistry {
 
 /// Registration payload for the http-mock proxy's `/__admin/openapi` route.
 #[derive(Deserialize)]
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-openapi-rs.md#source
 pub struct Registration {
     #[serde(default)]
     pub host: Option<String>,
@@ -326,7 +318,6 @@ struct AppState {
 }
 
 /// Serve the standalone OpenAPI mock server until the process is killed.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-openapi-rs.md#source
 pub async fn serve(host_port: &str, spec_path: &str) -> Result<()> {
     let spec = Arc::new(OpenApiSpec::load(spec_path)?);
     let app = Router::new()

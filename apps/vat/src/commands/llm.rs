@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-llm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat llm` — compact agent-facing usage contract.
 
@@ -7,7 +6,6 @@ use std::process::ExitCode;
 use anyhow::Result;
 
 /// Stable guide text intended for LLM/tool agents.
-/// @spec apps/vat/tech-design/logic/llm-agent-usage-guide.md#cli
 const GUIDE: &str = r#"# vat LLM Guide
 
 vat is a local, ephemeral agent test runner. Use it to prepare a real local
@@ -1453,7 +1451,6 @@ const TOPICS: &[cli_std::llm::Topic] = &[
 ];
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#1817" reason="DX command-inventory contract and offline guide text are hand-written pending codegen support">
-/// @spec apps/vat/tech-design/logic/llm-agent-usage-guide.md#cli
 pub fn exec(topic: &str, format: cli_std::llm::Format) -> Result<ExitCode> {
     let out = cli_std::llm::render("vat", crate::VERSION, TOPICS, topic, format)?;
     println!("{out}");

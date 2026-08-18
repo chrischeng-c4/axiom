@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! vat — agent-native, GPU-native dev containers.
 //!
@@ -55,8 +54,6 @@ pub mod cli;
 /// Crate version, surfaced by `vat --version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // CODEGEN-END
-// SPEC-MANAGED: apps/vat/tech-design/logic/add-versioned-native-lumen-service-preset.md#changes
 // CODEGEN-BEGIN
-// SPEC-REF: apps/vat/tech-design/logic/add-versioned-native-lumen-service-preset.md#changes
 // TODO: Implement apps/vat/src/lib.rs
 // CODEGEN-END

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_cluster-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Integration coverage for kind-like local Kubernetes clusters.
 //!

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#vat-compose-runtime-local-build-artifacts
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-compose-runtime-local-build-artifacts

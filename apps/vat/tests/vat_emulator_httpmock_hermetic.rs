@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_hermetic-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // HANDWRITE-BEGIN gap="missing-generator:e2e-test:7761ba2f" tracker="pending-tracker" reason="--no-forward proxy: unmatched → 502 hermetic (no upstream), stub still served; default proxy still forwards."
 //! Integration test for the http-mock hermetic (`--no-forward`) mode — the
@@ -40,7 +39,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_hermetic-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
