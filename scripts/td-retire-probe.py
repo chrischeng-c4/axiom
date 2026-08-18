@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.environ.get(
@@ -170,6 +171,25 @@ def scan(want):
     return md, lock, py, hdr, files, other, embed
 
 
+def _resolves(prefix):
+    """True when prefix matches a path on disk or a tracked path in the repository."""
+    if not prefix:
+        return False
+    if os.path.exists(os.path.join(ROOT, prefix)):
+        return True
+    try:
+        res = subprocess.run(
+            ["git", "ls-files", "--", prefix],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return res.returncode == 0 and bool(res.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def main(argv):
     expect = None
     if argv[:1] == ["--expect"]:
@@ -189,6 +209,9 @@ def main(argv):
             print("%-36s md=%-5d lock=%-3d py=%-5d hdr=%-5d files=%-5d other=%-4d embed=%d"
                   % (t, md, lock, py, hdr, len(files), other, embed))
         return 0
+    for p in argv:
+        if not _resolves(p):
+            sys.exit(f"error: unknown tree prefix: {p}")
     want = lambda t: any(t == p or t.startswith(p.rstrip("/") + "/") for p in argv)
     md, lock, py, hdr, files, other, embed = scan(want)
     line = ("md=%d lock=%d py=%d hdr=%d files=%d other=%d embed=%d"
