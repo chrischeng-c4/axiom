@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 // CODEGEN-BEGIN
 //! Plugin system for cclab-probe
 //!
@@ -39,16 +38,13 @@ use crate::runner::{TestMeta, TestResult, TestSummary};
 // ============================================================================
 
 /// Result type for hook execution
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub type HookResult<T> = Result<T, HookError>;
 
 /// Future type for async hooks
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub type AsyncHookFuture<'a, T> = Pin<Box<dyn Future<Output = HookResult<T>> + Send + 'a>>;
 
 /// Errors that can occur during hook execution
 #[derive(Debug, Clone)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub enum HookError {
     /// Hook execution failed
     ExecutionFailed(String),
@@ -60,7 +56,6 @@ pub enum HookError {
     InvalidArguments(String),
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl std::fmt::Display for HookError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -72,12 +67,10 @@ impl std::fmt::Display for HookError {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl std::error::Error for HookError {}
 
 /// Hook specification types for the plugin system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub enum HookSpec {
     /// Called when the runner is being configured
     Configure,
@@ -101,7 +94,6 @@ pub enum HookSpec {
     ModifyItems,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl std::fmt::Display for HookSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -128,7 +120,6 @@ impl std::fmt::Display for HookSpec {
 /// Plugins can implement any subset of hook methods. Default implementations
 /// are provided that do nothing, allowing plugins to only implement the hooks
 /// they care about.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub trait Plugin: Send + Sync {
     /// Get the plugin name (must be unique)
     fn name(&self) -> &'static str;
@@ -180,7 +171,6 @@ pub trait Plugin: Send + Sync {
 
 /// Configuration passed to plugins during the configure hook
 #[derive(Debug, Clone, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub struct PluginConfig {
     /// Whether to run tests in parallel
     pub parallel: bool,
@@ -194,7 +184,6 @@ pub struct PluginConfig {
     pub extra: HashMap<String, String>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl PluginConfig {
     /// Create a new plugin config with defaults
     pub fn new() -> Self {
@@ -224,12 +213,10 @@ impl PluginConfig {
 
 /// Manages plugin registration and hook execution
 #[derive(Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub struct PluginManager {
     plugins: Vec<Arc<dyn Plugin>>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl PluginManager {
     /// Create a new plugin manager
     pub fn new() -> Self {
@@ -378,19 +365,16 @@ impl PluginManager {
 
 /// Logging plugin that logs test lifecycle events
 #[derive(Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub struct LoggingPlugin {
     verbose: bool,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl LoggingPlugin {
     pub fn new(verbose: bool) -> Self {
         Self { verbose }
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl Plugin for LoggingPlugin {
     fn name(&self) -> &'static str {
         "logging"
@@ -439,26 +423,22 @@ impl Plugin for LoggingPlugin {
 
 /// Timeout plugin that enforces test timeouts
 #[derive(Debug)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub struct TimeoutPlugin {
     default_timeout: f64,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl TimeoutPlugin {
     pub fn new(default_timeout: f64) -> Self {
         Self { default_timeout }
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl Default for TimeoutPlugin {
     fn default() -> Self {
         Self::new(30.0) // 30 seconds default
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl Plugin for TimeoutPlugin {
     fn name(&self) -> &'static str {
         "timeout"
@@ -477,13 +457,11 @@ impl Plugin for TimeoutPlugin {
 
 /// Filter plugin that filters tests by markers/tags
 #[derive(Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 pub struct FilterPlugin {
     include_tags: Vec<String>,
     exclude_tags: Vec<String>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl FilterPlugin {
     pub fn new() -> Self {
         Self::default()
@@ -500,7 +478,6 @@ impl FilterPlugin {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-plugin-rs.md#source
 impl Plugin for FilterPlugin {
     fn name(&self) -> &'static str {
         "filter"

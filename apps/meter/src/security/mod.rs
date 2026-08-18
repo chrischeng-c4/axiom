@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-security-mod-rs.md#source
 // CODEGEN-BEGIN
 //! Security testing framework for cclab
 //!

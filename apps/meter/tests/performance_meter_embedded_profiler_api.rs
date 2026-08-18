@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/logic/external-contracts.md#meter-embedded-profiler-api
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec meter-embedded-profiler-api

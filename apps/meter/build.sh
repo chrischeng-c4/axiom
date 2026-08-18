@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# SPEC-MANAGED: apps/meter/tech-design/semantic/meter-build-script.md#text-source-unit
 # CODEGEN-BEGIN
 set -euo pipefail
 

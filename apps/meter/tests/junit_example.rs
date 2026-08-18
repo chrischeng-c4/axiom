@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-tests-junit-example-rs.md#source
 // CODEGEN-BEGIN
 use meter::reporter::{Reporter, TestReport};
 use meter::runner::{TestMeta, TestResult, TestStatus};

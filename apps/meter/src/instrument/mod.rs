@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! AST-assisted instrumentation-point discovery (feature `ast`).
 //!
@@ -33,7 +32,6 @@ use serde::{Deserialize, Serialize};
 /// What kind of source construct a probe point sits on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#source
 pub enum ProbeKind {
     /// Free function (Rust `fn`, Python `def`, TS/JS `function`, Go `func`).
     /// Rust methods are also reported as `Function` (see [`FunctionKind`]).
@@ -43,7 +41,6 @@ pub enum ProbeKind {
     Method,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#source
 impl From<FunctionKind> for ProbeKind {
     fn from(kind: FunctionKind) -> Self {
         match kind {
@@ -55,7 +52,6 @@ impl From<FunctionKind> for ProbeKind {
 
 /// A precise, AST-identified location where meter can place a probe.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#source
 pub struct ProbePoint {
     /// Function or method name (`<anonymous>` when the grammar node has no
     /// `name` field).
@@ -72,7 +68,6 @@ pub struct ProbePoint {
     pub end_line: usize,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#source
 impl ProbePoint {
     /// Number of source lines the construct spans (>= 1).
     pub fn line_span(&self) -> usize {
@@ -82,7 +77,6 @@ impl ProbePoint {
 
 /// Errors from probe-point discovery.
 #[derive(Debug, thiserror::Error)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#source
 pub enum InstrumentError {
     /// The file extension is outside meter's AST instrumentation scope.
     #[error("unsupported file extension for AST instrumentation: {0:?}")]
@@ -101,7 +95,6 @@ pub enum InstrumentError {
 
 /// Map a file extension to a compass [`Language`] meter knows how to instrument.
 /// Returns `None` for extensions outside meter's instrumentation scope.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#source
 pub fn language_for_extension(ext: &str) -> Option<Language> {
     match ext {
         "rs" => Some(Language::Rust),
@@ -118,7 +111,6 @@ pub fn language_for_extension(ext: &str) -> Option<Language> {
 /// Reads `path`, delegates parsing/enumeration to [`cclab_compass::outline`],
 /// and returns one [`ProbePoint`] per function/method with an exact 1-based line
 /// span, ordered by `start_line`.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#source
 pub fn discover_probe_points(path: impl AsRef<Path>) -> Result<Vec<ProbePoint>, InstrumentError> {
     let path = path.as_ref();
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -136,7 +128,6 @@ pub fn discover_probe_points(path: impl AsRef<Path>) -> Result<Vec<ProbePoint>, 
 /// Discover probe points in an in-memory source string (testable without a file).
 ///
 /// `file_label` is recorded verbatim on each [`ProbePoint::file`].
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-instrument-mod-rs.md#source
 pub fn discover_probe_points_in_source(
     source: &str,
     language: Language,

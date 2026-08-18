@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-report-emit-rs.md#source
 // CODEGEN-BEGIN
 //! [`emit`] — print exactly ONE serde_json document to stdout.
 //!
@@ -14,7 +13,6 @@ use super::envelope::MeterReport;
 ///
 /// `compact == false` => `to_string_pretty`; `compact == true` => `to_string`.
 /// Returns the serialized string for callers that also want it in-hand.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-report-emit-rs.md#source
 pub fn emit(report: &MeterReport, compact: bool) -> String {
     let json = render(report, compact);
     // Exactly one stdout write of the report; trailing newline for line-based
@@ -28,7 +26,6 @@ pub fn emit(report: &MeterReport, compact: bool) -> String {
 }
 
 /// Render `report` to a JSON string without printing.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-report-emit-rs.md#source
 pub fn render(report: &MeterReport, compact: bool) -> String {
     if compact {
         serde_json::to_string(report)
@@ -46,7 +43,6 @@ pub fn render(report: &MeterReport, compact: bool) -> String {
 }
 
 /// Print a diagnostic line to stderr (never stdout).
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-report-emit-rs.md#source
 pub fn diag(msg: impl AsRef<str>) {
     let _ = writeln!(std::io::stderr(), "{}", msg.as_ref());
 }

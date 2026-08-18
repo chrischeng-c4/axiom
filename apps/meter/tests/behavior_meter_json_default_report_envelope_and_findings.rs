@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/logic/external-contracts.md#meter-json-default-report-envelope-and-findings
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec meter-json-default-report-envelope-and-findings

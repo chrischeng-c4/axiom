@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 // CODEGEN-BEGIN
 //! Result types for agent evaluation
 
@@ -9,7 +8,6 @@ use std::collections::HashMap;
 /// Match type for correctness evaluation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub enum MatchType {
     /// Exact string match
     Exact,
@@ -25,7 +23,6 @@ pub enum MatchType {
 
 /// Correctness evaluation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct CorrectnessResult {
     /// Whether the output matches expected
     pub matches: bool,
@@ -42,7 +39,6 @@ pub struct CorrectnessResult {
     pub details: Option<String>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 impl CorrectnessResult {
     /// Create a passing correctness result
     pub fn passed(match_type: MatchType) -> Self {
@@ -73,7 +69,6 @@ impl CorrectnessResult {
 
 /// Tool accuracy evaluation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct ToolAccuracyResult {
     /// Precision: TP / (TP + FP)
     pub precision: f64,
@@ -91,7 +86,6 @@ pub struct ToolAccuracyResult {
     pub unexpected_tools: Vec<String>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 impl Default for ToolAccuracyResult {
     fn default() -> Self {
         Self {
@@ -106,7 +100,6 @@ impl Default for ToolAccuracyResult {
 
 /// Latency metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct LatencyMetrics {
     /// Total latency in milliseconds
     pub total_ms: f64,
@@ -121,7 +114,6 @@ pub struct LatencyMetrics {
 
 /// Cost metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct CostMetrics {
     /// Total cost in USD
     pub total_cost_usd: f64,
@@ -148,7 +140,6 @@ pub struct CostMetrics {
 
 /// Quality scores from LLM-as-judge
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct QualityScores {
     /// Individual criterion scores (0.0-1.0)
     pub scores: HashMap<String, f64>,
@@ -163,7 +154,6 @@ pub struct QualityScores {
 
 /// Single agent evaluation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct AgentEvalResult {
     /// Test case ID
     pub test_case_id: String,
@@ -201,7 +191,6 @@ pub struct AgentEvalResult {
     pub failure_reason: Option<String>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 impl AgentEvalResult {
     /// Determine if result passed all checks
     pub fn determine_passed(&self) -> bool {
@@ -214,7 +203,6 @@ impl AgentEvalResult {
 
 /// Aggregated correctness metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct CorrectnessMetrics {
     /// Total test cases
     pub total: usize,
@@ -231,7 +219,6 @@ pub struct CorrectnessMetrics {
 
 /// Aggregated tool usage metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct ToolUsageMetrics {
     /// Average precision across all tests
     pub avg_precision: f64,
@@ -251,7 +238,6 @@ pub struct ToolUsageMetrics {
 
 /// Aggregated quality metrics (from LLM-as-judge)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct QualityMetrics {
     /// Average scores by criterion
     pub avg_scores_by_criterion: HashMap<String, f64>,
@@ -265,7 +251,6 @@ pub struct QualityMetrics {
 
 /// Aggregated cost statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct CostStats {
     /// Total cost in USD across all tests
     pub total_cost_usd: f64,
@@ -291,7 +276,6 @@ pub struct CostStats {
 
 /// Aggregated agent evaluation metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 pub struct AgentEvalMetrics {
     /// Total number of test cases
     pub total_cases: usize,
@@ -319,7 +303,6 @@ pub struct AgentEvalMetrics {
     pub cost_stats: CostStats,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-result-rs.md#source
 impl Default for AgentEvalMetrics {
     fn default() -> Self {
         Self {

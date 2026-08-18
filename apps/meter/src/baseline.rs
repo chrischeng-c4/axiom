@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 // CODEGEN-BEGIN
 //! Baseline metrics recording and regression detection
 //!
@@ -18,7 +17,6 @@ use std::path::{Path, PathBuf};
 
 /// Percentile to use for regression detection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub enum PercentileType {
     Mean,
     P50,
@@ -28,7 +26,6 @@ pub enum PercentileType {
     P9999,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 impl PercentileType {
     /// Extract the specified percentile value from BenchmarkStats
     pub fn extract_value(&self, stats: &BenchmarkStats) -> f64 {
@@ -62,7 +59,6 @@ impl PercentileType {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 #[cfg_attr(feature = "rkyv", archive(check_bytes))]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct BaselineMetadata {
     /// Baseline format version
     pub version: String,
@@ -81,7 +77,6 @@ pub struct BaselineMetadata {
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 #[cfg_attr(feature = "rkyv", archive(check_bytes))]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct GitMetadata {
     /// Current commit SHA
     pub commit_sha: Option<String>,
@@ -95,7 +90,6 @@ pub struct GitMetadata {
 
 /// Content type for baseline snapshots
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub enum BaselineContent {
     /// Benchmark results (supports binary serialization)
     Benchmarks(Vec<BenchmarkResult>),
@@ -105,7 +99,6 @@ pub enum BaselineContent {
 
 /// A snapshot of benchmark results at a point in time
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct BaselineSnapshot {
     /// Metadata about this baseline
     pub metadata: BaselineMetadata,
@@ -113,7 +106,6 @@ pub struct BaselineSnapshot {
     pub content: BaselineContent,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 impl BaselineSnapshot {
     /// Create a new benchmark baseline snapshot
     pub fn from_benchmarks(benchmarks: Vec<BenchmarkResult>, env: &BenchmarkEnvironment) -> Self {
@@ -158,7 +150,6 @@ impl BaselineSnapshot {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 impl BaselineSnapshot {
     /// Serialize to binary format using rkyv (zero-copy)
     /// Only works for benchmark baselines
@@ -194,7 +185,6 @@ impl BaselineSnapshot {
 
 /// Thresholds for regression detection
 #[derive(Debug, Clone)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct RegressionThresholds {
     /// Warning threshold as percentage (e.g., 5.0 = 5%)
     pub warning_threshold_percent: f64,
@@ -208,7 +198,6 @@ pub struct RegressionThresholds {
     pub percentile_type: PercentileType,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 impl Default for RegressionThresholds {
     fn default() -> Self {
         Self {
@@ -221,7 +210,6 @@ impl Default for RegressionThresholds {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 impl RegressionThresholds {
     /// Set which percentile to use for regression detection
     pub fn with_percentile(mut self, percentile: PercentileType) -> Self {
@@ -232,7 +220,6 @@ impl RegressionThresholds {
 
 /// Severity of a detected regression
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub enum RegressionSeverity {
     /// 0-5% slower
     Minor,
@@ -244,7 +231,6 @@ pub enum RegressionSeverity {
 
 /// A detected performance regression
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct Regression {
     /// Name of the benchmark
     pub name: String,
@@ -264,7 +250,6 @@ pub struct Regression {
 
 /// A detected performance improvement
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct Improvement {
     /// Name of the benchmark
     pub name: String,
@@ -278,7 +263,6 @@ pub struct Improvement {
 
 /// Summary statistics for regression analysis
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct RegressionSummary {
     /// Total number of benchmarks compared
     pub total_benchmarks: usize,
@@ -292,7 +276,6 @@ pub struct RegressionSummary {
 
 /// Report containing all regression analysis results
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct RegressionReport {
     /// Baseline timestamp
     pub baseline_timestamp: String,
@@ -307,12 +290,10 @@ pub struct RegressionReport {
 }
 
 /// File-based baseline storage
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct FileBaselineStore {
     base_dir: PathBuf,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 impl FileBaselineStore {
     /// Create a new file-based baseline store
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
@@ -514,10 +495,8 @@ impl FileBaselineStore {
 }
 
 /// Regression detection engine
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 pub struct RegressionDetector;
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-baseline-rs.md#source
 impl RegressionDetector {
     /// Detect regressions by comparing current results against baseline
     ///

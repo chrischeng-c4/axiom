@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 // CODEGEN-BEGIN
 //! Test reporter - generates reports in various formats
 
@@ -9,7 +8,6 @@ use std::fmt::Write as FmtWrite;
 
 /// Report output format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub enum ReportFormat {
     /// Markdown format (human-readable)
     #[default]
@@ -26,7 +24,6 @@ pub enum ReportFormat {
     Console,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 impl std::fmt::Display for ReportFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -42,7 +39,6 @@ impl std::fmt::Display for ReportFormat {
 
 /// Full test report with all results and metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct TestReport {
     /// Suite name
     pub suite_name: String,
@@ -63,7 +59,6 @@ pub struct TestReport {
 
 /// Environment information
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct EnvironmentInfo {
     /// Python version
     pub python_version: Option<String>,
@@ -77,7 +72,6 @@ pub struct EnvironmentInfo {
 
 /// Coverage information for a single file
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct FileCoverage {
     /// File path (relative to project root)
     pub path: String,
@@ -93,7 +87,6 @@ pub struct FileCoverage {
 
 /// Overall coverage summary
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct CoverageInfo {
     /// Total statements across all files
     pub total_statements: usize,
@@ -107,7 +100,6 @@ pub struct CoverageInfo {
     pub uncovered_files: Vec<String>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 impl TestReport {
     /// Create a new test report
     pub fn new(suite_name: impl Into<String>, results: Vec<TestResult>) -> Self {
@@ -193,7 +185,6 @@ fn calculate_summary(results: &[TestResult]) -> TestSummary {
 
 /// Agent evaluation report with all results and metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct AgentEvalReport {
     /// Suite name
     pub suite_name: String,
@@ -207,7 +198,6 @@ pub struct AgentEvalReport {
     pub environment: EnvironmentInfo,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 impl AgentEvalReport {
     /// Create a new agent evaluation report
     pub fn new(
@@ -243,12 +233,10 @@ impl AgentEvalReport {
 
 /// Test reporter - generates reports in various formats
 #[derive(Debug)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct Reporter {
     format: ReportFormat,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 impl Reporter {
     /// Create a new reporter with specified format
     pub fn new(format: ReportFormat) -> Self {
