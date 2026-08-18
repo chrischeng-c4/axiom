@@ -331,7 +331,7 @@ def main() -> int:
         "project_permissions.allow, so the profile authorizes its own gate "
         "without hand editing",
     )
-    ap.add_argument("--model", default="gemini-3.6-flash-high")
+    ap.add_argument("--model", default="gemini-3.7-flash-high")
     ap.add_argument("--timeout", default="45m")
     ap.add_argument(
         "--allow-shell",
