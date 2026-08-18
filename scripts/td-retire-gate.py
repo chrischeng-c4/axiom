@@ -57,6 +57,15 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 ALL_ZEROS = "md=0 lock=0 py=0 hdr=0 files=0 other=0 embed=0"
+
+# The columns this campaign drives to zero. `py`, `other`, and `embed` are
+# held-fixed columns whose correct end value is whatever the tree started with:
+# 18 of the 33 trees are also Python TD projects the campaign never retires, and
+# a tree can be named by lines the rule deliberately does not select. A gate
+# that demanded zero everywhere would be unwinnable for those rounds, and one
+# that let the caller name any expectation at all could be handed the base
+# measurement and accept a round that did nothing.
+DRIVEN_TO_ZERO = ("md", "lock", "hdr", "files")
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
 
 _spec = importlib.util.spec_from_file_location(
@@ -75,7 +84,18 @@ def under(path, prefixes):
     return any(path == p or path.startswith(p.rstrip("/") + "/") for p in prefixes)
 
 
-def row_counts(prefixes, base):
+def check_expect(expect):
+    """Refuse an expectation that would let the round leave the corpus behind."""
+    seen = dict(part.split("=", 1) for part in expect.split())
+    missing = [c for c in DRIVEN_TO_ZERO if seen.get(c) != "0"]
+    if missing:
+        raise SystemExit(
+            f"error: --expect must drive {', '.join(DRIVEN_TO_ZERO)} to zero; "
+            f"{', '.join(missing)} is not 0 in {expect!r}")
+    return expect
+
+
+def row_counts(prefixes, base, expect):
     tracked = 0
     for prefix in prefixes:
         code, out = run(["git", "-c", "core.fsmonitor=false", "ls-tree", "-r",
@@ -86,11 +106,11 @@ def row_counts(prefixes, base):
         tracked += len(out.strip().splitlines())
 
     code, out = run(["python3", "scripts/td-retire-probe.py",
-                     "--expect", ALL_ZEROS] + list(prefixes))
+                     "--expect", expect] + list(prefixes))
     lines = [l for l in out.splitlines() if l.strip()]
     first = lines[0] if lines else "<none>"
-    if code == 0 and lines[:1] == [ALL_ZEROS]:
-        return True, f"tracked_at_base={tracked} counted, all zero"
+    if code == 0 and lines[:1] == [expect]:
+        return True, f"tracked_at_base={tracked} counted, matched {expect!r}"
     if code != 0 and not any(l.startswith("md=") for l in lines) and any(
             p in out for p in prefixes):
         return True, f"tracked_at_base={tracked} refused post-commit: {first!r}"
@@ -220,11 +240,14 @@ def row_build(package):
 
 def main(argv):
     base = head = None
+    expect = ALL_ZEROS
     prefixes, packages = [], []
     it = iter(argv)
     for arg in it:
         if arg == "--prefix":
             prefixes.append(next(it, None))
+        elif arg == "--expect":
+            expect = check_expect(next(it, None))
         elif arg == "--base":
             base = next(it, None)
         elif arg == "--head":
@@ -237,7 +260,7 @@ def main(argv):
         sys.exit("error: --prefix and --base are both required")
 
     rows = [("counts   the trees and their pointers are gone",
-              row_counts(prefixes, base)),
+              row_counts(prefixes, base, expect)),
             ("residue  the corpus is gone and nothing else is",
              row_residue(prefixes, base))]
     added, removed = parse_diff(base, head)
