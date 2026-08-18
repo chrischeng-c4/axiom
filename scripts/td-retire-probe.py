@@ -2,9 +2,19 @@
 """Probe the tech-design retirement population.
 
 usage: td-retire-probe.py <tree-prefix> [<tree-prefix> ...]
+       td-retire-probe.py --expect '<line>' <tree-prefix> [<tree-prefix> ...]
        td-retire-probe.py --census
 
 Prints  md=<n> lock=<n> py=<n> hdr=<n> files=<n> other=<n>  for the listed trees.
+
+`--expect` compares that whole printed line against its argument byte for byte
+and exits 1 on any difference, printing both.  Without it the probe always
+exits 0, which makes it a report rather than a gate: a round could delete
+nothing, print a line nobody read, and be recorded as passing.  The comparison
+is exact and covers every column, including the ones a given round holds fixed
+-- a change that reaches its own target by also dropping a held-fixed column is
+the failure the gate exists to catch, and a per-column ceiling would let it
+through.
 
   md      regular *.md files under any listed tree
   lock    td.lock files under any listed tree
@@ -161,6 +171,11 @@ def scan(want):
 
 
 def main(argv):
+    expect = None
+    if argv[:1] == ["--expect"]:
+        if len(argv) < 3:
+            sys.exit("error: --expect takes a line and at least one tree prefix")
+        expect, argv = argv[1], argv[2:]
     if argv == ["--census"]:
         trees = set()
         for dp, dns, _ in os.walk(ROOT):
@@ -173,14 +188,20 @@ def main(argv):
                 lambda x, t=t: x == t or x.startswith(t + "/"))
             print("%-36s md=%-5d lock=%-3d py=%-5d hdr=%-5d files=%-5d other=%-4d embed=%d"
                   % (t, md, lock, py, hdr, len(files), other, embed))
-        return
+        return 0
     want = lambda t: any(t == p or t.startswith(p.rstrip("/") + "/") for p in argv)
     md, lock, py, hdr, files, other, embed = scan(want)
-    print("md=%d lock=%d py=%d hdr=%d files=%d other=%d embed=%d"
-          % (md, lock, py, hdr, len(files), other, embed))
+    line = ("md=%d lock=%d py=%d hdr=%d files=%d other=%d embed=%d"
+            % (md, lock, py, hdr, len(files), other, embed))
+    print(line)
+    if expect is not None and line != expect.strip():
+        print("expected: " + expect.strip())
+        print("actual:   " + line)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(__doc__)
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))
