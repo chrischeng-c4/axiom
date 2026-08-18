@@ -97,16 +97,44 @@ def row_counts(prefixes, base):
     return False, f"tracked_at_base={tracked} exit={code} first_line={first!r}"
 
 
-def row_residue(prefixes):
-    left = []
+def row_residue(prefixes, base):
+    """Under the prefixes: the Markdown corpus is gone and nothing else is.
+
+    The deletable set is exactly what the probe calls `md` plus `lock` — every
+    `*.md` and the `td.lock` beside them. Everything else under a tree stays,
+    and that is not a formality: eighteen of the repository's thirty-three
+    tech-design trees are also Python tech-design projects rooted at the same
+    directory, so the tree holds a `pyproject.toml`, a `uv.lock`, a `src/` and
+    a `tests/` that this campaign does not retire.
+
+    The survival half is the one thing no other row can see. `deletions` skips
+    everything under a prefix by construction, precisely so that the corpus's
+    own removal is not reported as one offence per file — which means a round
+    that took a `src/service_auth/__init__.py` with it would otherwise leave
+    every row green.
+    """
+    left, missing = [], []
     for prefix in prefixes:
         for dp, dns, fns in os.walk(os.path.join(ROOT, prefix)):
             dns[:] = [d for d in dns if d not in probe.SKIP]
             for fn in fns:
-                if not fn.endswith(".py"):
+                if fn.endswith(".md") or fn == "td.lock":
                     left.append(os.path.relpath(os.path.join(dp, fn), ROOT))
-    return not left, f"non_py_files_left={len(left)}" + (
-        f" e.g. {left[0]}" if left else "")
+        code, out = run(["git", "-c", "core.fsmonitor=false", "ls-tree", "-r",
+                         "--name-only", base, "--", prefix])
+        if code == 0:
+            for rel in out.splitlines():
+                if rel.endswith(".md") or os.path.basename(rel) == "td.lock":
+                    continue
+                if not os.path.exists(os.path.join(ROOT, rel)):
+                    missing.append(rel)
+    ok = not left and not missing
+    detail = f"corpus_left={len(left)} non_corpus_deleted={len(missing)}"
+    if left:
+        detail += f" e.g. {left[0]}"
+    if missing:
+        detail += f" e.g. deleted {missing[0]}"
+    return ok, detail
 
 
 DIFF_GIT = re.compile(r'^diff --git "?a/(.+?)"? "?b/')
@@ -210,8 +238,8 @@ def main(argv):
 
     rows = [("counts   the trees and their pointers are gone",
               row_counts(prefixes, base)),
-            ("residue  nothing but .py is left under the prefixes",
-             row_residue(prefixes))]
+            ("residue  the corpus is gone and nothing else is",
+             row_residue(prefixes, base))]
     added, removed = parse_diff(base, head)
     rows.append(("additions  the round adds no line", row_additions(added)))
     rows.append(("deletions  every deletion outside the tree is rule-selected",
