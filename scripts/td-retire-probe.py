@@ -73,13 +73,25 @@ ROOT = os.environ.get(
 )
 SKIP = {".git", "target", "node_modules", "__pycache__", ".venv",
         "site-packages", "dist", "build"}
-EXT = {".rs", ".py", ".toml", ".sh", ".yaml", ".yml", ".txt", ".md"}
 REF = re.compile(r"((?:[\w./\-]*?)tech-design)/[\w./\-]+\.md")
 HEADER = re.compile(
     r"^(?:///|//!|//|#|<!--)\s*(?:SPEC-MANAGED:|SPEC-REF:|@spec)\s")
 RAW = re.compile("r" + "#" + "+" + chr(34))
 QUOTE = chr(34)
 INCL = re.compile(r"include_(?:str|bytes|dir)!\s*\(\s*" + QUOTE + r"([^" + QUOTE + r"]+)" + QUOTE)
+
+
+def read_text(path):
+    """Return file contents as text if path exists, can be read, and survives a UTF-8 round trip."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        text = raw.decode("utf-8")
+        if text.encode("utf-8") != raw:
+            return None
+        return text
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def _tree(parts):
@@ -143,13 +155,9 @@ def scan(want):
                 py += sum(1 for f in fns if f.endswith(".py"))
             continue
         for fn in fns:
-            if os.path.splitext(fn)[1] not in EXT:
-                continue
-            try:
-                text = open(os.path.join(dp, fn), errors="replace").read()
-            except OSError:
-                continue
-            if "tech-design" not in text:
+            fp = os.path.join(dp, fn)
+            text = read_text(fp)
+            if text is None or "tech-design" not in text:
                 continue
             rel = os.path.normpath(os.path.join(rd, fn))
             masked = literal_lines(text) if fn.endswith(".rs") else set()
