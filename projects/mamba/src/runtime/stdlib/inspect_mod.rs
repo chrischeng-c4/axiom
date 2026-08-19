@@ -2916,6 +2916,7 @@ pub fn mb_inspect_signature(func: MbValue) -> MbValue {
                     annotation: None,
                     entry_abi: "boxed".to_string(),
                     contract: None,
+                    dynamic_boundary_license: None,
                 })
                 .collect();
             return signature_from_infos(&infos, None);

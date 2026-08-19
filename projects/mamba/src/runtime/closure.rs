@@ -1,5 +1,6 @@
 use super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::value::MbValue;
+use crate::types::DynamicBoundaryLicense;
 use rustc_hash::FxHashMap;
 /// Closure and nested function support for the Mamba runtime (#289).
 ///
@@ -852,11 +853,15 @@ pub struct MbParamInfo {
     /// Resolved scalar contract; unlike annotation, this is authoritative for
     /// runtime rejection and is absent for Any/generic/container/forward refs.
     pub contract: Option<String>,
+    /// Closed dynamic-boundary license carried from authored source
+    /// provenance. Only the exact `explicit-any` tag is accepted.
+    pub dynamic_boundary_license: Option<DynamicBoundaryLicense>,
 }
 
 /// Register a function's declared parameters. `params` is a list of
-/// seven-field (name, kind, has_default, default, annotation, entry_abi,
-/// contract) tuples. Five/six-field tuples remain accepted for old modules.
+/// eight-field (name, kind, has_default, default, annotation, entry_abi,
+/// contract, dynamic-boundary-license) tuples. Five/six/seven-field tuples
+/// remain accepted for old modules and are conservatively unlicensed.
 /// lower_top_level priming loop in hir_to_mir.rs.
 pub fn mb_func_set_params(func: MbValue, params: MbValue) {
     let mut infos: Vec<MbParamInfo> = Vec::new();
@@ -882,6 +887,13 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
                         .and_then(|value| extract_str(*value))
                         .unwrap_or_else(|| "boxed".to_string());
                     let contract = elems.get(6).and_then(|value| extract_str(*value));
+                    let dynamic_boundary_license = elems
+                        .get(7)
+                        .and_then(|value| extract_str(*value))
+                        .and_then(|value| match value.as_str() {
+                            "explicit-any" => Some(DynamicBoundaryLicense::ExplicitAny),
+                            _ => None,
+                        });
                     infos.push(MbParamInfo {
                         name,
                         kind,
@@ -890,6 +902,7 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
                         annotation,
                         entry_abi,
                         contract,
+                        dynamic_boundary_license,
                     });
                 }
             }

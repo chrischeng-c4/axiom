@@ -7,7 +7,7 @@ use crate::hir::*;
 use crate::mir::*;
 use crate::resolve::{SymbolId, SymbolTable, VariableClass};
 use crate::source::span::Span;
-use crate::types::{Ty, TypeContext, TypeId};
+use crate::types::{DynamicBoundaryLicense, Ty, TypeContext, TypeId};
 use std::collections::{HashMap, HashSet};
 
 /// Decorator kind applied to a class method. Used during class registration
@@ -2073,6 +2073,10 @@ impl<'a> HirToMir<'a> {
                 Some(contract) => self.emit_str_const(contract),
                 None => self.emit_none(),
             };
+            let license_vreg = match p.dynamic_boundary_license {
+                Some(DynamicBoundaryLicense::ExplicitAny) => self.emit_str_const("explicit-any"),
+                None => self.emit_none(),
+            };
             let tup_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tup_vreg,
@@ -2084,6 +2088,7 @@ impl<'a> HirToMir<'a> {
                     anno_vreg,
                     abi_vreg,
                     contract_vreg,
+                    license_vreg,
                 ],
                 ty: any_ty,
             });
@@ -2151,6 +2156,7 @@ impl<'a> HirToMir<'a> {
             let anno_vreg = self.emit_none();
             let abi_vreg = self.emit_str_const("boxed");
             let contract_vreg = self.emit_none();
+            let license_vreg = self.emit_none();
             let tuple_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tuple_vreg,
@@ -2162,6 +2168,7 @@ impl<'a> HirToMir<'a> {
                     anno_vreg,
                     abi_vreg,
                     contract_vreg,
+                    license_vreg,
                 ],
                 ty: any_ty,
             });
@@ -11876,7 +11883,7 @@ impl<'a> HirToMir<'a> {
                         args: vec![closure_vreg, names_list],
                         ty: self.tcx.none(),
                     });
-                    // FUNC_PARAMS: seven fields; lambda declarations have no
+                    // FUNC_PARAMS: eight fields; lambda declarations have no
                     // scalar source contract and enter boxed.
                     // per param — defaults reuse the already-evaluated outer
                     // vregs (positionally trailing, Python rule).
@@ -11916,6 +11923,7 @@ impl<'a> HirToMir<'a> {
                         let anno_vreg = self.emit_none();
                         let abi_vreg = self.emit_str_const("boxed");
                         let contract_vreg = self.emit_none();
+                        let license_vreg = self.emit_none();
                         let tup = self.fresh_vreg();
                         self.current_stmts.push(MirInst::MakeTuple {
                             dest: tup,
@@ -11927,6 +11935,7 @@ impl<'a> HirToMir<'a> {
                                 anno_vreg,
                                 abi_vreg,
                                 contract_vreg,
+                                license_vreg,
                             ],
                             ty: any_ty,
                         });

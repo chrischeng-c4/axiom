@@ -24,6 +24,121 @@ fn line_count(output: &str, expected: &str) -> usize {
 }
 
 #[test]
+fn frozen_explicit_any_scalar_ingress_matches_cpython_oracle() {
+    let source =
+        include_str!("../../../tests/cpython/_regression/core/force_typed/explicit_any_twice.py");
+    let (result, output) = run(source);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
+    );
+    assert_eq!(output, "42\nabab\n", "unexpected explicit Any output");
+}
+
+#[test]
+fn compiled_explicit_any_and_fake_any_have_distinct_admission() {
+    let source = r#"
+from typing import Any
+
+def licensed(value: Any):
+    return value + value
+
+def fake(value: "Any"):
+    print("BAD_FAKE")
+    return value + value
+
+def pair(first: Any, second: int):
+    print("BAD_PAIR")
+    return first + second
+
+licensed_fn: Any = licensed
+fake_fn: Any = fake
+pair_fn: Any = pair
+print(licensed_fn("ab"))
+try:
+    fake_fn("ab")
+except TypeError:
+    print("REJECT_FAKE")
+try:
+    pair_fn("ab", "wrong")
+except TypeError as exc:
+    print("REJECT_B", str(exc))
+"#;
+    let (result, output) = run(source);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
+    );
+    assert_eq!(
+        output,
+        "abab\nREJECT_FAKE\nREJECT_B pair() argument 'second' expected int, got str\n",
+        "fake Any was admitted or Any waived B:\n{output}"
+    );
+    assert!(
+        !output.contains("BAD_PAIR"),
+        "concrete B body executed:\n{output}"
+    );
+}
+
+#[test]
+fn compiled_fake_variadic_any_rejects_before_bodies() {
+    let source = r#"
+from typing import Any
+
+def licensed_star(*args: Any):
+    print("LICENSED_STAR", len(args), args[0], args[1])
+    return len(args)
+
+def licensed_dstar(**kwargs: Any):
+    print("LICENSED_DSTAR", len(kwargs), kwargs["first"], kwargs["second"])
+    return len(kwargs)
+
+def fake_star(*args: "Any"):
+    print("BAD_STAR")
+    return len(args)
+
+def fake_dstar(**kwargs: "Any"):
+    print("BAD_DSTAR")
+    return len(kwargs)
+
+licensed_star_fn: Any = licensed_star
+licensed_dstar_fn: Any = licensed_dstar
+fake_star_fn: Any = fake_star
+fake_dstar_fn: Any = fake_dstar
+
+licensed_star_fn("first", 2)
+licensed_dstar_fn(first="first", second=2)
+
+try:
+    fake_star_fn("first", 2)
+except TypeError:
+    print("REJECT_STAR")
+
+try:
+    fake_dstar_fn(first="first", second=2)
+except TypeError:
+    print("REJECT_DSTAR")
+"#;
+    let (result, output) = run(source);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
+    );
+    assert_eq!(
+        output, "LICENSED_STAR 2 first 2\nLICENSED_DSTAR 2 first 2\nREJECT_STAR\nREJECT_DSTAR\n",
+        "unlicensed variadic Any was admitted:\n{output}"
+    );
+    assert!(
+        !output.contains("BAD_STAR"),
+        "*args body executed:\n{output}"
+    );
+    assert!(
+        !output.contains("BAD_DSTAR"),
+        "**kwargs body executed:\n{output}"
+    );
+}
+
+#[test]
 fn dynamic_routes_reject_before_body_and_keep_bound_kw_default() {
     let (result, output) = run(r#"
 from typing import Any
