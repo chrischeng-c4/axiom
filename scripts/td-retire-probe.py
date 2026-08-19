@@ -5,7 +5,7 @@ usage: td-retire-probe.py <tree-prefix> [<tree-prefix> ...]
        td-retire-probe.py --expect '<line>' <tree-prefix> [<tree-prefix> ...]
        td-retire-probe.py --census
 
-Prints  md=<n> lock=<n> py=<n> hdr=<n> files=<n> other=<n>  for the listed trees.
+Prints  md=<n> lock=<n> py=<n> hdr=<n> files=<n> tdref=<n> other=<n> embed=<n>  for the listed trees.
 
 `--expect` compares that whole printed line against its argument byte for byte
 and exits 1 on any difference, printing both.  Without it the probe always
@@ -23,8 +23,10 @@ through.
           this campaign is to delete a tech-design directory wholesale.
   hdr     REAL standalone header lines outside every tree that point into one
   files   distinct files holding at least one such line
-  other   lines naming a listed tree that are NOT standalone headers -- prose
-          mentions and code string literals.  Deliberately out of scope.
+  tdref   contract bindings (td_ref in .toml) pointing to a listed tree
+  other   lines naming a listed tree that are NOT standalone headers or td_ref
+          bindings -- prose mentions and code string literals.  Deliberately
+          out of scope.
   embed   compile-time embeds (`include_str!` and friends) whose argument
           RESOLVES to a file this campaign would DELETE (`*.md`, `td.lock`)
           under a listed tree.  Must be 0 before that tree's Markdown may be
@@ -79,6 +81,7 @@ HEADER = re.compile(
 RAW = re.compile("r" + "#" + "+" + chr(34))
 QUOTE = chr(34)
 INCL = re.compile(r"include_(?:str|bytes|dir)!\s*\(\s*" + QUOTE + r"([^" + QUOTE + r"]+)" + QUOTE)
+TDREF = re.compile(r"^td_ref\s*=")
 
 
 def read_text(path):
@@ -141,7 +144,7 @@ def literal_lines(text):
 
 
 def scan(want):
-    md = lock = py = hdr = other = embed = 0
+    md = lock = py = hdr = tdref = other = embed = 0
     files = set()
     for dp, dns, fns in os.walk(ROOT):
         dns[:] = [d for d in dns if d not in SKIP]
@@ -174,9 +177,11 @@ def scan(want):
                 if HEADER.match(line.strip()) and n not in masked:
                     hdr += 1
                     files.add(rel)
+                elif fn.endswith(".toml") and TDREF.match(line.strip()):
+                    tdref += 1
                 else:
                     other += 1
-    return md, lock, py, hdr, files, other, embed
+    return md, lock, py, hdr, files, tdref, other, embed
 
 
 def _resolves(prefix):
@@ -212,18 +217,18 @@ def main(argv):
             if "tech-design" in parts:
                 trees.add(_tree(parts))
         for t in sorted(trees):
-            md, lock, py, hdr, files, other, embed = scan(
+            md, lock, py, hdr, files, tdref, other, embed = scan(
                 lambda x, t=t: x == t or x.startswith(t + "/"))
-            print("%-36s md=%-5d lock=%-3d py=%-5d hdr=%-5d files=%-5d other=%-4d embed=%d"
-                  % (t, md, lock, py, hdr, len(files), other, embed))
+            print("%-36s md=%-5d lock=%-3d py=%-5d hdr=%-5d files=%-5d tdref=%-4d other=%-4d embed=%d"
+                  % (t, md, lock, py, hdr, len(files), tdref, other, embed))
         return 0
     for p in argv:
         if not _resolves(p):
             sys.exit(f"error: unknown tree prefix: {p}")
     want = lambda t: any(t == p or t.startswith(p.rstrip("/") + "/") for p in argv)
-    md, lock, py, hdr, files, other, embed = scan(want)
-    line = ("md=%d lock=%d py=%d hdr=%d files=%d other=%d embed=%d"
-            % (md, lock, py, hdr, len(files), other, embed))
+    md, lock, py, hdr, files, tdref, other, embed = scan(want)
+    line = ("md=%d lock=%d py=%d hdr=%d files=%d tdref=%d other=%d embed=%d"
+            % (md, lock, py, hdr, len(files), tdref, other, embed))
     print(line)
     if expect is not None and line != expect.strip():
         print("expected: " + expect.strip())
