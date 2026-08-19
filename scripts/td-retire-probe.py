@@ -5,7 +5,7 @@ usage: td-retire-probe.py <tree-prefix> [<tree-prefix> ...]
        td-retire-probe.py --expect '<line>' <tree-prefix> [<tree-prefix> ...]
        td-retire-probe.py --census
 
-Prints  md=<n> lock=<n> py=<n> ec=<n> ecrest=<n> ecdirs=<n> hdr=<n> files=<n> tdref=<n> other=<n> embed=<n>  for the listed trees.
+Prints  md=<n> lock=<n> py=<n> ec=<n> ecrest=<n> ecdirs=<n> ecscan=<n> hdr=<n> files=<n> tdref=<n> other=<n> embed=<n>  for the listed trees.
 
 `--expect` compares that whole printed line against its argument byte for byte
 and exits 1 on any difference, printing both.  Without it the probe always
@@ -25,6 +25,8 @@ through.
   ecrest  non-Python external-contract files under any listed tree, excluding
           generated evidence.
   ecdirs  external-contracts directories the walk reached, excluding evidence.
+  ecscan  external-contracts directories whose files reached the reference scan,
+          excluding evidence.
   hdr     REAL standalone header lines outside every tree that point into one
   files   distinct files holding at least one such line
   tdref   contract bindings (td_ref in .toml) pointing to a listed tree
@@ -149,7 +151,7 @@ def literal_lines(text):
 
 
 def scan(want):
-    md = lock = py = ec = ecrest = ecdirs = hdr = tdref = other = embed = 0
+    md = lock = py = ec = ecrest = ecdirs = ecscan = hdr = tdref = other = embed = 0
     files = set()
     for dp, dns, fns in os.walk(ROOT):
         dns[:] = [d for d in dns if d not in SKIP]
@@ -171,6 +173,8 @@ def scan(want):
         if "external-contracts" in parts and "evidence" not in parts:
             ecdirs += 1
         for fn in fns:
+            if "external-contracts" in parts and "evidence" not in parts and fn == fns[0]:
+                ecscan += 1
             fp = os.path.join(dp, fn)
             text = read_text(fp)
             if text is None or "tech-design" not in text:
@@ -194,7 +198,7 @@ def scan(want):
                     tdref += 1
                 else:
                     other += 1
-    return md, lock, py, ec, ecrest, ecdirs, hdr, files, tdref, other, embed
+    return md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, files, tdref, other, embed
 
 
 def _resolves(prefix):
@@ -230,18 +234,18 @@ def main(argv):
             if "tech-design" in parts or "external-contracts" in parts:
                 trees.add(_tree(parts))
         for t in sorted(trees):
-            md, lock, py, ec, ecrest, ecdirs, hdr, files, tdref, other, embed = scan(
+            md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, files, tdref, other, embed = scan(
                 lambda x, t=t: x == t or x.startswith(t + "/"))
-            print("%-36s md=%-5d lock=%-3d py=%-5d ec=%-5d ecrest=%-5d ecdirs=%-5d hdr=%-5d files=%-5d tdref=%-4d other=%-4d embed=%d"
-                  % (t, md, lock, py, ec, ecrest, ecdirs, hdr, len(files), tdref, other, embed))
+            print("%-36s md=%-5d lock=%-3d py=%-5d ec=%-5d ecrest=%-5d ecdirs=%-5d ecscan=%-5d hdr=%-5d files=%-5d tdref=%-4d other=%-4d embed=%d"
+                  % (t, md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, len(files), tdref, other, embed))
         return 0
     for p in argv:
         if not _resolves(p):
             sys.exit(f"error: unknown tree prefix: {p}")
     want = lambda t: any(t == p or t.startswith(p.rstrip("/") + "/") for p in argv)
-    md, lock, py, ec, ecrest, ecdirs, hdr, files, tdref, other, embed = scan(want)
-    line = ("md=%d lock=%d py=%d ec=%d ecrest=%d ecdirs=%d hdr=%d files=%d tdref=%d other=%d embed=%d"
-            % (md, lock, py, ec, ecrest, ecdirs, hdr, len(files), tdref, other, embed))
+    md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, files, tdref, other, embed = scan(want)
+    line = ("md=%d lock=%d py=%d ec=%d ecrest=%d ecdirs=%d ecscan=%d hdr=%d files=%d tdref=%d other=%d embed=%d"
+            % (md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, len(files), tdref, other, embed))
     print(line)
     if expect is not None and line != expect.strip():
         print("expected: " + expect.strip())
