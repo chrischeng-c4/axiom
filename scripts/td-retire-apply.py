@@ -60,16 +60,9 @@ def strip_headers(prefixes: list[str]) -> tuple[int, int]:
             continue
 
         for fn in fns:
-            if os.path.splitext(fn)[1] not in probe.EXT:
-                continue
             fp = os.path.join(dp, fn)
-            try:
-                with open(fp, "r", encoding="utf-8", errors="replace") as f:
-                    text = f.read()
-            except OSError:
-                continue
-
-            if "tech-design" not in text:
+            text = probe.read_text(fp)
+            if text is None or "tech-design" not in text:
                 continue
 
             masked = probe.literal_lines(text) if fn.endswith(".rs") else set()
