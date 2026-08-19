@@ -3584,6 +3584,28 @@ impl TypeChecker {
         }
     }
 
+    pub(crate) fn check_required_omitted_parameter(&mut self, param: &Param) {
+        if param.annotation != ParamAnnotation::Omitted
+            || param.kind != crate::parser::ast::ParamKind::Regular
+            || param.default.is_some()
+            || param.pos_only
+            || param.kw_only
+        {
+            return;
+        }
+
+        let path = "parameter -> required -> source_annotation -> omitted";
+        let declared = DeclaredType::from_implicit_unknown(path);
+        self.record_declared_type(param.span, declared);
+        self.error(
+            param.span,
+            format!(
+                "cannot infer type for parameter `{}`: {path}",
+                param.name.as_str()
+            ),
+        );
+    }
+
     pub(crate) fn check_n3_return_inference(
         &mut self,
         declaration_symbol: SymbolId,
@@ -6301,15 +6323,35 @@ mod tests {
     }
 
     #[test]
-    fn test_n3_p1_omitted_parameter_without_default_unchanged() {
+    fn test_n3_p1_omitted_parameter_without_default_is_force_typed_error() {
         use crate::source::span::FileId;
         let src = "def collect(items):\n    pass\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
         let Stmt::FnDef { params, .. } = &module.stmts[0].node else { panic!() };
-        assert!(checker.get_declared_type(params[0].span).is_none());
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            MambaError::Type { span, message } => {
+                assert_eq!(*span, params[0].span);
+                assert_eq!(
+                    message,
+                    "cannot infer type for parameter `items`: parameter -> required -> source_annotation -> omitted"
+                );
+            }
+            other => panic!("expected exact parameter Type error, got {other:?}"),
+        }
+        let declared = checker
+            .get_declared_type(params[0].span)
+            .expect("omitted required parameter declaration recorded");
+        assert_eq!(*declared.source(), SourceAnnotation::Omitted);
+        assert_eq!(declared.normalized(), None);
+        assert_eq!(
+            *declared.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "parameter -> required -> source_annotation -> omitted".to_string()
+            }
+        );
     }
 
     #[test]
@@ -6328,12 +6370,12 @@ mod tests {
     #[test]
     fn test_n3_p1_decorated_form_negative_control() {
         use crate::source::span::FileId;
-        let src = "def dec(f): return f\n@dec\ndef collect(items = []):\n    pass\n";
+        let src = "from typing import Any\ndef dec(f: Any) -> Any: return f\n@dec\ndef collect(items = []):\n    pass\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
         assert!(errors.is_empty());
-        let Stmt::FnDef { params, .. } = &module.stmts[1].node else { panic!() };
+        let Stmt::FnDef { params, .. } = &module.stmts[2].node else { panic!() };
         assert!(checker.get_declared_type(params[0].span).is_none());
     }
 
@@ -6468,12 +6510,12 @@ mod tests {
     #[test]
     fn test_n3_r1_decorated_form_negative_control() {
         use crate::source::span::FileId;
-        let src = "def dec(f): return f\n@dec\ndef collect():\n    return []\n";
+        let src = "from typing import Any\ndef dec(f: Any) -> Any: return f\n@dec\ndef collect():\n    return []\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
         assert!(errors.is_empty());
-        let Stmt::FnDef { body, .. } = &module.stmts[1].node else { panic!() };
+        let Stmt::FnDef { body, .. } = &module.stmts[2].node else { panic!() };
         let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
         assert!(checker.get_declared_type(ret_expr.span).is_none());
     }
@@ -6559,7 +6601,7 @@ mod tests {
     #[test]
     fn test_n3_r1_conditional_return_negative_control() {
         use crate::source::span::FileId;
-        let src = "def collect(cond):\n    if cond:\n        return [1]\n    return []\n";
+        let src = "def collect(cond: bool):\n    if cond:\n        return [1]\n    return []\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);

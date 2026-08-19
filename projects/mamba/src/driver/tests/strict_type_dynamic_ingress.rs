@@ -36,6 +36,56 @@ fn frozen_explicit_any_scalar_ingress_matches_cpython_oracle() {
 }
 
 #[test]
+fn omitted_required_regular_parameter_rejects_before_body() {
+    let source = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/implicit_required_regular_parameter.py"
+    );
+    let (result, output) = run(source);
+    let expected =
+        "cannot infer type for parameter `value`: parameter -> required -> source_annotation -> omitted";
+    let error = result.expect_err("omitted required parameter must be rejected before execution");
+    assert!(error.contains(expected), "unexpected error: {error}");
+    assert_eq!(
+        output, "",
+        "rejected source must not execute any body: {output:?}"
+    );
+}
+
+#[test]
+fn explicit_any_required_regular_parameter_matches_frozen_cpython_oracle() {
+    let source = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/explicit_any_required_regular_parameter.py"
+    );
+    let (result, output) = run(source);
+    assert!(
+        result.is_ok(),
+        "explicit Any fixture failed: {result:?}\n{output}"
+    );
+    assert_eq!(output, "BODY dynamic\nRETURN dynamic\n");
+}
+
+#[test]
+fn force_typed_required_parameter_fixture_pair_differs_only_by_explicit_any() {
+    let implicit = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/implicit_required_regular_parameter.py"
+    );
+    let explicit = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/explicit_any_required_regular_parameter.py"
+    );
+    assert_eq!(
+        explicit.matches(": Any").count(),
+        1,
+        "positive fixture must contain exactly one authored Any token"
+    );
+    let without_authored_any = explicit.replacen(": Any", "", 1);
+    assert_eq!(
+        without_authored_any.as_bytes(),
+        implicit.as_bytes(),
+        "removing the sole authored Any token must yield the negative fixture byte-for-byte"
+    );
+}
+
+#[test]
 fn compiled_explicit_any_and_fake_any_have_distinct_admission() {
     let source = r#"
 from typing import Any

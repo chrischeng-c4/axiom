@@ -1,9 +1,11 @@
 #![cfg(test)]
 
+use crate::error::MambaError;
 use crate::parser;
-use crate::source::span::FileId;
+use crate::parser::ast::{ParamAnnotation, ParamKind, SourceAnnotation, Stmt};
+use crate::source::span::{FileId, Span};
 use crate::types::ty::{ClassRole, Ty, TypeParamDefault, TypeVarKind};
-use crate::types::TypeChecker;
+use crate::types::{TypeChecker, TypeProvenance};
 
 fn check(src: &str) -> Vec<String> {
     let module = parser::parse(src, FileId(0)).expect("parse failed");
@@ -67,6 +69,193 @@ fn bare_instance_parameter_error_count(errors: &[String]) -> usize {
         .iter()
         .filter(|error| error.contains("got `_W`") || error.contains("does not satisfy parameter"))
         .count()
+}
+
+#[test]
+fn module_plain_required_omitted_parameter_emits_exact_implicit_unknown_type_error() {
+    const PATH: &str = "parameter -> required -> source_annotation -> omitted";
+    const MESSAGE: &str =
+        "cannot infer type for parameter `value`: parameter -> required -> source_annotation -> omitted";
+    let source = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/implicit_required_regular_parameter.py"
+    );
+    let module = parser::parse(source, FileId(3735)).expect("parse failed");
+    let Some(Stmt::FnDef {
+        decorators,
+        name,
+        type_params,
+        params,
+        return_ty,
+        ..
+    }) = module.stmts.iter().find_map(|stmt| match &stmt.node {
+        function @ Stmt::FnDef { name, .. } if name == "echo" => Some(function),
+        _ => None,
+    })
+    else {
+        panic!("echo function missing from parsed fixture")
+    };
+    assert!(decorators.is_empty());
+    assert_eq!(name, "echo");
+    assert!(type_params.is_empty());
+    assert!(return_ty.is_none());
+    assert_eq!(params.len(), 1);
+    let param = &params[0];
+    assert_eq!(param.name, "value");
+    assert_eq!(param.annotation, ParamAnnotation::Omitted);
+    assert_eq!(param.kind, ParamKind::Regular);
+    assert!(param.default.is_none());
+    assert!(!param.pos_only);
+    assert!(!param.kw_only);
+    assert_eq!(param.span.file, FileId(3735));
+    assert_eq!(
+        &source[param.span.start as usize..param.span.end as usize],
+        "value",
+        "parameter span must bind the source name exactly"
+    );
+
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    let declared = checker.get_declared_type(param.span);
+    assert_eq!(
+        (errors.len(), declared.is_some()),
+        (1, true),
+        "eligible omitted parameter must emit exactly one error and record its declaration; errors={errors:?}, declared={declared:?}"
+    );
+    let [MambaError::Type { span, message }] = errors.as_slice() else {
+        panic!("expected one Type error, got: {errors:?}")
+    };
+    assert_eq!(*span, param.span, "diagnostic must bind the parameter span");
+    assert_eq!(message, MESSAGE);
+
+    let declared = declared.expect("implicit declaration must be recorded at the parameter span");
+    assert_eq!(*declared.source(), SourceAnnotation::Omitted);
+    assert_eq!(declared.normalized(), None);
+    assert_eq!(
+        *declared.provenance(),
+        TypeProvenance::ImplicitUnknown {
+            inference_path: PATH.to_string(),
+        }
+    );
+}
+
+#[test]
+fn module_plain_required_explicit_any_preserves_authored_provenance() {
+    let source = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/explicit_any_required_regular_parameter.py"
+    );
+    let module = parser::parse(source, FileId(3735)).expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    assert!(
+        errors.is_empty(),
+        "authored Any must remain accepted: {errors:?}"
+    );
+    let Some(Stmt::FnDef { params, .. }) = module.stmts.iter().find_map(|stmt| match &stmt.node {
+        function @ Stmt::FnDef { name, .. } if name == "echo" => Some(function),
+        _ => None,
+    }) else {
+        panic!("echo function missing from parsed fixture")
+    };
+    let ParamAnnotation::Authored(annotation) = &params[0].annotation else {
+        panic!("positive fixture must carry authored Any syntax")
+    };
+    let declared = checker
+        .get_declared_type(annotation.span)
+        .expect("authored annotation declaration missing");
+    assert!(matches!(declared.source(), SourceAnnotation::Authored(_)));
+    assert_eq!(declared.normalized(), Some(checker.tcx.any()));
+    assert_eq!(*declared.provenance(), TypeProvenance::ExplicitAny);
+}
+
+#[test]
+fn module_plain_required_omitted_parameter_predicate_excludes_frozen_forms() {
+    const PATH: &str = "parameter -> required -> source_annotation -> omitted";
+
+    fn collect_controlled_omitted_params(
+        statements: &[crate::source::span::Spanned<Stmt>],
+        found: &mut Vec<(String, Span)>,
+    ) {
+        for statement in statements {
+            match &statement.node {
+                Stmt::FnDef {
+                    name, params, body, ..
+                }
+                | Stmt::AsyncFnDef {
+                    name, params, body, ..
+                } => {
+                    if name == "controlled" {
+                        found.extend(
+                            params
+                                .iter()
+                                .filter(|param| param.annotation == ParamAnnotation::Omitted)
+                                .map(|param| (param.name.clone(), param.span)),
+                        );
+                    }
+                    collect_controlled_omitted_params(body, found);
+                }
+                Stmt::ClassDef { body, .. } => {
+                    collect_controlled_omitted_params(body, found);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let controls = [
+        ("default", "def controlled(value = 0):\n    pass\n"),
+        ("positional-only", "def controlled(value, /):\n    pass\n"),
+        ("keyword-only", "def controlled(*, value):\n    pass\n"),
+        ("star", "def controlled(*value):\n    pass\n"),
+        ("double-star", "def controlled(**value):\n    pass\n"),
+        (
+            "method",
+            "class Example:\n    def controlled(self, value):\n        pass\n",
+        ),
+        (
+            "nested",
+            "def outer() -> None:\n    def controlled(value):\n        pass\n",
+        ),
+        ("async", "async def controlled(value):\n    pass\n"),
+        ("generator", "def controlled(value):\n    yield value\n"),
+        (
+            "decorated",
+            "from typing import Any\ndef identity(fn: Any) -> Any:\n    return fn\n@identity\ndef controlled(value):\n    pass\n",
+        ),
+        ("generic", "def controlled[T](value):\n    pass\n"),
+        (
+            "annotated-return",
+            "def controlled(value) -> None:\n    pass\n",
+        ),
+    ];
+
+    for (label, source) in controls {
+        let module = parser::parse(source, FileId(3735)).expect("control parse failed");
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(
+            errors.is_empty(),
+            "{label} must remain outside the omitted-required rule: {errors:?}"
+        );
+
+        let mut controlled_params = Vec::new();
+        collect_controlled_omitted_params(&module.stmts, &mut controlled_params);
+        assert!(
+            !controlled_params.is_empty(),
+            "{label} control must bind at least one actual omitted parameter span"
+        );
+        for (parameter, span) in controlled_params {
+            let forbidden = TypeProvenance::ImplicitUnknown {
+                inference_path: PATH.to_string(),
+            };
+            assert_ne!(
+                checker
+                    .get_declared_type(span)
+                    .map(|declared| declared.provenance()),
+                Some(&forbidden),
+                "{label} controlled parameter `{parameter}` at {span} acquired the forbidden provenance"
+            );
+        }
+    }
 }
 
 #[test]

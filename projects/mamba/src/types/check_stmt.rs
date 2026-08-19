@@ -1108,6 +1108,12 @@ impl TypeChecker {
             && !is_decorated
             && !is_generator
             && return_ty.is_none();
+        let is_required_omitted_parameter_eligible = is_module_level
+            && !is_async
+            && !is_decorated
+            && !is_generator
+            && generic_params.is_empty()
+            && return_ty.is_none();
 
         // A parameter default value must satisfy the parameter's annotation
         // (`def f(c: int = "3")` is a type error). Mirrors the var-decl
@@ -1146,6 +1152,11 @@ impl TypeChecker {
                         ),
                     );
                 }
+            }
+        }
+        if is_required_omitted_parameter_eligible {
+            for param in params {
+                self.check_required_omitted_parameter(param);
             }
         }
         // Defaults are evaluated before the def binds its name, but recursive
