@@ -19,8 +19,11 @@ this skill claims to have set is a goal nobody set.
 
 ## The mechanism you are writing for
 
-Measured by reading the shipped binary of Claude Code `2.1.234`. Each row is a
-property the condition you write has to survive.
+Two sources, and they agree. The first nine rows were measured by reading the
+shipped binary of Claude Code `2.1.234`. The official page at
+<https://code.claude.com/docs/en/goal> confirms all nine and supplies the last
+five, which that reading missed. Each row is a property the condition you write
+has to survive.
 
 | Measured | What it costs a condition that ignores it |
 |---|---|
@@ -33,6 +36,11 @@ property the condition you write has to survive.
 | `/goal` with no argument prints the active condition, the number of turns it has been evaluated, and the last check's reason | the human can always see which one is running |
 | `/goal clear` clears it — as do `stop`, `off`, `reset`, `none`, and `cancel` | there is an exit that is not "satisfy it" |
 | it is refused in an untrusted workspace, and refused while `disableAllHooks` or `allowManagedHooksOnly` is set | on a machine where hooks are restricted, none of this output runs |
+| setting a goal **starts a turn immediately**, with the condition itself as the directive | there is no dry run: the line you emit is executed the moment it is pasted, so a condition still missing a part runs anyway |
+| a goal does **not** change the permission mode | in manual mode the loop halts at every tool call the settings do not already allow, so a check the human has not permitted waits on the human it was written to replace |
+| several turns with **no tool use** trip a stall guard: the loop stops, prints a warning, and returns control with the goal still set | a condition satisfiable by prose alone never reaches met — it spends turns arguing with the evaluator and hands back unresolved |
+| four failures clear the goal — an authentication failure Claude Code manages itself, an exhausted credit balance, a context overflow auto-compaction could not clear, and an unavailable model — while rate limits and overload leave it active | a condition that needs many turns can end with no verdict, so every line you emit has to stay valid to paste a second time |
+| the evaluator is the session's configured **small fast model**, Haiku by default, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` repoints it everywhere Claude Code uses that model, not only here | the reader is the cheapest model in the session — a condition needing inference across a long transcript is judged by it, so settle it in one quoted command output |
 
 The second row is the one that decides everything below. The evaluator sees the
 transcript, so **"the tests pass" is not a condition** — it is a claim about a
@@ -133,8 +141,9 @@ before the queue is done:
 ```
 
 The first prints what is currently active and the last check's reason; the
-second ends it early. Say once — not once per block — that the list is a queue
-and that pasting a second condition cancels the first.
+second ends it early. Say once — not once per block — that the list is a queue,
+that pasting a condition starts a turn on the spot, and that pasting a second
+one cancels the first.
 
 ## Never
 
