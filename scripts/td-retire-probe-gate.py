@@ -29,9 +29,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PROBE = ["python3", "scripts/td-retire-probe.py"]
-ALL_ZEROS = "md=0 lock=0 py=0 hdr=0 files=0 other=0 embed=0"
+ALL_ZEROS = "md=0 lock=0 py=0 ec=0 ecrest=0 ecdirs=0 ecscan=0 hdr=0 files=0 tdref=0 other=0 embed=0"
 COUNT_LINE = re.compile(
-    r"^md=(\d+) lock=(\d+) py=(\d+) hdr=(\d+) files=(\d+) other=(\d+) embed=(\d+)$"
+    r"^md=(\d+) lock=(\d+) py=(\d+) ec=(\d+) ecrest=(\d+) ecdirs=(\d+) ecscan=(\d+) hdr=(\d+) files=(\d+) tdref=(\d+) other=(\d+) embed=(\d+)$"
 )
 
 # A prefix that resolves and counts something, and one that resolves and counts
@@ -76,7 +76,7 @@ def accepts(label: str, args: list[str], want_empty: bool) -> tuple[str, bool, s
     lines = count_lines(out)
     if code != 0 or len(lines) != 1:
         return label, False, f"exit={code} count_lines={len(lines)}"
-    columns = [int(g) for g in lines[0].groups()]
+    columns = [int(g) for i, g in enumerate(lines[0].groups()) if i not in (5, 6)]
     empty = all(c == 0 for c in columns)
     ok = empty is want_empty
     kind = "all-zero" if empty else "nonzero"
