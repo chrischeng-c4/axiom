@@ -45,7 +45,8 @@ MARKETPLACE = REPO / ".claude-plugin/marketplace.json"
 # frontmatter `name:` entirely. Naming them here rather than globbing keeps a
 # stray directory from silently joining the population under test.
 SKILLS = ("codex-code-review", "codex-e2e-review", "meta-check",
-          "wi-change-grill", "wi-epic-grill", "wi-epic-reconcile", "wi-tdd")
+          "prepare-goal", "wi-change-grill", "wi-epic-grill",
+          "wi-epic-reconcile", "wi-tdd")
 
 # The `ec -> td -> cb` ladder is gone from this plugin: three scripts, three
 # gates, and the twelve `wi-{ec,td,cb}-*` wrappers, deleted rather than
@@ -81,7 +82,16 @@ SKILLS = ("codex-code-review", "codex-e2e-review", "meta-check",
 # time the ladder starts, the work item has already said what the change is;
 # what remains is a fixed sequence of verbs and the exit codes they return, and
 # the only question a gate could raise is whether it counts.
-INTERVIEWING = ("wi-change-grill", "wi-epic-grill", "wi-epic-reconcile")
+# `prepare-goal` is interviewing on the strength of its second route rather
+# than its first. Given an iid it reads a body that a validator already refused
+# once, and there is nothing left to ask; given none, everything the condition
+# needs -- the end state, the command that shows it, the near miss it must not
+# take, where it stops when the end state is unreachable -- exists only in the
+# human's head. Classifying it procedural would forbid the very tool that route
+# is made of, and would leave the no-iid case answered by whatever the agent
+# guessed the human meant.
+INTERVIEWING = ("prepare-goal", "wi-change-grill", "wi-epic-grill",
+                "wi-epic-reconcile")
 PROCEDURAL = ("codex-code-review", "codex-e2e-review", "meta-check", "wi-tdd")
 
 # The scripts sit at the plugin root, not inside a skill. They were under
