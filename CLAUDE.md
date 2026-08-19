@@ -50,7 +50,7 @@ into the script that replaced it.
 
 ## Skills
 
-Seven entry points. Each is invoked by a human, and each hands off to a script
+Eight entry points. Each is invoked by a human, and each hands off to a script
 that can refuse it.
 
 | Skill | Reach for it when | It does |
@@ -61,11 +61,12 @@ that can refuse it.
 | `/aw:wi-tdd` | the work item is ready to implement | drives one change — or an epic's children in dependency order — through the ladder below |
 | `/aw:codex-e2e-review` | the `e2e` phase printed it as the next command | routes the case to the other model and binds its verdict to the reviewed bytes |
 | `/aw:codex-code-review` | the `logic` phase printed it as the next command | the same, for the implementation and its colocated tests |
+| `/aw:prepare-goal` | a work item, or a bare intent, has to become a `/goal` the session's evaluator can actually decide | interviews you or reads the tracker through `epic.py`/`change.py`, then prints conditions for you to paste |
 | `/aw:meta-check` | before trusting a `CLAUDE.md`, `README.md` or `CONTRIBUTING.md`, and after editing one | `meta.py check` reports every doc fact whose owner is gone |
 
 The usual sequence is grill → reconcile (epics only) → `wi-tdd`; the two review
 skills are reached from the phase that prints them, not chosen, and
-`meta-check` stands outside the lifecycle entirely.
+`prepare-goal` and `meta-check` stand outside the lifecycle entirely.
 
 - A grill never writes product source and never invents an answer you did not
   give. It offers only gates the repository already runs, and it stops asking
@@ -76,6 +77,10 @@ skills are reached from the phase that prints them, not chosen, and
   column. A line beginning `!` means there is no order to follow: report it and
   stop. An epic body you edited to make the graph parse is an epic whose
   dependencies you decided.
+- `prepare-goal` prints text and sets nothing. `/goal` is a Claude Code
+  built-in that nothing here implements, and a goal exists only once the human
+  pastes one of the printed lines — which starts a turn on the spot, and
+  supersedes whatever goal was already running.
 - `meta-check` reads and never writes, and its baseline is **not** zero: 103
   findings over 182 documents today, nearly all of them markers left behind by
   the deleted CLI. So it is not yet wired into `run_all.py` as a ratchet — it
