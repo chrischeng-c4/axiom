@@ -53,6 +53,17 @@ into the script that replaced it.
 Eight entry points. Each is invoked by a human, and each hands off to a script
 that can refuse it.
 
+They load as project skills out of `.claude/skills/`, not as the `aw` plugin,
+and that copy is what a session actually reads. Each directory is named
+`aw:<skill>`, so the invocation keeps the namespace the plugin gave it and
+every `/aw:…` in this repository still resolves. The prefix has to be in the
+directory name because the loader keys off the path and ignores the frontmatter
+`name:` — measured with a probe whose two names disagreed, and the directory
+won. The originals under `plugins/aw/skills/` are the same eight files with
+`${CLAUDE_PLUGIN_ROOT}` paths where the copies write `plugins/aw/scripts/`, and
+nothing detects drift between the two — so an edit to one of them is half an
+edit.
+
 | Skill | Reach for it when | It does |
 |---|---|---|
 | `/aw:wi-change-grill` | a change must be opened, or its body is thin, stale, or unvalidatable | interviews you, then `change.py create\|update` writes the body |
@@ -81,11 +92,21 @@ skills are reached from the phase that prints them, not chosen, and
   built-in that nothing here implements, and a goal exists only once the human
   pastes one of the printed lines — which starts a turn on the spot, and
   supersedes whatever goal was already running.
-- `meta-check` reads and never writes, and its baseline is **not** zero: 103
-  findings over 182 documents today, nearly all of them markers left behind by
-  the deleted CLI. So it is not yet wired into `run_all.py` as a ratchet — it
-  is a report you run over what you touched, and a rising count in a file you
-  edited is the signal.
+- `meta-check` reads and never writes. Its baseline was 103 findings over 182
+  documents, nearly all of them markers left behind by the deleted CLI. Those
+  are cleared, and so are the three rules added on 2026-08-20 — `M5` a gate
+  whose test-name filter cargo exits 0 on, `M6` a gate naming a package or
+  target that is not in the checkout, `M7` a self-graded `Status:`/`Maturity:`
+  field — which landed at 151, 5 and 526 findings and reached zero the same day
+  the 60 project READMEs carrying them were rewritten. It reports `=> CLEAN`
+  over 184 tracked META-docs and 64 project READMEs; the count was 185 until
+  `4a30ca3097` deleted `apps/lumen`'s retired trees.
+- All seven rules are ratcheted to zero by
+  `plugins/aw/verification/check_meta_clean.py`, which `run_all.py` runs with a
+  negative control. That is weaker than it sounds: nothing in this repository
+  calls `run_all.py` — no CI workflow, no git hook, no phase script — so the
+  ratchet is one a human runs, and a finding in a file you edited is still the
+  signal.
 
 ## Authority Order
 
@@ -187,14 +208,20 @@ red first. A phase does not start until its predecessor has landed its commit.
   no longer exists. The `.rs` file is the authoring surface; editing the markdown
   a header names propagates nowhere.
 
-## Phase-1 boundaries
+## Test Layout
 
-- Externally observable product behavior belongs in the project-local Python
-  phase-1 project at `apps/<name>/e2e/`, where `pyproject.toml` is the inventory
-  and `src/cases/*.py` holds one black-box verifier per case.
-- Rules observable only inside the Rust implementation are colocated tests under
-  their semantic `src/**` owner, in a `tests.rs` wired in with
-  `#[cfg(test)] mod tests;`. They are authored by the `unit` phase, before the
-  implementation exists.
-- Never wrap a Python phase-1 case in an app-level Rust tree and never delegate
-  one to `cargo test`.
+Every `apps/<p>` and `libs/<p>` crate owes an `e2e/` tree. Externally
+observable behavior goes in `{apps,libs}/<p>/e2e/*.rs` — Rust, one file per
+case, run by `cargo test -p <crate>`. Declare each one: `autotests = false`
+plus a `[[test]]` stanza per file, so the `Cargo.toml` manifest is the
+inventory and nothing starts or stops running without showing up in a diff.
+Rules observable only inside the implementation stay as colocated unit tests
+under their semantic `src/**` owner (`cargo test -p <crate> --lib`).
+
+Write the `e2e/*.rs` case before the `src/**` change it judges.
+
+`tech-design/`, `external-contracts/`, and `tests/` are superseded: no authored
+source belongs in them. Never create one, never add a file to one, and migrate
+a surviving case into `e2e/` rather than editing it in place. Python spec
+models and `src/cases/*.py` verifiers are retired — never author a new one.
+Generated EC evidence under `external-contracts/` is output, not contract.
