@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-llm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! LLM topic provider for the shared h2c client/server transport contract.
 
@@ -59,7 +58,6 @@ concurrent streams and let each outbound caller manage its own pool.
 };
 
 /// Return the shared h2c topic for CLI composition.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Emit pydantic v2 models for the spec's component schemas.
 
@@ -19,7 +18,6 @@ const PY_KEYWORDS: &[&str] = &[
 ];
 
 /// True when `s` is a usable bare Python identifier (and not a keyword).
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md#source
 pub fn is_py_ident(s: &str) -> bool {
     let mut c = s.chars();
     match c.next() {
@@ -29,7 +27,6 @@ pub fn is_py_ident(s: &str) -> bool {
     c.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') && !PY_KEYWORDS.contains(&s)
 }
 
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md#source
 pub fn emit(spec: &Spec, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     let mut out = String::from(HEADER);
     out.push_str("from __future__ import annotations\n");

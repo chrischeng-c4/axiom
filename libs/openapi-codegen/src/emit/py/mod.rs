@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Python emitter: read an OpenAPI 3.0/3.1/3.2 document and emit pydantic v2
 //! models plus a typed sync/async HTTP/2 client runtime.
@@ -26,7 +25,6 @@ use crate::{GenOptions, GeneratedFile, GeneratedOutput, PythonTarget};
 use anyhow::{Context, Result};
 
 /// Pure Python generation: spec JSON text → in-memory files. No filesystem access.
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     generate_impl(spec_json, opts, None)
 }

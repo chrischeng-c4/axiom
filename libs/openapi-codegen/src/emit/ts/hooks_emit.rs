@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-hooks-emit-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Emits `hooks.ts`: TanStack Query (React Query) hooks bound to the client,
 //! using the per-operation `XxxData` / `XxxResponse` types.
@@ -12,7 +11,6 @@ use crate::ir::names::to_pascal;
 
 /// Render `hooks.ts`.
 ///
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-hooks-emit-rs.md#source
 pub fn emit(plans: &[OperationPlan]) -> String {
     let mut out = String::from(crate::emit::ts::types_emit::HEADER);
     out.push_str("import { useMutation, useQuery } from \"@tanstack/react-query\";\n");

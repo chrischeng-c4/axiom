@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Per-language emitters. Each reads the shared [`crate::ir`] and renders a typed
 //! client in its target language.

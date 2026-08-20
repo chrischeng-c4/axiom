@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-plan-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Per-operation TypeScript generation plan, derived from the neutral
 //! [`crate::ir::operations::OperationIR`]. Shared by the type, client, and hooks
@@ -12,7 +11,6 @@ use crate::ir::operations::{self, OperationIR, ParamIR};
 
 /// One named field inside a grouped request sub-object (`path`/`query`/`headers`).
 #[derive(Debug)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-plan-rs.md#source
 pub struct ParamField {
     pub name: String,
     pub ts_type: String,
@@ -21,7 +19,6 @@ pub struct ParamField {
 
 /// The JSON request body, if any.
 #[derive(Debug)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-plan-rs.md#source
 pub struct BodyField {
     pub ts_type: String,
     pub required: bool,
@@ -29,7 +26,6 @@ pub struct BodyField {
 
 /// Fully-resolved TypeScript plan for one HTTP operation.
 #[derive(Debug)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-plan-rs.md#source
 pub struct OperationPlan {
     /// camelCase client function name (also the hook stem source).
     pub fn_name: String,
@@ -55,7 +51,6 @@ pub struct OperationPlan {
     pub post_twin_path: Option<String>,
 }
 
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-plan-rs.md#source
 impl OperationPlan {
     pub fn has_inputs(&self) -> bool {
         self.data_type_name.is_some()
@@ -70,7 +65,6 @@ impl OperationPlan {
 
 /// Build a deterministic TS plan for every operation in the spec. Per-operation
 /// type names are collision-safe against component type names.
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-plan-rs.md#source
 pub fn build(spec: &Spec, tm: &TypeMap) -> Vec<OperationPlan> {
     let mut fn_reg = NameRegistry::new();
     let mut type_reg = NameRegistry::new();

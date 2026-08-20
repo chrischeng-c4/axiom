@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Rust emitter: read an OpenAPI 3.0/3.1/3.2 document and emit serde models
 //! plus a typed `reqwest::blocking` client.
@@ -24,7 +23,6 @@ use crate::{GenOptions, GeneratedFile, GeneratedOutput, RustTarget};
 use anyhow::{Context, Result};
 
 /// Pure Rust generation: spec JSON text → in-memory files. No filesystem access.
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     generate_impl(spec_json, opts, None)
 }
