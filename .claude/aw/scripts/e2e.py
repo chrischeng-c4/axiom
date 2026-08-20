@@ -62,8 +62,8 @@ Whole-surface, advisory:
 from __future__ import annotations
 
 import argparse
-import ast
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -71,8 +71,8 @@ from typing import Any
 
 if sys.version_info < (3, 11):
     sys.stderr.write(
-        f"e2e.py reads the case inventory from a pyproject.toml, which needs "
-        f"Python 3.11+ for tomllib; this is {sys.version.split()[0]}.\n"
+        f"e2e.py reads the case inventory out of the crate manifest, which "
+        f"needs Python 3.11+ for tomllib; this is {sys.version.split()[0]}.\n"
         "Invoke it as: uv run --python 3.13 --no-project <path>/e2e.py ...\n"
     )
     raise SystemExit(2)
@@ -95,15 +95,17 @@ Check = leg.Check
 GIT = leg.GIT
 PHASE = "e2e"
 
-# What a case must declare about itself before it is trusted to run. These are
-# read out of the file without importing it, so the declaration is available
-# before the code behind it executes.
-REQUIRED_CONSTANTS = ("CASE_ID", "DIMENSION", "TARGET_COMMAND", "ASSERTIONS")
+# The three ways a Rust case can say it checked something. A case carrying
+# none of them is a program that runs and reports nothing, which is green
+# forever and therefore evidence of nothing.
+ASSERT_MACROS = ("assert!", "assert_eq!", "assert_ne!")
 
-# What the inventory must say about each case. `promise` and `oracle` are here
-# because a case whose inventory entry says only "it exists" gives a reader no
-# way to tell a real oracle from a tautology without opening the file.
-REQUIRED_ENTRY_KEYS = ("id", "dimension", "promise", "oracle", "command")
+# What can be decided about an assertion without running it. A Rust literal
+# on both sides of `assert_eq!` is the one shape whose verdict is fixed at
+# read time; everything else needs the product, and that is `E1`'s job.
+_LIT = r'(?:-?\d[\d_]*(?:\.\d+)?|true|false|"[^"\n]*")'
+VACUOUS_CMP = re.compile(rf"assert_(?:eq|ne)!\(\s*{_LIT}\s*,\s*{_LIT}\s*[,)]")
+VACUOUS_BOOL = re.compile(r"assert!\(\s*(?:true|false)\s*[,)]")
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -127,39 +129,134 @@ def e2e_root(repo: Path, project: str) -> Path:
     return leg.leg_root(repo, project, PHASE)
 
 
+def manifest(root: Path) -> Path:
+    """The crate manifest that owns `root`. It is the case inventory.
+
+    One level above the e2e root rather than inside it, which is the whole
+    reason `C0` has to allow a path outside the phase's write root: registering
+    a case and writing it are one act, and the register lives here.
+    """
+    return root.parent / "Cargo.toml"
+
+
+class E2eInventory:
+    """`[[test]]` from the crate manifest, or the reason there is no inventory.
+
+    Cargo already has a register of test targets and a rule about what happens
+    to a file nobody declared, so this reads that one instead of adding a
+    second. The alternative -- an `[[aw.e2e.cases]]` table beside it -- is two
+    answers to "what runs", free to disagree, with the disagreement showing up
+    as a coverage difference rather than as a defect.
+
+    `autotests = false` is checked, never assumed. With autodiscovery on, an
+    undeclared file under `e2e/` runs anyway and a declaration whose file is
+    gone is ignored -- so the manifest describes the inventory rather than
+    being it, and there is nothing here for `C1` to refuse a case against.
+
+    Missing, unusable and empty are three answers, and none of them is
+    defaulted to the others. `problem` carries which one, in the words the
+    author has to act on; `cases` is what the phase runs.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.problem = ""
+        self.crate = ""
+        self.cases: dict[str, dict[str, Any]] = {}
+        path = manifest(root)
+        if not path.is_file():
+            self.problem = (
+                f"there is no crate manifest at {path.name} beside "
+                f"{root.name}/, so nothing declares what runs")
+            return
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        package = data.get("package", {})
+        self.crate = str(package.get("name", "")).strip()
+        if not self.crate:
+            self.problem = f"{path.name} declares no `[package] name`"
+            return
+        if package.get("autotests") is not False:
+            self.problem = (
+                f"{path.name} does not set `autotests = false` under "
+                "`[package]`\nwith autodiscovery on, a file nobody declared "
+                "still runs and a declaration whose file is gone is ignored, "
+                "so the manifest is a description of the inventory rather than "
+                "the inventory itself")
+            return
+        prefix = f"{root.name}/"
+        for stanza in data.get("test", []):
+            name = str(stanza.get("name", "")).strip()
+            declared = str(stanza.get("path", "")).strip()
+            if not name or not declared.startswith(prefix):
+                continue
+            self.cases[name] = {
+                "id": name,
+                "path": declared,
+                # Derived, not declared. The command for a `[[test]]` target is
+                # fixed by cargo, so reading one out of the manifest would be
+                # inventing a key cargo does not have and letting it drift from
+                # the target it names.
+                "command": f"cargo test -p {self.crate} --test {name}",
+            }
+        if not self.cases:
+            self.problem = (
+                f"{path.name} declares no `[[test]]` whose `path` is under "
+                f"{prefix}\nthis is the first case in the project: the "
+                "inventory has to be appended to, and a file that is not in it "
+                "does not run")
+
+
 def inventory(root: Path) -> dict[str, dict[str, Any]]:
     """Every case the project declares, keyed by id. Empty if none are.
 
-    The key is `python-e2e`, not the `python-ec` the retiring lifecycle reads.
-    They are separate because the roots are separate: a project mid-changeover
-    has both an `external-contracts/` tree and an `e2e/` tree, and one key
-    across both would make a case belong to whichever inventory was parsed
-    last.
+    The dict form is what `unit.py` and `logic.py` ask for -- they need the
+    command and nothing else -- and it is kept one-argument so that where the
+    inventory lives stays this module's business.
     """
-    path = root / "pyproject.toml"
-    if not path.is_file():
-        return {}
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    cases = data.get("tool", {}).get("aw", {}).get("python-e2e", {}).get("cases", [])
-    return {c["id"]: c for c in cases}
+    return E2eInventory(root).cases
 
 
 def case_path(root: Path, case_id: str) -> Path:
-    return root / "src" / "cases" / f"{case_id}.py"
+    """Where the case's source is, per the manifest, or where it should be.
+
+    The declared path is preferred over the conventional one because the
+    manifest is what cargo obeys: a stanza pointing somewhere else is a case
+    that runs from somewhere else, and reporting the conventional path would
+    print a file nobody executes. The fallback is for the case the inventory
+    does not name at all, which `C1` refuses -- and which still has to be
+    printed by name in the refusal.
+    """
+    entry = inventory(root).get(case_id)
+    if entry:
+        return root.parent / entry["path"]
+    return root / f"{case_id}.rs"
 
 
 def changed_cases(repo: Path, root: Path, dirty: list[str]) -> list[str]:
-    """The case ids this change wrote, from the dirty set."""
-    prefix = f"{(root / 'src' / 'cases').relative_to(repo)}/"
-    return sorted({Path(p).stem for p in dirty
-                   if p.startswith(prefix) and p.endswith(".py")})
+    """The case ids this change wrote, from the dirty set.
+
+    Files sitting directly in the e2e root, and only those. A `[[test]]` stanza
+    names one file, so a subdirectory holds fixtures for a harness rather than
+    cases -- `apps/lumen/e2e/rig/` and `apps/lumen/e2e/ec/` are both that -- and
+    a stem lifted out of one would be a case id no stanza can ever match. The
+    crate manifest is in the dirty set whenever a case was registered, and it is
+    not a case either; the `.rs` suffix is what excludes it.
+    """
+    prefix = f"{root.relative_to(repo)}/"
+    out: set[str] = set()
+    for path in dirty:
+        if not path.startswith(prefix) or not path.endswith(".rs"):
+            continue
+        if "/" in path[len(prefix):]:
+            continue
+        out.add(Path(path).stem)
+    return sorted(out)
 
 
 # --------------------------------------------------------------------------
 # the checks this phase adds
 # --------------------------------------------------------------------------
 def c1_registered(chk: Check, root: Path, cases: list[str],
-                  inv: dict[str, dict[str, Any]]) -> None:
+                  inv: "E2eInventory") -> None:
     """Every case this phase wrote is declared, and declares itself.
 
     Two halves, one row, because they are the same defect seen from two sides:
@@ -170,85 +267,88 @@ def c1_registered(chk: Check, root: Path, cases: list[str],
     """
     if not cases:
         chk.add("FAIL", "C1 registered",
-                f"this change wrote no case under {root.name}/src/cases/\n"
+                f"this change wrote no case directly under {root.name}/\n"
                 f"the {PHASE} phase's whole output is cases; a change here with "
                 "none has nothing that could refuse the implementation later")
         return
-    if not (root / "pyproject.toml").is_file():
+    if inv.problem:
         chk.add("FAIL", "C1 registered",
-                f"there is no inventory at {root.name}/pyproject.toml, so the "
-                f"{len(cases)} case file(s) this change wrote are scripts in a "
-                "folder\nthis is the first work item in the project: the "
-                "inventory has to be created, not appended to")
+                f"{len(cases)} case file(s) were written and nothing runs "
+                f"them:\n{inv.problem}")
         return
+    want = f"{root.name}/"
     problems: list[str] = []
     for case_id in cases:
-        entry = inv.get(case_id)
+        entry = inv.cases.get(case_id)
         if entry is None:
-            problems.append(f"  {case_id}: not in the inventory's "
-                            "[[tool.aw.python-e2e.cases]]")
+            problems.append(
+                f"  {case_id}: no `[[test]]` named it, so cargo will not run "
+                f"it -- add `name = \"{case_id}\"` with "
+                f"`path = \"{want}{case_id}.rs\"`")
             continue
-        missing = [k for k in REQUIRED_ENTRY_KEYS if not str(entry.get(k, "")).strip()]
-        if missing:
-            problems.append(f"  {case_id}: inventory entry is missing "
-                            f"{', '.join(missing)}")
-        declared = leg.case_constants(case_path(root, case_id))
-        absent = [k for k in REQUIRED_CONSTANTS if k not in declared]
-        if absent:
-            problems.append(f"  {case_id}: the file declares no {', '.join(absent)}")
-        elif declared["CASE_ID"] != case_id:
-            problems.append(f"  {case_id}: declares CASE_ID="
-                            f"{declared['CASE_ID']!r}, which no inventory entry names")
+        expect = f"{want}{case_id}.rs"
+        if entry["path"] != expect:
+            problems.append(
+                f"  {case_id}: declared at {entry['path']}, not {expect} -- "
+                "the target name and the file stem have to agree, or the "
+                "command that runs one names the other")
+        source = case_path(root, case_id)
+        if not source.is_file():
+            problems.append(f"  {case_id}: declared at {entry['path']}, "
+                            "which is not a file")
     if problems:
         chk.add("FAIL", "C1 registered", "\n".join(problems))
         return
     chk.add("PASS", "C1 registered",
-            f"all {len(cases)} case(s) are inventoried and self-declaring")
+            f"all {len(cases)} case(s) are declared in "
+            f"{manifest(root).name} and present on disk")
 
 
-def _is_literal(node: ast.expr) -> bool:
-    try:
-        ast.literal_eval(node)
-    except (ValueError, TypeError, SyntaxError):
-        return False
-    return True
+def _line_of(text: str, offset: int) -> int:
+    return text.count("\n", 0, offset) + 1
 
 
 def c2_observes_product(chk: Check, root: Path, cases: list[str]) -> None:
-    """No case asserts something it computed out of thin air.
+    """No case asserts something it wrote down itself.
 
-    An `assert 1 == 1`, or an assert over two constants the case itself wrote,
-    is green forever and red never -- so it survives `E1` only by accident and
+    An `assert_eq!(1, 1)`, or an assert over two literals the case supplied, is
+    green forever and red never -- so it survives `E1` only by accident and
     passes every phase after. The check is deliberately shallow: it refuses an
-    assert whose *both* sides are literals, which is the only shape that can be
-    decided without running anything. A case that reaches out and gets the
-    wrong thing is a defect no static reading can catch, and `E1` is what
+    assertion whose verdict is fixed at read time, which is the only shape that
+    can be decided without running anything. A case that reaches out and gets
+    the wrong thing is a defect no static reading can catch, and `E1` is what
     catches it.
+
+    It reads the text rather than a syntax tree. There is no Rust parser in the
+    standard library and the phase scripts take no dependency, so a tree would
+    mean either vendoring one or shelling out to a toolchain the phase does not
+    otherwise need. The cost is that a literal comparison inside a comment or a
+    string reads as one: that direction refuses a case the author can rewrite,
+    where a parser this shallow getting it wrong the other way would let a
+    vacuous assertion through.
     """
     problems: list[str] = []
     for case_id in cases:
         path = case_path(root, case_id)
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        asserts = [n for n in ast.walk(tree) if isinstance(n, ast.Assert)]
-        if not asserts:
-            problems.append(f"  {case_id}: contains no assert")
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if not any(macro in text for macro in ASSERT_MACROS):
+            problems.append(
+                f"  {case_id}: contains none of "
+                f"{', '.join(f'`{m}`' for m in ASSERT_MACROS)}, so nothing in "
+                "it can fail on what the product did")
             continue
-        for node in asserts:
-            test = node.test
-            if isinstance(test, ast.Compare) and len(test.comparators) == 1:
-                if _is_literal(test.left) and _is_literal(test.comparators[0]):
-                    problems.append(
-                        f"  {case_id}:{node.lineno}: both sides of this assert "
-                        "are literals, so it observes nothing")
-            elif _is_literal(test):
+        for pattern, why in ((VACUOUS_CMP, "both sides of this comparison are "
+                                           "literals"),
+                             (VACUOUS_BOOL, "this assertion is a literal")):
+            for hit in pattern.finditer(text):
                 problems.append(
-                    f"  {case_id}:{node.lineno}: this assert is a literal, so "
-                    "it observes nothing")
+                    f"  {case_id}:{_line_of(text, hit.start())}: {why}, so it "
+                    "observes nothing")
     if problems:
         chk.add("FAIL", "C2 observes the product", "\n".join(problems))
         return
     chk.add("PASS", "C2 observes the product",
-            f"every assert in {len(cases)} case(s) reads something")
+            f"every assertion in {len(cases)} case(s) reads something")
 
 
 def e1_cases_are_red(chk: Check, repo: Path, cases: list[str],
@@ -262,8 +362,16 @@ def e1_cases_are_red(chk: Check, repo: Path, cases: list[str],
     are not in it.
     """
     green: list[str] = []
-    for case_id in cases:
-        result = leg.run_command(repo, inv[case_id]["command"])
+    results = [leg.run_command(repo, inv[case_id]["command"]) for case_id in cases]
+    dead = leg.unrunnable(*results)
+    if dead:
+        chk.add("FAIL", "E1 cases are red", dead
+                + "\na case that could not be started did not refuse anything. "
+                "This row reads a non-zero exit as the answer it wants, so a "
+                "command that never ran would pass it without observing the "
+                "product at all")
+        return
+    for case_id, result in zip(cases, results):
         if result["exit"] == 0:
             green.append(f"  {case_id}")
     if green:
@@ -328,9 +436,10 @@ below, say so. Apply them per case, naming the case each finding is about.
      internals, reading its private state, asserting on a data structure it
      could have observed from the outside?
 
-  Q4 PROMISE VS ASSERTION
-     The inventory entry states a `promise` and an `oracle`. Does the code
-     assert THAT, or something weaker that happens to hold?
+  Q4 NAME VS ASSERTION
+     The `[[test]]` target's name is the case's only declaration of what it is
+     about, and it is what anyone selecting cases to run will read. Does the
+     code assert THAT, or something weaker that happens to hold?
 
   Q5 SETUP
      Is the red this case produces the red it claims -- a missing behaviour --
@@ -341,10 +450,11 @@ below, say so. Apply them per case, naming the case each finding is about.
      Could this case pass with the product absent entirely? Deleted, renamed,
      never built?
 
-  Q7 DECLARED FAILURE
-     Does the assertion message name the same observable the `ASSERTIONS`
-     tuple declares? A case whose failure text describes a different check is
-     one nobody can attribute later.
+  Q7 ATTRIBUTABLE FAILURE
+     A Rust assertion that carries no message fails as `assertion failed:
+     <expr>` and a file and line, and nothing else. Does each assertion state
+     the observable it checked, in words a later reader can attribute to a
+     promise? A red nobody can attribute is a red nobody can act on.
 
 {leg.OUTPUT_CONTRACT}"""
 
@@ -364,18 +474,28 @@ def _print_cases(repo: Path, root: Path, inv: dict[str, dict[str, Any]],
         source = case_path(root, case_id)
         print("=" * 78)
         print(f"CASE      : {case_id}")
-        print(f"DIMENSION : {entry.get('dimension')}")
+        print(f"TARGET    : {entry.get('path') or '(declared by nothing)'}")
         print()
         print("-- inventory entry ------------------------------------------------")
-        for field in ("promise", "oracle", "target", "command"):
+        for field in ("path", "command"):
             if entry.get(field):
                 print(f"{field}: {entry[field]}")
         print()
         if run and entry.get("command"):
             result = leg.run_command(repo, entry["command"])
             print("-- currently fails with -------------------------------------------")
-            print(f"exit={result['exit']} {result['exception']}: "
-                  f"{result['message'][:600]}")
+            # `leg.run_command` pulls an exception name out of stderr, which is
+            # a Python shape. A cargo red has none -- libtest prints the failed
+            # assertion on stdout and rustc prints a build error on stderr --
+            # so with no exception the output itself is the attribution, and
+            # printing the empty fields instead would leave Q7 unanswerable.
+            if result["exception"]:
+                print(f"exit={result['exit']} {result['exception']}: "
+                      f"{result['message'][:600]}")
+            else:
+                tail = (result["stdout"] + result["stderr"]).strip()
+                print(f"exit={result['exit']}")
+                print(tail[-2000:] if tail else "(the command printed nothing)")
             print()
         print(f"-- case source: {source.relative_to(repo)} ------------------------")
         print(source.read_text(encoding="utf-8") if source.is_file()
@@ -498,7 +618,7 @@ def _wi_checks(args: argparse.Namespace, *, require_clean: bool,
                         "over it would be about paths this phase may not write")
         return chk, repo, root, dirty, []
 
-    inv = inventory(root)
+    inv = E2eInventory(root)
     cases = changed_cases(repo, root, dirty)
     c1_registered(chk, root, cases, inv)
     if not chk.failed:
@@ -509,7 +629,7 @@ def _wi_checks(args: argparse.Namespace, *, require_clean: bool,
                     "not run: a FAIL above means a red here would be a red "
                     "about the case rather than about the product")
         else:
-            e1_cases_are_red(chk, repo, cases, inv)
+            e1_cases_are_red(chk, repo, cases, inv.cases)
     if include_verdict:
         leg.c7_verdict(chk, repo, PHASE, args.wi, dirty, REVIEWER)
     return chk, repo, root, dirty, cases
@@ -533,16 +653,24 @@ def cmd_start(args: argparse.Namespace) -> int:
     mod = leg.change_module()
     print()
     print("=" * 78)
-    for heading in ("Goal", "Acceptance"):
+    for heading in ("## Goal", "## Acceptance"):
         section = mod.section_at(body, 2, heading)
-        print(f"## {heading}\n")
+        print(f"{heading}\n")
         print((section or "(this work item has no such section)").strip())
         print()
     print("=" * 78)
-    print("Write the cases under")
-    print(f"  {(root / 'src' / 'cases').relative_to(repo)}/")
-    print("and inventory each one in")
-    print(f"  {(root / 'pyproject.toml').relative_to(repo)}")
+    print("Write the cases directly under")
+    print(f"  {root.relative_to(repo)}/")
+    print("one file per case, and declare each one in")
+    print(f"  {manifest(root).relative_to(repo)}")
+    print("as")
+    print("  [[test]]")
+    print('  name = "<stem>"')
+    print(f'  path = "{root.name}/<stem>.rs"')
+    print()
+    print("That manifest is the inventory, and the declaration is not optional:")
+    print("`autotests = false` is set, so a file nobody declared does not run.")
+    print("It is the one path outside the e2e root this phase may write.")
     print()
     print("Every case must be RED against the tree as it stands. A case that is")
     print("green now measures the tree it was written against, not the change --")

@@ -225,7 +225,14 @@ def l2_l3_tests(chk: Check, repo: Path, cfg, recorded: list[str]) -> None:
                     "could not check out HEAD to compare the test population:\n"
                     + error)
             return
-        before = cfg.names(leg.run_command(head, cfg.test)["stdout"], "passed")
+        at_head = leg.run_command(head, cfg.test)
+        if at_head["unrunnable"]:
+            chk.add("FAIL", "L3 the suite is whole", at_head["unrunnable"]
+                    + "\nthis row is a comparison against the tests that ran at "
+                    "HEAD, and a run that produced no output would report an "
+                    "empty population as a whole one")
+            return
+        before = cfg.names(at_head["stdout"], "passed")
 
     lost = sorted(before - passed - failed)
     if lost:
@@ -255,7 +262,7 @@ def l4_l5_contract(chk: Check, repo: Path, root: Path, cases: list[str]) -> None
     if unknown:
         chk.add("FAIL", "L4 the contract accepts the code",
                 "committed by the e2e phase and not in "
-                f"{(root / 'pyproject.toml').relative_to(repo)}:\n"
+                f"{e2e_mod.manifest(root).relative_to(repo)}:\n"
                 + "\n".join(f"  {c}" for c in unknown)
                 + "\nthe inventory was edited after that phase closed")
         chk.add("PENDING", "L5 the contract refused HEAD",
@@ -285,8 +292,15 @@ def l4_l5_contract(chk: Check, repo: Path, root: Path, cases: list[str]) -> None
             chk.add("FAIL", "L5 the contract refused HEAD",
                     "could not check out HEAD to measure against:\n" + error)
             return
-        green = [c for c in cases
-                 if leg.run_command(head, inv[c]["command"])["exit"] == 0]
+        at_head = [leg.run_command(head, inv[c]["command"]) for c in cases]
+        dead = leg.unrunnable(*at_head)
+        if dead:
+            chk.add("FAIL", "L5 the contract refused HEAD", dead
+                    + "\na case that could not be started at HEAD did not "
+                    "refuse it, and this row reads a non-zero exit there as the "
+                    "answer it wants")
+            return
+        green = [c for c, result in zip(cases, at_head) if result["exit"] == 0]
 
     if green:
         chk.add("FAIL", "L5 the contract refused HEAD",
@@ -595,17 +609,17 @@ def cmd_start(args: argparse.Namespace) -> int:
     mod = leg.change_module()
     print()
     print("=" * 78)
-    for heading in ("Goal", "Acceptance"):
+    for heading in ("## Goal", "## Acceptance"):
         section = mod.section_at(body, 2, heading)
-        print(f"## {heading}\n")
+        print(f"{heading}\n")
         print((section or "(this work item has no such section)").strip())
         print()
 
     inv = e2e_mod.inventory(root)
     print("## The contract\n")
     for case_id in leg.contract_set(repo, root, args.wi, "e2e"):
-        promise = str(inv.get(case_id, {}).get("promise") or "").strip()
-        print(f"- `{case_id}`" + (f" -- {promise}" if promise else ""))
+        command = str(inv.get(case_id, {}).get("command") or "").strip()
+        print(f"- `{case_id}`" + (f" -- `{command}`" if command else ""))
     print()
 
     recorded, why = recorded_red(repo, args.wi)

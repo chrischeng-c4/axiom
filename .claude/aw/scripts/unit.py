@@ -195,7 +195,14 @@ def u2_named_red(chk: Check, repo: Path, cfg: UnitConfig) -> list[str]:
             chk.add("FAIL", "U2 named red",
                     "could not check out HEAD to subtract its failures:\n" + error)
             return []
-        before = cfg.names(leg.run_command(head, cfg.test)["stdout"], "failed")
+        at_head = leg.run_command(head, cfg.test)
+        if at_head["unrunnable"]:
+            chk.add("FAIL", "U2 named red", at_head["unrunnable"]
+                    + "\nHEAD's failures are subtracted from the tree's, so a "
+                    "run that produced no output would report every failure "
+                    "here as one this phase caused")
+            return []
+        before = cfg.names(at_head["stdout"], "failed")
 
     new = sorted(failing - before)
     if not new:
@@ -237,10 +244,17 @@ def u3_contract_still_red(chk: Check, repo: Path, root: Path,
         if entry is None:
             chk.add("FAIL", "U3 contract still red",
                     f"`{case_id}` was committed by the e2e phase but is not in "
-                    f"{(root / 'pyproject.toml').relative_to(repo)}\n"
+                    f"{e2e_mod.manifest(root).relative_to(repo)}\n"
                     "the inventory was edited after that phase closed")
             return
-        if leg.run_command(repo, entry["command"])["exit"] == 0:
+        result = leg.run_command(repo, entry["command"])
+        if result["unrunnable"]:
+            chk.add("FAIL", "U3 contract still red", result["unrunnable"]
+                    + "\na case that could not be started did not refuse "
+                    "anything, and this row reads a non-zero exit as the answer "
+                    "it wants")
+            return
+        if result["exit"] == 0:
             green.append(f"  {case_id}")
     if green:
         chk.add("FAIL", "U3 contract still red",
@@ -328,17 +342,17 @@ def cmd_start(args: argparse.Namespace) -> int:
     mod = leg.change_module()
     print()
     print("=" * 78)
-    for heading in ("Goal", "Acceptance"):
+    for heading in ("## Goal", "## Acceptance"):
         section = mod.section_at(body, 2, heading)
-        print(f"## {heading}\n")
+        print(f"{heading}\n")
         print((section or "(this work item has no such section)").strip())
         print()
 
     inv = e2e_mod.inventory(root)
     print("## The cases this has to stay red against\n")
     for case_id in leg.contract_set(repo, root, args.wi, "e2e"):
-        promise = str(inv.get(case_id, {}).get("promise") or "").strip()
-        print(f"- `{case_id}`" + (f" -- {promise}" if promise else ""))
+        command = str(inv.get(case_id, {}).get("command") or "").strip()
+        print(f"- `{case_id}`" + (f" -- `{command}`" if command else ""))
     print()
     print("=" * 78)
     print("Write the colocated tests in")

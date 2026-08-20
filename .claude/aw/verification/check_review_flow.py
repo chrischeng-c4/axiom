@@ -69,13 +69,15 @@ from _paths import E2E_SCRIPT, LOGIC_SCRIPT, pinned_interpreter  # noqa: E402
 Path = pathlib.Path
 
 UV = pinned_interpreter()
-LAUNCH = " ".join(UV)
 
-CASE = "demo-marker-case"
-CASES_REL = "apps/demo/e2e/src/cases"
-CASE_REL = f"{CASES_REL}/{CASE}.py"
-PYPROJECT_REL = "apps/demo/e2e/pyproject.toml"
+# Underscores, not hyphens: the case id is a `[[test]]` target name, and cargo
+# passes that name to rustc as a crate name.
+CASE = "demo_marker_case"
+E2E_REL = "apps/demo/e2e"
+CASE_REL = f"{E2E_REL}/{CASE}.rs"
 PROJECT_TOML_REL = "apps/demo/aw.toml"
+CARGO_REL = "apps/demo/Cargo.toml"
+WORKSPACE_REL = "Cargo.toml"
 LIB_REL = "apps/demo/src/lib.rs"
 TESTS_REL = "apps/demo/src/tests.rs"
 
@@ -98,7 +100,7 @@ MARKER = "hello"
 WI_SENTINEL = "the marker file today does not exist"
 
 # The same, for the case source and for each side of the code-review surface.
-CASE_SENTINEL = 'MARKER_FILE = pathlib.Path("apps/demo/marker.txt")'
+CASE_SENTINEL = 'let marker = dir.join("marker.txt");'
 LIB_SENTINEL = "pub fn double(n: i64) -> i64"
 TESTS_SENTINEL = "fn twice_doubles()"
 
@@ -107,46 +109,53 @@ TESTS_SENTINEL = "fn twice_doubles()"
 # review whatever its exit code says.
 RUBRIC_SENTINEL = "Q0 DOES THIS CHANGE SATISFY THE WORK ITEM?"
 
+# It reads the marker file and nothing else. No subprocess: this gate never
+# asks whether the product behaves, only whether a reviewer would be shown the
+# right thing, and a case that ran a binary would make every control here wait
+# on a build it has no claim about.
 CASE_SRC = f'''\
-"""The product writes the marker string."""
-from __future__ import annotations
+//! The product writes the marker string.
 
-import pathlib
+use std::fs;
+use std::path::PathBuf;
 
-CASE_ID = "{CASE}"
-DIMENSION = "behavior"
-TARGET_COMMAND = "{LAUNCH} {CASE_REL}"
-ASSERTIONS = ("running the product writes `{MARKER}` to the marker file",)
-
-{CASE_SENTINEL}
-
-
-def verify() -> list[str]:
-    observed = (
-        MARKER_FILE.read_text(encoding="utf-8") if MARKER_FILE.is_file() else ""
-    )
-    assert observed == "{MARKER}", (
+#[test]
+fn the_product_writes_the_marker() {{
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    {CASE_SENTINEL}
+    let observed = fs::read_to_string(&marker).unwrap_or_default();
+    assert_eq!(
+        observed, "{MARKER}",
         "running the product writes `{MARKER}` to the marker file"
-    )
-    return list(ASSERTIONS)
-
-
-if __name__ == "__main__":
-    verify()
+    );
+}}
 '''
 
-PYPROJECT = f'''\
-[project]
-name = "demo-e2e"
-version = "0.1.0"
-requires-python = ">=3.11"
+WORKSPACE_TOML = '''\
+[workspace]
+resolver = "2"
+members = ["apps/demo"]
+'''
 
-[[tool.aw.python-e2e.cases]]
-id = "{CASE}"
-dimension = "behavior"
-promise = "the product writes the marker string"
-oracle = "the bytes in the marker file after the product runs"
-command = "{LAUNCH} {CASE_REL}"
+# `autotests = false` is in the scaffold, not in the change: with autodiscovery
+# on, a file under `e2e/` that nobody declared runs anyway, so there would be
+# nothing for `C1` to refuse an unregistered case against.
+CARGO_TOML = '''\
+[package]
+name = "demo"
+version = "0.0.0"
+edition = "2021"
+autotests = false
+
+[dependencies]
+'''
+
+# The same manifest with the case registered. Registering a case and writing it
+# are one act, so both paths are the `e2e` change under review here.
+CARGO_TOML_REGISTERED = CARGO_TOML + f'''
+[[test]]
+name = "{CASE}"
+path = "e2e/{CASE}.rs"
 '''
 
 # The `[unit]` block is here even though nothing in this gate compiles: the
@@ -189,7 +198,7 @@ use super::*;
 # checkout gitignores it. Mirroring that is not cosmetic: either file reported
 # by `git status` would join the dirty set and fail `C0` in every control here
 # -- the right row red for entirely the wrong reason.
-GITIGNORE = ".aw/\n__pycache__/\napps/demo/marker.txt\napps/demo/target/\n"
+GITIGNORE = ".aw/\n__pycache__/\ntarget/\napps/demo/marker.txt\n"
 
 WI_BODY = f"""\
 ## Goal
@@ -201,14 +210,14 @@ Running the demo product writes the string `{MARKER}` into
 
 ### Verified premises
 
-- `{PROJECT_TOML_REL}:1` declares the project and names no case inventory, so
-  nothing in this project pins the marker file yet.
+- `{CARGO_REL}:1` declares the crate with `autotests = false` and no `[[test]]`
+  stanza, so nothing in this project pins the marker file yet.
 - `{LIB_REL}:1` carries no `marker` function, so nothing writes the marker
   today.
 
 ### Change points
 
-- `{PYPROJECT_REL}`
+- `{CARGO_REL}`
 - `{CASE_REL}`
 
 ### Frozen decisions
@@ -255,7 +264,7 @@ ECHOED = (
     "tokens used\n26,895\n"
     "Reviewed the change.\n\nVERDICT: accepted\n"
 )
-FINDING = "Q1 demo-marker-case: an empty marker file would also pass"
+FINDING = f"Q1 {CASE}: an empty marker file would also pass"
 REJECTED = f"FINDING: {FINDING}\nVERDICT: rejected\n"
 REJECTED_ECHOED = (
     f"FINDING: {FINDING}\nVERDICT: rejected\n"
@@ -277,13 +286,23 @@ def build(root: Path) -> Path:
     would leave every control running against a tree with nothing in it.
     """
     fixture = root / "fixture"
-    (fixture / CASES_REL).mkdir(parents=True)
+    (fixture / E2E_REL).mkdir(parents=True)
     (fixture / LIB_REL).parent.mkdir(parents=True)
     (fixture / ".gitignore").write_text(GITIGNORE)
     (fixture / "aw.toml").write_text('version = "0.0.0"\n')
     (fixture / PROJECT_TOML_REL).write_text(PROJECT_TOML)
+    (fixture / WORKSPACE_REL).write_text(WORKSPACE_TOML)
+    (fixture / CARGO_REL).write_text(CARGO_TOML)
     (fixture / LIB_REL).write_text(LIB_SRC)
     (fixture / TESTS_REL).write_text(TESTS_SRC)
+
+    # Generated and committed with the scaffold. Cargo writes one the first
+    # time it resolves the workspace, and an untracked `Cargo.lock` appearing
+    # mid-control would join the dirty set and fail `C0` -- the right row red
+    # for a path no phase wrote.
+    subprocess.run(["cargo", "generate-lockfile", "--offline",
+                    "--manifest-path", str(fixture / CARGO_REL)],
+                   cwd=fixture, check=True, capture_output=True)
     body = fixture / WI_BODY_REL
     body.parent.mkdir(parents=True)
     body.write_text(WI_BODY)
@@ -294,8 +313,8 @@ def build(root: Path) -> Path:
     subprocess.run(["git", "add", "-A"], cwd=fixture, check=True)
     subprocess.run(["git", "commit", "-qm", "scaffold"], cwd=fixture, check=True)
 
-    (fixture / PYPROJECT_REL).write_text(PYPROJECT)
-    (fixture / CASES_REL / f"{CASE}.py").write_text(CASE_SRC)
+    (fixture / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
+    (fixture / CASE_REL).write_text(CASE_SRC)
     return fixture
 
 
@@ -442,7 +461,7 @@ def main() -> int:
             raw = (h.root / f"{w.name}.txt").read_bytes()
             rec = w / RECORD_REL
             got = json.loads(rec.read_text()) if rec.is_file() else {}
-            want_paths = sorted([PYPROJECT_REL, CASE_REL])
+            want_paths = sorted([CARGO_REL, CASE_REL])
             problems = []
             if got.get("work_item") != WI:
                 problems.append(f"work_item={got.get('work_item')!r}")
@@ -490,14 +509,16 @@ def main() -> int:
         def refuses_an_inadmissible_change() -> None:
             """A reviewer is not spent on a question the checks already answered.
 
-            The mutation removes the inventory, so `C1` refuses -- and the
+            The mutation puts the manifest back as `HEAD` has it, so the case
+            file is there and nothing declares it -- and with `autotests =
+            false` a file nobody declared does not run. `C1` refuses, and the
             claim is not only that the verb exits non-zero. It must not print
             the rubric: the rubric is the reviewer's instruction sheet, and a
             prompt carrying it has started the review whatever the exit code
             says afterwards.
             """
             w = h.fresh()
-            (w / PYPROJECT_REL).unlink()
+            (w / CARGO_REL).write_text(CARGO_TOML)
             r = h.e2e(w, "review-prompt", str(WI))
             ok = r.returncode != 0 and RUBRIC_SENTINEL not in r.stdout
             h.record("review-prompt refuses a change the mechanical list refused",
@@ -562,8 +583,13 @@ def main() -> int:
             lambda: h.prompt_control(
                 "review-prompt carries the work item, the source, and the failure",
                 ("review-prompt", str(WI)),
+                # libtest's own summary line, which appears only in the case
+                # output the prompt runs and pastes. The assertion message
+                # would not do: it is in the case source, which the prompt
+                # prints either way, so it cannot tell a prompt that ran the
+                # case from one that only read it.
                 {WI_SENTINEL: True, CASE_SENTINEL: True,
-                 "AssertionError": True, RUBRIC_SENTINEL: True}),
+                 "test result: FAILED": True, RUBRIC_SENTINEL: True}),
             refuses_an_inadmissible_change,
             # No work item: the whole surface, advisory. The negative half is
             # the load-bearing one -- a form that went and read the staged body
