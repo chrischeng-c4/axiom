@@ -5837,62 +5837,70 @@ fn test_stdlib_non_stdlib_call_untouched() {
 
 #[test]
 fn test_stdlib_provenance_is_keyed_by_binding_identity() {
-    let errors = check(
-        "from os import strerror\n\
-         def local(strerror):\n\
-         \x20   strerror(\"ok\")\n\
-         strerror(\"ok\")\n",
-    );
+    let check_raw = |source: &str, file| {
+        let module = parser::parse(source, file).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        checker.check_module(&module)
+    };
+
+    let source = "from typing import Callable\n\
+from os import strerror\n\
+def local(strerror: Callable[[str], str]) -> None:\n\
+\x20\x20\x20\x20strerror(\"ok\")\n\
+strerror(\"ok\")\n";
+    assert_eq!(source.len(), 137);
+    let errors = check_raw(source, FileId(37681));
+    let [MambaError::Type { span, message }] = errors.as_slice() else {
+        panic!("expected one Type error, got: {errors:?}")
+    };
+    assert_eq!(*span, Span::new(FileId(37681), 131, 135));
+    assert_eq!(&source[span.start as usize..span.end as usize], "\"ok\"");
     assert_eq!(
-        errors
-            .iter()
-            .filter(|error| error.contains("argument type mismatch"))
-            .count(),
-        1,
-        "a parameter shadow must not inherit import provenance: {errors:?}"
+        message,
+        "argument type mismatch: expected `int`, got `str` for parameter `code`"
     );
 
-    let errors = check(
-        "from os import strerror\n\
-         strerror = lambda value: value\n\
-         strerror(\"ok\")\n",
-    );
-    assert!(
-        errors.is_empty(),
-        "a direct assignment must clear import provenance: {errors:?}"
+    let source = "from os import strerror\n\
+strerror = lambda value: value\n\
+strerror(\"ok\")\n";
+    assert_eq!(source.len(), 70);
+    let errors = check_raw(source, FileId(37682));
+    assert!(errors.is_empty(), "expected no diagnostics, got: {errors:?}");
+
+    let source = "from html.parser import HTMLParser\n\
+class LocalHandler:\n\
+\x20\x20\x20\x20def handle_entityref(self, name: int) -> None:\n\
+\x20\x20\x20\x20\x20\x20\x20\x20pass\n\
+obj = object.__new__(HTMLParser)\n\
+def local(obj: LocalHandler) -> None:\n\
+\x20\x20\x20\x20obj.handle_entityref(12345)\n\
+obj.handle_entityref(12345)\n";
+    assert_eq!(source.len(), 250);
+    let errors = check_raw(source, FileId(37683));
+    let [MambaError::Type { span, message }] = errors.as_slice() else {
+        panic!("expected one Type error, got: {errors:?}")
+    };
+    assert_eq!(*span, Span::new(FileId(37683), 243, 248));
+    assert_eq!(&source[span.start as usize..span.end as usize], "12345");
+    assert_eq!(
+        message,
+        "argument type mismatch: expected `str`, got `int` for parameter `name`"
     );
 
-    let errors = check(
-        "from html.parser import HTMLParser\n\
-         obj = object.__new__(HTMLParser)\n\
-         def local(obj):\n\
-         \x20   obj.handle_entityref(12345)\n\
-         obj.handle_entityref(12345)\n",
-    );
-    assert_eq!(
-        errors
-            .iter()
-            .filter(|error| error.contains("argument type mismatch"))
-            .count(),
-        1,
-        "a parameter shadow must not inherit instance provenance: {errors:?}"
-    );
-
-    let errors = check(
-        "import queue\n\
-         Alias = queue.Queue\n\
-         def local(Alias):\n\
-         \x20   inside: int = Alias()\n\
-         outside: int = Alias()\n",
-    );
-    assert_eq!(
-        errors
-            .iter()
-            .filter(|error| error.contains("type mismatch"))
-            .count(),
-        1,
-        "a parameter shadow must not inherit native class-reference provenance: {errors:?}"
-    );
+    let source = "from typing import Any\n\
+import queue\n\
+Alias = queue.Queue\n\
+def local(Alias: Any) -> None:\n\
+\x20\x20\x20\x20inside: int = Alias()\n\
+outside: int = Alias()\n";
+    assert_eq!(source.len(), 136);
+    let errors = check_raw(source, FileId(37684));
+    let [MambaError::Type { span, message }] = errors.as_slice() else {
+        panic!("expected one Type error, got: {errors:?}")
+    };
+    assert_eq!(*span, Span::new(FileId(37684), 128, 135));
+    assert_eq!(&source[span.start as usize..span.end as usize], "Alias()");
+    assert_eq!(message, "type mismatch: expected `int`, got `queue.Queue`");
 }
 
 #[test]
