@@ -1,3 +1,14 @@
+//! CJK matching still works when the `jieba` feature is compiled out.
+//!
+//! Runs over the HTTP API with the default feature set: a `text` field is
+//! declared with the jieba analyzer, a document containing 北京大學 is indexed,
+//! and a `match` query for 北京 must return it. The superseded fallback matched
+//! only the exact whole string, so this case fails against that behaviour
+//! rather than describing it.
+//!
+//! The feature being off is the whole point. A run with `jieba` enabled
+//! exercises the real tokenizer and says nothing about the fallback path that
+//! ships in the default build.
 // HANDWRITE-BEGIN gap="missing-generator:e2e-test:3297e901" tracker="#1975" reason="New end-to-end test (default feature set, jieba OFF): create a collection with a `text` field declared `analyzer: jieba`, index a document whose value is 北京大學, run a `match` query for 北京 over the HTTP API, and assert the document is returned (AC5, fails before this change since the old fallback only matches the exact whole string)."
 // SPEC-MANAGED: apps/lumen/tech-design/logic/cjk-bigram-fallback-for-analyzer-jieba-when-jieba-feature-is-off.md#e2e-test
 // E2E test for CJK-bigram fallback in Jieba analyzer when feature is OFF

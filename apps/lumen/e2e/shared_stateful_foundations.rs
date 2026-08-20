@@ -1,3 +1,14 @@
+//! Ownership boundary: lumen delegates trace initialization and peer transport
+//! to the shared service libraries, and keeps no local duplicate of either.
+//!
+//! Asserted against the text of `src/bin/lumen.rs`, which this file embeds.
+//! That is deliberate. A duplicate tracer is not a behavioural failure — both
+//! pipelines emit spans and every runtime assertion stays green — so the only
+//! observation point that can see it is the wiring itself.
+//!
+//! The third case makes the classification total: every completed shared root
+//! must resolve to a lumen-owned adapter or a runtime projection. Without it a
+//! root can be absent from both lists while the first two cases still pass.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:c90bbb42" tracker="#1646" reason="Lock Lumen's ownership boundary: shared OTLP tracing and shared reloadable peer transport, with no local duplicate tracer. generator gap: missing-generator:lumen-foundation-ownership-test (#1646)."
 // @spec apps/lumen/tech-design/logic/adopt-shared-stateful-service-foundations.md#unit-test
 // @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
