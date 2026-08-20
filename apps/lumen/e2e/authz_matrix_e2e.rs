@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! Authorization matrix (TEST-STRATEGY security gate) over delegated auth (#2869).
 //!

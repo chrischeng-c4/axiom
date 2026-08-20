@@ -1,5 +1,4 @@
 # HANDWRITE-BEGIN gap="missing-generator:e2e-test:03653f66" tracker="pending-tracker" reason="Add the HTTP browse rig scenario for filter+sort cursor exhaustion and latency flatness."
-# @spec apps/lumen/tech-design/logic/gate-the-filter-sort-deep-page-chain-bench-cell-pg-competitive-p.md#e2e-test
 [record]
 suite = "lumen"
 dimension = "load"

@@ -1,6 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md#dx-contract
 // HANDWRITE-BEGIN gap="missing-generator:dx-contract:lumen-runtime-renderer" tracker="1683" reason="The runtime renderer binds TD task decisions to Rust FieldType capabilities; AW has the dx-contract parser/skeleton but not yet this cross-source Rust emitter."
-// @spec apps/lumen/tech-design/semantic/lumen-src.md#schema
 //! Generated Developer & Agent Experience surface for Lumen.
 //!
 //! Runtime field operations come from [`FieldType::capabilities`]. Task

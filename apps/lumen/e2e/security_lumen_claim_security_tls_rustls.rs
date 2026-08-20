@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-tls-rustls
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-security-tls-rustls

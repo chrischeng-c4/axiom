@@ -1,9 +1,7 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
 //! `llm` (offline integration contract + agent topics), and `k8s` (operator
 //! + CRD generation). Agents start here: `lumen llm --topic outline`.
-//! @spec apps/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#logic
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
@@ -87,12 +85,10 @@ enum Command {
     /// running target + version, downloads the matching `lumen-<target>.tar.gz`,
     /// verifies its sha256, and atomically replaces the running executable.
     /// `--check` reports the available version without changing anything.
-    // @spec apps/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
     Upgrade(UpgradeArgs),
     /// Search, view, and file Lumen issues on the axiom tracker.
     /// `search` and `view` read existing `app:lumen` issues; `create`
     /// files a diagnostics-rich issue tagged `app:lumen`.
-    // @spec apps/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
     Issue(IssueArgs),
     /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
     /// and ship it to a destination (`file://`, `s3://`, or `gs://`) via
@@ -109,13 +105,11 @@ enum Command {
     /// example). Reachability only: the child is handed a URL and nothing
     /// else. Obtaining a Kubernetes ServiceAccount token for it is #2878's
     /// job, and until then there is no credential to obtain.
-    // @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
     Connect(ConnectArgs),
     /// One-shot query wrappers against a reachable lumen node: `index`,
     /// `search`, `duplicates`, `collections list`. Assembles the exact wire
     /// body `lumen spec --shapes` publishes — no interactive REPL. Requires
     /// the `backup` feature (pulled in transitively by `operator`).
-    // @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
     Query(QueryArgs),
 }
 
@@ -242,7 +236,6 @@ struct K8sOperatorArgs {
     cmd: Option<K8sOperatorCmd>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#rust-source-unit
 impl Default for K8sOperatorCmd {
     fn default() -> Self {
         Self::Run(K8sOperatorRunArgs::default())
@@ -404,7 +397,6 @@ struct K8sFileOutputArgs {
 }
 
 /// `lumen upgrade` flags.
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
 #[derive(clap::Args)]
 struct UpgradeArgs {
     /// Report the current and latest version without modifying the binary.
@@ -422,8 +414,6 @@ struct UpgradeArgs {
 }
 
 /// `lumen issue <search|view|create|comment>` flags.
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-cli-add-issue-comment-auto-reopen-follow-up.md
 #[derive(clap::Args)]
 struct IssueArgs {
     #[command(subcommand)]
@@ -536,7 +526,6 @@ struct BackupArgs {
 
 /// `lumen connect` flags (#1321): manage a `kubectl port-forward` around a
 /// wrapped command so an agent never tracks the port-forward process itself.
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[derive(clap::Args)]
 struct ConnectArgs {
     /// kubectl context to port-forward through. Omit to use the current context.
@@ -632,7 +621,6 @@ struct ConnectArgs {
 ///
 /// There is deliberately no environment variable for `--client-sa`. Which
 /// account you act as is a decision each invocation makes out loud.
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[derive(clap::Args, Clone)]
 struct QueryTarget {
     /// Base URL of a reachable lumen serving node, e.g. `http://localhost:7373`
@@ -655,7 +643,6 @@ struct QueryTarget {
 
 /// `lumen query <index|search|duplicates|collections>` flags (#1321): thin
 /// one-shot wrappers assembling the exact `lumen spec --shapes` wire body.
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[derive(clap::Args)]
 struct QueryArgs {
     #[command(subcommand)]
@@ -806,7 +793,6 @@ enum LlmTopic {
     Diagnose,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#source
 impl LlmTopic {
     const fn id(self) -> &'static str {
         match self {
@@ -910,7 +896,6 @@ enum SpecFormat {
 #[derive(Parser)]
 struct SpecArgs {
     /// Generate a typed client from this spec instead of printing it.
-    /// @spec apps/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
     #[command(subcommand)]
     gen: Option<SpecSub>,
     /// Schema format to emit when neither `--shapes` nor `--fields` is set.
@@ -1114,8 +1099,6 @@ async fn main() -> Result<()> {
 
 /// This binary's identity + build provenance for the standard CLI ops
 /// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention.
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
 const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
     project: "lumen",
     repo: "chrischeng-c4/axiom",
@@ -1193,7 +1176,6 @@ async fn issue(args: IssueArgs) -> Result<()> {
 
 /// `lumen spec gen` — generate a typed client from lumen's own OpenAPI document
 /// (offline; no engine or server) and write it into `--out`.
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
 fn spec_gen(args: GenArgs) -> Result<()> {
     use openapi_codegen::{
         generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
@@ -1625,7 +1607,6 @@ fn resolve_base_url(target: &QueryTarget) -> Result<String> {
 /// as they pass through a loopback proxy. The URL the child gets points at the
 /// proxy rather than at the port-forward, and that is the only difference the
 /// child can observe.
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 async fn connect(args: ConnectArgs) -> Result<()> {
     let service = args
         .service
@@ -2246,7 +2227,6 @@ async fn query_token(target: &QueryTarget) -> Result<Option<service_auth::k8s::P
 /// `auth: required` answers 401 — the honest failure (AC4). What #2873 removed
 /// and did not come back is the silent path: quietly reaching into a Secret
 /// for a shared token nobody named.
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[cfg(feature = "backup")]
 async fn dispatch_query(args: QueryArgs) -> Result<()> {
     match args.command {
@@ -3021,7 +3001,6 @@ struct SegmentCheckpointSink {
     aof: Option<lumen::coordinator::SharedAof>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#source
 #[async_trait::async_trait]
 impl lumen::api::CheckpointSink for SegmentCheckpointSink {
     async fn checkpoint_now(&self) -> Result<bool> {

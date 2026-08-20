@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-runtime-image.md#runtime-image
 # CODEGEN-BEGIN
 # syntax=docker/dockerfile:1
 # From-source build for dev / CI. For production prefer `Dockerfile.release`,

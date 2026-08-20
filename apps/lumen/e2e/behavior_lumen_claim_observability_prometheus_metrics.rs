@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-prometheus-metrics
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-observability-prometheus-metrics

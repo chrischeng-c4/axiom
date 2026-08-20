@@ -10,8 +10,6 @@
 //! must resolve to a lumen-owned adapter or a runtime projection. Without it a
 //! root can be absent from both lists while the first two cases still pass.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:c90bbb42" tracker="#1646" reason="Lock Lumen's ownership boundary: shared OTLP tracing and shared reloadable peer transport, with no local duplicate tracer. generator gap: missing-generator:lumen-foundation-ownership-test (#1646)."
-// @spec apps/lumen/tech-design/logic/adopt-shared-stateful-service-foundations.md#unit-test
-// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 const LUMEN_BIN: &str = include_str!("../src/bin/lumen.rs");
 const LUMEN_MANIFEST: &str = include_str!("../Cargo.toml");
 const LUMEN_AUTH: &str = include_str!("../src/auth.rs");

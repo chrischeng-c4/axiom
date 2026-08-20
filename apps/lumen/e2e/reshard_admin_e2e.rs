@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! Reshard admin verbs end-to-end (#1380, #1389, #1396): bucket-scoped
 //! export (`POST /admin/backup:scoped`), additive batch-apply

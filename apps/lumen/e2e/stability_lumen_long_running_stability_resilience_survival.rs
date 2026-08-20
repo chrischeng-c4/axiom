@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-long-running-stability-resilience-survival
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-long-running-stability-resilience-survival

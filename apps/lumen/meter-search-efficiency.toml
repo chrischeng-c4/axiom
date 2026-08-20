@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-meter-search-efficiency
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
 delegate_command = "cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter"

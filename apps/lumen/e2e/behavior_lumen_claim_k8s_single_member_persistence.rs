@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-single-member-persistence
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-k8s-single-member-persistence

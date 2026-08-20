@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Pure rendering: a [`Lumen`] spec → the set of child Kubernetes objects that
 //! realize it. No cluster, no I/O — every object is a self-contained
@@ -135,7 +134,6 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
 /// perform the Raft membership transition required before a replica delta.
 /// The retained handoff loop consults this function to prune HPAs emitted by
 /// older Lumen versions for every topology.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub(crate) fn wants_hpa(_lumen: &Lumen) -> bool {
     false
 }
@@ -146,7 +144,6 @@ pub(crate) fn wants_hpa(_lumen: &Lumen) -> bool {
 /// (#1385, R2) can confirm a live HPA found at this CR's name was actually
 /// rendered by lumen — not a user-created object with a coincidentally
 /// matching name — before deleting it.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub(crate) fn hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> {
     let mut labels = std::collections::BTreeMap::new();
     labels.insert("app.kubernetes.io/name".to_string(), APP.to_string());
@@ -171,7 +168,6 @@ pub(crate) fn hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, St
 /// of `replicasPerShard`. No topology renders a direct HPA: single-member
 /// scale-out would create uncoordinated copies, while raft-HA needs a
 /// membership-aware whole-layer transition before changing pod count.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     render_with_profile_opt(lumen, None)
 }
@@ -242,7 +238,6 @@ fn render_with_profile_opt(
 /// traffic the spec has stopped asking to drop. Flipping `networkPolicy` to
 /// `false` therefore has to actively remove it, or the field is opt-in only.
 ///
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub fn prunes(lumen: &Lumen) -> Vec<PruneTarget> {
     if lumen.spec.network_policy {
         return Vec::new();
@@ -264,7 +259,6 @@ pub fn prunes(lumen: &Lumen) -> Vec<PruneTarget> {
 /// If they resolved it separately, a spec that names an external SA would run
 /// pods as one identity and authorize a different one — and the symptom would
 /// be every request failing authentication, not an obviously wrong manifest.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub(crate) fn serving_service_account_name(lumen: &Lumen) -> String {
     lumen
         .spec
@@ -282,7 +276,6 @@ pub(crate) fn serving_service_account_name(lumen: &Lumen) -> String {
 /// ServiceAccount delegated review. A namespace is a DNS-1123 *label* and
 /// cannot contain a dot, so splitting at the first dot recovers the namespace
 /// exactly and the mapping is injective.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub fn auth_delegator_binding_name(lumen: &Lumen) -> String {
     format!(
         "lumen.{}.{}.auth-delegator",
@@ -300,7 +293,6 @@ pub fn auth_delegator_binding_name(lumen: &Lumen) -> String {
 /// deleting it. `lumen.dev/owner-namespace` exists because the recommended
 /// label set has no way to say which namespace an object belongs *to* when the
 /// object itself has none.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub fn auth_delegator_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> {
     let mut labels = std::collections::BTreeMap::new();
     labels.insert("app.kubernetes.io/name".to_string(), APP.to_string());
@@ -344,7 +336,6 @@ pub fn auth_delegator_labels(lumen: &Lumen) -> std::collections::BTreeMap<String
 /// endpoint that rejects it or stamped with an owner reference that gets it
 /// garbage collected. [`super::reconcile`] applies it on its own path and
 /// sweeps it on its own path.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub fn auth_delegator_binding(lumen: &Lumen) -> Value {
     let sa = serving_service_account_name(lumen);
     let ns = namespace(lumen);
@@ -374,7 +365,6 @@ pub fn auth_delegator_binding(lumen: &Lumen) -> Value {
 /// `<instance>-backup` component label, calls the client Service like any other
 /// in-cluster client, and needs egress to object storage — the serving pods'
 /// posture would be wrong for it in both directions.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 fn serving_network_policy(cx: &RenderCtx<'_>, name: &str) -> Value {
     render::common::network_policy(render::common::NetworkPolicy {
         cx,
@@ -417,7 +407,6 @@ fn attach_service_account_annotations(
 /// automation a stable cloud-neutral target for Workload Identity annotations.
 /// Like every other child, it is owned by the `Lumen` CR and is garbage
 /// collected with the instance.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 fn backup_service_account(cx: &RenderCtx<'_>) -> Value {
     let name = format!("{}-backup", cx.name);
     json!({
@@ -435,7 +424,6 @@ fn backup_service_account(cx: &RenderCtx<'_>) -> Value {
 /// its own path would produce a pod with a token mounted somewhere the client
 /// never looks, and the symptom would be an authentication failure rather than
 /// a missing file.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub(crate) fn control_plane_token() -> ProjectedServiceAccountToken<'static> {
     ProjectedServiceAccountToken::new(
         crate::auth::CONTROL_PLANE_TOKEN_VOLUME,
@@ -452,7 +440,6 @@ pub(crate) fn control_plane_token() -> ProjectedServiceAccountToken<'static> {
 /// endpoint's bytes to a destination via `lumen backup`
 /// (`libs/service-backup`). The shared [`service_k8s::render::cron_job`] helper
 /// stays manifest-only.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
     let policy = lumen.spec.serving.backup.as_ref()?;
     let cron_name = format!("{}-backup", cx.name);

@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-runtime-image.md#runtime-image
 # CODEGEN-BEGIN
 # syntax=docker/dockerfile:1
 # Production image for lumen — downloads a PUBLISHED release binary (no source

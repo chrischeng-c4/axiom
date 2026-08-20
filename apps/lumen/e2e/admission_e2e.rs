@@ -1,6 +1,4 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:76ab3ef3" tracker="#1642" reason="Verify Lumen-selected collection-read policy rejects excess requests while the default router remains unchanged."
-// @spec apps/lumen/tech-design/logic/adopt-shared-stateful-service-foundations.md#unit-test
-// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 use std::sync::Arc;
 use std::time::Duration;
 

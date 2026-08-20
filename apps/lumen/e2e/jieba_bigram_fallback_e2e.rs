@@ -10,7 +10,6 @@
 //! exercises the real tokenizer and says nothing about the fallback path that
 //! ships in the default build.
 // HANDWRITE-BEGIN gap="missing-generator:e2e-test:3297e901" tracker="#1975" reason="New end-to-end test (default feature set, jieba OFF): create a collection with a `text` field declared `analyzer: jieba`, index a document whose value is 北京大學, run a `match` query for 北京 over the HTTP API, and assert the document is returned (AC5, fails before this change since the old fallback only matches the exact whole string)."
-// SPEC-MANAGED: apps/lumen/tech-design/logic/cjk-bigram-fallback-for-analyzer-jieba-when-jieba-feature-is-off.md#e2e-test
 // E2E test for CJK-bigram fallback in Jieba analyzer when feature is OFF
 // This test verifies that Chinese text can be matched via bigrams when jieba feature is disabled.
 

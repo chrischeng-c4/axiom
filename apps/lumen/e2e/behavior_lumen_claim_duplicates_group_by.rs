@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-duplicates-group-by
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-duplicates-group-by

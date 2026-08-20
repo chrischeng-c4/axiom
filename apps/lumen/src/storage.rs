@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! In-memory storage and query execution.
 //!
@@ -58,11 +57,9 @@ pub const MAX_INDEX_ITEMS: usize = 10_000;
 /// #183: max keys in a multi-key `sort`. The generic plan and keyset cursor carry
 /// a full `Vec<SortValue>` and compare every key in order, so this is a guard
 /// against pathological requests, not a structural limit.
-/// @spec apps/lumen/tech-design/logic/raise-multi-key-sort-cap-beyond-2-keys.md
 pub const MAX_SORT_KEYS: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub enum DropOutcome {
     /// The collection did not exist.
     NotFound,
@@ -75,7 +72,6 @@ pub enum DropOutcome {
 }
 
 #[derive(Debug, Error)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub enum StorageError {
     #[error("collection not found: {0}")]
     CollectionNotFound(String),
@@ -125,12 +121,10 @@ pub enum StorageError {
 /// Total-ordered, bit-monotone wrapper around `f64`. NaN is rejected at
 /// construction (the API layer must validate before reaching here).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub struct SortableF64(u64);
 
 const MISSING_SORTABLE_F64_BITS: u64 = 0xfff8_0000_0000_0000;
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl SortableF64 {
     pub fn new(x: f64) -> Result<Self> {
         if x.is_nan() {
@@ -265,7 +259,6 @@ enum InternerBucket {
     Many(Vec<u32>),
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Interner {
     fn intern(&mut self, eid: &str) -> u32 {
         self.intern_with_status(eid).0
@@ -334,13 +327,11 @@ fn hash_external_id(eid: &str) -> u64 {
 /// exactly `docids.len()`. Replaces the old `BTreeMap<u32,u32>` whose per-doc
 /// access chased heap-scattered tree nodes.
 #[derive(Debug, Default, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub(crate) struct Postings {
     docids: Vec<u32>,
     tfs: Vec<u32>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Postings {
     /// Build a posting list from ascending `(docid, tf)` pairs. Crate-internal,
     /// used by the Text segment writer round-trip test to fabricate postings
@@ -542,7 +533,6 @@ struct TextIndex {
     tombstones: RoaringBitmap,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl TextIndex {
     fn clear_match_rank_cache(&self) {
         if let Ok(mut cache) = self.match_rank_cache.write() {
@@ -905,7 +895,6 @@ struct KeywordIndex {
     tombstones: RoaringBitmap,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl KeywordIndex {
     /// The doc's keyword for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -1107,7 +1096,6 @@ struct NumberRangeStats {
 /// unchanged tree is O(log distinct).
 const RANGE_STATS_BUILD_THRESHOLD: u64 = 1024;
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl NumberRangeStats {
     fn build(values: &BTreeMap<SortableF64, RoaringBitmap>) -> Self {
         let mut keys = Vec::with_capacity(values.len());
@@ -1208,7 +1196,6 @@ struct NumberIndex {
     tombstones: RoaringBitmap,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl NumberIndex {
     /// The doc's value for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -2051,7 +2038,6 @@ struct SetIndex {
     tombstones: RoaringBitmap,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl SetIndex {
     /// Does doc `id`'s set contain `el`, for a per-doc PREDICATE point lookup?
     /// When a sealed segment is attached it serves ids in its covered range
@@ -2262,7 +2248,6 @@ struct HashIndex {
     segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl HashIndex {
     /// The doc's 64-bit hash for the per-doc Hamming read. When a sealed segment
     /// is attached it serves ids in its covered range `[0..n_docs)` (the live
@@ -2287,7 +2272,6 @@ impl HashIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl std::fmt::Debug for FieldIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -2320,7 +2304,6 @@ fn parse_hash(s: &str) -> Result<u64> {
         .map_err(|e| anyhow!("hash field expects a 64-bit hex string (got `{s}`): {e}"))
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn from_spec(spec: &FieldSpec) -> Result<Self> {
         Ok(match spec.field_type {
@@ -2695,7 +2678,6 @@ struct FieldCoverage {
     names: Vec<String>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl FieldCoverage {
     fn insert(&mut self, field: String) -> bool {
         if self.contains(&field) {
@@ -2746,7 +2728,6 @@ struct TokenSet {
     tokens: SmallVec<[String; 8]>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl TokenSet {
     fn insert_str(&mut self, token: &str) -> bool {
         if self.tokens.iter().any(|seen| seen == token) {
@@ -2823,7 +2804,6 @@ struct Collection {
     /// `IndexItem.version`. A strictly-older versioned write is dropped at apply
     /// time. In-memory only (reconstructed by WAL replay); durability across
     /// snapshot/seal is a follow-up.
-    /// @spec apps/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
     cell_versions: FastHashMap<u32, FastHashMap<String, u64>>,
     /// #1292: doc-level last-write-wins for `PUT .../docs:replace`. Sparse
     /// `doc-id → highest applied doc version`, populated only for docs
@@ -2845,7 +2825,6 @@ struct Collection {
     field_checksums: FastHashMap<u32, FastHashMap<String, u64>>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Collection {
     fn new(schema: BTreeMap<String, FieldSpec>) -> Result<Self> {
         let mut fields = FastHashMap::default();
@@ -2949,7 +2928,6 @@ impl Collection {
 // ---------------------------------------------------------------------------
 
 #[derive(Default)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub struct Engine {
     state: RwLock<EngineState>,
     metrics: Metrics,
@@ -3014,7 +2992,6 @@ fn gc_prune_accumulator(accumulator: &mut BTreeMap<PruneAccumKey, PruneAccumStat
         .retain(|_, state| now.saturating_sub(state.created_tick) <= PRUNE_ACCUM_MAX_AGE_TICKS);
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Engine")
@@ -3028,7 +3005,6 @@ struct EngineState {
     collections: BTreeMap<String, Collection>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Engine {
     pub fn new() -> Self {
         // #2475: `metrics` needs `Metrics::new()`'s sentinel seeding (the
@@ -3347,7 +3323,6 @@ impl Engine {
                 // #184: external-version LWW — drop a strictly-older versioned
                 // write for this (external_id, field) cell. Absent version means
                 // arrival order (no check, today's behavior).
-                // @spec apps/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
                 let item_version = items[pos].version;
                 if let Some(v) = item_version {
                     let stale = coll
@@ -3536,7 +3511,6 @@ impl Engine {
     /// malformed or over [`MAX_BATCH_REPLACE_SIZE`] — a single bad item
     /// (unknown field, type mismatch, stale version) is reported per-item
     /// in [`ReplaceDocResult`] and never fails its siblings.
-    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
     pub fn replace_docs(
         &self,
         collection_id: &str,
@@ -3910,7 +3884,6 @@ impl Engine {
         // of returning a mis-ordered page: sequential sorted paging uses the
         // keyset cursor handed back in the response; random page-jumps use the
         // request's native `offset` field and the materialized path above.
-        // @spec apps/lumen/tech-design/logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md
         if matches!(parsed_cursor, Some(PageCursor::Offset(n)) if n != 0)
             && req.sort.as_deref().is_some_and(|s| !s.is_empty())
             && !sort_needs_materialize
@@ -4082,7 +4055,6 @@ impl Engine {
         // the present rows per the policy) and count them in an exact total; rows
         // missing an `exclude` key are dropped. Materializes the full matched set
         // (no early termination) and paginates by offset.
-        // @spec apps/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
         if sort_needs_materialize {
             let sort = req
                 .sort
@@ -4626,7 +4598,6 @@ impl Engine {
     /// [`Self::apply_reshard_prune_chunk`]'s receiver-side chunk
     /// accumulator, not directly from a wire `ReshardBatch` (#1457 R1 split
     /// the authoritative-replace scope out of that purely-additive type).
-    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
     pub fn apply_reshard_batch(
         &self,
         delta: SnapshotV1,
@@ -4777,7 +4748,6 @@ impl Engine {
     /// [`PRUNE_ACCUM_MAX_ENTRIES`] distinct in-flight groups are already
     /// held, so neither an abandoned migration nor a flood of bogus keys can
     /// grow the accumulator without bound.
-    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
     pub fn apply_reshard_prune_chunk(
         &self,
         chunk: crate::reshard::ReshardPruneChunk,
@@ -4875,7 +4845,6 @@ impl Engine {
     /// report pre-eviction bytes even though it is chronologically
     /// post-cutover, defeating the cutover-generation freshness check in
     /// [`crate::operator::crd::LumenSpec::reshard_status_with_usage`].
-    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
     pub fn evict_not_owned(
         &self,
         to: &VirtualBucketShardMap,
@@ -5033,7 +5002,6 @@ impl Engine {
 /// the waiting write handler (by sequence) so the HTTP response keeps
 /// its rich shape even though apply happens in the subscribe layer.
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub enum ApplyOutcome {
     Created(CreateCollectionResponse),
     Indexed(IndexResponse),
@@ -5257,7 +5225,6 @@ fn checksum_f32(v: &[f32]) -> u64 {
 /// ordering matters). Kept in sync with `apply_value`'s arms by hand: any
 /// new `(FieldIndex, FieldValue)` pairing accepted there must be mirrored
 /// here.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 fn validate_value(fi: &FieldIndex, value: &FieldValue, field_name: &str) -> Result<()> {
     match (fi, value) {
         (FieldIndex::Text { .. }, FieldValue::String(_)) => Ok(()),
@@ -5322,7 +5289,6 @@ const MAX_KNN_K: u32 = 10_000;
 /// Reject pathological queries with a clear error. Traversal is **iterative**
 /// (explicit stack) so validating a deeply-nested tree cannot itself overflow
 /// the stack. Bounds: nesting depth, total node count, `terms` fan-out, `knn` k.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub fn validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> {
     let mut stack: Vec<(&QueryNode, usize)> = vec![(root, 1)];
     let mut nodes = 0usize;
@@ -6124,7 +6090,6 @@ struct TopRankedHit {
     external_id: String,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl PartialEq for TopRankedHit {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -6133,10 +6098,8 @@ impl PartialEq for TopRankedHit {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Eq for TopRankedHit {}
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Ord for TopRankedHit {
     fn cmp(&self, other: &Self) -> CmpOrdering {
         match self.score.total_cmp(&other.score) {
@@ -6147,7 +6110,6 @@ impl Ord for TopRankedHit {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl PartialOrd for TopRankedHit {
     fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
         Some(self.cmp(other))
@@ -6721,7 +6683,6 @@ fn eval_prefix(coll: &Collection, q: &PrefixQuery) -> Result<RoaringBitmap> {
 /// delete leaves `eid_fields[id]` non-empty (matches `term`/`terms` still
 /// hitting on the surviving field), and full delete either removes the entry
 /// or leaves it empty — both read as dead here, consistent with `term`.
-/// @spec apps/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
 fn eval_ids(coll: &Collection, q: &IdsQuery) -> Result<RoaringBitmap> {
     let mut out = RoaringBitmap::new();
     for eid in &q.values {
@@ -7164,7 +7125,6 @@ struct SortableBitsBounds {
     high: Option<(u64, bool)>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl SortableBitsBounds {
     #[inline]
     fn new(lo: &std::ops::Bound<SortableF64>, hi: &std::ops::Bound<SortableF64>) -> Self {
@@ -9256,7 +9216,6 @@ const SNAPSHOT_VERSION: u32 = 1;
 
 /// Top-level snapshot document. JSON-serialisable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub struct SnapshotV1 {
     /// Format version. Bump when the wire layout changes
     /// incompatibly so old snapshots can be detected at restore.
@@ -9265,7 +9224,6 @@ pub struct SnapshotV1 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub struct CollectionSnapshot {
     pub schema: BTreeMap<String, FieldSpec>,
     pub version: u32,
@@ -9275,7 +9233,6 @@ pub struct CollectionSnapshot {
 
 /// Response summary for `POST /admin/reshard:apply` (#1380 R1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub struct ReshardApplyOutcome {
     pub collections_touched: u32,
     pub documents_upserted: u32,
@@ -9287,7 +9244,6 @@ pub struct ReshardApplyOutcome {
 
 /// Response summary for `POST /admin/reshard:evict` (#1380 R3).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub struct ReshardEvictOutcome {
     pub collections_touched: u32,
     pub documents_evicted: u32,
@@ -9299,7 +9255,6 @@ pub struct ReshardEvictOutcome {
 /// common case for every chunk but the last); `documents_pruned` is only
 /// meaningful once `complete` is `true`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub struct ReshardPruneOutcome {
     pub complete: bool,
     pub documents_pruned: u32,
@@ -9307,7 +9262,6 @@ pub struct ReshardPruneOutcome {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 pub enum FieldIndexSnapshot {
     Text {
         analyzer: Analyzer,
@@ -9354,7 +9308,6 @@ pub enum FieldIndexSnapshot {
     },
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Collection {
     fn to_snapshot(&self) -> Result<CollectionSnapshot> {
         let mut fields: BTreeMap<String, FieldIndexSnapshot> = BTreeMap::new();
@@ -9377,7 +9330,6 @@ impl Collection {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn to_snapshot(&self, interner: &Interner) -> Result<FieldIndexSnapshot> {
         let eid = |id: u32| interner.resolve(id).to_string();
@@ -9498,7 +9450,6 @@ impl FieldIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Collection {
     fn from_snapshot(snap: CollectionSnapshot) -> Result<Self> {
         // Re-intern every external_id (eid_fields covers all indexed docs) so
@@ -9530,7 +9481,6 @@ impl Collection {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn from_snapshot(snap: FieldIndexSnapshot, interner: &mut Interner) -> Result<Self> {
         Ok(match snap {
@@ -9727,7 +9677,6 @@ impl FieldIndex {
 const EID_META_FILE: &str = "_collection.lmeta.lseg";
 
 #[cfg_attr(not(test), allow(dead_code))]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl FieldIndex {
     /// Seal this field's forward payload into `<field>.lseg` under `dir`, attach
     /// the reader, and DROP the in-RAM forward payload. Keeps the inverted
@@ -10094,7 +10043,6 @@ impl FieldIndex {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Collection {
     /// PRODUCTION seal (Phase 2f-1): seal EVERY field into a columnar mmap
     /// segment under `dir`, write the collection EID column, attach each reader,
@@ -10320,7 +10268,6 @@ struct CheckpointSchema {
 
 const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Engine {
     /// PRODUCTION checkpoint (Phase 2f-2): seal EVERY live collection into a
     /// segment checkpoint under `dir` — one subdir `dir/<collection>/` per
@@ -10474,7 +10421,6 @@ fn collection_name_from_dir(dir: &std::path::Path) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Engine {
     /// TEST SEAM (Stage 2 Phase 2c): seal the current in-RAM state of a Number
     /// field into a columnar mmap segment under `dir`, then attach it so per-doc
@@ -18611,7 +18557,6 @@ mod checkpoint_engine_tests {
 // silently fall through to score ranking and ignore the sort. Sequential
 // sorted paging uses the keyset cursor handed back in the response; native
 // `offset` provides direct page jumps without client over-fetch.
-// @spec apps/lumen/tech-design/logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod offset_sort_guard_tests {
@@ -18826,7 +18771,6 @@ mod offset_sort_guard_tests {
 // #184: external-version last-write-wins. An IndexItem may carry an optional
 // `version`; lumen keeps the highest version per (external_id, field) and drops
 // strictly-older writes. Absent version = arrival order (today's behavior).
-// @spec apps/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod external_version_lww_tests {
@@ -18938,7 +18882,6 @@ mod external_version_lww_tests {
 // #180: opt-in `missing: first|last|exclude` on a sort key. exclude (default)
 // drops rows lacking the value (today's behavior); first/last keep them, placed
 // before/after the present rows, and count them in an exact total.
-// @spec apps/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod sort_missing_tests {
@@ -19077,7 +19020,6 @@ mod sort_missing_tests {
 // #181: a has_child query may be combined with sort. It resolves to a parent
 // bitmap via the materialized path, which is then sorted by a parent field.
 // knn/rrf/hamming + sort stay rejected.
-// @spec apps/lumen/tech-design/logic/allow-has-child-to-combine-with-sort-by-materializing-parent-bit.md
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod has_child_sort_tests {
@@ -19272,7 +19214,6 @@ mod has_child_sort_tests {
 // ---------------------------------------------------------------------------
 // #182: native `ids` query — filter by a set of external_ids, resolved through
 // the interner. Constant-scored, predicable, composes under and/or/not + sort.
-// @spec apps/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod ids_query_tests {
@@ -19488,7 +19429,6 @@ mod ids_query_tests {
 // ---------------------------------------------------------------------------
 // #183: multi-key sort cap raised to MAX_SORT_KEYS (4). The generic plan
 // compares every key in priority order; > 4 keys is rejected.
-// @spec apps/lumen/tech-design/logic/raise-multi-key-sort-cap-beyond-2-keys.md
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod multikey_sort_cap_tests {

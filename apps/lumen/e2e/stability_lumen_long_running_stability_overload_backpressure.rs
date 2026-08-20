@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-overload-backpressure
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-long-running-stability-overload-backpressure

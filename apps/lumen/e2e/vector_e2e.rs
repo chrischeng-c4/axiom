@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! End-to-end HTTP integration test for the vector / kNN surface.
 //!
@@ -22,7 +21,6 @@ fn server() -> TestServer {
 /// `rand` version. We use it for vectors only; bench paths upstream
 /// rely on the same shape.
 struct Lcg(u64);
-/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl Lcg {
     fn new(seed: u64) -> Self {
         Self(seed.wrapping_mul(6_364_136_223_846_793_005) ^ 0x9E37_79B9_7F4A_7C15)

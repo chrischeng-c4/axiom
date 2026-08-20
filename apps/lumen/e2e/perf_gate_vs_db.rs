@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! Competitive perf-regression GATE — native Rust, no Python/GIL.
 //!
@@ -232,7 +231,6 @@ const LCG_A: u64 = 6_364_136_223_846_793_005;
 const LCG_C: u64 = 1_442_695_040_888_963_407;
 
 struct Lcg(u64);
-/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl Lcg {
     fn new(s: u64) -> Self {
         Self(s.wrapping_mul(LCG_A) ^ 0x9E37_79B9_7F4A_7C15)
@@ -1240,7 +1238,6 @@ enum NativePool {
     Tcp(Arc<Vec<Mutex<tokio::net::TcpStream>>>),
 }
 
-/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl NativePool {
     fn len(&self) -> usize {
         match self {
@@ -2807,7 +2804,6 @@ struct StorageOnlyChunks {
     peak_rss: u64,
 }
 
-/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl ShardedScale {
     fn segment_bytes(&self) -> (u64, std::collections::BTreeMap<String, u64>) {
         let mut total = 0u64;

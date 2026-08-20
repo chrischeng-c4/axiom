@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Wire types for the public HTTP API.
 //!
@@ -17,14 +16,12 @@ use utoipa::ToSchema;
 
 /// `PUT /collections/{id}` body.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct CreateCollectionRequest {
     pub fields: BTreeMap<String, FieldSpec>,
 }
 
 /// `PUT /collections/{id}` response.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct CreateCollectionResponse {
     pub collection_id: String,
     pub version: u32,
@@ -37,7 +34,6 @@ pub struct CreateCollectionResponse {
 /// meaningful when `field_type == FieldType::Vector`; they are
 /// rejected by schema validation on any other field type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct FieldSpec {
     #[serde(rename = "type")]
     pub field_type: FieldType,
@@ -70,7 +66,6 @@ pub struct FieldSpec {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum FieldType {
     Text,
     Keyword,
@@ -86,7 +81,6 @@ pub enum FieldType {
 /// Operations a field type can truthfully expose to clients. This is shared by
 /// runtime validation and `lumen spec --fields`, so a documentation update
 /// cannot quietly advertise a query or sort the engine rejects.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldCapabilities {
     pub bm25: bool,
@@ -99,7 +93,6 @@ pub struct FieldCapabilities {
     pub hamming: bool,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 impl FieldType {
     pub const ALL: [Self; 6] = [
         Self::Text,
@@ -179,7 +172,6 @@ impl FieldType {
 /// Distance metric for `FieldType::Vector`. Wire form is snake_case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum VectorMetric {
     Cosine,
     Dot,
@@ -190,7 +182,6 @@ pub enum VectorMetric {
 /// `hnsw-cpu` / `flat-cpu` (kebab-case).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "kebab-case")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum VectorBackend {
     /// Approximate HNSW graph (CPU). Sub-linear, recall < 1.
     HnswCpu,
@@ -201,7 +192,6 @@ pub enum VectorBackend {
     FlatCpu,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 impl Default for VectorBackend {
     fn default() -> Self {
         Self::HnswCpu
@@ -216,7 +206,6 @@ impl Default for VectorBackend {
 /// time until the backing codec ships.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum VectorQuantize {
     Sq,
     Pq,
@@ -225,7 +214,6 @@ pub enum VectorQuantize {
 /// Resolved vector field configuration. Built from a `FieldSpec`
 /// once schema validation has confirmed all required slots are present.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct VectorSpec {
     pub dim: u32,
     pub metric: VectorMetric,
@@ -236,7 +224,6 @@ pub struct VectorSpec {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum Analyzer {
     WhitespaceLower,
     Jieba,
@@ -258,7 +245,6 @@ pub const MAX_INDEX_BATCH_SIZE: usize = 1000;
 
 /// `POST /collections/{id}/index` body.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct IndexRequest {
     /// At most [`MAX_INDEX_BATCH_SIZE`] items; a longer batch is rejected
     /// with 400 before any item runs.
@@ -270,7 +256,6 @@ pub struct IndexRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct IndexItem {
     pub external_id: String,
     pub field: String,
@@ -280,7 +265,6 @@ pub struct IndexItem {
     /// writes (cf. Elasticsearch `version_type=external`), so out-of-order
     /// delivery cannot clobber a newer value. When absent, the write applies in
     /// arrival order.
-    /// @spec apps/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u64>,
 }
@@ -293,7 +277,6 @@ pub struct IndexItem {
 /// vs list-of-number).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(untagged)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum FieldValue {
     String(String),
     Number(f64),
@@ -302,7 +285,6 @@ pub enum FieldValue {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct IndexResponse {
     pub indexed: u32,
     pub bytes_written: BTreeMap<String, u64>,
@@ -315,7 +297,6 @@ pub struct IndexResponse {
 
 /// `POST /collections/{id}/search` body.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct SearchRequest {
     pub query: QueryNode,
     #[serde(default = "default_limit")]
@@ -352,7 +333,6 @@ pub struct SearchRequest {
     /// exact materialized deep-page path instead. Page sequentially with the
     /// keyset cursor returned by a first-page request, or jump directly with
     /// `offset`.
-    /// @spec apps/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<Vec<SortSpec>>,
     /// Whether to compute the exact total match count. Defaults to `true`
@@ -379,7 +359,6 @@ fn default_track_total() -> bool {
 
 /// One sort key. `order` defaults to ascending.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct SortSpec {
     pub field: String,
     #[serde(default)]
@@ -388,7 +367,6 @@ pub struct SortSpec {
     /// `exclude` keeps today's behavior (such rows are dropped from results and
     /// from `total`). `first`/`last` keep them, placed before/after the rows
     /// that do have a value, and count them in `total`.
-    /// @spec apps/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
     #[serde(default)]
     pub missing: SortMissing,
 }
@@ -396,7 +374,6 @@ pub struct SortSpec {
 /// Placement of rows missing a value for a sort key (SQL NULLS FIRST/LAST).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
 pub enum SortMissing {
     /// Drop rows that lack a value for this key (default; today's behavior).
     #[default]
@@ -409,7 +386,6 @@ pub enum SortMissing {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum SortOrder {
     #[default]
     Asc,
@@ -426,7 +402,6 @@ pub enum SortOrder {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum QueryNode {
     Match(MatchQuery),
     Term(TermQuery),
@@ -479,7 +454,6 @@ pub enum QueryNode {
 
 /// `exists` predicate (see [`QueryNode::Exists`]).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct ExistsQuery {
     pub field: String,
 }
@@ -487,7 +461,6 @@ pub struct ExistsQuery {
 /// `duplicated` predicate (see [`QueryNode::Duplicated`]).
 /// Reuses `default_min_group_size` (defined with `DuplicatesRequest`).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct DuplicatedQuery {
     pub field: String,
     /// Minimum group size to count as duplicated (default 2).
@@ -497,7 +470,6 @@ pub struct DuplicatedQuery {
 
 /// Reciprocal Rank Fusion query (see [`QueryNode::Rrf`]).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct RrfQuery {
     /// Sub-queries whose rankings are fused (≥1; typically a `knn` + a `match`).
     pub queries: Vec<QueryNode>,
@@ -512,7 +484,6 @@ fn default_rrf_k() -> u32 {
 
 /// Hamming near-duplicate query over a `hash` field (see [`QueryNode::Hamming`]).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct HammingQuery {
     pub field: String,
     /// The query hash as a 64-bit hex string (optionally `0x`-prefixed).
@@ -523,7 +494,6 @@ pub struct HammingQuery {
 
 /// `has_child` sub-query (see [`QueryNode::HasChild`]).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct HasChildQuery {
     /// The child collection to evaluate `query` against.
     pub collection: String,
@@ -533,7 +503,6 @@ pub struct HasChildQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct MatchQuery {
     pub field: String,
     pub text: String,
@@ -543,7 +512,6 @@ pub struct MatchQuery {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum MatchOp {
     And,
     Or,
@@ -554,21 +522,18 @@ fn default_match_op() -> MatchOp {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct TermQuery {
     pub field: String,
     pub value: FieldValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct TermsQuery {
     pub field: String,
     pub values: Vec<FieldValue>,
 }
 
 /// Case-sensitive UTF-8 starts-with query for `keyword` fields.
-/// @spec apps/lumen/tech-design/logic/native-prefix-wildcard-query-for-keyword-fields.md#logic
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrefixQuery {
     pub field: String,
@@ -579,7 +544,6 @@ pub struct PrefixQuery {
 /// through the collection interner to a docid (unknown ids are skipped). It is
 /// constant-scored and composes under and/or/not like term/terms. Removes the
 /// need to index a redundant row-id keyword field for `row_id_in`.
-/// @spec apps/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct IdsQuery {
     pub values: Vec<String>,
@@ -589,7 +553,6 @@ pub struct IdsQuery {
 /// `vector` under the field's declared metric. Scores are the negated
 /// distance — higher = better, consistent with BM25 / term scoring.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct KnnQuery {
     pub field: String,
     pub vector: Vec<f32>,
@@ -610,14 +573,12 @@ pub struct KnnQuery {
 /// queries — comparison is semantically fuzzy after tokenization.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(untagged)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum RangeBound {
     Number(f64),
     Keyword(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct RangeQuery {
     pub field: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -631,14 +592,12 @@ pub struct RangeQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct SearchHit {
     pub external_id: String,
     pub score: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct SearchResponse {
     pub hits: Vec<SearchHit>,
     pub total: u64,
@@ -655,7 +614,6 @@ pub struct SearchResponse {
 /// `POST /collections/{id}/search:all` body. This is an explicitly expensive
 /// full-materialization operation for export/maintenance workflows; ordinary
 /// interactive queries should use [`SearchRequest`] pagination.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchAllRequest {
     pub query: QueryNode,
@@ -668,7 +626,6 @@ pub struct SearchAllRequest {
 /// Complete matching id set returned by `search:all` from one local read-lock
 /// snapshot, or from one snapshot per routed shard (there is intentionally no
 /// cross-shard transaction).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchAllResponse {
     pub external_ids: Vec<String>,
@@ -698,7 +655,6 @@ pub const MAX_BATCH_SEARCH_SIZE: usize = 32;
 /// per item. There is no cross-collection ranking or merged pagination:
 /// results, and cursors, stay independent per item.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct BatchSearchRequest {
     /// At most [`MAX_BATCH_SEARCH_SIZE`] items; a longer batch is rejected
     /// with 400 before any item runs.
@@ -710,7 +666,6 @@ pub struct BatchSearchRequest {
 /// the same fields `POST /collections/{id}/search` accepts, plus the
 /// target `collection`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct BatchSearchItem {
     pub collection: String,
     #[serde(flatten)]
@@ -721,7 +676,6 @@ pub struct BatchSearchItem {
 /// request item, in the same order and with the same length as
 /// `searches`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct BatchSearchResponse {
     pub results: Vec<BatchSearchResult>,
 }
@@ -733,7 +687,6 @@ pub struct BatchSearchResponse {
 /// alongside `{"status":"ok","response":{...}}` siblings.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "status", rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum BatchSearchResult {
     Ok { response: SearchResponse },
     Error { code: String, message: String },
@@ -761,7 +714,6 @@ pub const MAX_BATCH_REPLACE_SIZE: usize = 32;
 /// caller owns only some fields of a doc and wants to update those without
 /// touching the rest.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct ReplaceDocsRequest {
     /// At most [`MAX_BATCH_REPLACE_SIZE`] items; a longer batch is rejected
     /// with 400 before any item runs.
@@ -770,7 +722,6 @@ pub struct ReplaceDocsRequest {
 
 /// One item of a [`ReplaceDocsRequest`]: the target doc's full field set.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct ReplaceDocItem {
     pub external_id: String,
     /// Optional doc-level version for last-write-wins, using the caller's
@@ -789,7 +740,6 @@ pub struct ReplaceDocItem {
 /// `PUT /collections/{id}/docs:replace` response: one [`ReplaceDocResult`]
 /// per request item, in the same order and with the same length as `docs`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct ReplaceDocsResponse {
     pub results: Vec<ReplaceDocResult>,
 }
@@ -808,7 +758,6 @@ pub struct ReplaceDocsResponse {
 /// "wrote successfully" and "this item failed validation".
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "status", rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub enum ReplaceDocResult {
     Ok {
         /// Number of fields written from this item's `fields` map.
@@ -836,7 +785,6 @@ pub enum ReplaceDocResult {
 /// carries only `version` and `fields`; posting it is semantically
 /// identical to sending a one-item [`ReplaceDocsRequest`] to `docs:replace`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct ReplaceDocBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u64>,
@@ -848,7 +796,6 @@ pub struct ReplaceDocBody {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct DuplicatesRequest {
     pub field: String,
     #[serde(default = "default_min_group_size")]
@@ -867,14 +814,12 @@ fn default_dup_limit() -> u32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct DuplicateGroup {
     pub value: serde_json::Value,
     pub external_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct DuplicatesResponse {
     pub groups: Vec<DuplicateGroup>,
     pub truncated: bool,
@@ -893,7 +838,6 @@ pub struct DuplicatesResponse {
 /// lumen with an OLAP store (ClickHouse / Druid / BigQuery / DuckDB)
 /// and dual-write.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct StatsResponse {
     /// Distinct `external_id` count in this collection.
     pub documents_indexed: u64,
@@ -910,7 +854,6 @@ pub struct StatsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct FieldStats {
     #[serde(rename = "type")]
     pub field_type: FieldType,
@@ -926,13 +869,11 @@ pub struct FieldStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct StorageStats {
     pub total_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct CacheStats {
     /// Hit ratio on the posting-list cache. `1.0` when no cache layer
     /// is attached (in-memory engine has no need for one).
@@ -953,7 +894,6 @@ pub struct CacheStats {
 // baking lumen's spec-path text into the generic `libs/service-http` crate
 // (see #1005).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct ApiError {
     pub error: String,
     pub message: String,
@@ -963,7 +903,6 @@ pub struct ApiError {
 // Normalization
 // ---------------------------------------------------------------------------
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 impl FieldSpec {
     /// Normalize sugar: `{type: "keyword", multi: true}` → `{type: "set"}`.
     /// Sets a default analyzer on `text` if absent. Fills in a default

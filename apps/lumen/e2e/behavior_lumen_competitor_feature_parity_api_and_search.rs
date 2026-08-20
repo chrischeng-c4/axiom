@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/competitor-feature-parity/behavior/serve-functional.md#lumen-competitor-feature-parity-api-and-search
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-competitor-feature-parity-api-and-search

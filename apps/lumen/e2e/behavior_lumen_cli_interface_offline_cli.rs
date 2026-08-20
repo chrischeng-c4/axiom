@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-offline-cli
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-cli-interface-offline-cli

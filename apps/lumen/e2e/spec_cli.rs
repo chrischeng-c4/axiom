@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! `lumen spec` surface: the offline, machine-readable self-description an
 //! agent reads to wire lumen into a pipeline. Each emitter must produce valid
@@ -189,7 +188,6 @@ fn json_schema_no_longer_publishes_a_token_registry_schema() {
 }
 
 #[test]
-// @spec apps/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md
 fn search_request_sort_schema_documents_current_sort_behavior() {
     let v: Value = serde_json::from_str(&json_schema_json()).expect("json-schema is valid JSON");
     let desc = v["components"]["schemas"]["SearchRequest"]["properties"]["sort"]["description"]
@@ -339,7 +337,6 @@ fn field_catalog_matches_the_real_enums() {
 
 /// #824: the outline must teach the convention-canonical `--topic` form, not
 /// the positional form rejected by clap.
-/// @spec apps/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#unit-test
 #[test]
 fn llm_outline_maps_agent_topics() {
     let outline = llm_outline_md();
@@ -553,7 +550,6 @@ fn llm_deployment_states_the_private_clusterip_tls_contract() {
 /// #812: the serving fleet is always a StatefulSet with a durable PVC-backed
 /// WAL, including at `replicasPerShard: 1` — this must be discoverable
 /// offline via `lumen llm --topic storage`, not only in the CRD doc comments.
-/// @spec apps/lumen/tech-design/logic/render-serving-as-a-statefulset-unconditionally-even-at-replicas.md
 #[test]
 fn llm_storage_documents_unconditional_statefulset_pvc() {
     let storage = llm_storage_md();
@@ -660,7 +656,6 @@ fn llm_storage_documents_deployment_to_statefulset_upgrade_handoff() {
 /// #808 R1: the manual admin backup/restore procedure, the optional
 /// `spec.serving.backup` CRD field, and the `lumen backup` CLI verb must all
 /// be discoverable offline via `lumen llm --topic storage`.
-/// @spec apps/lumen/tech-design/logic/no-snapshot-backup-mechanism-for-lumen-s-wal-any-replicaspershar.md
 #[test]
 fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
     let storage = llm_storage_md();
@@ -692,7 +687,6 @@ fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
 /// after creation) — the manual patch procedure, its `StorageClass`
 /// precondition, the shrink limitation, and the `resize-storage` CLI helper
 /// must all be discoverable offline via `lumen llm --topic storage`.
-/// @spec apps/lumen/tech-design/logic/raftstorage-pvc-has-no-auto-expansion-cr-field-change-doesn-t-re.md
 #[test]
 fn llm_storage_documents_resize_gap() {
     let storage = llm_storage_md();
@@ -717,7 +711,6 @@ fn llm_storage_documents_resize_gap() {
 /// reference example StorageClass names per common provider, rather than
 /// only in the CRD field doc comment. Documentation-only: no `serving.ssd`
 /// toggle, no new CRD field.
-/// @spec apps/lumen/tech-design/logic/expose-ssd-as-a-simple-toggle-serving-ssd-instead-of-requiring-a.md
 #[test]
 fn llm_storage_documents_ssd_guidance() {
     let storage = llm_storage_md();
@@ -1039,7 +1032,6 @@ fn llm_recipes_render_every_cookbook_shape_without_drift() {
 
 /// #200: the emitted OpenAPI must be self-complete (every `$ref` resolves to a
 /// defined component schema) and advertise the real serving port 7373.
-/// @spec apps/lumen/tech-design/interfaces/rest/lumen-openapi-define-4-dangling-ref-schemas-fix-servers-port-808.md
 #[test]
 fn openapi_is_self_complete_and_uses_port_7373() {
     let v: Value = serde_json::from_str(&openapi_json()).expect("openapi is valid JSON");
@@ -1154,7 +1146,6 @@ fn openapi_json_declares_3_2_and_describes_query_twins() {
 /// it must byte-match live generation exactly so the offline contract cannot
 /// silently lag the surface it
 /// describes. Modeled on `openapi_is_valid_json_with_search_path`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn openapi_committed_snapshot_matches_live_generation() {
     let committed = include_str!("../clients/openapi.json");
@@ -1368,7 +1359,6 @@ fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
 /// #1480 R2: the reshard admin verbs section must cover all six
 /// `Role::Admin`-gated verbs, including `POST /admin/reshard:fence`'s TTL
 /// semantics, driver-owned framing, and manual-use risk warning.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_storage_documents_reshard_fence_admin_verb() {
     let storage = llm_storage_md();
@@ -1394,7 +1384,6 @@ fn llm_storage_documents_reshard_fence_admin_verb() {
 /// #1480 R3: the workflow topic must disclose the routed multi-shard client
 /// retry contract — the three retryable `503` codes and the two rejected
 /// (not retryable) verbs with their alternatives.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_workflow_discloses_routed_mode_retry_contract() {
     let g = llm_workflow_md();
@@ -1419,7 +1408,6 @@ fn llm_workflow_discloses_routed_mode_retry_contract() {
 /// `lumen_scatter_map_version_mismatches_total` counter, and the
 /// `awaitingTopologyConvergence`/`topologyConvergenceStalled` status
 /// conditions) into the deployment topic.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_deployment_documents_reshard_convergence_observability() {
     let deployment = llm_deployment_md();

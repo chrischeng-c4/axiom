@@ -8,7 +8,6 @@
 //! The chainable assertions carry weight the help-text ones cannot. A verb can
 //! be listed, spelled correctly, and still emit output that no downstream verb
 //! is able to consume.
-// SPEC-MANAGED: apps/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-cli-convention" tracker="standardize-gap-projects-lumen-tests-cli-convention-rs" reason="CLI convention smoke test for the shared llm/upgrade/issue surface until the test generator owns binary-help assertions."
 use cli_std::chainable::assert_chainable;
 use serde_json::Value;
@@ -102,7 +101,6 @@ fn help_ships_standard_issue_group_not_report_issue() {
 }
 
 /// #1095: direct SnapshotV1 movement verbs are visible alongside `backup`.
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md#unit-test
 #[test]
 fn help_ships_snapshot_data_movement_verbs() {
     let help = run_lumen(&["--help"]);
@@ -145,7 +143,6 @@ fn help_ships_snapshot_data_movement_verbs() {
 
 /// Every topic advertised by the typed task manifest must parse through the
 /// actual lumen binary.
-/// @spec apps/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#unit-test
 #[test]
 fn llm_outline_advertised_topic_commands_parse() {
     let commands = outline_llm_topic_commands();
@@ -204,7 +201,6 @@ fn issue_help_lists_search_view_create_comment() {
 
 /// #931: issue comment is the shared cli-std follow-up path; dry-run must be
 /// offline-testable and show the reopen/comment preview without mutating GitHub.
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-cli-add-issue-comment-auto-reopen-follow-up.md#unit-test
 #[test]
 fn issue_comment_help_and_dry_run_preview() {
     let help = run_lumen(&["issue", "comment", "--help"]);

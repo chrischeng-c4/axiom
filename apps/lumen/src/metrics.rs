@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Lightweight in-process Prometheus exposition.
 //!
@@ -66,7 +65,6 @@ const DEFAULT_SLOW_QUERY_THRESHOLD_MS: u64 = 500;
 /// `shard="0", partition="0"` as constants; future LSM/Raft tiers will
 /// vary `partition` and `shard` respectively.
 #[derive(Debug, Default)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#source
 pub struct Metrics {
     pub index_writes_total: Counter,
     pub index_bytes_total: Counter,
@@ -178,7 +176,6 @@ pub struct Metrics {
     pub storage_full_errors_total: Counter,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#source
 impl Metrics {
     pub fn new() -> Self {
         let metrics = Self::default();

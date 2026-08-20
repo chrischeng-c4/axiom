@@ -1,5 +1,4 @@
 #!/usr/bin/env sh
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-install-script.md#text-source-unit
 # CODEGEN-BEGIN
 # lumen installer — downloads the right prebuilt binary from GitHub
 # Releases and drops it on your PATH.
