@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-policy-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! One backup policy in two shapes, because a CRD cannot hold the runtime one.
 //!

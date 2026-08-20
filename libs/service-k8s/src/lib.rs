@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `service-k8s` — the ecosystem's shared Kubernetes operator scaffold.
 //!

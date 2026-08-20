@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `raft-runtime` — the ecosystem's shared raft driver.
 //!

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-readiness-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Probe-facing name for the protocol-neutral lifecycle readiness contract.
 //!

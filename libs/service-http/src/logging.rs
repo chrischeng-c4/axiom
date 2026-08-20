@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Compatibility adapter to protocol-neutral `service-observability`.
 

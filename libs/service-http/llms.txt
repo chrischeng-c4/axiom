@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/service-http/tech-design/semantic/service-http-libs-service-http.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Service Http Agent Context
 

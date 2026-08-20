@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! [`RaftHost`](crate::RaftHost) tuning.
 
@@ -6,7 +5,6 @@ use std::time::Duration;
 
 /// When the host captures a state-machine snapshot and compacts the raft log.
 #[derive(Clone, Copy, Debug)]
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-config-rs.md#source
 pub enum SnapshotPolicy {
     /// Never compact (the log grows; fine for log-broker state machines with no
     /// meaningful snapshot, e.g. relay).
@@ -20,7 +18,6 @@ pub enum SnapshotPolicy {
 
 /// Host timing + snapshot policy.
 #[derive(Clone, Copy, Debug)]
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-config-rs.md#source
 pub struct HostConfig {
     /// Logical tick (election/heartbeat clock).
     pub tick: Duration,
@@ -34,7 +31,6 @@ pub struct HostConfig {
     pub snapshot: SnapshotPolicy,
 }
 
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-config-rs.md#source
 impl Default for HostConfig {
     fn default() -> Self {
         HostConfig {

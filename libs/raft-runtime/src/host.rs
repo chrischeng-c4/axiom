@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `RaftHost` — drives a [`raft_core::RaftNode`] for a [`RaftStateMachine`] over
 //! an h2c peer transport, with read-your-write `propose` and snapshot/compaction.
@@ -398,7 +397,6 @@ impl Drop for RpcGuard {
     }
 }
 
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#source
 impl Shared {
     fn http_client(&self) -> reqwest::Client {
         self.peer_transport
@@ -709,13 +707,11 @@ impl Shared {
 }
 
 /// A running raft group host. Cheap to hold; aborts its tasks on drop.
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#source
 pub struct RaftHost {
     pub(crate) shared: Arc<Shared>,
     tasks: StdMutex<Option<(JoinHandle<()>, JoinHandle<()>)>>,
 }
 
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#source
 impl Drop for RaftHost {
     fn drop(&mut self) {
         if let Some((tick, pump)) = self.tasks.lock().expect("raft task mutex poisoned").take() {
@@ -725,7 +721,6 @@ impl Drop for RaftHost {
     }
 }
 
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#source
 impl RaftHost {
     /// Build a host for node `id`, recovering persisted state + replaying the
     /// resident committed log into the state machine, and start the tick + pump.
