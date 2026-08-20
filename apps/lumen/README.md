@@ -147,7 +147,7 @@ serving transport confidentiality.
 - Gate: `cargo test -p lumen --test auth_e2e`
 - Gate: `cargo test -p lumen --test authz_matrix_e2e`
 - Gate: `cargo test -p lumen --test operator_render`
-- Gate: `cargo test -p lumen --test security_lumen_claim_security_tls_rustls`
+- Gate: `cargo test -p lumen --lib`
 - Gate: `cargo test -p lumen --test serving_tls_rotation`
 - Gate: `acceptance/gcp/scripts/run.sh`
 - Gate: `acceptance/gcp/scripts/verify-lumen-auth.sh`
@@ -231,7 +231,7 @@ replica policy, failover, and replacement bootstrap.
 - Root WI: none; this capability predates the tracker.
 - Gate: `cargo test -p lumen --test reshard_admin_e2e`
 - Gate: `cargo test -p lumen --test efficiency_lumen_claim_elastic_disk_tier`
-- Gate: `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync --test stability_lumen_claim_dynamic_multi_shard_replica_kind`
+- Gate: `cargo test -p lumen --test wal_nats_e2e --test stability_lumen_claim_dynamic_multi_shard_replica_kind`
 - Gate: `apps/lumen/scripts/kind-e2e.sh`
 
 Claims this capability makes:
@@ -250,7 +250,7 @@ data.
 
 - Root WI: none; this capability predates the tracker.
 - Gate: `cargo test -p lumen --test backup_restore_e2e`
-- Gate: `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync`
+- Gate: `cargo test -p lumen --test wal_nats_e2e`
 - Gate: `acceptance/gcp/scripts/run.sh`
 
 Claims this capability makes:

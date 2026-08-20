@@ -5,6 +5,21 @@
 //! the README §1b contract for `FieldType::Vector` + the `knn`
 //! query node, and verifies that backup + restore preserves the
 //! kNN top-K.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 2 sentences were the whole of the `// Contract:` comment in 2 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test vector_e2e`
+//! in a subprocess and asserted the child's exit status. `cargo test -p lumen` already
+//! runs this target directly, so the shells added a second, nested run and nothing
+//! else. They were deleted on 2026-08-20 with the EC machinery they belonged to, and
+//! the sentence is the only thing they held that nothing else did. Each line below is
+//! prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-vector-filtered-knn` — Filtered kNN returns the nearest vector within
+//!   the filter without recall collapse.
+//! - `lumen-claim-vector-hnsw` — CPU vector kNN returns ordered nearest-neighbor
+//!   results and preserves restore behavior.
 
 use std::sync::Arc;
 

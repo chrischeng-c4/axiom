@@ -9,6 +9,19 @@
 //! The third case makes the classification total: every completed shared root
 //! must resolve to a lumen-owned adapter or a runtime projection. Without it a
 //! root can be absent from both lists while the first two cases still pass.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! This sentence was the whole of the `// Contract:` comment in an AW-EC shell under
+//! `apps/lumen/e2e/`, which ran `cargo test -p lumen --test
+//! shared_stateful_foundations` in a subprocess and asserted the child's exit status.
+//! `cargo test -p lumen` already runs this target directly, so the shell added a
+//! second, nested run and nothing else. It was deleted on 2026-08-20 with the EC
+//! machinery it belonged to, and the sentence is the only thing it held that nothing
+//! else did. The line below is prefixed with the EC id the shell was filed under.
+//!
+//! - `lumen-claim-long-running-shared-foundations` — Lumen delegates tracing, peer
+//!   transport, and completed shared stateful roots to the reusable service libraries.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:c90bbb42" tracker="#1646" reason="Lock Lumen's ownership boundary: shared OTLP tracing and shared reloadable peer transport, with no local duplicate tracer. generator gap: missing-generator:lumen-foundation-ownership-test (#1646)."
 const LUMEN_BIN: &str = include_str!("../src/bin/lumen.rs");
 const LUMEN_MANIFEST: &str = include_str!("../Cargo.toml");

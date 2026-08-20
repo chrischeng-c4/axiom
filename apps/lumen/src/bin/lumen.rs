@@ -15,6 +15,19 @@
 //! lumen serve --wal raft               # k8s StatefulSet / HA mode
 //! lumen serve --host 0.0.0.0 --port 7373 --log-format json
 //! ```
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! This sentence was the whole of the `// Contract:` comment in an AW-EC shell under
+//! `apps/lumen/e2e/`, which ran `cargo test -p lumen --bin lumen` in a subprocess and
+//! asserted the child's exit status. `cargo test -p lumen` already runs this binary's
+//! colocated unit tests directly, so the shell added a second, nested run and nothing
+//! else. It was deleted on 2026-08-20 with the EC machinery it belonged to, and the
+//! sentence is the only thing it held that nothing else did. The line below is prefixed
+//! with the EC id the shell was filed under.
+//!
+//! - `lumen-claim-topology-empty-pvc-bootstrap-seed` — A fresh serving process restores
+//!   a configured SnapshotV1 seed before WAL or raft catch-up.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

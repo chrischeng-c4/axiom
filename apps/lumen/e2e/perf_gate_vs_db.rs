@@ -35,6 +35,25 @@
 //!   LUMEN_GATE_COMPARE_PEERS=1 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
 //!   LUMEN_GATE_RELEASE_SOAK=1 cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture
 //!   LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 4 sentences were the whole of the `// Contract:` comment in 4 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test
+//! perf_gate_vs_db` in a subprocess and asserted the child's exit status. `cargo test
+//! -p lumen` already runs this target directly, so the shells added a second, nested
+//! run and nothing else. They were deleted on 2026-08-20 with the EC machinery they
+//! belonged to, and the sentence is the only thing they held that nothing else did.
+//! Each line below is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-exact-term-range-set` — Term, range, and set filter behavior stays
+//!   within the exact/filter search gate.
+//! - `lumen-claim-exact-wide-range-filter` — Wide range filters over sorted disk-backed
+//!   values pass the exact/filter gate.
+//! - `lumen-claim-lexical-bm25` — BM25 ranking and analyzer behavior pass the ratcheted
+//!   performance/conformance comparison.
+//! - `lumen-claim-search-core-filter-sort` — Filter/sort early-termination behavior is
+//!   covered by the ratcheted database comparison gate.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

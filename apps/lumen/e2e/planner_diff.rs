@@ -4,6 +4,19 @@
 //! / sort-by-field), the planner's result SET must equal a brute-force
 //! evaluation of the query semantics over the corpus, and sort results must be
 //! in field order. A faster-but-wrong planner is a failure, not a win.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! This sentence was the whole of the `// Contract:` comment in an AW-EC shell under
+//! `apps/lumen/e2e/`, which ran `cargo test -p lumen --test planner_diff` in a
+//! subprocess and asserted the child's exit status. `cargo test -p lumen` already runs
+//! this target directly, so the shell added a second, nested run and nothing else. It
+//! was deleted on 2026-08-20 with the EC machinery it belonged to, and the sentence is
+//! the only thing it held that nothing else did. The line below is prefixed with the EC
+//! id the shell was filed under.
+//!
+//! - `lumen-claim-search-core-planner` — The planner keeps boolean evaluation and
+//!   roaring-posting behavior aligned with brute-force expectations.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

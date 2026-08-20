@@ -4,6 +4,49 @@
 //! Drives the real axum router via `axum-test::TestServer`. These tests
 //! double as executable documentation for the wire shapes — if the
 //! README's API examples change, these tests will need to change too.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 14 sentences were the whole of the `// Contract:` comment in 14 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test api_e2e` in a
+//! subprocess and asserted the child's exit status. `cargo test -p lumen` already runs
+//! this target directly, so the shells added a second, nested run and nothing else.
+//! They were deleted on 2026-08-20 with the EC machinery they belonged to, and the
+//! sentence is the only thing they held that nothing else did. Each line below is
+//! prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-cli-service-process-interface` — The long-running service exposes
+//!   health, readiness, version, metrics, indexing, and search routes through the
+//!   binary-served API.
+//! - `lumen-claim-competitor-feature-search-breadth` — The API, vector, hash,
+//!   duplicate, and nested search surfaces execute correctly across the replacement
+//!   feature set.
+//! - `lumen-claim-duplicates-group-by` — Duplicate detection returns groups of external
+//!   IDs sharing a field value.
+//! - `lumen-claim-http2-client-route-list` — Search and index HTTP routes are exposed
+//!   and exercised through the binary-served API tests.
+//! - `lumen-claim-http2-ops-route-list` — Health, readiness, OpenAPI, metrics, and
+//!   version routes are exposed and exercised.
+//! - `lumen-claim-http2-query-method-twins` — QUERY is byte-identical to its POST twin
+//!   and OPTIONS/HEAD advertise Accept-Query.
+//! - `lumen-claim-http2-read-consistency-live-state` — X-Read-Consistency is evaluated
+//!   against the live cluster role and applied index.
+//! - `lumen-claim-http2-read-consistency-raft-bootstrap` — The serving bootstrap
+//!   supplies raft state to the API so bounded reads reject a lagged follower.
+//! - `lumen-claim-observability-otlp` — The serving process keeps observability
+//!   configuration and metadata routes wired.
+//! - `lumen-claim-observability-prometheus-metrics` — The /metrics endpoint emits
+//!   Prometheus text with the expected scrape content type.
+//! - `lumen-claim-standard-live-openapi-swagger` — The live service serves OpenAPI JSON
+//!   and Swagger UI against the operational route surface.
+//! - `lumen-claim-standard-service-probe-routes` — The service exposes health,
+//!   readiness, version, metrics, indexing, and search routes through the binary-served
+//!   API.
+//! - `lumen-competitor-feature-parity-api-and-search` — The HTTP API end-to-end (create
+//!   -> index -> search -> hydrate ids) returns correct ranked external_ids and never
+//!   documents.
+//! - `lumen-long-running-stability-meta-api` — GET /healthz (liveness) returns 200
+//!   always; GET /readyz returns 200 normally and 503 while draining; both bypass auth.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
