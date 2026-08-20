@@ -1,5 +1,5 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:projected-service-account-token" tracker="#2877" reason="Own the projected `serviceAccountToken` volume/mount pair and the apiserver's expiration floor as one value, so a workload cannot mount a token whose audience and file path disagree with the client that reads it."
-//! An audience-bound, short-lived ServiceAccount token, mounted as a file.
+//! An audience-bound, short-lived ServiceAccount token, mounted as a file (#2877).
 //!
 //! A workload that calls a service which authenticates with `TokenReview`
 //! needs a credential that is (a) issued to *its own* ServiceAccount, (b)

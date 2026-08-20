@@ -15,6 +15,19 @@
 //!
 //! Body assembly / URL pre-fill / repo resolution / payload shaping are pure and
 //! unit-tested; everything network-facing lives behind the `online` feature.
+//!
+//! **Courier proxy mode** (#1320). `$AXIOM_COURIER_URL` being set routes all
+//! four verbs through courier's `/v1/issues/{owner}/{name}...` endpoints; unset
+//! or blank falls through to the direct `api.github.com` path, and that
+//! fallback is contractually **byte-identical** to what this module sent before
+//! courier existed. That contract is why every URL is built by a named pure
+//! function — `github_search_url` / `courier_search_url` and their siblings —
+//! rather than formatted inline inside the verb.
+//!
+//! Their purity is also the entire test strategy here: this crate carries no
+//! HTTP-mock dev-dependency, so proxy-mode routing is verified by asserting the
+//! exact request shape each verb hands to those builders, never by a live
+//! round trip. A case that needs a real response does not belong in this crate.
 
 use crate::ToolInfo;
 use anyhow::Result;

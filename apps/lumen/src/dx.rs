@@ -4,9 +4,18 @@
 //! Generated Developer & Agent Experience surface for Lumen.
 //!
 //! Runtime field operations come from [`FieldType::capabilities`]. Task
-//! navigation decisions are compiled from the TD's `dx-contract` section so
-//! runbook prose, typed inputs, and command templates cannot become a second
-//! hand-maintained CLI catalogue.
+//! navigation decisions are compiled from `src/dx-contract.yaml`, which this
+//! module `include_str!`s so the contract is in the binary rather than read at
+//! run time — runbook prose, typed inputs, and command templates cannot become
+//! a second hand-maintained CLI catalogue.
+//!
+//! The split is deliberate and it is an authority split, not a layout one. The
+//! yaml owns task classification, narrative, preconditions, typed inputs,
+//! templates and artifact selection; the Rust owns structural behaviour —
+//! [`FieldType`] and its capabilities, runtime validation, CLI registration.
+//! Neither may restate the other's half: a capability written into the yaml is
+//! a claim nothing checks, and a runbook step written into Rust is a catalogue
+//! that drifts from the one `lumen llm` serves.
 
 use cli_std::llm::v2::{Input, ProtocolDocument, Risk, Runbook, Step, Task, Topic};
 use serde::Deserialize;

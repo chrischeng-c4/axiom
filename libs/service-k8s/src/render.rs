@@ -10,6 +10,15 @@
 //! Lifted + parameterized from lumen's `service_k8s::render` helpers. A service
 //! keeps its own service-specific rendering and calls these for the shared
 //! shapes.
+//!
+//! The layout is lopsided on purpose (#1849). Pod composition and the stateless
+//! Deployment shape live in [`common`] and [`deployment`], but the StatefulSet
+//! helpers and the ordinary children stayed at the root: their callers were
+//! already deployed against these paths, and moving them would have made a
+//! rendering refactor into a breaking change for every adopter at once. So a
+//! helper's depth here records when it arrived, not how shared it is — do not
+//! read the root as legacy, and do not "finish" the split without moving the
+//! callers in the same change.
 
 use serde_json::{json, Value};
 
@@ -29,14 +38,9 @@ pub const ENV_REPLICAS_PER_SHARD: &str = "REPLICAS_PER_SHARD";
 pub const ENV_VOTER_COUNT: &str = "VOTER_COUNT";
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#1849" reason="Expose semantic common and Deployment submodules while preserving the monolithic root compatibility surface for existing StatefulSet consumers in this first landing.">
-/// Workload-neutral Pod composition and ordinary Kubernetes child helpers.
 pub mod common;
-/// Stateless `apps/v1` Deployment composition.
 pub mod deployment;
-/// Audience-bound, short-lived ServiceAccount tokens mounted as a file (#2877).
 pub mod projected_token;
-/// Cluster-scoped RBAC children — bindings that cannot carry an owner
-/// reference and must not accept a group subject (#2876).
 pub mod rbac;
 
 /// Per-service render identity, threaded through the helpers.

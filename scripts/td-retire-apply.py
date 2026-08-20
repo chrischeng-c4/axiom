@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
-"""Apply tech-design retirement: delete tree files and referencing headers.
+"""Apply the retirement: clear tree files and the headers that point at them.
 
-usage: td-retire-apply.py --prefix <tree-prefix> [--prefix <tree-prefix> ...]
-       td-retire-apply.py <tree-prefix> [<tree-prefix> ...]
+usage: td-retire-apply.py [--whole-tree] --prefix <tree-prefix> [--prefix ...]
+       td-retire-apply.py [--whole-tree] <tree-prefix> [<tree-prefix> ...]
+
+Two modes, matching the two the gate judges.  Without `--whole-tree` this takes
+the Markdown corpus and its `td.lock` and leaves everything else -- `.py`,
+`pyproject.toml`, `uv.lock` -- where the Markdown children of #3694 need it.
+With `--whole-tree` it takes every file under the prefix and the directories
+themselves, which is the decision for the fifteen lumen-scope projects.
+
+The header rule is `probe.selects` either way, so it covers `external-contracts`
+targets as well as `tech-design` ones and matches, line for line, what
+`td-retire-gate.py`'s `deletions` row will accept.  Nothing here decides what a
+header is; a second copy of that rule is the copy that drifts.
 """
 from __future__ import annotations
 
@@ -25,8 +36,13 @@ def under(path: str, prefixes: list[str]) -> bool:
     return any(path == p or path.startswith(p + "/") for p in clean)
 
 
-def delete_corpus_files(prefixes: list[str]) -> int:
-    """Deletes all *.md and td.lock files under the given tree prefixes."""
+def delete_corpus_files(prefixes: list[str], whole_tree: bool = False) -> int:
+    """Clears the retired files under the given tree prefixes.
+
+    In whole-tree mode that is every file and then every directory, the prefix
+    root included: a tree that survives as one `.gitkeep` still resolves as a
+    prefix and still appears in the census, which is #3737.
+    """
     deleted_count = 0
     for prefix in prefixes:
         prefix_dir = os.path.join(ROOT, prefix.rstrip("/"))
@@ -34,7 +50,7 @@ def delete_corpus_files(prefixes: list[str]) -> int:
             continue
         for dp, dns, fns in os.walk(prefix_dir, topdown=False):
             for fn in fns:
-                if fn.endswith(".md") or fn == "td.lock":
+                if whole_tree or fn.endswith(".md") or fn == "td.lock":
                     fp = os.path.join(dp, fn)
                     os.remove(fp)
                     deleted_count += 1
@@ -56,13 +72,16 @@ def strip_headers(prefixes: list[str]) -> tuple[int, int]:
         dns[:] = [d for d in dns if d not in probe.SKIP]
         rd = os.path.relpath(dp, ROOT)
         parts = rd.split("/")
-        if "tech-design" in parts and under(probe._tree(parts), prefixes):
+        in_tree = "tech-design" in parts or "external-contracts" in parts
+        if in_tree and under(probe._tree(parts), prefixes):
             continue
 
         for fn in fns:
             fp = os.path.join(dp, fn)
             text = probe.read_text(fp)
-            if text is None or "tech-design" not in text:
+            if text is None or not (
+                "tech-design" in text or "external-contracts" in text
+            ):
                 continue
 
             masked = probe.literal_lines(text) if fn.endswith(".rs") else set()
@@ -72,12 +91,9 @@ def strip_headers(prefixes: list[str]) -> tuple[int, int]:
 
             for n, line in enumerate(lines, 1):
                 line_stripped = line.rstrip("\r\n")
-                m = probe.REF.search(line_stripped)
                 if (
-                    m
-                    and probe._hits(m, rd, want)
-                    and probe.HEADER.match(line_stripped.strip())
-                    and n not in masked
+                    n not in masked
+                    and probe.selects(line_stripped.strip(), rd, want)
                 ):
                     modified = True
                     removed_lines_total += 1
@@ -94,9 +110,12 @@ def strip_headers(prefixes: list[str]) -> tuple[int, int]:
 
 def main(argv: list[str]) -> int:
     prefixes = []
+    whole_tree = False
     it = iter(argv)
     for arg in it:
-        if arg == "--prefix":
+        if arg == "--whole-tree":
+            whole_tree = True
+        elif arg == "--prefix":
             val = next(it, None)
             if val:
                 prefixes.append(val)
@@ -108,11 +127,12 @@ def main(argv: list[str]) -> int:
     if not prefixes:
         sys.exit("error: at least one --prefix is required")
 
-    deleted_files = delete_corpus_files(prefixes)
+    deleted_files = delete_corpus_files(prefixes, whole_tree)
     touched_files, removed_lines = strip_headers(prefixes)
 
     print(
-        f"applied: deleted_files={deleted_files} touched_files={touched_files} removed_lines={removed_lines}"
+        f"applied: whole_tree={whole_tree} deleted_files={deleted_files} "
+        f"touched_files={touched_files} removed_lines={removed_lines}"
     )
     return 0
 

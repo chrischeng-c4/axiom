@@ -5,7 +5,11 @@ usage: td-retire-probe.py <tree-prefix> [<tree-prefix> ...]
        td-retire-probe.py --expect '<line>' <tree-prefix> [<tree-prefix> ...]
        td-retire-probe.py --census
 
-Prints  md=<n> lock=<n> py=<n> ec=<n> ecrest=<n> ecdirs=<n> ecscan=<n> hdr=<n> files=<n> tdref=<n> other=<n> embed=<n>  for the listed trees.
+Prints one `<column>=<n>` pair per member of `COLUMNS`, in that order, for the
+listed trees.  Nothing hand-writes that line: the format string, the census
+row, and both gates' all-zeros expectation are all built from `COLUMNS`, because
+the two defects that column list has already produced (#3746, #3762) were both a
+literal that stopped matching the columns beside it.
 
 `--expect` compares that whole printed line against its argument byte for byte
 and exits 1 on any difference, printing both.  Without it the probe always
@@ -18,17 +22,38 @@ through.
 
   md      regular *.md files under any listed tree
   lock    td.lock files under any listed tree
-  py      Python TD files under any listed tree.  Held FIXED by every gate:
-          they are a different artifact class, and the loudest way to fail
-          this campaign is to delete a tech-design directory wholesale.
+  py      Python TD files under any listed tree.  Held FIXED by the Markdown
+          children of #3694 -- for them a Python TD project is a different
+          artifact class, and the loudest way to fail that campaign is to
+          delete a tech-design directory wholesale.  DRIVEN TO ZERO by the
+          whole-tree retirement of the fifteen lumen-scope projects, where
+          deleting the directory wholesale is the decision.  Which of the two
+          a given round is doing is not inferable from this column: it is
+          declared by `td-retire-gate.py`'s `--whole-tree`, and each mode
+          refuses the other's target.
+  tdrest  files under any listed tech-design tree that are none of the above --
+          `pyproject.toml`, `uv.lock`, egg-info, a `.gitkeep`.  Counted by
+          nothing before, so "the tree is gone" was unmeasurable: the three
+          columns above cover only three filename shapes, and #3737 is one
+          `.gitkeep` keeping a retired tree in the census.
   ec      Python external-contract files under any listed tree.
   ecrest  non-Python external-contract files under any listed tree, excluding
           generated evidence.
+  ecev    non-Python files under a listed tree's `evidence/`.  `ec` counts only
+          Python and `ecrest` excludes evidence outright, so 251 files in the
+          lumen scope alone belonged to no column at all.
   ecdirs  external-contracts directories the walk reached, excluding evidence.
   ecscan  external-contracts directories whose files reached the reference scan,
           excluding evidence.
   hdr     REAL standalone header lines outside every tree that point into one
   files   distinct files holding at least one such line
+  echdr   REAL standalone header lines that point into a listed
+          external-contracts tree, counted only outside every tree.  `REF`
+          matches `tech-design/**.md` and nothing else, so these 237 lines --
+          104 of them in `apps/lumen/tests/` alone -- were invisible to `hdr`
+          and to `other` alike, and a round that stripped one would be reported
+          by `deletions` as having deleted a line the rule does not select.
+  ecfiles distinct files holding at least one `echdr` line
   tdref   contract bindings (td_ref in .toml) pointing to a listed tree
   other   lines naming a listed tree that are NOT standalone headers or td_ref
           bindings -- prose mentions and code string literals.  Deliberately
@@ -82,6 +107,16 @@ ROOT = os.environ.get(
 SKIP = {".git", "target", "node_modules", "__pycache__", ".venv",
         "site-packages", "dist", "build"}
 REF = re.compile(r"((?:[\w./\-]*?)tech-design)/[\w./\-]+\.md")
+# The external-contracts counterpart of REF.  Not restricted to one extension:
+# what a header names under an EC tree is a `.py` case, a `.md` brief, a `.json`
+# review or a `.lock`, and the retirement deletes all of them.
+ECREF = re.compile(r"((?:[\w./\-]*?)external-contracts)/[\w./\-]+\.\w+")
+COLUMNS = ("md", "lock", "py", "tdrest", "ec", "ecrest", "ecev", "ecdirs",
+           "ecscan", "hdr", "files", "echdr", "ecfiles", "tdref", "other",
+           "embed")
+LINE_FMT = " ".join(c + "=%d" for c in COLUMNS)
+CENSUS_FMT = "%-36s " + " ".join(
+    c + "=%-" + str(max(2, 6 - len(c))) + "d" for c in COLUMNS)
 HEADER = re.compile(
     r"^(?:///|//!|//|#|<!--)\s*(?:SPEC-MANAGED:|SPEC-REF:|@spec)\s")
 RAW = re.compile("r" + "#" + "+" + chr(34))
@@ -115,20 +150,40 @@ def _deleted(path):
     return path.endswith(".md") or os.path.basename(path) == "td.lock"
 
 
-def _hits(m, rd, want):
+def _hits(m, rd, want, marker="tech-design"):
     """True when a matched reference names a wanted tree, literally or resolved.
 
     A reference is written either from the repository root or from the
     referring file.  Testing only the literal prefix loses the second form;
     testing only the resolved path loses the first, since `apps/x/tech-design`
     named inside `apps/x/src/` resolves to a path that does not exist.
+
+    `marker` selects which family the resolved half is tested against, so the
+    same two-sided rule serves `REF` and `ECREF` instead of being written twice
+    and drifting.
     """
     literal = m.group(1)
     literal = literal[2:] if literal.startswith("./") else literal
     if want(literal):
         return True
     parts = os.path.normpath(os.path.join(rd, m.group(0))).split("/")
-    return "tech-design" in parts and want(_tree(parts))
+    return marker in parts and want(_tree(parts))
+
+
+def selects(line_stripped, rd, want):
+    """True when the retirement rule deletes this line for the wanted trees.
+
+    One definition, shared by the probe's own count, `td-retire-gate.py`'s
+    `deletions` row and `td-retire-apply.py`'s rewrite, so that the gate keeps
+    measuring the rule rather than restating it.
+    """
+    if not HEADER.match(line_stripped):
+        return False
+    m = REF.search(line_stripped)
+    if m and _hits(m, rd, want):
+        return True
+    m = ECREF.search(line_stripped)
+    return bool(m and _hits(m, rd, want, "external-contracts"))
 
 
 def literal_lines(text):
@@ -151,8 +206,8 @@ def literal_lines(text):
 
 
 def scan(want):
-    md = lock = py = ec = ecrest = ecdirs = ecscan = hdr = tdref = other = embed = 0
-    files = set()
+    n_ = dict.fromkeys(COLUMNS, 0)
+    files, ecfiles = set(), set()
     for dp, dns, fns in os.walk(ROOT):
         dns[:] = [d for d in dns if d not in SKIP]
         rd = os.path.relpath(dp, ROOT)
@@ -160,45 +215,61 @@ def scan(want):
         if "tech-design" in parts:
             tree = _tree(parts)
             if want(tree):
-                md += sum(1 for f in fns if f.endswith(".md"))
-                lock += sum(1 for f in fns if f == "td.lock")
-                py += sum(1 for f in fns if f.endswith(".py"))
+                n_["md"] += sum(1 for f in fns if f.endswith(".md"))
+                n_["lock"] += sum(1 for f in fns if f == "td.lock")
+                n_["py"] += sum(1 for f in fns if f.endswith(".py"))
+                n_["tdrest"] += sum(
+                    1 for f in fns
+                    if not f.endswith((".md", ".py")) and f != "td.lock")
             continue
-        if "external-contracts" in parts:
+        in_ec = "external-contracts" in parts
+        if in_ec:
             tree = _tree(parts)
             if want(tree):
-                ec += sum(1 for f in fns if f.endswith(".py"))
-                if "evidence" not in parts:
-                    ecrest += sum(1 for f in fns if not f.endswith(".py"))
-        if "external-contracts" in parts and "evidence" not in parts:
-            ecdirs += 1
+                n_["ec"] += sum(1 for f in fns if f.endswith(".py"))
+                if "evidence" in parts:
+                    n_["ecev"] += sum(1 for f in fns if not f.endswith(".py"))
+                else:
+                    n_["ecrest"] += sum(1 for f in fns if not f.endswith(".py"))
+        if in_ec and "evidence" not in parts:
+            n_["ecdirs"] += 1
         for fn in fns:
-            if "external-contracts" in parts and "evidence" not in parts and fn == fns[0]:
-                ecscan += 1
+            if in_ec and "evidence" not in parts and fn == fns[0]:
+                n_["ecscan"] += 1
             fp = os.path.join(dp, fn)
             text = read_text(fp)
-            if text is None or "tech-design" not in text:
+            if text is None or not (
+                    "tech-design" in text or "external-contracts" in text):
                 continue
             rel = os.path.normpath(os.path.join(rd, fn))
             masked = literal_lines(text) if fn.endswith(".rs") else set()
             for im in INCL.finditer(text):
                 tgt = os.path.normpath(os.path.join(rd, im.group(1)))
-                parts = tgt.split("/")
-                if ("tech-design" in parts and want(_tree(parts))
+                tparts = tgt.split("/")
+                if ("tech-design" in tparts and want(_tree(tparts))
                         and _deleted(tgt)):
-                    embed += 1
+                    n_["embed"] += 1
             for n, line in enumerate(text.splitlines(), 1):
+                stripped = line.strip()
+                is_hdr = bool(HEADER.match(stripped)) and n not in masked
+                em = ECREF.search(line)
+                if (em and not in_ec and is_hdr
+                        and _hits(em, rd, want, "external-contracts")):
+                    n_["echdr"] += 1
+                    ecfiles.add(rel)
                 m = REF.search(line)
                 if not m or not _hits(m, rd, want):
                     continue
-                if HEADER.match(line.strip()) and n not in masked:
-                    hdr += 1
+                if is_hdr:
+                    n_["hdr"] += 1
                     files.add(rel)
-                elif fn.endswith(".toml") and TDREF.match(line.strip()):
-                    tdref += 1
+                elif fn.endswith(".toml") and TDREF.match(stripped):
+                    n_["tdref"] += 1
                 else:
-                    other += 1
-    return md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, files, tdref, other, embed
+                    n_["other"] += 1
+    n_["files"] = len(files)
+    n_["ecfiles"] = len(ecfiles)
+    return n_
 
 
 def _resolves(prefix):
@@ -234,18 +305,15 @@ def main(argv):
             if "tech-design" in parts or "external-contracts" in parts:
                 trees.add(_tree(parts))
         for t in sorted(trees):
-            md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, files, tdref, other, embed = scan(
-                lambda x, t=t: x == t or x.startswith(t + "/"))
-            print("%-36s md=%-5d lock=%-3d py=%-5d ec=%-5d ecrest=%-5d ecdirs=%-5d ecscan=%-5d hdr=%-5d files=%-5d tdref=%-4d other=%-4d embed=%d"
-                  % (t, md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, len(files), tdref, other, embed))
+            n_ = scan(lambda x, t=t: x == t or x.startswith(t + "/"))
+            print(CENSUS_FMT % ((t,) + tuple(n_[c] for c in COLUMNS)))
         return 0
     for p in argv:
         if not _resolves(p):
             sys.exit(f"error: unknown tree prefix: {p}")
     want = lambda t: any(t == p or t.startswith(p.rstrip("/") + "/") for p in argv)
-    md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, files, tdref, other, embed = scan(want)
-    line = ("md=%d lock=%d py=%d ec=%d ecrest=%d ecdirs=%d ecscan=%d hdr=%d files=%d tdref=%d other=%d embed=%d"
-            % (md, lock, py, ec, ecrest, ecdirs, ecscan, hdr, len(files), tdref, other, embed))
+    n_ = scan(want)
+    line = LINE_FMT % tuple(n_[c] for c in COLUMNS)
     print(line)
     if expect is not None and line != expect.strip():
         print("expected: " + expect.strip())
