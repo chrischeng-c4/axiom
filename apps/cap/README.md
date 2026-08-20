@@ -28,120 +28,156 @@ Test gate: `cargo test -p cap` passed
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 Nothing reads the tables below. The capability gate that validated their
 shape was deleted with the `aw` binary, so the shape is convention now and
 the commands named in each row are the only part that runs.
 
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Agent Hook Installation | - | implemented | verified | smoke | ready | `cargo test -p cap hook_install` |
-| Standard Agent CLI Operations | #477 | implemented | verified | smoke | ready | `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands` |
-| Command Lease Throttling | - | implemented | verified | smoke | ready | `cargo test -p cap throttle` |
-| Daemon Lifecycle and Status | - | implemented | verified | smoke | ready | `cargo test -p cap daemon` |
-| Config, Logging, and Reap Policy | - | implemented | verified | smoke | ready | `cargo test -p cap config eventlog reap` |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Agent Hook Installation | - | `cargo test -p cap --test behavior_cap_agent_hook_installation` |
+| Standard Agent CLI Operations | #477 | `cargo test -p cap --test behavior_cap_standard_agent_cli_operations` |
+| Command Lease Throttling | - | `cargo test -p cap --test behavior_cap_command_lease_throttling` |
+| Daemon Lifecycle and Status | - | `cargo test -p cap --test behavior_cap_daemon_lifecycle_and_status` |
+| Config, Logging, and Reap Policy | - | `cargo test -p cap --test behavior_cap_config_logging_and_reap_policy` |
 
 ### Agent Hook Installation
 
-ID: agent-hook-installation
-Type: AgentFirst
-Surfaces: CLI: `cap on` + `cap off` + `cap status` + `cap hook` + `cap run '<command string>'` - Global agent-hook lifecycle, status, and adapter routing.; AgentHook: `Claude Code PreToolUse` + `Codex CLI PreToolUse` + `AGY PreToolUse` - Global snippets preserve unrelated user config; Claude/Codex rewrite Bash through cap and AGY applies the destructive-command guard to `run_command`.
-EC Dimensions: behavior: `cap` - global three-agent hook installation, command-string rewrite adapters, destructive-command guard, recursion prevention, and fail-open routing behavior
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-`cap on` installs and `cap off` removes global PreToolUse hook snippets for Claude Code, Codex CLI, and AGY, preserving unrelated user configuration. Claude/Codex route Bash through cap; AGY applies the destructive-command guard to `run_command`. Agent hooks deny destructive commands they cannot prove stay inside the current Git workspace; `cap status` reports global hook state alongside daemon capacity.
-Gate Inventory:
-- `cargo test -p cap hook_install`; `cargo test -p cap hook`
+`cap on` installs and `cap off` removes global PreToolUse hook snippets for
+Claude Code, Codex CLI, and AGY, preserving unrelated user configuration.
+Claude/Codex route Bash through cap; AGY applies the destructive-command guard
+to `run_command`. Agent hooks deny destructive commands they cannot prove stay
+inside the current Git workspace; `cap status` reports global hook state
+alongside daemon capacity.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Claude, Codex, and AGY hook installation | epic | - | implemented | verified | smoke | `cargo test -p cap hook_install` |
-| Hook payload rewrite adapters | epic | - | implemented | verified | smoke | `cargo test -p cap hook` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `cap on` + `cap off` + `cap status` + `cap hook` +
+  `cap run '<command string>'` - Global agent-hook lifecycle, status, and
+  adapter routing.; AgentHook: `Claude Code PreToolUse` +
+  `Codex CLI PreToolUse` + `AGY PreToolUse` - Global snippets preserve
+  unrelated user config; Claude/Codex rewrite Bash through cap and AGY applies
+  the destructive-command guard to `run_command`.
+- Gate — behavior: `cap` - global three-agent hook installation, command-string
+  rewrite adapters, destructive-command guard, recursion prevention, and
+  fail-open routing behavior
+- Gate: `cargo test -p cap --test behavior_cap_agent_hook_installation`
+- Gate: `cargo test -p cap --test behavior_cap_agent_hook_installation`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Claude, Codex, and AGY hook installation | epic | - | `cargo test -p cap --test behavior_cap_agent_hook_installation` |
+| Hook payload rewrite adapters | epic | - | `cargo test -p cap --test behavior_cap_hook_payload_rewrite_adapters` |
 
 ### Standard Agent CLI Operations
 
-ID: standard-agent-cli-operations
-Type: RuntimeTool
-Surfaces: CLI: `cap llm` + `cap upgrade` + `cap issue search/view/create` + `cap report-issue` - Repo-wide agent-facing self-documentation, self-update, and diagnostics-rich issue filing through `cli-std`; `report-issue` is a deprecated compatibility alias for older issue text.
-EC Dimensions: behavior: `cap` - standard CLI command registration, offline LLM docs, release upgrade routing, and project-scoped issue diagnostics
-Root WI: #477
-Status: verified
-Required Verification: smoke
-Promise:
 Cap exposes the repo-wide standard agent commands through the shared `cli-std`
 implementation: `llm` for offline guidance, `upgrade` for cap release updates,
 and `issue` for tracker search/view/create with `app:cap` diagnostics.
-Gate Inventory:
-- `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands`; `cargo build -p cap --features release`
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Shared standard CLI commands | change | #477 | implemented | verified | smoke | `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands` |
+- Root WI: #477
+- Surfaces: CLI: `cap llm` + `cap upgrade` + `cap issue search/view/create` +
+  `cap report-issue` - Repo-wide agent-facing self-documentation, self-update,
+  and diagnostics-rich issue filing through `cli-std`; `report-issue` is a
+  deprecated compatibility alias for older issue text.
+- Gate — behavior: `cap` - standard CLI command registration, offline LLM docs,
+  release upgrade routing, and project-scoped issue diagnostics
+- Gate: `cargo test -p cap --test behavior_cap_standard_agent_cli_operations`
+- Gate: `cargo test -p cap --test behavior_cap_standard_agent_cli_operations`
+- Gate: `cargo build -p cap --features release`
+- Evidence: `cargo test -p cap --test behavior_cap_standard_agent_cli_operations` 
+  `cargo test -p cap --test behavior_cap_standard_agent_cli_operations`
 
 ### Command Lease Throttling
 
-ID: command-lease-throttling
-Type: RuntimeTool
-Surfaces: CLI: `cap run '<command string>'` + `cap run -- <argv...>` + `cap <passthrough...>` + `cap run --timeout <secs>` + `cap run --idle-timeout <secs>` + `cap wait` - Command wrapping, explicit argv mode, passthrough wrapping, per-invocation wall-clock/idle timeout overrides, and headroom wait entrypoints for agent-launched local commands.
-EC Dimensions: behavior: `cap` - command wrapping, shell-string fallback, lease admission, pause/resume/kill outcomes, absolute and idle wall-clock timeouts, and structured run envelopes; efficiency: `cap` - same-name command replacement decisions and resource gates over CPU time and peak RSS; stability: `cap` - memory and CPU pressure backpressure, and independent wall-clock/idle-progress timeouts, that prevent agent-launched local commands from exhausting the host or hanging silently
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-`cap run` wraps local commands in daemon leases, applies memory-pressure backpressure, and emits structured outcomes when a command must wait, pause, resume, or be killed. Independently of memory/CPU pressure, `--timeout <secs>` kills a lease once its wall-clock run time (excluding time spent `Paused`) exceeds the budget, and `--idle-timeout <secs>` kills a lease that makes no CPU progress for that many seconds (also excluding `Paused` time). Both flags default to the daemon's `default_timeout_secs`/`default_idle_timeout_secs` config (0 = disabled) when omitted, and an explicit `0` disables the trigger for that invocation regardless of the config default. Both triggers reuse the existing SIGTERM-grace/SIGKILL escalation and `KillEnvelope` reporting — no new kill mechanism — surfaced as the `AbsoluteTimeout`/`IdleTimeout` classifications with `RaiseTimeoutOrSplit`/`InvestigateHang` actions.
-Gate Inventory:
-- `cargo test -p cap throttle`; `cargo test -p cap sampler`; `cargo test -p cap protocol`; `cargo test -p cap cli`; `cargo test -p cap command_planner`
+`cap run` wraps local commands in daemon leases, applies memory-pressure
+backpressure, and emits structured outcomes when a command must wait, pause,
+resume, or be killed. Independently of memory/CPU pressure, `--timeout <secs>`
+kills a lease once its wall-clock run time (excluding time spent `Paused`)
+exceeds the budget, and `--idle-timeout <secs>` kills a lease that makes no CPU
+progress for that many seconds (also excluding `Paused` time). Both flags
+default to the daemon's `default_timeout_secs`/`default_idle_timeout_secs`
+config (0 = disabled) when omitted, and an explicit `0` disables the trigger
+for that invocation regardless of the config default. Both triggers reuse the
+existing SIGTERM-grace/SIGKILL escalation and `KillEnvelope` reporting — no new
+kill mechanism — surfaced as the `AbsoluteTimeout`/`IdleTimeout`
+classifications with `RaiseTimeoutOrSplit`/`InvestigateHang` actions.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Lease admission and process supervision | epic | - | implemented | verified | smoke | `cargo test -p cap throttle` |
-| Memory and CPU pressure sampling | epic | - | implemented | verified | smoke | `cargo test -p cap sampler` |
-| Absolute and idle wall-clock timeouts | epic | #1323 | implemented | verified | smoke | `cargo test -p cap throttle` |
-| Command planner cd-prefix native recognition | change | #1378 | implemented | verified | smoke | `cargo test -p cap command_planner` |
-| Command planner grep flag native recognition | change | #1392 | implemented | verified | smoke | `cargo test -p cap command_planner` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `cap run '<command string>'` + `cap run -- <argv...>` +
+  `cap <passthrough...>` + `cap run --timeout <secs>` +
+  `cap run --idle-timeout <secs>` + `cap wait` - Command wrapping, explicit
+  argv mode, passthrough wrapping, per-invocation wall-clock/idle timeout
+  overrides, and headroom wait entrypoints for agent-launched local commands.
+- Gate — behavior: `cap` - command wrapping, shell-string fallback, lease
+  admission, pause/resume/kill outcomes, absolute and idle wall-clock timeouts,
+  and structured run envelopes
+- Gate — efficiency: `cap` - same-name command replacement decisions and
+  resource gates over CPU time and peak RSS
+- Gate — stability: `cap` - memory and CPU pressure backpressure, and
+  independent wall-clock/idle-progress timeouts, that prevent agent-launched
+  local commands from exhausting the host or hanging silently
+- Gate: `cargo test -p cap --test behavior_cap_command_lease_throttling`
+- Gate: `cargo test -p cap --test behavior_cap_command_lease_throttling`
+- Gate: `cargo test -p cap --test behavior_cap_command_lease_throttling`
+- Gate: `cargo test -p cap --test behavior_cap_command_lease_throttling`
+- Gate: `cargo test -p cap --test behavior_cap_command_lease_throttling`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Lease admission and process supervision | epic | - | `cargo test -p cap --lib` |
+| Memory and CPU pressure sampling | epic | - | `cargo test -p cap --test behavior_cap_memory_and_cpu_pressure_sampling` |
+| Absolute and idle wall-clock timeouts | epic | #1323 | `cargo test -p cap --lib` |
+| Command planner cd-prefix native recognition | change | #1378 | `cargo test -p cap --lib` |
+| Command planner grep flag native recognition | change | #1392 | `cargo test -p cap --lib` |
 
 ### Daemon Lifecycle and Status
 
-ID: daemon-lifecycle-and-status
-Type: RuntimeTool
-Surfaces: CLI: `cap daemon` + `cap status` + `cap ps` + `cap ping` + `cap wait` - Daemon lifecycle, lease/pressure status, liveness probe, and wait-for-headroom entrypoints.
-EC Dimensions: behavior: `cap` - daemon lifecycle, lease status, liveness, process group isolation, and wait command behavior; stability: `cap` - fail-open command path, bounded wait behavior, process-group lease isolation, and daemon liveness recovery
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-The cap daemon can start, stop, report status, answer liveness probes, and keep command leases isolated by process group without becoming a hard dependency for agent commands.
-Gate Inventory:
-- `cargo test -p cap daemon`; `cargo test -p cap cli`
+The cap daemon can start, stop, report status, answer liveness probes, and keep
+command leases isolated by process group without becoming a hard dependency for
+agent commands.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Daemon process lifecycle | epic | - | implemented | verified | smoke | `cargo test -p cap daemon` |
-| CLI status and wait surfaces | epic | - | implemented | verified | smoke | `cargo test -p cap cli` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `cap daemon` + `cap status` + `cap ps` + `cap ping` +
+  `cap wait` - Daemon lifecycle, lease/pressure status, liveness probe, and
+  wait-for-headroom entrypoints.
+- Gate — behavior: `cap` - daemon lifecycle, lease status, liveness, process
+  group isolation, and wait command behavior
+- Gate — stability: `cap` - fail-open command path, bounded wait behavior,
+  process-group lease isolation, and daemon liveness recovery
+- Gate: `cargo test -p cap --test behavior_cap_daemon_lifecycle_and_status`
+- Gate: `cargo test -p cap --test behavior_cap_daemon_lifecycle_and_status`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Daemon process lifecycle | epic | - | `cargo test -p cap --test behavior_cap_daemon_lifecycle_and_status` |
+| CLI status and wait surfaces | epic | - | `cargo test -p cap --test behavior_cap_cli_status_and_wait_surfaces` |
 
 ### Config, Logging, and Reap Policy
 
-ID: config-logging-and-reap-policy
-Type: RuntimeTool
-Surfaces: CLI: `cap config` + `cap status` - Local configuration and status surfaces for inspecting runtime pressure, leases, and cap policy state.; Config: `~/.cap/config.toml` + `JSONL run log` - Durable local configuration, run-log persistence, and bounded reap allowlist policy artifacts.
-EC Dimensions: behavior: `cap` - configuration defaults/compatibility, JSONL run-log persistence, and reap allowlist policy behavior; stability: `cap` - bounded auto-reap policy and persistent logs/config that keep restart and pressure decisions auditable
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-Cap exposes durable local configuration, JSONL run logging, and a bounded reap policy for auto-restarting tool processes under kill-floor pressure.
-Gate Inventory:
-- `cargo test -p cap config`; `cargo test -p cap eventlog`; `cargo test -p cap reap`
+Cap exposes durable local configuration, JSONL run logging, and a bounded reap
+policy for auto-restarting tool processes under kill-floor pressure.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Configuration defaults and compatibility | epic | - | implemented | verified | smoke | `cargo test -p cap config` |
-| Run-log persistence | epic | - | implemented | verified | smoke | `cargo test -p cap eventlog` |
-| Reap allowlist policy | epic | - | implemented | verified | smoke | `cargo test -p cap reap` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `cap config` + `cap status` - Local configuration and status
+  surfaces for inspecting runtime pressure, leases, and cap policy state.;
+  Config: `~/.cap/config.toml` + `JSONL run log` - Durable local configuration,
+  run-log persistence, and bounded reap allowlist policy artifacts.
+- Gate — behavior: `cap` - configuration defaults/compatibility, JSONL run-log
+  persistence, and reap allowlist policy behavior
+- Gate — stability: `cap` - bounded auto-reap policy and persistent logs/config
+  that keep restart and pressure decisions auditable
+- Gate: `cargo test -p cap --test behavior_cap_config_logging_and_reap_policy`
+- Gate: `cargo test -p cap --test behavior_cap_config_logging_and_reap_policy`
+- Gate: `cargo test -p cap --test behavior_cap_config_logging_and_reap_policy`
 
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Configuration defaults and compatibility | epic | - | `cargo test -p cap --test behavior_cap_config_logging_and_reap_policy` |
+| Run-log persistence | epic | - | `cargo test -p cap --test behavior_cap_run_log_persistence` |
+| Reap allowlist policy | epic | - | `cargo test -p cap --test behavior_cap_reap_allowlist_policy` |
 
 ## Why
 

@@ -27,26 +27,24 @@ domain-specific status remain owned by the service.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Shared Kubernetes Operator Scaffold | - | implemented | verified | smoke | ready | controller, lease, render, resize, and service traits |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Shared Kubernetes Operator Scaffold | - | controller, lease, render, resize, and service traits |
 
 ### Shared Kubernetes Operator Scaffold
 
-ID: shared-kubernetes-operator-scaffold
-Type: DeveloperTool
-Root WI: -
-Status: verified
-Surfaces: Rust API: `service_k8s` controller, lease, render, resize, and service modules.
-EC Dimensions: behavior: `cargo test -p service-k8s` - operator scaffold contract coverage
-Required Verification: smoke
-Promise:
 Kubernetes-native services can supply their CRD and render model and reuse the
 same controller and HA scaffolding.
-Gate Inventory: `cargo test -p service-k8s`; libs/service-k8s/src/lib.rs
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| shared-kubernetes-operator-scaffold-contract | epic | - | implemented | verified | smoke | `cargo test -p service-k8s`; libs/service-k8s/src/lib.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API: `service_k8s` controller, lease, render, resize, and
+  service modules.
+- Gate — behavior: `cargo test -p service-k8s` - operator scaffold contract
+  coverage
+- Gate: `cargo test -p service-k8s`
+- Source: `libs/service-k8s/src/lib.rs`
+- Evidence: `cargo test -p service-k8s`; libs/service-k8s/src/lib.rs

@@ -92,41 +92,42 @@ machine-readable stdout report is the primary agent contract for each run.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 Nothing reads the tables below. The capability gate that validated their
 shape was deleted with the `aw` binary, so the shape is convention now and
 the commands named in each row are the only part that runs.
 
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Runtime Resource Attribution | #3 | implemented | verified | smoke | ready | measure/profile, phase boundary cost, benchmark regression |
-| Agent Use First CLI | - | implemented | verified | smoke | ready | JSON-default CLI and offline LLM/spec contract |
-| Legacy Carried Internals | #3 | retired | verified | smoke | retired | Old qc-era modules retained for compatibility, not public meter capability |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Runtime Resource Attribution | #3 | measure/profile, phase boundary cost, benchmark regression |
+| Agent Use First CLI | - | JSON-default CLI and offline LLM/spec contract |
+| Legacy Carried Internals | #3 | Old qc-era modules retained for compatibility, not public meter capability |
 
 ### Runtime Resource Attribution
 
-ID: runtime-resource-attribution
-Type: DeveloperTool
-Surfaces: CLI: `meter measure <target>` + `meter measure --bin/--example/--bench/--exec <target>` + `meter profile --phases <file>` + `meter profile <source-target>` + `meter bench --target <crate> --baseline <file>` - External measurement, embedded profiling, reserved source profiling, and benchmark regression folding entrypoints.
-EC Dimensions: efficiency: `meter` - cpu/wall/RSS vitals, optional stack samples, embedded phase/boundary cost, and benchmark regression findings
-Root WI: #3
-Status: verified
-Required Verification: smoke
-Promise:
-meter emits ranked runtime/resource findings so an agent can identify where time goes and catch benchmark regressions outside ordinary unit tests.
-Gate Inventory:
-- `cargo run -p meter-cli --bin meter -- measure --exec /bin/ls --compact`; `cargo run -p meter-cli --bin meter -- profile --phases apps/meter/tests/fixtures/profile_phase_breakdown.json`; `cargo test -p meter performance::profiler`; `cargo test -p meter benchmark::`
+meter emits ranked runtime/resource findings so an agent can identify where
+time goes and catch benchmark regressions outside ordinary unit tests.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Profile phase boundary-cost report | epic | - | implemented | verified | smoke | `cargo run -p meter-cli --bin meter -- profile --phases apps/meter/tests/fixtures/profile_phase_breakdown.json` |
-| Embedded profiler API | epic | - | implemented | verified | smoke | `cargo test -p meter performance::profiler` |
-| Benchmark regression API | epic | - | implemented | verified | smoke | `cargo test -p meter benchmark::` |
-| Capture vitals and measurement contract | change | #3 | implemented | verified | smoke | `cargo test -p meter capture::vitals` |
+- Root WI: #3
+- Surfaces: CLI: `meter measure <target>` +
+  `meter measure --bin/--example/--bench/--exec <target>` +
+  `meter profile --phases <file>` + `meter profile <source-target>` +
+  `meter bench --target <crate> --baseline <file>` - External measurement,
+  embedded profiling, reserved source profiling, and benchmark regression
+  folding entrypoints.
+- Gate — efficiency: `meter` - cpu/wall/RSS vitals, optional stack samples,
+  embedded phase/boundary cost, and benchmark regression findings
+- Gate:
+  `cargo run -p meter-cli --bin meter -- measure --exec /bin/ls --compact`
+- Gate:
+  `cargo run -p meter-cli --bin meter -- profile --phases apps/meter/tests/fixtures/profile_phase_breakdown.json`
+- Gate: `cargo test -p meter --lib`
+- Gate: `cargo test -p meter --lib`
 
 Shipped behavior:
-
 - `meter measure <target>|--bin|--example|--bench|--exec <target>` measures an
   external executable or cargo target: level `vitals` (default) emits
   `Finding{kind:vital}`
@@ -144,36 +145,37 @@ Shipped behavior:
   into `Finding{kind:regression}` and exits 2 for medium-or-worse regressions.
 - Embedded APIs provide phase timing, boundary tracing, benchmark stats, and
   baseline comparison for code that can already emit measurement data.
-
 Known limits:
-
 - IO, disk, GPU, network, and leak detection are not public signals yet.
 - Source auto-discovery/probe injection is not wired; `profile` currently needs
   embedded phase data.
 
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Profile phase boundary-cost report | epic | - | `cargo run -p meter-cli --bin meter -- profile --phases apps/meter/tests/fixtures/profile_phase_breakdown.json` |
+| Embedded profiler API | epic | - | `cargo test -p meter --test performance_meter_embedded_profiler_api` |
+| Benchmark regression API | epic | - | `cargo test -p meter --test performance_meter_benchmark_regression_api` |
+| Capture vitals and measurement contract | change | #3 | `cargo test -p meter --test performance_meter_capture_vitals_and_measurement_contract` |
+
 ### Agent Use First CLI
 
-ID: agent-use-first-cli
-Type: DeveloperTool
-Surfaces: CLI: `meter test` + `meter run` + `meter report` + `meter state` + `meter spec --json-schema` + `meter spec --catalog` + `meter llm guide` + `meter llm recipes` - JSON-default delegated run, report/state reprojection, offline spec/catalog, and agent usage documentation entrypoints.
-EC Dimensions: behavior: `meter` - deterministic meter.report/1 JSON, findings/invoke fields, offline schema/catalog, LLM guide, and delegated runner exit semantics
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-meter's default CLI output is deterministic JSON with machine-readable findings, next actions, environment, completion, and delegated-run exit semantics for agents.
-Gate Inventory:
-- `cargo run -p meter-cli --bin meter -- spec --json-schema --compact`; `cargo run -p meter-cli --bin meter -- spec --catalog --compact`; `cargo test -p meter report::`
+meter's default CLI output is deterministic JSON with machine-readable
+findings, next actions, environment, completion, and delegated-run exit
+semantics for agents.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| JSON-default report envelope and findings | epic | - | implemented | verified | smoke | `cargo test -p meter report::` |
-| Offline schema and catalog self-description | epic | - | implemented | verified | smoke | `cargo run -p meter-cli --bin meter -- spec --catalog --compact` |
-| Delegated runner exit-code contract | epic | - | implemented | verified | smoke | `cargo test -p meter report::builder::tests::forward_exit_overrides_natural_code` |
-| LLM usage guide | epic | - | implemented | verified | smoke | `cargo run -p meter-cli --bin meter -- llm guide` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `meter test` + `meter run` + `meter report` + `meter state` +
+  `meter spec --json-schema` + `meter spec --catalog` + `meter llm guide` +
+  `meter llm recipes` - JSON-default delegated run, report/state reprojection,
+  offline spec/catalog, and agent usage documentation entrypoints.
+- Gate — behavior: `meter` - deterministic meter.report/1 JSON, findings/invoke
+  fields, offline schema/catalog, LLM guide, and delegated runner exit
+  semantics
+- Gate: `cargo run -p meter-cli --bin meter -- spec --json-schema --compact`
+- Gate: `cargo run -p meter-cli --bin meter -- spec --catalog --compact`
+- Gate: `cargo test -p meter --lib`
 
 Shipped behavior:
-
 - JSON is the default stdout for populator verbs.
 - Diagnostics and `--human` summaries go to stderr.
 - `schema_version` is `meter.report/1`.
@@ -185,28 +187,31 @@ Shipped behavior:
 - `meter run` delegates test by default and folds opt-in bench/profile findings
   into one worst-wins report.
 
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| JSON-default report envelope and findings | epic | - | `cargo test -p meter --test behavior_meter_json_default_report_envelope_and_findings` |
+| Offline schema and catalog self-description | epic | - | `cargo run -p meter-cli --bin meter -- spec --catalog --compact` |
+| Delegated runner exit-code contract | epic | - | `cargo test -p meter --test behavior_meter_delegated_runner_exit_code_contract` |
+| LLM usage guide | epic | - | `cargo run -p meter-cli --bin meter -- llm guide` |
+
 ### Legacy Carried Internals
 
-ID: legacy-carried-internals
-Root WI: #3
-Status: retired
-Required Verification: smoke
-Promise:
-meter retains old qc-era modules only so dependent crates and tests continue to build while the public meter surface narrows.
-Gate Inventory:
-- `cargo test -p meter`
+meter retains old qc-era modules only so dependent crates and tests continue to
+build while the public meter surface narrows.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Cargo audit advisory detection | epic | - | out_of_scope | verified | smoke | `cargo test -p meter --test audit_trust_bug` |
-| Seeded fuzz and injection finding generation | epic | - | out_of_scope | verified | smoke | `cargo test -p meter security::` |
-| Agent-eval and legacy reporter internals | epic | - | out_of_scope | verified | smoke | `cargo test -p meter` |
-| Stress residue prune | change | #3 | implemented | verified | smoke | `cargo test -p meter` |
+- Root WI: #3
+- Gate: `cargo test -p meter`
 
 These modules are intentionally not listed in `meter --help`, `meter spec
 --catalog`, or `meter llm recipes`. They are compatibility code until a later
 prune or separate product decision.
 
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Cargo audit advisory detection | epic | - | `cargo test -p meter --test audit_trust_bug` |
+| Seeded fuzz and injection finding generation | epic | - | `cargo test -p meter --lib` |
+| Agent-eval and legacy reporter internals | epic | - | `cargo test -p meter` |
+| Stress residue prune | change | #3 | `cargo test -p meter` |
 
 ## CLI
 

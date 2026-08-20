@@ -10,30 +10,27 @@ Service routes and operational endpoint policy remain in `service-http`.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Shared HTTP Runtime | #1776 | implemented | passing | conformance | ready | sole listener owner over server-tcp and per-connection h2c |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Shared HTTP Runtime | #1776 | sole listener owner over server-tcp and per-connection h2c |
 
 ### Shared HTTP Runtime
 
-ID: shared-http-runtime
-Type: DeveloperTool
-Root WI: 1776
-Status: verified
-Surfaces: Rust API: `server_http`.
-EC Dimensions: behavior: `cargo test -p server-http -p server-tcp -p transport-h2c` - listener ownership, admission metrics, h2c, and drain coverage
-Required Verification: conformance
-Promise:
 HTTP services and development tools can serve HTTP/1.1 and h2c through one
 listener runtime that uses the same admission, supervision, readiness, and
 shutdown contract as raw TCP services. `transport-h2c` never owns a listener;
 `service-http` never owns lifecycle state.
-Gate Inventory: `cargo test -p server-http -p server-tcp -p transport-h2c`; libs/server-http/src/lib.rs
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| shared-http-runtime-lifecycle-convergence | change | #1776 | implemented | passing | conformance | `cargo test -p server-http -p server-tcp -p transport-h2c` |
+- Root WI: #1776
+- Surfaces: Rust API: `server_http`.
+- Gate — behavior: `cargo test -p server-http -p server-tcp -p transport-h2c` -
+  listener ownership, admission metrics, h2c, and drain coverage
+- Gate: `cargo test -p server-http -p server-tcp -p transport-h2c`
+- Source: `libs/server-http/src/lib.rs`
 
 <!-- HANDWRITE-END -->
+- Evidence: `cargo test -p server-http -p server-tcp -p transport-h2c`

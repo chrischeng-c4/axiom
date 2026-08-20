@@ -71,104 +71,141 @@ Explicit non-goals: AST ownership, env isolation, e2e orchestration, profiling, 
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 Nothing reads the tables below. The capability gate that validated their
 shape was deleted with the `aw` binary, so the shape is convention now and
 the commands named in each row are the only part that runs.
 
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Static Security Scan | - | implemented | verified | smoke | ready | compass-backed security diagnostics normalized into `guard.report/1` |
-| Security Policy Profile | - | implemented | verified | smoke | ready | `guard-baseline-static/1`, `guard-security-lint/1`, and `guard-strict/1` map security diagnostics/lint into policy findings |
-| Lifecycle Security Report | #2930 | implemented | pending | smoke | candidate | `guard.report/1` is a fail-closed, machine-readable security metric for lifecycle consumers |
-| Dynamic Security Evidence | - | implemented | verified | smoke | ready | vat/rig/meter evidence adapters run and fold into `guard.report/1`; arena is legacy optional |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Static Security Scan | - | compass-backed security diagnostics normalized into `guard.report/1` |
+| Security Policy Profile | - | `guard-baseline-static/1`, `guard-security-lint/1`, and `guard-strict/1` map security diagnostics/lint into policy findings |
+| Lifecycle Security Report | #2930 | `guard.report/1` is a fail-closed, machine-readable security metric for lifecycle consumers |
+| Dynamic Security Evidence | - | vat/rig/meter evidence adapters run and fold into `guard.report/1`; arena is legacy optional |
 
 ### Static Security Scan
 
-ID: static-security-scan
-Type: SecurityTool
-Surfaces: CLI: `guard scan [path]` + `guard report` + `guard spec` + `guard llm` - Security scan, report reprojection, offline spec, and agent playbook entrypoints.
-EC Dimensions: behavior: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-scan-command-report-projection` - public scan projection; security: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-compass-backed-diagnostic-scan` - compass-backed findings; stability: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-static-finding-normalization` - deterministic normalization
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-guard scans source/config files with compass and emits a deterministic `guard.report/1` security findings envelope.
-Gate Inventory:
-- `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`; `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo run -p guard --bin guard -- scan apps/guard --compact`
+guard scans source/config files with compass and emits a deterministic
+`guard.report/1` security findings envelope.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Compass-backed diagnostic scan | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard scan::tests::detects_javascript_eval_as_security_finding` |
-| JSON report envelope | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo run -p guard --bin guard -- scan apps/guard --compact` |
-| Scan command report projection | change | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-scan-command-report-projection` |
-| Stable static finding normalization | change | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-static-finding-normalization` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `guard scan [path]` + `guard report` + `guard spec` +
+  `guard llm` - Security scan, report reprojection, offline spec, and agent
+  playbook entrypoints.
+- Gate — behavior:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-scan-command-report-projection`
+  - public scan projection
+- Gate — security:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-compass-backed-diagnostic-scan`
+  - compass-backed findings
+- Gate — stability:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-static-finding-normalization`
+  - deterministic normalization
+- Gate:
+  `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`
+- Gate:
+  `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo run -p guard --bin guard -- scan apps/guard --compact`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Compass-backed diagnostic scan | epic | - | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard --lib` |
+| JSON report envelope | epic | - | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo run -p guard --bin guard -- scan apps/guard --compact` |
+| Scan command report projection | change | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-scan-command-report-projection` |
+| Stable static finding normalization | change | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-static-finding-normalization` |
 
 ### Security Policy Profile
 
-ID: security-policy-profile
-Type: SecurityTool
-Surfaces: CLI: `guard scan --profile baseline-static` + `guard scan --profile security-lint` + `guard scan --profile strict` - Policy profile selection for baseline static, security lint, and strict security severity normalization.
-EC Dimensions: behavior: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-standalone-cli-distribution` - independently built public CLI surface; security: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-security-lint-policy` - policy findings; stability: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-policy-selection` - repeatable policy selection
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-guard maps compass security diagnostics and security-impacting lint into policy severities, remediation, locations, and agent prompts.
-Gate Inventory:
-- `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`; `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo build -p guard --bin guard`
+guard maps compass security diagnostics and security-impacting lint into policy
+severities, remediation, locations, and agent prompts.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Baseline static policy | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard detects_javascript_eval_as_security_finding` |
-| Security lint policy | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -- --nocapture` |
-| Standalone CLI distribution | epic | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-standalone-cli-distribution` |
-| Stable policy selection | change | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-policy-selection` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `guard scan --profile baseline-static` +
+  `guard scan --profile security-lint` + `guard scan --profile strict` - Policy
+  profile selection for baseline static, security lint, and strict security
+  severity normalization.
+- Gate — behavior:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-standalone-cli-distribution`
+  - independently built public CLI surface
+- Gate — security:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-security-lint-policy`
+  - policy findings
+- Gate — stability:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-policy-selection`
+  - repeatable policy selection
+- Gate:
+  `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`
+- Gate:
+  `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo build -p guard --bin guard`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Baseline static policy | epic | - | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard --lib` |
+| Security lint policy | epic | - | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -- --nocapture` |
+| Standalone CLI distribution | epic | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-standalone-cli-distribution` |
+| Stable policy selection | change | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-policy-selection` |
 
 ### Lifecycle Security Report
 
-ID: security-ec-profile
-Type: SecurityTool
-Surfaces: CLI: `guard scan --profile security-lint --compact --no-persist` - lifecycle-consumable security evidence.
-EC Dimensions: behavior: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-security-report-consumer-contract` - consumer decision surface; security: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command` - fail-closed evidence; stability: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-security-metric-projection` - stable health projection
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-Guard emits a fail-closed `guard.report/1` decision that lifecycle consumers can ingest without importing Guard internals. Consumer integration is owned and verified by the consuming product.
-Gate Inventory:
-- `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command`
+Guard emits a fail-closed `guard.report/1` decision that lifecycle consumers
+can ingest without importing Guard internals. Consumer integration is owned and
+verified by the consuming product.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Lifecycle security metric | change | #2931 | implemented | pending | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-lifecycle-security-metric` |
-| EC security evidence command | epic | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command` |
-| Security report consumer contract | change | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-security-report-consumer-contract` |
-| Stable security metric projection | change | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-security-metric-projection` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `guard scan --profile security-lint --compact --no-persist` -
+  lifecycle-consumable security evidence.
+- Gate — behavior:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-security-report-consumer-contract`
+  - consumer decision surface
+- Gate — security:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command`
+  - fail-closed evidence
+- Gate — stability:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-security-metric-projection`
+  - stable health projection
+- Gate:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Lifecycle security metric | change | #2931 | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-lifecycle-security-metric` |
+| EC security evidence command | epic | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command` |
+| Security report consumer contract | change | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-security-report-consumer-contract` |
+| Stable security metric projection | change | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-security-metric-projection` |
 
 ### Dynamic Security Evidence
 
-ID: dynamic-security-evidence
-Type: SecurityTool
-Surfaces: CLI: `guard scan --vat-runner <id> --vat-command <cmd> --rig-dir <path> --rig-scenario <path> --rig-command <cmd> --meter-target <path> --meter-command <cmd> --arena-spec <path> --arena-command <cmd>` - Dynamic security evidence adapters for isolated execution, exploit/e2e journeys, resource-abuse signals, and the legacy Arena compatibility surface.
-EC Dimensions: behavior: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-dynamic-adapter-routing` - exact routing and evidence folding for all nine public adapter flags; security: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command` - fail-closed composed evidence; stability: `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-evidence-folding` - repeatable folded evidence
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-guard will compose static findings with vat-isolated execution, rig attack journeys, and meter resource evidence. Legacy arena evidence can still be passed through compatibility flags, but it is not required for production readiness.
-Gate Inventory:
-- `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command`
+guard will compose static findings with vat-isolated execution, rig attack
+journeys, and meter resource evidence. Legacy arena evidence can still be
+passed through compatibility flags, but it is not required for production
+readiness.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Vat isolated security runner | epic | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-vat-isolated-security-runner` |
-| Rig exploit journey bridge | epic | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-rig-exploit-journey-bridge` |
-| Meter DoS/resource evidence bridge | epic | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-meter-dos-resource-evidence-bridge` |
-| Dynamic adapter routing | change | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-dynamic-adapter-routing` |
-| Stable evidence folding | change | - | implemented | verified | smoke | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-evidence-folding` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI:
+  `guard scan --vat-runner <id> --vat-command <cmd> --rig-dir <path> --rig-scenario <path> --rig-command <cmd> --meter-target <path> --meter-command <cmd> --arena-spec <path> --arena-command <cmd>`
+  - Dynamic security evidence adapters for isolated execution, exploit/e2e
+  journeys, resource-abuse signals, and the legacy Arena compatibility surface.
+- Gate — behavior:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-dynamic-adapter-routing`
+  - exact routing and evidence folding for all nine public adapter flags
+- Gate — security:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command`
+  - fail-closed composed evidence
+- Gate — stability:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-evidence-folding`
+  - repeatable folded evidence
+- Gate:
+  `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command`
 
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Vat isolated security runner | epic | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-vat-isolated-security-runner` |
+| Rig exploit journey bridge | epic | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-rig-exploit-journey-bridge` |
+| Meter DoS/resource evidence bridge | epic | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-meter-dos-resource-evidence-bridge` |
+| Dynamic adapter routing | change | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-dynamic-adapter-routing` |
+| Stable evidence folding | change | - | `uv run --frozen --offline --project apps/guard/external-contracts python apps/guard/external-contracts/src/runner.py --case guard-stable-evidence-folding` |
 
 ## Build & test
 

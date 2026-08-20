@@ -8,26 +8,23 @@ the key scope encoded in the token.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Scoped Claim Tokens | - | implemented | verified | smoke | ready | signs and verifies scoped HMAC claim tokens |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Scoped Claim Tokens | - | signs and verifies scoped HMAC claim tokens |
 
 ### Scoped Claim Tokens
 
-ID: scoped-claim-tokens
-Type: DeveloperTool
-Root WI: -
-Status: verified
-Surfaces: Rust API: `claim_token` signing and verification primitives.
-EC Dimensions: behavior: `cargo test -p claim-token` - token signing, verification, and scope rejection coverage
-Required Verification: smoke
-Promise:
 Services can issue and verify scoped HMAC claim tokens without sharing
 resource-wide credentials with workers.
-Gate Inventory: `cargo test -p claim-token`; libs/claim-token/src/lib.rs
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| scoped-claim-tokens-contract | epic | - | implemented | verified | smoke | `cargo test -p claim-token`; libs/claim-token/src/lib.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API: `claim_token` signing and verification primitives.
+- Gate — behavior: `cargo test -p claim-token` - token signing, verification,
+  and scope rejection coverage
+- Gate: `cargo test -p claim-token`
+- Source: `libs/claim-token/src/lib.rs`
+- Evidence: `cargo test -p claim-token`; libs/claim-token/src/lib.rs

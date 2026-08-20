@@ -14,43 +14,45 @@ serialization.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Classical ML Estimator Toolkit | - | implemented | passing | conformance | not_ready | default `ml` feature exposes scikit-learn-like estimators, transformers, metrics, and workflow utilities |
-| Deep Learning Tensor And Layer Toolkit | - | implemented | passing | conformance | not_ready | `full`/`dl` feature exposes tensor autograd, layers, optimizers, data loading, and model-weight serialization |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Classical ML Estimator Toolkit | - | default `ml` feature exposes scikit-learn-like estimators, transformers, metrics, and workflow utilities |
+| Deep Learning Tensor And Layer Toolkit | - | `full`/`dl` feature exposes tensor autograd, layers, optimizers, data loading, and model-weight serialization |
 
 ### Classical ML Estimator Toolkit
 
-ID: classical-ml-estimator-toolkit
-Type: DeveloperTool
-Surfaces: Rust API: `cclab_learn::ml`; Cargo feature: `ml`
-EC Dimensions: behavior: `cargo test -p cclab-learn`
-Root WI: -
-Status: confirmed
-Required Verification: conformance
-Promise:
-Cclab Learn provides a Rust-native scikit-learn-like ML API with shared estimator/transformer traits, classical supervised and unsupervised models, preprocessing and feature engineering helpers, metrics, dataset splitting, pipelines, cross-validation, and grid search.
-Gate Inventory: `cargo test -p cclab-learn`; crates/cclab-learn/src/ml/mod.rs; crates/cclab-learn/src/ml/traits.rs
+Cclab Learn provides a Rust-native scikit-learn-like ML API with shared
+estimator/transformer traits, classical supervised and unsupervised models,
+preprocessing and feature engineering helpers, metrics, dataset splitting,
+pipelines, cross-validation, and grid search.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Classical ML estimator and workflow contract | epic | - | implemented | passing | conformance | `cargo test -p cclab-learn`; crates/cclab-learn/src/ml/mod.rs; crates/cclab-learn/src/ml/traits.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API: `cclab_learn::ml`; Cargo feature: `ml`
+- Gate — behavior: `cargo test -p cclab-learn`
+- Gate: `cargo test -p cclab-learn`
+- Source: `crates/cclab-learn/src/ml/mod.rs`,
+  `crates/cclab-learn/src/ml/traits.rs`
+- Evidence: `cargo test -p cclab-learn`; crates/cclab-learn/src/ml/mod.rs;
+  crates/cclab-learn/src/ml/traits.rs
 
 ### Deep Learning Tensor And Layer Toolkit
 
-ID: deep-learning-tensor-and-layer-toolkit
-Type: DeveloperTool
-Surfaces: Rust API: `cclab_learn::dl`; Cargo features: `dl` / `full`
-EC Dimensions: behavior: `cargo test -p cclab-learn --features full`
-Root WI: -
-Status: confirmed
-Required Verification: conformance
-Promise:
-Cclab Learn provides a feature-gated Rust deep-learning toolkit with flat-data tensors, tape-based automatic differentiation, neural-network layers and activations, optimizers, recurrent and attention layers, dataloaders, and JSON/binary model-weight serialization.
-Gate Inventory: `cargo test -p cclab-learn --features full`; crates/cclab-learn/src/dl/mod.rs; crates/cclab-learn/src/dl/tensor.rs; crates/cclab-learn/src/dl/serialization.rs
+Cclab Learn provides a feature-gated Rust deep-learning toolkit with flat-data
+tensors, tape-based automatic differentiation, neural-network layers and
+activations, optimizers, recurrent and attention layers, dataloaders, and
+JSON/binary model-weight serialization.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Deep learning tensor and layer contract | epic | - | implemented | passing | conformance | `cargo test -p cclab-learn --features full`; crates/cclab-learn/src/dl/mod.rs; crates/cclab-learn/src/dl/tensor.rs; crates/cclab-learn/src/dl/serialization.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API: `cclab_learn::dl`; Cargo features: `dl` / `full`
+- Gate — behavior: `cargo test -p cclab-learn --features full`
+- Gate: `cargo test -p cclab-learn --features full`
+- Source: `crates/cclab-learn/src/dl/mod.rs`,
+  `crates/cclab-learn/src/dl/tensor.rs`,
+  `crates/cclab-learn/src/dl/serialization.rs`
+- Evidence: `cargo test -p cclab-learn --features full`;
+  crates/cclab-learn/src/dl/mod.rs; crates/cclab-learn/src/dl/tensor.rs;
+  crates/cclab-learn/src/dl/serialization.rs

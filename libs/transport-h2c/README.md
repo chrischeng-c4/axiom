@@ -9,27 +9,25 @@ task supervision, and drain belong to `server-http`/`server-tcp`.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| HTTP/2 Cleartext Client Helpers | - | implemented | verified | smoke | ready | single connection, pooled connection, and sizing heuristic |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| HTTP/2 Cleartext Client Helpers | - | single connection, pooled connection, and sizing heuristic |
 
 ### HTTP/2 Cleartext Client Helpers
 
-ID: http2-cleartext-client-helpers
-Type: DeveloperTool
-Root WI: -
-Status: verified
-Surfaces: Rust API: `transport_h2c` client, manager, and per-connection server helpers.
-EC Dimensions: behavior: `cargo test -p transport-h2c` - h2c client and pool behavior coverage
-Required Verification: smoke
-Promise:
 Services can reuse one tested h2c transport helper instead of hand-rolling
 connection setup, pooling, concurrency sizing, or per-connection protocol
 negotiation. The crate never binds a listener.
-Gate Inventory: `cargo test -p transport-h2c`; libs/transport-h2c/src/lib.rs
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| http2-cleartext-client-helpers-contract | epic | - | implemented | verified | smoke | `cargo test -p transport-h2c`; libs/transport-h2c/src/lib.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API: `transport_h2c` client, manager, and per-connection
+  server helpers.
+- Gate — behavior: `cargo test -p transport-h2c` - h2c client and pool behavior
+  coverage
+- Gate: `cargo test -p transport-h2c`
+- Source: `libs/transport-h2c/src/lib.rs`
+- Evidence: `cargo test -p transport-h2c`; libs/transport-h2c/src/lib.rs

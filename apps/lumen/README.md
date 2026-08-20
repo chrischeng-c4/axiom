@@ -48,6 +48,8 @@ authoritative when the two differ.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 Every capability belongs to exactly one of two feature roots:
 
 - **Core Features** define what Lumen fundamentally does: Indexing and
@@ -76,17 +78,17 @@ IDs one way.
 
 #### Indexing
 
-ID: `indexing`
+Build and maintain rebuildable indexes over caller-owned `external_id` values.
+The caller supplies source data, embeddings, and perceptual hashes; Lumen owns
+schema validation, lexical analysis, index mutation, segment/checkpoint
+persistence, and deterministic rebuild.
 
-Status: ready
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p lumen --test api_e2e --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e`
+- Gate: `cargo test -p lumen --test perf_gate --test perf_gate_vs_db`
+- Source: `apps/lumen/e2e/rig/cases`
 
-Promise: Build and maintain rebuildable indexes over caller-owned
-`external_id` values. The caller supplies source data, embeddings, and
-perceptual hashes; Lumen owns schema validation, lexical analysis, index
-mutation, segment/checkpoint persistence, and deterministic rebuild.
-
-Claims:
-
+Claims this capability makes:
 - `schema-and-index-lifecycle` — schemas and mutations are validated and
   applied consistently.
 - `derived-index-storage` — retained index state survives restart and can be
@@ -94,26 +96,19 @@ Claims:
 - `indexing-quality` — indexing meets the declared throughput, footprint, and
   long-running stability floors.
 
-Verification:
-
-- `cargo test -p lumen --test api_e2e --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e`
-- `cargo test -p lumen --test perf_gate --test perf_gate_vs_db`
-- `apps/lumen/e2e/rig/cases`
-
 #### Querying
 
-ID: `querying`
+Query Lumen indexes and return ranked or filtered caller-owned `external_id`
+values. Supported semantics include lexical BM25, exact and range filters,
+vector kNN, Hamming hash search, hybrid RRF, duplicates, nested/group/collapse
+behavior, pagination, sorting, and explicit read consistency.
 
-Status: ready
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p lumen --test api_e2e --test coverage_gaps_e2e`
+- Gate: `cargo test -p lumen --test vector_e2e --test hash_hamming --test hybrid_rrf --test collapse_nested`
+- Gate: `cargo test -p lumen --test perf_gate --test perf_gate_vs_db`
 
-Promise: Query Lumen indexes and return ranked or filtered caller-owned
-`external_id` values. Supported semantics include lexical BM25, exact and
-range filters, vector kNN, Hamming hash search, hybrid RRF, duplicates,
-nested/group/collapse behavior, pagination, sorting, and explicit read
-consistency.
-
-Claims:
-
+Claims this capability makes:
 - `lexical-and-structured-query` — lexical, exact, range, pagination, and sort
   behavior is deterministic.
 - `semantic-and-similarity-query` — vector, hash, hybrid, duplicate, and nested
@@ -121,51 +116,43 @@ Claims:
 - `query-quality` — unsafe shapes are rejected and query latency, throughput,
   and footprint stay within the declared floors.
 
-Verification:
-
-- `cargo test -p lumen --test api_e2e --test coverage_gaps_e2e`
-- `cargo test -p lumen --test vector_e2e --test hash_hamming --test hybrid_rrf --test collapse_nested`
-- `cargo test -p lumen --test perf_gate --test perf_gate_vs_db`
-
 ### Non-Core Features
 
 #### Kubernetes-Native Deployment
 
-ID: `kubernetes-native-deployment`
+Render the image, CRD, operator, and instance layers independently, then
+reconcile each Lumen instance into stable Kubernetes workloads, networking,
+conditions, disruption protection, and optional isolation. Reusable Kubernetes
+mechanics stay in shared libraries; Lumen owns its CRD policy and app wiring.
 
-Status: ready
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p lumen --features operator --test operator_render --test operator_backup_kubernetes_wiring`
+- Gate: `apps/lumen/scripts/kind-e2e.sh`
+- Gate: `acceptance/gcp/scripts/run.sh`
 
-Promise: Render the image, CRD, operator, and instance layers independently,
-then reconcile each Lumen instance into stable Kubernetes workloads,
-networking, conditions, disruption protection, and optional isolation.
-Reusable Kubernetes mechanics stay in shared libraries; Lumen owns its CRD
-policy and app wiring.
-
-Claims:
-
+Claims this capability makes:
 - `layered-deployment-artifacts` — Dockerfile, CRD, operator, and instance
   renderers remain independently usable.
 - `live-operator-reconciliation` — desired state converges and owned resources
   are repaired without taking over unrelated objects.
 
-Verification:
-
-- `cargo test -p lumen --features operator --test operator_render --test operator_backup_kubernetes_wiring`
-- `apps/lumen/scripts/kind-e2e.sh`
-- `acceptance/gcp/scripts/run.sh`
-
 #### Security & Access
 
-ID: `security-hardening`
+Use Kubernetes as the client request identity and authorization boundary, a
+separate X.509 identity plane for replicated Raft traffic, and rustls for
+serving transport confidentiality.
 
-Status: not ready
-
-Promise: Use Kubernetes as the client request identity and authorization
-boundary, a separate X.509 identity plane for replicated Raft traffic, and
-rustls for serving transport confidentiality.
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p lumen -p service-auth -p service-k8s -p peer-tls`
+- Gate: `cargo test -p lumen --test auth_e2e`
+- Gate: `cargo test -p lumen --test authz_matrix_e2e`
+- Gate: `cargo test -p lumen --test operator_render`
+- Gate: `cargo test -p lumen --test security_lumen_claim_security_tls_rustls`
+- Gate: `cargo test -p lumen --test serving_tls_rotation`
+- Gate: `acceptance/gcp/scripts/run.sh`
+- Gate: `acceptance/gcp/scripts/verify-lumen-auth.sh`
 
 Request path:
-
 ```text
 Google user or Google service account
   -> kube-apiserver authentication through kubeconfig / GKE credential plugin
@@ -175,26 +162,20 @@ Google user or Google service account
   -> strict system:serviceaccount:<namespace>:<name> principal
   -> Lumen SubjectAccessReview for lumencollections / lumenadmin
 ```
-
 Peer path:
-
 ```text
 Lumen peer pod
   -> instance-scoped X.509 certificate
   -> mandatory mTLS on :7374
 ```
-
 Serving path:
-
 ```text
 in-cluster caller
   -> https://<instance>.<namespace>.svc:7373 (ClusterIP, never published)
   -> TLS terminated by the serving pod itself, ALPN h2 / http/1.1
   -> leaf verified against the externally distributed public CA
 ```
-
 Invariants:
-
 - Serving TLS terminates in the Lumen process. No Ingress, Gateway,
   LoadBalancer, NodePort, or service mesh terminates it on Lumen's behalf, so
   no hop between a caller and Lumen carries a request token in the clear.
@@ -228,27 +209,13 @@ Invariants:
 - Deployment administrators or an external platform provision the serving and
   peer TLS Secrets named by each Lumen instance. The operator only consumes
   those Secrets and does not resolve issuers or perform CAS automation.
-
-Claims:
-
+Claims this capability makes:
 - `kubernetes-native-request-identity-and-authorization` — permitted KSA
   requests pass TokenReview/SAR and invalid or denied requests fail closed.
 - `instance-scoped-raft-peer-identity` — only valid instance peers can use the
   Raft transport, including through rotation and failover.
 - `serving-transport-tls` — the rustls-backed serving transport terminates
   private ClusterIP TLS in-process and admits no plaintext or unverified path.
-
-Verification:
-
-- `cargo test -p lumen -p service-auth -p service-k8s -p peer-tls`
-- `apps/lumen/e2e/auth_e2e.rs`
-- `apps/lumen/e2e/authz_matrix_e2e.rs`
-- `apps/lumen/e2e/operator_render.rs`
-- `apps/lumen/e2e/security_lumen_claim_security_tls_rustls.rs`
-- `apps/lumen/e2e/serving_tls_rotation.rs`
-- `acceptance/gcp/scripts/run.sh`
-- `acceptance/gcp/scripts/verify-lumen-auth.sh`
-
 Ready when one retained GKE evidence bundle proves KSA allow/deny, direct
 Google rejection, peer mTLS positive/negative behavior, credential rotation,
 failover, and cleanup. Retired bearer/Google-registry evidence cannot close
@@ -256,17 +223,18 @@ this capability.
 
 #### Scaling & Availability
 
-ID: `scaling-availability`
+Scale index state and serving capacity without changing indexing or query
+semantics. Lumen uses RAM-hot/disk-all segments, a versioned virtual-bucket
+shard map, checkpointed reshard transitions, one Raft group per shard, explicit
+replica policy, failover, and replacement bootstrap.
 
-Status: ready
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p lumen --test reshard_admin_e2e`
+- Gate: `cargo test -p lumen --test efficiency_lumen_claim_elastic_disk_tier`
+- Gate: `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync --test stability_lumen_claim_dynamic_multi_shard_replica_kind`
+- Gate: `apps/lumen/scripts/kind-e2e.sh`
 
-Promise: Scale index state and serving capacity without changing indexing or
-query semantics. Lumen uses RAM-hot/disk-all segments, a versioned
-virtual-bucket shard map, checkpointed reshard transitions, one Raft group per
-shard, explicit replica policy, failover, and replacement bootstrap.
-
-Claims:
-
+Claims this capability makes:
 - `elastic-segment-tier` — hot memory and retained disk tiers obey their
   resource contract.
 - `dynamic-shard-topology` — resharding converges without losing readable
@@ -274,48 +242,35 @@ Claims:
 - `primary-replica-failover-and-bootstrap` — replicas synchronize, fail over,
   and replace failed members.
 
-Verification:
-
-- `cargo test -p lumen --test reshard_admin_e2e`
-- `cargo test -p lumen --test efficiency_lumen_claim_elastic_disk_tier`
-- `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync --test stability_lumen_claim_dynamic_multi_shard_replica_kind`
-- `apps/lumen/scripts/kind-e2e.sh`
-
 #### Durability & Recovery
 
-ID: `durability-recovery`
+Recover derived index state through WAL/checkpoint replay, Raft replication,
+backup/restore, and cold seed without claiming ownership of the caller's source
+data.
 
-Status: ready
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p lumen --test backup_restore_e2e`
+- Gate: `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync`
+- Gate: `acceptance/gcp/scripts/run.sh`
 
-Promise: Recover derived index state through WAL/checkpoint replay, Raft
-replication, backup/restore, and cold seed without claiming ownership of the
-caller's source data.
-
-Claims:
-
+Claims this capability makes:
 - `wal-checkpoint-and-raft-recovery` — committed index mutations survive
   restart and member replacement.
 - `backup-restore-and-cold-seed` — a retained snapshot restores into a fresh
   instance and remains readable after restart.
 
-Verification:
-
-- `cargo test -p lumen --test backup_restore_e2e`
-- `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync`
-- `acceptance/gcp/scripts/run.sh`
-
 #### Operations & Observability
 
-ID: `operations-observability`
+Expose health, readiness, conditions, metrics, events, alerts, tracing, and
+long-running-operation state for both serving and control-plane behavior.
 
-Status: ready
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p lumen --test api_e2e`
+- Gate: `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`
+- Source: `apps/lumen/e2e/rig/cases`
+- Source: `apps/lumen/k8s/components/operator-monitoring`
 
-Promise: Expose health, readiness, conditions, metrics, events, alerts,
-tracing, and long-running-operation state for both serving and control-plane
-behavior.
-
-Claims:
-
+Claims this capability makes:
 - `standard-operational-surfaces` — health, readiness, metrics, and status
   reflect real service state.
 - `control-plane-observability` — reconciliation, leadership, errors, and
@@ -323,35 +278,22 @@ Claims:
 - `long-running-stability` — retained workloads stay within declared resource
   and correctness bounds.
 
-Verification:
-
-- `cargo test -p lumen --test api_e2e`
-- `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`
-- `apps/lumen/e2e/rig/cases`
-- `apps/lumen/k8s/components/operator-monitoring`
-
 #### API, CLI & Agent Integration
 
-ID: `api-cli-agent-integration`
+Expose the two core jobs through HTTP/1.1 and HTTP/2, served and offline
+OpenAPI, generated clients, the standard `llm`/`upgrade`/`issue` surface,
+deployment commands, chainable output, and offline agent guidance.
 
-Status: ready
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p lumen --test spec_cli --test api_e2e`
+- Gate: `cargo test -p lumen --test cli_convention`
+- Gate: `cargo test -p lumen --test behavior_lumen_claim_cli_deployment_operator_command_surface`
 
-Promise: Expose the two core jobs through HTTP/1.1 and HTTP/2, served and
-offline OpenAPI, generated clients, the standard `llm`/`upgrade`/`issue`
-surface, deployment commands, chainable output, and offline agent guidance.
-
-Claims:
-
+Claims this capability makes:
 - `http2-openapi-and-client-interface` — wire behavior and published schemas
   stay aligned.
 - `standard-cli-and-agent-interface` — commands remain discoverable,
   executable, and explicit about their next step or terminal state.
-
-Verification:
-
-- `cargo test -p lumen --test spec_cli --test api_e2e`
-- `cargo test -p lumen --test cli_convention`
-- `cargo test -p lumen --test behavior_lumen_claim_cli_deployment_operator_command_surface`
 
 ## Verified Cloud Evidence
 

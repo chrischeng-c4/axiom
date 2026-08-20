@@ -9,26 +9,24 @@ version metadata without copying build-script logic.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Build Script Version Stamp | - | implemented | verified | smoke | ready | emits `<PREFIX>_GIT_SHA`, `<PREFIX>_BUILT_AT`, and `<PREFIX>_TARGET` |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Build Script Version Stamp | - | emits `<PREFIX>_GIT_SHA`, `<PREFIX>_BUILT_AT`, and `<PREFIX>_TARGET` |
 
 ### Build Script Version Stamp
 
-ID: build-script-version-stamp
-Type: DeveloperTool
-Root WI: -
-Status: verified
-Surfaces: Rust API: `build_stamp::stamp(prefix)`; Cargo build-script stdout directives.
-EC Dimensions: behavior: `cargo test -p build-stamp` - unit coverage for SHA decoding, timestamp formatting, target fallback, and rerun hints
-Required Verification: smoke
-Promise:
 Build scripts can call `stamp(prefix)` to emit consistent best-effort build
 metadata without failing source-tarball, non-git, or missing-target builds.
-Gate Inventory: `cargo test -p build-stamp`; libs/build-stamp/src/lib.rs
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| build-script-version-stamp-contract | epic | - | implemented | verified | smoke | `cargo test -p build-stamp`; libs/build-stamp/src/lib.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API: `build_stamp::stamp(prefix)`; Cargo build-script stdout
+  directives.
+- Gate — behavior: `cargo test -p build-stamp` - unit coverage for SHA
+  decoding, timestamp formatting, target fallback, and rerun hints
+- Gate: `cargo test -p build-stamp`
+- Source: `libs/build-stamp/src/lib.rs`
+- Evidence: `cargo test -p build-stamp`; libs/build-stamp/src/lib.rs

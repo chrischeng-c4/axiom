@@ -13,25 +13,28 @@ the metadata outside this binding.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Mamba QC Decorator Binding | - | implemented | passing | conformance | not_ready | exposes pytest-like fixture, mark, raises, and parametrize metadata primitives for Mamba |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Mamba QC Decorator Binding | - | exposes pytest-like fixture, mark, raises, and parametrize metadata primitives for Mamba |
 
 ### Mamba QC Decorator Binding
 
-ID: mamba-qc-decorator-binding
-Type: DeveloperTool
-Surfaces: Mamba module: `cclab.qc`; Native ABI: `mb_qc_fixture`, `mb_qc_mark`, `mb_qc_raises`, `mb_qc_parametrize`; Rust module registrar: `QcMambaModule`
-EC Dimensions: behavior: `cargo test -p cclab-qc-mamba`
-Root WI: -
-Status: confirmed
-Required Verification: conformance
-Promise:
-Cclab QC Mamba exposes pytest-like test decorator primitives to Mamba scripts through the `cclab.qc` native module, including fixture metadata, a mark namespace sentinel, raises context metadata, and parametrize metadata for the downstream test runner to consume.
-Gate Inventory: `cargo test -p cclab-qc-mamba`; crates/cclab-qc-mamba/src/lib.rs; crates/cclab-qc-mamba/src/methods.rs
+Cclab QC Mamba exposes pytest-like test decorator primitives to Mamba scripts
+through the `cclab.qc` native module, including fixture metadata, a mark
+namespace sentinel, raises context metadata, and parametrize metadata for the
+downstream test runner to consume.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Mamba QC decorator metadata ABI contract | epic | - | implemented | passing | conformance | `cargo test -p cclab-qc-mamba`; crates/cclab-qc-mamba/src/lib.rs; crates/cclab-qc-mamba/src/methods.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Mamba module: `cclab.qc`; Native ABI: `mb_qc_fixture`,
+  `mb_qc_mark`, `mb_qc_raises`, `mb_qc_parametrize`; Rust module registrar:
+  `QcMambaModule`
+- Gate — behavior: `cargo test -p cclab-qc-mamba`
+- Gate: `cargo test -p cclab-qc-mamba`
+- Source: `crates/cclab-qc-mamba/src/lib.rs`,
+  `crates/cclab-qc-mamba/src/methods.rs`
+- Evidence: `cargo test -p cclab-qc-mamba`; crates/cclab-qc-mamba/src/lib.rs;
+  crates/cclab-qc-mamba/src/methods.rs
