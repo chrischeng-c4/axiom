@@ -42,10 +42,20 @@ prove that CJK matching still works with `jieba` compiled out. That file states
 the requirement in its `//!` but carries no `cfg` to enforce it, so
 `--all-features` makes it fail for the same reason it exists.
 
-Measured at `d1f407f6cf`, both with `--no-fail-fast`, 97 test binaries each:
-row 1 is `627 passed; 6 failed; 43 ignored` over 4 red targets, row 2 is
-`929 passed; 4 failed; 43 ignored` over 3. Row 2's three red targets —
+Measured on the S8 tree (parent `db414b17db`), both with `--no-fail-fast`, 82
+test binaries each: row 1 is `629 passed; 4 failed; 28 ignored` and row 2 is
+`929 passed; 4 failed; 28 ignored`, over the same three red targets —
 `capability_shared_ownership`, `retired_credential_surface` and `spec_gen_e2e`
-— are a subset of row 1's four and fail with byte-identical messages, so the
-second row introduces no new failure. Of its `+302` executed tests, 177 are the
-eleven binaries that were empty under row 1.
+— failing with byte-identical messages, so the second row introduces no new
+failure. Of its `+300` executed tests, 177 are the eleven binaries that were
+empty under row 1.
+
+Row 1 can show a fourth red target that is not a regression.
+`e2e/auth_e2e.rs:182` gives a spawned `lumen serve` 20 seconds to refuse and
+exit, and panics at `:210` if it has not. When that deadline expires the panic
+prints the child's own stderr — which is the correct refusal — so the message
+says the server "kept running" while quoting the proof that it did not. Row 1
+read `627 passed; 6 failed; 43 ignored` over 4 red targets at `d1f407f6cf`,
+whose tree differs from `db414b17db` only in three `.md` files; that run shared
+the machine and the workspace `target/` with a second session. On an isolated
+`CARGO_TARGET_DIR` the target finishes in ~1.1 s, three runs of three.

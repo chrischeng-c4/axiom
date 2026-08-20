@@ -3,6 +3,51 @@
 //! cluster. This encodes the operational knowledge that lives in `k8s/base` +
 //! the overlays as executable assertions — replicas, env wiring, resources,
 //! probes, owner refs, Lumen-owned raft wiring, and observability toggles.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 9 sentences were the whole of the `// Contract:` comment in 9 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --features operator
+//! --test operator_render` in a subprocess and asserted the child's exit status.
+//!
+//! Until 2026-08-20 these shells could not be deleted. The project's only declared gate
+//! was `cargo test -p lumen`, and with `default = []` that command compiled every
+//! `#![cfg(feature = "operator")]` target into an empty binary that printed `0 passed`
+//! and exited 0 — so the shells were the sole surviving record that these checks should
+//! run at all. `apps/lumen/CONTRIBUTING.md` declared `cargo test -p lumen --features
+//! "operator delegated-auth"` as a required second gate row that day, and that run
+//! executes this target directly. That made each shell a second, nested run of a target
+//! the gate already covers, so they were deleted the same day. The sentence is the only
+//! thing they held that nothing else did. Each line below is prefixed with the EC id
+//! its shell was filed under.
+//!
+//! - `lumen-claim-cli-deployment-operator-command-surface` — The operator-facing
+//!   command surface renders CRD and serving objects used by the deployment path.
+//! - `lumen-claim-dynamic-post-cutover-usage-freshness` — A pre-cutover usage sample
+//!   cannot trigger another split; a fresh generation can.
+//! - `lumen-claim-dynamic-serve-shard-map` — The operator-delivered shard map is
+//!   projected into the serving process configuration.
+//! - `lumen-claim-dynamic-single-member-persistence` — A single-member topology renders
+//!   as a durable StatefulSet with its serving storage contract.
+//! - `lumen-claim-dynamic-storage-pressure-split-policy` — The operator render gate
+//!   proves rendering topology conformance: storage-pressure reshard recommendations
+//!   compute correctly without changing HPA-owned serving scale (rendering only —
+//!   reshard driver execution, admin verbs, and migration durability are covered by the
+//!   dedicated reshard-durability gate).
+//! - `lumen-claim-k8s-operator-reconcile` — The kube-rs operator render path proves
+//!   rendering topology conformance: Lumen CRD inputs map to serving resources,
+//!   including storage-pressure reshard policy, status phases, and fixed storage
+//!   topology (rendering only — the live reconcile loop, reshard driver, and admin
+//!   verbs are covered by the dedicated reshard-durability gate).
+//! - `lumen-claim-k8s-operator-storage-topology-reshard` — The operator render gate
+//!   proves rendering topology conformance: fixed StatefulSet storage topology and
+//!   reshard status exposure (rendering only — reshard driver execution, admin verbs,
+//!   and migration durability are covered by the dedicated reshard-durability gate).
+//! - `lumen-claim-k8s-single-member-persistence` — The Kubernetes instance renderer
+//!   gives a single-member service durable StatefulSet storage.
+//! - `lumen-long-running-stability-operator-render` — render(Lumen) emits the managed
+//!   serving Deployment/Service/HPA/PDB plus the Relay StatefulSet/Service/PDB when the
+//!   broker is managed.
 #![cfg(feature = "operator")]
 
 use std::collections::BTreeMap;

@@ -41,17 +41,6 @@ required_for_production = true
 assertions = ["The connect and query command groups parse and the query adapter emits the published request shape."]
 
 [[aw.ec.generated.cases]]
-id = "lumen-claim-cli-deployment-operator-command-surface"
-capability_id = "api-cli-agent-integration"
-claim_id = "standard-cli-and-agent-interface"
-contract_id = "cli-deployment-operator-command-surface"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_cli_deployment_operator_command_surface.rs"
-command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
-required_for_production = true
-assertions = ["The operator-facing command surface renders CRD and serving objects used by the deployment path."]
-
-[[aw.ec.generated.cases]]
 id = "lumen-claim-competitor-performance-external-comparison"
 capability_id = "querying"
 claim_id = "query-quality"
@@ -74,39 +63,6 @@ required_for_production = true
 assertions = ["The installed CLI exposes discoverable connect and query tooling for agents and operators."]
 
 [[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-autonomous-reshard"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-autonomous-reshard"
-category = "stability"
-test_path = "apps/lumen/e2e/stability_lumen_claim_dynamic_autonomous_reshard.rs"
-command = "cargo test -p lumen --features operator --test reshard_driver_e2e full_split_resumes_after_restart_and_reaches_complete -- --exact --nocapture"
-required_for_production = true
-assertions = ["The autonomous reshard workflow resumes after interruption and reaches Complete."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-checkpointed-phase-driver"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-checkpointed-phase-driver"
-category = "stability"
-test_path = "apps/lumen/e2e/stability_lumen_claim_dynamic_checkpointed_phase_driver.rs"
-command = "cargo test -p lumen --features operator --test reshard_driver_e2e cutover_blocked_until_every_touched_shard_checkpoints -- --exact --nocapture"
-required_for_production = true
-assertions = ["The reshard phase driver cannot cut over until every touched shard has checkpointed."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-cross-pod-routing"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-cross-pod-routing"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_dynamic_cross_pod_routing.rs"
-command = "cargo test -p lumen --features operator --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
-required_for_production = true
-assertions = ["Cross-pod reads and writes follow the delivered ownership map to the owning shard."]
-
-[[aw.ec.generated.cases]]
 id = "lumen-claim-dynamic-multi-shard-replica-kind"
 capability_id = "scaling-availability"
 claim_id = "dynamic-shard-topology"
@@ -116,72 +72,6 @@ test_path = "apps/lumen/e2e/stability_lumen_claim_dynamic_multi_shard_replica_ki
 command = "apps/lumen/scripts/kind-e2e.sh"
 required_for_production = true
 assertions = ["The live kind dogfood path covers multi-shard and replicated-shard operator profiles."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-post-cutover-usage-freshness"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-post-cutover-usage-freshness"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_dynamic_post_cutover_usage_freshness.rs"
-command = "cargo test -p lumen --features operator --test operator_render reshard_status_with_usage_holds_on_pre_cutover_measurement -- --exact --nocapture && cargo test -p lumen --features operator --test operator_render reshard_status_with_usage_reports_urgent_after_fresh_post_cutover_measurement -- --exact --nocapture"
-required_for_production = true
-assertions = ["A pre-cutover usage sample cannot trigger another split; a fresh generation can."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-reshard-durability"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-reshard-durability"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_dynamic_reshard_durability.rs"
-command = "cargo test -p lumen --features operator --test reshard_driver_e2e -- --nocapture && cargo test -p lumen --test reshard_admin_e2e -- --nocapture && cargo test -p lumen --lib segment_rdb -- --nocapture"
-required_for_production = true
-assertions = ["The checkpointed reshard phase driver (state machine, checkpoint-gated cutover, no-transition guard), the four reshard/backup admin verbs (scoped export, additive apply, source eviction, on-demand checkpoint) including idempotency and auth, and cold-start durability of applied/evicted reshard mutations all pass — keeping the migration-path regression class #1389 fixed under standing gate."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-serve-shard-map"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-serve-shard-map"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_dynamic_serve_shard_map.rs"
-command = "cargo test -p lumen --features operator --test operator_render shard_map_assignments_are_exposed_to_serving_config -- --exact --nocapture"
-required_for_production = true
-assertions = ["The operator-delivered shard map is projected into the serving process configuration."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-single-member-persistence"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-single-member-persistence"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_dynamic_single_member_persistence.rs"
-command = "cargo test -p lumen --features operator --test operator_render statefulset_wires_serving_contract_single_member -- --exact --nocapture"
-required_for_production = true
-assertions = ["A single-member topology renders as a durable StatefulSet with its serving storage contract."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-stale-hpa-handoff"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-stale-hpa-handoff"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_dynamic_stale_hpa_handoff.rs"
-command = "cargo test -p lumen --features operator --lib prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
-required_for_production = true
-assertions = ["The reconcile loop deletes a stale operator-rendered HPA when fixed shard topology takes ownership."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-dynamic-storage-pressure-split-policy"
-capability_id = "scaling-availability"
-claim_id = "dynamic-shard-topology"
-contract_id = "dynamic-storage-pressure-split-policy"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_dynamic_storage_pressure_split_policy.rs"
-command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
-required_for_production = true
-assertions = ["The operator render gate proves rendering topology conformance: storage-pressure reshard recommendations compute correctly without changing HPA-owned serving scale (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-elastic-disk-tier"
@@ -206,39 +96,6 @@ required_for_production = true
 assertions = ["The Kubernetes base, overlays, HPA/PDB, and operator manifests render successfully."]
 
 [[aw.ec.generated.cases]]
-id = "lumen-claim-k8s-operator-reconcile"
-capability_id = "kubernetes-native-deployment"
-claim_id = "live-operator-reconciliation"
-contract_id = "k8s-operator-reconcile"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_k8s_operator_reconcile.rs"
-command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
-required_for_production = true
-assertions = ["The kube-rs operator render path proves rendering topology conformance: Lumen CRD inputs map to serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology (rendering only — the live reconcile loop, reshard driver, and admin verbs are covered by the dedicated reshard-durability gate)."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-k8s-operator-storage-topology-reshard"
-capability_id = "kubernetes-native-deployment"
-claim_id = "live-operator-reconciliation"
-contract_id = "k8s-operator-storage-topology-reshard"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_k8s_operator_storage_topology_reshard.rs"
-command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
-required_for_production = true
-assertions = ["The operator render gate proves rendering topology conformance: fixed StatefulSet storage topology and reshard status exposure (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-k8s-single-member-persistence"
-capability_id = "kubernetes-native-deployment"
-claim_id = "layered-deployment-artifacts"
-contract_id = "k8s-single-member-persistence"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_k8s_single_member_persistence.rs"
-command = "cargo test -p lumen --features operator --test operator_render statefulset_wires_serving_contract_single_member -- --exact --nocapture"
-required_for_production = true
-assertions = ["The Kubernetes instance renderer gives a single-member service durable StatefulSet storage."]
-
-[[aw.ec.generated.cases]]
 id = "lumen-claim-k8s-stateless-kind"
 capability_id = "kubernetes-native-deployment"
 claim_id = "live-operator-reconciliation"
@@ -248,17 +105,6 @@ test_path = "apps/lumen/e2e/stability_lumen_claim_k8s_stateless_kind.rs"
 command = "apps/lumen/scripts/kind-e2e.sh"
 required_for_production = true
 assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-claim-k8s-topology-hpa-handoff"
-capability_id = "kubernetes-native-deployment"
-claim_id = "live-operator-reconciliation"
-contract_id = "k8s-topology-hpa-handoff"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_claim_k8s_topology_hpa_handoff.rs"
-command = "cargo test -p lumen --features operator --lib prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
-required_for_production = true
-assertions = ["The Kubernetes reconcile loop deletes stale autoscaling state when fixed storage topology takes over."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-long-running-kustomize-base"
@@ -319,20 +165,6 @@ test_path = "apps/lumen/e2e/stability_lumen_long_running_stability_latency_drift
 command = "cd apps/lumen && ../../target/debug/vat run rig-endurance"
 required_for_production = true
 assertions = ["soak_p99_drift warms a bounded keyspace, records p99_w1/p99_w2/p99_w3 over three 500-search windows with zero failures, and requires each adjacent window plus window 3 versus window 1 to stay <= 1.10x + 6ms."]
-
-[[aw.ec.generated.cases]]
-id = "lumen-long-running-stability-operator-render"
-capability_id = "kubernetes-native-deployment"
-claim_id = "live-operator-reconciliation"
-contract_id = "devops-operator-render-golden"
-category = "behavior"
-test_path = "apps/lumen/e2e/behavior_lumen_long_running_stability_operator_render.rs"
-command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
-required_for_production = true
-assertions = [
-    "render(Lumen) emits the managed serving Deployment/Service/HPA/PDB plus the Relay StatefulSet/Service/PDB when the broker is managed.",
-    "BYO-Relay (broker.externalUrl) omits the managed Relay objects and wires the external URL into the serving env.",
-]
 
 [[aw.ec.generated.cases]]
 id = "lumen-long-running-stability-overload-backpressure"

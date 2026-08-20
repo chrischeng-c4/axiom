@@ -12,6 +12,28 @@
 //! in production. Mirrors `reshard_driver_e2e.rs`'s `spin_up_shard` pattern
 //! but wires the pod-side routing layer instead of the driver-facing admin
 //! surface.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! This sentence was the whole of the `// Contract:` comment in 1 AW-EC shell under
+//! `apps/lumen/e2e/`, which ran `cargo test -p lumen --features operator --test
+//! routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact` in
+//! a subprocess and asserted the child's exit status. The name filter narrows; the gate
+//! runs the superset.
+//!
+//! Until 2026-08-20 these shells could not be deleted. The project's only declared gate
+//! was `cargo test -p lumen`, and with `default = []` that command compiled every
+//! `#![cfg(feature = "operator")]` target into an empty binary that printed `0 passed`
+//! and exited 0 — so the shells were the sole surviving record that these checks should
+//! run at all. `apps/lumen/CONTRIBUTING.md` declared `cargo test -p lumen --features
+//! "operator delegated-auth"` as a required second gate row that day, and that run
+//! executes this target directly. That made each shell a second, nested run of a target
+//! the gate already covers, so they were deleted the same day. The sentence is the only
+//! thing they held that nothing else did. Each line below is prefixed with the EC id
+//! its shell was filed under.
+//!
+//! - `lumen-claim-dynamic-cross-pod-routing` — Cross-pod reads and writes follow the
+//!   delivered ownership map to the owning shard.
 #![cfg(feature = "operator")]
 
 use std::net::TcpListener;
