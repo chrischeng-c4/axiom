@@ -1,6 +1,6 @@
 ---
 name: meta-check
-description: Refuse a META-doc whose facts have rotted. Runs the validator over every tracked CLAUDE.md, README.md and CONTRIBUTING.md and reports orphaned generator markers, commands naming a CLI that was deleted, links whose targets are gone, and project READMEs missing a required section. Reads only; it never edits a document and never regenerates one.
+description: Refuse a META-doc whose facts have rotted. Runs the validator over every tracked CLAUDE.md, README.md and CONTRIBUTING.md and reports orphaned generator markers, commands naming a CLI that was deleted, links whose targets are gone, project READMEs missing a required section, and capability gates that cannot refuse anything — a test-name filter cargo exits 0 on, a package or test target absent from the checkout, a self-graded status field nothing recomputes. Reads only; it never edits a document and never regenerates one.
 version: 0.1.0
 user-invocable: true
 ---
@@ -20,11 +20,34 @@ this. The verdict is the script's exit code, not your reading of its output.
 | `M2` | a command naming a CLI that was deleted | copied and run, it fails with "command not found" and reads as a broken checkout |
 | `M3` | a relative link whose target is not in the tree | the document points at a file the reader then cannot find |
 | `M4` | a project README with no `## Brief` or `## Capabilities` | the two sections a reader goes there for |
+| `M5` | a gate command whose selector is a bare test name | cargo exits **0** when a filter matches nothing, so the gate is green whether the behavior holds or the test was renamed away |
+| `M6` | a gate naming a cargo package or `--test` target that is not in the checkout | copied and run, it cannot resolve, so the capability has never been verified by the command written under it |
+| `M7` | `Status:`, `Maturity:`, `Production:` and their Capability Index columns | nothing reads them; they grade the capability on the day somebody typed them |
 
 `M1` is the largest by far, and it is the reason this exists. The verb that
 wrote those blocks was deleted with the crate that carried it, leaving the
 markers behind — a marker with no producer is worse than plain prose, because
 plain prose does not claim to be maintained.
+
+`M5`, `M6` and `M7` are a different question asked of a different population.
+`M1`–`M4` ask whether a reference resolves; these ask whether a promise could
+ever have been refused, and they read only project READMEs — the one place
+`CONTRIBUTING.md` binds a promise to a gate. A `cargo test` line in the root
+`CONTRIBUTING.md` is an example of a command's *shape*, and a rule that read it
+as a gate would report the documentation of the convention as a breach of it.
+
+`M7` is `M1`'s blind twin. The same deleted verb emitted both, but it wrapped
+the marker blocks in `<!-- aw:meta:… -->` and left the capability fields bare,
+so clearing every marker in the repository left 526 self-graded fields standing
+in 58 of 64 project READMEs. Those are gone: the 60 READMEs carrying them were
+rewritten on 2026-08-20 into the shape `CONTRIBUTING.md` asks for.
+
+All seven rules are ratcheted to zero by `check_meta_clean.py`, and the
+tolerated set is empty for every one of them. That is a state each rule earned
+rather than started in — a ratchet that lands red is one every reader learns to
+scroll past, so a rule is a report until its live count reads zero and joins the
+ratchet the day it does. `M5`, `M6` and `M7` landed as reports at 151, 5 and 526
+and were moved in the same day the last of them cleared.
 
 ## Run it
 
@@ -72,10 +95,24 @@ Every rule resolves against the filesystem: a marker, a command, a path, a
 heading.
 
 So it cannot tell you whether a promise under `## Capabilities` is *true*, and
-it does not try to run the gate command written beneath one. Most of those
-commands are `cargo` invocations, and resolving a crate and target name needs
-`cargo metadata` — a different and much larger job. A capability whose gate
-command nobody runs is caught here by a reader, not by this script.
+it never runs the gate command written beneath one. `M6` resolves the names in
+that command — against the tracked `Cargo.toml` files read directly, honouring
+`autotests = false` and the `[[test]]` stanzas beside it, not against
+`cargo metadata`, which would need a resolved workspace and a network. So a
+package or target that is not in the checkout is refused, and everything past
+that point is not: whether the selected tests exist, whether they pass, and
+whether what they measure is the promise written above them.
+
+`M5` is narrower still, and it is worth being exact about what it claims. It
+reads the *shape* of the selector, not the behavior behind it. A bare test-name
+filter is reported because `cargo test` exits 0 when the filter matches nothing
+— the gate is green whether the behavior holds, the test was renamed, or the
+test was deleted — and the fix is to name the target with `--test`, which fails
+loudly instead. A filter that today matches a real test is still reported,
+because nothing holds it to that tomorrow.
+
+A capability whose gate command nobody runs is caught here by a reader, not by
+this script.
 
 ## Fixing what it reports
 
@@ -93,6 +130,21 @@ it names.
   exists is not a link and is not reported.
 - `M4` — add the missing section. If nothing is claimed yet, say so under the
   heading rather than leaving the heading out.
+- `M5` — replace the bare filter with the target that holds it: `--test <name>`
+  for a case under `e2e/`, `--lib` for a colocated one. Do not simply delete the
+  filter to widen the command — a gate that runs the whole package no longer
+  says which case refuses the promise it sits under. If no case exists yet, that
+  is what the bullet should say, and `CONTRIBUTING.md` requires it to.
+- `M6` — the name is wrong or the target is gone. Read the crate's own
+  `Cargo.toml`: with `autotests = false` the `[[test]]` stanzas are the entire
+  inventory, so a target absent from them cannot be selected however the file is
+  named on disk. A capability whose only gate named a deleted target was never
+  verified by it, so correct the promise as well as the command.
+- `M7` — delete the field. `Status:`, `Maturity:`, `Production:` and the
+  Capability Index columns are a grade nothing recomputes; the gate command
+  below is the same claim, made by something that can refuse it. Keep only what
+  `CONTRIBUTING.md` asks for: the promise as prose, then the root WI, the
+  verbatim gate command, and the source paths.
 
 Re-run the verb after each file. The count falling is the evidence; a file you
 believe you fixed is not.
