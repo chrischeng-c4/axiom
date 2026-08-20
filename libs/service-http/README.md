@@ -19,6 +19,8 @@ generation. `standard_probe_routes`, `ReadinessHook`, `serve`, and
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 Each section names the gate that verifies it. A capability with no gate line is
 not claimed.
 
@@ -36,6 +38,7 @@ valid W3C `traceparent`/`tracestate` headers into request spans.
   `cargo test -p service-http --features otlp --test otlp_tracing`
 - Source: `libs/service-http/src/lib.rs`
 
+
 ### Standard Endpoints (Probes Surface)
 
 `standard_probe_routes()` (`libs/service-http/src/probes.rs`) mounts the five
@@ -52,6 +55,7 @@ ships on its one serve port:
 `standard_probe_routes_canonical_json` is the byte-identical-snapshot variant
 for services that need one canonical serialization shared across a CLI twin, an
 offline fixture, and the live route.
+
 
 ### Trace Context (Accept-or-Generate + Log Correlation + OTLP Upgrade)
 
@@ -75,6 +79,7 @@ hand-rolled span/correlation layer:
 This piece is inbound-only: it instruments the request a service receives. See
 [Outbound Propagation](#outbound-propagation-not-yet-claimed) for the separate,
 unimplemented service-to-service leg.
+
 
 ### Server-Timing Response Attribution
 
@@ -100,6 +105,7 @@ README, not here.
 - Gates: `cargo test -p service-http --test server_timing`
 - Source: `libs/service-http/src/server_timing.rs`
 
+
 ### Admission Control
 
 `AdmissionController` + `admission_middleware`
@@ -111,8 +117,9 @@ raw key. Denials render the shared `ErrorEnvelope` with HTTP 429 and
 values stay the adopting service's decision.
 
 - Root WI: #1642
-- Gates: `cargo test -p service-http admission`
+- Gates: `cargo test -p service-http --lib`
 - Source: `libs/service-http/src/admission.rs`
+
 
 ### Error Envelope
 
@@ -121,6 +128,7 @@ values stay the adopting service's decision.
 responses, paired with a `StatusCode` via `ApiErr`. Services classify their own
 domain errors into it (`From<DomainError>`); this crate owns only the generic
 envelope, builder, and `utoipa::ToSchema` shape.
+
 
 ### Outbound Propagation (Not Yet Claimed)
 

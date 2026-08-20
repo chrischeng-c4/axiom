@@ -12,50 +12,60 @@ Project-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIB
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
+| Capability | Root WI | Notes |
+|---|---:|---|
 
 ### Terminal-first Agent Workbench
 
-ID: terminal-first-agent-workbench
-Type: RuntimeTool
-Root WI: #2171
-Status: confirmed
-Surfaces: Native desktop host, registered launch folders, real agent PTY, active cwd, context renderer registry, provenance, and production evidence.
-EC Dimensions: behavior: folder-agent-artifact-journey; efficiency: folder-agent-artifact-efficiency; stability: folder-agent-artifact-stability
-Required Verification: smoke, integration, e2e
-Promise:
 Workbench launches Claude Code, Codex, or AGY through its native CLI in a real
 PTY and adds optional, read-only context without owning vendor sessions, AW
 lifecycle state, or inferred knowledge as canonical repository truth.
-Gate Inventory:
-- verified: `cargo test -p workbench --test desktop_launch_smoke -- --nocapture`
-- verified: `cargo test -p workbench --test folder_shell_journey -- --nocapture`
-- verified: `cargo test -p workbench --test pty_agent_adapters -- --nocapture`
-- verified: `cargo test -p workbench --test pty_cwd_context -- --nocapture`
-- verified: `cargo test -p workbench --test generic_context_renderers -- --nocapture`
-- verified: `cargo test -p workbench --test aw_typed_renderer -- --nocapture`
-- verified: `cargo test -p workbench --test context_provenance -- --nocapture`
-- verified: `cargo test -p workbench --test graph_context_adapter -- --nocapture`
-- verified: `cargo test -p workbench --test derived_page_context_adapter -- --nocapture`
-- verified: `cargo test -p workbench --test production_journey -- --nocapture`
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| desktop-application-bootstrap | change | #2191 | complete | verified | prototype | `desktop_launch_smoke` |
-| three-column-folder-shell | change | #2192 | complete | verified | prototype | `folder_shell_journey` plus retained viewport evidence |
-| native-agent-pty | change | #2193 | complete | verified | prototype | `pty_agent_adapters` real-shell fixture |
-| authoritative-cwd-context | change | #2194 | complete | verified | prototype | `pty_cwd_context` OSC 7 real-PTY fixture |
-| generic-context-renderers | change | #2195 | complete | verified | prototype | `generic_context_renderers` non-AW Git fixture |
-| optional-aw-typed-renderer | change | #2196 | complete | verified | prototype | `aw_typed_renderer` four-kind fixtures and byte identity |
-| context-provenance-core | change | #2197 | complete | verified | prototype | `context_provenance` canonical, derived, and unavailable states |
-| context-provenance | change | #2198 | complete | verified | prototype | duplicate contract satisfied by #2197 and `context_provenance` |
-| optional-graph-adapter | change | #2199 | complete | verified | prototype | `graph_context_adapter` bounded compatibility payload, provenance, and failure isolation |
-| optional-derived-page-adapter | change | #2200 | complete | verified | prototype | `derived_page_context_adapter` bounded pages, citation provenance, freshness, and failure isolation |
-| production-journey | change | #2201 | complete | verified | production | `production_journey` plus `evidence/production-journey/v1/manifest.json` |
-| local-snapshot-and-diagnostics-cli | change | #2435 | in-progress | verified | prototype | `observability_cli` plus native Swift runtime tests |
+- Root WI: #2171
+- Surfaces: Native desktop host, registered launch folders, real agent PTY,
+  active cwd, context renderer registry, provenance, and production evidence.
+- Gate — behavior: folder-agent-artifact-journey
+- Gate — efficiency: folder-agent-artifact-efficiency
+- Gate — stability: folder-agent-artifact-stability
+- Gate: verified:
+  `cargo test -p workbench --test desktop_launch_smoke -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test folder_shell_journey -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test pty_agent_adapters -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test pty_cwd_context -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test generic_context_renderers -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test aw_typed_renderer -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test context_provenance -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test graph_context_adapter -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test derived_page_context_adapter -- --nocapture`
+- Gate: verified:
+  `cargo test -p workbench --test production_journey -- --nocapture`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| desktop-application-bootstrap | change | #2191 | `desktop_launch_smoke` |
+| three-column-folder-shell | change | #2192 | `folder_shell_journey` plus retained viewport evidence |
+| native-agent-pty | change | #2193 | `pty_agent_adapters` real-shell fixture |
+| authoritative-cwd-context | change | #2194 | `pty_cwd_context` OSC 7 real-PTY fixture |
+| generic-context-renderers | change | #2195 | `generic_context_renderers` non-AW Git fixture |
+| optional-aw-typed-renderer | change | #2196 | `aw_typed_renderer` four-kind fixtures and byte identity |
+| context-provenance-core | change | #2197 | `context_provenance` canonical, derived, and unavailable states |
+| context-provenance | change | #2198 | duplicate contract satisfied by #2197 and `context_provenance` |
+| optional-graph-adapter | change | #2199 | `graph_context_adapter` bounded compatibility payload, provenance, and failure isolation |
+| optional-derived-page-adapter | change | #2200 | `derived_page_context_adapter` bounded pages, citation provenance, freshness, and failure isolation |
+| production-journey | change | #2201 | `production_journey` plus `evidence/production-journey/v1/manifest.json` |
+| local-snapshot-and-diagnostics-cli | change | #2435 | `observability_cli` plus native Swift runtime tests |
 
 ## Product Brief
 

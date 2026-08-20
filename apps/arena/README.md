@@ -130,68 +130,57 @@ concurrent driving; http/2 (the loadgen client is h1 ureq today).
 
 ## Capabilities
 
-Nothing reads the tables below. The capability gate that validated their
-shape was deleted with the `aw` binary, so the shape is convention now and
-the commands named in each row are the only part that runs.
+A promise with no gate under it is not claimed.
+
+`meta.py check` reads the gate commands below and refuses the ones that
+cannot go red -- a bare test-name filter, a package or target absent from the
+checkout. It does not validate the shape of the tables, which the gate deleted
+with the `aw` binary used to; that shape is convention, and `CONTRIBUTING.md`
+is where it is written down.
 
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| N-Target Comparison Runner | - | implemented | verified | smoke | retired | sequential N-target fanout, scalar reduction, and `arena.report/1` output |
-| Ratio Ratchet Gates | - | implemented | verified | smoke | retired | peer/base ratio classification plus host-scoped ratcheted baseline gates |
-| Vat Runner Integration | - | implemented | verified | smoke | retired | vat can provision comparison targets and run arena as the comparison runner |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| N-Target Comparison Runner | - | sequential N-target fanout, scalar reduction, and `arena.report/1` output |
+| Ratio Ratchet Gates | - | peer/base ratio classification plus host-scoped ratcheted baseline gates |
+| Vat Runner Integration | - | vat can provision comparison targets and run arena as the comparison runner |
 
 ### N-Target Comparison Runner
 
-ID: n-target-comparison-runner
-Type: RuntimeTool
-Root WI: -
-Status: retired
-Required Verification: smoke
-Promise:
-`arena run --spec` fans the same logical workload across a base target and peers, reduces each result to a comparable scalar, and emits one `arena.report/1` JSON report.
-Gate Inventory:
-- `cargo test -p arena`
+`arena run --spec` fans the same logical workload across a base target and
+peers, reduces each result to a comparable scalar, and emits one
+`arena.report/1` JSON report.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Sequential target fanout and measurement | epic | - | implemented | verified | smoke | `cargo test -p arena` |
-| Arena report envelope | epic | - | implemented | verified | smoke | `cargo test -p arena` |
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p arena`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Sequential target fanout and measurement | epic | - | `cargo test -p arena` |
+| Arena report envelope | epic | - | `cargo test -p arena` |
 
 ### Ratio Ratchet Gates
 
-ID: ratio-ratchet-gates
-Type: RuntimeTool
-Root WI: -
-Status: retired
-Required Verification: smoke
-Promise:
-arena computes peer/base ratios, classifies win/exempt/target cells, and gates WIN cells against ratcheted host-scoped baselines.
-Gate Inventory:
-- `cargo test -p arena`
+arena computes peer/base ratios, classifies win/exempt/target cells, and gates
+WIN cells against ratcheted host-scoped baselines.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Win exempt target classification | epic | - | implemented | verified | smoke | `cargo test -p arena` |
-| Host scoped baseline ratchet | epic | - | implemented | verified | smoke | `cargo test -p arena` |
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p arena`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Win exempt target classification | epic | - | `cargo test -p arena` |
+| Host scoped baseline ratchet | epic | - | `cargo test -p arena` |
 
 ### Vat Runner Integration
 
-ID: vat-runner-integration
-Type: RuntimeTool
-Root WI: -
-Status: retired
-Required Verification: smoke
-Promise:
-vat can run arena as a normal runner after provisioning every comparison target, while arena stays protocol-agnostic.
-Gate Inventory:
-- `cargo test -p arena`
+vat can run arena as a normal runner after provisioning every comparison
+target, while arena stays protocol-agnostic.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Vat managed comparison runner | epic | - | implemented | verified | smoke | `cargo test -p arena` |
-
+- Root WI: none; this capability predates the tracker.
+- Gate: `cargo test -p arena`
+- Evidence: `cargo test -p arena`
 
 ## Build & test
 

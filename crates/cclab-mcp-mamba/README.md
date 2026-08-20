@@ -12,25 +12,32 @@ the current binding surface.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Mamba MCP Server Binding | - | implemented | passing | conformance | not_ready | exposes MCP server handles, tool metadata registration, stdio initialize stub, and streamable HTTP app handles |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Mamba MCP Server Binding | - | exposes MCP server handles, tool metadata registration, stdio initialize stub, and streamable HTTP app handles |
 
 ### Mamba MCP Server Binding
 
-ID: mamba-mcp-server-binding
-Type: DeveloperTool
-Surfaces: Mamba module: `cclab.mcp`; Native ABI: `mb_mcp_server_new`, `mb_mcp_server_register_tool`, `mb_mcp_server_tool_count`, `mb_mcp_server_run_stdio`, `mb_mcp_server_streamable_http_app`, `mb_mcp_server_name`; Rust module registrar: `McpMambaModule`
-EC Dimensions: behavior: `cargo test -p cclab-mcp-mamba`
-Root WI: -
-Status: confirmed
-Required Verification: conformance
-Promise:
-Cclab MCP Mamba exposes MCP server primitives to Mamba scripts through the `cclab.mcp` native module, including server handles, tool registration metadata, tool counts, server-name access, a minimal stdio initialize response stub, and streamable HTTP app handles for mounting.
-Gate Inventory: `cargo test -p cclab-mcp-mamba`; crates/cclab-mcp-mamba/src/lib.rs; crates/cclab-mcp-mamba/src/methods.rs; crates/cclab-mcp-mamba/src/types.rs; crates/cclab-mcp-mamba/tests/methods_test.rs
+Cclab MCP Mamba exposes MCP server primitives to Mamba scripts through the
+`cclab.mcp` native module, including server handles, tool registration
+metadata, tool counts, server-name access, a minimal stdio initialize response
+stub, and streamable HTTP app handles for mounting.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Mamba MCP server ABI contract | epic | - | implemented | passing | conformance | `cargo test -p cclab-mcp-mamba`; crates/cclab-mcp-mamba/src/lib.rs; crates/cclab-mcp-mamba/src/methods.rs; crates/cclab-mcp-mamba/src/types.rs; crates/cclab-mcp-mamba/tests/methods_test.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Mamba module: `cclab.mcp`; Native ABI: `mb_mcp_server_new`,
+  `mb_mcp_server_register_tool`, `mb_mcp_server_tool_count`,
+  `mb_mcp_server_run_stdio`, `mb_mcp_server_streamable_http_app`,
+  `mb_mcp_server_name`; Rust module registrar: `McpMambaModule`
+- Gate — behavior: `cargo test -p cclab-mcp-mamba`
+- Gate: `cargo test -p cclab-mcp-mamba`
+- Source: `crates/cclab-mcp-mamba/src/lib.rs`,
+  `crates/cclab-mcp-mamba/src/methods.rs`,
+  `crates/cclab-mcp-mamba/src/types.rs`,
+  `crates/cclab-mcp-mamba/tests/methods_test.rs`
+- Evidence: `cargo test -p cclab-mcp-mamba`; crates/cclab-mcp-mamba/src/lib.rs;
+  crates/cclab-mcp-mamba/src/methods.rs; crates/cclab-mcp-mamba/src/types.rs;
+  crates/cclab-mcp-mamba/tests/methods_test.rs

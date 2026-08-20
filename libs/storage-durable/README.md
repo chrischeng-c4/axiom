@@ -9,27 +9,24 @@ state-machine semantics.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Shared Service Durability Contract | - | implemented | verified | smoke | ready | fsync policy, atomic writes, framed logs, and snapshot files |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Shared Service Durability Contract | - | fsync policy, atomic writes, framed logs, and snapshot files |
 
 ### Shared Service Durability Contract
 
-ID: shared-storage-durable-contract
-Type: DeveloperTool
-Root WI: -
-Status: verified
-Surfaces: Rust API: `storage_durable`.
-EC Dimensions: behavior: `cargo test -p storage-durable` - durable file primitive coverage
-Required Verification: smoke
-Promise:
 Services can compose one shared durable local storage layer instead of
 reimplementing fsync, atomic rename, append-log frame parsing, torn-tail
 recovery, or sequence-named snapshot retention locally.
-Gate Inventory: `cargo test -p storage-durable`; libs/storage-durable/src/lib.rs
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| shared-storage-durable-contract | epic | - | implemented | verified | smoke | `cargo test -p storage-durable`; libs/storage-durable/src/lib.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API: `storage_durable`.
+- Gate — behavior: `cargo test -p storage-durable` - durable file primitive
+  coverage
+- Gate: `cargo test -p storage-durable`
+- Source: `libs/storage-durable/src/lib.rs`
+- Evidence: `cargo test -p storage-durable`; libs/storage-durable/src/lib.rs

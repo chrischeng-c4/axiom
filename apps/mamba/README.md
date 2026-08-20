@@ -14,6 +14,8 @@ Canonical supporting docs:
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 Each capability states its promise and names the gate that verifies it. A
 promise with no gate line under it is not claimed — and most of the tier
 promises below are exactly that today: planned, with the gate still to be
@@ -29,6 +31,7 @@ stdlibs → Hot stdlibs → Third-party → Other stdlibs (7a vendor, then 7b na
 rewrite). This is policy, enforced operationally by the GitHub tier labels and
 the #1996 Delivery Queue rather than by any checker. A later tier is not
 dependency-ready while a required earlier-tier contract is red.
+
 
 #### T1. Mamba Core Semantics — #1996
 
@@ -47,6 +50,7 @@ correctness plus race, deadlock, leak, CPU, peak-RSS, and multicore evidence.
 - Contracts: `apps/mamba/external-contracts/{type-system,concurrency}.md`
 - Exit gate: #2028 (fail-closed rollup that releases Tier 2) — **not written**
 
+
 #### T2. CPython-compatible Language Core — #2002
 
 After Tier 1 establishes Mamba's intentional divergences, parsing, ASTs, scope,
@@ -59,6 +63,7 @@ implicit `Any` or GIL-dependent execution.
 - Oracle: `apps/mamba/tests/harness/cpython`
 - Exit gate: #2035 — **not written**
 
+
 #### T3. Built-ins and Core Value Model — #2001
 
 Numeric values, mappings, sequences, sets, Unicode and binary values,
@@ -68,6 +73,7 @@ retain Tier 1 single-mutation memory safety and free-threaded execution.
 
 - Contracts: `apps/mamba/external-contracts/{numbers,collections,strings,iterators}.md`
 - Exit gate: #2056 — **not written**
+
 
 #### T4. C-backed Stdlib Compatibility — #2003
 
@@ -79,6 +85,7 @@ success; unsupported platform rows stay visible and issue-owned.
 - Contract: `apps/mamba/external-contracts/stdlib.md`
 - Platform matrix: `apps/mamba/tests/harness/cpython/tools/platform_readiness.py`
 - Exit gate: #2061 — **not written**
+
 
 #### T5. Hot Stdlib Native/Hybrid Paths — #1103
 
@@ -93,6 +100,7 @@ vendored module identity, never a native shell or sentinel stub.
 - Source: `apps/mamba/src/runtime/stdlib`, `.../vendor_lib.rs`
 - Exit gate: #2080 — **not written**
 
+
 #### T6. Third-party Ecosystem — #1119
 
 Selected real third-party packages install or build on Mamba and complete
@@ -102,6 +110,7 @@ shims, and fake modules never count as readiness.
 
 - Contract: `apps/mamba/external-contracts/third-party.md`
 - Exit gate: #2096 — **not written**
+
 
 #### T7. Other Stdlib: Vendor then Rewrite — #2004
 
@@ -113,6 +122,7 @@ proven.
 
 - Source: `apps/mamba/src/runtime/stdlib/vendor_lib.rs`, `apps/mamba/vendor`
 - Exit gates: 7a #2104, 7b #2116 — **not written**
+
 
 ### C1. Py3.12 functional parity
 
@@ -131,6 +141,7 @@ behavior failures.
 The CPython oracle gate itself remains open — the tier exit gates above are
 what would close it.
 
+
 ### C2. Less CPU time AND less memory than CPython
 
 Performance is a committed capability: for the same program, mamba targets
@@ -140,7 +151,7 @@ than roughly 0.8x on CPython-tuned C hot paths, and both CPU and RSS measured
 externally before claiming progress.
 
 - Root WI: #707
-- Gates: `cargo test -p mamba --release --test perf_pin -- perf_pin`;
+- Gates: `cargo test -p mamba --release --test perf_pin` 
   `cargo bench -p mamba --bench mamba_bench`;
   `apps/mamba/benches/3p/cross_runtime.rs`;
   `apps/mamba/tests/harness/cpython/config/perf/pins`
@@ -149,6 +160,7 @@ externally before claiming progress.
 Measured state is bimodal — see
 [Performance data](#performance-data--measured-mamba-vs-cpython-312). The ratio
 gates remain open.
+
 
 ### C3. mambalibs end-to-end
 
@@ -165,6 +177,7 @@ plugin layer.
 - Source: `apps/mamba/mambalibs`,
   `apps/mamba/src/pkgmanage/builder/force_link.rs`
 
+
 ### C4. Package manager — uv-like
 
 **Verified.** A built-in package manager for project scaffold, dependency
@@ -174,7 +187,7 @@ add/remove, lockfile generation, sync/install, cache, and validation workflows �
 
 - Root WI: #459 (parity #519, `mamba run` command mode #525)
 - Gates: `cargo test -p mamba --test pkgmgr`;
-  `cargo test -p mamba --test schema_gates pkgmgr`;
+  `cargo test -p mamba --test schema_gates --test pkgmgr` 
   `./target/debug/mamba pkgmgr-validate --json`
 - Source: `apps/mamba/src/pkgmanage`, `apps/mamba/tests/pkgmgr`
 
@@ -229,6 +242,7 @@ with `.venv` executables and site-packages preferred before host fallbacks.
 
 No known release-blocking command-family gaps remain under #519; follow-up
 parity work is tracked as focused hardening or live-network fixtures.
+
 
 ## Test Completeness — what we tested, against what authority
 

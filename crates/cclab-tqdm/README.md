@@ -11,25 +11,24 @@ terminal rendering and visual regression coverage remain product-readiness gaps.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Progress Tracking API | - | implemented | verified | smoke | not_ready | Progress bar, spinner, multi-progress, style, and error APIs with behavior smoke proof |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Progress Tracking API | - | Progress bar, spinner, multi-progress, style, and error APIs with behavior smoke proof |
 
 ### Progress Tracking API
 
-ID: progress-tracking-api
-Type: DeveloperTool
-Surfaces: Rust API: `cclab_tqdm::{ProgressBar, MultiProgress, ProgressStyle, TqdmError}`
-EC Dimensions: behavior: `cargo test -p cclab-tqdm` - progress bar, spinner, multi-progress, style, rate, and typed-error behavior smoke
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-Cclab Tqdm exposes Rust progress tracking primitives for progress bars, spinners, multi-progress rendering, style templates, rate/ETA calculation, and typed progress errors.
-Gate Inventory: `cargo test -p cclab-tqdm`
+Cclab Tqdm exposes Rust progress tracking primitives for progress bars,
+spinners, multi-progress rendering, style templates, rate/ETA calculation, and
+typed progress errors.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Progress API behavior smoke contract | epic | - | implemented | verified | smoke | `cargo test -p cclab-tqdm`; crates/cclab-tqdm/src/bar.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API:
+  `cclab_tqdm::{ProgressBar, MultiProgress, ProgressStyle, TqdmError}`
+- Gate — behavior: `cargo test -p cclab-tqdm` - progress bar, spinner,
+  multi-progress, style, rate, and typed-error behavior smoke
+- Gate: `cargo test -p cclab-tqdm`
+- Evidence: `cargo test -p cclab-tqdm`; crates/cclab-tqdm/src/bar.rs

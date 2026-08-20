@@ -12,25 +12,24 @@ contract, so this is not yet production-ready documentation generation.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Diagram And Specification Generation Library | - | implemented | verified | smoke | not_ready | basic Mermaid flowchart and Markdown spec rendering library with behavior smoke proof |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Diagram And Specification Generation Library | - | basic Mermaid flowchart and Markdown spec rendering library with behavior smoke proof |
 
 ### Diagram And Specification Generation Library
 
-ID: diagram-and-specification-generation-library
-Type: DeveloperTool
-Surfaces: Rust API: `cclab_aurora::{DiagramSpec, DiagramNode, DiagramEdge, SpecificationDoc, render_mermaid_flowchart, render_markdown_spec}`
-EC Dimensions: behavior: `cargo test --manifest-path crates/cclab-aurora/Cargo.toml` - Mermaid flowchart, Markdown spec rendering, and validation smoke
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-Cclab Aurora provides a Rust library for generating basic Mermaid diagram and Markdown specification artifacts from structured inputs.
-Gate Inventory: `cargo test --manifest-path crates/cclab-aurora/Cargo.toml`
+Cclab Aurora provides a Rust library for generating basic Mermaid diagram and
+Markdown specification artifacts from structured inputs.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Library target behavior smoke | epic | - | implemented | verified | smoke | `cargo test --manifest-path crates/cclab-aurora/Cargo.toml`; crates/cclab-aurora/src/lib.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API:
+  `cclab_aurora::{DiagramSpec, DiagramNode, DiagramEdge, SpecificationDoc, render_mermaid_flowchart, render_markdown_spec}`
+- Gate — behavior: `cargo test --manifest-path crates/cclab-aurora/Cargo.toml`
+  - Mermaid flowchart, Markdown spec rendering, and validation smoke
+- Gate: `cargo test --manifest-path crates/cclab-aurora/Cargo.toml`
+- Evidence: `cargo test --manifest-path crates/cclab-aurora/Cargo.toml`;
+  crates/cclab-aurora/src/lib.rs

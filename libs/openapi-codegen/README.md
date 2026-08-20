@@ -8,29 +8,26 @@ keyword (the HTTP `QUERY` method, RFC 10008) and `additionalOperations` map.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Multi-Language OpenAPI Client Generation | - | implemented | verified | smoke | ready | emits typed clients for supported target languages |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Multi-Language OpenAPI Client Generation | - | emits typed clients for supported target languages |
 
 ### Multi-Language OpenAPI Client Generation
 
-ID: multi-language-openapi-client-generation
-Type: DeveloperTool
-Root WI: -
-Status: verified
-Surfaces: Rust API: `openapi_codegen`.
-EC Dimensions: behavior: `cargo test -p openapi-codegen` - OpenAPI parser and emitter coverage
-Required Verification: smoke
-Promise:
 Projects can derive typed client code from OpenAPI documents without copying
 language-specific generation logic.
-Gate Inventory: `cargo test -p openapi-codegen`; libs/openapi-codegen/src/lib.rs
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| multi-language-openapi-client-generation-contract | epic | - | implemented | verified | smoke | `cargo test -p openapi-codegen`; libs/openapi-codegen/src/lib.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Rust API: `openapi_codegen`.
+- Gate — behavior: `cargo test -p openapi-codegen` - OpenAPI parser and emitter
+  coverage
+- Gate: `cargo test -p openapi-codegen`
+- Source: `libs/openapi-codegen/src/lib.rs`
+- Evidence: `cargo test -p openapi-codegen`; libs/openapi-codegen/src/lib.rs
 
 ## Versioned target profiles
 
