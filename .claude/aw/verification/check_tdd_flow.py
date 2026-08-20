@@ -86,13 +86,21 @@ from _paths import (E2E_SCRIPT, LOGIC_SCRIPT, UNIT_SCRIPT,  # noqa: E402
 Path = pathlib.Path
 
 UV = pinned_interpreter()
-LAUNCH = " ".join(UV)
 
-CASE = "demo-marker-case"
-CASES_REL = "apps/demo/e2e/src/cases"
-PYPROJECT_REL = "apps/demo/e2e/pyproject.toml"
+# Underscores, not hyphens: the case id is a `[[test]]` target name, and cargo
+# passes that name to rustc as a crate name. A hyphen there is a build failure
+# before any control gets to decide anything.
+CASE = "demo_marker_case"
+E2E_REL = "apps/demo/e2e"
+CASE_REL = f"{E2E_REL}/{CASE}.rs"
 PROJECT_TOML_REL = "apps/demo/aw.toml"
 CARGO_REL = "apps/demo/Cargo.toml"
+
+# A workspace root, so `cargo test -p demo` resolves from the checkout root.
+# That is where every phase runs, and where `leg.at_head` puts its detached
+# worktree, so a crate reachable only by `--manifest-path` would be a crate the
+# derived case command cannot name.
+WORKSPACE_REL = "Cargo.toml"
 LIB_REL = "apps/demo/src/lib.rs"
 TESTS_REL = "apps/demo/src/tests.rs"
 MAIN_REL = "apps/demo/src/main.rs"
@@ -117,13 +125,33 @@ MARKER = "hello"
 # a control that needs to break the recording has something to compare against.
 UNIT_TEST = "tests::marker_is_hello"
 
+WORKSPACE_TOML = '''\
+[workspace]
+resolver = "2"
+members = ["apps/demo"]
+'''
+
+# `autotests = false` is in the scaffold rather than added by the `e2e` phase.
+# It is a property of the project, not of a change: with autodiscovery on, a
+# file under `e2e/` that nobody declared runs anyway, and `C1` would have
+# nothing to refuse an unregistered case against. The phase appends stanzas to
+# a manifest that already refuses undeclared files.
 CARGO_TOML = '''\
 [package]
 name = "demo"
 version = "0.0.0"
 edition = "2021"
+autotests = false
 
 [dependencies]
+'''
+
+# The same manifest with the case registered -- the `e2e` phase's second write,
+# and the only path outside its own root it is allowed to touch.
+CARGO_TOML_REGISTERED = CARGO_TOML + f'''
+[[test]]
+name = "{CASE}"
+path = "e2e/{CASE}.rs"
 '''
 
 # --------------------------------------------------------------------------
@@ -202,11 +230,16 @@ pub fn marker() -> &'static str {{
 
 # What the `logic` phase writes into `main.rs`: the externally observable half,
 # which is the half the e2e case can see.
+# Relative to the process's own directory rather than to the checkout root.
+# The case runs it with `current_dir` set to the crate, because a `[[test]]`
+# target's own working directory is the crate root and a product that resolved
+# its output against the repository root would only be observable from one of
+# the two.
 MAIN_IMPLEMENTED = '''\
 use std::fs;
 
 fn main() {
-    fs::write("apps/demo/marker.txt", demo::marker()).expect("write the marker");
+    fs::write("marker.txt", demo::marker()).expect("write the marker");
 }
 '''
 
@@ -231,45 +264,36 @@ use super::marker;
 # The e2e case
 # --------------------------------------------------------------------------
 
-# No stage branch and no environment read -- see the note at the top. It runs
-# the binary and reads what the binary wrote, at every phase, unchanged.
+# It runs the built binary directly -- `env!("CARGO_BIN_EXE_demo")` -- and
+# never `cargo run`. A nested cargo invoked from inside a `cargo test` blocks
+# on the build directory's file lock until the phase's 900-second timeout, and
+# what that reports is a hung gate rather than a red case.
 #
 # It removes the marker before running, so what it reads is what this run
 # produced. Without that it would pass on a file an earlier run left behind,
 # which is `L3`'s defect arriving through the back door inside a single phase.
 CASE_SRC = f'''\
-"""The product writes the marker string."""
-from __future__ import annotations
+//! The product writes the marker string.
 
-import pathlib
-import subprocess
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
 
-CASE_ID = "{CASE}"
-DIMENSION = "behavior"
-TARGET_COMMAND = "{LAUNCH} {CASES_REL}/{CASE}.py"
-ASSERTIONS = ("running the product writes `{MARKER}` to the marker file",)
-
-MARKER_FILE = pathlib.Path("apps/demo/marker.txt")
-
-
-def verify() -> list[str]:
-    if MARKER_FILE.is_file():
-        MARKER_FILE.unlink()
-    subprocess.run(
-        ["cargo", "run", "--offline", "-q", "--manifest-path", "{CARGO_REL}"],
-        check=False, capture_output=True,
-    )
-    observed = (
-        MARKER_FILE.read_text(encoding="utf-8") if MARKER_FILE.is_file() else ""
-    )
-    assert observed == "{MARKER}", (
+#[test]
+fn the_product_writes_the_marker() {{
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let marker = dir.join("marker.txt");
+    let _ = fs::remove_file(&marker);
+    Command::new(env!("CARGO_BIN_EXE_demo"))
+        .current_dir(&dir)
+        .status()
+        .expect("the product runs");
+    let observed = fs::read_to_string(&marker).unwrap_or_default();
+    assert_eq!(
+        observed, "{MARKER}",
         "running the product writes `{MARKER}` to the marker file"
-    )
-    return list(ASSERTIONS)
-
-
-if __name__ == "__main__":
-    verify()
+    );
+}}
 '''
 
 # The same case with the product gone from it: it asserts something about the
@@ -277,40 +301,18 @@ if __name__ == "__main__":
 # and green in the tree, so `L4` cannot tell the two apart and only `L5` sees
 # it. This is the shape of a case that stopped observing the thing it names.
 CASE_SRC_BLIND = f'''\
-"""A case that observes the scaffold and calls it the product."""
-from __future__ import annotations
+//! A case that observes the scaffold and calls it the product.
 
-import pathlib
+use std::path::PathBuf;
 
-CASE_ID = "{CASE}"
-DIMENSION = "behavior"
-TARGET_COMMAND = "{LAUNCH} {CASES_REL}/{CASE}.py"
-ASSERTIONS = ("running the product writes `{MARKER}` to the marker file",)
-
-
-def verify() -> list[str]:
-    assert pathlib.Path("{CARGO_REL}").is_file(), (
+#[test]
+fn the_product_writes_the_marker() {{
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        dir.join("Cargo.toml").is_file(),
         "running the product writes `{MARKER}` to the marker file"
-    )
-    return list(ASSERTIONS)
-
-
-if __name__ == "__main__":
-    verify()
-'''
-
-PYPROJECT = f'''\
-[project]
-name = "demo-e2e"
-version = "0.1.0"
-requires-python = ">=3.11"
-
-[[tool.aw.python-e2e.cases]]
-id = "{CASE}"
-dimension = "behavior"
-promise = "the product writes the marker string"
-oracle = "the bytes in the marker file after the product runs"
-command = "{LAUNCH} {CASES_REL}/{CASE}.py"
+    );
+}}
 '''
 
 # The project config. `[unit] build` and `[unit] test` are two keys rather than
@@ -332,7 +334,7 @@ harness = "cargo"
 # product output. Mirroring the real checkout's ignores is not cosmetic: any of
 # them reported by `git status` would join the dirty set and fail `C0` in every
 # control below -- the right row red for entirely the wrong reason.
-GITIGNORE = ".aw/\n__pycache__/\napps/demo/target/\napps/demo/marker.txt\n"
+GITIGNORE = ".aw/\n__pycache__/\ntarget/\napps/demo/marker.txt\n"
 
 WI_BODY = f"""\
 ## Goal
@@ -344,8 +346,8 @@ Running the demo product writes the string `{MARKER}` into
 
 ### Verified premises
 
-- `{CASES_REL}/{CASE}.py:1` runs the product and reads the marker file, so it
-  is red until the product writes one.
+- `{CASE_REL}:1` runs the product and reads the marker file, so it is red
+  until the product writes one.
 - `{MAIN_REL}:1` is an empty `main`, so nothing writes the marker today.
 - `{LIB_REL}:1` carries no `marker` function, so the unit test has nothing to
   call until the skeleton lands.
@@ -382,7 +384,7 @@ This addresses the worker implementing this work item, not the controller review
 
 ### Must not touch
 
-- `{CASES_REL}/**`
+- `{E2E_REL}/**`
 - `{NEIGHBOUR_REL}`
 - `{NEIGHBOUR_TESTS_REL}`
 
@@ -444,11 +446,12 @@ def build(root: Path) -> Path:
     observes the product from one that observes the scaffold.
     """
     fixture = root / "fixture"
-    (fixture / CASES_REL).mkdir(parents=True)
+    (fixture / E2E_REL).mkdir(parents=True)
     (fixture / LIB_REL).parent.mkdir(parents=True)
     (fixture / ".gitignore").write_text(GITIGNORE)
     (fixture / "aw.toml").write_text('version = "0.0.0"\n')
     (fixture / PROJECT_TOML_REL).write_text(PROJECT_TOML)
+    (fixture / WORKSPACE_REL).write_text(WORKSPACE_TOML)
     (fixture / CARGO_REL).write_text(CARGO_TOML)
     (fixture / LIB_REL).write_text(LIB_SCAFFOLD)
     (fixture / MAIN_REL).write_text(MAIN_SCAFFOLD)
@@ -488,8 +491,8 @@ def land_e2e(work: Path) -> None:
     working. The trailer is written here in the shape the phase produces, and
     the control that checks the phase *does* produce it is separate.
     """
-    (work / PYPROJECT_REL).write_text(PYPROJECT)
-    (work / CASES_REL / f"{CASE}.py").write_text(CASE_SRC)
+    (work / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
+    (work / CASE_REL).write_text(CASE_SRC)
     git(work, "add", "-A")
     git(work, "commit", "-qm",
         f"e2e(demo): pin the marker behaviour\n\nRefs #{WI}\nE2E-Red: {CASE}")
@@ -652,8 +655,8 @@ def main() -> int:
         w = h.fresh()
 
         def write_e2e_and_review():
-            (w / PYPROJECT_REL).write_text(PYPROJECT)
-            (w / CASES_REL / f"{CASE}.py").write_text(CASE_SRC)
+            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
+            (w / CASE_REL).write_text(CASE_SRC)
             return h.accept(E2E_SCRIPT, w, "e2e")
 
         steps = [
@@ -690,7 +693,7 @@ def main() -> int:
 
         def start_dirty() -> None:
             w = h.fresh()
-            (w / CASES_REL / f"{CASE}.py").write_text(CASE_SRC)
+            (w / CASE_REL).write_text(CASE_SRC)
             r = h.e2e(w, "start", str(WI))
             hit = h.red_on(r, "P2")
             h.record("start refuses a dirty tree", "FAIL on P2",
@@ -742,8 +745,8 @@ def main() -> int:
 
         def e2e_phase_writes_src() -> None:
             w = h.fresh()
-            (w / PYPROJECT_REL).write_text(PYPROJECT)
-            (w / CASES_REL / f"{CASE}.py").write_text(CASE_SRC)
+            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
+            (w / CASE_REL).write_text(CASE_SRC)
             (w / LIB_REL).write_text(LIB_SKELETON)
             r = h.e2e(w, "verify", str(WI))
             hit = h.red_on(r, "C0")
@@ -980,8 +983,8 @@ def main() -> int:
             it pass" from "it was already passing".
             """
             w = h.fresh()
-            (w / PYPROJECT_REL).write_text(PYPROJECT)
-            (w / CASES_REL / f"{CASE}.py").write_text(CASE_SRC_BLIND)
+            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
+            (w / CASE_REL).write_text(CASE_SRC_BLIND)
             git(w, "add", "-A")
             git(w, "commit", "-qm",
                 f"e2e(demo): pin the marker behaviour\n\nRefs #{WI}\nE2E-Red: {CASE}")
@@ -1045,8 +1048,8 @@ def main() -> int:
         # only half of that exists.
         def e2e_commit_without_verdict() -> None:
             w = h.fresh()
-            (w / PYPROJECT_REL).write_text(PYPROJECT)
-            (w / CASES_REL / f"{CASE}.py").write_text(CASE_SRC)
+            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
+            (w / CASE_REL).write_text(CASE_SRC)
             r = h.e2e(w, "commit", str(WI), "--dry-run")
             hit = h.red_on(r, "C7")
             h.record("e2e commit refuses when no verdict exists at all",
@@ -1056,11 +1059,11 @@ def main() -> int:
         def e2e_verdict_goes_stale() -> None:
             """A verdict is an approval of bytes, not of an intention."""
             w = h.fresh()
-            (w / PYPROJECT_REL).write_text(PYPROJECT)
-            (w / CASES_REL / f"{CASE}.py").write_text(CASE_SRC)
+            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
+            (w / CASE_REL).write_text(CASE_SRC)
             h.accept(E2E_SCRIPT, w, "e2e")
-            (w / CASES_REL / f"{CASE}.py").write_text(
-                CASE_SRC + "\n# edited after the reviewer accepted it\n")
+            (w / CASE_REL).write_text(
+                CASE_SRC + "\n// edited after the reviewer accepted it\n")
             r = h.e2e(w, "commit", str(WI), "--dry-run")
             block = h.row_block(r, "C7")
             hit = "different bytes" in block
@@ -1087,8 +1090,8 @@ def main() -> int:
             happened.
             """
             w = h.fresh()
-            (w / PYPROJECT_REL).write_text(PYPROJECT)
-            (w / CASES_REL / f"{CASE}.py").write_text(CASE_SRC)
+            (w / CARGO_REL).write_text(CARGO_TOML_REGISTERED)
+            (w / CASE_REL).write_text(CASE_SRC)
             (w / LIB_REL).write_text(LIB_SKELETON)
             (w / TESTS_REL).write_text(TESTS_SRC)
             git(w, "add", "-A")

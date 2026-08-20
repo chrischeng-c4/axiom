@@ -31,7 +31,6 @@ that leg's own script instead.
 """
 from __future__ import annotations
 
-import ast
 import contextlib
 import hashlib
 import importlib.util
@@ -111,6 +110,18 @@ TEST_FILES = ("tests.rs", "tests/mod.rs")
 # through would surface as an empty red set two rows later.
 LEG_TEST_FILES = {"unit": "requires", "logic": "refuses"}
 
+# The one path a phase may write outside its root, relative to the project
+# directory. `e2e`'s case inventory is the crate manifest, which sits one level
+# above `e2e/` -- and registering a case is not optional, because `autotests =
+# false` means a file nobody declared does not run. Without this entry the
+# phase would be unable to do its job: `C1` requires the `[[test]]` stanza and
+# `C0` would refuse the edit that adds it.
+#
+# Exact filenames, never a prefix. `apps/<p>/Cargo.toml` is the register; every
+# other path outside the root is still the out-of-scope write `C0` exists to
+# name, and `unit` and `logic` have no entry here at all.
+LEG_EXTRA_PATHS = {"e2e": ("Cargo.toml",)}
+
 # Both tables are keyed by phase, and neither is a second enum -- so a phase
 # renamed in `workitem.LEGS` has to reach them, and nothing about a dict makes
 # it. `leg_root` refuses a phase the table has no entry for, which is one
@@ -124,12 +135,15 @@ LEG_TEST_FILES = {"unit": "requires", "logic": "refuses"}
 # is a subset by design: `e2e` writes no Rust test file and has no entry. What
 # it may not contain is a key no phase answers to, which is how a renamed
 # `unit` would silently stop being required to write a test at all.
-if set(LEG_ROOTS) != set(PHASES) or not set(LEG_TEST_FILES) <= set(PHASES):
+if (set(LEG_ROOTS) != set(PHASES)
+        or not set(LEG_TEST_FILES) <= set(PHASES)
+        or not set(LEG_EXTRA_PATHS) <= set(PHASES)):
     raise SystemExit(
         "leg.py: a phase table names something the ladder does not\n"
-        f"  ladder:         {' -> '.join(PHASES)}\n"
-        f"  LEG_ROOTS:      {sorted(LEG_ROOTS)}\n"
-        f"  LEG_TEST_FILES: {sorted(LEG_TEST_FILES)}"
+        f"  ladder:          {' -> '.join(PHASES)}\n"
+        f"  LEG_ROOTS:       {sorted(LEG_ROOTS)}\n"
+        f"  LEG_TEST_FILES:  {sorted(LEG_TEST_FILES)}\n"
+        f"  LEG_EXTRA_PATHS: {sorted(LEG_EXTRA_PATHS)}"
     )
 
 
@@ -337,12 +351,21 @@ def contract_set(repo: Path, ec: Path, iid: int, leg: str) -> list[str]:
     phase that no longer exists, so a caller that forgot the argument would have
     silently measured an empty set and reported "no cases" rather than failing.
     """
-    prefix = f"{(ec / 'src' / 'cases').relative_to(repo)}/"
-    return sorted({
-        Path(p).stem
-        for p in landed_paths(repo, iid, leg)
-        if p.startswith(prefix) and p.endswith(".py")
-    })
+    prefix = f"{ec.relative_to(repo)}/"
+    out: set[str] = set()
+    for path in landed_paths(repo, iid, leg):
+        if not path.startswith(prefix) or not path.endswith(".rs"):
+            continue
+        # Files directly in the root, matching `e2e.changed_cases`. A
+        # subdirectory holds fixtures for a harness rather than cases -- a
+        # `[[test]]` stanza names one file -- so a stem lifted out of one is an
+        # id no target can match. The crate manifest lands in the same commit,
+        # because registering a case and writing it are one act, and the `.rs`
+        # suffix is what keeps it out of this set.
+        if "/" in path[len(prefix):]:
+            continue
+        out.add(Path(path).stem)
+    return sorted(out)
 
 
 def change_digest(repo: Path, iid: int, paths: list[str]) -> str:
@@ -378,9 +401,24 @@ def run_command(cwd: Path, command: str, timeout: int = 900) -> dict[str, Any]:
     is attributing a red needs to be able to print one. `split()` rather than a
     shell: a declared command that needs quoting or a pipe is a command doing
     more than naming a gate.
+
+    `unrunnable` is the reason the command never started or never finished, and
+    it is empty for every command that ran. It exists because "did not run" and
+    "ran and failed" are the same non-zero exit, and several rows here read a
+    non-zero exit as the answer they were hoping for -- so a result they cannot
+    tell apart is one they would accept. Callers that treat a failure as
+    evidence have to check it; callers that treat a failure as a failure do not.
     """
-    proc = subprocess.run(command.split(), cwd=cwd, capture_output=True,
-                          text=True, timeout=timeout)
+    try:
+        proc = subprocess.run(command.split(), cwd=cwd, capture_output=True,
+                              text=True, timeout=timeout)
+    except FileNotFoundError:
+        # The first word of a declared command naming nothing on PATH. It used
+        # to end the phase in a traceback, which no row accounted for.
+        head = (command.split() or ["(empty command)"])[0]
+        return _unrunnable(command, 127, f"`{head}` is not on PATH")
+    except subprocess.TimeoutExpired:
+        return _unrunnable(command, 124, f"it did not finish within {timeout}s")
     clean = ANSI.sub("", proc.stderr)
     matches = list(EXC_LINE.finditer(clean))
     last = matches[-1] if matches else None
@@ -390,27 +428,33 @@ def run_command(cwd: Path, command: str, timeout: int = 900) -> dict[str, Any]:
         "message": last.group("msg").strip() if last else "",
         "stderr": clean,
         "stdout": proc.stdout,
+        "unrunnable": "",
     }
 
 
-def case_constants(path: Path) -> dict[str, Any]:
-    """Module-level literal assignments, read without importing the module.
+def _unrunnable(command: str, code: int, why: str) -> dict[str, Any]:
+    reason = f"`{command}` did not run: {why}"
+    return {"exit": code, "exception": "", "message": "",
+            "stderr": reason, "stdout": "", "unrunnable": reason}
 
-    Importing would run the case. Reading is the point: these constants are the
-    case's own declaration of what it is, and the declaration has to be
-    readable before the case is trusted to run.
+
+def unrunnable(*results: dict[str, Any]) -> str:
+    """Every reason among these results that a command did not run.
+
+    Written to be called on a list rather than per result, because the rows
+    that need it run one command per case and a report naming the first failure
+    would hide the rest.
     """
-    out: dict[str, Any] = {}
-    for node in ast.parse(path.read_text(encoding="utf-8")).body:
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                try:
-                    out[target.id] = ast.literal_eval(node.value)
-                except (ValueError, TypeError, SyntaxError):
-                    pass
-    return out
+    return "\n".join(r["unrunnable"] for r in results if r.get("unrunnable"))
+
+
+# `case_constants` stood here until the cases became Rust. It read a Python
+# case's module-level `CASE_ID`/`DIMENSION`/`ASSERTIONS` without importing the
+# file, so `C1` could check that a case declared what it was. A `[[test]]`
+# target has no analogue and nothing invented one: the name in the manifest is
+# now the whole of a case's declaration, and `C1` checks that against the file
+# on disk instead. Deleted rather than left unused -- a reader finding it here
+# would reasonably conclude cases still declare themselves in their own source.
 
 
 @contextlib.contextmanager
@@ -760,14 +804,23 @@ def c0_scope(chk: Check, repo: Path, root: Path, dirty: list[str], leg: str) -> 
     one.
     """
     prefix = f"{root.relative_to(repo)}/"
+    # See `LEG_EXTRA_PATHS`. Resolved to full repo-relative paths and compared
+    # whole, so this widens the write root by the exact files named there and
+    # by nothing that merely starts with one of their names.
+    allowed = {f"{root.parent.relative_to(repo)}/{name}"
+               for name in LEG_EXTRA_PATHS.get(leg, ())}
     if not dirty:
         chk.add("FAIL", "C0 scope",
                 f"nothing differs from HEAD; there is no {leg.upper()} change to verify")
         return
-    outside = [p for p in dirty if not p.startswith(prefix)]
+    outside = [p for p in dirty
+               if not p.startswith(prefix) and p not in allowed]
     if outside:
-        chk.add("FAIL", "C0 scope",
-                f"changed outside {prefix}:\n" + "\n".join(f"  {p}" for p in outside))
+        detail = f"changed outside {prefix}:\n" + "\n".join(f"  {p}" for p in outside)
+        if allowed:
+            detail += ("\nthe only path outside it this phase may write is "
+                       + ", ".join(sorted(allowed)))
+        chk.add("FAIL", "C0 scope", detail)
         return
 
     # The filename half, for the two phases sharing one root. See
@@ -794,7 +847,11 @@ def c0_scope(chk: Check, repo: Path, root: Path, dirty: list[str], leg: str) -> 
                 "keep the next phase off them")
         return
 
+    register = sorted(p for p in dirty if p in allowed)
     detail = f"all {len(dirty)} changed paths are under {prefix}"
+    if register:
+        detail = (f"all {len(dirty)} changed paths are under {prefix} or are "
+                  f"the register at {', '.join(register)}")
     if rule == "requires":
         detail += f", including {len(tests)} test file(s)"
     elif rule == "refuses":
