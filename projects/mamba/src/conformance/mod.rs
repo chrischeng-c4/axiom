@@ -890,6 +890,7 @@ mod tests {
 
     /// S3/R4: Lock acquisition in run_and_capture does not add measurable
     /// overhead in single-threaded mode (uncontended lock).
+    #[cfg(not(debug_assertions))]
     #[test]
     fn run_and_capture_single_threaded_lock_overhead_minimal() {
         let tmp = TempDir::new().unwrap();

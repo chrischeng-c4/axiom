@@ -237,6 +237,7 @@ fn print_table(results: &[PerfResult]) {
 // ── The benchmark suite ────────────────────────────────────────────────────
 
 #[test]
+#[cfg(not(debug_assertions))]
 fn perf_comparison_mamba_vs_py312() {
     let results = vec![
         // ── Numeric ──

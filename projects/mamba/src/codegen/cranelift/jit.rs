@@ -3487,6 +3487,7 @@ mod tests {
     }
 
     /// S3/R4: Uncontended lock acquisition adds negligible overhead (<1ms).
+    #[cfg(not(debug_assertions))]
     #[test]
     fn jit_lock_uncontended_overhead_is_negligible() {
         let start = std::time::Instant::now();

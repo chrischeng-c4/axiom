@@ -129,36 +129,309 @@ fn test_parser_unterminated_literals() {
     }
 }
 
+const DEEP_PARSER_CHILD_ENV: &str = "MAMBA_DEEP_PARSER_CHILD_V1";
+const DEEP_PARSER_EXACT_TEST: &str = "conformance::tests_subdirs::stress::test_parser_resilience::test_parser_deeply_nested_expressions";
+const DEEP_PARSER_CHILD_SUMMARY: &str =
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;";
+const DEEP_PARSER_MARKERS: [&str; 4] = [
+    "MAMBA_DEEP_PARSER_CASE_OK:v1:parentheses:200",
+    "MAMBA_DEEP_PARSER_CASE_OK:v1:binary_chain:200",
+    "MAMBA_DEEP_PARSER_CASE_OK:v1:attribute_chain:150",
+    "MAMBA_DEEP_PARSER_CHILD_OK:v1",
+];
+const DEEP_PARSER_CHILD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const DEEP_PARSER_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const DEEP_PARSER_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+fn spawn_deep_parser_pipe_drainer<R>(
+    mut reader: R,
+) -> std::thread::JoinHandle<(Vec<u8>, Option<String>)>
+where
+    R: std::io::Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let error = reader.read_to_end(&mut bytes).err().map(|err| err.to_string());
+        (bytes, error)
+    })
+}
+
+fn join_deep_parser_pipe_drainer(
+    handle: std::thread::JoinHandle<(Vec<u8>, Option<String>)>,
+    stream: &str,
+) -> (String, Option<String>) {
+    match handle.join() {
+        Ok((bytes, error)) => (String::from_utf8_lossy(&bytes).into_owned(), error),
+        Err(_) => (
+            String::new(),
+            Some(format!("{stream} drainer thread panicked")),
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn configure_deep_parser_process_group(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_deep_parser_process_group(_command: &mut std::process::Command) {}
+
+#[cfg(unix)]
+fn request_deep_parser_termination(
+    child: &std::process::Child,
+    force: bool,
+) -> std::io::Result<()> {
+    let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+    let process_group = -(child.id() as libc::pid_t);
+    if unsafe { libc::kill(process_group, signal) } == -1 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(unix))]
+fn request_deep_parser_termination(
+    child: &mut std::process::Child,
+    _force: bool,
+) -> std::io::Result<()> {
+    child.kill()
+}
+
+fn terminate_and_reap_deep_parser_child(
+    child: &mut std::process::Child,
+    reason: &str,
+    supervisor_errors: &mut Vec<String>,
+) -> std::process::ExitStatus {
+    let cleanup_deadline = std::time::Instant::now() + DEEP_PARSER_CLEANUP_TIMEOUT;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status,
+            Ok(None) => {}
+            Err(err) => {
+                supervisor_errors.push(format!(
+                    "try_wait during {reason} cleanup failed: {err}"
+                ))
+            }
+        }
+
+        if std::time::Instant::now() >= cleanup_deadline {
+            eprintln!(
+                "deep-parser child cleanup deadline expired without direct-child reap: \
+                 reason={reason}, pid={}, supervisor_errors={supervisor_errors:?}",
+                child.id()
+            );
+            if let Err(err) = request_deep_parser_termination(child, true) {
+                eprintln!("deep-parser final termination request failed: {err}");
+            }
+            std::process::abort();
+        }
+
+        if let Err(err) = request_deep_parser_termination(child, false) {
+            supervisor_errors.push(format!("termination during {reason} cleanup failed: {err}"));
+
+            // A failed termination request may race with an already-exited
+            // child. Re-probe immediately before retrying within the deadline.
+            match child.try_wait() {
+                Ok(Some(status)) => return status,
+                Ok(None) => {}
+                Err(probe_err) => supervisor_errors.push(format!(
+                    "try_wait after termination during {reason} cleanup failed: {probe_err}"
+                )),
+            }
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => return status,
+            Ok(None) => {}
+            Err(err) => supervisor_errors.push(format!(
+                "try_wait after termination during {reason} cleanup failed: {err}"
+            )),
+        }
+
+        let now = std::time::Instant::now();
+        if now < cleanup_deadline {
+            std::thread::sleep(
+                DEEP_PARSER_POLL_INTERVAL.min(cleanup_deadline.saturating_duration_since(now)),
+            );
+        }
+    }
+}
+
 /// Test deeply nested expressions and chained operators.
 #[test]
 fn test_parser_deeply_nested_expressions() {
-    // Deeply nested parentheses
-    let depth = 200;
-    let mut src = "(".repeat(depth);
-    src.push_str("42");
-    src.push_str(&")".repeat(depth));
-    src.push('\n');
+    if std::env::var_os(DEEP_PARSER_CHILD_ENV).is_some() {
+        let worker = std::thread::Builder::new()
+            .name("mamba-deep-parser-64m".to_string())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                // Deeply nested parentheses
+                let depth = 200;
+                let mut src = "(".repeat(depth);
+                src.push_str("42");
+                src.push_str(&")".repeat(depth));
+                src.push('\n');
+                assert!(
+                    parser::parse(&src, FileId(0)).is_ok(),
+                    "parser rejected 200-deep nested parens"
+                );
+                println!("{}", DEEP_PARSER_MARKERS[0]);
 
-    let res = std::panic::catch_unwind(|| parser::parse(&src, FileId(0)));
-    assert!(res.is_ok(), "parser panicked on 200-deep nested parens");
+                // Chained binary operators: 1 + 1 + 1 + ... + 1
+                let mut chained = "1".to_string();
+                for _ in 0..200 {
+                    chained.push_str(" + 1");
+                }
+                chained.push('\n');
+                assert!(
+                    parser::parse(&chained, FileId(0)).is_ok(),
+                    "parser rejected 200-chained addition"
+                );
+                println!("{}", DEEP_PARSER_MARKERS[1]);
 
-    // Chained binary operators: 1 + 1 + 1 + ... + 1
-    let mut chained = "1".to_string();
-    for _ in 0..200 {
-        chained.push_str(" + 1");
+                // Chained attribute access: x.a.b.c.d...
+                let mut attrs = "x".to_string();
+                for i in 0..150 {
+                    attrs.push_str(&format!(".attr_{i}"));
+                }
+                attrs.push('\n');
+                assert!(
+                    parser::parse(&attrs, FileId(0)).is_ok(),
+                    "parser rejected 150-chained attribute access"
+                );
+                println!("{}", DEEP_PARSER_MARKERS[2]);
+            })
+            .expect("failed to spawn 64 MiB deep-parser worker");
+
+        worker
+            .join()
+            .unwrap_or_else(|_| panic!("64 MiB deep-parser worker panicked"));
+        println!("{}", DEEP_PARSER_MARKERS[3]);
+        return;
     }
-    chained.push('\n');
-    let res = std::panic::catch_unwind(|| parser::parse(&chained, FileId(0)));
-    assert!(res.is_ok(), "parser panicked on 200-chained addition");
 
-    // Chained attribute access: x.a.b.c.d...
-    let mut attrs = "x".to_string();
-    for i in 0..150 {
-        attrs.push_str(&format!(".attr_{i}"));
+    let executable = std::env::current_exe().expect("failed to resolve current libtest executable");
+    let mut command = std::process::Command::new(&executable);
+    command
+        .arg(DEEP_PARSER_EXACT_TEST)
+        .arg("--exact")
+        .arg("--nocapture")
+        .env(DEEP_PARSER_CHILD_ENV, "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    configure_deep_parser_process_group(&mut command);
+    let mut child = command.spawn().unwrap_or_else(|err| {
+        panic!(
+            "failed to spawn deep-parser child {}: {err}",
+            executable.display()
+        )
+    });
+
+    let child_stdout = child.stdout.take().unwrap_or_else(|| {
+        let mut supervisor_errors = Vec::new();
+        let _ = terminate_and_reap_deep_parser_child(
+            &mut child,
+            "missing stdout pipe",
+            &mut supervisor_errors,
+        );
+        panic!("deep-parser child stdout pipe was not available");
+    });
+    let child_stderr = child.stderr.take().unwrap_or_else(|| {
+        let mut supervisor_errors = Vec::new();
+        let _ = terminate_and_reap_deep_parser_child(
+            &mut child,
+            "missing stderr pipe",
+            &mut supervisor_errors,
+        );
+        panic!("deep-parser child stderr pipe was not available");
+    });
+    let stdout_drainer = spawn_deep_parser_pipe_drainer(child_stdout);
+    let stderr_drainer = spawn_deep_parser_pipe_drainer(child_stderr);
+
+    let deadline = std::time::Instant::now() + DEEP_PARSER_CHILD_TIMEOUT;
+    let mut timed_out = false;
+    let mut supervisor_errors = Vec::new();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    timed_out = true;
+                    break Some(terminate_and_reap_deep_parser_child(
+                        &mut child,
+                        "timeout",
+                        &mut supervisor_errors,
+                    ));
+                }
+                std::thread::sleep(
+                    DEEP_PARSER_POLL_INTERVAL.min(deadline.saturating_duration_since(now)),
+                );
+            }
+            Err(err) => {
+                supervisor_errors.push(format!("try_wait failed: {err}"));
+                break Some(terminate_and_reap_deep_parser_child(
+                    &mut child,
+                    "try_wait failure",
+                    &mut supervisor_errors,
+                ));
+            }
+        }
+    };
+
+    let (stdout, stdout_error) = join_deep_parser_pipe_drainer(stdout_drainer, "stdout");
+    let (stderr, stderr_error) = join_deep_parser_pipe_drainer(stderr_drainer, "stderr");
+    if let Some(err) = stdout_error {
+        supervisor_errors.push(err);
     }
-    attrs.push('\n');
-    let res = std::panic::catch_unwind(|| parser::parse(&attrs, FileId(0)));
-    assert!(res.is_ok(), "parser panicked on 150-chained attribute access");
+    if let Some(err) = stderr_error {
+        supervisor_errors.push(err);
+    }
+
+    let diagnostics = format!(
+        "deep-parser child status={status:?}, timed_out={timed_out}, supervisor_errors={supervisor_errors:?}\n\
+         --- child stdout ---\n{stdout}\n\
+         --- child stderr ---\n{stderr}"
+    );
+    assert!(!timed_out, "deep-parser child exceeded 30 seconds\n{diagnostics}");
+    assert!(
+        supervisor_errors.is_empty(),
+        "deep-parser child supervision failed\n{diagnostics}"
+    );
+    assert!(
+        status.as_ref().is_some_and(|status| status.success()),
+        "deep-parser child exited unsuccessfully\n{diagnostics}"
+    );
+
+    let combined_output = format!("{stdout}\n{stderr}");
+    let summary_count = combined_output.matches(DEEP_PARSER_CHILD_SUMMARY).count();
+    assert_eq!(
+        summary_count, 1,
+        "deep-parser child must emit exactly one successful one-test summary, got {summary_count}\n{diagnostics}"
+    );
+    for marker in DEEP_PARSER_MARKERS {
+        let count = combined_output.matches(marker).count();
+        assert_eq!(
+            count, 1,
+            "deep-parser child marker {marker:?} must occur exactly once, got {count}\n{diagnostics}"
+        );
+    }
+
+    print!("{stdout}");
+    eprint!("{stderr}");
 }
 
 /// Test extreme indentation and whitespace mixing.
