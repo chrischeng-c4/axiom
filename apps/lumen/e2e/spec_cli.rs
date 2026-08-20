@@ -2,6 +2,43 @@
 //! `lumen spec` surface: the offline, machine-readable self-description an
 //! agent reads to wire lumen into a pipeline. Each emitter must produce valid
 //! JSON with the expected top-level shape (no server, no I/O).
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 12 sentences were the whole of the `// Contract:` comment in 12 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test spec_cli` in
+//! a subprocess and asserted the child's exit status. `cargo test -p lumen` already
+//! runs this target directly, so the shells added a second, nested run and nothing
+//! else. They were deleted on 2026-08-20 with the EC machinery they belonged to, and
+//! the sentence is the only thing they held that nothing else did. Each line below is
+//! prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-agent-llm-topics` — The offline cclab.llm.v2 outline publishes every
+//!   typed Lumen task and each task emits a source-backed Markdown/JSON runbook.
+//! - `lumen-claim-agent-offline-spec` — Offline schema commands produce valid OpenAPI
+//!   JSON/YAML and JSON-schema output for agents.
+//! - `lumen-claim-agent-query-catalog` — The offline query-shape and field/analyzer
+//!   catalogs remain deterministic for agent ingestion.
+//! - `lumen-claim-cli-llm-v2-task-navigation` — The public lumen llm command renders
+//!   deterministic Markdown and typed JSON from one source-backed cclab.llm.v2
+//!   contract.
+//! - `lumen-claim-cli-standard-llm-entrypoint` — The shared `lumen llm` entrypoint
+//!   publishes the agent topic set through the standard CLI convention.
+//! - `lumen-claim-developer-integration-contract` — The integration contract documents
+//!   routed retry semantics and the reshard administration boundary from the canonical
+//!   source model.
+//! - `lumen-claim-developer-llm-v2-task-navigation` — Agent task navigation exposes one
+//!   deterministic typed contract in Markdown and JSON.
+//! - `lumen-claim-http2-offline-spec-list` — The offline spec commands publish the
+//!   supported HTTP API inventory.
+//! - `lumen-claim-standard-offline-openapi` — The offline `lumen spec` OpenAPI output
+//!   remains valid and includes the operational search route.
+//! - `lumen-cli-interface-llm-playbook` — lumen llm outline publishes the cclab.llm.v2
+//!   typed task manifest and every advertised topic parses through the binary.
+//! - `lumen-cli-interface-offline-cli` — lumen spec emits valid OpenAPI JSON, OpenAPI
+//!   YAML, and JSON-schema output offline.
+//! - `lumen-cli-interface-query-catalog` — lumen spec exposes query-shape, field,
+//!   analyzer, and vector-metric catalogs.
 
 use lumen::spec::{
     field_catalog, json_schema_json, llm_auth_md, llm_deployment_md, llm_integration_md,

@@ -6,6 +6,19 @@
 //! Lumen's own test surface is the release guarantee that generated Python,
 //! TypeScript, and Rust clients can drive the public API happy path against a
 //! real Lumen server.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! This sentence was the whole of the `// Contract:` comment in an AW-EC shell under
+//! `apps/lumen/e2e/`, which ran `cargo test -p lumen --test generated_clients_crud_e2e`
+//! in a subprocess and asserted the child's exit status. `cargo test -p lumen` already
+//! runs this target directly, so the shell added a second, nested run and nothing else.
+//! It was deleted on 2026-08-20 with the EC machinery it belonged to, and the sentence
+//! is the only thing it held that nothing else did. The line below is prefixed with the
+//! EC id the shell was filed under.
+//!
+//! - `lumen-cli-interface-generated-clients` — lumen spec gen emits Python, TypeScript,
+//!   and Rust clients from the offline OpenAPI document.
 
 use std::fs;
 use std::net::SocketAddr;

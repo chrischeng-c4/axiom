@@ -1,5 +1,20 @@
 // CODEGEN-BEGIN
 //! Online field deletion.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 2 sentences were the whole of the `// Contract:` comment in 2 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test
+//! drop_field_e2e` in a subprocess and asserted the child's exit status. `cargo test -p
+//! lumen` already runs this target directly, so the shells added a second, nested run
+//! and nothing else. They were deleted on 2026-08-20 with the EC machinery they
+//! belonged to, and the sentence is the only thing they held that nothing else did.
+//! Each line below is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-competitor-feature-schema-metadata` — Schema lifecycle,
+//!   reindex/replay, and stats/metadata behavior pass the production conformance tests.
+//! - `lumen-claim-schema-ddl-drop-field` — Collection DDL, online drop-field drain, and
+//!   drain readiness semantics pass.
 
 use std::sync::Arc;
 

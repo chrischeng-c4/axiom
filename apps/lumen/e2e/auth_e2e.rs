@@ -19,6 +19,26 @@
 //! The positive path (a real ServiceAccount identity allowed or denied by a
 //! scripted apiserver) lives in `authz_matrix_e2e.rs`, which drives the same
 //! router through a fake `ReviewBackend`.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 2 sentences were the whole of the `// Contract:` comment in 2 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test auth_e2e` in
+//! a subprocess and asserted the child's exit status. `cargo test -p lumen` already
+//! runs this target directly, so the shells added a second, nested run and nothing
+//! else. They were deleted on 2026-08-20 with the EC machinery they belonged to, and
+//! the sentence is the only thing they held that nothing else did. Each line below is
+//! prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-security-bearer-auth` — Under LUMEN_AUTH=required every serving route
+//!   is refused with 401 whether or not a credential is presented, and the binary exits
+//!   at startup rather than degrade to an open API; under auth disabled the whole data
+//!   plane still serves unauthenticated. (#2871 retired the bearer registry, so no
+//!   credential is acceptable until TokenReview lands.)
+//! - `lumen-security-hardening-auth-bearer-rbac` — Under LUMEN_AUTH=required both a
+//!   missing credential and an unresolvable one are rejected with 401, and the process
+//!   refuses to start instead of serving an open API. (#2871 retired the bearer
+//!   registry, so there is no valid token to accept until TokenReview lands.)
 
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;

@@ -8,6 +8,28 @@
 //! The chainable assertions carry weight the help-text ones cannot. A verb can
 //! be listed, spelled correctly, and still emit output that no downstream verb
 //! is able to consume.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 5 sentences were the whole of the `// Contract:` comment in 5 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test
+//! cli_convention` in a subprocess and asserted the child's exit status. `cargo test -p
+//! lumen` already runs this target directly, so the shells added a second, nested run
+//! and nothing else. They were deleted on 2026-08-20 with the EC machinery they
+//! belonged to, and the sentence is the only thing they held that nothing else did.
+//! Each line below is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-chainable-artifact-render-follow-ups` — Artifact render commands
+//!   write exactly one runnable trailing `next:` line when writing files and keep
+//!   stream mode raw.
+//! - `lumen-claim-chainable-backup-export-import-next` — Backup, export, and import
+//!   helpers emit machine-readable next or terminal markers through the built binary.
+//! - `lumen-claim-chainable-issue-upgrade-terminal` — Shared issue dry-run paths and
+//!   upgrade check terminate with explicit `next: done` markers.
+//! - `lumen-claim-cli-standard-issue-surface` — The shared issue group exposes search,
+//!   view, create, and comment under `lumen issue`.
+//! - `lumen-claim-cli-standard-upgrade-check` — The shared upgrade check surface
+//!   remains available and emits an explicit terminal marker.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-cli-convention" tracker="standardize-gap-projects-lumen-tests-cli-convention-rs" reason="CLI convention smoke test for the shared llm/upgrade/issue surface until the test generator owns binary-help assertions."
 use cli_std::chainable::assert_chainable;
 use serde_json::Value;

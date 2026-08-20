@@ -20,6 +20,26 @@
 //! Plus the two cases that are neither: a collection listing is *filtered*, not
 //! denied, and an apiserver that cannot answer yields 503 — never 200, never a
 //! 403 that would look like a settled policy decision.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 2 sentences were the whole of the `// Contract:` comment in 2 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test
+//! authz_matrix_e2e` in a subprocess and asserted the child's exit status. `cargo test
+//! -p lumen` already runs this target directly, so the shells added a second, nested
+//! run and nothing else. They were deleted on 2026-08-20 with the EC machinery they
+//! belonged to, and the sentence is the only thing they held that nothing else did.
+//! Each line below is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-security-rbac-matrix` — Every serving route is exercised twice - it
+//!   answers on an open server and returns 401 under LUMEN_AUTH=required - so a route
+//!   that silently disappeared cannot pass as a protected one; index size and result
+//!   pages stay bounded. (#2871 removed the role dimension; it returns with
+//!   SubjectAccessReview.)
+//! - `lumen-security-hardening-access-control` — FILTERING: under LUMEN_AUTH=required a
+//!   search over any collection is refused with 401 and returns no rows, so no result
+//!   reaches an unidentified caller. (#2871 removed the 403 read-scope column; it
+//!   returns with SubjectAccessReview.)
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};

@@ -261,38 +261,6 @@ name = "backup_restore_e2e"
 path = "e2e/backup_restore_e2e.rs"
 
 [[test]]
-name = "behavior_lumen_claim_agent_llm_topics"
-path = "e2e/behavior_lumen_claim_agent_llm_topics.rs"
-
-[[test]]
-name = "behavior_lumen_claim_agent_offline_spec"
-path = "e2e/behavior_lumen_claim_agent_offline_spec.rs"
-
-[[test]]
-name = "behavior_lumen_claim_agent_query_catalog"
-path = "e2e/behavior_lumen_claim_agent_query_catalog.rs"
-
-[[test]]
-name = "behavior_lumen_claim_backup_periodic_snapshotter"
-path = "e2e/behavior_lumen_claim_backup_periodic_snapshotter.rs"
-
-[[test]]
-name = "behavior_lumen_claim_backup_rdb_store"
-path = "e2e/behavior_lumen_claim_backup_rdb_store.rs"
-
-[[test]]
-name = "behavior_lumen_claim_chainable_artifact_render_follow_ups"
-path = "e2e/behavior_lumen_claim_chainable_artifact_render_follow_ups.rs"
-
-[[test]]
-name = "behavior_lumen_claim_chainable_backup_export_import_next"
-path = "e2e/behavior_lumen_claim_chainable_backup_export_import_next.rs"
-
-[[test]]
-name = "behavior_lumen_claim_chainable_issue_upgrade_terminal"
-path = "e2e/behavior_lumen_claim_chainable_issue_upgrade_terminal.rs"
-
-[[test]]
 name = "behavior_lumen_claim_cli_connect_query_workflow"
 path = "e2e/behavior_lumen_claim_cli_connect_query_workflow.rs"
 
@@ -301,48 +269,8 @@ name = "behavior_lumen_claim_cli_deployment_operator_command_surface"
 path = "e2e/behavior_lumen_claim_cli_deployment_operator_command_surface.rs"
 
 [[test]]
-name = "behavior_lumen_claim_cli_llm_v2_task_navigation"
-path = "e2e/behavior_lumen_claim_cli_llm_v2_task_navigation.rs"
-
-[[test]]
-name = "behavior_lumen_claim_cli_service_process_interface"
-path = "e2e/behavior_lumen_claim_cli_service_process_interface.rs"
-
-[[test]]
-name = "behavior_lumen_claim_cli_standard_issue_surface"
-path = "e2e/behavior_lumen_claim_cli_standard_issue_surface.rs"
-
-[[test]]
-name = "behavior_lumen_claim_cli_standard_llm_entrypoint"
-path = "e2e/behavior_lumen_claim_cli_standard_llm_entrypoint.rs"
-
-[[test]]
-name = "behavior_lumen_claim_cli_standard_upgrade_check"
-path = "e2e/behavior_lumen_claim_cli_standard_upgrade_check.rs"
-
-[[test]]
-name = "behavior_lumen_claim_competitor_feature_schema_metadata"
-path = "e2e/behavior_lumen_claim_competitor_feature_schema_metadata.rs"
-
-[[test]]
-name = "behavior_lumen_claim_competitor_feature_search_breadth"
-path = "e2e/behavior_lumen_claim_competitor_feature_search_breadth.rs"
-
-[[test]]
-name = "behavior_lumen_claim_developer_integration_contract"
-path = "e2e/behavior_lumen_claim_developer_integration_contract.rs"
-
-[[test]]
 name = "behavior_lumen_claim_developer_interactive_tooling"
 path = "e2e/behavior_lumen_claim_developer_interactive_tooling.rs"
-
-[[test]]
-name = "behavior_lumen_claim_developer_llm_v2_task_navigation"
-path = "e2e/behavior_lumen_claim_developer_llm_v2_task_navigation.rs"
-
-[[test]]
-name = "behavior_lumen_claim_duplicates_group_by"
-path = "e2e/behavior_lumen_claim_duplicates_group_by.rs"
 
 [[test]]
 name = "behavior_lumen_claim_dynamic_cross_pod_routing"
@@ -351,10 +279,6 @@ path = "e2e/behavior_lumen_claim_dynamic_cross_pod_routing.rs"
 [[test]]
 name = "behavior_lumen_claim_dynamic_post_cutover_usage_freshness"
 path = "e2e/behavior_lumen_claim_dynamic_post_cutover_usage_freshness.rs"
-
-[[test]]
-name = "behavior_lumen_claim_dynamic_reshard_admin_verbs"
-path = "e2e/behavior_lumen_claim_dynamic_reshard_admin_verbs.rs"
 
 [[test]]
 name = "behavior_lumen_claim_dynamic_reshard_durability"
@@ -377,58 +301,6 @@ name = "behavior_lumen_claim_dynamic_storage_pressure_split_policy"
 path = "e2e/behavior_lumen_claim_dynamic_storage_pressure_split_policy.rs"
 
 [[test]]
-name = "behavior_lumen_claim_dynamic_versioned_virtual_bucket_map"
-path = "e2e/behavior_lumen_claim_dynamic_versioned_virtual_bucket_map.rs"
-
-[[test]]
-name = "behavior_lumen_claim_exact_keyword_lexicographic_range"
-path = "e2e/behavior_lumen_claim_exact_keyword_lexicographic_range.rs"
-
-[[test]]
-name = "behavior_lumen_claim_exact_term_range_set"
-path = "e2e/behavior_lumen_claim_exact_term_range_set.rs"
-
-[[test]]
-name = "behavior_lumen_claim_exact_wide_range_filter"
-path = "e2e/behavior_lumen_claim_exact_wide_range_filter.rs"
-
-[[test]]
-name = "behavior_lumen_claim_http2_client_route_list"
-path = "e2e/behavior_lumen_claim_http2_client_route_list.rs"
-
-[[test]]
-name = "behavior_lumen_claim_http2_offline_spec_list"
-path = "e2e/behavior_lumen_claim_http2_offline_spec_list.rs"
-
-[[test]]
-name = "behavior_lumen_claim_http2_ops_route_list"
-path = "e2e/behavior_lumen_claim_http2_ops_route_list.rs"
-
-[[test]]
-name = "behavior_lumen_claim_http2_query_method_twins"
-path = "e2e/behavior_lumen_claim_http2_query_method_twins.rs"
-
-[[test]]
-name = "behavior_lumen_claim_http2_read_consistency_live_state"
-path = "e2e/behavior_lumen_claim_http2_read_consistency_live_state.rs"
-
-[[test]]
-name = "behavior_lumen_claim_http2_read_consistency_raft_bootstrap"
-path = "e2e/behavior_lumen_claim_http2_read_consistency_raft_bootstrap.rs"
-
-[[test]]
-name = "behavior_lumen_claim_http2_reshard_admin_verbs"
-path = "e2e/behavior_lumen_claim_http2_reshard_admin_verbs.rs"
-
-[[test]]
-name = "behavior_lumen_claim_http2_synchronous_checkpoint"
-path = "e2e/behavior_lumen_claim_http2_synchronous_checkpoint.rs"
-
-[[test]]
-name = "behavior_lumen_claim_hybrid_rrf"
-path = "e2e/behavior_lumen_claim_hybrid_rrf.rs"
-
-[[test]]
 name = "behavior_lumen_claim_k8s_kustomize_base"
 path = "e2e/behavior_lumen_claim_k8s_kustomize_base.rs"
 
@@ -449,108 +321,16 @@ name = "behavior_lumen_claim_k8s_topology_hpa_handoff"
 path = "e2e/behavior_lumen_claim_k8s_topology_hpa_handoff.rs"
 
 [[test]]
-name = "behavior_lumen_claim_lexical_bm25"
-path = "e2e/behavior_lumen_claim_lexical_bm25.rs"
-
-[[test]]
 name = "behavior_lumen_claim_long_running_kustomize_base"
 path = "e2e/behavior_lumen_claim_long_running_kustomize_base.rs"
-
-[[test]]
-name = "behavior_lumen_claim_nested_collapse"
-path = "e2e/behavior_lumen_claim_nested_collapse.rs"
-
-[[test]]
-name = "behavior_lumen_claim_observability_otlp"
-path = "e2e/behavior_lumen_claim_observability_otlp.rs"
-
-[[test]]
-name = "behavior_lumen_claim_observability_prometheus_metrics"
-path = "e2e/behavior_lumen_claim_observability_prometheus_metrics.rs"
 
 [[test]]
 name = "behavior_lumen_claim_observability_servicemonitor_rule"
 path = "e2e/behavior_lumen_claim_observability_servicemonitor_rule.rs"
 
 [[test]]
-name = "behavior_lumen_claim_schema_ddl_drop_field"
-path = "e2e/behavior_lumen_claim_schema_ddl_drop_field.rs"
-
-[[test]]
-name = "behavior_lumen_claim_schema_reindex_replay"
-path = "e2e/behavior_lumen_claim_schema_reindex_replay.rs"
-
-[[test]]
-name = "behavior_lumen_claim_schema_stats_metadata"
-path = "e2e/behavior_lumen_claim_schema_stats_metadata.rs"
-
-[[test]]
-name = "behavior_lumen_claim_search_core_planner"
-path = "e2e/behavior_lumen_claim_search_core_planner.rs"
-
-[[test]]
-name = "behavior_lumen_claim_standard_live_openapi_swagger"
-path = "e2e/behavior_lumen_claim_standard_live_openapi_swagger.rs"
-
-[[test]]
-name = "behavior_lumen_claim_standard_offline_openapi"
-path = "e2e/behavior_lumen_claim_standard_offline_openapi.rs"
-
-[[test]]
-name = "behavior_lumen_claim_standard_service_probe_routes"
-path = "e2e/behavior_lumen_claim_standard_service_probe_routes.rs"
-
-[[test]]
-name = "behavior_lumen_claim_topology_empty_pvc_bootstrap_seed"
-path = "e2e/behavior_lumen_claim_topology_empty_pvc_bootstrap_seed.rs"
-
-[[test]]
-name = "behavior_lumen_claim_vector_filtered_knn"
-path = "e2e/behavior_lumen_claim_vector_filtered_knn.rs"
-
-[[test]]
-name = "behavior_lumen_claim_vector_hash_hamming"
-path = "e2e/behavior_lumen_claim_vector_hash_hamming.rs"
-
-[[test]]
-name = "behavior_lumen_claim_vector_hnsw"
-path = "e2e/behavior_lumen_claim_vector_hnsw.rs"
-
-[[test]]
-name = "behavior_lumen_cli_interface_generated_clients"
-path = "e2e/behavior_lumen_cli_interface_generated_clients.rs"
-
-[[test]]
-name = "behavior_lumen_cli_interface_llm_playbook"
-path = "e2e/behavior_lumen_cli_interface_llm_playbook.rs"
-
-[[test]]
-name = "behavior_lumen_cli_interface_offline_cli"
-path = "e2e/behavior_lumen_cli_interface_offline_cli.rs"
-
-[[test]]
-name = "behavior_lumen_cli_interface_protocol_transport"
-path = "e2e/behavior_lumen_cli_interface_protocol_transport.rs"
-
-[[test]]
-name = "behavior_lumen_cli_interface_query_catalog"
-path = "e2e/behavior_lumen_cli_interface_query_catalog.rs"
-
-[[test]]
-name = "behavior_lumen_competitor_feature_parity_api_and_search"
-path = "e2e/behavior_lumen_competitor_feature_parity_api_and_search.rs"
-
-[[test]]
-name = "behavior_lumen_long_running_stability_meta_api"
-path = "e2e/behavior_lumen_long_running_stability_meta_api.rs"
-
-[[test]]
 name = "behavior_lumen_long_running_stability_operator_render"
 path = "e2e/behavior_lumen_long_running_stability_operator_render.rs"
-
-[[test]]
-name = "behavior_lumen_topology_existing_backup_seed"
-path = "e2e/behavior_lumen_topology_existing_backup_seed.rs"
 
 [[test]]
 name = "benchmark_lumen_competitor_performance_competitive"
@@ -629,24 +409,12 @@ name = "drop_field_e2e"
 path = "e2e/drop_field_e2e.rs"
 
 [[test]]
-name = "efficiency_lumen_claim_competitor_performance_depth_invariant"
-path = "e2e/efficiency_lumen_claim_competitor_performance_depth_invariant.rs"
-
-[[test]]
-name = "efficiency_lumen_claim_competitor_performance_envelope"
-path = "e2e/efficiency_lumen_claim_competitor_performance_envelope.rs"
-
-[[test]]
 name = "efficiency_lumen_claim_competitor_performance_external_comparison"
 path = "e2e/efficiency_lumen_claim_competitor_performance_external_comparison.rs"
 
 [[test]]
 name = "efficiency_lumen_claim_elastic_disk_tier"
 path = "e2e/efficiency_lumen_claim_elastic_disk_tier.rs"
-
-[[test]]
-name = "efficiency_lumen_claim_search_core_filter_sort"
-path = "e2e/efficiency_lumen_claim_search_core_filter_sort.rs"
 
 [[test]]
 name = "feature_gated_targets_are_registered"
@@ -757,42 +525,6 @@ name = "search_all_e2e"
 path = "e2e/search_all_e2e.rs"
 
 [[test]]
-name = "security_lumen_claim_security_bearer_auth"
-path = "e2e/security_lumen_claim_security_bearer_auth.rs"
-
-[[test]]
-name = "security_lumen_claim_security_query_safety"
-path = "e2e/security_lumen_claim_security_query_safety.rs"
-
-[[test]]
-name = "security_lumen_claim_security_rbac_matrix"
-path = "e2e/security_lumen_claim_security_rbac_matrix.rs"
-
-[[test]]
-name = "security_lumen_claim_security_score_confidentiality"
-path = "e2e/security_lumen_claim_security_score_confidentiality.rs"
-
-[[test]]
-name = "security_lumen_claim_security_tls_rustls"
-path = "e2e/security_lumen_claim_security_tls_rustls.rs"
-
-[[test]]
-name = "security_lumen_security_hardening_access_control"
-path = "e2e/security_lumen_security_hardening_access_control.rs"
-
-[[test]]
-name = "security_lumen_security_hardening_auth_bearer_rbac"
-path = "e2e/security_lumen_security_hardening_auth_bearer_rbac.rs"
-
-[[test]]
-name = "security_lumen_security_hardening_query_injection"
-path = "e2e/security_lumen_security_hardening_query_injection.rs"
-
-[[test]]
-name = "security_lumen_security_hardening_result_leak"
-path = "e2e/security_lumen_security_hardening_result_leak.rs"
-
-[[test]]
 name = "serving_tls_rotation"
 path = "e2e/serving_tls_rotation.rs"
 
@@ -829,14 +561,6 @@ name = "stability_lumen_claim_k8s_stateless_kind"
 path = "e2e/stability_lumen_claim_k8s_stateless_kind.rs"
 
 [[test]]
-name = "stability_lumen_claim_long_running_log_fanout"
-path = "e2e/stability_lumen_claim_long_running_log_fanout.rs"
-
-[[test]]
-name = "stability_lumen_claim_long_running_shared_foundations"
-path = "e2e/stability_lumen_claim_long_running_shared_foundations.rs"
-
-[[test]]
 name = "stability_lumen_claim_long_running_stateless_kind"
 path = "e2e/stability_lumen_claim_long_running_stateless_kind.rs"
 
@@ -859,10 +583,6 @@ path = "e2e/stability_lumen_long_running_stability_resilience_survival.rs"
 [[test]]
 name = "stability_lumen_long_running_stability_resource_leak"
 path = "e2e/stability_lumen_long_running_stability_resource_leak.rs"
-
-[[test]]
-name = "stability_lumen_topology_existing_raft_replica_sync"
-path = "e2e/stability_lumen_topology_existing_raft_replica_sync.rs"
 
 [[test]]
 name = "stats_metadata_e2e"

@@ -5,6 +5,23 @@
 //! (`POST /admin/reshard:evict`), on-demand durability checkpoint
 //! (`POST /admin/checkpoint`), and the bounded write-pause fence
 //! (`POST /admin/reshard:fence`, #1396 R2).
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 3 sentences were the whole of the `// Contract:` comment in 3 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test
+//! reshard_admin_e2e` in a subprocess and asserted the child's exit status. `cargo test
+//! -p lumen` already runs this target directly, so the shells added a second, nested
+//! run and nothing else. They were deleted on 2026-08-20 with the EC machinery they
+//! belonged to, and the sentence is the only thing they held that nothing else did.
+//! Each line below is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-dynamic-reshard-admin-verbs` — Scoped export and additive apply move
+//!   a bounded shard subset without mutating the source.
+//! - `lumen-claim-http2-reshard-admin-verbs` — The public API list contains scoped
+//!   export, additive apply, prune/evict, and checkpoint administration routes.
+//! - `lumen-claim-http2-synchronous-checkpoint` — The synchronous checkpoint
+//!   administration verb returns an explicit completion result.
 
 use std::sync::Arc;
 

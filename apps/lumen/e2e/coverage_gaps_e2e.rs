@@ -3,6 +3,27 @@
 //!
 //! Each test is named after the README §-section + capability so the
 //! coverage matrix in README's Status section can be traced row-by-row.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 4 sentences were the whole of the `// Contract:` comment in 4 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test
+//! coverage_gaps_e2e` in a subprocess and asserted the child's exit status. `cargo test
+//! -p lumen` already runs this target directly, so the shells added a second, nested
+//! run and nothing else. They were deleted on 2026-08-20 with the EC machinery they
+//! belonged to, and the sentence is the only thing they held that nothing else did.
+//! Each line below is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-security-query-safety` — Malformed, deeply nested, and adversarial
+//!   query shapes remain bounded and do not panic.
+//! - `lumen-claim-security-score-confidentiality` — Scores and hit existence do not
+//!   leak across collection boundaries.
+//! - `lumen-security-hardening-query-injection` — C2: malformed JSON, deeply-nested
+//!   JSON query DSL, special-char search text, inverted ranges, and range numeric
+//!   overflow are rejected or evaluated safely (no panic, no 5xx, bounded work).
+//! - `lumen-security-hardening-result-leak` — C3: relevance scores and hit existence do
+//!   not leak documents across collection boundaries; RBAC denial coverage remains
+//!   pinned by the authz matrix case.
 
 use std::sync::Arc;
 

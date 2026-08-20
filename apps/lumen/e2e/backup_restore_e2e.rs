@@ -1,5 +1,24 @@
 // CODEGEN-BEGIN
 //! Backup → restore round-trip.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 3 sentences were the whole of the `// Contract:` comment in 3 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --test
+//! backup_restore_e2e` in a subprocess and asserted the child's exit status. `cargo
+//! test -p lumen` already runs this target directly, so the shells added a second,
+//! nested run and nothing else. They were deleted on 2026-08-20 with the EC machinery
+//! they belonged to, and the sentence is the only thing they held that nothing else
+//! did. Each line below is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-backup-periodic-snapshotter` — The serving process snapshot loop and
+//!   restore path remain covered by the backup/restore e2e gate; live replica
+//!   synchronization remains raft-owned.
+//! - `lumen-claim-backup-rdb-store` — RDB snapshots restore through the LocalFsRdbStore
+//!   baseline as a cold restore and future bootstrap seed surface.
+//! - `lumen-topology-existing-backup-seed` — The backup/restore e2e gate proves cold
+//!   snapshot restore; the empty-PVC bootstrap seed path now restores SnapshotV1 before
+//!   WAL/raft catch-up.
 
 use std::sync::Arc;
 
