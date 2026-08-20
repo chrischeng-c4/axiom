@@ -1,3 +1,14 @@
+//! Provenance on the stateful-workload capability claim: the active record and
+//! the superseded one must stay distinct.
+//!
+//! Collapsing them is the failure this guards. A claim whose current
+//! verification and whose historical verification resolve to the same
+//! reference reads as fully evidenced while carrying evidence for only one of
+//! them, and no downstream reader can tell the two apart.
+//!
+//! Both cases are structural: they read the declared linkage instead of
+//! running anything, because a broken provenance chain changes no runtime
+//! behaviour and would otherwise be visible only in review.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:d81257e0" tracker="#2144" reason="Add a deterministic structural regression test that requires the TD primary capability reference, active #2144 linkage, retained #1553 provenance, and the existing stateful capability gate. generator gap: missing-generator:test:capability-td-linkage (#2144)."
 // @spec apps/lumen/tech-design/validate/link-stateful-service-workload-claim-to-primary-td-verification.md#unit-test
 

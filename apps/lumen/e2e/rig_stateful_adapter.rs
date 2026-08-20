@@ -1,3 +1,13 @@
+//! Search continuity across a restart is driven by the shared stateful runner,
+//! not by a lumen-local lifecycle.
+//!
+//! The case reads the declared scenario wiring rather than running the
+//! scenario, because the failure it guards is a re-implementation: a private
+//! restart path keeps every search assertion green while the shared lifecycle
+//! it was meant to exercise never runs at all.
+//!
+//! `shared_stateful_foundations.rs` embeds this file, so the two are read
+//! together and move together.
 // HANDWRITE-BEGIN gap="missing-generator:e2e-test:647c2c4a" tracker="#1645" reason="Bind Lumen search continuity assertions to the shared Rig stateful lifecycle. generator gap: missing-generator:lumen-stateful-adapter (#1645)."
 // @spec apps/lumen/tech-design/logic/adopt-shared-stateful-service-foundations.md#unit-test
 // @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test

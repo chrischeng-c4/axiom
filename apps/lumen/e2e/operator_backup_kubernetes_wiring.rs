@@ -1,3 +1,15 @@
+//! The rendered backup identity and the checked-in operator RBAC, read as one
+//! gate.
+//!
+//! Both halves are inspected because they fail apart. The CronJob can name a
+//! service account the static role never grants, and the role can hold a
+//! secret grant no rendered object asks for. Each half on its own looks
+//! correct, and only the pair shows the mismatch.
+//!
+//! Many of the assertions are negative — no secret grant, no Raft port in the
+//! rendered network policy, monitoring objects opt-in on both consumer paths.
+//! A permission that is merely unused today is a permission the next
+//! reconciler change can start using without anyone reviewing the grant.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-operator-backup-kubernetes-wiring" tracker="#2370" reason="Parse Lumen's rendered backup identity and static operator RBAC as one regression gate before live GKE operator acceptance."
 #![cfg(feature = "operator")]
 

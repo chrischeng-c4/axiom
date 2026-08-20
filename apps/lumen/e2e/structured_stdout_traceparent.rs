@@ -1,3 +1,17 @@
+//! Correlation between an inbound `traceparent` header and the JSONL audit
+//! line the running binary writes to stdout.
+//!
+//! The subject is the real process, not a library call. The case spawns
+//! `lumen`, drives writes over HTTP with a valid, an invalid, and a missing
+//! `traceparent`, and drains stdout while the request is still in flight. A
+//! trace id that only ever appears in an in-process subscriber proves nothing
+//! about what an operator's log collector receives, so the observation point
+//! is the child's stdout pipe and nowhere else.
+//!
+//! Invalid and missing headers are separate cases on purpose. Both must still
+//! yield a well-formed non-zero trace id: falling back to no correlation at
+//! all would silently un-thread every request whose caller sent a malformed
+//! header, and no assertion about the valid case can see that.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:0571ffd4" tracker="1871" reason="Run the real Lumen binary, make valid, invalid, and missing traceparent HTTP writes, capture stdout concurrently, and assert the shared JSONL and correlation contracts."
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;

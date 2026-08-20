@@ -1,3 +1,13 @@
+//! The shipped CLI's help surface: which command groups exist, how they are
+//! spelled, and which of their outputs can be chained into the next verb.
+//!
+//! Every assertion runs the built binary and reads its real output. Help text
+//! is a published interface — scripts and agents parse it — so a rename that
+//! only a doc comment records is a breaking change nobody measured.
+//!
+//! The chainable assertions carry weight the help-text ones cannot. A verb can
+//! be listed, spelled correctly, and still emit output that no downstream verb
+//! is able to consume.
 // SPEC-MANAGED: apps/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-cli-convention" tracker="standardize-gap-projects-lumen-tests-cli-convention-rs" reason="CLI convention smoke test for the shared llm/upgrade/issue surface until the test generator owns binary-help assertions."
 use cli_std::chainable::assert_chainable;
