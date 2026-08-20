@@ -52,6 +52,7 @@ agent can navigate cheaply and act on correctly:
   - [Deploy tenancy — dedicated first, shared only when justified](#deploy-tenancy-dedicated-first-shared-only-when-justified)
 - [Operations baseline — notice the breach, watch the watcher, answer "converged?"](#operations-baseline-notice-the-breach-watch-the-watcher-answer-converged)
 - [Conformance: what proves a service actually complies](#conformance-what-proves-a-service-actually-complies)
+  - [Test layout — `e2e/*.rs`, explicitly declared, no autodiscovery](#test-layout-e2ers-explicitly-declared-no-autodiscovery)
   - [Architecture/profile conformance checklist](#architectureprofile-conformance-checklist)
   - [EC gates — `vat`-driven, evidence under `external-contracts/`](#ec-gates-vat-driven-evidence-under-external-contracts)
   - [Service dogfood rules — keep the whole surface honest](#service-dogfood-rules-keep-the-whole-surface-honest)
@@ -1135,11 +1136,46 @@ hides every other service's failure.
 
 ## Conformance: what proves a service actually complies
 
-Every rule above is a claim until something fails on it. Two mechanisms
-do the failing: EC gates for evidence-backed behavior, and the dogfood
-rules for the surfaces a test suite never exercises. Architecture and
-profile shape is the third question, and nothing runs it any more — the
-catalogue below is a hand-applied checklist, not a gate.
+Every rule above is a claim until something fails on it. Three mechanisms
+do the failing: the `e2e/` suite for externally observable behavior, EC gates
+for evidence-backed behavior, and the dogfood rules for the surfaces a test
+suite never exercises. Architecture and profile shape is the fourth question,
+and nothing runs it any more — the catalogue below is a hand-applied checklist,
+not a gate.
+
+### Test layout — `e2e/*.rs`, explicitly declared, no autodiscovery
+
+Every `apps/<p>` and `libs/<p>` crate owes an `e2e/` tree. It is where
+externally observable behavior is judged, it is written in Rust, and it runs
+under plain `cargo test -p <crate>`.
+
+| Where | What lives there | How it runs |
+|---|---|---|
+| `{apps,libs}/<p>/e2e/*.rs` | externally observable behavior, one file per case | `cargo test -p <crate>` |
+| `{apps,libs}/<p>/src/**` | rules observable only inside the implementation, colocated | `cargo test -p <crate> --lib` |
+
+Two rules make the tree honest:
+
+- **Declare every case.** Set `autotests = false` in the crate's `Cargo.toml`
+  and give each `e2e/*.rs` its own `[[test]]` stanza whose `path` is
+  `e2e/<name>.rs`. With autodiscovery off the manifest is the inventory: what
+  runs is a reviewable list in `Cargo.toml`, not whatever happens to be sitting
+  in the directory. An undeclared file is not built at all, so adding or
+  renaming a case has to show up in the diff to take effect.
+  `libs/service-http` is the reference shape: eight `e2e/*.rs`, eight
+  `[[test]]` stanzas, `autotests = false`.
+- **Write the case first.** The `e2e/*.rs` case lands before the `src/**`
+  change it judges, and must be observed failing for the stated reason before
+  the change makes it pass. A case written afterwards is fitted to the
+  implementation it was supposed to constrain.
+
+`{apps,libs}/<p>/tech-design/`, `{apps,libs}/<p>/external-contracts/`, and
+`{apps,libs}/<p>/tests/` are superseded: no authored source belongs in them.
+Do not create one, do not add a file to one, and migrate a surviving case into
+`e2e/` rather than editing it in place. The Python spec model and its
+`src/cases/*.py` verifiers are retired across the repository — never author a
+new one. The only thing that may still appear under `external-contracts/` is
+generated evidence written by an EC gate run, which is output, never contract.
 
 ### Architecture/profile conformance checklist
 
@@ -1204,14 +1240,13 @@ The `SPEC-MANAGED` marking on these files named a regenerator that no longer
 exists: nothing regenerates an `AW-EC-TOOL` block today, so the `.toml` is the
 authoring surface and editing the contract it cites propagates nowhere.
 
-The phase-1 shape those gates feed is the project-local Python project at
-`apps/<name>/e2e/`: `pyproject.toml` is the inventory, `src/cases/*.py` holds
-one black-box verifier per case, and the review verdict is bound to a digest
-over the exact source bundle it read. Do not wrap a Python phase-1 case in an
-app-level Rust tree and do not delegate one to `cargo test`. Rules observable
-only inside the Rust implementation are colocated tests under their semantic
-`src/**` owner, authored by the `unit` phase before the implementation exists.
-`CLAUDE.md` owns that ladder; this section owns only the gate files.
+These `vat.toml` / `meter*.toml` / `guard*.toml` gate files are runner
+configuration and they survive; what they write under `external-contracts/` is
+generated evidence. The Python EC *project* they used to point at —
+`pyproject.toml` as inventory plus `src/cases/*.py` verifiers — does not
+survive. Behavioral assertions live in `e2e/*.rs` per
+[Test layout](#test-layout-e2ers-explicitly-declared-no-autodiscovery). Never
+author a new Python EC case, in any project including Agentic Workflow itself.
 
 ### Service dogfood rules — keep the whole surface honest
 
