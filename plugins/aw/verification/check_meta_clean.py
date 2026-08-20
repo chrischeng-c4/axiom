@@ -85,8 +85,31 @@ def report(root):
 # and not to `meta.py` would be a gate asserting a rule that does not exist; a
 # rule added to `meta.py` and not here would go unratcheted, which is the
 # failure this is guarding against in the first place.
-RULES = tuple(load_script_module(META_SCRIPT, "metamod").RULES)
+RULES_TEXT = dict(load_script_module(META_SCRIPT, "metamod").RULES)
+RULES = tuple(RULES_TEXT)
 check("the script declares at least the four shipped rules", len(RULES) >= 4, f"{RULES}")
+
+# Which rules this gate ratchets to zero, as against which it merely reports.
+#
+# The distinction is this file's own history, applied a second time. M1-M4
+# landed as a report because `meta.py check` returned 103 findings the day it
+# was written, and the paragraph above says why a ratchet cannot land red: it
+# joins the pre-existing failures everybody scrolls past. Those four reached
+# zero and were ratcheted, and the tolerated set for them is empty and stays
+# empty.
+#
+# M5, M6, and M7 were in that first state when they landed on 2026-08-20 --
+# M5 151, M6 5, M7 526 over 64 project READMEs, 58 of which still carried the
+# Capability Index shape the deleted generator emitted. All three read zero the
+# same day the READMEs were rewritten, which is the condition for moving a rule
+# in, so all seven are ratcheted and the tolerated set is empty for every one of
+# them.
+#
+# The reachability control above runs over every rule in `RULES`, not this
+# subset, so a rule that quietly stopped firing is still a red.
+RATCHETED = ("M1", "M2", "M3", "M4", "M5", "M6", "M7")
+check("every ratcheted rule is a rule the script declares",
+      set(RATCHETED) <= set(RULES), f"{sorted(set(RATCHETED) - set(RULES))}")
 
 # --------------------------------------------------------------------------
 # the negative control, first
@@ -114,6 +137,20 @@ CONTROL = {
         "Run `aw wi list`, then read [the design](gone.md).",
     ],
 }
+# The capability rules read a project README, so their defects go in the one
+# above rather than in a file of their own. Appended, not woven in: the M4 row
+# depends on `## Brief` still being absent from it.
+CONTROL["p/README.md"] += [
+    "",
+    "Status: verified",
+    "",
+    "| Capability | Maturity | Production |",
+    "|---|---|---|",
+    "| A | smoke | ready |",
+    "",
+    "- Gate: `cargo test -p p some_filter`",
+    "- Gate: `cargo test -p nosuchpkg --lib`",
+]
 
 with tempfile.TemporaryDirectory(prefix="meta-clean-control-") as tmp:
     root = pathlib.Path(tmp) / "checkout"
@@ -174,17 +211,33 @@ check("every rule ran", set(live["counts"]) == set(RULES),
 # One row per rule rather than one row for the total, so that a red names the
 # rule and the reader knows which kind of rot landed without re-running
 # anything.
-for rule in RULES:
+for rule in RATCHETED:
     hits = [f for f in live["findings"] if f["rule"] == rule]
     check(f"{rule}: no {rule} findings in this checkout", not hits,
           "; ".join(f"{f['path']}:{f['line']} {f['message']}" for f in hits[:5])
           + (f" (+{len(hits) - 5} more)" if len(hits) > 5 else ""))
 
-# Asserted separately from the counts above. They are read out of the JSON; this
-# is the exit code the skill and any caller actually branch on, and a report that
-# disagreed with its own status would make every other row here unfalsifiable.
-check("the live run exits 0", live_code == 0,
+# The unratcheted rules print their count and refuse nothing. A number rather
+# than a row, because the number is the thing that has to fall: when one reads
+# zero, its rule moves into `RATCHETED` and this loop stops naming it.
+for rule in [r for r in RULES if r not in RATCHETED]:
+    hits = [f for f in live["findings"] if f["rule"] == rule]
+    files = len({f["path"] for f in hits})
+    print(f"REPORT {rule}: {len(hits)} finding(s) in {files} file(s) "
+          f"-- not ratcheted; {RULES_TEXT[rule]}")
+
+# Asserted against the ratcheted set, which is what this gate refuses on. A
+# report carrying unratcheted findings exits 1 by `meta.py`'s own contract, so
+# reading the exit code alone would make this gate red on a rule it deliberately
+# does not enforce yet -- and reading nothing would leave the code unchecked the
+# day the last unratcheted rule is cleared.
+ratcheted_hits = [f for f in live["findings"] if f["rule"] in RATCHETED]
+expected_code = 1 if live["findings"] else 0
+check("the live run's exit code agrees with its own report",
+      live_code == expected_code,
       f"exit={live_code}, {len(live['findings'])} finding(s)")
+check("the live run reports no ratcheted finding", not ratcheted_hits,
+      f"{len(ratcheted_hits)} ratcheted finding(s)")
 
 print("\n=> " + ("GREEN" if not fails else f"RED ({len(fails)} failure(s))"))
 sys.exit(1 if fails else 0)

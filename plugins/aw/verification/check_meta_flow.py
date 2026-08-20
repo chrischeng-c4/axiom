@@ -82,6 +82,38 @@ CLEAN_README = [
     "- Nothing claimed yet.",                                       # 9
     "",                                                             # 10
     "See [CONTRIBUTING.md](CONTRIBUTING.md).",                      # 11
+    "",                                                             # 12
+    # Three gate shapes M5 and M6 must both accept. The first names its target,
+    # the second names the lib, and the third proves `--features` is understood
+    # as taking a value -- read as a filter, `extra` would be an M5 on a
+    # correctly written gate, which is the false positive that would make the
+    # rule unusable.
+    "- Gate: `cargo test -p cleanpkg --test real_target`",          # 13
+    "- Gate: `cargo test -p cleanpkg --lib`",                       # 14
+    "- Gate: `cargo test -p cleanpkg --features extra --test real_target`",  # 15
+    "",                                                             # 16
+    # The two truncations, each a false positive this rule reported before the
+    # span learned to stop. Everything after `#` is a comment, and the words
+    # inside the JSON string belong to the string.
+    "```bash",                                                      # 17
+    "cargo test -p cleanpkg   # spec/compare units + stub-server",   # 18
+    "```",                                                          # 19
+    "",                                                             # 20
+    'Quoted: "cargo test -p cleanpkg", as JSON would carry it.',     # 21
+]
+# Not a META-doc, so it is staged apart from `TRACKED` -- the scanned-count row
+# asserts `len(TRACKED)`, and a manifest counted there would make the population
+# disagree with itself. M6 resolves `-p cleanpkg` and `--test real_target`
+# against this file and nothing else.
+CLEAN_MANIFEST = [
+    "[package]",                                                    # 1
+    'name = "cleanpkg"',                                            # 2
+    'version = "0.0.0"',                                            # 3
+    "autotests = false",                                            # 4
+    "",                                                             # 5
+    "[[test]]",                                                     # 6
+    'name = "real_target"',                                         # 7
+    'path = "e2e/real_target.rs"',                                  # 8
 ]
 CLEAN_CONTRIBUTING = [
     "# Contributing to Clean",                                      # 1
@@ -100,6 +132,18 @@ ROTTEN_README = [
     "```bash",                                                      # 9
     "aw health --project rotten",                                   # 10
     "```",                                                          # 11
+    "",                                                             # 12
+    "### A Capability",                                             # 13
+    "",                                                             # 14
+    "Status: verified",                                             # 15
+    "",                                                             # 16
+    "| Capability | Maturity | Production |",                       # 17
+    "|---|---|---|",                                                # 18
+    "| A | smoke | ready |",                                        # 19
+    "",                                                             # 20
+    "- Gate: `cargo test -p cleanpkg some_filter`",                 # 21
+    "- Gate: `cargo test -p cleanpkg --test gone_target`",          # 22
+    "- Gate: `cargo test -p nosuchpkg --lib`",                      # 23
 ]
 ROTTEN_CONTRIBUTING = [
     "# Contributing to Rotten",                                     # 1
@@ -154,6 +198,12 @@ UNTRACKED = {
     "untracked/README.md": UNTRACKED_README,
     "untracked/CONTRIBUTING.md": ROOT_CONTRIBUTING,
 }
+# Tracked, and deliberately outside `TRACKED`: it is staged so M6 can resolve a
+# package against it, and it is not a META-doc so it must not reach the
+# population the scanned-count row checks.
+TRACKED_AUX = {
+    "clean/Cargo.toml": CLEAN_MANIFEST,
+}
 
 LAUNCH = pinned_interpreter()
 
@@ -189,9 +239,10 @@ with tempfile.TemporaryDirectory(prefix="meta-flow-") as tmp:
     root = pathlib.Path(tmp) / "checkout"
     root.mkdir()
     write(root, TRACKED)
+    write(root, TRACKED_AUX)
     write(root, UNTRACKED)
     subprocess.run([*GIT, "init", "-q"], cwd=root, capture_output=True, text=True)
-    staged = subprocess.run([*GIT, "add", "--", *TRACKED], cwd=root,
+    staged = subprocess.run([*GIT, "add", "--", *TRACKED, *TRACKED_AUX], cwd=root,
                             capture_output=True, text=True)
     check("the fixture staged its tracked files", staged.returncode == 0,
           staged.stderr.strip())
@@ -275,6 +326,49 @@ with tempfile.TemporaryDirectory(prefix="meta-flow-") as tmp:
           not rows(data, "M4", "README.md"), f"{rows(data, 'M4')}")
     check("M4 does not reach a README with no CONTRIBUTING beside it",
           not rows(data, "M4", "docsonly/README.md"), f"{rows(data, 'M4')}")
+
+    # -- M5 ---------------------------------------------------------------
+    check("M5 reports a bare test-name filter",
+          rows(data, "M5") == [("rotten/README.md", 21)], f"{rows(data, 'M5')}")
+    check("M5 names the filter word it refuses",
+          all("some_filter" in f["message"]
+              for f in data["findings"] if f["rule"] == "M5"),
+          f"{[f['message'] for f in data['findings'] if f['rule'] == 'M5']}")
+    check("M5 does not read the value of `--test` as a filter",
+          not rows(data, "M5", "rotten/README.md") or
+          ("rotten/README.md", 22) not in rows(data, "M5"), f"{rows(data, 'M5')}")
+
+    # -- M6 ---------------------------------------------------------------
+    check("M6 reports a `--test` target the named package does not declare",
+          ("rotten/README.md", 22) in rows(data, "M6"), f"{rows(data, 'M6')}")
+    check("M6 reports a package that is not in the checkout",
+          ("rotten/README.md", 23) in rows(data, "M6"), f"{rows(data, 'M6')}")
+    check("M6 tells an absent target from an absent package",
+          any("--test gone_target" in f["message"] for f in data["findings"]
+              if f["rule"] == "M6")
+          and any("-p nosuchpkg" in f["message"] for f in data["findings"]
+                  if f["rule"] == "M6"),
+          f"{[f['message'] for f in data['findings'] if f['rule'] == 'M6']}")
+    check("M6 fires on nothing else in the fixture",
+          len(rows(data, "M6")) == 2, f"{rows(data, 'M6')}")
+
+    # -- M7 ---------------------------------------------------------------
+    check("M7 reports a self-graded field",
+          ("rotten/README.md", 15) in rows(data, "M7"), f"{rows(data, 'M7')}")
+    check("M7 reports a Capability Index table header",
+          ("rotten/README.md", 17) in rows(data, "M7"), f"{rows(data, 'M7')}")
+    check("M7 fires on nothing else in the fixture",
+          len(rows(data, "M7")) == 2, f"{rows(data, 'M7')}")
+
+    # -- M5/M6/M7 reach project READMEs and nothing else -------------------
+    # `rotten/CONTRIBUTING.md` is in the same run and carries no capability
+    # rules by design. Without this row, a rule scoped to every META-doc would
+    # pass every assertion above.
+    check("M5, M6, and M7 do not reach a CONTRIBUTING.md",
+          not [f for f in data["findings"]
+               if f["rule"] in ("M5", "M6", "M7")
+               and f["path"].endswith("CONTRIBUTING.md")],
+          f"{[(f['rule'], f['path']) for f in data['findings'] if f['rule'] in ('M5', 'M6', 'M7')]}")
 
     # -- the negative control every rule shares ---------------------------
     # `clean/` is in the same run as `rotten/`, differing only in the defects.

@@ -42,6 +42,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 # `git` here disables fsmonitor for the reason `leg.py` gives: a stalled
@@ -66,7 +67,25 @@ RULES = {
     "M2": "an `aw <verb>` command naming a CLI that was deleted",
     "M3": "a relative link whose target is not in the checkout",
     "M4": "a project README missing a required section",
+    "M5": "a capability gate whose test-name filter exits 0 when it matches nothing",
+    "M6": "a capability gate naming a cargo package or test target that does not exist",
+    "M7": "a capability field asserting a state nothing measures",
 }
+
+# M5, M6, and M7 read a project README's `## Capabilities` section, so they are
+# the first three rules whose defect is a *claim* rather than a broken
+# reference. M1-M4 ask "does this resolve?"; these ask "could this promise ever
+# have been refused?" -- which is the question `CONTRIBUTING.md` line 1637
+# leaves to a reader ("Nothing validates this shape") and the one that let 62
+# `CAPABILITIES.md` files reach the identical empty template before anybody
+# noticed.
+#
+# They are scoped to project READMEs and not to the other two META-docs on
+# purpose. A `cargo test` line in the root `CONTRIBUTING.md` is an *example of a
+# command's shape*, quoted to teach the convention, and a rule that read it as a
+# gate would report the documentation of the rule as a violation of it. The
+# promise-to-gate binding this measures exists in exactly one place, which
+# `CONTRIBUTING.md` line 1625 names: a capability heading in a project README.
 
 # --------------------------------------------------------------------------
 # M1 -- the markers, and who is supposed to write them
@@ -154,6 +173,88 @@ CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)*?\1")
 # `## Install`), not a promise about one thing, and requiring `## Brief` of it
 # would be requiring a section with nothing to put in it.
 REQUIRED_H2 = ("## Brief", "## Capabilities")
+
+# --------------------------------------------------------------------------
+# M5 -- a gate that cannot go red
+# --------------------------------------------------------------------------
+# `cargo test -p <crate> <filter>` exits **0** when `<filter>` selects no test.
+# Not 1, not a warning -- libtest runs zero tests and reports success, so the
+# gate is green in exactly the two cases a gate exists to tell apart: the
+# behaviour holds, and the test that measured it was renamed out from under the
+# README. Measured in this repository: `apps/lumen/README.md` gates that no
+# longer matched anything kept printing `test result: ok. 0 passed`.
+#
+# `--test <target>` is the opposite direction and is why M6 exists beside this
+# one: a target that is gone makes cargo *fail*, loudly, with "no test target
+# named ...". So the repair for an M5 is to name the target, never to correct
+# the filter -- a corrected filter is one rename away from being wrong again and
+# silent about it.
+#
+# The parse deliberately understands which flags take a value. `--test peer_mtls`
+# and `--features operator` put a bare word on the line that is not a filter, and
+# reading them as one would report every correctly-targeted gate in the tree.
+# The span ends at the first character that ends a command, and every one of
+# them was put here by a false positive this rule reported before it was:
+# `#` began a trailing shell comment (`cargo test -p arena  # spec/compare units`,
+# whose comment words parsed as six filters), `"` closed the JSON string a
+# command was quoted inside (`"command": "cargo test -p cap",`, which made the
+# package `cap",`), and `|` closes a markdown table cell. Truncating early is
+# the safe direction: it can only cost a finding, never invent one.
+CARGO_TEST = re.compile(r"cargo\s+test\b([^`\n#\"'|;&]*)")
+CARGO_VALUE_FLAGS = frozenset((
+    "-p", "--package", "--exclude", "--features", "-F", "--test", "--bin",
+    "--example", "--bench", "--manifest-path", "--target", "--profile",
+    "--target-dir", "-j", "--jobs",
+))
+
+# --------------------------------------------------------------------------
+# M6 -- a gate naming something that is not there
+# --------------------------------------------------------------------------
+# The package and the test target are the two halves of a gate that cargo
+# resolves *before* running anything, so both are checkable without a build --
+# which matters, because resolving them the way cargo does means `cargo
+# metadata` and a compile-shaped dependency this script does not have.
+#
+# `autotests = false` is read rather than assumed. A crate that declares it has
+# no targets except the `[[test]]` stanzas it lists, which is the arrangement
+# `CLAUDE.md` requires under "Test Layout" and the reason a new `e2e/*.rs` with
+# no stanza silently never runs. A crate *without* it still autodiscovers
+# `tests/*.rs`, so both sets are admitted or this rule would report every
+# ordinary crate in the repository.
+CARGO_PKG_FLAGS = ("-p", "--package")
+
+# --------------------------------------------------------------------------
+# M7 -- a field that grades itself
+# --------------------------------------------------------------------------
+# `Status: verified`, `Maturity: smoke`, `Production: ready`. Nothing reads
+# these. No script parses them, no gate compares them to a test result, and
+# nothing goes red when the code behind one stops being any of those things --
+# they are the state of the world on the day somebody typed them.
+#
+# That makes them the exact defect `.claude/rules/authoring/agent-instruction-ghan.md`
+# refuses: "Do not add a section that no consumer refuses; an unrefusable
+# section degenerates into a title echo." A capability's refusable content is
+# its promise, its named surface, and its gate command -- the three things
+# `CONTRIBUTING.md` line 1625 asks for. These fields sit beside those three
+# looking like more of them.
+#
+# They are residue, not authorship: the verb that emitted them was deleted with
+# its crate, which is the same event M1 exists for. M1 cannot see these because
+# the generator wrote them without a marker pair around them.
+#
+# `Root WI`, `Promise`, `Surfaces`, and `Gate` are deliberately absent from the
+# list. All four are required or useful content, and three of them are named
+# verbatim in the required shape.
+SELF_GRADED_FIELD = re.compile(
+    r"^\s*(?:[-*]\s+)?(Status|Maturity|Production|Feature Class|"
+    r"Required Verification)\s*:", re.M)
+
+# The same five fields in their other shape. The generator emitted a "Capability
+# Index" table whose columns are `Impl | Verification | Maturity | Production`,
+# and a rule that only read the line form would pass a file holding twenty rows
+# of it. Both `Maturity` and `Production` are required in the header so that an
+# ordinary table that happens to have a column called "Status" is not swept in.
+INDEX_TABLE_HEADER = re.compile(r"^\|.*\bMaturity\b.*\bProduction\b.*\|\s*$", re.M)
 
 
 class Finding:
@@ -360,6 +461,124 @@ def m4_readme_shape(repo: Path, all_docs: list[str], selected: set[str],
     return population
 
 
+def cargo_index(repo: Path) -> dict[str, set[str]]:
+    """Package name -> the test targets `cargo test -p <name> --test <t>` accepts.
+
+    Tracked manifests only, for the reason `tracked_docs` gives: a `Cargo.toml`
+    under `target/` belongs to a build, not to this repository.
+
+    A package that is present with no test targets maps to an empty set, which
+    is distinct from a package that is absent and is why the value is a set
+    rather than a truthy list -- M6 has to tell "you named a target this crate
+    does not declare" from "you named a crate that does not exist", and those
+    are different sentences to a reader holding a failing command.
+    """
+    proc = subprocess.run([*GIT, "ls-files", "-z", "--", "*Cargo.toml"], cwd=repo,
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        usage_error(f"git ls-files failed: {proc.stderr.strip()}")
+
+    index: dict[str, set[str]] = {}
+    for rel in proc.stdout.split("\0"):
+        if not rel:
+            continue
+        try:
+            manifest = tomllib.loads((repo / rel).read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            # A manifest this script cannot parse is not a finding about a
+            # document. Skipping it costs M6 one crate; reporting it would put
+            # a Rust defect in a META-doc report.
+            continue
+        package = manifest.get("package")
+        if not isinstance(package, dict) or not isinstance(package.get("name"), str):
+            continue
+
+        targets = {t.get("name") for t in manifest.get("test", [])
+                   if isinstance(t, dict) and isinstance(t.get("name"), str)}
+        if package.get("autotests") is not False:
+            targets |= {p.stem for p in (repo / rel).parent.glob("tests/*.rs")}
+        index[package["name"]] = targets
+    return index
+
+
+def cargo_test_spans(text: str):
+    """(line, packages, targets, filters) for every `cargo test` in the text.
+
+    One parser for M5 and M6 so the two rules can never disagree about which
+    word on a line is a filter and which is the value of the flag before it.
+    """
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for match in CARGO_TEST.finditer(line):
+            packages: list[str] = []
+            targets: list[str] = []
+            filters: list[str] = []
+            pending = ""
+            for token in match.group(1).split():
+                if pending:
+                    if pending in CARGO_PKG_FLAGS:
+                        packages.append(token)
+                    elif pending == "--test":
+                        targets.append(token)
+                    pending = ""
+                    continue
+                if token in CARGO_VALUE_FLAGS:
+                    pending = token
+                    continue
+                if token.startswith("-"):
+                    # `--lib`, `--all-targets`, `--`, `--nocapture`: no value,
+                    # and none of them is a filter.
+                    continue
+                filters.append(token)
+            yield lineno, packages, targets, filters
+
+
+def m5_vacuous_gates(rel: str, text: str, out: list[Finding]) -> None:
+    for lineno, _packages, _targets, filters in cargo_test_spans(text):
+        for name in filters:
+            out.append(Finding("M5", rel, lineno,
+                               f"`{name}` is a test-name filter -- cargo exits 0 when "
+                               f"it matches nothing, so this gate cannot go red; name "
+                               f"the target with `--test <target>` or `--lib` instead"))
+
+
+def m6_absent_gate_targets(rel: str, text: str, index: dict[str, set[str]],
+                           out: list[Finding]) -> None:
+    for lineno, packages, targets, _filters in cargo_test_spans(text):
+        known = [p for p in packages if p in index]
+        for package in packages:
+            if package not in index:
+                out.append(Finding("M6", rel, lineno,
+                                   f"`-p {package}` names no package in this checkout"))
+        for target in targets:
+            if not known:
+                # `--test` with no resolvable package is already reported above,
+                # or the command names no package at all and cargo would pick
+                # the manifest it is standing in -- which this script cannot
+                # know. Either way the target is unanswerable, not absent.
+                continue
+            if any(target in index[p] for p in known):
+                continue
+            out.append(Finding("M6", rel, lineno,
+                               f"`--test {target}` names no test target declared by "
+                               + " or ".join(f"`{p}`" for p in known)))
+
+
+def m7_self_graded_fields(rel: str, text: str, out: list[Finding]) -> None:
+    lines = text.splitlines()
+    for lineno, line in enumerate(lines, 1):
+        field = SELF_GRADED_FIELD.match(line)
+        if field:
+            out.append(Finding("M7", rel, lineno,
+                               f"`{field.group(1)}:` grades this capability, and nothing "
+                               f"measures it -- the refusable content is the promise, "
+                               f"the named surface, and the gate command"))
+        if INDEX_TABLE_HEADER.match(line):
+            out.append(Finding("M7", rel, lineno,
+                               "a Capability Index table grades every row it holds "
+                               "(`Maturity`, `Production`), and nothing measures those "
+                               "columns"))
+
+
 def collect(repo: Path, rules: tuple[str, ...],
             paths: tuple[str, ...]) -> tuple[list[Finding], dict]:
     all_docs = tracked_docs(repo)
@@ -393,6 +612,22 @@ def collect(repo: Path, rules: tuple[str, ...],
         m2_stale_exemptions(chosen, texts, not paths, out)
     projects = m4_readme_shape(repo, all_docs, chosen if "M4" in rules else set(),
                                texts, out)
+
+    # M5-M7 run over the project READMEs and nothing else, so they read the
+    # population M4 derived rather than deriving a second one. Two derivations
+    # of "what is a project" would be two answers the day one of them changed.
+    capability_rules = {"M5", "M6", "M7"} & set(rules)
+    if capability_rules:
+        index = cargo_index(repo) if "M6" in capability_rules else {}
+        for rel in projects:
+            if rel not in chosen:
+                continue
+            if "M5" in capability_rules:
+                m5_vacuous_gates(rel, texts[rel], out)
+            if "M6" in capability_rules:
+                m6_absent_gate_targets(rel, texts[rel], index, out)
+            if "M7" in capability_rules:
+                m7_self_graded_fields(rel, texts[rel], out)
 
     out.sort(key=lambda f: (f.path, f.line, f.rule))
     population = {
