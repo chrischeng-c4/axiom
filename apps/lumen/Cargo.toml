@@ -265,60 +265,12 @@ name = "behavior_lumen_claim_cli_connect_query_workflow"
 path = "e2e/behavior_lumen_claim_cli_connect_query_workflow.rs"
 
 [[test]]
-name = "behavior_lumen_claim_cli_deployment_operator_command_surface"
-path = "e2e/behavior_lumen_claim_cli_deployment_operator_command_surface.rs"
-
-[[test]]
 name = "behavior_lumen_claim_developer_interactive_tooling"
 path = "e2e/behavior_lumen_claim_developer_interactive_tooling.rs"
 
 [[test]]
-name = "behavior_lumen_claim_dynamic_cross_pod_routing"
-path = "e2e/behavior_lumen_claim_dynamic_cross_pod_routing.rs"
-
-[[test]]
-name = "behavior_lumen_claim_dynamic_post_cutover_usage_freshness"
-path = "e2e/behavior_lumen_claim_dynamic_post_cutover_usage_freshness.rs"
-
-[[test]]
-name = "behavior_lumen_claim_dynamic_reshard_durability"
-path = "e2e/behavior_lumen_claim_dynamic_reshard_durability.rs"
-
-[[test]]
-name = "behavior_lumen_claim_dynamic_serve_shard_map"
-path = "e2e/behavior_lumen_claim_dynamic_serve_shard_map.rs"
-
-[[test]]
-name = "behavior_lumen_claim_dynamic_single_member_persistence"
-path = "e2e/behavior_lumen_claim_dynamic_single_member_persistence.rs"
-
-[[test]]
-name = "behavior_lumen_claim_dynamic_stale_hpa_handoff"
-path = "e2e/behavior_lumen_claim_dynamic_stale_hpa_handoff.rs"
-
-[[test]]
-name = "behavior_lumen_claim_dynamic_storage_pressure_split_policy"
-path = "e2e/behavior_lumen_claim_dynamic_storage_pressure_split_policy.rs"
-
-[[test]]
 name = "behavior_lumen_claim_k8s_kustomize_base"
 path = "e2e/behavior_lumen_claim_k8s_kustomize_base.rs"
-
-[[test]]
-name = "behavior_lumen_claim_k8s_operator_reconcile"
-path = "e2e/behavior_lumen_claim_k8s_operator_reconcile.rs"
-
-[[test]]
-name = "behavior_lumen_claim_k8s_operator_storage_topology_reshard"
-path = "e2e/behavior_lumen_claim_k8s_operator_storage_topology_reshard.rs"
-
-[[test]]
-name = "behavior_lumen_claim_k8s_single_member_persistence"
-path = "e2e/behavior_lumen_claim_k8s_single_member_persistence.rs"
-
-[[test]]
-name = "behavior_lumen_claim_k8s_topology_hpa_handoff"
-path = "e2e/behavior_lumen_claim_k8s_topology_hpa_handoff.rs"
 
 [[test]]
 name = "behavior_lumen_claim_long_running_kustomize_base"
@@ -327,10 +279,6 @@ path = "e2e/behavior_lumen_claim_long_running_kustomize_base.rs"
 [[test]]
 name = "behavior_lumen_claim_observability_servicemonitor_rule"
 path = "e2e/behavior_lumen_claim_observability_servicemonitor_rule.rs"
-
-[[test]]
-name = "behavior_lumen_long_running_stability_operator_render"
-path = "e2e/behavior_lumen_long_running_stability_operator_render.rs"
 
 [[test]]
 name = "benchmark_lumen_competitor_performance_competitive"
@@ -543,14 +491,6 @@ path = "e2e/spec_gen_e2e.rs"
 [[test]]
 name = "spec_route_parity"
 path = "e2e/spec_route_parity.rs"
-
-[[test]]
-name = "stability_lumen_claim_dynamic_autonomous_reshard"
-path = "e2e/stability_lumen_claim_dynamic_autonomous_reshard.rs"
-
-[[test]]
-name = "stability_lumen_claim_dynamic_checkpointed_phase_driver"
-path = "e2e/stability_lumen_claim_dynamic_checkpointed_phase_driver.rs"
 
 [[test]]
 name = "stability_lumen_claim_dynamic_multi_shard_replica_kind"

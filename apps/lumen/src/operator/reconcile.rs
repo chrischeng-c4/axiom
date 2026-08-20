@@ -63,6 +63,30 @@
 //! no-op, not an error). Without this migration cleanup, a stale HPA can keep
 //! mutating the data StatefulSet outside the shared membership-aware capacity
 //! contract.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 2 sentences were the whole of the `// Contract:` comment in 2 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --features operator
+//! --lib prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard` in a subprocess
+//! and asserted the child's exit status. That test is this file's own.
+//!
+//! Until 2026-08-20 these shells could not be deleted. The project's only declared gate
+//! was `cargo test -p lumen`, and with `default = []` that command did not compile this
+//! module at all — `crate::operator` gates `pub mod reconcile;` on the `operator`
+//! feature — so each shell's `--lib` name filter matched no test, printed `0 passed`,
+//! and exited 0. That left the shells as the sole surviving record that these checks
+//! should run at all. `apps/lumen/CONTRIBUTING.md` declared `cargo test -p lumen
+//! --features "operator delegated-auth"` as a required second gate row that day, and
+//! that run executes this module's colocated tests directly. That made each shell a
+//! second, nested run of a check the gate already covers, so they were deleted the same
+//! day. The sentence is the only thing they held that nothing else did. Each line below
+//! is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-dynamic-stale-hpa-handoff` — The reconcile loop deletes a stale
+//!   operator-rendered HPA when fixed shard topology takes ownership.
+//! - `lumen-claim-k8s-topology-hpa-handoff` — The Kubernetes reconcile loop deletes
+//!   stale autoscaling state when fixed storage topology takes over.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
