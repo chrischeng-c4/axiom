@@ -17,8 +17,8 @@ Usage
         --scope libs/service-auth \
         --issue 3368 \
         --design-input libs/service-auth/README.md \
-        --write libs/service-auth/external-contracts/tests/unit/test_runner_protocol.py:2 \
-        --gate "uv run pytest libs/service-auth"
+        --write libs/service-auth/src/runner_protocol.rs:2 \
+        --gate "cargo test -p service-auth"
 
 Five inputs describe the round -- the scope, the ticket, the design inputs, the
 write set, and the gate. Everything else is derived, and each flag stays
