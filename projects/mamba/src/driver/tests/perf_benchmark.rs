@@ -293,7 +293,7 @@ fn perf_benchmark_string_concat_10k() {
     let results = vec![bench(
         "string concat 10K",
         r#"
-parts = []
+parts: list[str] = []
 i = 0
 while i < 10000:
     parts.append("x")
@@ -368,7 +368,7 @@ print(total)
         bench(
             "string concat 10K",
             r#"
-parts = []
+parts: list[str] = []
 i = 0
 while i < 10000:
     parts.append("x")
