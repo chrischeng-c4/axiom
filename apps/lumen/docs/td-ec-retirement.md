@@ -435,7 +435,7 @@ NC2 是故意設計成過不了的。`feature_gated_targets_are_registered` 的�
 
 | # | 事實 | 為什麼 S4 需要它 |
 |---|---|---|
-| 1 | S3 必須先 commit，S4 的 diff 才量得準 | gate 的 `additions`／`deletions` 是對 base 量整份 diff；base 不含 S3 的話，176 個 rename 會被算進 S4 的帳上 |
+| 1 | ~~S3 必須先 commit，S4 的 diff 才量得準~~ **已滿足** | gate 的 `additions`／`deletions` 是對 base 量整份 diff；base 不含 S3 的話，176 個 rename 會被算進 S4 的帳上。S3 已落在 `aa0da939b1` 與 `e005374a7f`，所以 S4 的 base 就是 §7 記的那顆 SHA，不需要再扣除 rename |
 | 2 | `apps/lumen/Cargo.toml` 現在是測試清單本身 | S4 刪 `tech-design/`／`external-contracts/` 不該動到它；動到就是刪錯東西 |
 | 3 | ledger 還有 6 條 `deferred:S3` 沒收 | 兩個不同的理由。5 條的擁有者在 `libs/**`，不在 S3 的範圍；第 6 條 `apps/lumen/e2e/ec_claim_closure_consistency.rs` 這一輪**有搬**，但它沒有知識要留——它的 `CLAIM_DOCUMENT`（`:9`）指向 `apps/lumen/external-contracts/claim-closure/production-claims.md`，主體隨樹退場，case 也跟著退場。六個檔都還是 0 行 `//!`，這是它們不觸發 gate `stale_deferred` 的原因 |
 | 4 | `retired_credential_surface` 是既存紅 | 它點名 `apps/lumen/README.md:368`。S4 刪 `tech-design/` 會讓該檔 `:88` 與 `:134` 兩條 allowance 失效，要一起處理 |
@@ -445,6 +445,25 @@ NC2 是故意設計成過不了的。`feature_gated_targets_are_registered` 的�
 ---
 
 ## 7. 恢復程序（context 掉了怎麼接）
+
+**S0–S3 落在哪。**「已完成」在 §6 是一句話，在樹上是四顆 commit，`app/lumen`
+上連續：
+
+| SHA | 主旨 | 帶了什麼 |
+|---|---|---|
+| `d27508f64c` | `td-ec(S0-S2)` | 儀器（`scripts/td-retire-*.py`）＋知識地板與差集：29 檔，1155 insertions／143 deletions |
+| `aa0da939b1` | `lumen(S3): move tests/ to e2e/` | 176 個 `apps/lumen/{tests => e2e}/` rename、`autotests = false` ＋ 167 個 `[[test]]`、16 個 consumer 重新指向：192 檔，818／171 |
+| `e005374a7f` | `lumen(S3): land the eight deferred knowledge runs and the reason ledger` | 8 條 `deferred:S3` 的 `//!` ＋ `docs/td-ec-reason-ledger.tsv`（76 列）＋本文件：10 檔，620 insertions |
+| `ae40071a1e` | `docs(lumen)` | 地雷 28：分段 rustdoc gate 的覆蓋缺口 |
+
+S4 的 diff base 是這四顆的最後一顆，不是 `main`。`apps/lumen/Cargo.toml`
+在 `e005374a7f` 之後的 sha256 是
+`7cceeb2285f4074bbe27987f6116c1645b3b6e23334edebb785a5528bb836fa8` —— S4 不該
+動到它，動到了就是碰了 D2 的產物。
+
+進 S4 之前，樹上有一條**既存的紅**：`apps/lumen/e2e/retired_credential_surface.rs:411`
+指著 `apps/lumen/README.md:368`。它在 S3 之前就紅，不是 S3 造成的，也不要在 S4
+把它當成新壞掉的東西去追。
 
 1. 讀 §0（三個凍結決策）、§3（地雷）、§4（gate）。
 2. 讀 §6 找第一個未完成的階段。**不要相信 §1 的表**，它是 2026-08-19 的快照。
