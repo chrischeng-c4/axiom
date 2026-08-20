@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! `POST /collections/{id}/reindex/stream` — NDJSON in, NDJSON out.
 

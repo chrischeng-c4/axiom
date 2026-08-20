@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen — standalone search and duplicate-detection index.
 //!

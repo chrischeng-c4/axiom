@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Snapshot-level resharding primitives.
 //!
@@ -24,7 +23,6 @@ use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
 /// and [`crate::operator::reshard_driver`]'s oversize-wedge detection
 /// compares a batch's real wire size against this same number rather than a
 /// second, hand-copied literal.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub const ADMIN_ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Resolve the data-plane body limit from `LUMEN_BODY_LIMIT_BYTES`, falling
@@ -49,7 +47,6 @@ pub fn body_limit_bytes_from_env() -> usize {
 pub const MAX_BATCH_BYTES: usize = ADMIN_ROUTE_BODY_LIMIT_BYTES / 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub struct BucketMove {
     pub bucket: u32,
     pub from_shard: u32,
@@ -73,7 +70,6 @@ pub struct BucketMove {
 /// chunked message: [`ReshardPruneChunk`] /
 /// [`snapshot_reshard_prune_chunks`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub struct ReshardBatch {
     pub from_map_version: u64,
     pub to_map_version: u64,
@@ -95,7 +91,6 @@ pub struct ReshardBatch {
 /// is pruned from the target rather than surviving only because an earlier,
 /// now-stale copy landed on the target from a prior additive pass.
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub struct ReshardBatchReplaceScope {
     pub bucket: u32,
     pub virtual_bucket_count: u32,
@@ -136,7 +131,6 @@ pub struct ReshardBatchReplaceScope {
 /// receiver's chunk-0 reset — must change together (e.g. to a per-pass
 /// nonce field on this struct).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub struct ReshardPruneChunk {
     pub to_map_version: u64,
     pub bucket: u32,
@@ -150,7 +144,6 @@ pub struct ReshardPruneChunk {
 /// Return the virtual buckets whose physical owner changes between two map
 /// versions. A shard split keeps the virtual bucket count stable and changes
 /// assignments in small increments.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn bucket_moves(
     from: &VirtualBucketShardMap,
     to: &VirtualBucketShardMap,
@@ -216,7 +209,6 @@ pub fn bucket_moves(
 /// source shard) has no authority to speak for. Applying such a batch is
 /// harmless idempotent no-op on a repeat pass (`Engine::apply_reshard_batch`
 /// already documents this).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn snapshot_reshard_batches(
     snapshot: &SnapshotV1,
     from: &VirtualBucketShardMap,
@@ -368,7 +360,6 @@ pub fn snapshot_reshard_batches(
 /// `max_chunk_bytes` via [`chunk_ids_by_bytes`] — unlike [`ReshardBatch`],
 /// no *other* pair's chunk count or size is affected by how large one pair's
 /// population is.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn snapshot_reshard_prune_chunks(
     snapshot: &SnapshotV1,
     to: &VirtualBucketShardMap,
@@ -480,7 +471,6 @@ fn byte_cap_chunk(
 /// the wire-level primitive an operator can use between batches: fetch target
 /// snapshot, merge one moved-bucket batch, restore the merged snapshot, then
 /// checkpoint the batch as complete.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> {
     if base.version != delta.version {
         bail!(
@@ -519,7 +509,6 @@ pub fn merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<S
 /// exactly the "freshly created, zero documents" shape (schema + per-field
 /// index structure, no postings) that a real empty collection's own
 /// snapshot already has.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn snapshot_bucket_subset(
     snapshot: &SnapshotV1,
     virtual_bucket_count: u32,

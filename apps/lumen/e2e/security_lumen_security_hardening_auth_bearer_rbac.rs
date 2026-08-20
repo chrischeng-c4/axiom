@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-security-hardening-auth-bearer-rbac
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-security-hardening-auth-bearer-rbac

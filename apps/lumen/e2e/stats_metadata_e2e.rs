@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! `/stats` is engine *metadata*, not data analytics.
 //!

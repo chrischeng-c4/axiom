@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
 # CODEGEN-BEGIN
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

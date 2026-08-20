@@ -1,6 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/logic/bulk-scroll-to-exhaustion-endpoint-for-all-matching-ids-no-unlim.md#unit-test
 // CODEGEN-BEGIN
-// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 use std::sync::Arc;
 
 use axum_test::TestServer;

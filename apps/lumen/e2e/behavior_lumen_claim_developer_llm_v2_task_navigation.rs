@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-developer-llm-v2-task-navigation
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-developer-llm-v2-task-navigation

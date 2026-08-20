@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-developer-integration-contract
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-developer-integration-contract

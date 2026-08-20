@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! The three request-authentication states of a serving process (#2869).
 //!

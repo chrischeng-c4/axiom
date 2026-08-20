@@ -10,7 +10,6 @@
 //! gamed. Without it a mechanism can appear in neither column, and a shared
 //! failure becomes a tracked skip instead of a failure.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:a96e84cf" tracker="#2324" reason="Create one deterministic structural regression gate for Lumen's trait-derived capability baseline and shared-library ownership boundary. It must inspect aw.toml, README, Cargo.toml, and the actual CLI, HTTP, auth, Kubernetes, Raft, peer transport, and observability integration seams; require canonical shared delegation; keep search/CRD policy app-owned; and encode a total, disjoint shared-versus-domain classification so shared failures cannot be tracked skips. generator gap: missing-generator:test:capability-shared-ownership (#2324)."
-// @spec apps/lumen/tech-design/interfaces/rest/verify-capability-contracts-and-shared-ownership.md#unit-test
 
 use std::collections::BTreeSet;
 

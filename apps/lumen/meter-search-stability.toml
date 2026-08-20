@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-meter-search-stability
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
 delegate_command = "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"

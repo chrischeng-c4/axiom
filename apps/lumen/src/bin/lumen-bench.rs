@@ -1,6 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-bench-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-// @spec apps/lumen/tech-design/logic/gate-the-filter-sort-deep-page-chain-bench-cell-pg-competitive-p.md#logic
 //! In-process latency gate for the two query shapes lumen is measured on.
 //!
 //! **`status=pass` on the output line is a literal.** `print_report` hard-codes

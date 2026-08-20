@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-backup-periodic-snapshotter
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-backup-periodic-snapshotter

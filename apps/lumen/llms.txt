@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-apps-lumen.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # lumen Agent Context
 

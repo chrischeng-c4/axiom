@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `EngineSm` — lumen's [`Engine`] as a [`raft_runtime::RaftStateMachine`].
 //!
@@ -30,14 +29,12 @@ use raft_runtime::RaftHost;
 const OUTCOME_WINDOW: u64 = 8192;
 
 /// lumen's engine driven as a raft state machine.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#source
 pub struct EngineSm {
     engine: Arc<Engine>,
     applied: AtomicU64,
     outcomes: Mutex<OutcomeWindow<Result<ApplyOutcome>>>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#source
 impl EngineSm {
     /// Wrap `engine`, seeded at `from_seq` (the seq the engine was cold-started
     /// to, e.g. from an RDB checkpoint — `0` for a fresh engine).
@@ -67,7 +64,6 @@ impl EngineSm {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#source
 impl RaftStateMachine for EngineSm {
     fn apply(&self, index: Index, command: &[u8]) -> Result<()> {
         let outcome =
@@ -112,13 +108,11 @@ impl RaftStateMachine for EngineSm {
 /// [`RaftHost`] (which handles leader-redirect + read-your-write), and the rich
 /// [`ApplyOutcome`] is claimed from the local [`EngineSm`] apply (the host
 /// applies on every node, so a follower has its own outcome).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#source
 pub struct RaftWriteSink {
     host: Arc<RaftHost>,
     sm: Arc<EngineSm>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#source
 impl RaftWriteSink {
     pub fn new(host: Arc<RaftHost>, sm: Arc<EngineSm>) -> Self {
         Self { host, sm }
@@ -126,7 +120,6 @@ impl RaftWriteSink {
 }
 
 #[async_trait::async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#source
 impl WriteSink for RaftWriteSink {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
         let index = match self.host.propose(WalRecord::new(entry).encode()?).await {

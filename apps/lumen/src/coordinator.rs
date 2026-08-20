@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Write coordinator — the seam between the HTTP write handlers and the
 //! log-driven apply loop.
@@ -65,17 +64,14 @@ struct PendingApply {
 /// default, so a stranded write is loud (a 5xx) rather than silent (an
 /// infinite hang, the original defect) or misleading (a 4xx).
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 pub struct SubmitStalled(pub String);
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 impl std::fmt::Display for SubmitStalled {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 impl std::error::Error for SubmitStalled {}
 
 /// A durable write path (local AOF append/flush/sync, a segment/RDB
@@ -88,17 +84,14 @@ impl std::error::Error for SubmitStalled {}
 /// call `Metrics::mark_storage_degraded` — this type only carries the
 /// message, it does not itself flip the sticky degraded flag.
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 pub struct StorageFullError(pub String);
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 impl std::fmt::Display for StorageFullError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 impl std::error::Error for StorageFullError {}
 
 /// #2516: true when `e`'s error chain contains an `io::Error` whose kind is
@@ -107,7 +100,6 @@ impl std::error::Error for StorageFullError {}
 /// whether to flip the node into degraded read-only mode. Walks the full
 /// `anyhow` context chain (not just the outer error) because every durable
 /// write path wraps the root `std::io::Error` with `.context(...)`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 pub fn is_storage_full(e: &anyhow::Error) -> bool {
     e.chain().any(|cause| {
         cause
@@ -129,17 +121,14 @@ struct CompletionState {
 /// replacement process; the everysec fsync remains off the normal write path.
 /// `None` on the default / non-AOF path, so `start_from` is byte-identical to
 /// today.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 pub type SharedAof = Arc<Mutex<crate::aof::AofWriter>>;
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 pub struct WriteCoordinator {
     wal: SharedWal,
     applied: AtomicU64,
     completions: Mutex<CompletionState>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 impl WriteCoordinator {
     /// Spawn the apply loop and return the coordinator. The loop tails
     /// the log from the beginning and folds it into `engine`.
@@ -460,14 +449,12 @@ impl WriteCoordinator {
 /// The write seam the API binds to: submit a log entry, get its applied outcome,
 /// and report the applied head. Implemented by [`WriteCoordinator`] (the WAL-seam
 /// path for embedded/nats) and by `RaftWriteSink` (the raft-runtime path).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 #[async_trait::async_trait]
 pub trait WriteSink: Send + Sync {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome>;
     fn applied_seq(&self) -> u64;
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 #[async_trait::async_trait]
 impl WriteSink for WriteCoordinator {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {

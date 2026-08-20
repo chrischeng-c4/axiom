@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-read-consistency-raft-bootstrap
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-http2-read-consistency-raft-bootstrap

@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-rig-search-stability
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
 project = "lumen"

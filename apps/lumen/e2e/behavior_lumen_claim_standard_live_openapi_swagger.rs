@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-standard-live-openapi-swagger
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-standard-live-openapi-swagger

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Tokenizers for `text` fields.
 //!
@@ -38,7 +37,6 @@ pub const DEFAULT_NGRAM_MIN: usize = 2;
 pub const DEFAULT_NGRAM_MAX: usize = 3;
 
 /// Tokenize `text` with the chosen `analyzer`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#source
 pub fn tokenize(text: &str, analyzer: Analyzer) -> Vec<String> {
     match analyzer {
         Analyzer::WhitespaceLower => {
@@ -51,12 +49,10 @@ pub fn tokenize(text: &str, analyzer: Analyzer) -> Vec<String> {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#source
 pub(crate) fn for_whitespace_lower(text: &str, mut emit: impl FnMut(String)) -> u32 {
     for_whitespace_lower_cow(text, |tok| emit(tok.into_owned()))
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#source
 pub(crate) fn for_whitespace_lower_cow<'a>(
     mut text: &'a str,
     mut emit: impl FnMut(Cow<'a, str>),

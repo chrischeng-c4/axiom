@@ -1,5 +1,4 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-ec-claim-closure-consistency" tracker="1871" reason="The EC producer cannot independently prove that its authored claim document, generated inventory, wrapper dispatch, and capability-contract claims agree without a repository-level oracle."
-// @spec apps/lumen/tech-design/semantic/lumen-ec-gates.md#schema
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

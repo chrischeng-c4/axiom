@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3).
 //!
@@ -116,7 +115,6 @@ struct RemoteShard {
 /// serving pod (#1398 R1-R3). Local-owned buckets hit `engine`/`local_write`
 /// directly; remote-owned buckets forward one hop to the owning pod's
 /// stable per-shard DNS name (`routing::shard_host`).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#source
 pub struct RoutedRouter {
     engine: Arc<Engine>,
     local_write: Arc<dyn WriteBackend>,
@@ -125,7 +123,6 @@ pub struct RoutedRouter {
     remotes: Vec<Option<RemoteShard>>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#source
 impl RoutedRouter {
     /// `shard_urls[shard]` is the base URL (`http://host:port`, no trailing
     /// slash) forwarded requests for that shard are sent to; its length must
@@ -582,7 +579,6 @@ fn merge_drop_outcomes(a: DropOutcome, b: DropOutcome) -> DropOutcome {
 }
 
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#source
 impl RoutedBackend for RoutedRouter {
     async fn create_collection(
         &self,

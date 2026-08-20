@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Per-shard replication surface.
 //!
@@ -41,12 +40,10 @@ use crate::config::ClusterConfig;
 /// (mid-election, or the group hasn't elected one yet).
 const NO_LEADER: u32 = u32::MAX;
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 pub use raft_runtime::ReadConsistency;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 pub enum RaftRole {
     Leader,
     Follower,
@@ -54,7 +51,6 @@ pub enum RaftRole {
     Candidate,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 impl RaftRole {
     /// Decode the `AtomicU8` encoding [`ClusterState::role`] stores (the
     /// enum's own discriminant order — see the `as u8` encode side in
@@ -70,7 +66,6 @@ impl RaftRole {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 impl From<raft_runtime::RaftRole> for RaftRole {
     fn from(role: raft_runtime::RaftRole) -> Self {
         match role {
@@ -86,14 +81,12 @@ impl From<raft_runtime::RaftRole> for RaftRole {
 /// deployment: `lumen-{ordinal}.{headless_service}:{port}` where the
 /// pod ordinal is `replica * shard_count + shard`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 pub struct RaftGroup {
     pub shard_index: u32,
     pub peers: Vec<PeerAddr>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 pub struct PeerAddr {
     pub pod_name: String,
     pub host: String,
@@ -102,7 +95,6 @@ pub struct PeerAddr {
     pub role: RaftRole,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 impl From<raft_runtime::PeerAddr> for PeerAddr {
     fn from(p: raft_runtime::PeerAddr) -> Self {
         Self {
@@ -115,7 +107,6 @@ impl From<raft_runtime::PeerAddr> for PeerAddr {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 impl RaftGroup {
     /// `fallback_prefix` is used only when `POD_NAME` carries no StatefulSet
     /// name of its own. The pod's name wins for the same reason it does in
@@ -198,7 +189,6 @@ impl RaftGroup {
 /// (derived once from static topology config); only role membership is
 /// live, computed in [`ClusterState::snapshot`] from `leader_index`.
 #[derive(Debug)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 pub struct ClusterState {
     pub pod_name: String,
     pub shard_index: u32,
@@ -219,7 +209,6 @@ pub struct ClusterState {
     leader_index: AtomicU32,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 impl ClusterState {
     pub fn new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> {
         let is_voter = cfg.is_voter()?;
@@ -364,7 +353,6 @@ impl ClusterState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 pub struct ClusterStateView {
     pub pod_name: String,
     pub shard_index: u32,
@@ -376,7 +364,6 @@ pub struct ClusterStateView {
     pub replication_lag_ms: u64,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#source
 impl From<raft_runtime::ClusterStateView> for ClusterStateView {
     fn from(v: raft_runtime::ClusterStateView) -> Self {
         Self {

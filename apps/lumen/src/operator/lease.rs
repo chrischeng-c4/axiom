@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-lease-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen's leader-election lease — now the shared `service_k8s::lease`.
 //!

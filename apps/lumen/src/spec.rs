@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Offline, machine-readable self-description for agent integration.
 //!
@@ -12,13 +11,11 @@ use serde_json::{json, Value};
 
 /// The full OpenAPI 3.2 document as pretty JSON (every route + schema,
 /// including the #1297 `QUERY` twins injected by `crate::api::openapi`).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn openapi_json() -> String {
     serde_json::to_string_pretty(&openapi_value()).expect("OpenApi value serializes to JSON")
 }
 
 /// The full OpenAPI 3.2 document as YAML for LLM/agent reading.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn openapi_yaml() -> String {
     serde_yaml::to_string(&openapi_value()).expect("OpenApi value serializes to YAML")
 }
@@ -43,7 +40,6 @@ fn openapi_value() -> Value {
 
 /// Just the component schemas (the request/response data types) as pretty JSON
 /// — the JSON-Schema view an agent uses to build/validate request bodies.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn json_schema_json() -> String {
     let api = crate::api::openapi();
     // #2871 retired the bearer/identity registry, so `operationalSchemas` no
@@ -57,7 +53,6 @@ pub fn json_schema_json() -> String {
 /// `{name, description, request}` for `POST /collections/{id}/search` (or
 /// `/duplicates` where noted) using the exact wire form of every `QueryNode`
 /// variant plus sort / collapse.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn query_shapes() -> Value {
     json!({
         "search_endpoint": "POST /collections/{collection}/search",
@@ -144,15 +139,12 @@ pub fn query_shapes() -> Value {
 /// The field-type + analyzer + vector-metric catalog — what `type`/`analyzer`/
 /// `metric` values a `PUT /collections/{id}` schema may use. Mirrors the
 /// `FieldType` / `Analyzer` / `VectorMetric` enums.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn field_catalog() -> Value {
     crate::dx::field_catalog()
 }
 
 /// The agent-facing LLM topic outline (`lumen llm --topic outline`) as
 /// Markdown.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
-/// @spec apps/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#logic
 pub fn llm_outline_md() -> String {
     r#"# lumen LLM outline
 
@@ -198,7 +190,6 @@ Use the smallest topic that answers the task:
 
 /// Kubernetes-native deployment topology (`lumen llm --topic deployment`) as
 /// Markdown.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_deployment_md() -> String {
     let mut out = r#"# lumen deployment
 
@@ -385,7 +376,6 @@ live replica synchronization mechanism.
 }
 
 /// Request-authentication contract (`lumen llm --topic auth`) as Markdown.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_auth_md() -> String {
     let mut out = String::from(
         r#"# lumen auth
@@ -572,7 +562,6 @@ The KSA token travels as it always did — `auth_token="<token>"` or
 /// model, declare→ingest→search→hydrate workflow, search-flavor decision map,
 /// connection, and non-goals. Where exact wire shape is needed it points at
 /// `lumen spec` / `lumen llm --topic recipes` so there is one source of truth.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_workflow_md() -> String {
     r#"# lumen workflow
 
@@ -825,7 +814,6 @@ adapter boundaries.
 
 /// The recommended database/pubsub integration boundary (`lumen llm --topic
 /// integration`) as Markdown.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_integration_md() -> String {
     let mut out = r#"# lumen integration
 
@@ -865,7 +853,6 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 
 /// A copy-paste end-to-end (`lumen llm --topic quickstart`) as Markdown:
 /// create → index → search against a local `lumen serve` on `:7373`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
@@ -947,7 +934,6 @@ see `lumen llm --topic auth`.
 /// Task → ready-to-POST body recipes (`lumen llm --topic recipes`) as Markdown,
 /// rendered from [`query_shapes`] so the bodies never drift from the canonical
 /// cookbook.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_recipes_md() -> String {
     let shapes = query_shapes();
     let endpoint = shapes["search_endpoint"].as_str().unwrap_or("");
@@ -973,7 +959,6 @@ pub fn llm_recipes_md() -> String {
 /// Operator storage/ops contract (`lumen llm --topic storage`) as Markdown: the
 /// serving fleet's workload kind and PVC durability guarantee, independent of
 /// `replicasPerShard`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_storage_md() -> String {
     let mut out = r#"# lumen storage
 

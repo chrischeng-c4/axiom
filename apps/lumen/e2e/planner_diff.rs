@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! Differential test for the query planner: for randomized corpora and every
 //! specialized query shape (term / range / boolean AND / filtered ranked search

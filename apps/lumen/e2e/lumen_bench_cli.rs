@@ -1,6 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-tests-lumen_bench_cli-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-// @spec apps/lumen/tech-design/logic/gate-the-filter-sort-deep-page-chain-bench-cell-pg-competitive-p.md#unit-test
 use std::process::Command;
 
 #[test]

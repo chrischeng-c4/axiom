@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Request auth for the serving API: Kubernetes ServiceAccount identities only.
 //!
@@ -127,20 +126,17 @@ pub const CONTROL_PLANE_TOKEN_FILE: &str = "/var/run/secrets/lumen.axiom.dev/tok
 /// Lumen owns *which* workloads need one and *what audience* it must carry;
 /// the reading, the rotation contract, and the redaction rules are
 /// [`service_auth::k8s::ProjectedTokenFile`]'s.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub fn control_plane_token_file() -> service_auth::k8s::ProjectedTokenFile {
     service_auth::k8s::ProjectedTokenFile::new(CONTROL_PLANE_TOKEN_FILE, AUDIENCE)
 }
 
 /// What a handler is asking about — one collection, or the instance itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub enum AuthTarget<'a> {
     Collection(&'a str),
     Admin,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl AuthTarget<'_> {
     /// The `SubjectAccessReview` attributes for this target at `needed`.
     pub fn attributes(&self, namespace: &str, needed: Role) -> ResourceAttributes {
@@ -180,7 +176,6 @@ pub fn verb(role: Role) -> &'static str {
 }
 
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub struct AuthConfig {
     /// Whether a caller must present a verifiable identity. `false` makes no
     /// Kubernetes call on any request path.
@@ -190,14 +185,12 @@ pub struct AuthConfig {
     pub namespace: String,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl Default for AuthConfig {
     fn default() -> Self {
         Self::open()
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl AuthConfig {
     pub fn open() -> Self {
         Self {
@@ -283,10 +276,8 @@ enum VerifierMode {
 }
 
 /// Lumen's verifier for the shared async auth middleware.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub struct LumenVerifier(VerifierMode);
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl std::fmt::Debug for LumenVerifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mode = match &self.0 {
@@ -298,7 +289,6 @@ impl std::fmt::Debug for LumenVerifier {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl LumenVerifier {
     pub fn new(cfg: Arc<AuthConfig>) -> Self {
         Self(if cfg.required {
@@ -372,7 +362,6 @@ impl LumenVerifier {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 #[async_trait::async_trait]
 impl AsyncVerifier for LumenVerifier {
     type Principal = AuthContext;
@@ -418,7 +407,6 @@ impl AsyncVerifier for LumenVerifier {
 /// operation, in the handler, because "may they touch *this* collection?" is a
 /// different question per handler and the route alone does not answer it.
 #[derive(Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub enum AuthContext {
     /// Auth is off. Passes every check, and makes no Kubernetes call.
     Open,
@@ -432,7 +420,6 @@ pub enum AuthContext {
     },
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl std::fmt::Debug for AuthContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -448,7 +435,6 @@ impl std::fmt::Debug for AuthContext {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl AuthContext {
     /// Authorize `needed` on one collection.
     pub async fn ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> {
@@ -487,7 +473,6 @@ impl AuthContext {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub async fn auth_middleware(
     State(verifier): State<Arc<LumenVerifier>>,
     req: Request,
@@ -505,7 +490,6 @@ pub async fn auth_middleware(
 /// permitted, and calling it a denial sends an operator to fix a policy that
 /// was never the problem.
 #[derive(Debug)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub enum AuthErr {
     Forbidden {
         subject: String,
@@ -522,7 +506,6 @@ pub enum AuthErr {
     },
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl AuthErr {
     fn new(subject: String, needed: Role, resource: String, e: DelegatedAuthError) -> Self {
         match e {
@@ -576,7 +559,6 @@ impl AuthErr {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl IntoResponse for AuthErr {
     fn into_response(self) -> Response {
         match &self {

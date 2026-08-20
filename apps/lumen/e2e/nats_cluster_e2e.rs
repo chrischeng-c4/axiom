@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! Legacy full-stack proof: two independent lumen serving nodes backed by
 //! the SAME NATS write log. Write through node A's HTTP API; read it

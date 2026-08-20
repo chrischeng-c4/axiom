@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen's operator wiring onto the shared `libs/service-k8s` controller.
 //!
@@ -318,7 +317,6 @@ struct KubeHpaControl {
     client: Client,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 #[async_trait::async_trait]
 impl HpaControl for KubeHpaControl {
     async fn hpa_labels(
@@ -494,7 +492,6 @@ struct KubeAuthDelegatorControl {
     client: Client,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 #[async_trait::async_trait]
 impl AuthDelegatorControl for KubeAuthDelegatorControl {
     async fn apply_binding(&self, binding: &serde_json::Value) -> anyhow::Result<()> {
@@ -740,7 +737,6 @@ fn auth_delegation_error(context: &serde_json::Value) -> Option<String> {
 }
 
 /// lumen's contribution to the shared operator.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 impl ManagedService for Lumen {
     /// Server-side-apply field manager + leader-election Lease name.
     const MANAGER: &'static str = "lumen-operator";
@@ -1231,7 +1227,6 @@ impl Lumen {
 /// binding sweep (#2876; independently leader-gated — see
 /// [`spawn_auth_delegator_sweep_loop`], which cleans up the one child no owner
 /// reference can reach).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     match Client::try_default().await {
         Ok(client) => {

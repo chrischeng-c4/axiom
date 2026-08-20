@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-exact-term-range-set
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-exact-term-range-set

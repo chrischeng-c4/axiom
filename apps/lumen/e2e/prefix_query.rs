@@ -1,6 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/logic/native-prefix-wildcard-query-for-keyword-fields.md#unit-test
 // CODEGEN-BEGIN
-// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 use std::sync::Arc;
 
 use axum::http::StatusCode;

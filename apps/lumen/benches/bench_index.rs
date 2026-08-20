@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-benches.md#schema
 // HANDWRITE-BEGIN gap="missing-generator:multi-target-benchmark-source-unit-ownership" tracker="#1634" reason="AW cannot yet partition one semantic Schema section across exact benchmark source-unit targets; preserve the verified benchmark body until #1634 lands canonical ownership."
 //! Index-throughput benches.
 //!
@@ -29,7 +28,6 @@ const N: usize = 10_000;
 /// Seeded LCG (Numerical Recipes constants). Avoids pulling in `rand`.
 struct Lcg(u64);
 
-/// @spec apps/lumen/tech-design/semantic/lumen-benches.md#schema
 impl Lcg {
     fn new(seed: u64) -> Self {
         Self(seed)

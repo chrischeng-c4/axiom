@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
 //! End-to-end test for hybrid retrieval via Reciprocal Rank Fusion
 //! (`QueryNode::Rrf`). Asserts the defining RRF property: a document

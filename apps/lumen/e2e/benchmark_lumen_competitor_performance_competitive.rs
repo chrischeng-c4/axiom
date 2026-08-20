@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-competitor-performance-competitive
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-competitor-performance-competitive

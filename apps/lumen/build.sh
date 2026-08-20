@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-build-script.md#text-source-unit
 # CODEGEN-BEGIN
 set -euo pipefail
 

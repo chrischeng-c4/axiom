@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/external-contracts/security-hardening/security/access-control.md#lumen-guard-search-security
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
 project = "lumen"

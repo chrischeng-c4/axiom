@@ -10,7 +10,6 @@
 //! running anything, because a broken provenance chain changes no runtime
 //! behaviour and would otherwise be visible only in review.
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:d81257e0" tracker="#2144" reason="Add a deterministic structural regression test that requires the TD primary capability reference, active #2144 linkage, retained #1553 provenance, and the existing stateful capability gate. generator gap: missing-generator:test:capability-td-linkage (#2144)."
-// @spec apps/lumen/tech-design/validate/link-stateful-service-workload-claim-to-primary-td-verification.md#unit-test
 
 const README: &str = include_str!("../README.md");
 const TD: &str = include_str!(
