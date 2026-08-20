@@ -146,7 +146,7 @@ serving transport confidentiality.
 - Gate: `cargo test -p lumen -p service-auth -p service-k8s -p peer-tls`
 - Gate: `cargo test -p lumen --test auth_e2e`
 - Gate: `cargo test -p lumen --test authz_matrix_e2e`
-- Gate: `cargo test -p lumen --test operator_render`
+- Gate: `cargo test -p lumen --features operator --test operator_render`
 - Gate: `cargo test -p lumen --lib`
 - Gate: `cargo test -p lumen --test serving_tls_rotation`
 - Gate: `acceptance/gcp/scripts/run.sh`
@@ -287,7 +287,7 @@ deployment commands, chainable output, and offline agent guidance.
 - Root WI: none; this capability predates the tracker.
 - Gate: `cargo test -p lumen --test spec_cli --test api_e2e`
 - Gate: `cargo test -p lumen --test cli_convention`
-- Gate: `cargo test -p lumen --test behavior_lumen_claim_cli_deployment_operator_command_surface`
+- Gate: `cargo test -p lumen --features operator --test operator_render`
 
 Claims this capability makes:
 - `http2-openapi-and-client-interface` — wire behavior and published schemas
