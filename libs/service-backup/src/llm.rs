@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-llm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! LLM topic provider for the shared service-backup contract.
 //!
@@ -53,7 +52,6 @@ synchronization.
 };
 
 /// Return the shared backup topic for CLI composition.
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }
@@ -124,7 +122,6 @@ pub const SECTIONED_TOPICS: &[cli_std::llm::SectionedTopic] = &[cli_std::llm::Se
 }];
 
 /// Return the shared backup topic in [`cli_std::llm::SectionedTopic`] form.
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-llm-rs.md#source
 pub fn sectioned_topic() -> &'static cli_std::llm::SectionedTopic {
     &SECTIONED_TOPICS[0]
 }

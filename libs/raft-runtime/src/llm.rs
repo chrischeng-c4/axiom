@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-llm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! LLM topic provider for the shared raft-runtime contract.
 
@@ -63,7 +62,6 @@ need this layer.
 };
 
 /// Return the shared raft topic for CLI composition.
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }

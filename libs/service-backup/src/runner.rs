@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-runner-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! One backup run: put the bytes, then apply retention.
 //!
@@ -31,7 +30,6 @@ use crate::{BackupSink, RetentionPolicy};
 /// Object written by one backup run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-runner-rs.md#source
 pub struct BackupObject {
     pub sink: String,
     pub key: String,
@@ -42,14 +40,12 @@ pub struct BackupObject {
 /// Summary returned by a runner after upload + retention.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-runner-rs.md#source
 pub struct BackupRunResult {
     pub object: BackupObject,
     pub pruned: usize,
 }
 
 /// Write one already-consistent snapshot payload to a sink and apply retention.
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-runner-rs.md#source
 pub fn run_backup_once(
     sink: &dyn BackupSink,
     timestamp: SystemTime,

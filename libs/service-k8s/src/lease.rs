@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-lease-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Minimal Lease-based leader election (coordination.k8s.io/v1).
 //!
@@ -29,13 +28,11 @@ const RENEW_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Shared leadership flag, flipped by the background election task and read by
 /// the reconcile loop.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-lease-rs.md#source
 pub struct Election {
     pub is_leader: AtomicBool,
     pub identity: String,
 }
 
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-lease-rs.md#source
 impl Election {
     pub fn new(identity: String) -> Arc<Self> {
         Arc::new(Self {
@@ -115,7 +112,6 @@ async fn acquire_or_renew(api: &Api<Lease>, lease_name: &str, identity: &str) ->
 /// Spawn the background election loop. The returned [`Election`] is shared with
 /// the reconcile context; its `is_leader` flag tracks whether this replica
 /// currently holds the `lease_name` Lease (in `namespace`).
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-lease-rs.md#source
 pub fn spawn(client: Client, namespace: String, lease_name: String, election: Arc<Election>) {
     tokio::spawn(async move {
         let api: Api<Lease> = Api::namespaced(client, &namespace);

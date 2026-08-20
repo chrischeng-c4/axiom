@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Where a backup goes, in the two spellings operators actually use.
 //!
@@ -36,7 +35,6 @@ use serde::{Deserialize, Serialize};
 /// Backup destination declared by a service CR or runner config.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#source
 pub enum BackupDestination {
     /// Local filesystem path, primarily for dev/tests and PVC-backed local runs.
     Local {
@@ -110,7 +108,6 @@ pub const SUPPORTED_SCHEMES: &[SchemeInfo] = &[
     },
 ];
 
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#source
 impl BackupDestination {
     /// Parse the common URI spellings used by operators and CLIs.
     /// `gs://bucket/prefix` selects the always-linked GCS adapter.

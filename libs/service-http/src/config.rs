@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! HTTP-specific runtime knobs and observability-config projection.
 //!
@@ -14,7 +13,6 @@ pub use service_observability::{LogFormat, ServiceIdentity};
 /// Built by a service binary from its flags/env and handed to the shared
 /// scaffolding. Construct with [`HttpConfig::new`].
 #[derive(Clone, Debug)]
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
 pub struct HttpConfig {
     /// Bind host. k8s passes `0.0.0.0`; local dev defaults to `127.0.0.1`.
     pub host: String,
@@ -37,7 +35,6 @@ pub struct HttpConfig {
     pub otlp_endpoint: Option<String>,
 }
 
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
 impl HttpConfig {
     /// Construct a config from already-resolved values. Every field is explicit
     /// so a service binary maps its own flags/env in one place.

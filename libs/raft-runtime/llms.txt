@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/raft-runtime-libs-raft-runtime.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Raft Host Agent Context
 

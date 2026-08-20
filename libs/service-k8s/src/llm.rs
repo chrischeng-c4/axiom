@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-llm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! LLM topic provider for the shared Kubernetes operator scaffold.
 
@@ -51,7 +50,6 @@ must document an explicit handoff.
 };
 
 /// Return the shared operator topic for CLI composition.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }

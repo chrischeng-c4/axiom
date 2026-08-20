@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `service-backup` — shared backup contract for axiom services.
 //!

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-metrics-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! HTTP compatibility re-export for the protocol-neutral metrics seam.
 //!

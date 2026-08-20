@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-store-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Durable storage for a raft node's hard state.
 //!
@@ -24,7 +23,6 @@ const MAGIC_V2: &[u8; 8] = b"RAFTST02";
 const MAGIC_V3: &[u8; 8] = b"RAFTST03";
 
 /// File-backed persistence for one raft node.
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-store-rs.md#source
 pub struct RaftStore {
     path: PathBuf,
     fsync: FsyncPolicy,
@@ -34,7 +32,6 @@ pub struct RaftStore {
     injected_after_publish_failure: Mutex<Option<io::ErrorKind>>,
 }
 
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-store-rs.md#source
 impl RaftStore {
     /// Open (creating the dir if needed) the state file `raft-<node_id>.state`.
     pub fn open(dir: &str, node_id: NodeId, fsync: FsyncPolicy) -> io::Result<RaftStore> {

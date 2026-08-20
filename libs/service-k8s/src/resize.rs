@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-resize-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! PVC resize support: parse Kubernetes storage quantities, decide whether a
 //! PVC needs growing, and patch `spec.resources.requests.storage` on PVCs
@@ -29,7 +28,6 @@ use serde_json::json;
 
 /// Outcome of comparing a PVC's current size against its desired size.
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-resize-rs.md#source
 pub enum ResizeAction {
     /// `desired > current`; growing is the only direction Kubernetes PVCs
     /// support.
@@ -55,7 +53,6 @@ pub enum ResizeAction {
 /// byte count. Binary suffixes (`Ki/Mi/Gi/Ti/Pi/Ei`) are powers of 1024;
 /// decimal suffixes (`k/M/G/T/P/E`) are powers of 1000, matching
 /// `resource.Quantity` semantics.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-resize-rs.md#source
 pub fn parse_storage_bytes(qty: &str) -> Result<u64> {
     let s = qty.trim();
     if s.is_empty() {
@@ -93,7 +90,6 @@ pub fn parse_storage_bytes(qty: &str) -> Result<u64> {
 
 /// Classify a `current` PVC size against a caller-supplied `desired` size.
 /// Pure and unit-tested; no live-cluster dependency.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-resize-rs.md#source
 pub fn decide(current: &str, desired: &str) -> ResizeAction {
     let current_bytes = match parse_storage_bytes(current) {
         Ok(v) => v,
@@ -126,7 +122,6 @@ pub fn decide(current: &str, desired: &str) -> ResizeAction {
 
 /// Per-PVC result of a `resize_instance` run.
 #[derive(Debug, Clone, Serialize)]
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-resize-rs.md#source
 pub struct PvcResizeOutcome {
     pub pvc_name: String,
     pub current: String,
@@ -142,7 +137,6 @@ pub struct PvcResizeOutcome {
 /// No other PVC field is touched, and no CR is read or mutated by this
 /// function — the caller resolves the desired size (e.g. from its own CRD's
 /// spec) before calling in, so this module stays CRD-agnostic.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-resize-rs.md#source
 pub async fn resize_instance<F, D>(
     client: kube::Client,
     namespace: &str,
