@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
 """Negative control for `check_plugin.py`, one mutation per assertion class.
 
+Re-pointed on 2026-08-21 when `plugins/aw/` was deleted: the skills are read
+from `.claude/skills/aw:*/` and the scripts from `.claude/aw/scripts/`. The
+`${CLAUDE_PLUGIN_ROOT}` mutations became in-repo-path mutations, because the
+variable they broke no longer appears in any body -- and a control with no
+live target is a rule nobody is measuring.
+
 A checker that has never been seen to fail is a checker nobody has measured.
 Each mutation below is a break that really ships:
 
-  bundled-path   `scripts/` -> `script/` inside the ${CLAUDE_PLUGIN_ROOT}
-                 reference. The plugin installs, loads, and dies on first use.
+  script-path    `scripts/` -> `script/` inside the in-repo path a SKILL.md
+                 names. The skill loads cleanly and dies on first use. Both
+                 occurrences in the body are mutated and both are expected to
+                 go red -- the rule fires per named path, so a control that
+                 mutated one would be green off the other's survival.
   skill-name     a cross-reference to a skill that does not exist. This is the
                  defect that actually shipped: with the directories named
                  `aw-epic-*`, every `/aw:wi-epic-*` reference in both bodies
@@ -79,12 +88,12 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _paths import HERE, PLUGIN_DIR  # noqa: E402
+from _paths import HERE, SCRIPTS, skill_dir  # noqa: E402
 
 CHECK = HERE / "check_plugin.py"
-GRILL = PLUGIN_DIR / "skills/wi-epic-grill/SKILL.md"
-CHANGE_GRILL = PLUGIN_DIR / "skills/wi-change-grill/SKILL.md"
-RECONCILE = PLUGIN_DIR / "skills/wi-epic-reconcile/SKILL.md"
+GRILL = skill_dir("wi-epic-grill") / "SKILL.md"
+CHANGE_GRILL = skill_dir("wi-change-grill") / "SKILL.md"
+RECONCILE = skill_dir("wi-epic-reconcile") / "SKILL.md"
 # The `ask-in-gate` and `unpinned` mutations have been re-pointed twice now:
 # first from `wi-ec-commit`/`wi-ec-start` to `codex-review` when the leg
 # wrappers were retired, and now to `codex-code-review` when `codex-review` was
@@ -92,20 +101,21 @@ RECONCILE = PLUGIN_DIR / "skills/wi-epic-reconcile/SKILL.md"
 # whose target disappears has to be re-pointed rather than dropped -- a rule
 # with no live target is a rule nobody is measuring, and it reads identically to
 # a rule that passes.
-CODE_REVIEW = PLUGIN_DIR / "skills/codex-code-review/SKILL.md"
-E2E_SCRIPT = PLUGIN_DIR / "scripts/e2e.py"
-LOGIC_SCRIPT = PLUGIN_DIR / "scripts/logic.py"
+CODE_REVIEW = skill_dir("codex-code-review") / "SKILL.md"
+E2E_SCRIPT = SCRIPTS / "e2e.py"
+LOGIC_SCRIPT = SCRIPTS / "logic.py"
 PATHS = HERE / "_paths.py"
-COPY_DIR = PLUGIN_DIR / "skills/wi-epic-reconcile/scripts"
+COPY_DIR = skill_dir("wi-epic-reconcile") / "scripts"
 
 # (label, target, anchor, mutant, expected reds, occurrences)
 MUTATIONS = [
     (
-        "bundled-path",
+        "script-path",
         GRILL,
-        "${CLAUDE_PLUGIN_ROOT}/scripts/epic.py",
-        "${CLAUDE_PLUGIN_ROOT}/script/epic.py",
-        ["FAIL wi-epic-grill: bundled path /script/epic.py exists"],
+        ".claude/aw/scripts/epic.py",
+        ".claude/aw/script/epic.py",
+        ["FAIL wi-epic-grill: script path .claude/aw/script/epic.py exists"],
+        2,
     ),
     (
         "skill-name",
@@ -157,8 +167,8 @@ MUTATIONS = [
     (
         "unpinned",
         CODE_REVIEW,
-        'uv run --python 3.13 --no-project "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py"',
-        'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/logic.py"',
+        'uv run --python 3.13 --no-project ".claude/aw/scripts/logic.py"',
+        'python3 ".claude/aw/scripts/logic.py"',
         ["FAIL codex-code-review: `logic.py` is invoked through the pinned interpreter"] * 3,
         3,
     ),

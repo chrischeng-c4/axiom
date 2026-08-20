@@ -164,8 +164,5 @@
   "statusLine": {
     "type": "command",
     "command": ".claude/statusline.sh"
-  },
-  "enabledPlugins": {
-    "aw@axiom": true
   }
 }

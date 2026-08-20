@@ -38,8 +38,8 @@ cannot drift from the code it governs while both still look maintained.
   `apps/lumen/CONTRIBUTING.md:18` declares as the project gate. The gate is what
   refuses a violation; this file only says why.
 - The gate deliberately lives in `apps/lumen/e2e/` rather than
-  `plugins/aw/verification/`. Nothing in this repository calls
-  `plugins/aw/verification/run_all.py` — no CI workflow, no git hook, no phase
+  `.claude/aw/verification/`. Nothing in this repository calls
+  `.claude/aw/verification/run_all.py` — no CI workflow, no git hook, no phase
   script — so a check registered there is refused by nobody. Before moving this
   gate, find the caller first.
 - All three cases were proven able to fail before being accepted: a planted

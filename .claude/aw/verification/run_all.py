@@ -48,14 +48,19 @@ FLAG = "--with-negative-controls"
 # probes stage their own throwaway trees, and the flow gates carry their
 # controls inside themselves -- each row already a declared mutation.
 SUITE = [
-    ("check_manifests_cli.py", "check_manifests_cli_negative_control.py"),
-    # Second, and early on purpose. Its control is the only one here that
+    # `check_manifests_cli.py` and its control stood first here until
+    # 2026-08-21. They asked `claude plugin validate` about `plugin.json` and
+    # `marketplace.json`; the plugin was deleted that day and both manifests
+    # went with it, so the gate had no subject left. Deleted rather than
+    # skipped -- a gate that passes because its subject is absent is the exact
+    # false green this directory exists to prevent.
+    #
+    # First, and early on purpose. Its control is the only one here that
     # mutates product scripts the rest of the suite depends on -- `workitem.py`,
     # `leg.py` and `e2e.py` -- and `check_plugin.py`, `check_engine_split.py`,
     # `check_review_flow.py` and `check_tdd_flow.py` all read at least one of
     # them. Running it here means a restore that silently failed is caught by
-    # four later checkers rather than by the next session, which is the same
-    # reason the manifest pair runs ahead of `check_plugin.py`.
+    # four later checkers rather than by the next session.
     ("check_next_command.py", "check_next_command_negative_control.py"),
     ("check_plugin.py", "check_plugin_negative_control.py"),
     ("check_coverage_rule.py", "check_coverage_rule_negative_control.py"),
@@ -65,7 +70,7 @@ SUITE = [
     # nothing is spawned and nothing is written, so it costs about as much as
     # the probes and sits with them rather than with the flow gates below.
     ("check_epic_order.py", None),
-    ("probe_plugin_root.py", None),
+    ("probe_offtree_root.py", None),
     ("probe_local_verbs.py", None),
     # The META-doc validator. Exempt from the ordering rule above for the same
     # reason the flow gates are: its fixture is a `tempfile` git repository of

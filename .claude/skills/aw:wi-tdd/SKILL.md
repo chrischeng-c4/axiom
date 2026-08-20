@@ -26,7 +26,7 @@ unknown reason.
 You were given one `<iid>`. Find out which kind it is by asking for its order:
 
 ```
-uv run --python 3.13 --no-project "plugins/aw/scripts/epic.py" order <iid> --open-only
+uv run --python 3.13 --no-project ".claude/aw/scripts/epic.py" order <iid> --open-only
 ```
 
 On a change work item `epic.py order` refuses, and the refusal names the type
@@ -65,9 +65,9 @@ and the sequence would then be yours rather than the author's.
 Every command goes through the pinned interpreter:
 
 ```
-uv run --python 3.13 --no-project "plugins/aw/scripts/e2e.py" --project <app> start <iid>
-uv run --python 3.13 --no-project "plugins/aw/scripts/unit.py" --project <app> start <iid>
-uv run --python 3.13 --no-project "plugins/aw/scripts/logic.py" --project <app> start <iid>
+uv run --python 3.13 --no-project ".claude/aw/scripts/e2e.py" --project <app> start <iid>
+uv run --python 3.13 --no-project ".claude/aw/scripts/unit.py" --project <app> start <iid>
+uv run --python 3.13 --no-project ".claude/aw/scripts/logic.py" --project <app> start <iid>
 ```
 
 `--project` is required and must come before the verb — it is on the top-level
@@ -81,8 +81,8 @@ The pin is load-bearing. `e2e.py` and `unit.py` read TOML, `tomllib` is 3.11+,
 and a bare `python3` is 3.9 on at least one machine this runs on — where the
 failure is a `ModuleNotFoundError` traceback that reads like a broken script
 rather than a wrong interpreter. The scripts are in the checkout at
-`plugins/aw/scripts/e2e.py`, `plugins/aw/scripts/unit.py`, and
-`plugins/aw/scripts/logic.py`, and those paths are relative to the repository
+`.claude/aw/scripts/e2e.py`, `.claude/aw/scripts/unit.py`, and
+`.claude/aw/scripts/logic.py`, and those paths are relative to the repository
 root — run them from there. For readability the table below writes the short
 form; each entry means the same pinned launcher with that script and verb.
 

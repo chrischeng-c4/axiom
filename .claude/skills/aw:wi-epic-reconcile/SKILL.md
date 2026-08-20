@@ -20,7 +20,7 @@ questions about one epic and repairs what it finds:
 The epic surface is the prototype bundled at this plugin's root. Invoke it as
 
 ```
-python3 "plugins/aw/scripts/epic.py" <verb> [args]
+python3 ".claude/aw/scripts/epic.py" <verb> [args]
 ```
 
 Note the path: **one** copy of that script exists, and it sits beside the
@@ -29,7 +29,7 @@ in this tree already carry same-named copies of a shared helper whose contents
 have since diverged, and reconciling an epic against a stale second copy of the
 epic schema is exactly the failure this skill exists to catch. If that path
 does not exist the plugin is not loaded; the same script is in the checkout at
-`plugins/aw/scripts/epic.py`.
+`.claude/aw/scripts/epic.py`.
 
 The script finds the repository from your **working directory**, walking up to
 the outermost `aw.toml` — never from its own location, which may or may not sit

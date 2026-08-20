@@ -126,7 +126,7 @@ AW_BARE = re.compile(r"^\s*aw\s+[a-z]")
 # silently blinds the rule to whatever replaces it.
 #
 # Two near misses are deliberately *not* here.
-# `plugins/aw/verification/README.md:315` says the change schema is "enforced by
+# `.claude/aw/verification/README.md:315` says the change schema is "enforced by
 # `aw wi validate`" in the present tense -- that is the rot, not a record of it.
 # `apps/mamba/CONTRIBUTING.md:58` was a live instruction in a checklist table
 # telling a human to run `aw wi create`; exempting it would have left a reader
@@ -142,7 +142,7 @@ DEAD_COMMAND_EXEMPT: dict[str, tuple[str, ...]] = {
         "It was `aw review --project <project>`, spliced",
         "and `aw meta init` / `sync` / `check`",
     ),
-    "plugins/aw/verification/README.md": (
+    ".claude/aw/verification/README.md": (
         "`aw wi validate` enforced it, and",
     ),
 }

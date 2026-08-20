@@ -16,11 +16,11 @@ the tracker by hand.
 Invoke the surface as
 
 ```
-python3 "plugins/aw/scripts/change.py" <verb> [args]
+python3 ".claude/aw/scripts/change.py" <verb> [args]
 ```
 
 If that path does not exist, the plugin is not loaded; the same script is in
-the checkout at `plugins/aw/scripts/change.py`. The script finds the repository
+the checkout at `.claude/aw/scripts/change.py`. The script finds the repository
 from your **working directory**, walking up to the outermost `aw.toml` — never
 from its own location, which may or may not sit inside a checkout. Run it from
 inside the checkout you mean to write against. For readability this skill

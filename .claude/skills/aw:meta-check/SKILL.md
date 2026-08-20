@@ -52,7 +52,7 @@ and were moved in the same day the last of them cleared.
 ## Run it
 
 ```
-uv run --python 3.13 --no-project "plugins/aw/scripts/meta.py" check
+uv run --python 3.13 --no-project ".claude/aw/scripts/meta.py" check
 ```
 
 `meta.py check` is the whole surface — one verb, and the singleton is the
@@ -77,9 +77,9 @@ Both flags repeat, and both are for reading a large report rather than for
 shrinking it into a green one:
 
 ```
-uv run --python 3.13 --no-project "plugins/aw/scripts/meta.py" check --rule M3
-uv run --python 3.13 --no-project "plugins/aw/scripts/meta.py" check --path apps/keep
-uv run --python 3.13 --no-project "plugins/aw/scripts/meta.py" check --format json
+uv run --python 3.13 --no-project ".claude/aw/scripts/meta.py" check --rule M3
+uv run --python 3.13 --no-project ".claude/aw/scripts/meta.py" check --path apps/keep
+uv run --python 3.13 --no-project ".claude/aw/scripts/meta.py" check --format json
 ```
 
 `--format json` carries the population alongside the findings — how many
@@ -122,7 +122,7 @@ it names.
 - `M1` — delete the marker pair and keep the content. The content is now
   authored prose owned by whoever edits that file.
 - `M2` — the phase scripts that replaced the deleted CLI sit beside
-  `plugins/aw/scripts/meta.py`. Repoint the line at one of them, or, if the
+  `.claude/aw/scripts/meta.py`. Repoint the line at one of them, or, if the
   sentence exists to record that the command is gone, add it to
   `DEAD_COMMAND_EXEMPT` quoting the line verbatim. An exemption that stops
   matching its line is itself reported, so a stale one cannot go quiet.

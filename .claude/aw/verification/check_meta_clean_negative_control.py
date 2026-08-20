@@ -21,7 +21,7 @@ defect at all would pass every row below while being unable to tell a broken
 link from a missing section.
 
 Restore is verified by sha256 and, unlike the other controls here, is also
-wrapped in a `finally`. The others mutate files inside `plugins/aw`, where a
+wrapped in a `finally`. The others mutate files inside `.claude/aw`, where a
 leftover mutant shows up in the next `git status` a session runs. These mutate
 documents two directories away from anything else this suite touches, and a
 control that dies holding one would leave a rotted document behind and a green
