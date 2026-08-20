@@ -85,13 +85,6 @@ struct Allowance {
 
 const ALLOWANCES: &[Allowance] = &[
     Allowance {
-        path: "apps/lumen/tech-design/semantic/source/",
-        lines: 4,
-        reason: "SPEC-MANAGED mirrors. They reproduce their source file byte for byte, so they \
-                 carry exactly the retirement notes the source carries; their fidelity is #2806's \
-                 gate and duplicating it here would let each check look like it covers the other.",
-    },
-    Allowance {
         path: "apps/lumen/src/operator/mod.rs",
         lines: 2,
         reason: "Negative assertions: the rendered operator manifest is checked for the absence \
@@ -129,13 +122,6 @@ const ALLOWANCES: &[Allowance] = &[
         lines: 2,
         reason: "Migration note in the example CR, where someone copying an old manifest will \
                  actually read it.",
-    },
-    Allowance {
-        path: "apps/lumen/tech-design/logic/\
-               no-snapshot-backup-mechanism-for-lumen-s-wal-any-replicaspershar.md",
-        lines: 4,
-        reason: "Migration notes in a design record: the backup CronJob carries no credential \
-                 env, and each mention states the field is retired and names its successor.",
     },
     Allowance {
         path: "apps/lumen/e2e/cli_convention.rs",

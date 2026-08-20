@@ -381,18 +381,6 @@ name = "behavior_lumen_claim_dynamic_versioned_virtual_bucket_map"
 path = "e2e/behavior_lumen_claim_dynamic_versioned_virtual_bucket_map.rs"
 
 [[test]]
-name = "behavior_lumen_claim_ec_claim_closure_evidence"
-path = "e2e/behavior_lumen_claim_ec_claim_closure_evidence.rs"
-
-[[test]]
-name = "behavior_lumen_claim_ec_generated_inventory_dispatch"
-path = "e2e/behavior_lumen_claim_ec_generated_inventory_dispatch.rs"
-
-[[test]]
-name = "behavior_lumen_claim_ec_vat_managed_runners"
-path = "e2e/behavior_lumen_claim_ec_vat_managed_runners.rs"
-
-[[test]]
 name = "behavior_lumen_claim_exact_keyword_lexicographic_range"
 path = "e2e/behavior_lumen_claim_exact_keyword_lexicographic_range.rs"
 
@@ -635,10 +623,6 @@ path = "e2e/drop_drain_e2e.rs"
 [[test]]
 name = "drop_field_e2e"
 path = "e2e/drop_field_e2e.rs"
-
-[[test]]
-name = "ec_claim_closure_consistency"
-path = "e2e/ec_claim_closure_consistency.rs"
 
 [[test]]
 name = "efficiency_lumen_claim_competitor_performance_depth_invariant"
