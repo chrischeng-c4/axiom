@@ -609,6 +609,10 @@ name = "coverage_pass_e2e"
 path = "e2e/coverage_pass_e2e.rs"
 
 [[test]]
+name = "design_trees_stay_retired"
+path = "e2e/design_trees_stay_retired.rs"
+
+[[test]]
 name = "disk_format_bench"
 path = "e2e/disk_format_bench.rs"
 

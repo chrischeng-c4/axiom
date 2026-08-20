@@ -34,7 +34,6 @@ impl ReadyFacts {
 /// One service-specific planning result consumed by the shared controller.
 /// `context` is opaque to service-k8s and is handed back to the same service
 /// only after children have been applied and readiness has been observed.
-/// @spec apps/pgpool/tech-design/logic/converge-deployment-provider-and-reconcile-planning-on-service-k.md#logic
 pub struct ReconcilePlan {
     pub children: Vec<serde_json::Value>,
     pub context: serde_json::Value,

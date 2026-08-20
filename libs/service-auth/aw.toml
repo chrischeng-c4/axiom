@@ -10,8 +10,8 @@ target = "rust"
 test_cmd = "cargo test -p service-auth"
 verify_cold = true
 
-# The external-contract inventory lives in
-# external-contracts/pyproject.toml under [tool.aw.python-ec], and is verified
-# by scripts/td-ec-verify.py. The AW-EC-BEGIN/END block that used to sit here
+# There is no external-contract inventory. The TD/EC retirement deleted this
+# crate's external-contracts/ tree, and with it the pyproject.toml that
+# [tool.aw.python-ec] was read from. The AW-EC-BEGIN/END block that used to sit here
 # generated one case from a markdown TD that no longer exists; the Rust suite it
 # named is still run by test_cmd above.

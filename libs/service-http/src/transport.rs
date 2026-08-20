@@ -1,6 +1,5 @@
 // CODEGEN-BEGIN
 //! HTTP transport: the h2c serve loop + the standard request-tracing layer.
-//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
 //! [`serve`] composes [`server_http::serve_h2c`] (HTTP/1.1 + HTTP/2 cleartext on one port —
 //! the in-cluster default `axum::serve` can't do) rather than re-implementing

@@ -2,7 +2,6 @@
 //! Server-side h2c transport (behind the `server` feature): serve one accepted
 //! stream as **HTTP/1.1 or HTTP/2 cleartext (h2c, prior-knowledge)** via
 //! hyper-util's auto builder.
-//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
 //! `axum::serve` speaks HTTP/1 only; this is the ecosystem's drop-in replacement
 //! so a service actually accepts h2c (the in-cluster default) alongside HTTP/1.1
