@@ -26,7 +26,7 @@ spec:
         description: Auto-generated derived type for DeferSpec via `CustomResource`
         properties:
           spec:
-            description: 'The generic cluster shape every sharded-HA service embeds in its CRD spec via `#[serde(flatten)] pub cluster: service_k8s::ClusterSpec`. @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source'
+            description: 'The generic cluster shape every sharded-HA service embeds in its CRD spec via `#[serde(flatten)] pub cluster: service_k8s::ClusterSpec`.'
             properties:
               auth:
                 default: "off"
@@ -83,7 +83,7 @@ spec:
                 default:
                   cpu: ''
                   memory: ''
-                description: Per-pod CPU/memory requests. Empty values resolve to the shared data-plane defaults (`1` CPU / `4Gi`) at render time. Limits are intentionally omitted so a dedicated-node pod can use otherwise-idle node capacity. @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
+                description: Per-pod CPU/memory requests. Empty values resolve to the shared data-plane defaults (`1` CPU / `4Gi`) at render time. Limits are intentionally omitted so a dedicated-node pod can use otherwise-idle node capacity.
                 properties:
                   cpu:
                     default: ''
