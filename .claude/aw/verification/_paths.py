@@ -36,17 +36,32 @@ def repo_root() -> pathlib.Path:
 
 
 REPO = repo_root()
-PLUGIN_DIR = REPO / "plugins/aw"
-PLUGIN_JSON = PLUGIN_DIR / ".claude-plugin/plugin.json"
-MARKETPLACE = REPO / ".claude-plugin/marketplace.json"
 
-# The skill directory names are the invocation names -- Claude Code composes
-# `plugin:skill` from the plugin name and the directory name, and ignores the
-# frontmatter `name:` entirely. Naming them here rather than globbing keeps a
-# stray directory from silently joining the population under test.
+# `aw` was a Claude Code plugin at `plugins/aw/` until 2026-08-21. That tree is
+# deleted -- the scripts moved here, the skills were already duplicated into
+# `.claude/skills/`, and `plugin.json`, `marketplace.json` and the
+# `enabledPlugins` entry went with it. So `PLUGIN_DIR`, `PLUGIN_JSON` and
+# `MARKETPLACE` are gone from this module rather than repointed: there is no
+# bundle to name, and a constant pointing at a path that cannot exist is the
+# shape of gate that goes red about itself.
+AW_DIR = REPO / ".claude/aw"
+SKILLS_DIR = REPO / ".claude/skills"
+
+# The skill directory names are the invocation names -- Claude Code composes the
+# skill name from the directory and ignores the frontmatter `name:` entirely,
+# measured with a probe whose two names disagreed. That is why each directory is
+# literally `aw:<skill>`: the `aw:` prefix survives only because it is in the
+# path. Naming the eight here rather than globbing keeps a stray directory from
+# silently joining the population under test.
 SKILLS = ("codex-code-review", "codex-e2e-review", "meta-check",
           "prepare-goal", "wi-change-grill", "wi-epic-grill",
           "wi-epic-reconcile", "wi-tdd")
+SKILL_PREFIX = "aw:"
+
+
+def skill_dir(skill: str) -> pathlib.Path:
+    """The on-disk directory for one skill name in `SKILLS`."""
+    return SKILLS_DIR / f"{SKILL_PREFIX}{skill}"
 
 # The `ec -> td -> cb` ladder is gone from this plugin: three scripts, three
 # gates, and the twelve `wi-{ec,td,cb}-*` wrappers, deleted rather than
@@ -94,13 +109,19 @@ INTERVIEWING = ("prepare-goal", "wi-change-grill", "wi-epic-grill",
                 "wi-epic-reconcile")
 PROCEDURAL = ("codex-code-review", "codex-e2e-review", "meta-check", "wi-tdd")
 
-# The scripts sit at the plugin root, not inside a skill. They were under
+# The eight scripts sit in one directory, not inside a skill. They were under
 # `wi-epic-grill/scripts/` while it was the only skill running them, which made
 # the epic grill look like their owner; reconcile already reached across into
 # it, and the change grill would have been a second skill reaching into a third
 # one's directory. A shared dependency belongs beside the skills, not inside
 # whichever one happened to need it first.
-SCRIPTS = PLUGIN_DIR / "scripts"
+#
+# They also cannot be split across the eight skill directories, which is what
+# the plugin deletion had to decide. `e2e.py`, `unit.py` and `logic.py` each
+# load `leg.py` by `Path(__file__).parent / "leg.py"`, and `leg.change_module()`
+# loads `change.py` the same way. One directory is a load-bearing requirement,
+# not a tidiness preference.
+SCRIPTS = AW_DIR / "scripts"
 SCRIPT = SCRIPTS / "epic.py"
 CHANGE_SCRIPT = SCRIPTS / "change.py"
 LEG_SCRIPT = SCRIPTS / "leg.py"

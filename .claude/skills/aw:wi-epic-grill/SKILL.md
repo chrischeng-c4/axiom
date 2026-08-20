@@ -15,11 +15,11 @@ answer the human did not give, and never edits the tracker by hand.
 The epic surface is this plugin's own bundled prototype. Invoke it as
 
 ```
-python3 "plugins/aw/scripts/epic.py" <verb> [args]
+python3 ".claude/aw/scripts/epic.py" <verb> [args]
 ```
 
 If that path does not exist, the plugin is not loaded; the same script is in
-the checkout at `plugins/aw/scripts/epic.py`. Do not improvise a third
+the checkout at `.claude/aw/scripts/epic.py`. Do not improvise a third
 location — there is one script, and running a copy of it is how the epic
 schema silently forks.
 

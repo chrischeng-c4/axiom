@@ -11,7 +11,7 @@ Preserve the one-project, one-worktree allocation and converge persistent branch
 - Do not delete or force-overwrite a persistent ref without explicit user confirmation.
 - Preserve dirty worktree changes and prefer rebase-based non-destructive convergence.
 - Let the work-item scripts manage tracker state without creating or switching git branches.
-- Run git through `git -c core.fsmonitor=false`. This checkout enables `core.fsmonitor`, and a stalled daemon blocks every command that reads the index — indefinitely, with no error. `plugins/aw/scripts/leg.py` does this for the same reason.
+- Run git through `git -c core.fsmonitor=false`. This checkout enables `core.fsmonitor`, and a stalled daemon blocks every command that reads the index — indefinitely, with no error. `.claude/aw/scripts/leg.py` does this for the same reason.
 
 ## Verification
 

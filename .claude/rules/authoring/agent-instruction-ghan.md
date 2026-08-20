@@ -19,7 +19,7 @@ Give every instruction addressed to an agent — a `type=change` work item, a `S
 
 - Read back the authored artifact and confirm each section states its refusal condition rather than restating the title.
 - Run the `## Acceptance` negative control and confirm the gate goes red before accepting it as green.
-- Run `plugins/aw/scripts/change.py validate <iid>` for a work item, or `--body-file <path>` for a body that is not on the tracker yet.
+- Run `.claude/aw/scripts/change.py validate <iid>` for a work item, or `--body-file <path>` for a body that is not on the tracker yet.
 - Nothing regenerates this file. It and `.agents/rules/authoring/agent-instruction-ghan.md` are two hand-maintained copies of one rule, so editing one of them is half an edit.
 
 ## References

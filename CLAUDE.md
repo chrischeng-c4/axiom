@@ -30,11 +30,20 @@ verification live in its `CONTRIBUTING.md`. There is no third META-doc —
 `<project>/CAPABILITIES.md` was deleted on 2026-08-17 and its content merged
 into the README.
 
-## `aw` is `plugins/aw`
+## `aw` is `.claude/aw` plus `.claude/skills/aw:*`
 
-`aw` is the phase scripts under `plugins/aw/scripts/` and the skills under
-`plugins/aw/skills/`. There is no CLI behind them — the protocol is their stdout
-and their exit codes.
+`aw` is the phase scripts under `.claude/aw/scripts/` and the eight skills under
+`.claude/skills/aw:*/`. There is no CLI behind them — the protocol is their
+stdout and their exit codes.
+
+It was a Claude Code plugin at `plugins/aw/` until 2026-08-21. That tree is
+deleted: the scripts moved to `.claude/aw/scripts/`, the verification suite to
+`.claude/aw/verification/`, and `plugins/aw/skills/`, `plugins/aw/.claude-plugin/plugin.json`
+and `.claude-plugin/marketplace.json` were removed outright, along with the
+`enabledPlugins` entry in `.claude/settings.json`. The eight skills in
+`.claude/skills/` were already the copy every session read, so nothing about
+what loads changed — what changed is that there is now one copy of each file
+instead of two, and `${CLAUDE_PLUGIN_ROOT}` resolves nowhere.
 
 Launch every one of them through `uv run --python 3.13 --no-project`. They read
 TOML, `tomllib` is 3.11+, and a bare `python3` is 3.9 on at least one machine
@@ -59,10 +68,10 @@ and that copy is what a session actually reads. Each directory is named
 every `/aw:…` in this repository still resolves. The prefix has to be in the
 directory name because the loader keys off the path and ignores the frontmatter
 `name:` — measured with a probe whose two names disagreed, and the directory
-won. The originals under `plugins/aw/skills/` are the same eight files with
-`${CLAUDE_PLUGIN_ROOT}` paths where the copies write `plugins/aw/scripts/`, and
-nothing detects drift between the two — so an edit to one of them is half an
-edit.
+won. These eight are the only copy. A second set lived under
+`plugins/aw/skills/` with `${CLAUDE_PLUGIN_ROOT}` paths where these write
+`.claude/aw/scripts/`, nothing detected drift between them, and that pair was
+collapsed on 2026-08-21 by deleting the plugin.
 
 | Skill | Reach for it when | It does |
 |---|---|---|
@@ -98,7 +107,7 @@ skills are reached from the phase that prints them, not chosen, and
   over 184 tracked META-docs and 64 project READMEs; the count was 185 until
   `4a30ca3097` deleted `apps/lumen`'s retired trees.
 - All seven rules are ratcheted to zero by
-  `plugins/aw/verification/check_meta_clean.py`, which `run_all.py` runs with a
+  `.claude/aw/verification/check_meta_clean.py`, which `run_all.py` runs with a
   negative control. That is weaker than it sounds: nothing in this repository
   calls `run_all.py` — no CI workflow, no git hook, no phase script — so the
   ratchet is one a human runs, and a finding in a file you edited is still the
@@ -150,7 +159,7 @@ measuring nothing.
 
 ### Work-item terminal states
 
-The closed work-item enum lives at `plugins/aw/scripts/workitem.py`:
+The closed work-item enum lives at `.claude/aw/scripts/workitem.py`:
 
 | Type | Terminal state |
 |---|---|

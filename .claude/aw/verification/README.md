@@ -3,8 +3,8 @@
 Gates for the `aw` plugin and the two work-item schemas its scripts enforce.
 
 ```
-uv run --python 3.13 --no-project plugins/aw/verification/run_all.py                          # ~38s
-uv run --python 3.13 --no-project plugins/aw/verification/run_all.py --with-negative-controls  # ~77s
+uv run --python 3.13 --no-project .claude/aw/verification/run_all.py                          # ~38s
+uv run --python 3.13 --no-project .claude/aw/verification/run_all.py --with-negative-controls  # ~77s
 ```
 
 One interpreter, the same launcher the skills use to run the scripts. The gates
@@ -38,16 +38,34 @@ the single place any of them spells a bundled location; a gate that recomputes
 one is a second reading of a path, and the next time that path moves only one of
 the two readings gets updated.
 
-The plugin's shape:
+The shape under test:
 
 ```
-plugins/aw/
+.claude/aw/
   scripts/        epic.py, change.py — the type-bound facades — and workitem.py, the engine
                   leg.py, and the three phases it is shared by: e2e.py, unit.py, logic.py
-  skills/         codex-code-review, codex-e2e-review,
-                  wi-change-grill, wi-epic-grill, wi-epic-reconcile, wi-tdd
-  verification/
+  verification/   this directory
+.claude/skills/
+  aw:codex-code-review/  aw:codex-e2e-review/  aw:meta-check/  aw:prepare-goal/
+  aw:wi-change-grill/    aw:wi-epic-grill/     aw:wi-epic-reconcile/  aw:wi-tdd/
 ```
+
+This was a Claude Code plugin at `plugins/aw/` until 2026-08-21, which is why
+several sections below are written about one. That tree is deleted — scripts
+and this directory moved under `.claude/aw/`, the eight skills load as project
+skills out of `.claude/skills/`, and `plugin.json`, `marketplace.json` and the
+`enabledPlugins` entry in `.claude/settings.json` went with it. Two sections
+are kept as measurement rather than as instruction, and each says so where it
+starts: **Registration is the directory name** and **The installed copy is a
+copy**. What they measured is a property of Claude Code, and the conclusion
+that outlived the plugin is the one `check_plugin.py` still asserts — a
+directory name registers as itself, so the `aw:` namespace survives only
+because it is literally in each directory's name.
+
+The eight scripts cannot be split across the eight skill directories, and that
+is not a preference: `e2e.py`, `unit.py` and `logic.py` each load `leg.py` by
+`Path(__file__).parent / "leg.py"`, and `leg.change_module()` loads `change.py`
+the same way. One directory is load-bearing.
 
 `ec.py`, `td.py`, `cb.py`, their three gates, and the twelve `wi-{ec,td,cb}-*`
 wrappers were **deleted**, not archived. An archive of instructions for scripts
@@ -79,7 +97,7 @@ directory for a file none of them owns.
 | `check_change_schema.py` | a change schema that has narrowed, widened, or grown a rule nothing is ever seen refusing |
 | `check_change_schema_negative_control.py` | a schema gate that stays green while one rule quietly stops firing |
 | `check_epic_order.py` | an epic sequence that was guessed — a cycle answered with an arbitrary order, a child appended to the end because nothing placed it, or a declared dependency dropped because it could not be parsed |
-| `probe_plugin_root.py` | a script that only resolves the repository when it happens to live inside one |
+| `probe_offtree_root.py` | a script that only resolves the repository when it happens to live inside one |
 | `probe_local_verbs.py` | an `adopt` that overwrites, or an id parser that invents a number |
 | `check_meta_flow.py` | a META-doc rule that fires on nothing, or on everything — a marker whose producer is gone, a command for a binary that is gone, a link to a file that is gone, a project README missing the section a reader goes there for |
 | `check_meta_clean.py` | a META-doc in *this* checkout that has rotted — and a certification issued over a population that was never read |
@@ -107,7 +125,7 @@ thirds as many rows.
 
 Five of these encode defects that actually shipped and were caught late:
 
-- **`probe_plugin_root.py`.** `_repo_root()` walked up from `__file__`. A
+- **`probe_offtree_root.py`.** `_repo_root()` walked up from `__file__`. A
   git-marketplace install puts the plugin under `~/.claude/plugins/`, where no
   `aw.toml` exists on any parent, so the script would have died on import with
   a message blaming the user's checkout. Installing from a local directory
@@ -529,6 +547,10 @@ claude --plugin-dir "$PWD/plugins/aw" -p "list every skill whose name contains e
      aw:wi-epic-reconcile
 ```
 
+That command is not runnable now — `plugins/aw/` was deleted on 2026-08-21 —
+and it is kept verbatim because it is the transcript of the measurement, not an
+instruction. The finding it produced is what `check_plugin.py` asserts.
+
 Two separate probes, each staged as one throwaway plugin with a matching
 control so a null result could be told apart from a broken probe (v2.1.227):
 
@@ -563,7 +585,13 @@ assertion with a positive control that refuses a colon.
 
 ## The installed copy is a copy
 
-`plugin install` copies the plugin into
+Historical, as of 2026-08-21: there is no installed copy, because there is no
+plugin. Kept because it records *why* the plugin was worth deleting — an edit
+here reached a session only after an uninstall/install cycle, and nothing
+detected the gap. The eight skills in `.claude/skills/` are read from the
+checkout directly, so this failure mode is gone rather than mitigated.
+
+`plugin install` copied the plugin into
 `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, and
 `installed_plugins.json` points `installPath` at that copy. Nothing in a
 session reads the checkout.

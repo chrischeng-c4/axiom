@@ -67,11 +67,11 @@ evaluator can find in the transcript.
 Do not guess the kind. Ask for its order:
 
 ```
-uv run --python 3.13 --no-project "plugins/aw/scripts/epic.py" order <iid> --open-only
+uv run --python 3.13 --no-project ".claude/aw/scripts/epic.py" order <iid> --open-only
 ```
 
 If that path does not exist the plugin is not loaded; the same script is in the
-checkout at `plugins/aw/scripts/epic.py`. On a change work item this refuses
+checkout at `.claude/aw/scripts/epic.py`. On a change work item this refuses
 and names the type it actually found — that message is the answer, not an error
 to route around.
 
@@ -85,7 +85,7 @@ queue to prepare, and picking one yourself makes the order yours.
 **A change.** Read the body:
 
 ```
-uv run --python 3.13 --no-project "plugins/aw/scripts/change.py" show <iid>
+uv run --python 3.13 --no-project ".claude/aw/scripts/change.py" show <iid>
 ```
 
 Its `## Acceptance` table already holds the verbatim command, the current

@@ -40,7 +40,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _paths import (META_SCRIPT, PLUGIN_DIR, REPO,  # noqa: E402
+from _paths import (HERE, META_SCRIPT, REPO,  # noqa: E402
                     load_script_module, pinned_interpreter)
 
 GIT = ("git", "-c", "core.fsmonitor=false")
@@ -470,7 +470,7 @@ meta.DEAD_COMMAND_EXEMPT = shipped_exempt
 # reading a narrower defect.
 PATTERN = re.compile(r"^AW_INVOCATION = re\.compile\((.*)\)$", re.M)
 here = PATTERN.search(META_SCRIPT.read_text(encoding="utf-8"))
-there = PATTERN.search((PLUGIN_DIR / "verification/check_plugin.py").read_text(encoding="utf-8"))
+there = PATTERN.search((HERE / "check_plugin.py").read_text(encoding="utf-8"))
 check("both `AW_INVOCATION` definitions were found", bool(here) and bool(there))
 check("`meta.py` and `check_plugin.py` share one `aw <verb>` detector",
       bool(here) and bool(there) and here.group(1) == there.group(1),

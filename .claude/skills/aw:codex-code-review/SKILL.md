@@ -23,9 +23,9 @@ about it, and you do not decide the outcome.
 Three commands, in this order, none of them optional.
 
 ```
-uv run --python 3.13 --no-project "plugins/aw/scripts/logic.py" --project <name> review-prompt <iid> > <prompt-path>
+uv run --python 3.13 --no-project ".claude/aw/scripts/logic.py" --project <name> review-prompt <iid> > <prompt-path>
 codex exec - < <prompt-path> > <transcript-path> 2>&1
-uv run --python 3.13 --no-project "plugins/aw/scripts/logic.py" --project <name> verdict <iid> --transcript <transcript-path>
+uv run --python 3.13 --no-project ".claude/aw/scripts/logic.py" --project <name> verdict <iid> --transcript <transcript-path>
 ```
 
 Write both files under a scratch directory, not into the checkout.
@@ -42,7 +42,7 @@ contract. Do not "fix" this back to `review`.
 
 The interpreter pin is load-bearing — the phase scripts read TOML and `tomllib`
 is 3.11+, while a bare `python3` is 3.9 on at least one machine this runs on.
-The script is in the checkout at `plugins/aw/scripts/logic.py`, and that path is
+The script is in the checkout at `.claude/aw/scripts/logic.py`, and that path is
 relative to the repository root — run it from there. For readability this skill
 writes the short form `logic.py <verb>` from here on.
 
@@ -52,7 +52,7 @@ Omitting the iid reviews every colocated test file in the project, each beside
 the source it sits on, instead of one change:
 
 ```
-uv run --python 3.13 --no-project "plugins/aw/scripts/logic.py" review-prompt > <prompt-path>
+uv run --python 3.13 --no-project ".claude/aw/scripts/logic.py" review-prompt > <prompt-path>
 codex exec - < <prompt-path> > <transcript-path> 2>&1
 ```
 

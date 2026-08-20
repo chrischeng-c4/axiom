@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Re-runnable checker for the `aw` Claude Code plugin.
+"""Re-runnable checker for the eight `aw:*` skills and the scripts they drive.
+
+The name is historical: `aw` was a Claude Code plugin at `plugins/aw/` until
+2026-08-21, and this file checked its bundle. The plugin is deleted -- the
+scripts are at `.claude/aw/scripts/`, the eight skills load as project skills
+out of `.claude/skills/aw:*/`, and the manifest assertions here were inverted
+into absence assertions so a half-restored plugin goes red instead of quietly
+loading a second copy of all eight.
 
 Two assertion classes here are not obvious and are the reason this file exists.
 
-**Bundled paths.** A SKILL.md names its script through
-`${CLAUDE_PLUGIN_ROOT}/skills/.../epic.py`, and nothing at authoring time
-proves that file is in the bundle. A typo there produces a plugin that
-installs cleanly, loads cleanly, and dies on first use.
+**Script paths.** A SKILL.md names its script by an in-repo path, and nothing
+at authoring time proves that file is there. A typo produces a skill that loads
+cleanly and dies on first use.
 
 **Invocation names.** Claude Code composes a plugin skill's name as
 `plugin:directory` and ignores the frontmatter `name:` outright -- measured,
@@ -36,10 +42,14 @@ import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 from _paths import (CHANGE_SCRIPT, INTERVIEWING,  # noqa: E402
-                    MARKETPLACE, META_SCRIPT, PINNED_PYTHON, PLUGIN_DIR,
-                    PLUGIN_JSON, E2E_SCRIPT, LOGIC_SCRIPT, PROCEDURAL, REPO,
-                    SCRIPT, SCRIPTS, SKILLS, UNIT_SCRIPT, pinned_interpreter)
+                    META_SCRIPT, PINNED_PYTHON,
+                    E2E_SCRIPT, LOGIC_SCRIPT, PROCEDURAL, REPO,
+                    SCRIPT, SCRIPTS, SKILLS, SKILLS_DIR, SKILL_PREFIX,
+                    UNIT_SCRIPT, pinned_interpreter, skill_dir)
 
+# The namespace the invocation keeps. It was the plugin name until 2026-08-21;
+# it is now the literal `aw:` prefix on each skill directory, which is the only
+# thing holding the namespace up now that no plugin supplies one.
 PLUGIN_NAME = "aw"
 
 # Each bundled script, and the verbs the skills must name for it. The two
@@ -165,8 +175,11 @@ GH_WRITE = re.compile(r"gh\s+(?:issue|pr)\s+(?:create|edit|close|comment|delete|
 GH_WRITE_CONTROL = ('gh issue create --repo <repo> --title "<title>" '
                     "--body-file <bodydir>/<slug>.md \\\n"
                     "  --label type:change --label epic:<iid>")
-PLUGIN_ROOT_PATH = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}(/[\w./:-]+)")
-IN_REPO_PATH = re.compile(r"`(plugins/aw/[\w./:-]+)`")
+# `${CLAUDE_PLUGIN_ROOT}` resolves nowhere now, so a SKILL.md naming a script
+# names it by its in-repo path and nothing else. The extractor asserts it found
+# something, so a body that stopped naming any path goes red rather than green.
+IN_REPO_PATH = re.compile(r"`(\.claude/aw/[\w./:-]+)`")
+PLUGIN_ROOT_PATH = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}")
 SKILL_REFERENCE = re.compile(r"/(aw[\w-]*:[\w:-]+)")
 
 fails = []
@@ -178,34 +191,27 @@ def check(label, ok, detail=""):
         fails.append(label)
 
 
-# -- the manifests ---------------------------------------------------------
-check("marketplace.json exists", MARKETPLACE.is_file())
-check("plugin.json exists at .claude-plugin/plugin.json", PLUGIN_JSON.is_file())
+# -- the plugin is gone ----------------------------------------------------
+# Deleted on 2026-08-21. These four rows used to assert a `marketplace.json`,
+# a `plugin.json`, a kebab-case plugin name and a relative in-repo source that
+# resolved to the bundle. They are now the inverse assertion: those files must
+# NOT be back, because a half-restored plugin would load a second copy of eight
+# skills that already load out of `.claude/skills/`, and the two copies would
+# drift with nothing detecting it -- which is the exact condition the deletion
+# was for.
+check("no plugin marketplace is back", not (REPO / ".claude-plugin").exists())
+check("no plugins/ tree is back", not (REPO / "plugins").exists())
+settings = REPO / ".claude/settings.json"
+check("settings.json exists", settings.is_file())
+if settings.is_file():
+    check("settings.json enables no plugin",
+          "enabledPlugins" not in settings.read_text(encoding="utf-8"))
 
-market = json.loads(MARKETPLACE.read_text(encoding="utf-8"))
-manifest = json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))
-
-entries = {p["name"]: p for p in market.get("plugins", [])}
-check(f"marketplace lists the {PLUGIN_NAME} plugin", PLUGIN_NAME in entries, f"listed={list(entries)}")
-check("plugin.json name matches the marketplace entry",
-      manifest.get("name") == PLUGIN_NAME, f"plugin.json name={manifest.get('name')!r}")
-check("plugin name is valid kebab-case",
-      bool(re.fullmatch(r"[a-z][a-z0-9]*(-[a-z0-9]+)*", manifest.get("name", ""))))
-check("plugin.json carries a version", bool(manifest.get("version")))
-
-source = entries.get(PLUGIN_NAME, {}).get("source")
-check("the marketplace source is a relative in-repo path",
-      isinstance(source, str) and source.startswith("./"), f"source={source!r}")
-if isinstance(source, str):
-    resolved = (REPO / source).resolve()
-    check("the marketplace source resolves to the plugin directory",
-          resolved == PLUGIN_DIR.resolve(), f"resolved={resolved}")
-
-# -- the bundle ------------------------------------------------------------
+# -- the eight skills and the eight scripts --------------------------------
 for skill in SKILLS:
-    check(f"{skill}: SKILL.md is in the bundle", (PLUGIN_DIR / "skills" / skill / "SKILL.md").is_file())
+    check(f"{skill}: SKILL.md is on disk", (skill_dir(skill) / "SKILL.md").is_file())
 for name, path in sorted(SCRIPT_PATHS.items()):
-    check(f"{name} is in the bundle", path.is_file(), str(path))
+    check(f"{name} is on disk", path.is_file(), str(path))
 
 # Only the skills that are actually on disk, for the reason `SOURCES` above is
 # lenient: a skill is registered before its SKILL.md is written, so the gate
@@ -221,7 +227,7 @@ for name, path in sorted(SCRIPT_PATHS.items()):
 # absence itself is a FAIL row above.
 bodies = {s: path.read_text(encoding="utf-8")
           for s in SKILLS
-          if (path := PLUGIN_DIR / "skills" / s / "SKILL.md").is_file()}
+          if (path := skill_dir(s) / "SKILL.md").is_file()}
 joined = "\n".join(bodies.values())
 
 # -- the skill directories are the invocation names ------------------------
@@ -233,8 +239,13 @@ joined = "\n".join(bodies.values())
 # something else.
 SAFE_DIRECTORY = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
-on_disk = sorted(p.name for p in (PLUGIN_DIR / "skills").iterdir() if p.is_dir())
-check("the skills on disk are exactly the ones under test",
+# `.claude/skills/` is shared -- `agy-dispatch` lives there too -- so the
+# population is the `aw:`-prefixed directories, not the whole listing. The
+# prefix is stripped before comparing, which is also what proves it is present:
+# a directory that lost it simply is not in `on_disk`, and the equality fails.
+on_disk = sorted(q.name[len(SKILL_PREFIX):] for q in SKILLS_DIR.iterdir()
+                 if q.is_dir() and q.name.startswith(SKILL_PREFIX))
+check("the aw: skills on disk are exactly the ones under test",
       on_disk == sorted(SKILLS), f"on disk={on_disk}")
 for skill in SKILLS:
     check(f"{skill}: directory name survives registration unchanged",
@@ -268,27 +279,36 @@ for skill, text in bodies.items():
     check(f"{skill}: every /plugin:skill reference resolves to a real skill",
           not unknown, f"dangling={unknown}; real={sorted(expected)}")
 
-# -- every bundled path a SKILL.md names must exist ------------------------
-named = {(skill, m) for skill, text in bodies.items() for m in PLUGIN_ROOT_PATH.findall(text)}
-check("the `${CLAUDE_PLUGIN_ROOT}` extractor found paths at all", bool(named), f"found={len(named)}")
+# -- every script path a SKILL.md names must exist -------------------------
+# This was two extractors while the bodies carried both a `${CLAUDE_PLUGIN_ROOT}`
+# form and an in-repo fallback. There is one form now, and the second rule is
+# the inverse: a body still naming the plugin variable names a path that
+# resolves to the empty string at use, producing `/scripts/epic.py` -- an
+# absolute path into the filesystem root, which fails as "no such file" and
+# reads like a broken checkout.
+named = {(skill, m) for skill, text in bodies.items() for m in IN_REPO_PATH.findall(text)}
+check("the in-repo path extractor found paths at all", bool(named), f"found={len(named)}")
 for skill, rel in sorted(named):
-    target = PLUGIN_DIR / rel.lstrip("/")
-    check(f"{skill}: bundled path {rel} exists", target.is_file())
+    check(f"{skill}: script path {rel} exists", (REPO / rel).is_file())
 
-fallbacks = {(skill, m) for skill, text in bodies.items() for m in IN_REPO_PATH.findall(text)}
-check("the in-repo fallback extractor found paths at all", bool(fallbacks), f"found={len(fallbacks)}")
-for skill, rel in sorted(fallbacks):
-    check(f"{skill}: fallback path {rel} exists", (REPO / rel).is_file())
+for skill, text in bodies.items():
+    check(f"{skill}: names no ${{CLAUDE_PLUGIN_ROOT}}",
+          not PLUGIN_ROOT_PATH.search(text),
+          "the plugin is deleted; that variable expands to nothing")
+
+# Positive control: the absence rule must be able to see the string it forbids.
+check("positive control: the plugin-root rule refuses the variable",
+      bool(PLUGIN_ROOT_PATH.search("uv run ${CLAUDE_PLUGIN_ROOT}/scripts/epic.py")))
 
 # The scripts sit at the plugin root because all three skills run them. That is
 # only true while no skill carries its own copy: a second copy is not a load
 # error, it is a fork that works perfectly until the two readings of a schema
 # drift apart. This was a reconcile-only assertion while reconcile was the only
 # skill reaching across; every skill reaches across now.
-check("the scripts are bundled at the plugin root", SCRIPTS.is_dir(), str(SCRIPTS))
+check("the scripts sit in one shared directory", SCRIPTS.is_dir(), str(SCRIPTS))
 for skill in SKILLS:
     check(f"{skill}: carries no scripts/ copy of its own",
-          not (PLUGIN_DIR / "skills" / skill / "scripts").exists())
+          not (skill_dir(skill) / "scripts").exists())
 
 # -- the skills still drive the script, never the aw CLI -------------------
 for skill, text in bodies.items():
@@ -363,18 +383,32 @@ check("positive control: the pin population is transitive, not direct-only",
 check("the interpreter-pin population is not empty",
       bool(NEEDS_PIN), f"scripts importing tomllib={sorted(NEEDS_PIN)}")
 PINNED_PREFIX = " ".join(PINNED_PYTHON)
+
+# The invocation is now `<launcher> ".claude/aw/scripts/<name>"` -- the same
+# shape with the plugin variable replaced by the in-repo path. The quotes stay
+# required by this pattern on purpose: they are what bounds the prefix capture,
+# so an unquoted invocation is not silently exempted, it simply produces no
+# match -- which the emptiness assertion below then catches.
+SCRIPTS_REL = SCRIPTS.relative_to(REPO).as_posix()
+matched = 0
 for name in sorted(NEEDS_PIN):
-    pattern = re.compile(rf'(\S+(?: \S+)*?) "\$\{{CLAUDE_PLUGIN_ROOT\}}/scripts/{re.escape(name)}"')
+    pattern = re.compile(rf'(\S+(?: \S+)*?) "{re.escape(SCRIPTS_REL)}/{re.escape(name)}"')
     for skill, text in sorted(bodies.items()):
         for prefix in pattern.findall(text):
+            matched += 1
             check(f"{skill}: `{name}` is invoked through the pinned interpreter",
                   prefix.endswith(PINNED_PREFIX), f"prefix={prefix!r}")
 
+# Without this the loop above is vacuous the moment the invocation shape moves
+# again: zero matches print zero rows, and a gate that asserted nothing reads
+# identically to one that passed.
+check("the pin detector matched at least one invocation", matched > 0, f"matched={matched}")
+
 # Positive control: the same detector, applied to the shape it exists to refuse.
-BARE = f'python3 "${{CLAUDE_PLUGIN_ROOT}}/scripts/{sorted(NEEDS_PIN)[0]}" check'
+BARE = f'python3 "{SCRIPTS_REL}/{sorted(NEEDS_PIN)[0]}" check'
 check("positive control: the pin detector refuses a bare python3 invocation",
       not re.search(
-          rf'(\S+(?: \S+)*?) "\$\{{CLAUDE_PLUGIN_ROOT\}}/scripts/{re.escape(sorted(NEEDS_PIN)[0])}"',
+          rf'(\S+(?: \S+)*?) "{re.escape(SCRIPTS_REL)}/{re.escape(sorted(NEEDS_PIN)[0])}"',
           BARE).group(1).endswith(PINNED_PREFIX))
 
 # The `aw <verb>` detector is only meaningful if it can fire. The control used

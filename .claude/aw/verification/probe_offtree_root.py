@@ -1,22 +1,27 @@
-#!/usr/bin/env python3
 """Prove `epic.py` still works when it lives outside every checkout.
 
-This is the condition a git-marketplace install creates: the plugin is copied
-under `~/.claude/plugins/`, where no `aw.toml` exists on any parent path. The
-original `_repo_root()` walked up from `__file__` only, so that copy would have
-died on import -- before any verb ran, with a message blaming the user's
-checkout. Installing from a local directory hides the bug completely, because
-there the plugin root *is* the checkout.
+Named `probe_plugin_root.py` until 2026-08-21, when the `plugins/aw/` plugin
+was deleted. The condition it was written for -- a git-marketplace install
+copying the plugin under `~/.claude/plugins/`, where no `aw.toml` exists on any
+parent path -- can no longer arise. The property it measures survives the
+plugin, which is why the file did too: `_repo_root()` originally walked up from
+`__file__` only, so a copy anywhere outside a checkout died on import, before
+any verb ran, with a message blaming the user's checkout.
 
-The staging directory sits under the home Claude dir on purpose: same "outside
-every checkout, inside ~/.claude" shape as a real install.
+That is not hypothetical now either. The scripts moved once already, and the
+next thing that copies them -- a dispatch worktree, an agent staging a
+directory to read it, a scratch clone -- reproduces exactly this shape.
+Resolution walks from cwd first and from `__file__` second, and this is the
+only gate that measures the first half.
 
-The *whole script directory* is staged, not one file. That is what an install
-does -- measured: `diff -r ~/.claude/plugins/cache/axiom/aw/0.1.0/ plugins/aw/`
-is silent, so the cache holds a copy of the entire plugin tree. Staging a lone
-file was a simplification that happened to hold while the script was a single
-module, and it would have turned "the script imports a sibling" into a probe
-failure that reads like a repository defect.
+The staging directory sits under the home Claude dir on purpose: outside every
+checkout, and somewhere a real tool would plausibly put it.
+
+The *whole script directory* is staged, not one file. The eight scripts import
+each other by `Path(__file__).parent` -- `e2e.py`, `unit.py` and `logic.py` all
+load `leg.py` that way, and `leg.change_module()` loads `change.py` -- so
+staging a lone file turns "the script imports a sibling" into a probe failure
+that reads like a repository defect.
 """
 import pathlib
 import shutil
@@ -26,7 +31,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from _paths import REPO, SCRIPT  # noqa: E402
 
-STAGE = pathlib.Path.home() / ".claude/tmp/aw-plugin-root-probe"
+STAGE = pathlib.Path.home() / ".claude/tmp/aw-offtree-root-probe"
 OFFTREE = STAGE / "scripts"
 shutil.copytree(SCRIPT.parent, OFFTREE, dirs_exist_ok=True)
 COPY = OFFTREE / SCRIPT.name

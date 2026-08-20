@@ -112,7 +112,7 @@ Each line below cost a round. Follow them literally.
     evidence. Report either; never edit a test to make a sweep green.
 15. **A timeout is not a denial.** The worker was cut off with its work on disk.
     Read the diff and run the gate before concluding anything.
-16. Scripts under `plugins/aw/` launch with `uv run --python 3.13 --no-project`
+16. Scripts under `.claude/aw/` launch with `uv run --python 3.13 --no-project`
     — a bare `python3` is 3.9 here and dies on `tomllib` with a traceback that
     reads like a broken script. The `agy-dispatch` scripts run under plain
     `python3`.

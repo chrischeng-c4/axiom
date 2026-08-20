@@ -275,7 +275,7 @@ anti-boilerplate check rejected only seven literals (`(fill)`,
 `(replace-this)`, `tbd`, `todo`, `maybe`, `unclear`, `uncertain`). A title echo
 was accepted by construction.
 
-That generator is deleted with the crate that held it. `plugins/aw/scripts/change.py
+That generator is deleted with the crate that held it. `.claude/aw/scripts/change.py
 skeleton` emits the empty GHAN template in its place and `change.py validate`
 is what refuses a body now. The numbers above still describe the tracker,
 though — those bodies were written under the old generator and nothing has
@@ -297,12 +297,12 @@ prose:
 - *against which red?* → `E2E-Red:`, `Unit-Red:`, and `Logic-Contract:` name the
   cases and tests observed failing immediately before, so the following phase's
   green is attributable to something rather than merely asserted.
-  `plugins/aw/scripts/logic.py:142-153` parses `Unit-Red:` back out and refuses
+  `.claude/aw/scripts/logic.py:142-153` parses `Unit-Red:` back out and refuses
   a phase whose predecessor carries no trailer, and separately refuses one whose
   trailer is empty.
 - *reviewed against which bytes?* → `E2E-Change-Digest:`, which carries
   `leg.change_digest` — one sha256 over the work-item body **and** every path
-  under review (`plugins/aw/scripts/leg.py:331`).
+  under review (`.claude/aw/scripts/leg.py:331`).
 
 Two properties of that layer are load-bearing. The digest covers the work item
 as well as the code because the question a reviewer answers is "does this change
@@ -331,7 +331,7 @@ Each is specified as *required content · machine consumer · refusal conditions
 Not "improve X", not "support Y", not "make Z better". If there is no value to
 name on either side, the work is not yet bounded.
 
-**Consumer.** `change.py validate` (`plugins/aw/scripts/change.py:289-294`).
+**Consumer.** `change.py validate` (`.claude/aw/scripts/change.py:289-294`).
 
 **Refused when** the section still carries the skeleton placeholder, is written
 as a list, or runs to more than one paragraph. That is the whole of what a
@@ -1680,7 +1680,7 @@ Three rules govern every cell above:
 
 What still enforces any of this, and what does not:
 
-- **Enforced.** `plugins/aw/verification/check_plugin.py` asserts the skills on
+- **Enforced.** `.claude/aw/verification/check_plugin.py` asserts the skills on
   disk are exactly the registered set, so a skill directory nobody registered
   fails rather than loading unnoticed. This is the only check in this chapter
   with an exit code behind it.

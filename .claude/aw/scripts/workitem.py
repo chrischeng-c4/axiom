@@ -11,7 +11,7 @@ supposed to share a tracker start disagreeing about it.
 `_repo_root()` is the sharpest instance. It shipped broken once (walking up
 from `__file__` only, which finds no `aw.toml` when the plugin is installed
 outside every checkout) and now has a dedicated gate on it,
-`verification/probe_plugin_root.py`. A second copy would be a second thing that
+`verification/probe_offtree_root.py`. A second copy would be a second thing that
 gate does not watch.
 
 What is *not* here: any section, label, or rule that names a type. Those live

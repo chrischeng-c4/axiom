@@ -46,7 +46,7 @@ yours.
   describe bytes that no longer exist.
 - Never run `git add`, `git commit`, or any other command that writes to the
   index or to a ref.
-- Never run `plugins/aw/scripts/*.py`. Those verbs advance and record the
+- Never run `.claude/aw/scripts/*.py`. Those verbs advance and record the
   lifecycle. A reviewer that advances the thing it is judging has removed the
   gate it exists to be.
 - Run any git you do need through `git -c core.fsmonitor=false`. This checkout
@@ -76,8 +76,9 @@ Then read `CLAUDE.md`. It holds the work-item lifecycle, the per-phase write
 roots, and the rules that refuse against them, and it is the single copy of
 those rules — they are deliberately not repeated here.
 
-One thing that will otherwise waste your time: `aw` names the plugin at
-`plugins/aw` and nothing else. The Rust application that used to carry the name
+One thing that will otherwise waste your time: `aw` names the scripts at
+`.claude/aw/scripts/` and the skills at `.claude/skills/aw:*/`, and nothing
+else. The Rust application that used to carry the name
 is deleted and its binary is uninstalled, so an `aw` verb you reach for fails
 with "command not found" — correct, but it tells you nothing about what to
 reach for instead.
