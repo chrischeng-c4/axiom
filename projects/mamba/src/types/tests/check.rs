@@ -4284,7 +4284,7 @@ fn test_stdlib_iter_wrong_bare_object_rejected() {
 #[test]
 fn test_stdlib_list_dunder_contracts_rejected() {
     let errors = check(
-        "obj = []\nobj.__add__(12345)\nobj.__ge__(12345)\nobj.__gt__(12345)\nobj.__le__(12345)\nobj.__lt__(12345)\n",
+        "obj: list[object] = []\nobj.__add__(12345)\nobj.__ge__(12345)\nobj.__gt__(12345)\nobj.__le__(12345)\nobj.__lt__(12345)\n",
     );
     let list_value_errors = errors
         .iter()
@@ -4296,7 +4296,7 @@ fn test_stdlib_list_dunder_contracts_rejected() {
     );
 
     let errors = check(
-        "class _W:\n    pass\nobj = []\nobj.__getitem__(_W())\nobj.__delitem__(_W())\nobj.__setitem__(_W(), None)\n",
+        "class _W:\n    pass\nobj: list[object] = []\nobj.__getitem__(_W())\nobj.__delitem__(_W())\nobj.__setitem__(_W(), None)\n",
     );
     let bare_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
@@ -4305,7 +4305,7 @@ fn test_stdlib_list_dunder_contracts_rejected() {
     );
 
     let errors = check(
-        "obj = []\nobj.__add__([])\nobj.__ge__([])\nobj.__gt__([])\nobj.__le__([])\nobj.__lt__([])\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\nobj.__delitem__(0)\nobj.__setitem__(0, None)\nobj.__setitem__(slice(0, 1), [])\n",
+        "obj: list[object] = []\nobj.__add__([])\nobj.__ge__([])\nobj.__gt__([])\nobj.__le__([])\nobj.__lt__([])\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\nobj.__delitem__(0)\nobj.__setitem__(0, None)\nobj.__setitem__(slice(0, 1), [])\n",
     );
     assert!(
         errors.is_empty(),
@@ -4503,7 +4503,7 @@ fn test_stdlib_map_new_callable_rejected() {
     );
 
     let errors = check(
-        "from builtins import map\ndef identity(x):\n    return x\nmap.__new__(map, identity, [1])\n",
+        "from builtins import map\ndef identity(x: int) -> int:\n    return x\nmap.__new__(map, identity, [1])\n",
     );
     assert!(
         errors.is_empty(),
@@ -4569,7 +4569,7 @@ fn test_stdlib_property_descriptor_contracts_rejected() {
     );
 
     let errors = check(
-        "from builtins import property\nclass _Owner:\n    def marker(self):\n        return None\ndef f(self=None):\n    return None\ndef s(self, value):\n    pass\ndef d(self):\n    pass\nobj = property(f)\nobj.__get__(None, None)\nobj.__get__(None, _Owner)\nobj.getter(f)\nobj.setter(s)\nobj.deleter(d)\nproperty(f, s, d, \"doc\")\nvalue: Any = f\nobj.getter(value)\nproperty(value)\n",
+        "from builtins import property\nfrom typing import Any\nclass _Owner:\n    def marker(self):\n        return None\ndef f(self=None):\n    return None\ndef s(self: object, value: object) -> None:\n    pass\ndef d(self: object) -> None:\n    pass\nobj = property(f)\nobj.__get__(None, None)\nobj.__get__(None, _Owner)\nobj.getter(f)\nobj.setter(s)\nobj.deleter(d)\nproperty(f, s, d, \"doc\")\nvalue: Any = f\nobj.getter(value)\nproperty(value)\n",
     );
     assert!(
         errors.is_empty(),
@@ -5212,7 +5212,7 @@ fn test_stdlib_exception_group_typed_method_rejects_bare_instance() {
     );
 
     let errors = check(
-        "from builtins import ExceptionGroup\nobj = ExceptionGroup(\"msg\", [ValueError(\"x\")])\ndef matcher(exc):\n    return True\nobj.split(matcher)\n",
+        "from builtins import ExceptionGroup\nobj = ExceptionGroup(\"msg\", [ValueError(\"x\")])\ndef matcher(exc: BaseException) -> bool:\n    return True\nobj.split(matcher)\n",
     );
     assert!(
         errors.is_empty(),
@@ -5234,7 +5234,7 @@ fn test_direct_builtin_typed_argument_rejected_unless_shadowed() {
         "direct builtin anext(_W(), None) should reject a bare instance, got: {errors:?}"
     );
 
-    let errors = check("class _W:\n    pass\ndef aiter(value):\n    return value\naiter(_W())\n");
+    let errors = check("class _W:\n    pass\ndef aiter(value: _W) -> _W:\n    return value\naiter(_W())\n");
     assert!(
         errors.is_empty(),
         "user-shadowed aiter must not use the stdlib signature, got: {errors:?}"
@@ -5267,7 +5267,7 @@ fn generated_builtin_binder_owns_positional_only_calls() {
         );
     }
 
-    let errors = check("def chr(i):\n    return i\nchr(i=65)\n");
+    let errors = check("def chr(i: int) -> int:\n    return i\nchr(i=65)\n");
     assert!(
         errors.is_empty(),
         "a user-shadowed builtin name must retain ordinary keyword binding: {errors:?}"
@@ -5720,7 +5720,7 @@ fn test_stdlib_filter_wrong_bare_function_rejected() {
     );
 
     let errors =
-        check("from builtins import filter\ndef pred(value):\n    return True\nfilter(pred, [])\n");
+        check("from builtins import filter\ndef pred(value: object) -> bool:\n    return True\nfilter(pred, [])\n");
     assert!(
         errors.is_empty(),
         "filter(callable, iterable) must stay clean, got: {errors:?}"
@@ -5811,7 +5811,7 @@ fn test_stdlib_unknown_and_protocol_contracts_are_distinct() {
 #[test]
 fn test_stdlib_skip_when_arg_not_concrete_scalar() {
     // Argument is a variable of unknown type -> skip (Any actual).
-    let errors = check("from os import strerror\ndef f(v):\n    return strerror(v)\n");
+    let errors = check("from os import strerror\nfrom typing import Any\ndef f(v: Any) -> str:\n    return strerror(v)\n");
     assert!(
         errors.is_empty(),
         "strerror(unknown-var) must be skipped, got: {errors:?}"
@@ -5828,7 +5828,7 @@ fn test_stdlib_skip_when_arg_not_concrete_scalar() {
 fn test_stdlib_non_stdlib_call_untouched() {
     // A user fn that happens to share a stdlib name is not in import_origins,
     // so the hook never touches it.
-    let errors = check("def strerror(x):\n    return x\nstrerror(\"x\")\n");
+    let errors = check("def strerror(x: str) -> str:\n    return x\nstrerror(\"x\")\n");
     assert!(
         errors.is_empty(),
         "user strerror must be untouched, got: {errors:?}"
@@ -6488,12 +6488,16 @@ fn typeshed_imported_aliases_and_nested_classes_enforce_canonical_types() {
          from importlib.metadata import DistributionFinder\n\
          from ssl import SSLSocket\n\
          from wsgiref.handlers import BaseHandler\n\
+         from wsgiref.types import StartResponse, WSGIEnvironment\n\
          from wsgiref.util import setup_testing_defaults\n\
          PathFinder.find_distributions(DistributionFinder.Context())\n\
          socket = object.__new__(SSLSocket)\n\
          socket.connect((\"localhost\", 443))\n\
          setup_testing_defaults({})\n\
-         def app(environ, start_response):\n\
+         def app(\n\
+         \x20   environ: WSGIEnvironment,\n\
+         \x20   start_response: StartResponse,\n\
+         ) -> list[bytes]:\n\
          \x20   return []\n\
          handler = object.__new__(BaseHandler)\n\
          handler.run(app)\n",
@@ -6667,9 +6671,11 @@ fn typeshed_productive_recursive_aliases_enforce_representative_calls() {
     let valid = check(
         "import marshal\n\
          import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
          from xml.etree.ElementTree import Element\n\
          from xmlrpc.client import Marshaller, dumps as xmlrpc_dumps\n\
-         def trace(frame, event, arg):\n\
+         def trace(frame: FrameType, event: str, arg: Any) -> None:\n\
          \x20   return None\n\
          marshal.dumps((1, 'nested'))\n\
          sys.settrace(trace)\n\
@@ -7023,7 +7029,8 @@ fn typeshed_structured_literal_overloads_match_exact_ast_values() {
 
     let gradual = check(
         "import time\n\
-         def inspect_clock(name):\n\
+         from typing import Any\n\
+         def inspect_clock(name: Any) -> None:\n\
          \x20   time.get_clock_info(name)\n",
     );
     assert!(
