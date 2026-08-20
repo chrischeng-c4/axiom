@@ -10420,7 +10420,7 @@ impl Engine {
     /// the named field: after a `flush_to_segments`, a sealed field reads
     /// `forward_or_tokens_len == 0` (driver dropped) AND `has_segment == true`
     /// (mmap attached). Mirrors the in-crate `__field_forward_probe`, but is a
-    /// real `pub` API (not `#[cfg(test)]`) so `tests/perf_gate_vs_db.rs` — a
+    /// real `pub` API (not `#[cfg(test)]`) so `e2e/perf_gate_vs_db.rs` — a
     /// separate crate — can read it. Experimental-gated alongside the rest of
     /// the disk tier.
     pub fn segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)> {

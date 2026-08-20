@@ -543,7 +543,7 @@ mod tests {
     /// (`Engine::apply_reshard_batch` / `Engine::evict_not_owned`, added by
     /// `#1380`). This is the engine-level half of `#1389`'s proof; the
     /// driver-level half (cutover cannot fire before every touched shard's
-    /// checkpoint completes) lives in `tests/reshard_driver_e2e.rs`.
+    /// checkpoint completes) lives in `e2e/reshard_driver_e2e.rs`.
     #[test]
     fn reshard_apply_and_evict_survive_checkpoint_and_cold_start() {
         use crate::routing::VirtualBucketShardMap;

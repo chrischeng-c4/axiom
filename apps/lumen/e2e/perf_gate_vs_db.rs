@@ -20,7 +20,7 @@
 //! loopback, so those cells are EXEMPT (annotated) rather than gated. lumen's
 //! engine-only `took_us` is still collected for reference (the `lum_eng` column).
 //!
-//! Gate types (per cell, per peer) live in `tests/perf-baseline.json`:
+//! Gate types (per cell, per peer) live in `e2e/perf-baseline.json`:
 //!   WIN    — must hold `max(1.0, ratchet * baseline)`; dropping below FAILS the build.
 //!   TARGET — should win but does not yet; reported RED, does NOT fail (drives the work).
 //!   EXEMPT — opponent home-turf; reported with a reason, never fails.

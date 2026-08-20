@@ -15,31 +15,31 @@ struct GatedTarget {
 
 const REGISTRY: &[GatedTarget] = &[
     GatedTarget {
-        path: "apps/lumen/tests/access_render_cli.rs",
+        path: "apps/lumen/e2e/access_render_cli.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
     },
     GatedTarget {
-        path: "apps/lumen/tests/cli_client_ksa_token.rs",
+        path: "apps/lumen/e2e/cli_client_ksa_token.rs",
         gate: r#"#![cfg(all(unix, feature = "delegated-auth", feature = "backup"))]"#,
     },
     GatedTarget {
-        path: "apps/lumen/tests/operator_backup_kubernetes_wiring.rs",
+        path: "apps/lumen/e2e/operator_backup_kubernetes_wiring.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
     },
     GatedTarget {
-        path: "apps/lumen/tests/operator_render.rs",
+        path: "apps/lumen/e2e/operator_render.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
     },
     GatedTarget {
-        path: "apps/lumen/tests/operator_retired_credential_projection.rs",
+        path: "apps/lumen/e2e/operator_retired_credential_projection.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
     },
     GatedTarget {
-        path: "apps/lumen/tests/reshard_driver_e2e.rs",
+        path: "apps/lumen/e2e/reshard_driver_e2e.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
     },
     GatedTarget {
-        path: "apps/lumen/tests/routed_shard_e2e.rs",
+        path: "apps/lumen/e2e/routed_shard_e2e.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
     },
     GatedTarget {
@@ -93,7 +93,7 @@ fn count_test_rows(content: &str) -> usize {
 #[test]
 fn all_gated_files_in_tree_are_registered() {
     let root = repo_root();
-    let scan_roots = ["apps/lumen/tests", "apps/lumen/e2e"];
+    let scan_roots = ["apps/lumen/e2e"];
     let mut missing_or_mismatched = Vec::new();
 
     for scan_root in &scan_roots {

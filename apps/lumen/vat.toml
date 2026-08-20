@@ -45,7 +45,7 @@ timeout_s = 30
 id = "pg"
 preset = "postgres"
 port = 55432
-seed = ["tests/ec/pg/schema.sql"]
+seed = ["e2e/ec/pg/schema.sql"]
 export = { DATABASE_URL = "LUMEN_BENCH_PG_DSN" }
 ready_cmd = ["sh", "-c", "psql -h 127.0.0.1 -p 55432 -U postgres -d lumenbench -tAc 'select 1' >/dev/null 2>&1"]
 timeout_s = 120
@@ -62,19 +62,19 @@ timeout_s = 120
 [[runners]]
 id = "rig-resilience"
 requires = ["lumen", "toxiproxy"]
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/resilience"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir e2e/rig/cases/resilience"]
 timeout_s = 600
 
 [[runners]]
 id = "rig-endurance"
 requires = ["lumen"]
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/endurance"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir e2e/rig/cases/endurance"]
 timeout_s = 900
 
 [[runners]]
 id = "rig-load"
 requires = ["lumen"]
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/load --pins tests/rig/config/pins"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir e2e/rig/cases/load --pins e2e/rig/config/pins"]
 timeout_s = 300
 
 # Legacy competitive comparison runners: vat owns the serving lumen process;

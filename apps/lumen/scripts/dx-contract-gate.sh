@@ -76,7 +76,7 @@ done
 # file itself is still here, because deleting it belongs to #3708, not here.
 # `embed` targets 1, not 0.  `apps/lumen` compiles in TWO Markdown files under
 # the tree: this contract, and the TD that
-# `apps/lumen/tests/capability_stateful_workload_linkage.rs:5` embeds.  Only
+# `apps/lumen/e2e/capability_stateful_workload_linkage.rs:5` embeds.  Only
 # the first is a product input and only the first moves here; the test's
 # assertions are about the TD document itself and are retired with it by #3708.
 # Round 1 of this issue asserted `embed=0` and passed, because the probe then

@@ -674,7 +674,7 @@ fn every_runbook_url_resolves_to_a_file_in_this_repository() {
         .expect("alert rules");
     assert!(!rules.is_empty());
 
-    // tests/ -> apps/lumen -> apps -> repo root.
+    // e2e/ -> apps/lumen -> apps -> repo root.
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(std::path::Path::parent)
@@ -1057,7 +1057,7 @@ fn the_backup_runner_is_given_a_path_and_only_when_auth_is_required() {
 #[test]
 fn the_control_plane_paths_reach_for_no_other_credential() {
     // Assembled from parts so this gate does not match itself if the sweep is
-    // ever widened to include `apps/lumen/tests/`.
+    // ever widened to include `apps/lumen/e2e/`.
     let forbidden: &[(&str, &str)] = &[
         (
             &["metadata", ".google.internal"].concat(),
