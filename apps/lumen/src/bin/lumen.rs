@@ -4436,7 +4436,7 @@ mod tests {
     // shared module (`select_token`, `cr_tokens_secret`, `secret_data_bytes`)
     // keeps its own tests there and is simply no longer called from here
     // (#2873) — the integration gate for that is
-    // `tests/cli_credential_paths_retired.rs`.
+    // `e2e/cli_credential_paths_retired.rs`.
 
     // -----------------------------------------------------------------
     // `spawn_cluster_state_poller` (#1349)

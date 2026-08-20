@@ -138,30 +138,30 @@ const ALLOWANCES: &[Allowance] = &[
                  env, and each mention states the field is retired and names its successor.",
     },
     Allowance {
-        path: "apps/lumen/tests/cli_convention.rs",
+        path: "apps/lumen/e2e/cli_convention.rs",
         lines: 3,
         reason: "Negative assertions on the CLI's help surface for the snapshot verbs.",
     },
     Allowance {
-        path: "apps/lumen/tests/cli_credential_paths_retired.rs",
+        path: "apps/lumen/e2e/cli_credential_paths_retired.rs",
         lines: 2,
         reason: "#2873's gate. It names the retired header recipe in prose to record what the \
                  committed OpenAPI snapshot used to publish, and forbids it in code.",
     },
     Allowance {
-        path: "apps/lumen/tests/operator_render.rs",
+        path: "apps/lumen/e2e/operator_render.rs",
         lines: 9,
         reason: "Negative assertions across the rendered StatefulSet, its env, and the checked-in \
                  CRD YAML.",
     },
     Allowance {
-        path: "apps/lumen/tests/operator_retired_credential_projection.rs",
+        path: "apps/lumen/e2e/operator_retired_credential_projection.rs",
         lines: 14,
         reason: "#2870's gate — the file whose entire purpose is proving the projection is gone. \
                  It necessarily names every symbol it forbids.",
     },
     Allowance {
-        path: "apps/lumen/tests/spec_cli.rs",
+        path: "apps/lumen/e2e/spec_cli.rs",
         lines: 5,
         reason: "Negative assertions on the generated specification and its committed snapshot.",
     },

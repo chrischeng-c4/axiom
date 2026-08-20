@@ -3,7 +3,7 @@
 // @contract spec-gen-generated-clients-public-api-journey
 //! Generated-client delivery gate for Lumen itself.
 //!
-//! This is intentionally under `apps/lumen/tests`, not only `examples/`:
+//! This is intentionally under `apps/lumen/e2e`, not only `examples/`:
 //! Lumen's own test surface is the release guarantee that generated Python,
 //! TypeScript, and Rust clients can drive the public API happy path against a
 //! real Lumen server.

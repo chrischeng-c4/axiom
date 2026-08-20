@@ -40,7 +40,7 @@ expect = { statuses = [200, 201, 400, 409] }
 [[steps]]
 type = "exec"
 name = "resolve_lumen_pid"
-cmd = ["python3", "tests/rig/helpers/listener_pid.py", "{{upstream}}"]
+cmd = ["python3", "e2e/rig/helpers/listener_pid.py", "{{upstream}}"]
 timeout_secs = 5
 capture = { lumen_pid = "stdout" }
 
@@ -68,21 +68,21 @@ expect = { status = 200, timeout_ms = 10000 }
 [[steps]]
 type = "exec"
 name = "fd_count_before"
-cmd = ["python3", "tests/rig/helpers/process_resource_count.py", "fd", "{{lumen_pid}}"]
+cmd = ["python3", "e2e/rig/helpers/process_resource_count.py", "fd", "{{lumen_pid}}"]
 timeout_secs = 35
 capture = { fd_before = "stdout" }
 
 [[steps]]
 type = "exec"
 name = "socket_count_before"
-cmd = ["python3", "tests/rig/helpers/process_resource_count.py", "socket", "{{lumen_pid}}"]
+cmd = ["python3", "e2e/rig/helpers/process_resource_count.py", "socket", "{{lumen_pid}}"]
 timeout_secs = 35
 capture = { socket_before = "stdout" }
 
 [[steps]]
 type = "exec"
 name = "thread_count_before"
-cmd = ["python3", "tests/rig/helpers/process_resource_count.py", "thread", "{{lumen_pid}}"]
+cmd = ["python3", "e2e/rig/helpers/process_resource_count.py", "thread", "{{lumen_pid}}"]
 timeout_secs = 35
 capture = { thread_before = "stdout" }
 
@@ -115,21 +115,21 @@ expect = { status = 200, timeout_ms = 10000 }
 [[steps]]
 type = "exec"
 name = "fd_count_after"
-cmd = ["python3", "tests/rig/helpers/process_resource_count.py", "fd", "{{lumen_pid}}"]
+cmd = ["python3", "e2e/rig/helpers/process_resource_count.py", "fd", "{{lumen_pid}}"]
 timeout_secs = 35
 capture = { fd_after = "stdout" }
 
 [[steps]]
 type = "exec"
 name = "socket_count_after"
-cmd = ["python3", "tests/rig/helpers/process_resource_count.py", "socket", "{{lumen_pid}}"]
+cmd = ["python3", "e2e/rig/helpers/process_resource_count.py", "socket", "{{lumen_pid}}"]
 timeout_secs = 35
 capture = { socket_after = "stdout" }
 
 [[steps]]
 type = "exec"
 name = "thread_count_after"
-cmd = ["python3", "tests/rig/helpers/process_resource_count.py", "thread", "{{lumen_pid}}"]
+cmd = ["python3", "e2e/rig/helpers/process_resource_count.py", "thread", "{{lumen_pid}}"]
 timeout_secs = 35
 capture = { thread_after = "stdout" }
 

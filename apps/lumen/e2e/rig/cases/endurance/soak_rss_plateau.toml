@@ -38,7 +38,7 @@ expect = { statuses = [200, 201, 400, 409] }
 [[steps]]
 type = "exec"
 name = "resolve_lumen_pid"
-cmd = ["python3", "tests/rig/helpers/listener_pid.py", "{{upstream}}"]
+cmd = ["python3", "e2e/rig/helpers/listener_pid.py", "{{upstream}}"]
 timeout_secs = 5
 capture = { lumen_pid = "stdout" }
 

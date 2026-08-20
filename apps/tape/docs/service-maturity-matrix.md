@@ -10,7 +10,7 @@ only domain state, policy, schema, route wiring, and deployment defaults.
 
 | Operational promise | Shared owner | Lumen reference | Tape evidence | Relay evidence | Defer evidence | Decision |
 |---|---|---|---|---|---|---|
-| HTTP/1.1 + h2c, errors, probes, drain | `service-http`, `server-http`, `server-lifecycle`, `transport-h2c` | `apps/lumen/tests/behavior_lumen_cli_interface_protocol_transport.rs`, `spec_cli.rs` | `tests/http_transport.rs` | `tests/http2_transport.rs` | `tests/http_api.rs` | parity |
+| HTTP/1.1 + h2c, errors, probes, drain | `service-http`, `server-http`, `server-lifecycle`, `transport-h2c` | `apps/lumen/e2e/behavior_lumen_cli_interface_protocol_transport.rs`, `spec_cli.rs` | `tests/http_transport.rs` | `tests/http2_transport.rs` | `tests/http_api.rs` | parity |
 | Served/offline OpenAPI and generated clients | `openapi-codegen`, `service-http` | `tests/spec_cli.rs`, `generated_clients_crud_e2e.rs` | `tests/cli_contract.rs`, `src/openapi.rs` | `tests/spec_cli.rs`, `docs/worker-protocol.md` | `tests/cli_contract.rs`, `src/openapi.rs` | parity |
 | OTLP/W3C context, Prometheus metrics, lifecycle counters | `service-observability`, `metrics-prometheus`, `service-http` | `tests/behavior_lumen_claim_observability_*` | `tests/shared_otlp_tracing.rs`, `observability_assets.rs` | `tests/http2_transport.rs`, K8s observability component | `tests/http_api.rs`, K8s observability component | parity |
 | Authn/z, audited rotation, admission, stable errors | `service-auth`, `service-http` | `tests/auth_e2e.rs`, `admission_e2e.rs` | `tests/service_auth.rs`, `service_admission.rs`, `audit_contract.rs` | `tests/auth.rs`, `service_admission.rs` | `tests/service_auth.rs`, `service_admission.rs` | parity |

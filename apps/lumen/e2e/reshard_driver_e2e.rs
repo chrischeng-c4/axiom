@@ -295,7 +295,7 @@ fn merge_patch(base: &mut serde_json::Value, patch: &serde_json::Value) {
 /// StatefulSet readiness always reports the CR's own `shardCount` (the new
 /// pod is "ready" the instant `shardCount` is bumped) — the generic
 /// `libs/service-k8s` apply loop that would actually create it is exercised
-/// separately by `tests/operator_render.rs`; this harness only needs to
+/// separately by `e2e/operator_render.rs`; this harness only needs to
 /// prove the reshard driver's own phase/data-migration logic.
 struct FakeControl {
     cluster: Arc<Mutex<Lumen>>,

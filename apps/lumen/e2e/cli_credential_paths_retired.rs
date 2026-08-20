@@ -24,7 +24,7 @@
 //! retired header recipe. The negative assertions living
 //! in other tests (`spec_cli.rs`, `operator_render.rs`,
 //! `operator_retired_credential_projection.rs`) name the retired strings on
-//! purpose, so widening the scan to `tests/` would make the gate fail on
+//! purpose, so widening the scan to `e2e/` would make the gate fail on
 //! its own siblings. #2875 owns the repository-wide residue gate and the
 //! historical-evidence carve-out that requires.
 
@@ -48,7 +48,7 @@ fn lumen_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Every shipped text file under `apps/lumen`, excluding `tests/` (see the
+/// Every shipped text file under `apps/lumen`, excluding `e2e/` (see the
 /// scope note above), `target/`, and anything not human-readable.
 ///
 /// `clients/` earns its place on this list the hard way: `clients/openapi.json`

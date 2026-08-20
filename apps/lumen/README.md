@@ -98,7 +98,7 @@ Verification:
 
 - `cargo test -p lumen --test api_e2e --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e`
 - `cargo test -p lumen --test perf_gate --test perf_gate_vs_db`
-- `apps/lumen/tests/rig/cases`
+- `apps/lumen/e2e/rig/cases`
 
 #### Querying
 
@@ -241,11 +241,11 @@ Claims:
 Verification:
 
 - `cargo test -p lumen -p service-auth -p service-k8s -p peer-tls`
-- `apps/lumen/tests/auth_e2e.rs`
-- `apps/lumen/tests/authz_matrix_e2e.rs`
-- `apps/lumen/tests/operator_render.rs`
-- `apps/lumen/tests/security_lumen_claim_security_tls_rustls.rs`
-- `apps/lumen/tests/serving_tls_rotation.rs`
+- `apps/lumen/e2e/auth_e2e.rs`
+- `apps/lumen/e2e/authz_matrix_e2e.rs`
+- `apps/lumen/e2e/operator_render.rs`
+- `apps/lumen/e2e/security_lumen_claim_security_tls_rustls.rs`
+- `apps/lumen/e2e/serving_tls_rotation.rs`
 - `acceptance/gcp/scripts/run.sh`
 - `acceptance/gcp/scripts/verify-lumen-auth.sh`
 
@@ -327,7 +327,7 @@ Verification:
 
 - `cargo test -p lumen --test api_e2e`
 - `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`
-- `apps/lumen/tests/rig/cases`
+- `apps/lumen/e2e/rig/cases`
 - `apps/lumen/k8s/components/operator-monitoring`
 
 #### API, CLI & Agent Integration
