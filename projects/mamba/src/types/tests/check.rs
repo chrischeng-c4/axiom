@@ -302,6 +302,93 @@ fn test_function_str_arg_rejects_bytes_literal() {
 }
 
 #[test]
+fn all_string_literal_is_compatible_with_str_but_not_int() {
+    use crate::types::ty::LiteralValue;
+
+    let mut checker = TypeChecker::new();
+    let all_string = checker.tcx.intern(Ty::Literal(vec![
+        LiteralValue::Str("call".into()),
+        LiteralValue::Str("line".into()),
+    ]));
+    let empty = checker.tcx.intern(Ty::Literal(Vec::new()));
+    let mixed = checker.tcx.intern(Ty::Literal(vec![
+        LiteralValue::Str("call".into()),
+        LiteralValue::Int(1),
+    ]));
+    let integer = checker.tcx.intern(Ty::Literal(vec![LiteralValue::Int(1)]));
+    let boolean = checker
+        .tcx
+        .intern(Ty::Literal(vec![LiteralValue::Bool(true)]));
+
+    assert!(checker.types_compatible(checker.tcx.str(), all_string));
+    assert!(!checker.types_compatible(all_string, checker.tcx.str()));
+    assert!(!checker.types_compatible(checker.tcx.str(), empty));
+    assert!(!checker.types_compatible(checker.tcx.str(), mixed));
+    assert!(!checker.types_compatible(checker.tcx.str(), integer));
+    assert!(!checker.types_compatible(checker.tcx.str(), boolean));
+    assert!(!checker.types_compatible(checker.tcx.int(), all_string));
+}
+
+#[test]
+fn structured_trace_accepts_str_event_but_rejects_int_event_and_return() {
+    let positive = check_runtime(
+        "import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
+         def trace(frame: FrameType, event: str, arg: Any) -> None:\n\
+         \x20   return None\n\
+         sys.settrace(trace)\n",
+    );
+    assert!(
+        positive.is_empty(),
+        "str event callback must satisfy the structured trace contract: {positive:?}"
+    );
+
+    let event_int = check_runtime(
+        "import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
+         def trace(frame: FrameType, event: int, arg: Any) -> None:\n\
+         \x20   return None\n\
+         sys.settrace(trace)\n",
+    );
+    assert!(
+        event_int
+            .iter()
+            .any(|error| error.contains("parameter `function`")),
+        "int event callback must remain rejected: {event_int:?}"
+    );
+
+    let return_int = check_runtime(
+        "import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
+         def trace(frame: FrameType, event: str, arg: Any) -> int:\n\
+         \x20   return 1\n\
+         sys.settrace(trace)\n",
+    );
+    assert!(
+        return_int
+            .iter()
+            .any(|error| error.contains("parameter `function`")),
+        "int return callback must remain rejected: {return_int:?}"
+    );
+
+    let any_control = check_runtime(
+        "import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
+         def trace(frame: FrameType, event: Any, arg: Any) -> None:\n\
+         \x20   return None\n\
+         sys.settrace(trace)\n",
+    );
+    assert!(
+        any_control.is_empty(),
+        "Any control must remain accepted by the existing gradual policy: {any_control:?}"
+    );
+}
+
+#[test]
 fn external_builtin_annotations_preserve_nominal_identity() {
     let errors = check(
         "data: bytes = b\"ok\"\n\

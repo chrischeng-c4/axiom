@@ -4148,6 +4148,9 @@ impl TypeChecker {
         if matches!(e, Ty::TypeVar(_)) || matches!(a, Ty::TypeVar(_)) {
             return true;
         }
+        if expected == self.tcx.str() && self.tcx.is_nonempty_all_string_literal(actual) {
+            return true;
+        }
         // SelfType denotes an instance receiver, never the class object.
         if matches!(e, Ty::SelfType) {
             return !matches!(
