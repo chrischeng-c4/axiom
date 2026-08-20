@@ -21,6 +21,9 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+#[cfg(debug_assertions)]
+use sha2::{Digest, Sha256};
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -234,6 +237,102 @@ fn print_table(results: &[PerfResult]) {
     println!();
 }
 
+#[cfg(debug_assertions)]
+fn collect_perf_comparison_sources_3772() -> Vec<(String, String)> {
+    let lines: Vec<&str> = include_str!("perf_comparison.rs").lines().collect();
+    let mut fixtures = Vec::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() != "bench(" || lines.get(index + 2).map(|s| s.trim()) != Some("r#\"") {
+            continue;
+        }
+        let name = lines
+            .get(index + 1)
+            .and_then(|line| line.trim().strip_prefix('"'))
+            .and_then(|line| line.strip_suffix("\","))
+            .expect("benchmark name line")
+            .to_string();
+        let mut source = String::from("\n");
+        let mut body_index = index + 3;
+        while body_index < lines.len() && lines[body_index].trim() != "\"#," {
+            source.push_str(lines[body_index]);
+            source.push('\n');
+            body_index += 1;
+        }
+        assert!(body_index < lines.len(), "unterminated benchmark source: {name}");
+        fixtures.push((name, source));
+    }
+
+    fixtures
+}
+
+/// Audit every release-only payload independently so one early checker error
+/// cannot hide later Force Typed violations (#3772).
+#[test]
+#[cfg(debug_assertions)]
+fn perf_comparison_static_source_audit_3772() {
+    const EXPECTED_FIXTURES: [(&str, &str); 16] = [
+        ("int_sum_1m_typed", "bf36f7545b9bbb2ecfce1214fa78e1b4df56386eac12ee496e2bbaa76fa66c8b"),
+        ("int_sum_1m_untyped", "74d935b6d1b66128a19d9a4582bf99b03d015378dc988009f17cf984203a4069"),
+        ("int_mul_factorial_20", "04e81e9e08884ac0ec95bef84604fbc386a873b652f5ffd80c1534a9198da180"),
+        ("fib_25_typed", "db68798e6fe74a4b2754b2b2412e03cdfd8c3128ca24dfe09e58515a7c700e24"),
+        ("fib_25_untyped", "056a774dcb7dcdfc37d8d420235be68eaced596e27c89cd6e85303b1bd437fe4"),
+        ("factorial_15_typed", "fad57e0c31043a38d6323c0bf4860eaefca210bb7e16a894601b96b97acb6d97"),
+        ("range_sum_1m_typed", "8d72857e99de342de1f060a610b9d7e529ee089961234a0d8e88d161ed299909"),
+        ("range_loop_noop_1m", "8a04a27a2a2ac96613c3c24fff03c80459a54a4f33c7fa4373964eb162f9d099"),
+        ("list_comprehension_10k", "d8d6d6d776d80188f1d0a59e097b21dc73303847ab166c5e248e6a4424f24740"),
+        ("dict_build_1k", "5ff2fcd4014942e35b86bc375a527cf9b5ebf097aac66fedac1d7ce6a6e0beb3"),
+        ("list_sort_1k", "c7bd8db51d71d74fb82e63df23330d2fbb2ce6aa9cc6d1e6380194c80510018c"),
+        ("generator_sum_10k", "2ba97c0a672bd9ceba640d71d147f6725f63d728cbb96565906f096672c820ba"),
+        ("str_join_1k", "90d461eec47b725e042c16ef64817f343713d4e12dc15c99ca44f4cca5c44980"),
+        ("closure_counter_10k", "599c011018cf88dea706f0518c5ff1a4bc262b39328b90cf5cb61220107f27f3"),
+        ("class_instance_10k", "61d1ffba151837bfc38fb68c8f71b5daef2926f17456775189a1d3eba463fd29"),
+        ("try_except_loop_10k", "32910e8622f717fdf1587f3741be86574174b33fec313dbb73c02286108a3de8"),
+    ];
+    let fixtures = collect_perf_comparison_sources_3772();
+    let names: Vec<&str> = fixtures.iter().map(|(name, _)| name.as_str()).collect();
+    let expected_names: Vec<&str> = EXPECTED_FIXTURES.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        names, expected_names,
+        "benchmark source inventory changed; expected every payload"
+    );
+
+    let mut failures = Vec::new();
+    for (name, source) in fixtures {
+        let expected_digest = EXPECTED_FIXTURES
+            .iter()
+            .find_map(|(expected_name, digest)| {
+                (*expected_name == name.as_str()).then_some(*digest)
+            })
+            .expect("benchmark digest entry");
+        let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
+        if digest != expected_digest {
+            failures.push(format!(
+                "fixture={name} source_sha256 expected={expected_digest} actual={digest}"
+            ));
+            continue;
+        }
+        let module = match parser::parse(&source, FileId(0)) {
+            Ok(module) => module,
+            Err(error) => {
+                failures.push(format!("fixture={name} parse={error:?}"));
+                continue;
+            }
+        };
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        if !errors.is_empty() {
+            failures.push(format!("fixture={name} diagnostics={errors:?}"));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "perf_comparison static source audit failed for every violating payload:\n{}",
+        failures.join("\n")
+    );
+}
+
 // ── The benchmark suite ────────────────────────────────────────────────────
 
 #[test]
@@ -289,7 +388,7 @@ print(fib(25))
         bench(
             "fib_25_untyped",
             r#"
-def fib(n):
+def fib(n: int):
     if n <= 1:
         return n
     return fib(n - 1) + fib(n - 2)
@@ -380,7 +479,7 @@ print(total)
         bench(
             "str_join_1k",
             r#"
-parts = []
+parts: list[str] = []
 i = 0
 while i < 1000:
     parts.append("x")
