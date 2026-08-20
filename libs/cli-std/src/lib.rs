@@ -27,6 +27,13 @@
 //! port-forward lifecycle + token-registry Secret resolution every
 //! k8s-native service CLI's `<cli> connect` wants (extracted from `lumen
 //! connect`, #1321/#1376 — see `CONTRIBUTING.md` § "Deploy artifacts").
+//!
+//! **Courier proxy mode** (#1320). With `$AXIOM_COURIER_URL` set, [`issue`]'s
+//! four verbs route through courier's `/v1/issues/...` endpoints instead of
+//! calling `api.github.com` directly, authenticating with
+//! `$AXIOM_COURIER_TOKEN` — a courier-issued client credential, not a personal
+//! GitHub token. Unset or blank means unconfigured, and unconfigured is not a
+//! degraded mode: the direct-GitHub path runs unchanged.
 
 pub mod artifact;
 pub mod chainable;

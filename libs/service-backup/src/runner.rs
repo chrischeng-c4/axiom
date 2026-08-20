@@ -1,5 +1,25 @@
 // SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-runner-rs.md#rust-source-unit
 // CODEGEN-BEGIN
+//! One backup run: put the bytes, then apply retention.
+//!
+//! Three things are deliberately outside this primitive, and each is what makes
+//! it testable:
+//!
+//! - **The clock.** `timestamp` is an argument, not `SystemTime::now()`. The
+//!   sink derives the object key from it, so the caller -- not this function --
+//!   decides which key a run writes.
+//! - **Consistency.** The payload must already be a consistent snapshot. Nothing
+//!   here quiesces a writer or reads an applied index; `raft-runtime` and the
+//!   service's own admin snapshot endpoint own that.
+//! - **The sink.** Retention runs after a successful `put` and only when
+//!   `max_age_seconds` is `Some`.
+//!
+//! Two values in [`BackupRunResult`] are less
+//! informative than they look. `pruned == 0` covers both "retention was
+//! disabled" and "retention ran and nothing was old enough" -- the two are
+//! indistinguishable from the result alone. And `unix_seconds` comes from
+//! `duration_since(UNIX_EPOCH).unwrap_or_default()`, so a pre-epoch `timestamp`
+//! is recorded as `0` rather than refused.
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;

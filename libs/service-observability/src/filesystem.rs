@@ -1,4 +1,21 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:physical-filesystem-usage" tracker="#2947" reason="Portable, safe physical filesystem usage sampling for capacity-aware scheduling."
+//! Physical filesystem usage for capacity-aware scheduling, via `statvfs`.
+//!
+//! The three numbers do not add up, on purpose. `used_bytes` is
+//! `(f_blocks - f_bfree) * f_frsize` and `available_bytes` is
+//! `f_bavail * f_frsize`, and `f_bfree` (free blocks) exceeds `f_bavail` (free to
+//! an unprivileged writer) by whatever the filesystem holds in reserve. So
+//! `used + available < total` on a filesystem with a reserve, and a scheduler
+//! that computes headroom as `total - used` will promise space it cannot get.
+//! **`available_bytes` is the only one of the three that answers "can I write
+//! this?"**
+//!
+//! Every multiplication saturates, so a nonsensical `statvfs` clamps at
+//! `u64::MAX` instead of wrapping into a small number that looks plausible.
+//!
+//! The sample describes the filesystem *carrying* `path`, not the subtree at
+//! `path`: a quota or a bind mount below it is invisible here. The path must
+//! exist -- `statvfs` on a missing path is an error, not a zeroed sample.
 use std::path::Path;
 
 use anyhow::{Context, Result};

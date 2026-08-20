@@ -33,7 +33,7 @@ pub trait RaftStateMachine: Send + Sync + 'static {
     fn snapshot(&self, writer: &mut dyn Write) -> anyhow::Result<()>;
 
     /// Replace the entire state from snapshot bytes (a follower installing a
-    /// leader's snapshot, or cold-start). After this, [`applied_index`] must
+    /// leader's snapshot, or cold-start). After this, [`applied_index`](RaftStateMachine::applied_index) must
     /// return the snapshot's index.
     fn restore(&self, reader: &mut dyn Read) -> anyhow::Result<()>;
 

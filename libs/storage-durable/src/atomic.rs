@@ -1,4 +1,24 @@
 // CODEGEN-BEGIN
+//! Replace a file's contents so that a crash leaves either the old bytes or
+//! the new ones, never a prefix of the new ones.
+//!
+//! The order is what buys that, and all four steps are load-bearing: write the
+//! temp file, fsync it, rename it over the target, then fsync the target's
+//! parent directory. Skipping the last one leaves the rename itself in the
+//! directory's write-back cache, so the commit -- not the payload -- is what a
+//! crash loses.
+//!
+//! Two deliberate limits a caller has to know about:
+//!
+//! - The temp file is the fixed sibling `<path>.tmp`, not a randomised name, and
+//!   a leftover one is removed rather than recovered. Two concurrent
+//!   `atomic_write` calls to the same path therefore race, and one of them wins
+//!   silently. **One writer per path** is a precondition, not a hint.
+//! - [`sync_parent_dir`] treats `PermissionDenied`, `Unsupported` and `Other`
+//!   from opening the directory as success, because some platforms and sandboxes
+//!   do not allow opening a directory as a file. On those, the parent fsync is
+//!   quietly not happening and the durability of the commit is whatever the OS
+//!   orders by itself -- there is no error to observe.
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;

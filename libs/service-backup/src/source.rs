@@ -1,5 +1,26 @@
 // SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-source-rs.md#rust-source-unit
 // CODEGEN-BEGIN
+//! Fetch one exact backup object, for bootstrap and restore.
+//!
+//! This is narrower than [`BackupDestination`](crate::BackupDestination) on
+//! purpose, and the distinction is the whole reason the module exists: a
+//! destination URI names a **prefix** that a sink writes many objects under, while
+//! a source URI names **one concrete object** —
+//! `file:///path/to/snapshot.json` or `s3://bucket/path/to/snapshot.json`. So
+//! `s3://bucket/prefix` is a valid destination and a wrong source.
+//!
+//! The `s3://` arm is feature-gated, and the failure is deliberately at **run
+//! time**, not compile time: a binary built without the `s3` feature still
+//! accepts an `s3://` source URI in its configuration and only fails when the
+//! restore actually runs, with a message naming the rebuild flag. `file://` and
+//! `gs://` are always available.
+//!
+//! The rejection message enumerates
+//! [`SUPPORTED_SCHEMES`], which lives in
+//! `destination.rs` and is that file's inventory of what *destinations* accept.
+//! Adding a scheme to that table without adding an arm here therefore produces an
+//! error message advertising a scheme this function rejects -- the two must move
+//! together.
 use anyhow::{bail, ensure, Context, Result};
 
 use crate::destination::SUPPORTED_SCHEMES;

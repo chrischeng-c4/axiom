@@ -1,5 +1,29 @@
 // SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-policy-rs.md#rust-source-unit
 // CODEGEN-BEGIN
+//! One backup policy in two shapes, because a CRD cannot hold the runtime one.
+//!
+//! [`BackupPolicy`] nests the tagged
+//! [`BackupDestination`] enum, whose per-variant
+//! schemas a Kubernetes structural schema rejects.
+//! [`ScheduledBackupPolicy`] is the flat form the
+//! CRD can carry: `schedule`, a bare-string `destination`, and
+//! `retentionSecs`. Its unit test asserts `schema.get("oneOf").is_none()`, which
+//! is the structural-schema requirement made observable rather than asserted in
+//! prose.
+//!
+//! `to_runtime_policy` is the **only** validated path between the two, and every
+//! operator is expected to go through it (`TryFrom` just calls it). That places
+//! all validation at conversion time, not at deserialization time: a
+//! `ScheduledBackupPolicy` read straight out of a CR is not yet known to be
+//! usable, and an admission webhook that only checks it parses has checked
+//! nothing.
+//!
+//! What that conversion does and does not check is worth stating exactly. It
+//! rejects a blank `schedule` and it rejects a destination URI `from_uri` does
+//! not accept. It does **not** parse the cron expression -- the operator owns
+//! translating `schedule` into `CronJob.spec.schedule`, so a syntactically
+//! invalid cron passes this crate and fails in Kubernetes instead. And
+//! `retentionSecs: None` means keep every object forever, not keep none.
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

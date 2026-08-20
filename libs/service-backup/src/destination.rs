@@ -1,5 +1,34 @@
 // SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#rust-source-unit
 // CODEGEN-BEGIN
+//! Where a backup goes, in the two spellings operators actually use.
+//!
+//! [`BackupDestination`] is an internally tagged enum
+//! (`#[serde(tag = "type")]`), which is exactly why it cannot be embedded in a
+//! Kubernetes structural schema and why
+//! [`ScheduledBackupPolicy`](crate::ScheduledBackupPolicy) exists as a flat
+//! projection beside it.
+//!
+//! The URI form is strictly less expressive than the CR form. `from_uri` fills
+//! in `bucket` and `prefix` and leaves `region`, `endpoint` and
+//! `credentials_secret` as `None` every time -- those can only arrive by
+//! deserializing a CR, never from a URI. `default_prefix` then collapses "no
+//! prefix" (local `None`, object-store `""`) to the literal `"backup"`, so an
+//! empty prefix never reaches a sink as empty.
+//!
+//! [`SUPPORTED_SCHEMES`] is the canonical inventory,
+//! ordered to match `from_uri`'s parse order, and two unit tests hold it to
+//! that: one asserts the rejection message names every scheme in the table, the
+//! other asserts every scheme in the table parses a well-formed URI. The CLI
+//! `llm` topics render the table at call time instead of copying it into a
+//! string, so a help body cannot drift from what this file accepts (#2494).
+//!
+//! `sink_available` is the one column that is **not** about parsing. It is
+//! `cfg!(feature = ...)` for this build, and a `false` there does not stop
+//! `from_uri` from succeeding -- `s3://` parses in every build, and a build
+//! without the `s3` feature only fails later, inside
+//! [`BackupSink::put`](crate::BackupSink::put), through
+//! [`UnsupportedCloudSink`](crate::UnsupportedCloudSink). "Does this binary
+//! support S3" is therefore a question about the sink, never about the URI.
 use anyhow::{bail, ensure, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
