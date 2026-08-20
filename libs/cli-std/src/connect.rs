@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `<cli> connect` — the k8s-native service CLI's port-forward lifecycle +
 //! token-registry Secret resolution (feature `k8s`). Extracted from `lumen
@@ -19,7 +18,6 @@ use serde::Deserialize;
 
 /// The `token-registry.json` key every token-registry Secret stores its
 /// payload under (see `lumen llm --topic auth`'s Secret shape).
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub const TOKEN_REGISTRY_SECRET_KEY: &str = "token-registry.json";
 
 /// RAII child-process guard: kills + reaps on drop so a spawned `kubectl
@@ -27,12 +25,10 @@ pub const TOKEN_REGISTRY_SECRET_KEY: &str = "token-registry.json";
 /// `projects/preview/tests/kind_lifecycle.rs`'s `ChildGuard`, generalized
 /// here over any `std::process::Command` so it is unit-testable with a fake
 /// child instead of requiring a real cluster.
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub struct ChildGuard {
     child: Child,
 }
 
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 impl ChildGuard {
     pub fn spawn(command: &mut Command) -> Result<Self> {
         let child = command.spawn().context("spawn child process")?;
@@ -40,7 +36,6 @@ impl ChildGuard {
     }
 }
 
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -52,7 +47,6 @@ impl Drop for ChildGuard {
 /// number `kubectl port-forward` should target. There is an inherent
 /// TOCTOU race (someone else could bind it first), the same tradeoff
 /// `projects/preview/tests/kind_lifecycle.rs::free_local_port` makes.
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub fn free_local_port() -> Result<u16> {
     let listener =
         std::net::TcpListener::bind(("127.0.0.1", 0)).context("bind ephemeral local port")?;
@@ -62,7 +56,6 @@ pub fn free_local_port() -> Result<u16> {
 /// Poll `127.0.0.1:port` until a TCP connect succeeds or `timeout` elapses —
 /// the port-forward readiness gate: no fixed sleep, no dependency on
 /// kubectl's own stdout.
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub fn wait_for_local_port_ready(port: u16, timeout: Duration) -> Result<()> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -85,14 +78,12 @@ pub fn wait_for_local_port_ready(port: u16, timeout: Duration) -> Result<()> {
 /// the `connect` adapter convention).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "lowercase")]
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub enum Role {
     Read,
     Write,
     Admin,
 }
 
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 impl Role {
     /// Whether this role meets or exceeds `needed`.
     pub fn covers(self, needed: Role) -> bool {
@@ -105,7 +96,6 @@ impl Role {
 /// (a service's collection/namespace/etc). The literal key `*` is a
 /// wildcard grant applied when no more specific entry matches.
 #[derive(Debug, Clone, Deserialize)]
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub struct TokenClaims {
     pub subject: String,
     /// `resource` → `Role`. The literal key `*` is a wildcard.
@@ -115,14 +105,12 @@ pub struct TokenClaims {
 
 /// Pure: extract `spec.tokensSecret` from a CR's `kubectl get -o json`
 /// output (the shared token-registry-Secret CR convention).
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub fn cr_tokens_secret(cr_json: &serde_json::Value) -> Option<String> {
     cr_json["spec"]["tokensSecret"].as_str().map(str::to_string)
 }
 
 /// Run `kubectl get <resource> <name> -n <namespace> -o json` (optionally
 /// through `--context`) and parse the result.
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub fn kubectl_get_json(
     context: Option<&str>,
     resource: &str,
@@ -150,7 +138,6 @@ pub fn kubectl_get_json(
 /// Resolve a CR's `spec.tokensSecret` (`None` when unset). `resource_kind`
 /// is the CRD's kubectl resource name (e.g. `"lumen"`) — the CR-kind lookup
 /// convention stays each adopter's own.
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub fn resolve_cr_tokens_secret(
     context: Option<&str>,
     namespace: &str,
@@ -163,7 +150,6 @@ pub fn resolve_cr_tokens_secret(
 
 /// Pure: decode a Kubernetes Secret's `data.<key>` (base64) field into raw
 /// bytes. `kubectl get secret -o json` always base64-encodes `.data`.
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub fn secret_data_bytes(secret_json: &serde_json::Value, key: &str) -> Result<Vec<u8>> {
     use base64::Engine;
     let encoded = secret_json["data"][key]
@@ -178,7 +164,6 @@ pub fn secret_data_bytes(secret_json: &serde_json::Value, key: &str) -> Result<V
 /// (falling back to the wildcard `*` grant). Pure — unit-testable without
 /// any I/O; deterministic tie-break is not needed since callers name a
 /// specific role/collection scope for their own token.
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub fn select_token(
     registry: &HashMap<String, TokenClaims>,
     role: Role,
@@ -201,7 +186,6 @@ pub fn select_token(
 /// same schema `lumen llm --topic auth` documents), and pick a token whose
 /// role covers `role` for `collection` (or `*`). Returns `None` when no
 /// token can be resolved (e.g. auth-disabled deployments).
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 pub fn resolve_token(
     explicit_token: Option<&str>,
     context: Option<&str>,
@@ -235,7 +219,6 @@ pub fn resolve_token(
 /// duplicated rather than shared because `service-auth` depends on `cli-std`,
 /// not the reverse; the two are pinned together by
 /// `both_registry_shapes_resolve_the_same_token`.
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md#source
 fn bearer_secrets(bytes: &[u8]) -> Result<HashMap<String, TokenClaims>> {
     let doc: serde_json::Value =
         serde_json::from_slice(bytes).context("parse token-registry.json")?;

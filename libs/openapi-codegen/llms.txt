@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/openapi-codegen-libs-openapi-codegen.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Openapi Codegen Agent Context
 

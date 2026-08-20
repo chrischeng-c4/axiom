@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-error-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Error type for the frame-level [`H2cManager`](crate::H2cManager).
 
@@ -8,7 +7,6 @@ use std::time::Duration;
 
 /// Errors from the frame-level h2c connection manager.
 #[derive(Debug, thiserror::Error)]
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-error-rs.md#source
 pub enum H2cError {
     /// TCP connect / socket setup failed.
     #[error("connect {authority}: {source}")]
@@ -40,7 +38,6 @@ pub enum H2cError {
     Ambiguous { method: Method, cause: String },
 }
 
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-error-rs.md#source
 impl H2cError {
     /// Whether this error means the connection is gone (GOAWAY / reset / I/O) —
     /// the manager retries such requests on a fresh connection.
@@ -62,6 +59,5 @@ impl H2cError {
 }
 
 /// Result alias for the frame-level manager.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-error-rs.md#source
 pub type Result<T> = std::result::Result<T, H2cError>;
 // CODEGEN-END

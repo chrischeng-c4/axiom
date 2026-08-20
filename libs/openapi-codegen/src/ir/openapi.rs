@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! OpenAPI 3.0 / 3.1 / 3.2 document model.
 //!
@@ -29,7 +28,6 @@ use std::collections::BTreeMap;
 /// Root OpenAPI document.
 ///
 #[derive(Debug, Default, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct Spec {
     #[serde(default)]
     pub openapi: String,
@@ -43,7 +41,6 @@ pub struct Spec {
 }
 
 #[derive(Debug, Default, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct Info {
     #[serde(default)]
     pub title: String,
@@ -52,14 +49,12 @@ pub struct Info {
 }
 
 #[derive(Debug, Default, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct Components {
     #[serde(default)]
     pub schemas: BTreeMap<String, RefOr<Schema>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct PathItem {
     #[serde(default)]
     pub get: Option<Operation>,
@@ -86,7 +81,6 @@ pub struct PathItem {
 }
 
 #[derive(Debug, Default, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct Operation {
     #[serde(rename = "operationId", default)]
     pub operation_id: Option<String>,
@@ -108,7 +102,6 @@ pub struct Operation {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct Parameter {
     pub name: String,
     /// `query` | `path` | `header` | `cookie`. Kept as a string for tolerance.
@@ -121,7 +114,6 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Default, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct RequestBody {
     #[serde(default)]
     pub required: bool,
@@ -130,14 +122,12 @@ pub struct RequestBody {
 }
 
 #[derive(Debug, Default, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct Response {
     #[serde(default)]
     pub content: BTreeMap<String, MediaType>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct MediaType {
     #[serde(default)]
     pub schema: Option<RefOr<Schema>>,
@@ -151,14 +141,12 @@ pub struct MediaType {
 ///
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub enum RefOr<T> {
     Ref(RefObj),
     Item(Box<T>),
 }
 
 #[derive(Debug, Clone, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct RefObj {
     #[serde(rename = "$ref")]
     pub reference: String,
@@ -167,7 +155,6 @@ pub struct RefObj {
 /// `additionalProperties` may be a boolean or a schema.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub enum AdditionalProperties {
     Bool(bool),
     Schema(Box<RefOr<Schema>>),
@@ -176,7 +163,6 @@ pub enum AdditionalProperties {
 /// JSON-Schema subset used for TypeScript type mapping.
 ///
 #[derive(Debug, Default, Clone, Deserialize)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct Schema {
     #[serde(default, rename = "type")]
     pub ty: TypeField,
@@ -205,7 +191,6 @@ pub struct Schema {
     pub description: Option<String>,
 }
 
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 impl Schema {
     /// Declared types with the 3.1 `"null"` sentinel removed.
     pub fn type_names(&self) -> Vec<String> {
@@ -226,7 +211,6 @@ impl Schema {
 /// `type` keyword: a single string (3.0) or an array of strings (3.1).
 /// Normalized to a `Vec<String>`; absent → empty.
 #[derive(Debug, Default, Clone)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#source
 pub struct TypeField(pub Vec<String>);
 
 impl<'de> Deserialize<'de> for TypeField {

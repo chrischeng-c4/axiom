@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-chainable-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Chainable-output conformance — the reusable check a project's
 //! `chainable_output` baseline capability cites as its gate
@@ -34,24 +33,20 @@ use std::fmt;
 /// specific shapes that were checked and not found, so a failing test tells
 /// you what to add.
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-chainable-rs.md#source
 pub struct ChainableViolation(String);
 
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-chainable-rs.md#source
 impl ChainableViolation {
     fn new(reason: impl Into<String>) -> Self {
         Self(reason.into())
     }
 }
 
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-chainable-rs.md#source
 impl fmt::Display for ChainableViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "chainable-output violation: {}", self.0)
     }
 }
 
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-chainable-rs.md#source
 impl std::error::Error for ChainableViolation {}
 
 /// Assert that `output` (a CLI's captured stdout) carries the
@@ -80,7 +75,6 @@ impl std::error::Error for ChainableViolation {}
 /// // Missing next step entirely: a chainable-output defect.
 /// assert!(cli_std::chainable::assert_chainable(r#"{"result":"ok"}"#).is_err());
 /// ```
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-chainable-rs.md#source
 pub fn assert_chainable(output: &str) -> Result<(), ChainableViolation> {
     let trimmed = output.trim();
     if trimmed.is_empty() {
@@ -130,7 +124,6 @@ pub fn assert_chainable(output: &str) -> Result<(), ChainableViolation> {
 ///     cli_std::chainable::assert_command_chainable(&mut cmd).unwrap();
 /// }
 /// ```
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-chainable-rs.md#source
 pub fn assert_command_chainable(command: &mut std::process::Command) -> anyhow::Result<String> {
     use anyhow::Context;
     let output = command.output().context("run command under test")?;

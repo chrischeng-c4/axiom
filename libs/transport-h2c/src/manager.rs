@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `H2cManager` — a self-managing pool of frame-level h2c connections to one
 //! authority.
@@ -39,7 +38,6 @@ use crate::recommended_h2c_connections;
 
 /// Configuration for an [`H2cManager`].
 #[derive(Clone, Debug)]
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#source
 pub struct ManagerConfig {
     /// Connections kept warm at all times (opened eagerly at connect).
     pub min_connections: usize,
@@ -72,7 +70,6 @@ pub struct ManagerConfig {
     pub max_frame: u32,
 }
 
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#source
 impl Default for ManagerConfig {
     fn default() -> Self {
         Self {
@@ -93,7 +90,6 @@ impl Default for ManagerConfig {
     }
 }
 
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#source
 impl ManagerConfig {
     /// Cap `max_connections` by the `ln(concurrency)`/cores heuristic for a
     /// target peak concurrency, and use the same value as the request-admission
@@ -116,7 +112,6 @@ impl ManagerConfig {
 
 /// Aggregate snapshot of an [`H2cManager`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#source
 pub struct ManagerStats {
     /// Connections currently in the pool (healthy + not-yet-pruned dead).
     pub connections: usize,
@@ -160,12 +155,10 @@ struct Inner {
 /// # Ok(()) }
 /// ```
 #[derive(Clone)]
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#source
 pub struct H2cManager {
     inner: Arc<Inner>,
 }
 
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#source
 impl std::fmt::Debug for H2cManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("H2cManager")
@@ -175,7 +168,6 @@ impl std::fmt::Debug for H2cManager {
     }
 }
 
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#source
 impl H2cManager {
     /// Connect a manager to `endpoint` (`host:port` or `http://host:port`),
     /// opening `min_connections` eagerly and starting the supervisor.
@@ -442,7 +434,6 @@ struct Lease {
     _admission: OwnedSemaphorePermit,
 }
 
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-manager-rs.md#source
 impl Drop for Lease {
     fn drop(&mut self) {
         self.conn.release();

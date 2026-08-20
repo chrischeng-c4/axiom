@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-llm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! LLM topic provider for the shared OpenAPI codegen contract.
 
@@ -51,7 +50,6 @@ which generated files are considered public artifacts.
 };
 
 /// Return the shared generated-client topic for CLI composition.
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }

@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/cli-std/tech-design/semantic/cli-std-libs-cli-std.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # Cli Std Agent Context
 

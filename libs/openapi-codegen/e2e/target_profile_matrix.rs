@@ -1,5 +1,4 @@
 // <HANDWRITE gap="missing-generator:external-target-profile-matrix" tracker="#1569" reason="external compiler and runtime oracles require process orchestration">
-// @spec libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#external-contract
 
 use std::fs;
 use std::path::PathBuf;
