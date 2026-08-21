@@ -9,7 +9,7 @@ use super::{jit_assert_output, jit_try};
 #[test]
 fn test_jit_recursion_limit_and_stack_depth() {
     let src = r#"
-def rec(n):
+def rec(n: int):
     if n > 0:
         return rec(n - 1) + 1
     return 0
@@ -19,7 +19,7 @@ print(rec(50))
     jit_assert_output(src, "50");
 
     let src_tail = r#"
-def acc_rec(n, acc):
+def acc_rec(n: int, acc: int):
     if n <= 0:
         return acc
     return acc_rec(n - 1, acc + 2)
