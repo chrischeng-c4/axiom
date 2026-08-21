@@ -315,14 +315,14 @@ codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "mamba"
-path = "projects/mamba"
-td_path = "projects/mamba/tech-design"
-cap_path = "projects/mamba/README.md"
+path = "apps/mamba"
+td_path = "apps/mamba/tech-design"
+cap_path = "apps/mamba/README.md"
 label = "app:mamba"
 
 [[projects.workspaces]]
 name = "mamba"
-paths = ["projects/mamba/**"]
+paths = ["apps/mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p mamba"
 
@@ -370,75 +370,75 @@ verify_cold = true
 
 [[projects]]
 name = "pg"
-path = "projects/mamba/mambalibs/pgkit"
-td_path = "projects/mamba/mambalibs/pgkit/tech-design"
-cap_path = "projects/mamba/mambalibs/pgkit/pg/README.md"
+path = "apps/mamba/mambalibs/pgkit"
+td_path = "apps/mamba/mambalibs/pgkit/tech-design"
+cap_path = "apps/mamba/mambalibs/pgkit/pg/README.md"
 label = "lib:pg"
 
 [[projects.workspaces]]
 name = "pg"
-paths = ["projects/mamba/mambalibs/pgkit/pg/**"]
+paths = ["apps/mamba/mambalibs/pgkit/pg/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-pg"
 
 [[projects.workspaces]]
 name = "pg-cli"
-paths = ["projects/mamba/mambalibs/pgkit/pg-cli/**"]
+paths = ["apps/mamba/mambalibs/pgkit/pg-cli/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-pg-cli"
 
 [[projects.workspaces]]
 name = "pg-mamba"
-paths = ["projects/mamba/mambalibs/pgkit/binding/**"]
+paths = ["apps/mamba/mambalibs/pgkit/binding/**"]
 target = "rust"
 test_cmd = "cargo test -p pgkit-binding"
 
 
 [[projects]]
 name = "agentkit"
-path = "projects/mamba/mambalibs/agentkit"
-td_path = "projects/mamba/mambalibs/agentkit/tech-design"
+path = "apps/mamba/mambalibs/agentkit"
+td_path = "apps/mamba/mambalibs/agentkit/tech-design"
 label = "lib:agentkit"
 
 [[projects.workspaces]]
 name = "agentkit-core"
-paths = ["projects/mamba/mambalibs/agentkit/core/**"]
+paths = ["apps/mamba/mambalibs/agentkit/core/**"]
 target = "rust"
 test_cmd = "cargo test -p agent"
 
 [[projects.workspaces]]
 name = "agentkit-mamba"
-paths = ["projects/mamba/mambalibs/agentkit/binding/**"]
+paths = ["apps/mamba/mambalibs/agentkit/binding/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-binding"
 
 [[projects.workspaces]]
 name = "agentkit-graph"
-paths = ["projects/mamba/mambalibs/agentkit/graph/**"]
+paths = ["apps/mamba/mambalibs/agentkit/graph/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-graph"
 
 [[projects.workspaces]]
 name = "agentkit-llm"
-paths = ["projects/mamba/mambalibs/agentkit/llm/**"]
+paths = ["apps/mamba/mambalibs/agentkit/llm/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-llm"
 
 [[projects.workspaces]]
 name = "agentkit-tools"
-paths = ["projects/mamba/mambalibs/agentkit/tools/**"]
+paths = ["apps/mamba/mambalibs/agentkit/tools/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-tools"
 
 [[projects.workspaces]]
 name = "agentkit-frontend"
-paths = ["projects/mamba/mambalibs/agentkit/frontend/**"]
+paths = ["apps/mamba/mambalibs/agentkit/frontend/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-frontend"
 
 [[projects.workspaces]]
 name = "agentkit-backend"
-paths = ["projects/mamba/mambalibs/agentkit/backend/**"]
+paths = ["apps/mamba/mambalibs/agentkit/backend/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-backend"
 
@@ -786,10 +786,10 @@ verify_cold = false
 
 [[projects]]
 name = "mamba"
-path = "projects/mamba"
+path = "apps/mamba"
 
 [[projects.workspaces]]
-paths = ["projects/mamba/**"]
+paths = ["apps/mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p mamba"
 verify_cold = false

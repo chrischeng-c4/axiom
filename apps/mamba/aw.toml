@@ -1,0 +1,61 @@
+[project]
+name = "mamba"
+cap_path = "apps/mamba/README.md"
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "mamba"
+generated_from_td_digest = "sha256:939f94b54453e19ca75676125cba65a79425da2cc377a43396cefc35a34f8c43"
+
+[[aw.ec.generated.cases]]
+id = "mamba-t1-to-thread-gather-efficiency"
+capability_id = "mamba-core-semantics"
+claim_id = "parallel-to-thread-gather-preserves-every-result"
+contract_id = "MAMBA-T1-FT-GATHER-EFFICIENCY"
+category = "efficiency"
+td_ref = "apps/mamba/external-contracts/efficiency/mamba-t1-to-thread-gather-efficiency.md#mamba-t1-to-thread-gather-efficiency"
+test_path = "apps/mamba/tests/external_contracts/ec_mamba_t1_to_thread_gather_efficiency.rs"
+command = "cargo test -p mamba --release --test mamba_core_semantics_ec -- to_thread_gather_efficiency --exact"
+required_for_production = true
+assertions = [
+    "On a host exposing at least four logical CPUs, four equal CPU-bound asyncio.to_thread jobs complete with wall-clock speedup at least 1.50x versus the same jobs run serially, while returning the exact same ordered results.",
+    "During the parallel phase, measured process CPU time divided by wall time is at least 1.50, proving concurrent work used more than one core rather than cooperative single-loop scheduling.",
+    "Parallel peak RSS is no greater than 1.25 times serial peak RSS plus 16 MiB for the same workload; CPU scaling cannot be purchased with unbounded retained worker/future state.",
+    "The gate records logical CPU count, serial and parallel wall time, process CPU time, peak RSS, result digest, and speedup; unsupported hosts are explicit evidence, never a silent pass.",
+]
+
+[[aw.ec.generated.cases]]
+id = "mamba-t1-to-thread-gather-results"
+capability_id = "mamba-core-semantics"
+claim_id = "parallel-to-thread-gather-preserves-every-result"
+contract_id = "MAMBA-T1-FT-GATHER-RESULTS"
+category = "behavior"
+td_ref = "apps/mamba/external-contracts/behavior/mamba-t1-to-thread-gather-results.md#mamba-t1-to-thread-gather-results"
+test_path = "apps/mamba/tests/external_contracts/ec_mamba_t1_to_thread_gather_results.rs"
+command = "cargo test -p mamba --release --test mamba_core_semantics_ec -- to_thread_gather_results --exact"
+required_for_production = true
+assertions = [
+    "Two or more concurrently completing asyncio.to_thread calls with distinct inputs are gathered into one result list containing every expected value exactly once and in asyncio.gather input order.",
+    "No gathered slot may be None, missing, duplicated, stale, or borrowed from another worker, regardless of whether that worker finishes before or after the gather await begins.",
+    "The contract exercises the public Mamba asyncio surface from a compiled Python program; a Rust-only registry or helper test cannot satisfy this behavior gate by itself.",
+    "The CPython control program must produce the same ordered values; Mamba's intentional divergence is multicore execution, not gather result semantics.",
+]
+
+[[aw.ec.generated.cases]]
+id = "mamba-t1-to-thread-gather-stability"
+capability_id = "mamba-core-semantics"
+claim_id = "parallel-to-thread-gather-preserves-every-result"
+contract_id = "MAMBA-T1-FT-GATHER-STABILITY"
+category = "stability"
+td_ref = "apps/mamba/external-contracts/stability/mamba-t1-to-thread-gather-stability.md#mamba-t1-to-thread-gather-stability"
+test_path = "apps/mamba/tests/external_contracts/ec_mamba_t1_to_thread_gather_stability.rs"
+command = "cargo test -p mamba --release --test mamba_core_semantics_ec -- to_thread_gather_stability --exact"
+required_for_production = true
+assertions = [
+    "Across 100 rounds of eight concurrently gathered CPU-bound asyncio.to_thread calls, every round returns all eight distinct expected values exactly once with zero crash, panic, timeout, or deadlock.",
+    "The stability gate varies worker completion order and must fail on any None, missing, duplicate, stale, cross-worker, or wrong result; aggregate pass counts are insufficient evidence.",
+    "Using an OS-visible process-thread count, the worker/thread count after a 250 ms quiescence period following the final round returns to the pre-soak baseline plus at most one runtime service thread; private runtime registries are not an EC oracle.",
+    "Peak RSS is sampled in two equal soak windows; window two must be no greater than 1.10 times window one plus 8 MiB, so monotonic retained-result leaks fail the required gate.",
+]
+# AW-EC-END

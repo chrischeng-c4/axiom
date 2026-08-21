@@ -59,7 +59,7 @@ Each action is framed as a PM/QA task. Dev work is always delegated.
    - P1 iter UAF bug — if ready for another attempt
    - P2 stdlib modules — subagent-friendly batch work
    - Epic 2 package manager phases — when Epic 1 is clear
-2. Find the matching spec in `.aw/tech-design/projects/mamba/`. If no spec exists for the target module, create one.
+2. Find the matching spec in `.aw/tech-design/apps/mamba/`. If no spec exists for the target module, create one.
 3. **Update the spec** to describe the behavior that needs to be implemented:
    - Add missing R-groups, pub fn signatures, acceptance criteria
    - If the spec is an orphan change-spec (merge_strategy:extend/new, self-referential), note it but focus on the actual module spec

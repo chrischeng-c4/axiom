@@ -5,7 +5,7 @@
 //! path==record invariant (lint) keeps the tree a queryable database.
 //!
 //! Inherited from mamba's fixture-record contract
-//! (`projects/mamba/tests/harness/cpython/conventions/FIXTURE-LAYOUT.md`).
+//! (`apps/mamba/tests/harness/cpython/conventions/FIXTURE-LAYOUT.md`).
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

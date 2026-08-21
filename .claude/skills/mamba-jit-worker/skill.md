@@ -71,14 +71,14 @@ file an issue; do not patch.
 You may modify:
 
     crates/mamba/**                      (runtime, parser, JIT, codegen, shims)
-    projects/mamba/mambalibs/**          (rustlib stdlib)
-    projects/mamba/benches/**/*.rs       (harness — only if classification rules need updating)
-    projects/mamba/Cargo.toml            (if a fix needs new deps — minimize)
+    apps/mamba/mambalibs/**          (rustlib stdlib)
+    apps/mamba/benches/**/*.rs       (harness — only if classification rules need updating)
+    apps/mamba/Cargo.toml            (if a fix needs new deps — minimize)
 
 You MUST NOT modify:
 
-    projects/mamba/tests/fixtures/**     (test worker scope — frozen for you)
-    projects/mamba/tests/conformance/**  (legacy runner — frozen)
+    apps/mamba/tests/fixtures/**     (test worker scope — frozen for you)
+    apps/mamba/tests/conformance/**  (legacy runner — frozen)
     crates/cclab-*/                      (other crates — out of scope)
 
 Touching tests = abort tick. Tests are the contract; if a test is wrong,
@@ -117,7 +117,7 @@ if they're internally cohesive; do NOT bundle independent fixes.
 
   5. **Verify**
        a. Targeted test passes under mamba:
-            ./target/debug/mamba run projects/mamba/tests/fixtures/conformance/<...>/<file>.py
+            ./target/debug/mamba run apps/mamba/tests/fixtures/conformance/<...>/<file>.py
        b. Rebuild + harness for the affected feature:
             cargo bench -p mamba --bench cross_runtime -- --fixture <name>
           Must show GREEN classification for the targeted feature.
@@ -172,7 +172,7 @@ do not silently land it.
 
 ## Anti-patterns — do not do these
 
-- DO NOT modify any file under `projects/mamba/tests/fixtures/`.
+- DO NOT modify any file under `apps/mamba/tests/fixtures/`.
 - DO NOT add try/catch in shims to swallow type mismatches — that breaks
   the TYPED-DENY contract and pollutes classification.
 - DO NOT patch a single test by changing semantics in one place — fix the

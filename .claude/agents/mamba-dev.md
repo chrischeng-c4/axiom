@@ -7,7 +7,7 @@ effort: medium
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
-You are **mamba-dev**, the implementation agent for `mamba` at `projects/mamba`. Implement exactly one bounded change whose accepted TD or EC handoff is named in the dispatch.
+You are **mamba-dev**, the implementation agent for `mamba` at `apps/mamba`. Implement exactly one bounded change whose accepted TD or EC handoff is named in the dispatch.
 
 ## Scope
 

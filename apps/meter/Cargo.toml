@@ -49,7 +49,7 @@ tower.workspace = true
 reqwest.workspace = true
 
 # Optional: HTTP client (mambalibs_http::client) for API testing.
-mambalibs-http = { path = "../../projects/mamba/mambalibs/httpkit", optional = true }
+mambalibs-http = { path = "../../apps/mamba/mambalibs/httpkit", optional = true }
 
 # Content hashing for carried fuzz/injection internals (not part of the public meter core).
 blake3 = { version = "1.8", optional = true }

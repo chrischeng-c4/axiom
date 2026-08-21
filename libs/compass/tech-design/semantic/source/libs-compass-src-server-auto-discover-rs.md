@@ -336,7 +336,7 @@ mod tests {
         // Rust workspace at root
         std::fs::write(tmp.path().join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
         // Python project
-        let py = tmp.path().join("projects/mamba/mambalibs/httpkit");
+        let py = tmp.path().join("apps/mamba/mambalibs/httpkit");
         std::fs::create_dir_all(&py).unwrap();
         std::fs::write(py.join("pyproject.toml"), "[project]\n").unwrap();
         // TypeScript project
@@ -365,7 +365,7 @@ mod tests {
             ScopeConfig {
                 id: "py-api".into(),
                 lang: ScopeLang::Python,
-                root: PathBuf::from("projects/mamba/mambalibs/httpkit"),
+                root: PathBuf::from("apps/mamba/mambalibs/httpkit"),
                 interpreter: None,
                 search_paths: vec![],
                 marker: None,
@@ -373,7 +373,7 @@ mod tests {
         ];
 
         // File in Python project → py-api scope
-        let py_file = Path::new("projects/mamba/mambalibs/httpkit/main.py");
+        let py_file = Path::new("apps/mamba/mambalibs/httpkit/main.py");
         let scope = resolve_scope(py_file, &scopes).unwrap();
         assert_eq!(scope.id, "py-api");
 

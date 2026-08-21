@@ -8,8 +8,8 @@ labels: ["project:mamba", "axis:1", "type:test"]
 Epic: #3331
 
 ## Seed location
-Manifest case under `projects/mamba/tests/harness/cpython/config/manifests/<bucket>/<lib>.toml`;
-generated fixture under `projects/mamba/tests/cpython/<dimension>/<bucket>/<lib>/<case>.py`.
+Manifest case under `apps/mamba/tests/harness/cpython/config/manifests/<bucket>/<lib>.toml`;
+generated fixture under `apps/mamba/tests/cpython/<dimension>/<bucket>/<lib>/<case>.py`.
 
 ## Surface (what the seed asserts)
 - [ ] <feature 1 / API 1>
