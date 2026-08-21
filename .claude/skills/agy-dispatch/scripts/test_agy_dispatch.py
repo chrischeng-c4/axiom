@@ -815,13 +815,13 @@ class DispatchControllerTest(unittest.TestCase):
     def test_extracts_denied_run_command_from_protobuf_payload(self) -> None:
         payload = (
             b"\x08\x15garbage"
-            b'{"CommandLine":"rg -c NATIVE_FUNC_ADDRS\\\\.with projects/mamba",'
+            b'{"CommandLine":"rg -c NATIVE_FUNC_ADDRS\\\\.with apps/mamba",'
             b'"Cwd":"/repo","WaitMsBeforeAsync":5000}'
             b"\x00trailer"
         )
         self.assertEqual(
             agy_dispatch.extract_run_command_lines(payload),
-            [r"rg -c NATIVE_FUNC_ADDRS\.with projects/mamba"],
+            [r"rg -c NATIVE_FUNC_ADDRS\.with apps/mamba"],
         )
 
     def write_conversation(

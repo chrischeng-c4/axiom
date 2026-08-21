@@ -39,7 +39,7 @@ flowchart TD
 
 ```yaml
 changes:
-  - path: projects/mamba/src/runtime/stdlib/mmap_mod.rs
+  - path: apps/mamba/src/runtime/stdlib/mmap_mod.rs
     action: modify
     section: logic
     impl_mode: hand-written

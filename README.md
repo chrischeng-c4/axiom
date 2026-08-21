@@ -22,7 +22,7 @@ details.
 | [arena](apps/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
 | [guard](apps/guard/README.md) | Security posture gate for the cclab ecosystem. |
 | [rig](apps/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
-| [mamba](projects/mamba/README.md) | Force-typed Python compiler. |
+| [mamba](apps/mamba/README.md) | Force-typed Python compiler. |
 | [sift](projects/sift/README.md) | Sift is the GCP/GKE-first operational event platform in the Axiom stack. |
 | [lumen](apps/lumen/README.md) | A K8s-native, log-replicated search specialist. |
 | [jet](apps/jet/README.md) | Jet is a Rust-native frontend toolchain. |
@@ -93,7 +93,7 @@ an installer yet are marked _coming soon_.
 | [keep](apps/keep/README.md) | `keep` | _coming soon_ |
 | [loom](apps/loom/README.md) | `loom` | _coming soon_ |
 | [lumen](apps/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/lumen/install.sh \| sh` |
-| [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
+| [mamba](apps/mamba/README.md) | `mamba` | _coming soon_ |
 | [meter](apps/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/meter/install.sh \| sh` |
 | [pgpool](apps/pgpool/README.md) | `pgpool` | _coming soon_ |
 | [preview](apps/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/preview/install.sh \| sh` |

@@ -113,7 +113,7 @@ tests/
 └── governance/            meta-gates over manifests, profiles, CI policy, inventory shape
 ```
 
-(`projects/mamba/tests/` is the reference adopter: `cpython/` pins the
+(`apps/mamba/tests/` is the reference adopter: `cpython/` pins the
 CPython-replacement contract, `mambalibs/` the native-library contracts,
 `pkgmgr/` the CLI, `governance/` the meta-gates. The same first-split-by-domain
 shape applies to specs, configs, and generated trees.)
@@ -193,7 +193,7 @@ The mechanics that make a tree fully tooled — its layout spec, the
 conventions (hermetic per-file headers, oracle verification, performance
 baselines) — belong **with the tree**, not in this general guide. For the mamba
 CPython suite that source of truth is
-`projects/mamba/tests/cpython/conventions/FIXTURE-LAYOUT.md`: the six-dimension
+`apps/mamba/tests/cpython/conventions/FIXTURE-LAYOUT.md`: the six-dimension
 table, the `fixture_gen` → fill → `fixture_lint` loop, PEP 723 `[tool.mamba]`
 headers, the CPython oracle, and the perf-baseline flow.
 
@@ -1393,7 +1393,7 @@ The project row lost a sibling for the same reason. `<project>/CAPABILITIES.md`
 was its own META-doc until 2026-08-17, when all 62 of them were deleted and the
 five that carried content merged into their project's `README.md`. The doc type
 failed on its own evidence: 57 of the 62 were the identical empty template with
-a zero-row Capability Index, the two largest (`apps/relay`, `projects/mamba`)
+a zero-row Capability Index, the two largest (`apps/relay`, `apps/mamba`)
 had bypassed the template entirely, and `libs/service-http/CAPABILITIES.md`
 stated in its own prose that the real contract lived in the README. Nothing
 mechanical had ever read one — a repo-wide grep of `plugins/`, `.claude/`, and
