@@ -76,6 +76,20 @@ Then read `CLAUDE.md`. It holds the work-item lifecycle, the per-phase write
 roots, and the rules that refuse against them, and it is the single copy of
 those rules — they are deliberately not repeated here.
 
+### Prefer AGY for bounded delegation
+
+When a bounded task can use an external worker, prefer one fresh
+`GPT-5.6 Luna` subagent at medium reasoning with `$agy-dispatch`. Create that
+subagent after the user authorizes the exact headless AGY payload. Make it
+directly inherit that user turn. Do not reuse an older subagent or forward the
+authorization through a controller message.
+
+The subagent only translates the frozen request and runs the AGY adapter. The
+controller owns the contract, oracle, worktree, independent verification,
+acceptance, Git, tracker changes, publication, and cleanup. Follow
+`$agy-dispatch` as the source of truth for model, Project, worktree, permission,
+snapshot, command, and write rules.
+
 One thing that will otherwise waste your time: `aw` names the plugin at
 `plugins/aw` and nothing else. The Rust application that used to carry the name
 is deleted and its binary is uninstalled, so an `aw` verb you reach for fails
