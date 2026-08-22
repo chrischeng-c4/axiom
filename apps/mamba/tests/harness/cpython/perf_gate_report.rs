@@ -119,12 +119,7 @@ struct PinReport {
 }
 
 impl PinReport {
-    fn fixture_error(
-        path: String,
-        issue: Option<u64>,
-        lib: Option<String>,
-        detail: String,
-    ) -> Self {
+    fn fixture_error(path: String, issue: Option<u64>, lib: Option<String>, detail: String) -> Self {
         PinReport {
             path,
             issue,
@@ -215,20 +210,10 @@ fn grade(rel_path: String, pin: &Pin, cpy: Measurement, mb: Measurement) -> PinR
 fn parse_pin(toml_path: &Path) -> Result<(String, Pin), PinReport> {
     let rel_path = rel_path_string(toml_path);
     let raw = std::fs::read_to_string(toml_path).map_err(|err| {
-        PinReport::fixture_error(
-            rel_path.clone(),
-            None,
-            None,
-            format!("cannot read pin toml: {err}"),
-        )
+        PinReport::fixture_error(rel_path.clone(), None, None, format!("cannot read pin toml: {err}"))
     })?;
     let pin: Pin = toml::from_str(&raw).map_err(|err| {
-        PinReport::fixture_error(
-            rel_path.clone(),
-            None,
-            None,
-            format!("cannot parse pin toml: {err}"),
-        )
+        PinReport::fixture_error(rel_path.clone(), None, None, format!("cannot parse pin toml: {err}"))
     })?;
     Ok((rel_path, pin))
 }
@@ -306,22 +291,18 @@ fn evaluate_pin(rel_path: String, pin: Pin, toml_path: &Path) -> PinReport {
             }
             cpython_measurement_from_baseline(&baseline)
         }
-        Err(NoBaselineReason::CrossHost) => {
+        Err(reason @ (NoBaselineReason::CrossHost | NoBaselineReason::NoHost)) => {
+            // Deliberately NOT `require_gradable_baseline`: a report records
+            // ungradable pins as data. `perf_pin.rs` is the failing gate.
             return PinReport::no_baseline(
                 rel_path,
                 Some(pin.issue),
                 Some(pin.lib.clone()),
-                "cross-host: baseline recorded on a different host (or a legacy row with no \
-                 recorded host); ratios are not portable across machines"
-                    .to_string(),
+                format!("{}: {}", reason.as_str(), reason.explain()),
             );
         }
         Err(NoBaselineReason::Missing) => {
-            if let Some(imp) = pin
-                .prereq_imports
-                .iter()
-                .find(|imp| !python3_can_import(imp))
-            {
+            if let Some(imp) = pin.prereq_imports.iter().find(|imp| !python3_can_import(imp)) {
                 return PinReport::no_baseline(
                     rel_path,
                     Some(pin.issue),
@@ -345,12 +326,7 @@ fn evaluate_pin(rel_path: String, pin: Pin, toml_path: &Path) -> PinReport {
             )
         }
     };
-    let mb = measure_n(
-        mamba_bin_str,
-        &["run", fixture_str.as_str()],
-        samples,
-        timeout,
-    );
+    let mb = measure_n(mamba_bin_str, &["run", fixture_str.as_str()], samples, timeout);
 
     grade(rel_path, &pin, cpy, mb)
 }
@@ -414,10 +390,7 @@ fn write_sidecar(reports: &[PinReport]) {
     for report in reports {
         *counts.entry(report.verdict.as_str()).or_insert(0) += 1;
     }
-    let non_pass: Vec<&PinReport> = reports
-        .iter()
-        .filter(|r| r.verdict != Verdict::Pass)
-        .collect();
+    let non_pass: Vec<&PinReport> = reports.iter().filter(|r| r.verdict != Verdict::Pass).collect();
     let generated_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -483,11 +456,7 @@ fn write_sidecar(reports: &[PinReport]) {
 fn perf_pins_full_gate_report() {
     let dir = pins_dir();
     let pins = collect_files(&dir, ".toml");
-    assert!(
-        !pins.is_empty(),
-        "expected at least one perf pin under {}",
-        dir.display()
-    );
+    assert!(!pins.is_empty(), "expected at least one perf pin under {}", dir.display());
 
     let mut reports: Vec<PinReport> = Vec::with_capacity(pins.len());
     for toml_path in &pins {
@@ -533,10 +502,7 @@ fn perf_pins_full_gate_report() {
     for report in &reports {
         *counts.entry(report.verdict.as_str()).or_insert(0) += 1;
     }
-    let non_pass: Vec<&PinReport> = reports
-        .iter()
-        .filter(|r| r.verdict != Verdict::Pass)
-        .collect();
+    let non_pass: Vec<&PinReport> = reports.iter().filter(|r| r.verdict != Verdict::Pass).collect();
 
     if !non_pass.is_empty() {
         let summary = non_pass

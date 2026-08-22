@@ -118,7 +118,7 @@ probe     = "callable"
 [[case]]
 dimension = "surface"
 case      = "random_class_is_callable"
-subject   = "random.Random"
+subject   = "random.Random.sample"
 kind      = "mechanical"
 probe     = "callable"
 module    = "random"
@@ -258,10 +258,26 @@ source    = "Lib/test/test_random.py"
 
 [[case]]
 dimension = "behavior"
+case      = "sample_accepts_range_rejects_range_iterator_without_side_effects"
+subject   = "random.sample"
+kind      = "semantic"
+intent    = "random.sample(range(5), 2) remains accepted as [3, 0]; Random(1234).sample(iter(range(5)), 2) raises TypeError while the iterator remains at 0 and the following getrandbits(32) sentinel remains 4150886329"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
 case      = "module_helpers_share_default_generator"
 subject   = "random.seed"
 kind      = "semantic"
 intent    = "module-level helpers share one default generator: random.seed(2024) then [random.random() for _ in range(5)] replays identically after re-seeding"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_sample_heap_elements_match_cpython"
+subject   = "random.Random.sample"
+kind      = "semantic"
+intent    = "fresh Random(1234) sample(list('abcdef'), 3) returns ['d','a','e'] and preserves the following getrandbits(32) sentinel 389311301"
 source    = "Lib/test/test_random.py"
 
 [[case]]
@@ -279,6 +295,33 @@ case      = "seed_does_not_mutate_bytearray_buffer"
 subject   = "random.Random.seed"
 kind      = "semantic"
 intent    = "seeding from a bytearray must not mutate the caller's buffer (bug 44018): seed(bytearray(b'1234')) leaves the bytearray unchanged"
+module    = "random"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seed_rejects_unsupported_object_without_state_change"
+subject   = "random.Random.seed"
+kind      = "semantic"
+intent    = "unsupported user objects are rejected before state mutation"
+module    = "random"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seed_rejects_opaque_handles_without_state_change"
+subject   = "random.Random.seed"
+kind      = "semantic"
+intent    = "Random rejects object(), range(3), and iter(range(3)) seeds with TypeError; failed instance seeds preserve the 1234 stream and leave the iterator unconsumed, while a genuine large integer seed remains accepted"
+module    = "random"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seed_endpoint_opaque_values_and_large_int_matrix"
+subject   = "random.seed"
+kind      = "semantic"
+intent    = "five endpoint type-wall checks retain literal eight-draw getrandbits(64) baselines for all bad shapes; 29 immutable literal positive seed rows (including signed endpoint boundaries and signed seed_a/seed_b) each match independently at module seed, Random constructor, fixed rng.seed, DerivedRandom constructor, and DerivedRandom.seed, while None is acceptance-only"
 module    = "random"
 source    = "Lib/test/test_random.py"
 
@@ -678,4 +721,148 @@ case      = "seeded_simulation_is_reproducible"
 subject   = "random"
 kind      = "semantic"
 intent    = "a Monte-Carlo style simulation driven by a seeded Random (dice rolls, weighted event picks, a shuffled deck draw, and a without-replacement sample) is fully reproducible: re-running the same seeded pipeline reproduces an identical aggregate summary"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_int_random_stream_matches_cpython"
+subject   = "random.Random.random"
+kind      = "semantic"
+module    = "random"
+intent    = "exact CPython 3.12 integer-seed MT stream parity for 0, 42, 1234, -1, 2**40, 10**20, and the 625-word boundary seed (1 << (32 * 624)) + 1"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_text_stream_matches_cpython"
+subject   = "random.Random.seed"
+kind      = "semantic"
+module    = "random"
+intent    = "exact CPython 3.12 version-2 seeded random() stream parity for str, bytes, and bytearray payload abc, with bytearray input preserved"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_getrandbits_stream_matches_cpython"
+subject   = "random.Random.getrandbits"
+kind      = "semantic"
+module    = "random"
+intent    = "one Random(1234) consumes CPython MT words for getrandbits widths 1, 8, 16, 32, and 64, returning the exact stream including a non-inline 64-bit integer"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_gauss_stream_matches_cpython"
+subject   = "random.Random.gauss"
+kind      = "semantic"
+module    = "random"
+intent    = "exact CPython 3.12 Random.gauss Box-Muller stream and per-instance cached-second-variate parity for seed 1234, seed 42, and interleaved same-seed handles"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_randrange_randint_stream_matches_cpython"
+subject   = "random.Random.randrange"
+kind      = "semantic"
+module    = "random"
+intent    = "exact CPython 3.12 seeded randint and randrange rejection streams for Random(1234), including six randint(1, 100) draws, six randrange(10, 100, 3) draws with a positive stepped ceiling, and twenty randrange(0, 5, 2) draws whose values have cardinality three"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_choice_stream_matches_cpython"
+subject   = "random.Random.choice"
+kind      = "semantic"
+module    = "random"
+intent    = "fresh Random(1234) choice(list('abcdef')) produces six exact choices ['d','a','a','a','e','a'], then getrandbits(32) returns 2884343186, exercising the list-only _randbelow path"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_choices_unicode_string_matches_cpython"
+subject   = "random.Random.choices"
+kind      = "semantic"
+module    = "random"
+intent    = "fresh Random(1234) choices('aβcδ', k=6) produces ['δ','β','a','δ','δ','c'] and preserves the following getrandbits(32) sentinel 2884343186, exercising seeded public Unicode-string materialization and stream control"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_choices_heap_integer_range_matches_cpython"
+subject   = "random.Random.choices"
+kind      = "semantic"
+module    = "random"
+intent    = "fresh Random(1234) choices(range(1 << 60, (1 << 60) + 4), k=6) produces [1152921504606846979,1152921504606846977,1152921504606846976,1152921504606846979,1152921504606846979,1152921504606846978] and preserves the following getrandbits(32) sentinel 2884343186, exercising seeded public heap-integer-range materialization and stream control"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_shuffle_stream_matches_cpython"
+subject   = "random.Random.shuffle"
+kind      = "semantic"
+module    = "random"
+intent    = "fresh Random(1234) shuffle(range(8)) returns None and mutates the list to [1,3,2,4,5,6,0,7], then getrandbits(32) returns 422719469"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_sample_stream_matches_cpython"
+subject   = "random.Random.sample"
+kind      = "semantic"
+module    = "random"
+intent    = "one fresh Random(1234) sequentially samples range(10),4 to [7,1,0,9] then [9,0,1,8] with sentinel getrandbits(32) 3292010550; a separate fresh Random(1234) samples range(22),5 to [14,3,0,2,18] with sentinel 150006740, covering both pool and selected-set paths"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_negative_randrange_stream_matches_cpython"
+subject   = "random.Random.randrange"
+kind      = "semantic"
+module    = "random"
+intent    = "exact negative-step randrange ceiling cardinality and rejection consumption for two fresh Random(1234) streams, with no panic on descending ranges"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_sample_unicode_string_matches_cpython"
+subject   = "random.Random.sample"
+kind      = "semantic"
+module    = "random"
+intent    = "fresh Random(1234) sample('aβcδ', 3) returns ['δ','a','c'] and preserves the following getrandbits(32) sentinel 389311301"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "seeded_sample_heap_integer_range_matches_cpython"
+subject   = "random.Random.sample"
+kind      = "semantic"
+module    = "random"
+intent    = "fresh Random(1234) sample(range(1 << 60, (1 << 60) + 22), 5) returns [1152921504606846990,1152921504606846979,1152921504606846976,1152921504606846978,1152921504606846994] and preserves the following getrandbits(32) sentinel 150006740"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "sample_counts_zero_draw_control"
+subject   = "random.Random.sample"
+kind      = "semantic"
+module    = "random"
+intent    = "fresh Random(1234) sample('aβcδ', 0, counts=[2,1,3,2]) returns [] without consuming the following getrandbits(32) sentinel 4150886329"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "random_error_helpers_do_not_consume_rng"
+subject   = "random.Random"
+kind      = "semantic"
+module    = "random"
+intent    = "one Random(1234) catches TypeError from sample(bad_population, 1) with bad_population: Any = 1, ValueError from sample([], 1), and IndexError from choice([]), then asserts the following getrandbits(32) sentinel 4150886329"
+source    = "Lib/test/test_random.py"
+
+[[case]]
+dimension = "behavior"
+case      = "sample_rejects_reversed_iterator_without_draw"
+subject   = "random.Random.sample"
+kind      = "semantic"
+module    = "random"
+intent    = "sequence wall: Random(1234).sample(reversed((\"left\", \"right\")), 1) raises the exact TypeError before any draw, preserving the following getrandbits(32) sentinel 4150886329"
 source    = "Lib/test/test_random.py"

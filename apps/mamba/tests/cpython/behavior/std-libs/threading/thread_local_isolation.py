@@ -19,7 +19,7 @@ import threading
 
 _local = threading.local()
 _local.val = "main"
-_result = []
+_result: list[str] = []
 
 def _check_local():
     # A new thread starts without _local.val.

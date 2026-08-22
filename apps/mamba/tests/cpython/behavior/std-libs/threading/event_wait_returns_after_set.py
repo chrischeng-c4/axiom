@@ -20,7 +20,7 @@ import threading
 import time
 
 _ev = threading.Event()
-_ev_result = []
+_ev_result: list[str] = []
 
 def _waiter():
     _ev.wait()

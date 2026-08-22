@@ -51,9 +51,10 @@ use datatest_stable::harness;
 #[path = "harness_common.rs"]
 mod common;
 use common::{
-    cpython_measurement_from_baseline, evaluate_mem_gate, fixture_sha256, load_same_host_baseline,
-    mamba_bin, measure_n, python3_available, python3_can_import, NoBaselineReason, Pin,
-    DEFAULT_PIN_TIMEOUT_SECS, MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES,
+    baseline_required, cpython_measurement_from_baseline, evaluate_mem_gate, fixture_sha256,
+    load_same_host_baseline, mamba_bin, measure_n, python3_available, python3_can_import,
+    require_gradable_baseline, NoBaselineReason, Pin, DEFAULT_PIN_TIMEOUT_SECS,
+    MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES,
 };
 
 fn manifest_dir() -> PathBuf {
@@ -82,6 +83,17 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     );
 
     if !python3_available() {
+        // #3070: same false-green class as the cross-host skip below — with the
+        // require flag set, "no CPython to compare against" is a hard failure,
+        // not a passing skip.
+        assert!(
+            !baseline_required(),
+            "MAMBA_REQUIRE_CPYTHON_PERF_BASELINE is set, so #{} {} must be \
+             graded, but python3 is not available on this host, so there is no \
+             CPython side to grade against.",
+            pin.issue,
+            pin.lib
+        );
         eprintln!(
             "python3 not available; skipping #{} {} perf gate (mamba-only \
              run is meaningless without the CPython baseline)",
@@ -99,16 +111,20 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     // concern since both sides are measured live on this same host).
     let baseline = match load_same_host_baseline(toml_path) {
         Ok(baseline) => Some(baseline),
-        Err(NoBaselineReason::CrossHost) => {
+        Err(reason @ (NoBaselineReason::CrossHost | NoBaselineReason::NoHost)) => {
+            // #3070: the skip below is a default-mode convenience, never a way
+            // to report `ok` when the caller demanded grading. Assert first.
+            require_gradable_baseline(reason, pin.issue, &pin.lib, toml_path);
             eprintln!(
-                "#{} {} CPython perf baseline was recorded on a different host \
-                 (or is a legacy pre-host-tracking row with no recorded host); \
+                "#{} {} CPython perf baseline is not gradable here ({}): {}. \
                  CPU/RSS ratios are not portable across machines, so this pin is \
                  skipped rather than graded against non-portable data. Re-record \
                  on this host with `python3 tests/harness/cpython/tools/perf_baseline.py \
                  record --pin {}`.",
                 pin.issue,
                 pin.lib,
+                reason.as_str(),
+                reason.explain(),
                 toml_path.display()
             );
             return Ok(());

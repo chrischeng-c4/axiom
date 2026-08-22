@@ -473,7 +473,6 @@ case      = "concurrent_mutation_stress"
 subject   = "threading.Thread"
 kind      = "semantic"
 module    = "threading"
-xfail     = "shared-state SIGABRT under concurrent mutation (project_mamba_conformance_blockers)"
 intent    = "~9 worker threads hammer a shared dict + list (insert/pop/slice-del/clear) while the main thread drives gc.collect() across the racing containers; the process must not crash or deadlock and both structures stay type-valid and usable afterward"
 
 # ===========================================================================
