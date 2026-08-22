@@ -16,8 +16,8 @@ const CELL_ID_BASE: i64 = 1i64 << 38;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ScopedSymbolKey {
-    module: String,
-    symbol: i64,
+    pub module: Arc<str>,
+    pub symbol: i64,
 }
 
 /// A closure object — a function paired with its captured environment.
@@ -59,8 +59,6 @@ pub struct MbClosure {
 // Thread-local closure storage — Vec-indexed by closure ID for O(1) lookup (#1199).
 // ID N maps to index N-1 (IDs start at 1 for compatibility with MbValue::from_int).
 thread_local! {
-    static CLOSURES: std::cell::RefCell<Vec<Option<MbClosure>>> =
-        std::cell::RefCell::new(Vec::new());
     static ACTIVE_CELLS: std::cell::RefCell<HashMap<ScopedSymbolKey, MbValue>> =
         std::cell::RefCell::new(HashMap::new());
     static ACTIVE_MODULE_NAMES: std::cell::RefCell<Vec<String>> =
@@ -132,10 +130,9 @@ fn closure_slot_index(raw: i64) -> Option<usize> {
 fn with_live_closure<R>(closure_handle: MbValue, read: impl FnOnce(&MbClosure) -> R) -> Option<R> {
     let id = closure_handle.as_int()?;
     let idx = closure_slot_index(id)?;
-    CLOSURES.with(|closures| {
-        let vec = closures.borrow();
-        vec.get(idx).and_then(|slot| slot.as_ref()).map(read)
-    })
+    let state = super::program_state::current_program_state();
+    let vec = state.closures.read().ok()?;
+    vec.get(idx).and_then(|slot| slot.as_ref()).map(read)
 }
 
 fn with_live_closure_mut<R>(
@@ -144,23 +141,21 @@ fn with_live_closure_mut<R>(
 ) -> Option<R> {
     let id = closure_handle.as_int()?;
     let idx = closure_slot_index(id)?;
-    CLOSURES.with(|closures| {
-        let mut vec = closures.borrow_mut();
-        vec.get_mut(idx).and_then(|slot| slot.as_mut()).map(write)
-    })
+    let state = super::program_state::current_program_state();
+    let mut vec = state.closures.write().ok()?;
+    vec.get_mut(idx).and_then(|slot| slot.as_mut()).map(write)
 }
 
 fn allocate_closure_slot(closure: MbClosure) -> MbValue {
-    CLOSURES.with(|closures| {
-        let mut vec = closures.borrow_mut();
-        if let Some((idx, slot)) = vec.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
-            *slot = Some(closure);
-            return MbValue::from_int(CLOSURE_HANDLE_BASE + idx as i64);
-        }
-        let id = CLOSURE_HANDLE_BASE + vec.len() as i64;
-        vec.push(Some(closure));
-        MbValue::from_int(id)
-    })
+    let state = super::program_state::current_program_state();
+    let mut vec = state.closures.write().unwrap();
+    if let Some((idx, slot)) = vec.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
+        *slot = Some(closure);
+        return MbValue::from_int(CLOSURE_HANDLE_BASE + idx as i64);
+    }
+    let id = CLOSURE_HANDLE_BASE + vec.len() as i64;
+    vec.push(Some(closure));
+    MbValue::from_int(id)
 }
 
 fn teardown_closure(closure: MbClosure) {
@@ -184,36 +179,51 @@ fn teardown_closure(closure: MbClosure) {
 fn force_take_live_closure(closure_handle: MbValue) -> Option<MbClosure> {
     let id = closure_handle.as_int()?;
     let idx = closure_slot_index(id)?;
-    CLOSURES.with(|closures| {
-        let mut vec = closures.borrow_mut();
-        if idx < vec.len() {
-            vec[idx].take()
-        } else {
-            None
-        }
-    })
+    let state = super::program_state::current_program_state();
+    let mut vec = state.closures.write().ok()?;
+    if idx < vec.len() {
+        vec[idx].take()
+    } else {
+        None
+    }
 }
 
 fn dec_ref_or_take_live_closure(closure_handle: MbValue) -> Option<Option<MbClosure>> {
     let id = closure_handle.as_int()?;
     let idx = closure_slot_index(id)?;
-    CLOSURES.with(|closures| {
-        let mut vec = closures.borrow_mut();
-        let slot = vec.get_mut(idx)?;
-        let closure = slot.as_mut()?;
-        if closure.refs > 1 {
-            closure.refs -= 1;
-            Some(None)
+    let state = super::program_state::current_program_state();
+    let mut vec = state.closures.write().ok()?;
+    let slot = vec.get_mut(idx)?;
+    let closure = slot.as_mut()?;
+    if closure.refs > 1 {
+        closure.refs -= 1;
+        Some(None)
+    } else {
+        Some(slot.take())
+    }
+}
+
+static MAIN_MODULE_NAME: std::sync::OnceLock<Arc<str>> = std::sync::OnceLock::new();
+
+fn main_module_name() -> Arc<str> {
+    MAIN_MODULE_NAME
+        .get_or_init(|| Arc::from("__main__"))
+        .clone()
+}
+
+pub(crate) fn current_active_module_name_arc() -> Arc<str> {
+    ACTIVE_MODULE_NAMES.with(|names| {
+        let b = names.borrow();
+        if let Some(s) = b.last() {
+            Arc::from(s.as_str())
         } else {
-            Some(slot.take())
+            main_module_name()
         }
     })
 }
 
 pub(crate) fn current_active_module_name() -> String {
-    ACTIVE_MODULE_NAMES
-        .with(|names| names.borrow().last().cloned())
-        .unwrap_or_else(|| "__main__".to_string())
+    current_active_module_name_arc().to_string()
 }
 
 pub(crate) fn active_module_matches(name: &str) -> bool {
@@ -233,7 +243,7 @@ pub(crate) fn caller_active_module_name() -> String {
 
 fn scoped_symbol_key(symbol: i64) -> ScopedSymbolKey {
     ScopedSymbolKey {
-        module: current_active_module_name(),
+        module: current_active_module_name_arc(),
         symbol,
     }
 }
@@ -307,7 +317,7 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
         name: closure_name,
         qualname: None,
         doc: None,
-        module: None,
+        module: Some(current_active_module_name()),
         wrapped: None,
         captures: captured_vars,
         capture_ids: Vec::new(),
@@ -338,7 +348,7 @@ pub fn mb_closure_new_with_cells(name: MbValue, func: MbValue, capture_ids: MbVa
         name: closure_name,
         qualname: None,
         doc: None,
-        module: None,
+        module: Some(current_active_module_name()),
         wrapped: None,
         captures,
         capture_ids: ids,
@@ -359,29 +369,20 @@ pub fn mb_closure_set_defaults(closure_handle: MbValue, defaults_list: MbValue) 
 }
 
 fn set_closure_defaults_values(closure_handle: MbValue, vals: Vec<MbValue>) {
-    if let Some(id) = closure_handle.as_int() {
-        let old_defaults = CLOSURES.with(|closures| {
-            let mut vec = closures.borrow_mut();
-            let Some(idx) = closure_slot_index(id) else {
-                return Vec::new();
-            };
-            if let Some(Some(c)) = vec.get_mut(idx) {
-                let old = std::mem::take(&mut c.defaults);
-                c.defaults = vals;
-                return old;
-            }
-            Vec::new()
-        });
-        for old_val in old_defaults {
-            unsafe {
-                super::rc::release_if_ptr(old_val);
-            }
+    let old_defaults = with_live_closure_mut(closure_handle, |c| {
+        let old = std::mem::take(&mut c.defaults);
+        c.defaults = vals;
+        old
+    }).unwrap_or_default();
+    for old_val in old_defaults {
+        unsafe {
+            super::rc::release_if_ptr(old_val);
         }
-        if let Some(defaults) = closure_defaults(closure_handle).get(..) {
-            for &new_val in defaults {
-                unsafe {
-                    super::rc::retain_if_ptr(new_val);
-                }
+    }
+    if let Some(defaults) = closure_defaults(closure_handle).get(..) {
+        for &new_val in defaults {
+            unsafe {
+                super::rc::retain_if_ptr(new_val);
             }
         }
     }
@@ -391,72 +392,33 @@ fn set_closure_defaults_values(closure_handle: MbValue, vals: Vec<MbValue>) {
 /// a function/lambda has at least one default value, so the dispatcher can
 /// fill missing trailing args from `defaults`.
 pub fn mb_closure_set_arity(closure_handle: MbValue, arity: MbValue) {
-    if let (Some(id), Some(n)) = (closure_handle.as_int(), arity.as_int()) {
-        CLOSURES.with(|closures| {
-            let mut vec = closures.borrow_mut();
-            let Some(idx) = closure_slot_index(id) else {
-                return;
-            };
-            if let Some(Some(c)) = vec.get_mut(idx) {
-                c.arity = n.max(0) as usize;
-            }
+    if let Some(n) = arity.as_int() {
+        with_live_closure_mut(closure_handle, |c| {
+            c.arity = n.max(0) as usize;
         });
     }
 }
 
 /// Get the recorded arity for a closure (0 = unset).
 pub fn closure_arity(closure_handle: MbValue) -> usize {
-    if let Some(id) = closure_handle.as_int() {
-        CLOSURES.with(|closures| {
-            let vec = closures.borrow();
-            let Some(idx) = closure_slot_index(id) else {
-                return 0;
-            };
-            vec.get(idx)
-                .and_then(|slot| slot.as_ref())
-                .map(|c| c.arity)
-                .unwrap_or(0)
-        })
-    } else {
-        0
-    }
+    with_live_closure(closure_handle, |c| c.arity).unwrap_or(0)
 }
 
 /// Get a clone of the default argument values for a closure. Returns an
 /// empty Vec if the closure has no defaults or the handle is invalid.
 pub fn closure_defaults(closure_handle: MbValue) -> Vec<MbValue> {
-    if let Some(id) = closure_handle.as_int() {
-        CLOSURES.with(|closures| {
-            let vec = closures.borrow();
-            let Some(idx) = closure_slot_index(id) else {
-                return Vec::new();
-            };
-            vec.get(idx)
-                .and_then(|slot| slot.as_ref())
-                .map(|c| c.defaults.clone())
-                .unwrap_or_default()
-        })
-    } else {
-        Vec::new()
-    }
+    with_live_closure(closure_handle, |c| c.defaults.clone()).unwrap_or_default()
 }
 
 /// Get a captured variable by index.
 pub fn mb_closure_get_capture(closure_handle: MbValue, index: MbValue) -> MbValue {
-    if let (Some(id), Some(idx)) = (closure_handle.as_int(), index.as_int()) {
-        let val = CLOSURES.with(|closures| {
-            let vec = closures.borrow();
-            let Some(slot_idx) = closure_slot_index(id) else {
-                return MbValue::none();
-            };
-            let closure = vec.get(slot_idx).and_then(|slot| slot.as_ref());
-            if let Some(cell) = closure.and_then(|c| c.capture_cells.get(idx as usize).copied()) {
+    if let Some(idx) = index.as_int() {
+        let val = with_live_closure(closure_handle, |c| {
+            if let Some(cell) = c.capture_cells.get(idx as usize).copied() {
                 return mb_cell_get(cell);
             }
-            closure
-                .and_then(|c| c.captures.get(idx as usize).copied())
-                .unwrap_or(MbValue::none())
-        });
+            c.captures.get(idx as usize).copied().unwrap_or(MbValue::none())
+        }).unwrap_or_else(MbValue::none);
         unsafe {
             super::rc::retain_if_ptr(val);
         }
@@ -468,26 +430,20 @@ pub fn mb_closure_get_capture(closure_handle: MbValue, index: MbValue) -> MbValu
 
 /// Set a captured variable by index (for mutable closures).
 pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: MbValue) {
-    if let (Some(id), Some(idx)) = (closure_handle.as_int(), index.as_int()) {
-        let old_capture = CLOSURES.with(|closures| {
-            let mut vec = closures.borrow_mut();
-            let Some(slot_idx) = closure_slot_index(id) else {
+    if let Some(idx) = index.as_int() {
+        let old_capture = with_live_closure_mut(closure_handle, |c| {
+            let idx = idx as usize;
+            if let Some(cell) = c.capture_cells.get(idx).copied() {
+                mb_cell_set(cell, value);
                 return None;
-            };
-            if let Some(Some(c)) = vec.get_mut(slot_idx) {
-                let idx = idx as usize;
-                if let Some(cell) = c.capture_cells.get(idx).copied() {
-                    mb_cell_set(cell, value);
-                }
-                if idx >= c.captures.len() {
-                    c.captures.resize(idx + 1, MbValue::none());
-                }
-                let old = c.captures[idx];
-                c.captures[idx] = value;
-                return Some(old);
             }
-            None
-        });
+            if idx >= c.captures.len() {
+                c.captures.resize(idx + 1, MbValue::none());
+            }
+            let old = c.captures[idx];
+            c.captures[idx] = value;
+            Some(old)
+        }).flatten();
         if let Some(old_capture) = old_capture {
             unsafe {
                 super::rc::release_if_ptr(old_capture);
@@ -498,20 +454,7 @@ pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: Mb
 
 /// Cell handles captured by a closure handle.
 pub fn closure_capture_cells(closure_handle: MbValue) -> Vec<MbValue> {
-    if let Some(id) = closure_handle.as_int() {
-        CLOSURES.with(|closures| {
-            let vec = closures.borrow();
-            let Some(idx) = closure_slot_index(id) else {
-                return Vec::new();
-            };
-            vec.get(idx)
-                .and_then(|slot| slot.as_ref())
-                .map(|c| c.capture_cells.clone())
-                .unwrap_or_default()
-        })
-    } else {
-        Vec::new()
-    }
+    with_live_closure(closure_handle, |c| c.capture_cells.clone()).unwrap_or_default()
 }
 
 /// Read a captured variable's live value directly from a closure's own
@@ -528,14 +471,10 @@ pub fn closure_capture_cells(closure_handle: MbValue) -> Vec<MbValue> {
 /// the module the inspected closure was defined in — so it misses the real
 /// cell entirely and reads back as unset.
 pub fn closure_capture_value_for_id(closure_handle: MbValue, id: i64) -> Option<MbValue> {
-    let handle = closure_handle.as_int()?;
-    let cell = CLOSURES.with(|closures| {
-        let vec = closures.borrow();
-        let idx = closure_slot_index(handle)?;
-        let c = vec.get(idx).and_then(|slot| slot.as_ref())?;
+    let cell = with_live_closure(closure_handle, |c| {
         let pos = c.capture_ids.iter().position(|&cid| cid == id)?;
         c.capture_cells.get(pos).copied()
-    })?;
+    })??;
     match mb_cell_contents_read(cell) {
         CellContentsRead::Value(v) => Some(v),
         CellContentsRead::Empty | CellContentsRead::NotACell => None,
@@ -544,30 +483,40 @@ pub fn closure_capture_value_for_id(closure_handle: MbValue, id: i64) -> Option<
 
 /// Run a closure body with its captured cells installed as the active cell map.
 pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) -> R {
-    let pairs: Vec<(ScopedSymbolKey, MbValue)> = if let Some(id) = closure_handle.as_int() {
-        CLOSURES.with(|closures| {
-            let vec = closures.borrow();
-            let Some(idx) = closure_slot_index(id) else {
-                return Vec::new();
-            };
-            vec.get(idx)
-                .and_then(|slot| slot.as_ref())
-                .map(|c| {
-                    c.capture_ids
-                        .iter()
-                        .copied()
-                        .zip(c.capture_cells.iter().copied())
-                        .map(|(id, cell)| (scoped_symbol_key(id), cell))
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-    } else {
-        Vec::new()
-    };
-    if pairs.is_empty() {
+    let (raw_pairs, closure_mod) = with_live_closure(closure_handle, |c| {
+        let raw: Vec<(i64, MbValue)> = c.capture_ids
+            .iter()
+            .copied()
+            .zip(c.capture_cells.iter().copied())
+            .collect();
+        (raw, c.module.clone())
+    }).unwrap_or_default();
+
+    struct ModuleGuard {
+        pushed: bool,
+    }
+    impl Drop for ModuleGuard {
+        fn drop(&mut self) {
+            if self.pushed {
+                pop_active_module_name();
+            }
+        }
+    }
+    let mut pushed = false;
+    if let Some(mod_name) = closure_mod {
+        push_active_module_name(mod_name);
+        pushed = true;
+    }
+    let _mod_guard = ModuleGuard { pushed };
+
+    if raw_pairs.is_empty() {
         return call();
     }
+
+    let pairs: Vec<(ScopedSymbolKey, MbValue)> = raw_pairs
+        .into_iter()
+        .map(|(id, cell)| (scoped_symbol_key(id), cell))
+        .collect();
 
     let saved = ACTIVE_CELLS.with(|cells| {
         let mut cells = cells.borrow_mut();
@@ -617,6 +566,8 @@ pub(crate) fn capture_active_cell_context(ids: &[i64]) -> CapturedCellContext {
     }
 }
 
+
+
 pub(crate) fn with_captured_cell_context<R>(
     context: &CapturedCellContext,
     call: impl FnOnce() -> R,
@@ -648,25 +599,11 @@ pub(crate) fn with_captured_cell_context<R>(
 
 /// Get the underlying function of a closure.
 pub fn mb_closure_get_func(closure_handle: MbValue) -> MbValue {
-    if let Some(id) = closure_handle.as_int() {
-        let val = CLOSURES.with(|closures| {
-            let vec = closures.borrow();
-            let Some(idx) = closure_slot_index(id) else {
-                return MbValue::none();
-            };
-            vec.get(idx)
-                .and_then(|slot| slot.as_ref())
-                .map(|c| c.func)
-                .unwrap_or(MbValue::none())
-        });
-        // REQ: R2 — retain returned func, symmetric with mb_closure_get_capture
-        unsafe {
-            super::rc::retain_if_ptr(val);
-        }
-        val
-    } else {
-        MbValue::none()
+    let val = with_live_closure(closure_handle, |c| c.func).unwrap_or_else(MbValue::none);
+    unsafe {
+        super::rc::retain_if_ptr(val);
     }
+    val
 }
 
 /// Release a closure's resources, cascading rc releases on captures and
@@ -757,7 +694,7 @@ pub fn mb_apply_decorators(func: MbValue, decorators: MbValue) -> MbValue {
     if let Some(ptr) = decorators.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let decs = lock.read().unwrap();
+                let decs = lock.read().unwrap().to_vec();
                 let mut result = func;
                 // Apply in reverse order (innermost first)
                 for dec in decs.iter().rev() {
@@ -793,45 +730,7 @@ pub fn mb_property_new(fget: MbValue, fset: MbValue, fdel: MbValue) -> MbValue {
 
 // ── Function name registry (for __name__ attribute) ──
 
-thread_local! {
-    static FUNC_NAMES: std::cell::RefCell<HashMap<u64, String>> =
-        std::cell::RefCell::new(HashMap::new());
-    static FUNC_QUALNAMES: std::cell::RefCell<HashMap<u64, String>> =
-        std::cell::RefCell::new(HashMap::new());
-    static FUNC_DOCS: std::cell::RefCell<HashMap<u64, String>> =
-        std::cell::RefCell::new(HashMap::new());
-    static FUNC_MODULES: std::cell::RefCell<HashMap<u64, String>> =
-        std::cell::RefCell::new(HashMap::new());
-    // Code-object introspection metadata (CORE #3): positional argument count
-    // (`co_argcount`) and local/parameter variable names (`co_varnames`) for
-    // each user-defined function, keyed by the function value's bits. Populated
-    // at module init alongside FUNC_NAMES so `f.__code__.co_argcount` and
-    // `f.__code__.co_varnames` return the real compiled signature metadata.
-    static FUNC_ARGCOUNTS: std::cell::RefCell<HashMap<u64, i64>> =
-        std::cell::RefCell::new(HashMap::new());
-    static FUNC_VARNAMES: std::cell::RefCell<HashMap<u64, Vec<String>>> =
-        std::cell::RefCell::new(HashMap::new());
-    static FUNC_FLAGS: std::cell::RefCell<HashMap<u64, i64>> =
-        std::cell::RefCell::new(HashMap::new());
-    static FUNC_FREEVARS: std::cell::RefCell<HashMap<u64, Vec<(String, i64)>>> =
-        std::cell::RefCell::new(HashMap::new());
-    // Declared-signature metadata for `inspect.signature` (FUNC_PARAMS) and
-    // the textual return annotation (FUNC_RET_ANNOS). Populated at module
-    // init via mb_func_set_params / mb_func_set_retanno emitted by lowering.
-    static FUNC_PARAMS: std::cell::RefCell<HashMap<u64, Vec<MbParamInfo>>> =
-        std::cell::RefCell::new(HashMap::new());
-    static FUNC_BOXED_PARAMS: std::cell::RefCell<HashSet<u64>> =
-        std::cell::RefCell::new(HashSet::new());
-    static FUNC_RET_ANNOS: std::cell::RefCell<HashMap<u64, String>> =
-        std::cell::RefCell::new(HashMap::new());
-    // Source location metadata: first line number of the `def`/`lambda` and
-    // the source filename. Primed at module init via mb_func_set_srcinfo so
-    // `f.__code__.co_firstlineno` / `.co_filename` report real locations.
-    static FUNC_LINES: std::cell::RefCell<HashMap<u64, i64>> =
-        std::cell::RefCell::new(HashMap::new());
-    static FUNC_FILES: std::cell::RefCell<HashMap<u64, String>> =
-        std::cell::RefCell::new(HashMap::new());
-}
+// Function metadata registries are stored in ProgramState (process-shared).
 
 /// One declared parameter as recorded for introspection.
 #[derive(Clone)]
@@ -863,7 +762,7 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
     if let Some(ptr) = params.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for item in lock.read().unwrap().iter() {
+                for item in lock.read().unwrap().to_vec() {
                     let Some(tp) = item.as_ptr() else { continue };
                     let ObjData::Tuple(ref elems) = (*tp).data else {
                         continue;
@@ -896,15 +795,16 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
         }
     }
     let key = func.to_bits();
-    FUNC_PARAMS.with(|m| {
-        if let Some(prev) = m.borrow_mut().insert(key, infos) {
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_params.write() {
+        if let Some(prev) = m.insert(key, infos) {
             for p in prev {
                 unsafe {
                     super::rc::release_if_ptr(p.default);
                 }
             }
         }
-    });
+    };
 }
 
 fn extract_defaults_assignment(value: MbValue) -> Option<Vec<MbValue>> {
@@ -935,47 +835,50 @@ pub fn mb_func_set_pos_defaults(func: MbValue, defaults_value: MbValue) -> bool 
     };
 
     let key = func.to_bits();
-    let updated = FUNC_PARAMS.with(|m| {
-        let mut map = m.borrow_mut();
-        let Some(params) = map.get_mut(&key) else {
-            return false;
-        };
-        let pos_indices: Vec<usize> = params
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.kind <= 1)
-            .map(|(i, _)| i)
-            .collect();
-        let first_default_ordinal = pos_indices.len().saturating_sub(defaults.len());
-        let default_offset = defaults.len().saturating_sub(pos_indices.len());
-        for (ordinal, param_idx) in pos_indices.into_iter().enumerate() {
-            let p = &mut params[param_idx];
-            let next_default = if ordinal >= first_default_ordinal {
-                Some(defaults[default_offset + ordinal - first_default_ordinal])
-            } else {
-                None
-            };
-            if let Some(v) = next_default {
-                unsafe {
-                    super::rc::retain_if_ptr(v);
-                }
-                let old = p.default;
-                p.default = v;
-                p.has_default = true;
-                unsafe {
-                    super::rc::release_if_ptr(old);
-                }
-            } else {
-                let old = p.default;
-                p.default = MbValue::none();
-                p.has_default = false;
-                unsafe {
-                    super::rc::release_if_ptr(old);
+    let state = super::program_state::current_program_state();
+    let updated = if let Ok(mut map) = state.func_params.write() {
+        if let Some(params) = map.get_mut(&key) {
+            let pos_indices: Vec<usize> = params
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.kind <= 1)
+                .map(|(i, _)| i)
+                .collect();
+            let first_default_ordinal = pos_indices.len().saturating_sub(defaults.len());
+            let default_offset = defaults.len().saturating_sub(pos_indices.len());
+            for (ordinal, param_idx) in pos_indices.into_iter().enumerate() {
+                let p = &mut params[param_idx];
+                let next_default = if ordinal >= first_default_ordinal {
+                    Some(defaults[default_offset + ordinal - first_default_ordinal])
+                } else {
+                    None
+                };
+                if let Some(v) = next_default {
+                    unsafe {
+                        super::rc::retain_if_ptr(v);
+                    }
+                    let old = p.default;
+                    p.default = v;
+                    p.has_default = true;
+                    unsafe {
+                        super::rc::release_if_ptr(old);
+                    }
+                } else {
+                    let old = p.default;
+                    p.default = MbValue::none();
+                    p.has_default = false;
+                    unsafe {
+                        super::rc::release_if_ptr(old);
+                    }
                 }
             }
+            true
+        } else {
+            false
         }
-        true
-    });
+    } else {
+        false
+    };
     if updated {
         set_closure_defaults_values(func, defaults);
     }
@@ -1020,38 +923,47 @@ pub fn mb_func_default_at(func: MbValue, offset: MbValue) -> MbValue {
 pub fn mb_func_set_retanno(func: MbValue, anno: MbValue) {
     if let Some(s) = extract_str(anno) {
         let key = func.to_bits();
-        FUNC_RET_ANNOS.with(|m| m.borrow_mut().insert(key, s));
+        let state = super::program_state::current_program_state();
+        if let Ok(mut m) = state.func_ret_annos.write() {
+            m.insert(key, s);
+        };
     }
 }
 
 /// Declared parameters for a registered function, or None when unknown.
 pub fn func_params(func: MbValue) -> Option<Vec<MbParamInfo>> {
     let key = func.to_bits();
-    FUNC_PARAMS.with(|m| m.borrow().get(&key).cloned())
+    let state = super::program_state::current_program_state();
+    let guard = state.func_params.read().ok()?;
+    guard.get(&key).cloned()
 }
 
 pub fn mb_func_set_boxed_params(func: MbValue, flag: MbValue) {
     let enabled = flag.as_bool().unwrap_or(false) || flag.as_int().unwrap_or(0) != 0;
     let key = func.to_bits();
-    FUNC_BOXED_PARAMS.with(|m| {
-        let mut set = m.borrow_mut();
+    let state = super::program_state::current_program_state();
+    if let Ok(mut set) = state.func_boxed_params.write() {
         if enabled {
             set.insert(key);
         } else {
             set.remove(&key);
         }
-    });
+    };
 }
 
 pub fn func_has_boxed_params(func: MbValue) -> bool {
     let key = func.to_bits();
-    FUNC_BOXED_PARAMS.with(|m| m.borrow().contains(&key))
+    let state = super::program_state::current_program_state();
+    let guard = state.func_boxed_params.read().ok();
+    guard.map(|m| m.contains(&key)).unwrap_or(false)
 }
 
 /// Textual return annotation for a registered function, or None.
 pub fn func_ret_anno(func: MbValue) -> Option<String> {
     let key = func.to_bits();
-    FUNC_RET_ANNOS.with(|m| m.borrow().get(&key).cloned())
+    let state = super::program_state::current_program_state();
+    let guard = state.func_ret_annos.read().ok()?;
+    guard.get(&key).cloned()
 }
 
 fn is_simple_annotation_name(annotation: &str) -> bool {
@@ -1109,8 +1021,9 @@ pub fn mb_func_get_annotations(func: MbValue) -> MbValue {
         return annotations;
     }
     let key = func.to_bits();
-    let known = FUNC_PARAMS.with(|m| m.borrow().contains_key(&key))
-        || FUNC_RET_ANNOS.with(|m| m.borrow().contains_key(&key));
+    let state = super::program_state::current_program_state();
+    let known = state.func_params.read().map(|m| m.contains_key(&key)).unwrap_or(false)
+        || state.func_ret_annos.read().map(|m| m.contains_key(&key)).unwrap_or(false);
     if !known {
         return MbValue::none();
     }
@@ -1142,7 +1055,10 @@ pub fn mb_func_set_name(func: MbValue, name: MbValue) {
         return;
     }
     let key = func.to_bits();
-    FUNC_NAMES.with(|m| m.borrow_mut().insert(key, fname));
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_names.write() {
+        m.insert(key, fname);
+    };
 }
 
 /// Register a function's qualified name.
@@ -1155,7 +1071,10 @@ pub fn mb_func_set_qualname(func: MbValue, qualname: MbValue) {
         return;
     }
     let key = func.to_bits();
-    FUNC_QUALNAMES.with(|m| m.borrow_mut().insert(key, qualname));
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_qualnames.write() {
+        m.insert(key, qualname);
+    };
 }
 
 /// Register a function's simple name, its lexical qualname, and its defining
@@ -1192,12 +1111,11 @@ pub fn mb_func_get_name(func: MbValue) -> MbValue {
         return MbValue::from_ptr(MbObject::new_str(name));
     }
     let key = func.to_bits();
-    FUNC_NAMES.with(|m| {
-        m.borrow()
-            .get(&key)
-            .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
-            .unwrap_or(MbValue::none())
-    })
+    let state = super::program_state::current_program_state();
+    let guard = state.func_names.read().ok();
+    guard
+        .and_then(|m| m.get(&key).map(|s| MbValue::from_ptr(MbObject::new_str(s.clone()))))
+        .unwrap_or_else(MbValue::none)
 }
 
 /// Get a function's registered qualified name. Returns None-MbValue if absent.
@@ -1208,12 +1126,11 @@ pub fn mb_func_get_qualname(func: MbValue) -> MbValue {
             .unwrap_or_else(MbValue::none);
     }
     let key = func.to_bits();
-    FUNC_QUALNAMES.with(|m| {
-        m.borrow()
-            .get(&key)
-            .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
-            .unwrap_or(MbValue::none())
-    })
+    let state = super::program_state::current_program_state();
+    let guard = state.func_qualnames.read().ok();
+    guard
+        .and_then(|m| m.get(&key).map(|s| MbValue::from_ptr(MbObject::new_str(s.clone()))))
+        .unwrap_or_else(MbValue::none)
 }
 
 /// Register a function's docstring (for `f.__doc__`). Called at module init
@@ -1227,7 +1144,10 @@ pub fn mb_func_set_doc(func: MbValue, doc: MbValue) {
         return;
     }
     let key = func.to_bits();
-    FUNC_DOCS.with(|m| m.borrow_mut().insert(key, fdoc));
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_docs.write() {
+        m.insert(key, fdoc);
+    };
 }
 
 /// Get a function's registered docstring. Returns None-MbValue if not registered.
@@ -1238,12 +1158,11 @@ pub fn mb_func_get_doc(func: MbValue) -> MbValue {
             .unwrap_or_else(MbValue::none);
     }
     let key = func.to_bits();
-    FUNC_DOCS.with(|m| {
-        m.borrow()
-            .get(&key)
-            .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
-            .unwrap_or(MbValue::none())
-    })
+    let state = super::program_state::current_program_state();
+    let guard = state.func_docs.read().ok();
+    guard
+        .and_then(|m| m.get(&key).map(|s| MbValue::from_ptr(MbObject::new_str(s.clone()))))
+        .unwrap_or_else(MbValue::none)
 }
 
 /// Register a function's module name (for `f.__module__`).
@@ -1256,7 +1175,10 @@ pub fn mb_func_set_module(func: MbValue, module: MbValue) {
         return;
     }
     let key = func.to_bits();
-    FUNC_MODULES.with(|m| m.borrow_mut().insert(key, module_name));
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_modules.write() {
+        m.insert(key, module_name);
+    };
 }
 
 /// Get a function's registered module. Returns None-MbValue if not registered.
@@ -1267,12 +1189,11 @@ pub fn mb_func_get_module(func: MbValue) -> MbValue {
             .unwrap_or_else(MbValue::none);
     }
     let key = func.to_bits();
-    FUNC_MODULES.with(|m| {
-        m.borrow()
-            .get(&key)
-            .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
-            .unwrap_or(MbValue::none())
-    })
+    let state = super::program_state::current_program_state();
+    let guard = state.func_modules.read().ok();
+    guard
+        .and_then(|m| m.get(&key).map(|s| MbValue::from_ptr(MbObject::new_str(s.clone()))))
+        .unwrap_or_else(MbValue::none)
 }
 
 /// Register a function's positional argument count (for `f.__code__.co_argcount`).
@@ -1281,19 +1202,21 @@ pub fn mb_func_get_module(func: MbValue) -> MbValue {
 pub fn mb_func_set_argcount(func: MbValue, argcount: MbValue) {
     let n = argcount.as_int().unwrap_or(0);
     let key = func.to_bits();
-    FUNC_ARGCOUNTS.with(|m| m.borrow_mut().insert(key, n));
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_argcounts.write() {
+        m.insert(key, n);
+    };
 }
 
 /// Get a function's registered argument count. Returns None-MbValue if not
 /// registered (so callers can distinguish a real `def` from an arbitrary value).
 pub fn mb_func_get_argcount(func: MbValue) -> MbValue {
     let key = func.to_bits();
-    FUNC_ARGCOUNTS.with(|m| {
-        m.borrow()
-            .get(&key)
-            .map(|n| MbValue::from_int(*n))
-            .unwrap_or(MbValue::none())
-    })
+    let state = super::program_state::current_program_state();
+    let guard = state.func_argcounts.read().ok();
+    guard
+        .and_then(|m| m.get(&key).map(|n| MbValue::from_int(*n)))
+        .unwrap_or_else(MbValue::none)
 }
 
 /// Register a function's local variable names (for `f.__code__.co_varnames`).
@@ -1313,7 +1236,7 @@ pub fn mb_func_set_varnames(func: MbValue, names: MbValue) {
                     }
                 }
                 ObjData::List(lock) => {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     for item in items.iter() {
                         if let Some(s) = extract_str(*item) {
                             collected.push(s);
@@ -1325,37 +1248,48 @@ pub fn mb_func_set_varnames(func: MbValue, names: MbValue) {
         }
     }
     let key = func.to_bits();
-    FUNC_VARNAMES.with(|m| m.borrow_mut().insert(key, collected));
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_varnames.write() {
+        m.insert(key, collected);
+    };
 }
 
 /// Get a function's registered varnames as a tuple MbValue (CPython returns a
 /// tuple for `co_varnames`). Returns None-MbValue if not registered.
 pub fn mb_func_get_varnames(func: MbValue) -> MbValue {
     let key = func.to_bits();
-    FUNC_VARNAMES.with(|m| {
-        m.borrow()
-            .get(&key)
-            .map(|names| {
+    let state = super::program_state::current_program_state();
+    let guard = state.func_varnames.read().ok();
+    guard
+        .and_then(|m| {
+            m.get(&key).map(|names| {
                 let items: Vec<MbValue> = names
                     .iter()
                     .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
                     .collect();
                 MbValue::from_ptr(MbObject::new_tuple(items))
             })
-            .unwrap_or(MbValue::none())
-    })
+        })
+        .unwrap_or_else(MbValue::none)
 }
 
 /// Register extra code-object flags for a function (`CO_COROUTINE`, etc.).
 pub fn mb_func_set_flags(func: MbValue, flags: MbValue) {
     let n = flags.as_int().unwrap_or(0);
     let key = func.to_bits();
-    FUNC_FLAGS.with(|m| m.borrow_mut().insert(key, n));
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_flags.write() {
+        m.insert(key, n);
+    };
 }
 
 pub fn func_flags(func: MbValue) -> i64 {
     let key = func.to_bits();
-    FUNC_FLAGS.with(|m| *m.borrow().get(&key).unwrap_or(&0))
+    let state = super::program_state::current_program_state();
+    let guard = state.func_flags.read().ok();
+    guard
+        .and_then(|m| m.get(&key).copied())
+        .unwrap_or(0)
 }
 
 /// Register a function's free variables for inspect.getclosurevars.
@@ -1368,7 +1302,7 @@ pub fn mb_func_set_freevars(func: MbValue, freevars: MbValue) {
     if let Some(ptr) = freevars.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for item in lock.read().unwrap().iter() {
+                for item in lock.read().unwrap().to_vec() {
                     let Some(pair_ptr) = item.as_ptr() else {
                         continue;
                     };
@@ -1390,15 +1324,18 @@ pub fn mb_func_set_freevars(func: MbValue, freevars: MbValue) {
         }
     }
     let key = func.to_bits();
-    FUNC_FREEVARS.with(|m| {
-        m.borrow_mut().insert(key, collected);
-    });
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.func_freevars.write() {
+        m.insert(key, collected);
+    };
 }
 
 /// Registered free variables for a function, if any metadata was primed.
 pub fn func_freevars(func: MbValue) -> Option<Vec<(String, i64)>> {
     let key = func.to_bits();
-    FUNC_FREEVARS.with(|m| m.borrow().get(&key).cloned())
+    let state = super::program_state::current_program_state();
+    let guard = state.func_freevars.read().ok()?;
+    guard.get(&key).cloned()
 }
 
 /// True if `func` is a registered user-defined function (present in any of the
@@ -1409,9 +1346,10 @@ pub fn mb_func_is_registered(func: MbValue) -> bool {
         return true;
     }
     let key = func.to_bits();
-    FUNC_NAMES.with(|m| m.borrow().contains_key(&key))
-        || FUNC_ARGCOUNTS.with(|m| m.borrow().contains_key(&key))
-        || FUNC_VARNAMES.with(|m| m.borrow().contains_key(&key))
+    let state = super::program_state::current_program_state();
+    state.func_names.read().map(|m| m.contains_key(&key)).unwrap_or(false)
+        || state.func_argcounts.read().map(|m| m.contains_key(&key)).unwrap_or(false)
+        || state.func_varnames.read().map(|m| m.contains_key(&key)).unwrap_or(false)
 }
 
 pub(crate) fn mb_closure_set_wrapped(closure_handle: MbValue, wrapped: MbValue) -> bool {
@@ -1445,14 +1383,19 @@ pub(crate) fn mb_closure_get_wrapped(closure_handle: MbValue) -> Option<MbValue>
 /// register at closure-creation time.
 pub fn mb_func_set_srcinfo(func: MbValue, line: MbValue, filename: MbValue) {
     let key = func.to_bits();
+    let state = super::program_state::current_program_state();
     if let Some(n) = line.as_int() {
         if n > 0 {
-            FUNC_LINES.with(|m| m.borrow_mut().insert(key, n));
+            if let Ok(mut m) = state.func_lines.write() {
+                m.insert(key, n);
+            };
         }
     }
     if let Some(f) = extract_str(filename) {
         if !f.is_empty() {
-            FUNC_FILES.with(|m| m.borrow_mut().insert(key, f));
+            if let Ok(mut m) = state.func_files.write() {
+                m.insert(key, f);
+            };
         }
     }
 }
@@ -1460,23 +1403,22 @@ pub fn mb_func_set_srcinfo(func: MbValue, line: MbValue, filename: MbValue) {
 /// First source line of a registered function, or None when unknown.
 pub fn func_line(func: MbValue) -> Option<i64> {
     let key = func.to_bits();
-    FUNC_LINES.with(|m| m.borrow().get(&key).copied())
+    let state = super::program_state::current_program_state();
+    let guard = state.func_lines.read().ok()?;
+    guard.get(&key).copied()
 }
 
 /// Source filename of a registered function, or None when unknown.
 pub fn func_file(func: MbValue) -> Option<String> {
     let key = func.to_bits();
-    FUNC_FILES.with(|m| m.borrow().get(&key).cloned())
+    let state = super::program_state::current_program_state();
+    let guard = state.func_files.read().ok()?;
+    guard.get(&key).cloned()
 }
 
 // ── Cell Variables (for nonlocal/closure mutable capture) ──
 // Vec-indexed by cell slot for O(1) lookup (#1199). Raw handles are stored as
 // `CELL_ID_BASE + slot_index` so ordinary small ints never alias a live cell.
-
-thread_local! {
-    static CELLS: std::cell::RefCell<Vec<Option<MbValue>>> =
-        std::cell::RefCell::new(Vec::new());
-}
 
 fn cell_slot_index(raw: i64, len: usize) -> Option<usize> {
     let slot = raw.checked_sub(CELL_ID_BASE)?;
@@ -1487,18 +1429,14 @@ fn cell_slot_index(raw: i64, len: usize) -> Option<usize> {
 /// Create a new cell variable initialized with a value.
 /// Returns a handle (integer) that can be shared between scopes.
 pub fn mb_cell_new(value: MbValue) -> MbValue {
-    // Fix C-prime: CELLS takes its own +1 so JIT epilogue release of the
-    // source VReg cannot UAF the raw reference stored in the cell slot.
-    // Mirrors the symmetric pattern in mb_cell_set.
     unsafe {
         super::rc::retain_if_ptr(value);
     }
-    CELLS.with(|cells| {
-        let mut vec = cells.borrow_mut();
-        let id = CELL_ID_BASE + vec.len() as i64;
-        vec.push(Some(value));
-        MbValue::from_int(id)
-    })
+    let state = super::program_state::current_program_state();
+    let mut vec = state.cells.write().unwrap();
+    let id = CELL_ID_BASE + vec.len() as i64;
+    vec.push(Some(value));
+    MbValue::from_int(id)
 }
 
 /// Create a new, genuinely EMPTY cell (`types.CellType()` with no argument;
@@ -1507,31 +1445,29 @@ pub fn mb_cell_new(value: MbValue) -> MbValue {
 /// `cell_contents` reads raise ValueError until the cell is set via
 /// `mb_cell_set`.
 pub fn mb_cell_new_empty() -> MbValue {
-    CELLS.with(|cells| {
-        let mut vec = cells.borrow_mut();
-        let id = CELL_ID_BASE + vec.len() as i64;
-        vec.push(None);
-        MbValue::from_int(id)
-    })
+    let state = super::program_state::current_program_state();
+    let mut vec = state.cells.write().unwrap();
+    let id = CELL_ID_BASE + vec.len() as i64;
+    vec.push(None);
+    MbValue::from_int(id)
 }
 
 /// Get the value stored in a cell.
 pub fn mb_cell_get(cell_handle: MbValue) -> MbValue {
     if let Some(id) = cell_handle.as_int() {
-        CELLS.with(|cells| {
-            let vec = cells.borrow();
-            let Some(idx) = cell_slot_index(id, vec.len()) else {
-                return MbValue::none();
-            };
-            let val = vec
-                .get(idx)
-                .and_then(|slot| *slot)
-                .unwrap_or(MbValue::none());
-            unsafe {
-                super::rc::retain_if_ptr(val);
-            }
-            val
-        })
+        let state = super::program_state::current_program_state();
+        let vec = state.cells.read().unwrap();
+        let Some(idx) = cell_slot_index(id, vec.len()) else {
+            return MbValue::none();
+        };
+        let val = vec
+            .get(idx)
+            .and_then(|slot| *slot)
+            .unwrap_or(MbValue::none());
+        unsafe {
+            super::rc::retain_if_ptr(val);
+        }
+        val
     } else {
         MbValue::none()
     }
@@ -1565,21 +1501,22 @@ pub(crate) fn mb_cell_compare_value(cell_handle: MbValue) -> CellCompareValue {
     let Some(id) = cell_handle.as_int() else {
         return CellCompareValue::NotACell;
     };
-    CELLS.with(|cells| {
-        let vec = cells.borrow();
-        let Some(idx) = cell_slot_index(id, vec.len()) else {
-            return CellCompareValue::NotACell;
-        };
-        match vec.get(idx) {
-            None => CellCompareValue::NotACell,
-            Some(None) => CellCompareValue::Empty,
-            Some(Some(val)) => CellCompareValue::Value(*val),
-        }
-    })
+    let state = super::program_state::current_program_state();
+    let vec = state.cells.read().unwrap();
+    let Some(idx) = cell_slot_index(id, vec.len()) else {
+        return CellCompareValue::NotACell;
+    };
+    match vec.get(idx) {
+        None => CellCompareValue::NotACell,
+        Some(None) => CellCompareValue::Empty,
+        Some(Some(val)) => CellCompareValue::Value(*val),
+    }
 }
 
 pub fn mb_cell_handle_raw_is_live(raw: i64) -> i64 {
-    CELLS.with(|cells| i64::from(cell_slot_index(raw, cells.borrow().len()).is_some()))
+    let state = super::program_state::current_program_state();
+    let vec = state.cells.read().unwrap();
+    i64::from(cell_slot_index(raw, vec.len()).is_some())
 }
 
 /// Checked `cell_contents` read used by the `.cell_contents` attribute
@@ -1602,38 +1539,46 @@ pub fn mb_cell_contents_read(cell_handle: MbValue) -> CellContentsRead {
 /// Set the value stored in a cell.
 pub fn mb_cell_set(cell_handle: MbValue, value: MbValue) {
     if let Some(id) = cell_handle.as_int() {
-        // Retain so value survives the JIT epilogue releasing the source VReg.
         unsafe {
             super::rc::retain_if_ptr(value);
         }
-        CELLS.with(|cells| {
-            let mut vec = cells.borrow_mut();
+        let state = super::program_state::current_program_state();
+        let prev = {
+            let mut vec = state.cells.write().unwrap();
             if let Some(idx) = cell_slot_index(id, vec.len()) {
-                // Release the old cell value being overwritten.
-                if let Some(prev) = vec[idx] {
-                    unsafe {
-                        super::rc::release_if_ptr(prev);
-                    }
-                }
+                let prev = vec[idx];
                 vec[idx] = Some(value);
+                prev
+            } else {
+                None
             }
-        });
+        };
+        if let Some(prev) = prev {
+            unsafe {
+                super::rc::release_if_ptr(prev);
+            }
+        }
     }
 }
 
 pub fn mb_cell_clear(cell_handle: MbValue) {
     if let Some(id) = cell_handle.as_int() {
-        CELLS.with(|cells| {
-            let mut vec = cells.borrow_mut();
+        let state = super::program_state::current_program_state();
+        let prev = {
+            let mut vec = state.cells.write().unwrap();
             if let Some(idx) = cell_slot_index(id, vec.len()) {
-                if let Some(prev) = vec[idx] {
-                    unsafe {
-                        super::rc::release_if_ptr(prev);
-                    }
-                }
+                let prev = vec[idx];
                 vec[idx] = None;
+                prev
+            } else {
+                None
             }
-        });
+        };
+        if let Some(prev) = prev {
+            unsafe {
+                super::rc::release_if_ptr(prev);
+            }
+        }
     }
 }
 
@@ -1644,26 +1589,33 @@ fn active_cell_for_id(key: i64) -> MbValue {
         if let Some(cell) = cells.get(&scoped).copied() {
             return cell;
         }
-        let initial = GLOBAL_ID_NAMESPACE.with(|ns| {
-            ns.borrow()
-                .get(&scoped)
-                .copied()
-                .unwrap_or_else(MbValue::none)
-        });
+        let state = super::program_state::current_program_state();
+        let initial = state
+            .global_ids
+            .read()
+            .unwrap()
+            .get(&scoped)
+            .copied()
+            .unwrap_or_else(MbValue::none);
         let cell = mb_cell_new(initial);
         cells.insert(scoped, cell);
         cell
     })
 }
 
+#[inline]
+fn extract_symbol_key(id: MbValue) -> i64 {
+    id.as_int().unwrap_or_else(|| id.to_bits() as i64)
+}
+
 pub fn mb_capture_cell_set_id(id: MbValue, value: MbValue) {
-    let key = id.to_bits() as i64;
+    let key = extract_symbol_key(id);
     let cell = active_cell_for_id(key);
     mb_cell_set(cell, value);
 }
 
 pub fn mb_capture_cell_reset_id(id: MbValue, value: MbValue) {
-    let key = id.to_bits() as i64;
+    let key = extract_symbol_key(id);
     let cell = mb_cell_new(value);
     ACTIVE_CELLS.with(|cells| {
         cells.borrow_mut().insert(scoped_symbol_key(key), cell);
@@ -1680,7 +1632,7 @@ pub fn mb_capture_cell_reset_id(id: MbValue, value: MbValue) {
 /// before the real assignment still raises NameError instead of silently
 /// observing an unbound placeholder as `None`.
 pub fn mb_capture_cell_reset_empty_id(id: MbValue) {
-    let key = id.to_bits() as i64;
+    let key = extract_symbol_key(id);
     let cell = mb_cell_new_empty();
     ACTIVE_CELLS.with(|cells| {
         cells.borrow_mut().insert(scoped_symbol_key(key), cell);
@@ -1705,8 +1657,12 @@ fn active_cell_get_id_raw(key: i64) -> Option<MbValue> {
     match mb_cell_contents_read(cell) {
         CellContentsRead::Value(v) => Some(v),
         CellContentsRead::Empty => {
-            let name = MODULE_SYM_INFO
-                .with(|m| m.borrow().get(&key).map(|(name, _)| name.clone()))
+            let state = super::program_state::current_program_state();
+            let name = state
+                .module_sym_info
+                .read()
+                .ok()
+                .and_then(|m| m.get(&key).map(|(name, _)| name.clone()))
                 .unwrap_or_else(|| format!("<symbol {key}>"));
             raise_missing_global_name_error(&name);
             Some(MbValue::none())
@@ -1728,12 +1684,8 @@ fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
 
 // ── nonlocal/global support ──
 
-// Thread-local global namespace for the current module.
+// Thread-local runtime execution position / flags.
 thread_local! {
-    static GLOBAL_NAMESPACE: std::cell::RefCell<HashMap<String, MbValue>> =
-        std::cell::RefCell::new(HashMap::new());
-    static GLOBAL_ID_NAMESPACE: std::cell::RefCell<HashMap<ScopedSymbolKey, MbValue>> =
-        std::cell::RefCell::new(HashMap::new());
     static MISSING_GLOBAL_RAISES_NAME_ERROR: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
     /// Stack of "active module" SymbolId sets (#983). The top entry is the
@@ -1785,44 +1737,48 @@ fn raise_missing_global_name_error(name: &str) {
 }
 
 fn lookup_named_runtime_global(name: &str) -> Option<MbValue> {
-    if let Some(value) = GLOBAL_NAMESPACE.with(|ns| ns.borrow().get(name).copied()) {
+    let state = super::program_state::current_program_state();
+    if let Some(value) = {
+        let g = state.globals.read().unwrap();
+        g.get(name).copied()
+    } {
         return Some(value);
     }
 
-    let current_module = current_active_module_name();
-    if let Some(value) = GLOBAL_ID_NAMESPACE.with(|ns| {
-        let ns = ns.borrow();
-        MODULE_SYM_INFO.with(|info| {
-            let info = info.borrow();
-            ns.iter().find_map(|(key, value)| {
-                if key.module != current_module {
-                    return None;
-                }
-                let (symbol_name, _) = info.get(&key.symbol)?;
-                (symbol_name == name).then_some(*value)
-            })
+    let current_module = current_active_module_name_arc();
+    if let Some(value) = {
+        let g_ids = state.global_ids.read().unwrap();
+        let sym_info = state.module_sym_info.read().unwrap();
+        g_ids.iter().find_map(|(key, value)| {
+            if key.module != current_module {
+                return None;
+            }
+            let (symbol_name, _) = sym_info.get(&key.symbol)?;
+            (symbol_name == name).then_some(*value)
         })
-    }) {
+    } {
         return Some(value);
     }
 
-    MODULE_FUNC_INFO.with(|funcs| funcs.borrow().get(name).copied())
+    state.module_func_info.read().ok().and_then(|funcs| funcs.get(name).copied())
 }
 
 /// Get a global variable by name.
 pub fn mb_global_get(name: MbValue) -> MbValue {
     let var_name = extract_str(name).unwrap_or_default();
-    GLOBAL_NAMESPACE.with(|ns| {
-        let val = ns.borrow().get(&var_name).copied();
-        if val.is_none() && missing_global_should_raise_name_error() {
-            raise_missing_global_name_error(&var_name);
-        }
-        let val = val.unwrap_or_else(MbValue::none);
-        unsafe {
-            super::rc::retain_if_ptr(val);
-        }
-        val
-    })
+    let state = super::program_state::current_program_state();
+    let val = {
+        let g = state.globals.read().unwrap();
+        g.get(&var_name).copied()
+    };
+    if val.is_none() && missing_global_should_raise_name_error() {
+        raise_missing_global_name_error(&var_name);
+    }
+    let val = val.unwrap_or_else(MbValue::none);
+    unsafe {
+        super::rc::retain_if_ptr(val);
+    }
+    val
 }
 
 /// Guarded runtime read for an identifier the checker deferred to `Any`
@@ -1866,19 +1822,21 @@ pub fn mb_global_set(name: MbValue, value: MbValue) {
     unsafe {
         super::rc::retain_if_ptr(value);
     }
-    GLOBAL_NAMESPACE.with(|ns| {
-        let old = ns.borrow_mut().insert(var_name, value);
-        if let Some(prev) = old {
-            release_rebound_global_value(prev);
-        }
-    });
+    let state = super::program_state::current_program_state();
+    let old = {
+        let mut g = state.globals.write().unwrap();
+        g.insert(var_name, value)
+    };
+    if let Some(prev) = old {
+        release_rebound_global_value(prev);
+    }
 }
 
 /// Get a global variable by integer id (SymbolId). Used by REPL since
 /// MirConst::Str is not yet compiled to actual string pointers.
 /// The id is passed as raw i64 (not NaN-boxed).
 pub fn mb_global_get_id(id: MbValue) -> MbValue {
-    let key = id.to_bits() as i64;
+    let key = extract_symbol_key(id);
     mb_global_get_id_raw(key)
 }
 
@@ -1888,26 +1846,33 @@ pub fn mb_global_get_id_raw(key: i64) -> MbValue {
         return val;
     }
     let scoped = scoped_symbol_key(key);
-    GLOBAL_ID_NAMESPACE.with(|ns| {
-        let val = ns.borrow().get(&scoped).copied();
-        if val.is_none() && missing_global_should_raise_name_error() {
-            let name = MODULE_SYM_INFO
-                .with(|m| m.borrow().get(&key).map(|(name, _)| name.clone()))
-                .unwrap_or_else(|| format!("<symbol {key}>"));
-            raise_missing_global_name_error(&name);
+    let state = super::program_state::current_program_state();
+    let val = {
+        let g_ids = state.global_ids.read().unwrap();
+        let v = g_ids.get(&scoped).copied();
+        if let Some(val) = v {
+            unsafe {
+                super::rc::retain_if_ptr(val);
+            }
         }
-        let val = val.unwrap_or_else(MbValue::none);
-        unsafe {
-            super::rc::retain_if_ptr(val);
-        }
-        val
-    })
+        v
+    };
+    if val.is_none() && missing_global_should_raise_name_error() {
+        let name = state
+            .module_sym_info
+            .read()
+            .ok()
+            .and_then(|m| m.get(&key).map(|(name, _)| name.clone()))
+            .unwrap_or_else(|| format!("<symbol {key}>"));
+        raise_missing_global_name_error(&name);
+    }
+    val.unwrap_or_else(MbValue::none)
 }
 
 /// Set a global variable by integer id (SymbolId).
 /// The id is passed as raw i64 (not NaN-boxed).
 pub fn mb_global_set_id(id: MbValue, value: MbValue) {
-    let key = id.to_bits() as i64;
+    let key = extract_symbol_key(id);
     if active_cell_set_id_raw(key, value) {
         return;
     }
@@ -1916,28 +1881,32 @@ pub fn mb_global_set_id(id: MbValue, value: MbValue) {
     unsafe {
         super::rc::retain_if_ptr(value);
     }
-    GLOBAL_ID_NAMESPACE.with(|ns| {
-        let old = ns.borrow_mut().insert(scoped, value);
-        // Release the previous value being overwritten.
-        if let Some(prev) = old {
-            release_rebound_global_value(prev);
-        }
-    });
+    let state = super::program_state::current_program_state();
+    let old = {
+        let mut g_ids = state.global_ids.write().unwrap();
+        g_ids.insert(scoped, value)
+    };
+    // Release the previous value being overwritten.
+    if let Some(prev) = old {
+        release_rebound_global_value(prev);
+    }
 }
 
 /// Delete a global variable by integer id (SymbolId).
 /// The id is passed as raw i64 (not NaN-boxed).
 pub fn mb_global_del_id(id: MbValue) {
-    let key = id.to_bits() as i64;
+    let key = extract_symbol_key(id);
     let scoped = scoped_symbol_key(key);
-    GLOBAL_ID_NAMESPACE.with(|ns| {
-        let old = ns.borrow_mut().remove(&scoped);
-        if let Some(prev) = old {
-            unsafe {
-                super::rc::release_if_ptr(prev);
-            }
+    let state = super::program_state::current_program_state();
+    let old = {
+        let mut g_ids = state.global_ids.write().unwrap();
+        g_ids.remove(&scoped)
+    };
+    if let Some(prev) = old {
+        unsafe {
+            super::rc::release_if_ptr(prev);
         }
-    });
+    }
 }
 
 // ── Helpers ──
@@ -1966,164 +1935,50 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
 // ── Global namespace save/restore for module import isolation (#1190) ──
 
 fn current_module_symbol_entries(ns: &HashMap<ScopedSymbolKey, MbValue>) -> HashMap<i64, MbValue> {
-    let current_module = current_active_module_name();
+    let current_module = current_active_module_name_arc();
     ns.iter()
         .filter(|(key, _)| key.module == current_module)
         .map(|(key, value)| (key.symbol, *value))
         .collect()
 }
 
-fn remove_current_module_symbol_entries(ns: &mut HashMap<ScopedSymbolKey, MbValue>) {
-    let current_module = current_active_module_name();
-    ns.retain(|key, _| key.module != current_module);
+/// Snapshot only the active module's raw SymbolId globals.
+pub(crate) fn snapshot_current_module_global_id_namespace() -> HashMap<i64, MbValue> {
+    let state = super::program_state::current_program_state();
+    let g_ids = state.global_ids.read().unwrap();
+    current_module_symbol_entries(&g_ids)
 }
 
-/// Save and clear the current module's GLOBAL_ID_NAMESPACE slice, returning the
-/// previous raw SymbolId entries for that module only.
-pub(crate) fn save_and_clear_global_id_namespace() -> HashMap<i64, MbValue> {
-    GLOBAL_ID_NAMESPACE.with(|ns| {
-        let mut ns = ns.borrow_mut();
-        let saved = current_module_symbol_entries(&ns);
-        remove_current_module_symbol_entries(&mut ns);
-        saved
+/// Check if any global in `ProgramState` matches a predicate.
+pub(crate) fn global_id_namespace_any<F: FnMut(MbValue) -> bool>(mut f: F) -> bool {
+    let state = super::program_state::current_program_state();
+    let g_ids = state.global_ids.read().unwrap();
+    g_ids.values().copied().any(|v| f(v))
+}
+
+/// Replace the full ACTIVE_CELLS map and return the previous contents.
+pub(crate) fn replace_active_cells(
+    next: HashMap<ScopedSymbolKey, MbValue>,
+) -> HashMap<ScopedSymbolKey, MbValue> {
+    ACTIVE_CELLS.with(|cells| {
+        let mut b = cells.borrow_mut();
+        let prev = b.clone();
+        *b = next;
+        prev
     })
 }
 
-/// Restore a previously saved GLOBAL_ID_NAMESPACE slice for the current module.
-pub(crate) fn restore_global_id_namespace(saved: HashMap<i64, MbValue>) {
-    GLOBAL_ID_NAMESPACE.with(|ns| {
-        let mut ns = ns.borrow_mut();
-        remove_current_module_symbol_entries(&mut ns);
-        let current_module = current_active_module_name();
-        for (symbol, value) in saved {
-            ns.insert(
-                ScopedSymbolKey {
-                    module: current_module.clone(),
-                    symbol,
-                },
-                value,
-            );
-        }
-    });
+/// Snapshot the full ACTIVE_CELLS map (cloning thread-local active bindings).
+pub(crate) fn snapshot_active_cells() -> HashMap<ScopedSymbolKey, MbValue> {
+    ACTIVE_CELLS.with(|cells| cells.borrow().clone())
 }
 
-/// Replace the full GLOBAL_ID_NAMESPACE and return the previous contents.
-///
-/// Worker OS threads have their own Rust thread-local runtime state. Thread
-/// targets still need to resolve the defining module's globals through the
-/// same SymbolId-keyed namespace used by JIT code, so threading installs a
-/// snapshot before invoking a target and restores the previous namespace after.
-pub(crate) fn replace_global_id_namespace(
-    next: HashMap<ScopedSymbolKey, MbValue>,
-) -> HashMap<ScopedSymbolKey, MbValue> {
-    GLOBAL_ID_NAMESPACE.with(|ns| std::mem::replace(&mut *ns.borrow_mut(), next))
-}
-
-/// Snapshot the full GLOBAL_ID_NAMESPACE (non-destructive).
-pub(crate) fn snapshot_global_id_namespace() -> HashMap<ScopedSymbolKey, MbValue> {
-    GLOBAL_ID_NAMESPACE.with(|ns| ns.borrow().clone())
-}
-
-/// Snapshot only the active module's raw SymbolId globals.
-pub(crate) fn snapshot_current_module_global_id_namespace() -> HashMap<i64, MbValue> {
-    GLOBAL_ID_NAMESPACE.with(|ns| current_module_symbol_entries(&ns.borrow()))
-}
-
-/// Merge entries into the current GLOBAL_ID_NAMESPACE without clearing it.
-///
-/// Module-qualified keys make raw SymbolId collisions impossible across
-/// sibling/imported modules, so workers can simply overwrite by scoped key.
-pub(crate) fn merge_global_id_namespace(entries: &HashMap<ScopedSymbolKey, MbValue>) {
-    GLOBAL_ID_NAMESPACE.with(|ns| {
-        let mut ns = ns.borrow_mut();
-        for (k, v) in entries {
-            unsafe {
-                super::rc::retain_if_ptr(*v);
-            }
-            if let Some(prev) = ns.insert(k.clone(), *v) {
-                unsafe {
-                    super::rc::release_if_ptr(prev);
-                }
-            }
-        }
-    });
-}
-
-fn snapshot_active_cells_from_map(
-    cells: &HashMap<ScopedSymbolKey, MbValue>,
-) -> HashMap<ScopedSymbolKey, ActiveCellSnapshot> {
-    cells
-        .iter()
-        .filter_map(|(key, cell)| match mb_cell_contents_read(*cell) {
-            CellContentsRead::Value(value) => Some((key.clone(), ActiveCellSnapshot::Value(value))),
-            CellContentsRead::Empty => Some((key.clone(), ActiveCellSnapshot::Empty)),
-            CellContentsRead::NotACell => None,
-        })
-        .collect()
-}
-
-fn install_active_cell_snapshots(entries: HashMap<ScopedSymbolKey, ActiveCellSnapshot>) {
+/// Merge ACTIVE_CELLS from another thread snapshot into active cells.
+pub(crate) fn merge_active_cells(entries: &HashMap<ScopedSymbolKey, MbValue>) {
     ACTIVE_CELLS.with(|cells| {
         let mut cells = cells.borrow_mut();
-        cells.clear();
-        for (key, snapshot) in entries {
-            let cell = match snapshot {
-                ActiveCellSnapshot::Empty => mb_cell_new_empty(),
-                ActiveCellSnapshot::Value(value) => {
-                    let cell = mb_cell_new(value);
-                    unsafe {
-                        super::rc::release_if_ptr(value);
-                    }
-                    cell
-                }
-            };
-            cells.insert(key, cell);
-        }
-    });
-}
-
-/// Replace the full ACTIVE_CELLS map and return a value snapshot of the previous contents.
-pub(crate) fn replace_active_cells(
-    next: HashMap<ScopedSymbolKey, ActiveCellSnapshot>,
-) -> HashMap<ScopedSymbolKey, ActiveCellSnapshot> {
-    let previous = ACTIVE_CELLS.with(|cells| snapshot_active_cells_from_map(&cells.borrow()));
-    install_active_cell_snapshots(next);
-    previous
-}
-
-/// Snapshot the full ACTIVE_CELLS map as value snapshots (non-destructive).
-pub(crate) fn snapshot_active_cells() -> HashMap<ScopedSymbolKey, ActiveCellSnapshot> {
-    ACTIVE_CELLS.with(|cells| snapshot_active_cells_from_map(&cells.borrow()))
-}
-
-/// Merge ACTIVE_CELLS from another thread/runtime snapshot.
-pub(crate) fn merge_active_cells(entries: &HashMap<ScopedSymbolKey, ActiveCellSnapshot>) {
-    ACTIVE_CELLS.with(|cells| {
-        let mut cells = cells.borrow_mut();
-        for (key, snapshot) in entries {
-            if let Some(cell) = cells.get(key).copied() {
-                match snapshot {
-                    ActiveCellSnapshot::Empty => mb_cell_clear(cell),
-                    ActiveCellSnapshot::Value(value) => {
-                        mb_cell_set(cell, *value);
-                        unsafe {
-                            super::rc::release_if_ptr(*value);
-                        }
-                    }
-                }
-            } else {
-                let cell = match snapshot {
-                    ActiveCellSnapshot::Empty => mb_cell_new_empty(),
-                    ActiveCellSnapshot::Value(value) => {
-                        let cell = mb_cell_new(*value);
-                        unsafe {
-                            super::rc::release_if_ptr(*value);
-                        }
-                        cell
-                    }
-                };
-                cells.insert(key.clone(), cell);
-            }
+        for (key, cell) in entries {
+            cells.entry(key.clone()).or_insert(*cell);
         }
     });
 }
@@ -2150,59 +2005,61 @@ pub enum SymTy {
     Boxed,
 }
 
-thread_local! {
-    /// SymbolId.0 → (name, type tag). Used by mb_globals/mb_locals.
-    static MODULE_SYM_INFO: std::cell::RefCell<HashMap<i64, (String, SymTy)>> =
-        std::cell::RefCell::new(HashMap::new());
-    /// User-defined function/closure name → MbValue (TAG_FUNC pointer).
-    /// Populated alongside MODULE_SYM_INFO so functions show up in globals().
-    static MODULE_FUNC_INFO: std::cell::RefCell<HashMap<String, MbValue>> =
-        std::cell::RefCell::new(HashMap::new());
-}
-
 /// Replace the current MODULE_SYM_INFO with a new one.
 pub fn set_module_sym_info(info: HashMap<i64, (String, SymTy)>) {
-    MODULE_SYM_INFO.with(|m| *m.borrow_mut() = info);
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.module_sym_info.write() {
+        *m = info;
+    };
 }
 
 /// Replace the current MODULE_FUNC_INFO with a new one.
 pub fn set_module_func_info(info: HashMap<String, MbValue>) {
-    MODULE_FUNC_INFO.with(|m| *m.borrow_mut() = info);
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.module_func_info.write() {
+        *m = info;
+    };
 }
 
 /// Snapshot for save_and_restore around module imports.
 pub fn save_and_clear_module_sym_info() -> (HashMap<i64, (String, SymTy)>, HashMap<String, MbValue>)
 {
-    let syms = MODULE_SYM_INFO.with(|m| {
-        let mut b = m.borrow_mut();
-        let saved = b.clone();
-        b.clear();
+    let state = super::program_state::current_program_state();
+    let syms = state.module_sym_info.write().map(|mut m| {
+        let saved = m.clone();
+        m.clear();
         saved
-    });
-    let funcs = MODULE_FUNC_INFO.with(|m| {
-        let mut b = m.borrow_mut();
-        let saved = b.clone();
-        b.clear();
+    }).unwrap_or_default();
+    let funcs = state.module_func_info.write().map(|mut m| {
+        let saved = m.clone();
+        m.clear();
         saved
-    });
+    }).unwrap_or_default();
     (syms, funcs)
 }
 
 /// Restore a previously saved sym_info / func_info pair.
 pub fn restore_module_sym_info(saved: (HashMap<i64, (String, SymTy)>, HashMap<String, MbValue>)) {
-    MODULE_SYM_INFO.with(|m| *m.borrow_mut() = saved.0);
-    MODULE_FUNC_INFO.with(|m| *m.borrow_mut() = saved.1);
+    let state = super::program_state::current_program_state();
+    if let Ok(mut m) = state.module_sym_info.write() {
+        *m = saved.0;
+    };
+    if let Ok(mut m) = state.module_func_info.write() {
+        *m = saved.1;
+    };
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1979" reason="logic section in closure.rs is hand-written pending codegen support">
 /// Build a dict containing the current module's globals, drawing from
 /// MODULE_SYM_INFO + GLOBAL_ID_NAMESPACE + MODULE_FUNC_INFO. Skips dunder
 /// names except the standard CPython-visible ones.
 pub fn build_globals_dict() -> MbValue {
     use super::dict_ops;
     let dict = dict_ops::mb_dict_new();
+    let state = super::program_state::current_program_state();
 
     let id_ns = snapshot_current_module_global_id_namespace();
-    let sym_info = MODULE_SYM_INFO.with(|m| m.borrow().clone());
+    let sym_info = state.module_sym_info.read().map(|m| m.clone()).unwrap_or_default();
 
     for (id, raw) in &id_ns {
         let Some((name, ty)) = sym_info.get(id) else {
@@ -2236,51 +2093,46 @@ pub fn build_globals_dict() -> MbValue {
         };
         let key = MbValue::from_ptr(super::rc::MbObject::new_str(name.clone()));
         dict_ops::mb_dict_setitem(dict, key, boxed);
+        unsafe {
+            super::rc::release_if_ptr(key);
+        }
     }
 
-    let func_info = MODULE_FUNC_INFO.with(|m| m.borrow().clone());
+    let func_info = state.module_func_info.read().map(|m| m.clone()).unwrap_or_default();
     for (name, fv) in &func_info {
         if name.starts_with("__") && name != "__name__" && name != "__doc__" && name != "__all__" {
             continue;
         }
         let key = MbValue::from_ptr(super::rc::MbObject::new_str(name.clone()));
         dict_ops::mb_dict_setitem(dict, key, *fv);
+        unsafe {
+            super::rc::release_if_ptr(key);
+        }
     }
     dict
 }
+// </HANDWRITE>
 // HANDWRITE-END
 
 // ── Cleanup ──
 
-/// Reset all closure-related thread_local state to defaults.
+/// Reset closure-related thread_local state and process-global ProgramState.
 /// Called as part of centralized runtime cleanup between test executions.
 /// Values are cleared without releasing — refcount imbalance from mixed
 /// code paths makes release unsafe. Leaked objects reclaimed at process exit.
 pub(crate) fn cleanup_all_closures() {
-    let _ = CLOSURES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    cleanup_thread_local_closures();
+    super::program_state::current_program_state().clear();
+}
+
+/// Reset closure-related thread_local state to defaults without clearing
+/// process-global ProgramState.
+pub(crate) fn cleanup_thread_local_closures() {
     let _ = ACTIVE_CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_MODULE_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_QUALNAME_CONTEXTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = GLOBAL_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = GLOBAL_ID_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_MODULE_SYM_IDS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.set(false));
-    let _ = FUNC_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_QUALNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_DOCS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_MODULES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_ARGCOUNTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_VARNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_FLAGS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_FREEVARS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_BOXED_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_RET_ANNOS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_LINES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = FUNC_FILES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = MODULE_SYM_INFO.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = MODULE_FUNC_INFO.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
 }
 
 #[cfg(test)]

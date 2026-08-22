@@ -700,6 +700,22 @@ mod tests {
         assert!(recovered.is_none());
     }
 
+    #[test]
+    fn test_t1_stop_iteration_tag_requires_zero_payload_phase_a() {
+        // StopIteration is an exact raw tag-6/payload-0 singleton.  A
+        // nonzero payload in the same tag namespace is deliberately not the
+        // sentinel, reserving those values for future typed opaque tokens.
+        let sentinel_bits = NAN_PREFIX | (TAG_STOP_ITER << TAG_SHIFT);
+        let sentinel = MbValue::from_bits(sentinel_bits);
+        let fabricated_nonzero = MbValue::from_bits(sentinel_bits | 1);
+
+        assert_eq!(sentinel, MbValue::stop_iter_sentinel());
+        assert!(sentinel.is_stop_iter_sentinel());
+        assert!(!fabricated_nonzero.is_stop_iter_sentinel());
+        assert_ne!(fabricated_nonzero.to_bits(), sentinel.to_bits());
+        assert_eq!(fabricated_nonzero.as_int(), None);
+    }
+
     // ── INT range boundary tests ──
 
     #[test]

@@ -6,6 +6,80 @@ use super::value::MbValue;
 /// runtime support using setjmp/longjmp-style unwinding.
 use rustc_hash::FxHashMap;
 
+#[derive(Debug)]
+pub struct TraceFrameSnapshot {
+    pub filename: String,
+    pub lineno: u32,
+    pub name: String,
+    pub locals: Option<MbValue>,
+    pub local_trace_hook: Option<MbValue>,
+}
+
+impl TraceFrameSnapshot {
+    pub fn new(
+        filename: String,
+        lineno: u32,
+        name: String,
+        locals: Option<MbValue>,
+        local_trace_hook: Option<MbValue>,
+    ) -> Self {
+        if let Some(l) = locals {
+            unsafe {
+                super::rc::retain_if_ptr(l);
+            }
+        }
+        if let Some(h) = local_trace_hook {
+            unsafe {
+                super::rc::retain_if_ptr(h);
+            }
+        }
+        Self {
+            filename,
+            lineno,
+            name,
+            locals,
+            local_trace_hook,
+        }
+    }
+}
+
+impl Clone for TraceFrameSnapshot {
+    fn clone(&self) -> Self {
+        if let Some(locals) = self.locals {
+            unsafe {
+                super::rc::retain_if_ptr(locals);
+            }
+        }
+        if let Some(hook) = self.local_trace_hook {
+            unsafe {
+                super::rc::retain_if_ptr(hook);
+            }
+        }
+        Self {
+            filename: self.filename.clone(),
+            lineno: self.lineno,
+            name: self.name.clone(),
+            locals: self.locals,
+            local_trace_hook: self.local_trace_hook,
+        }
+    }
+}
+
+impl Drop for TraceFrameSnapshot {
+    fn drop(&mut self) {
+        if let Some(locals) = self.locals {
+            unsafe {
+                super::rc::release_if_ptr(locals);
+            }
+        }
+        if let Some(hook) = self.local_trace_hook {
+            unsafe {
+                super::rc::release_if_ptr(hook);
+            }
+        }
+    }
+}
+
 /// Exception object stored on the heap.
 #[derive(Clone)]
 pub struct MbException {
@@ -19,8 +93,8 @@ pub struct MbException {
     pub context: Option<Box<MbException>>,
     /// Whether __context__ should be suppressed (set by `from None`)
     pub suppress_context: bool,
-    /// Traceback entries: (filename, line, function)
-    pub traceback: Vec<(String, u32, String)>,
+    /// Traceback entries
+    pub traceback: Vec<TraceFrameSnapshot>,
 }
 
 impl MbException {
@@ -46,9 +120,22 @@ impl MbException {
     }
 }
 
-// Thread-local exception state — current unhandled exception.
+use super::execution_context::with_current_context;
+
+pub(crate) fn with_current_exception<F, R>(f: F) -> R
+where
+    F: FnOnce(&std::cell::RefCell<Option<MbException>>) -> R,
+{
+    if with_current_context(|_| ()).is_some() {
+        with_current_context(|ctx| f(&ctx.current_exception)).unwrap()
+    } else {
+        FALLBACK_CURRENT_EXCEPTION.with(f)
+    }
+}
+
+// Thread-local exception state — fallback when no ExecutionContext is bound.
 thread_local! {
-    static CURRENT_EXCEPTION: std::cell::RefCell<Option<MbException>> = std::cell::RefCell::new(None);
+    static FALLBACK_CURRENT_EXCEPTION: std::cell::RefCell<Option<MbException>> = std::cell::RefCell::new(None);
     static EXCEPTION_HANDLERS: std::cell::RefCell<Vec<ExceptionHandler>> = std::cell::RefCell::new(Vec::new());
     /// Most-recently caught exception. Mirrors CPython's "currently handled
     /// exception" reachable via sys.exc_info() / traceback.format_exc().
@@ -316,10 +403,18 @@ fn populate_exception_fields(
         let value_val = arg_items.first().copied().unwrap_or_else(MbValue::none);
         insert_borrowed_field(fields, "value", value_val);
     }
+    if type_name == "SystemExit" {
+        let code = match arg_items.len() {
+            0 => MbValue::none(),
+            1 => arg_items[0],
+            _ => MbValue::from_ptr(MbObject::new_tuple_borrowed(arg_items.to_vec())),
+        };
+        fields.insert("code".to_string(), code);
+    }
     if type_name == "AttributeError" {
         fields.insert("name".to_string(), MbValue::none());
         fields.insert("obj".to_string(), MbValue::none());
-    } else if type_name == "NameError" {
+    } else if type_name == "NameError" || type_name == "UnboundLocalError" {
         fields.insert("name".to_string(), MbValue::none());
     } else if type_name == "ImportError" || type_name == "ModuleNotFoundError" {
         populate_import_error_fields(fields, arg_items);
@@ -339,6 +434,34 @@ fn populate_exception_fields(
         && !populate_toml_decode_error_fields(fields, arg_items)
     {
         return false;
+    }
+    if type_name == "OSError"
+        || type_name == "IOError"
+        || type_name == "EnvironmentError"
+        || is_subclass_of(type_name, "OSError")
+    {
+        let (errno, strerror, filename, winerror, filename2) =
+            if arg_items.len() >= 2 && arg_items.len() <= 5 {
+                let errno = arg_items.get(0).copied().unwrap_or_else(MbValue::none);
+                let strerror = arg_items.get(1).copied().unwrap_or_else(MbValue::none);
+                let filename = arg_items.get(2).copied().unwrap_or_else(MbValue::none);
+                let winerror = arg_items.get(3).copied().unwrap_or_else(MbValue::none);
+                let filename2 = arg_items.get(4).copied().unwrap_or_else(MbValue::none);
+                (errno, strerror, filename, winerror, filename2)
+            } else {
+                (
+                    MbValue::none(),
+                    MbValue::none(),
+                    MbValue::none(),
+                    MbValue::none(),
+                    MbValue::none(),
+                )
+            };
+        fields.insert("errno".to_string(), errno);
+        fields.insert("strerror".to_string(), strerror);
+        fields.insert("filename".to_string(), filename);
+        fields.insert("winerror".to_string(), winerror);
+        fields.insert("filename2".to_string(), filename2);
     }
     let args_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(arg_items.to_vec()));
     fields.insert("args".to_string(), args_tuple);
@@ -704,7 +827,7 @@ fn store_exception_as_value(exc: MbException) -> MbValue {
     if !exc.traceback.is_empty() {
         fields.insert(
             "__traceback__".to_string(),
-            super::stdlib::traceback_mod::make_tb_from_traceback_entries(&exc.traceback),
+            super::stdlib::traceback_mod::make_tb_from_traceback_snapshots(&exc.traceback),
         );
     }
     let obj = Box::new(MbObject {
@@ -768,7 +891,7 @@ pub fn mb_raise(exc_type: MbValue, message: MbValue) {
     if let Some(context) = current_handled_exception_context() {
         exc.context = Some(Box::new(context));
     }
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         *cell.borrow_mut() = Some(exc);
     });
 }
@@ -827,7 +950,7 @@ pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
         // `raise ... from ...` ladders walk correctly.
         exc.cause = mbvalue_to_mbexception(cause, 0).map(Box::new);
     }
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         *cell.borrow_mut() = Some(exc);
     });
 }
@@ -842,7 +965,7 @@ pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbVal
     if !context.is_none() {
         exc.context = mbvalue_to_mbexception(context, 0).map(Box::new);
     }
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         *cell.borrow_mut() = Some(exc);
     });
 }
@@ -867,7 +990,7 @@ pub fn mb_raise_from_with_context(
     if !context.is_none() {
         exc.context = mbvalue_to_mbexception(context, 0).map(Box::new);
     }
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         *cell.borrow_mut() = Some(exc);
     });
 }
@@ -909,7 +1032,7 @@ pub fn mb_reraise_handled() {
 
 /// Check if there's a pending exception.
 pub fn mb_has_exception() -> MbValue {
-    CURRENT_EXCEPTION.with(|cell| MbValue::from_bool(cell.borrow().is_some()))
+    with_current_exception(|cell| MbValue::from_bool(cell.borrow().is_some()))
 }
 
 /// Take the current exception (clearing the pending state) and return a
@@ -917,7 +1040,7 @@ pub fn mb_has_exception() -> MbValue {
 /// no exception is pending. Used by the driver to report uncaught
 /// exceptions at the end of module execution.
 pub fn mb_take_uncaught_traceback() -> Option<String> {
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         cell.borrow_mut().take().map(|exc| {
             let mut out = String::from("Traceback (most recent call last):\n");
             out.push_str("  File \"<module>\"\n");
@@ -937,7 +1060,8 @@ pub fn mb_take_uncaught_traceback() -> Option<String> {
 /// `traceback.format_exc()` and `sys.exc_info()` can report it after the
 /// except handler has consumed the pending slot.
 pub fn mb_catch_exception() -> MbValue {
-    let result = CURRENT_EXCEPTION.with(|cell| match cell.borrow_mut().take() {
+    let exc = with_current_exception(|cell| cell.borrow_mut().take());
+    let result = match exc {
         Some(mut exc) => {
             exc.traceback =
                 super::stdlib::traceback_mod::trim_traceback_to_current_handler(&exc.traceback);
@@ -951,7 +1075,7 @@ pub fn mb_catch_exception() -> MbValue {
             val
         }
         None => MbValue::none(),
-    });
+    };
     // #1535: this exception is now handled — reset so a later, distinct
     // exception unwinding through this same still-active frame fires its
     // own 'exception' event.
@@ -1005,7 +1129,7 @@ fn collect_matcher_targets(exc_type: MbValue, out: &mut Vec<String>) -> Result<(
 /// Clear the current exception (used after successful except handling).
 pub fn mb_clear_exception() {
     super::class::clear_last_raised_instance();
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         *cell.borrow_mut() = None;
     });
     // #1535: see mb_catch_exception — reset the unwind-notification flag.
@@ -1015,13 +1139,13 @@ pub fn mb_clear_exception() {
 /// Set the current exception directly (for use by class.rs raise_instance).
 pub fn set_current_exception(exc: MbException) {
     super::class::clear_last_raised_instance();
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         *cell.borrow_mut() = Some(exc);
     });
 }
 
-pub fn set_current_traceback(entries: Vec<(String, u32, String)>) {
-    CURRENT_EXCEPTION.with(|cell| {
+pub fn set_current_traceback(entries: Vec<TraceFrameSnapshot>) {
+    with_current_exception(|cell| {
         if let Some(exc) = cell.borrow_mut().as_mut() {
             exc.traceback = entries;
         }
@@ -1029,16 +1153,16 @@ pub fn set_current_traceback(entries: Vec<(String, u32, String)>) {
 }
 
 pub fn update_current_traceback_frame_line(filename: &str, name: &str, lineno: u32) {
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         if let Some(exc) = cell.borrow_mut().as_mut() {
             if let Some(idx) =
                 exc.traceback
                     .iter()
-                    .rposition(|(frame_filename, _line, frame_name)| {
-                        frame_filename == filename && frame_name == name
+                    .rposition(|frame| {
+                        frame.filename == filename && frame.name == name
                     })
             {
-                exc.traceback[idx].1 = lineno;
+                exc.traceback[idx].lineno = lineno;
             }
         }
     });
@@ -1047,7 +1171,7 @@ pub fn update_current_traceback_frame_line(filename: &str, name: &str, lineno: u
 /// Clear the current exception state (for use by class.rs catch_exception_instance).
 pub fn clear_current_exception() {
     super::class::clear_last_raised_instance();
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         if cell.borrow().is_some() {
             *cell.borrow_mut() = None;
         }
@@ -1060,13 +1184,20 @@ pub fn clear_current_exception() {
 /// when no exception is pending. Used by eager iterable drains (e.g.
 /// `itertools.cycle`) to tell a real raise apart from a benign StopIteration.
 pub fn current_exception_type() -> Option<String> {
-    CURRENT_EXCEPTION.with(|cell| cell.borrow().as_ref().map(|e| e.exc_type.clone()))
+    with_current_exception(|cell| cell.borrow().as_ref().map(|e| e.exc_type.clone()))
 }
+
+/// Peek the pending exception's message string without clearing it. Returns `None`
+/// when no exception is pending.
+pub fn current_exception_message() -> Option<String> {
+    with_current_exception(|cell| cell.borrow().as_ref().map(|e| e.message.clone()))
+}
+
 
 /// Cheap probe for hot paths that only need to know whether an exception
 /// exists, not allocate its type name.
 pub fn has_current_exception() -> bool {
-    CURRENT_EXCEPTION.with(|cell| cell.borrow().is_some())
+    with_current_exception(|cell| cell.borrow().is_some())
 }
 
 /// #1535: temporarily hide the pending exception so a call can go through.
@@ -1080,7 +1211,7 @@ pub fn has_current_exception() -> bool {
 /// call so a normal, non-raising trace callback can run to completion and
 /// the original exception then keeps propagating.
 pub(crate) fn suspend_current_exception() -> Option<MbException> {
-    CURRENT_EXCEPTION.with(|cell| cell.borrow_mut().take())
+    with_current_exception(|cell| cell.borrow_mut().take())
 }
 
 /// Restore an exception saved by `suspend_current_exception`, unless the
@@ -1089,7 +1220,7 @@ pub(crate) fn suspend_current_exception() -> Option<MbException> {
 /// CPython's "trace function raised" behavior of not silently reinstating
 /// the original.
 pub(crate) fn restore_suspended_exception(saved: Option<MbException>) {
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
             *slot = saved;
@@ -1100,7 +1231,7 @@ pub(crate) fn restore_suspended_exception(saved: Option<MbException>) {
 /// Cheap type-name equality probe for hot paths that need to branch on one
 /// specific exception kind without cloning the stored name.
 pub fn current_exception_is(type_name: &str) -> bool {
-    CURRENT_EXCEPTION.with(|cell| {
+    with_current_exception(|cell| {
         cell.borrow()
             .as_ref()
             .is_some_and(|exc| exc.exc_type == type_name)
@@ -1181,7 +1312,7 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
         | "ZoneInfoNotFoundError"
         | "UnicodeError" | "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
         | "ValueError" | "JSONDecodeError" | "TOMLDecodeError"
-        | "OSError" | "IOError"
+        | "OSError" | "IOError" | "EnvironmentError"
         | "FileNotFoundError" | "PermissionError" | "IsADirectoryError"
         | "NotADirectoryError" | "FileExistsError" | "ConnectionError"
         | "TimeoutError" | "BrokenPipeError" | "ConnectionAbortedError"
@@ -1313,9 +1444,12 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
             // ValueError (CPython 3.12).
             | "IllegalMonthError" | "IllegalWeekdayError"
         ),
-        "OSError" => matches!(
+        "OSError" | "EnvironmentError" | "IOError" => matches!(
             child,
-            "FileNotFoundError"
+            "OSError"
+                | "EnvironmentError"
+                | "IOError"
+                | "FileNotFoundError"
                 | "PermissionError"
                 | "IsADirectoryError"
                 | "NotADirectoryError"
@@ -1894,6 +2028,8 @@ pub fn register_builtin_exceptions() {
 
     // OS / IO hierarchy
     super::class::mb_class_register("OSError", vec!["Exception".into()], empty());
+    super::class::mb_class_register("EnvironmentError", vec!["Exception".into()], empty());
+    super::class::mb_class_register("IOError", vec!["OSError".into()], empty());
     super::class::mb_class_register("FileNotFoundError", vec!["OSError".into()], empty());
     super::class::mb_class_register("PermissionError", vec!["OSError".into()], empty());
     super::class::mb_class_register("IsADirectoryError", vec!["OSError".into()], empty());
@@ -1980,13 +2116,13 @@ pub fn register_builtin_exceptions() {
 /// Retrieve the current exception without clearing the pending state.
 /// Returns `MbValue::none()` if no exception is pending.
 pub fn mb_get_exception() -> MbValue {
-    let has_current = CURRENT_EXCEPTION.with(|cell| cell.borrow().is_some());
+    let has_current = with_current_exception(|cell| cell.borrow().is_some());
     if has_current {
         if let Some(instance) = super::class::peek_last_raised_instance() {
             return instance;
         }
     }
-    CURRENT_EXCEPTION.with(|cell| match cell.borrow().as_ref() {
+    with_current_exception(|cell| match cell.borrow().as_ref() {
         Some(exc) => {
             let val = store_exception_as_value(exc.clone());
             unsafe {
@@ -2365,7 +2501,7 @@ pub fn mb_name_error(msg: &str) -> MbValue {
 /// Reset all exception-related thread_local state to defaults.
 /// Called as part of centralized runtime cleanup between test executions.
 pub(crate) fn cleanup_all_exceptions() {
-    let _ = CURRENT_EXCEPTION.with(|c| c.try_borrow_mut().map(|mut m| *m = None));
+    let _ = with_current_exception(|c| c.try_borrow_mut().map(|mut m| *m = None));
     let _ = EXCEPTION_HANDLERS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
 }
 
@@ -3703,5 +3839,234 @@ mod tests {
         assert!(exc.cause.is_none());
         assert!(exc.context.is_none());
         assert!(!exc.suppress_context);
+    }
+}
+
+#[cfg(test)]
+mod execution_context_exception_isolation {
+    use super::*;
+    use crate::runtime::execution_context::ExecutionContext;
+
+    #[test]
+    fn test_two_contexts_isolated_pending_exceptions_on_one_thread() {
+        let ctx_a = ExecutionContext::create();
+        let ctx_b = ExecutionContext::create();
+
+        let _guard_a = ctx_a.bind();
+        let typ_a = MbValue::from_ptr(MbObject::new_str("ValueError".to_string()));
+        let msg_a = MbValue::from_ptr(MbObject::new_str("error in context A".to_string()));
+        mb_raise(typ_a, msg_a);
+
+        assert!(has_current_exception());
+        assert_eq!(current_exception_type(), Some("ValueError".to_string()));
+        assert_eq!(current_exception_message(), Some("error in context A".to_string()));
+
+        {
+            let _guard_b = ctx_b.bind();
+            assert!(!has_current_exception());
+
+            let typ_b = MbValue::from_ptr(MbObject::new_str("TypeError".to_string()));
+            let msg_b = MbValue::from_ptr(MbObject::new_str("error in context B".to_string()));
+            mb_raise(typ_b, msg_b);
+
+            assert!(has_current_exception());
+            assert_eq!(current_exception_type(), Some("TypeError".to_string()));
+            assert_eq!(current_exception_message(), Some("error in context B".to_string()));
+        }
+
+        assert!(has_current_exception());
+        assert_eq!(current_exception_type(), Some("ValueError".to_string()));
+        assert_eq!(current_exception_message(), Some("error in context A".to_string()));
+
+        mb_clear_exception();
+        assert!(!has_current_exception());
+    }
+
+    #[test]
+    fn test_traceback_isolated_between_contexts() {
+        let ctx_a = ExecutionContext::create();
+        let ctx_b = ExecutionContext::create();
+
+        let _guard_a = ctx_a.bind();
+        let typ_a = MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string()));
+        let msg_a = MbValue::from_ptr(MbObject::new_str("A".to_string()));
+        mb_raise(typ_a, msg_a);
+        set_current_traceback(vec![TraceFrameSnapshot::new(
+            "file_a.py".to_string(),
+            42,
+            "func_a".to_string(),
+            None,
+            None,
+        )]);
+
+        {
+            let _guard_b = ctx_b.bind();
+            let typ_b = MbValue::from_ptr(MbObject::new_str("KeyError".to_string()));
+            let msg_b = MbValue::from_ptr(MbObject::new_str("B".to_string()));
+            mb_raise(typ_b, msg_b);
+            set_current_traceback(vec![TraceFrameSnapshot::new(
+                "file_b.py".to_string(),
+                99,
+                "func_b".to_string(),
+                None,
+                None,
+            )]);
+
+            let tb_b = with_current_exception(|cell| {
+                cell.borrow()
+                    .as_ref()
+                    .map(|exc| (exc.traceback[0].filename.clone(), exc.traceback[0].lineno, exc.traceback[0].name.clone()))
+            });
+            assert_eq!(tb_b, Some(("file_b.py".to_string(), 99, "func_b".to_string())));
+        }
+
+        let tb_a = with_current_exception(|cell| {
+            cell.borrow()
+                .as_ref()
+                .map(|exc| (exc.traceback[0].filename.clone(), exc.traceback[0].lineno, exc.traceback[0].name.clone()))
+        });
+        assert_eq!(tb_a, Some(("file_a.py".to_string(), 42, "func_a".to_string())));
+    }
+
+    #[test]
+    fn test_take_or_catch_in_one_context_does_not_consume_other() {
+        let ctx_a = ExecutionContext::create();
+        let ctx_b = ExecutionContext::create();
+
+        let _guard_a = ctx_a.bind();
+        let typ_a = MbValue::from_ptr(MbObject::new_str("KeyError".to_string()));
+        let msg_a = MbValue::from_ptr(MbObject::new_str("key missing".to_string()));
+        mb_raise(typ_a, msg_a);
+
+        {
+            let _guard_b = ctx_b.bind();
+            let typ_b = MbValue::from_ptr(MbObject::new_str("IndexError".to_string()));
+            let msg_b = MbValue::from_ptr(MbObject::new_str("index out of range".to_string()));
+            mb_raise(typ_b, msg_b);
+
+            let caught_b = mb_catch_exception();
+            assert!(!caught_b.is_none());
+            assert!(!has_current_exception());
+        }
+
+        assert!(has_current_exception());
+        assert_eq!(current_exception_type(), Some("KeyError".to_string()));
+        let caught_a = mb_catch_exception();
+        assert!(!caught_a.is_none());
+        assert!(!has_current_exception());
+    }
+
+    #[test]
+    fn test_cleanup_or_teardown_leaves_other_context_intact() {
+        let ctx_a = ExecutionContext::create();
+        let ctx_b = ExecutionContext::create();
+
+        {
+            let _guard_a = ctx_a.bind();
+            let typ_a = MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string()));
+            let msg_a = MbValue::from_ptr(MbObject::new_str("ctx A error".to_string()));
+            mb_raise(typ_a, msg_a);
+            set_current_traceback(vec![TraceFrameSnapshot::new(
+                "a.py".to_string(),
+                10,
+                "a_fn".to_string(),
+                None,
+                None,
+            )]);
+        }
+
+        {
+            let _guard_b = ctx_b.bind();
+            let typ_b = MbValue::from_ptr(MbObject::new_str("OverflowError".to_string()));
+            let msg_b = MbValue::from_ptr(MbObject::new_str("ctx B error".to_string()));
+            mb_raise(typ_b, msg_b);
+            set_current_traceback(vec![TraceFrameSnapshot::new(
+                "b.py".to_string(),
+                20,
+                "b_fn".to_string(),
+                None,
+                None,
+            )]);
+        }
+
+        // Teardown ctx_a
+        ctx_a.teardown();
+
+        // Check ctx_b is intact
+        {
+            let _guard_b = ctx_b.bind();
+            assert!(has_current_exception());
+            assert_eq!(current_exception_type(), Some("OverflowError".to_string()));
+            let tb_b = with_current_exception(|cell| {
+                cell.borrow()
+                    .as_ref()
+                    .map(|exc| (exc.traceback[0].filename.clone(), exc.traceback[0].lineno, exc.traceback[0].name.clone()))
+            });
+            assert_eq!(tb_b, Some(("b.py".to_string(), 20, "b_fn".to_string())));
+        }
+
+        ctx_b.teardown();
+    }
+
+    #[test]
+    fn test_teardown_is_idempotent_and_does_not_disturb_other_context() {
+        let ctx_a = ExecutionContext::create();
+        let ctx_b = ExecutionContext::create();
+
+        {
+            let _guard_a = ctx_a.bind();
+            let typ_a = MbValue::from_ptr(MbObject::new_str("ValueError".to_string()));
+            let msg_a = MbValue::from_ptr(MbObject::new_str("val_a".to_string()));
+            mb_raise(typ_a, msg_a);
+        }
+
+        {
+            let _guard_b = ctx_b.bind();
+            let typ_b = MbValue::from_ptr(MbObject::new_str("TypeError".to_string()));
+            let msg_b = MbValue::from_ptr(MbObject::new_str("val_b".to_string()));
+            mb_raise(typ_b, msg_b);
+        }
+
+        ctx_a.teardown();
+        ctx_a.teardown(); // idempotent call
+
+        {
+            let _guard_b = ctx_b.bind();
+            assert!(has_current_exception());
+            assert_eq!(current_exception_type(), Some("TypeError".to_string()));
+        }
+
+        ctx_b.teardown();
+        ctx_b.teardown(); // idempotent call
+    }
+
+    #[test]
+    fn test_fallback_path_without_context_bound() {
+        mb_clear_exception();
+        let typ = MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string()));
+        let msg = MbValue::from_ptr(MbObject::new_str("division by zero".to_string()));
+        mb_raise(typ, msg);
+
+        set_current_traceback(vec![TraceFrameSnapshot::new(
+            "fallback.py".to_string(),
+            1,
+            "div".to_string(),
+            None,
+            None,
+        )]);
+
+        assert!(has_current_exception());
+        assert_eq!(current_exception_type(), Some("ZeroDivisionError".to_string()));
+        assert_eq!(current_exception_message(), Some("division by zero".to_string()));
+
+        let tb = with_current_exception(|cell| {
+            cell.borrow()
+                .as_ref()
+                .map(|exc| (exc.traceback[0].filename.clone(), exc.traceback[0].lineno, exc.traceback[0].name.clone()))
+        });
+        assert_eq!(tb, Some(("fallback.py".to_string(), 1, "div".to_string())));
+
+        mb_clear_exception();
+        assert!(!has_current_exception());
     }
 }

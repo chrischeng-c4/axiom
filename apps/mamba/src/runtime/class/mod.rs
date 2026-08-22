@@ -11,6 +11,7 @@ use rustc_hash::FxHashMap;
 /// - Operator overloading (__add__, __sub__, __eq__, etc.)
 /// - super() support
 /// - Property descriptors
+use parking_lot::ReentrantMutex;
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -24,12 +25,12 @@ mod generator_attrs;
 mod mappingproxy;
 mod memoryview;
 
+pub use cells::{mb_class_bind_classcell, mb_class_mark_classcell_required};
 pub(crate) use cells::record_classcell_value_for_type_new;
 use cells::{
     classcell_marker, classcell_required_for, clear_classcell_state,
     validate_classcell_after_metaclass_new,
 };
-pub use cells::{mb_class_bind_classcell, mb_class_mark_classcell_required};
 pub(crate) use descriptors::{
     classmethod_descriptor_get, is_member_descriptor, make_member_descriptor,
     member_descriptor_delete, member_descriptor_get, member_descriptor_set,
@@ -45,7 +46,7 @@ use generator_attrs::{
     dispatch_coroutine_method, dispatch_coroutine_wrapper_method, dispatch_generator_method,
 };
 use mappingproxy::class_namespace_mappingproxy;
-use memoryview::{
+pub(crate) use memoryview::{
     is_memoryview_instance, memoryview_dict_str_get, memoryview_element_at, memoryview_field,
     memoryview_flat_items, memoryview_format, memoryview_format_itemsize, memoryview_i64_items,
     memoryview_is_dict, memoryview_itemsize, memoryview_nbytes, memoryview_nested_list,
@@ -100,113 +101,150 @@ struct NamedTupleBaseShape {
     fields: Vec<String>,
 }
 
-#[derive(Clone)]
-pub(crate) struct ThreadClassState {
-    class_registry: HashMap<String, MbClass>,
-    class_runtime_key_aliases: HashMap<String, String>,
-    user_classes: HashSet<String>,
-    callable_registry: HashSet<u64>,
-    slots_registry: HashMap<String, Vec<String>>,
-    own_slots_registry: HashMap<String, Vec<String>>,
-    dict_suppressed: HashSet<String>,
-    kwargs_registry: HashMap<String, HashMap<String, MbValue>>,
-    classcell_required: HashSet<String>,
-    classcell_symbol_ids: HashMap<String, i64>,
-    classcell_values: HashMap<String, MbValue>,
-    namedtuple_base_shapes: HashMap<String, NamedTupleBaseShape>,
-    runtime_checkable_protocols: HashSet<String>,
-    abc_virtual_subclasses: HashSet<(String, String)>,
-    user_abc_own_abstract: HashMap<String, HashSet<String>>,
+#[derive(Clone, Default)]
+pub(crate) struct ThreadClassState;
+
+pub(crate) struct GlobalRefCell<T> {
+    lock: ReentrantMutex<std::cell::RefCell<T>>,
+}
+
+impl<T> GlobalRefCell<T> {
+    pub fn new(val: T) -> Self {
+        Self {
+            lock: ReentrantMutex::new(std::cell::RefCell::new(val)),
+        }
+    }
+
+    #[inline]
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&std::cell::RefCell<T>) -> R,
+    {
+        let guard = self.lock.lock();
+        f(&*guard)
+    }
+}
+
+pub(crate) struct GlobalCellU64 {
+    val: AtomicU64,
+}
+
+impl GlobalCellU64 {
+    pub const fn new(val: u64) -> Self {
+        Self {
+            val: AtomicU64::new(val),
+        }
+    }
+
+    #[inline]
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&Self) -> R,
+    {
+        f(self)
+    }
+
+    #[inline]
+    pub fn get(&self) -> u64 {
+        self.val.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn set(&self, val: u64) {
+        self.val.store(val, Ordering::Relaxed);
+    }
 }
 
 // Global class registry — maps class name → MbClass.
+static CLASS_REGISTRY: std::sync::LazyLock<GlobalRefCell<HashMap<String, MbClass>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+static CLASS_RUNTIME_KEY_ALIASES: std::sync::LazyLock<GlobalRefCell<HashMap<String, String>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+/// Runtime identities of Python-created classes (lowered class statements
+/// and dynamic `type()` classes), as opposed to native stdlib stub classes
+/// registered through `mb_class_register` directly. Used by mb_getattr to
+/// decide whether a missing attribute should raise AttributeError: only
+/// when the instance's ENTIRE MRO is user-defined, so native parents (whose
+/// __init__ populates attributes outside mamba's instance fields) keep the
+/// lenient None return.
+static USER_CLASSES: std::sync::LazyLock<GlobalRefCell<HashSet<String>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashSet::new()));
+/// Registry of valid callable function pointer addresses.
+/// Only addresses registered here can be invoked via mb_call_method1.
+static CALLABLE_REGISTRY: std::sync::LazyLock<GlobalRefCell<HashSet<u64>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashSet::new()));
+/// __slots__ registry: class name → effective (merged) slot names.
+/// This is the instance LAYOUT — used for attribute-assignment
+/// restriction checks and member-descriptor synthesis. It must NOT be
+/// read back as the `__slots__` attribute VALUE (see OWN_SLOTS_REGISTRY);
+/// CPython keeps those two concepts distinct (#1523).
+static SLOTS_REGISTRY: std::sync::LazyLock<GlobalRefCell<HashMap<String, Vec<String>>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+/// `__slots__` registry: class name → declared-own slot names, exactly as
+/// written in the class body (no MRO merge). Backs the `cls.__slots__`
+/// attribute value, which CPython reports as-declared regardless of what
+/// the merged instance layout looks like (#1523).
+static OWN_SLOTS_REGISTRY: std::sync::LazyLock<GlobalRefCell<HashMap<String, Vec<String>>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+/// R13: Classes with __dict__ suppressed (defined __slots__ without '__dict__' in it).
+static DICT_SUPPRESSED: std::sync::LazyLock<GlobalRefCell<HashSet<String>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashSet::new()));
+/// R10: Pending class keyword arguments for __init_subclass__ dispatch.
+/// Stored by mb_class_set_kwargs, consumed by mb_class_register.
+static KWARGS_REGISTRY: std::sync::LazyLock<GlobalRefCell<HashMap<String, HashMap<String, MbValue>>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+/// Classes whose body needs CPython's implicit __classcell__ contract
+/// because a method references __class__ or zero-arg super().
+static CLASSCELL_REQUIRED: std::sync::LazyLock<GlobalRefCell<HashSet<String>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashSet::new()));
+/// Active capture-cell symbol for each staged class definition.
+static CLASSCELL_SYMBOL_IDS: std::sync::LazyLock<GlobalRefCell<HashMap<String, i64>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+/// Actual class objects written by `type.__new__`, keyed by the classcell
+/// marker's owning staged class.
+static CLASSCELL_VALUES: std::sync::LazyLock<GlobalRefCell<HashMap<String, MbValue>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+
 thread_local! {
-    static CLASS_REGISTRY: std::cell::RefCell<HashMap<String, MbClass>> =
-        std::cell::RefCell::new(HashMap::new());
-    static CLASS_RUNTIME_KEY_ALIASES: std::cell::RefCell<HashMap<String, String>> =
-        std::cell::RefCell::new(HashMap::new());
-    /// Runtime identities of Python-created classes (lowered class statements
-    /// and dynamic `type()` classes), as opposed to native stdlib stub classes
-    /// registered through `mb_class_register` directly. Used by mb_getattr to
-    /// decide whether a missing attribute should raise AttributeError: only
-    /// when the instance's ENTIRE MRO is user-defined, so native parents (whose
-    /// __init__ populates attributes outside mamba's instance fields) keep the
-    /// lenient None return.
-    static USER_CLASSES: std::cell::RefCell<HashSet<String>> =
-        std::cell::RefCell::new(HashSet::new());
-    /// Registry of valid callable function pointer addresses.
-    /// Only addresses registered here can be invoked via mb_call_method1.
-    static CALLABLE_REGISTRY: std::cell::RefCell<HashSet<u64>> =
-        std::cell::RefCell::new(HashSet::new());
-    /// __slots__ registry: class name → effective (merged) slot names.
-    /// This is the instance LAYOUT — used for attribute-assignment
-    /// restriction checks and member-descriptor synthesis. It must NOT be
-    /// read back as the `__slots__` attribute VALUE (see OWN_SLOTS_REGISTRY);
-    /// CPython keeps those two concepts distinct (#1523).
-    static SLOTS_REGISTRY: std::cell::RefCell<HashMap<String, Vec<String>>> =
-        std::cell::RefCell::new(HashMap::new());
-    /// `__slots__` registry: class name → declared-own slot names, exactly as
-    /// written in the class body (no MRO merge). Backs the `cls.__slots__`
-    /// attribute value, which CPython reports as-declared regardless of what
-    /// the merged instance layout looks like (#1523).
-    static OWN_SLOTS_REGISTRY: std::cell::RefCell<HashMap<String, Vec<String>>> =
-        std::cell::RefCell::new(HashMap::new());
-    /// R13: Classes with __dict__ suppressed (defined __slots__ without '__dict__' in it).
-    static DICT_SUPPRESSED: std::cell::RefCell<HashSet<String>> =
-        std::cell::RefCell::new(HashSet::new());
-    /// R10: Pending class keyword arguments for __init_subclass__ dispatch.
-    /// Stored by mb_class_set_kwargs, consumed by mb_class_register.
-    static KWARGS_REGISTRY: std::cell::RefCell<HashMap<String, HashMap<String, MbValue>>> =
-        std::cell::RefCell::new(HashMap::new());
-    /// Classes whose body needs CPython's implicit __classcell__ contract
-    /// because a method references __class__ or zero-arg super().
-    static CLASSCELL_REQUIRED: std::cell::RefCell<HashSet<String>> =
-        std::cell::RefCell::new(HashSet::new());
-    /// Active capture-cell symbol for each staged class definition.
-    static CLASSCELL_SYMBOL_IDS: std::cell::RefCell<HashMap<String, i64>> =
-        std::cell::RefCell::new(HashMap::new());
-    /// Actual class objects written by `type.__new__`, keyed by the classcell
-    /// marker's owning staged class.
-    static CLASSCELL_VALUES: std::cell::RefCell<HashMap<String, MbValue>> =
-        std::cell::RefCell::new(HashMap::new());
     /// Active staged class definitions whose custom metaclass is currently
     /// running `__new__`. The first matching `type.__new__` reuses the staged
     /// class object instead of allocating a duplicate class identity.
     static METACLASS_DEFINITION_STACK: std::cell::RefCell<Vec<MetaclassDefinitionContext>> =
         std::cell::RefCell::new(Vec::new());
-    /// Literal namedtuple base metadata for classes declared as
-    /// `class Child(namedtuple("Base", ["x"]))`.
-    static NAMEDTUPLE_BASE_SHAPES: std::cell::RefCell<HashMap<String, NamedTupleBaseShape>> =
-        std::cell::RefCell::new(HashMap::new());
-    /// Method lookup cache: (class_name_hash, method_name_hash) → cached MbValue.
-    /// Avoids repeated MRO walks for hot method dispatch paths.
-    static METHOD_CACHE: std::cell::RefCell<HashMap<(u64, u64), MbValue>> =
-        std::cell::RefCell::new(HashMap::new());
-    /// Generation counter for METHOD_CACHE invalidation.
-    /// Bumped on class registration or class attribute mutation; cache is cleared.
-    static METHOD_CACHE_GEN: Cell<u64> = Cell::new(0);
-    /// Fast-path cache for "simple" classes: classes with no descriptors and no __slots__.
-    /// For these classes, mb_setattr can skip the descriptor protocol check and slots
-    /// registry check entirely, going straight to the field insert.
-    /// Populated lazily on first mb_setattr call for each class.
-    static SIMPLE_CLASS_CACHE: std::cell::RefCell<HashSet<String>> =
-        std::cell::RefCell::new(HashSet::new());
-    /// Names of classes decorated with `@typing.runtime_checkable` (Protocols).
-    /// `isinstance(obj, P)` against such a class does STRUCTURAL matching —
-    /// true iff obj's class provides every non-dunder method P declares.
-    static RUNTIME_CHECKABLE_PROTOCOLS: std::cell::RefCell<HashSet<String>> =
-        std::cell::RefCell::new(HashSet::new());
-    /// collections.abc virtual subclass registry populated by ABC.register().
-    /// Entries are (registered child class name, ABC parent name).
-    static ABC_VIRTUAL_SUBCLASSES: std::cell::RefCell<HashSet<(String, String)>> =
-        std::cell::RefCell::new(HashSet::new());
-    /// abc: per-class set of method names declared with `@abc.abstractmethod`
-    /// (and the abstract{property,classmethod,staticmethod} variants). Used to
-    /// compute `cls.__abstractmethods__` and to block instantiation of classes
-    /// that still carry un-overridden abstract methods.
-    static USER_ABC_OWN_ABSTRACT: std::cell::RefCell<HashMap<String, HashSet<String>>> =
-        std::cell::RefCell::new(HashMap::new());
 }
+
+/// Literal namedtuple base metadata for classes declared as
+/// `class Child(namedtuple("Base", ["x"]))`.
+static NAMEDTUPLE_BASE_SHAPES: std::sync::LazyLock<GlobalRefCell<HashMap<String, NamedTupleBaseShape>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+/// Method lookup cache: (class_name_hash, method_name_hash) → cached MbValue.
+/// Avoids repeated MRO walks for hot method dispatch paths.
+static METHOD_CACHE: std::sync::LazyLock<GlobalRefCell<HashMap<(u64, u64), MbValue>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
+/// Generation counter for METHOD_CACHE invalidation.
+/// Bumped on class registration or class attribute mutation; cache is cleared.
+static METHOD_CACHE_GEN: GlobalCellU64 = GlobalCellU64::new(0);
+/// Fast-path cache for "simple" classes: classes with no descriptors and no __slots__.
+/// For these classes, mb_setattr can skip the descriptor protocol check and slots
+/// registry check entirely, going straight to the field insert.
+/// Populated lazily on first mb_setattr call for each class.
+static SIMPLE_CLASS_CACHE: std::sync::LazyLock<GlobalRefCell<HashSet<String>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashSet::new()));
+/// Names of classes decorated with `@typing.runtime_checkable` (Protocols).
+/// `isinstance(obj, P)` against such a class does STRUCTURAL matching —
+/// true iff obj's class provides every non-dunder method P declares.
+static RUNTIME_CHECKABLE_PROTOCOLS: std::sync::LazyLock<GlobalRefCell<HashSet<String>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashSet::new()));
+/// collections.abc virtual subclass registry populated by ABC.register().
+/// Entries are (registered child class name, ABC parent name).
+static ABC_VIRTUAL_SUBCLASSES: std::sync::LazyLock<GlobalRefCell<HashSet<(String, String)>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashSet::new()));
+/// abc: per-class set of method names declared with `@abc.abstractmethod`
+/// (and the abstract{property,classmethod,staticmethod} variants). Used to
+/// compute `cls.__abstractmethods__` and to block instantiation of classes
+/// that still carry un-overridden abstract methods.
+static USER_ABC_OWN_ABSTRACT: std::sync::LazyLock<GlobalRefCell<HashMap<String, HashSet<String>>>> =
+    std::sync::LazyLock::new(|| GlobalRefCell::new(HashMap::new()));
 
 struct MetaclassDefinitionContext {
     staged_class: String,
@@ -227,8 +265,8 @@ pub fn mb_class_set_abstractmethods(class_name: MbValue, names: MbValue) {
     if let Some(ptr) = names.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for item in lock.read().unwrap().iter() {
-                    if let Some(s) = extract_str(*item) {
+                for item in lock.read().unwrap().to_vec() {
+                    if let Some(s) = extract_str(item) {
                         set.insert(s);
                     }
                 }
@@ -1285,7 +1323,8 @@ pub fn mb_int_from_bytes(
                 ObjData::List(lock) => lock
                     .read()
                     .unwrap()
-                    .iter()
+                    .to_vec()
+                    .into_iter()
                     .filter_map(|v| v.as_int().map(|i| i as u8))
                     .collect(),
                 ObjData::Tuple(items) => items
@@ -1779,8 +1818,8 @@ pub fn mb_class_define(
             if let (ObjData::List(ref names_lock), ObjData::List(ref vals_lock)) =
                 (&(*names_ptr).data, &(*vals_ptr).data)
             {
-                let names = names_lock.read().unwrap();
-                let vals = vals_lock.read().unwrap();
+                let names = names_lock.read().unwrap().to_vec();
+                let vals = vals_lock.read().unwrap().to_vec();
                 for (n, v) in names.iter().zip(vals.iter()) {
                     if let Some(method_name) = extract_str(*n) {
                         stamp_class_method_metadata(
@@ -1866,7 +1905,7 @@ fn mb_class_define_multi_impl(
     if let Some(ptr) = bases_list.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 for item in items.iter() {
                     if let Some(base_name) = resolve_class_name(*item) {
                         bases.push(base_name);
@@ -1883,8 +1922,8 @@ fn mb_class_define_multi_impl(
             if let (ObjData::List(ref names_lock), ObjData::List(ref vals_lock)) =
                 (&(*names_ptr).data, &(*vals_ptr).data)
             {
-                let names = names_lock.read().unwrap();
-                let vals = vals_lock.read().unwrap();
+                let names = names_lock.read().unwrap().to_vec();
+                let vals = vals_lock.read().unwrap().to_vec();
                 for (n, v) in names.iter().zip(vals.iter()) {
                     if let Some(method_name) = extract_str(*n) {
                         stamp_class_method_metadata(
@@ -1951,7 +1990,7 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
     if let Some(ptr) = bases_list.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 for item in items.iter() {
                     raw_bases.push(*item);
                     if let Some(base_name) = resolve_class_name(*item) {
@@ -1963,9 +2002,9 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
     }
     let was_typeddict = class_is_typeddict_or_descendant(&class_name);
     if was_typeddict
-        && !bases
-            .iter()
-            .any(|base| base == "TypedDict" || class_mro_any(base, |parent| parent == "TypedDict"))
+        && !bases.iter().any(|base| {
+            base == "TypedDict" || class_mro_any(base, |parent| parent == "TypedDict")
+        })
     {
         bases.insert(0, "TypedDict".to_string());
     }
@@ -2015,6 +2054,7 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
             .unwrap_or_default()
     });
     install_abc_mixins(&class_name, &mro);
+
 }
 
 /// R10: Store class keyword arguments for __init_subclass__ dispatch.
@@ -2028,8 +2068,8 @@ pub fn mb_class_set_kwargs(class_name: MbValue, keys: MbValue, values: MbValue) 
             if let (ObjData::List(ref keys_lock), ObjData::List(ref vals_lock)) =
                 (&(*keys_ptr).data, &(*vals_ptr).data)
             {
-                let keys_items = keys_lock.read().unwrap();
-                let vals_items = vals_lock.read().unwrap();
+                let keys_items = keys_lock.read().unwrap().to_vec();
+                let vals_items = vals_lock.read().unwrap().to_vec();
                 for (k, v) in keys_items.iter().zip(vals_items.iter()) {
                     if let Some(key_name) = extract_str(*k) {
                         if key_name == "**" {
@@ -2079,7 +2119,8 @@ fn build_kwargs_dict(kwargs: &HashMap<String, MbValue>) -> MbValue {
 fn class_base_accepts_kwargs_without_init_subclass(base_name: &str) -> bool {
     matches!(base_name, "typing.Generic" | "typing.typing.Generic")
         || class_is_typeddict_or_descendant(base_name)
-        || typinganndata_helper_class_name(base_name).is_some_and(class_is_typeddict_or_descendant)
+        || typinganndata_helper_class_name(base_name)
+            .is_some_and(class_is_typeddict_or_descendant)
 }
 
 fn class_is_typeddict_or_descendant(class_name: &str) -> bool {
@@ -2413,11 +2454,9 @@ pub fn mb_deferred_class_name_read(class_name: MbValue, name: MbValue) -> MbValu
         return value;
     }
     let meta = CLASS_REGISTRY.with(|reg| {
-        reg.borrow().get(&class_name).and_then(|cls| {
-            cls.metaclass
-                .clone()
-                .or_else(|| inherited_metaclass_for_bases(&cls.bases))
-        })
+        reg.borrow()
+            .get(&class_name)
+            .and_then(|cls| cls.metaclass.clone().or_else(|| inherited_metaclass_for_bases(&cls.bases)))
     });
     if let Some(meta_name) = meta {
         let prepared = mb_call_metaclass_prepare(
@@ -2715,8 +2754,9 @@ pub fn mb_class_set_namedtuple_base(
                 Some(
                     lock.read()
                         .unwrap()
-                        .iter()
-                        .filter_map(|v| extract_str(*v))
+                        .to_vec()
+                        .into_iter()
+                        .filter_map(|v| extract_str(v))
                         .collect(),
                 )
             } else {
@@ -3037,7 +3077,7 @@ fn method_args_with_receiver_and_defaults(
     if let Some(args_ptr) = args.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*args_ptr).data {
-                all_args.extend(lock.read().unwrap().iter());
+                all_args.extend(lock.read().unwrap().to_vec());
             }
         }
     }
@@ -3046,9 +3086,12 @@ fn method_args_with_receiver_and_defaults(
     MbValue::from_ptr(MbObject::new_list(all_args))
 }
 
-fn rebox_method_result(raw: MbValue, is_boxed: bool) -> MbValue {
+fn rebox_method_result(raw: MbValue, is_boxed: bool, is_bool: bool) -> MbValue {
     if is_boxed {
         return raw;
+    }
+    if is_bool {
+        return super::builtins::mb_box_bool(raw.to_bits() as i64);
     }
     super::builtins::mb_box_int(raw.to_bits() as i64)
 }
@@ -3131,7 +3174,8 @@ fn call_registered_method_addr(addr: u64, args: &[MbValue]) -> MbValue {
         || super::module::is_variadic_func(addr)
         || super::module::is_kwargs_func(addr)
         || super::module::is_native_func(addr);
-    rebox_method_result(raw, is_boxed)
+    let is_bool = super::module::is_bool_return_func(addr);
+    rebox_method_result(raw, is_boxed, is_bool)
 }
 
 fn call_registered_method_value(callable: MbValue, addr: u64, args: &[MbValue]) -> MbValue {
@@ -3202,7 +3246,7 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
             .as_ptr()
             .map(|ptr| unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    lock.read().unwrap().iter().copied().collect()
+                    lock.read().unwrap().to_vec()
                 } else {
                     Vec::new()
                 }
@@ -3217,7 +3261,7 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
     if let Some(ptr) = args_list.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 // Dispatch based on arg count — single lock acquisition for count + values.
                 // REQ: JIT-compiled functions use SystemV/C calling convention.
                 match items.len() {
@@ -3252,7 +3296,7 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
                         let mut all_args = Vec::with_capacity(items.len() + 1);
                         all_args.push(instance);
                         all_args.extend(items.iter());
-                        drop(items); // Release the lock before calling.
+                        // drop(items); // Release the lock before calling.
                         if all_args.len() == 5 {
                             let func: extern "C" fn(
                                 MbValue,
@@ -3827,7 +3871,7 @@ fn seed_exception_args_fields(instance: MbValue, init_class: &str, args_list: Mb
         };
         let items = lock.read().unwrap();
         if let Some(first) = items.first() {
-            let msg = super::builtins::mb_str(*first);
+            let msg = super::builtins::mb_str(first);
             mb_setattr(
                 instance,
                 MbValue::from_ptr(MbObject::new_str("message".to_string())),
@@ -3846,7 +3890,7 @@ fn seed_exception_args_fields(instance: MbValue, init_class: &str, args_list: Mb
             args_tuple,
         );
         if init_class == "StopIteration" {
-            let value_val = items.first().copied().unwrap_or_else(MbValue::none);
+            let value_val = items.first().unwrap_or_else(MbValue::none);
             super::rc::retain_if_ptr(value_val);
             mb_setattr(
                 instance,
@@ -4208,11 +4252,7 @@ fn instance_new_with_init_impl(
                         // matching CPython's `dict(iterable, **kwargs)`. #1549.
                         let payload = instance.as_ptr().and_then(|ptr| unsafe {
                             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                                fields
-                                    .read()
-                                    .unwrap()
-                                    .get(payload_field_for_base(base))
-                                    .copied()
+                                fields.read().unwrap().get(payload_field_for_base(base)).copied()
                             } else {
                                 None
                             }
@@ -4310,7 +4350,7 @@ fn instance_new_with_init_impl(
             if let Some(ptr) = args_list.as_ptr() {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
-                        let items = lock.read().unwrap();
+                        let items = lock.read().unwrap().to_vec();
                         let message = items.first().copied().unwrap_or_else(MbValue::none);
                         let excs = items.get(1).copied().unwrap_or_else(MbValue::none);
                         // PEP 654: an ExceptionGroup subclass (but not a bare
@@ -4381,7 +4421,7 @@ fn instance_new_with_init_impl(
             if let Some(ptr) = args_list.as_ptr() {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
-                        let items = lock.read().unwrap();
+                        let items = lock.read().unwrap().to_vec();
                         // Set message to first arg (Python convention)
                         if let Some(first) = items.first() {
                             let msg = super::builtins::mb_str(*first);
@@ -5634,7 +5674,7 @@ fn make_bound_native_method(recv: MbValue, method_name: &str) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
-fn make_generic_alias_instance(origin: MbValue, key: MbValue) -> MbValue {
+pub(crate) fn make_generic_alias_instance(origin: MbValue, key: MbValue) -> MbValue {
     let args_tuple = if let Some(kp) = key.as_ptr() {
         unsafe {
             if let ObjData::Tuple(_) = (*kp).data {
@@ -5655,10 +5695,9 @@ fn make_generic_alias_instance(origin: MbValue, key: MbValue) -> MbValue {
             super::rc::retain_if_ptr(origin);
             g.insert("__origin__".to_string(), origin);
             g.insert("__args__".to_string(), args_tuple);
-            g.insert(
-                "__parameters__".to_string(),
-                MbValue::from_ptr(MbObject::new_tuple(vec![])),
-            );
+            let args_vec = super::builtins::extract_items(args_tuple);
+            let params_tuple = super::stdlib::typing_mod::typevar_params_tuple(&args_vec);
+            g.insert("__parameters__".to_string(), params_tuple);
         }
     }
     MbValue::from_ptr(inst_ptr)
@@ -5737,24 +5776,21 @@ fn user_abc_subclasshook(parent: &str, child_name: &str) -> Option<bool> {
     // extractor silently no-ops here; resolve via the registry instead
     // (#1821).
     let addr = extract_registered_func_addr(hook_fn);
-    if addr == 0 {
-        return None;
-    }
-    let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
-    if !is_registered {
-        return None;
-    }
-    // Call __subclasshook__(cls, C). mamba's @classmethod convention passes the
-    // owning class as a bare class-name string for `cls` (so an identity guard
-    // `if cls is Sized` works against the registered-class string). The
-    // candidate `C` is passed as a *type object* so `hasattr(C, "__len__")`
-    // queries the type's methods rather than treating a class-name string as a
-    // plain str (which would itself answer hasattr("__len__") truthily).
+    let is_registered = addr != 0 && CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
     let cls_obj = MbValue::from_ptr(MbObject::new_str(parent.to_string()));
     let cand_obj = make_type_object(child_name);
-    let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-        unsafe { std::mem::transmute(addr as usize) };
-    let result = func(cls_obj, cand_obj);
+    let result = if is_registered {
+        let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+            unsafe { std::mem::transmute(addr as usize) };
+        func(cls_obj, cand_obj)
+    } else {
+        let args = MbValue::from_ptr(MbObject::new_list(vec![cls_obj, cand_obj]));
+        super::builtins::mb_call_spread(hook_fn, args)
+    };
+    if super::exception::mb_has_exception().as_bool() == Some(true) || result.is_none() {
+        super::exception::mb_clear_exception();
+        return None;
+    }
     // NotImplemented → fall through.
     if result.is_not_implemented() {
         return None;
@@ -5932,7 +5968,7 @@ fn mapping_pair_from_value(value: MbValue) -> Option<(MbValue, MbValue)> {
         match &(*ptr).data {
             ObjData::Tuple(items) if items.len() == 2 => Some((items[0], items[1])),
             ObjData::List(lock) => {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 if items.len() == 2 {
                     Some((items[0], items[1]))
                 } else {
@@ -6803,8 +6839,8 @@ fn namedtuple_hidden_dict_fields(fields: &FxHashMap<String, MbValue>) -> HashSet
         if let Some(ptr) = names_val.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    for item in lock.read().unwrap().iter() {
-                        if let Some(name) = extract_str(*item) {
+                    for item in lock.read().unwrap().to_vec() {
+                        if let Some(name) = extract_str(item) {
                             hidden.insert(name);
                         }
                     }
@@ -6877,6 +6913,23 @@ fn mb_getattr_impl(
                 }
             }
         }
+        if obj.is_none() {
+            if matches!(
+                attr_name.as_str(),
+                "__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__"
+            ) {
+                return make_bound_native_method(obj, &attr_name);
+            }
+            if !(attr_name.starts_with("__") && attr_name.ends_with("__")) {
+                let instance = super::exception::mb_attribute_error_with_name_obj(
+                    &format!("'NoneType' object has no attribute '{}'", attr_name),
+                    &attr_name,
+                    obj,
+                );
+                mb_raise_instance(instance);
+                return MbValue::none();
+            }
+        }
         // A module's __dict__ is its namespace mapping. Return a snapshot
         // (same as vars(module)) rather than the live module dict, so iterating
         // it works (e.g. errno's uppercase constants) without letting callers
@@ -6912,6 +6965,19 @@ fn mb_getattr_impl(
                 ref fields,
             } = (*ptr).data
             {
+                if class_name == "frame" && (attr_name == "f_locals" || attr_name == "f_globals") {
+                    let is_module_frame = {
+                        let g = fields.read().unwrap();
+                        g.get("f_name")
+                            .copied()
+                            .and_then(extract_str)
+                            .as_deref()
+                            == Some("<module>")
+                    };
+                    if is_module_frame || attr_name == "f_globals" {
+                        return super::stdlib::traceback_mod::get_or_sync_module_globals();
+                    }
+                }
                 if class_name == "__super__"
                     && attr_name != "__super_class__"
                     && attr_name != "__super_self__"
@@ -7064,19 +7130,30 @@ fn mb_getattr_impl(
                     // bound methods, not hard-rejected. Fall through to the
                     // slow path for every other case, same as before this
                     // carve-out was revived.
-                    if !attr_s.starts_with("__")
-                        && super::module::is_module_value(obj)
-                        && super::dict_ops::dict_get_exact_str(&guard, "__name__")
+                    // If the object is a module value, raise AttributeError on miss, or call __getattr__ if present (#1965)
+                    if super::module::is_module_value(obj) {
+                        if let Some(getattr_fn) = super::dict_ops::dict_get_exact_str(&guard, "__getattr__") {
+                            let method_args = MbValue::from_ptr(MbObject::new_list(vec![attr]));
+                            drop(guard);
+                            return super::builtins::mb_call_spread(getattr_fn, method_args);
+                        }
+                        let mod_name = super::dict_ops::dict_get_exact_str(&guard, "__name__")
                             .and_then(extract_str)
-                            .is_some_and(|mod_name| {
-                                mod_name == "test" || mod_name.starts_with("test.")
-                            })
-                    {
+                            .unwrap_or_else(|| "module".to_string());
+                        if !attr_s.starts_with("__")
+                            && (mod_name == "test" || mod_name.starts_with("test."))
+                        {
+                            return MbValue::none();
+                        }
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "module '{}' has no attribute '{}'",
+                                mod_name, attr_s
+                            ))),
+                        );
                         return MbValue::none();
                     }
-                    // Dict miss is a real AttributeError shape; fall through
-                    // to the slow path so existing dunder / __getattr__ /
-                    // descriptor semantics keep handling it.
                 }
             }
         }
@@ -7215,6 +7292,11 @@ fn mb_getattr_impl(
     }
     if attr_name == "__setstate__" && super::iter::mb_iter_supports_setstate(obj) {
         return make_bound_native_method(obj, &attr_name);
+    }
+    if super::iter::mb_is_iterator_handle(obj) {
+        if matches!(attr_name.as_str(), "__next__" | "__iter__" | "__length_hint__") {
+            return make_bound_native_method(obj, &attr_name);
+        }
     }
 
     // __name__ / __qualname__ on functions / closures: look up in the
@@ -8355,10 +8437,11 @@ fn mb_getattr_impl(
                                 if let ObjData::List(ref lk) = (*p).data {
                                     lk.read()
                                         .unwrap()
-                                        .iter()
+                                        .to_vec()
+                                        .into_iter()
                                         .map(|s| {
-                                            super::rc::retain_if_ptr(*s);
-                                            *s
+                                            super::rc::retain_if_ptr(s);
+                                            s
                                         })
                                         .collect()
                                 } else {
@@ -8428,7 +8511,19 @@ fn mb_getattr_impl(
                         }
                     }
                     if super::dict_ops::dict_view_kind(obj).is_some()
-                        && matches!(attr_name.as_str(), "__contains__" | "isdisjoint")
+                        && matches!(
+                            attr_name.as_str(),
+                            "__contains__"
+                                | "isdisjoint"
+                                | "__and__"
+                                | "__rand__"
+                                | "__or__"
+                                | "__ror__"
+                                | "__sub__"
+                                | "__rsub__"
+                                | "__xor__"
+                                | "__rxor__"
+                        )
                     {
                         return make_bound_native_method(obj, &attr_name);
                     }
@@ -8904,7 +8999,19 @@ fn mb_getattr_impl(
                             }),
                             None => false,
                         };
-                        if pure_user_hierarchy || is_exception_instance_class(class_name) {
+                        if pure_user_hierarchy
+                            || is_exception_instance_class(class_name)
+                            || matches!(
+                                class_name.as_str(),
+                                "Lock"
+                                    | "Event"
+                                    | "RLock"
+                                    | "Condition"
+                                    | "Semaphore"
+                                    | "BoundedSemaphore"
+                                    | "Barrier"
+                            )
+                        {
                             let instance = super::exception::mb_attribute_error_with_name_obj(
                                 &format!(
                                     "'{}' object has no attribute '{}'",
@@ -9523,7 +9630,7 @@ unsafe extern "C" fn code_replace(self_v: MbValue, args: MbValue) -> MbValue {
     // kwargs arrive as a trailing dict positional in the packed args list.
     let kwargs = args.as_ptr().and_then(|p| {
         if let ObjData::List(ref lk) = (*p).data {
-            lk.read().unwrap().last().copied()
+            lk.read().unwrap().last()
         } else {
             None
         }
@@ -9598,7 +9705,7 @@ unsafe extern "C" fn code_eq(self_v: MbValue, args: MbValue) -> MbValue {
     let mut other = args;
     if let Some(ptr) = args.as_ptr() {
         if let ObjData::List(ref lock) = (*ptr).data {
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             if items.len() == 1 {
                 other = items[0];
             }
@@ -9791,7 +9898,7 @@ pub(crate) fn call_method_value_with_args(
     if let Some(ptr) = args.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                items.extend(lock.read().unwrap().iter());
+                items.extend(lock.read().unwrap().to_vec());
             }
         }
     }
@@ -9989,23 +10096,24 @@ fn invoke_descriptor_set(desc: MbValue, instance: MbValue, value: MbValue) {
     }
     // General __set__ protocol: call desc.__set__(instance, value)
     if let Some(method) = try_get_dunder(desc, "__set__") {
-        // Closure-handle __set__ bodies (e.g. #1379's zero-arg super()/
-        // __class__ compilation) are small tagged ints, not real function
-        // addresses; extract_registered_func_addr resolves them via the
-        // closure registry instead of transmuting garbage. This is the
-        // highest-risk wild-call site, so it additionally requires the
-        // resolved address to be a CALLABLE_REGISTRY member before any
-        // transmute — mirroring mb_property_set's dual-path dispatch (#1821).
         let addr = extract_registered_func_addr(method);
-        if addr != 0 {
-            let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
-            if is_reg {
-                // REQ: JIT-compiled functions use SystemV/C calling convention.
-                let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr as usize) };
-                func(desc, instance, value);
-            }
+        let is_reg = addr != 0 && CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
+        if is_reg {
+            // REQ: JIT-compiled functions use SystemV/C calling convention.
+            let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
+                unsafe { std::mem::transmute(addr as usize) };
+            func(desc, instance, value);
+        } else {
+            let args = MbValue::from_ptr(MbObject::new_list(vec![desc, instance, value]));
+            let _ = super::builtins::mb_call_spread(method, args);
         }
+    } else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "read-only attribute".to_string(),
+            )),
+        );
     }
 }
 
@@ -10065,19 +10173,24 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
     }
     // General __delete__ protocol: call desc.__delete__(instance)
     if let Some(method) = try_get_dunder(desc, "__delete__") {
-        // See invoke_descriptor_set above: closure-handle bodies need the
-        // registry-resolving extractor plus a CALLABLE_REGISTRY membership
-        // check before any transmute — this is a wild-call site (#1821).
         let addr = extract_registered_func_addr(method);
-        if addr != 0 {
-            let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
-            if is_reg {
-                // REQ: JIT-compiled functions use SystemV/C calling convention.
-                let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr as usize) };
-                func(desc, instance);
-            }
+        let is_reg = addr != 0 && CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
+        if is_reg {
+            // REQ: JIT-compiled functions use SystemV/C calling convention.
+            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+                unsafe { std::mem::transmute(addr as usize) };
+            func(desc, instance);
+        } else {
+            let args = MbValue::from_ptr(MbObject::new_list(vec![desc, instance]));
+            let _ = super::builtins::mb_call_spread(method, args);
         }
+    } else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "can't delete attribute".to_string(),
+            )),
+        );
     }
 }
 
@@ -10373,6 +10486,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "imag",
             "__getnewargs__",
             "__complex__",
+            "__format__",
             "__add__",
             "__radd__",
             "__sub__",
@@ -10903,7 +11017,7 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
                         let items: Option<Vec<MbValue>> =
                             result.as_ptr().and_then(|rp| match &(*rp).data {
                                 ObjData::List(ref lock) => {
-                                    Some(lock.read().unwrap().iter().copied().collect())
+                                    Some(lock.read().unwrap().to_vec())
                                 }
                                 ObjData::Tuple(ref t) => Some(t.clone()),
                                 ObjData::Set(ref lock) => {
@@ -11055,6 +11169,16 @@ fn mb_setattr_default(obj: MbValue, attr: MbValue, value: MbValue) {
             );
             return;
         }
+    }
+    if obj.is_none() {
+        let attr_name = extract_str(attr).unwrap_or_default();
+        let instance = super::exception::mb_attribute_error_with_name_obj(
+            &format!("'NoneType' object has no attribute '{}'", attr_name),
+            &attr_name,
+            obj,
+        );
+        mb_raise_instance(instance);
+        return;
     }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
@@ -11604,7 +11728,7 @@ pub fn mb_register_slots(class_name: MbValue, slots: MbValue) {
     if let Some(ptr) = slots.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 for item in items.iter() {
                     if let Some(s) = extract_str(*item) {
                         own_slot_names.push(s);
@@ -11682,6 +11806,15 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
 
 fn mb_delattr_default(obj: MbValue, attr: MbValue) {
     let attr_name = extract_str(attr).unwrap_or_default();
+    if obj.is_none() {
+        let instance = super::exception::mb_attribute_error_with_name_obj(
+            &format!("'NoneType' object has no attribute '{}'", attr_name),
+            &attr_name,
+            obj,
+        );
+        mb_raise_instance(instance);
+        return;
+    }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if super::stdlib::weakref_mod::proxy_dead_attr_access(obj, &attr_name) {
@@ -12073,7 +12206,10 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
     // Iterator handles are stored as integer IDs (not heap objects).
     // `hasattr(iter_handle, '__next__')` / `hasattr(iter_handle, '__iter__')`
     // must return True to match CPython's iterator protocol surface.
-    if matches!(attr_name.as_str(), "__next__" | "__iter__" | "__setstate__") {
+    if matches!(
+        attr_name.as_str(),
+        "__next__" | "__iter__" | "__setstate__" | "__length_hint__"
+    ) {
         if super::iter::mb_is_iterator_handle(obj)
             && (attr_name != "__setstate__" || super::iter::mb_iter_supports_setstate(obj))
         {
@@ -12634,8 +12770,15 @@ pub fn mb_dispatch_binop(op_code: i64, lhs: MbValue, rhs: MbValue) -> MbValue {
         .get(op_code as usize)
         .copied()
         .unwrap_or("add");
-    let dunder = format!("__{op_name}__");
-    let rdunder = format!("__r{op_name}__");
+    let (dunder, rdunder) = match op_name {
+        "eq" => ("__eq__".to_string(), "__eq__".to_string()),
+        "ne" => ("__ne__".to_string(), "__ne__".to_string()),
+        "lt" => ("__lt__".to_string(), "__gt__".to_string()),
+        "gt" => ("__gt__".to_string(), "__lt__".to_string()),
+        "le" => ("__le__".to_string(), "__ge__".to_string()),
+        "ge" => ("__ge__".to_string(), "__le__".to_string()),
+        _ => (format!("__{op_name}__"), format!("__r{op_name}__")),
+    };
 
     let rhs_reflected_first = instance_class_name(lhs)
         .zip(instance_class_name(rhs))
@@ -12750,6 +12893,38 @@ fn mb_inplace(
                 }
                 return a;
             }
+        } else if idunder == "__ior__"
+            && a.as_ptr()
+                .map_or(false, |p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        {
+            return super::dict_ops::mb_dict_ior(a, b);
+        } else if a
+            .as_ptr()
+            .map_or(false, |p| unsafe { matches!((*p).data, ObjData::Set(_)) })
+        {
+            match idunder {
+                "__ior__" => {
+                    super::set_ops::mb_set_update(a, b);
+                    unsafe { super::rc::retain_if_ptr(a); }
+                    return a;
+                }
+                "__iand__" => {
+                    super::set_ops::mb_set_intersection_update(a, b);
+                    unsafe { super::rc::retain_if_ptr(a); }
+                    return a;
+                }
+                "__isub__" => {
+                    super::set_ops::mb_set_difference_update(a, b);
+                    unsafe { super::rc::retain_if_ptr(a); }
+                    return a;
+                }
+                "__ixor__" => {
+                    super::set_ops::mb_set_symmetric_difference_update(a, b);
+                    unsafe { super::rc::retain_if_ptr(a); }
+                    return a;
+                }
+                _ => {}
+            }
         }
         // A user-defined instance whose in-place dunder is absent (or returned
         // NotImplemented) falls back to the binary operator dispatch
@@ -12800,12 +12975,9 @@ fn list_inplace_extend_update(list: MbValue, other: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// `dict.__ior__` wrapper: `mb_dict_update` (the same routine backing
-/// `dict.update()`, which already accepts a mapping or an iterable of
-/// key/value pairs) mutates in place but returns unit; see
-/// `list_inplace_extend_update` above for why a wrapper is needed. (#1026)
+/// `dict.__ior__` wrapper: `mb_dict_ior` mutates in place and returns `dict` (or `none()` on exception). (#1026, #2046)
 fn dict_inplace_update(dict: MbValue, other: MbValue) -> MbValue {
-    super::dict_ops::mb_dict_update(dict, other);
+    super::dict_ops::mb_dict_ior(dict, other);
     MbValue::none()
 }
 
@@ -12844,7 +13016,16 @@ pub fn mb_ifloordiv(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__ifloordiv__", 4, super::builtins::mb_floordiv)
 }
 pub fn mb_matmul(a: MbValue, b: MbValue) -> MbValue {
-    mb_dispatch_binop(MATMUL_OPCODE, a, b)
+    let res = mb_dispatch_binop(MATMUL_OPCODE, a, b);
+    // Matmul error handling fallback (#1971)
+    if res.is_none() && !super::exception::has_current_exception() {
+        super::builtins::raise_type_error(format!(
+            "unsupported operand type(s) for @: '{}' and '{}'",
+            super::builtins::value_type_name(a),
+            super::builtins::value_type_name(b)
+        ));
+    }
+    res
 }
 pub fn mb_imatmul(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__imatmul__", MATMUL_OPCODE, mb_matmul)
@@ -12856,10 +13037,27 @@ pub fn mb_iand(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__iand__", 15, super::builtins::mb_bitand)
 }
 pub fn mb_ior(a: MbValue, b: MbValue) -> MbValue {
+    if a.as_ptr()
+        .map_or(false, |p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+    {
+        return super::dict_ops::mb_dict_ior(a, b);
+    }
     mb_inplace(a, b, "__ior__", 16, super::builtins::mb_bitor)
 }
 pub fn mb_ixor(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__ixor__", 17, super::builtins::mb_bitxor)
+}
+pub fn mb_itruediv(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__itruediv__", 3, super::builtins::mb_div)
+}
+pub fn mb_imod(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__imod__", 5, super::builtins::mb_mod)
+}
+pub fn mb_ilshift(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__ilshift__", 18, super::builtins::mb_lshift)
+}
+pub fn mb_irshift(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__irshift__", 19, super::builtins::mb_rshift)
 }
 
 /// Invoke a 2-arg method value with (self, arg). Handles both TAG_FUNC direct
@@ -12961,7 +13159,11 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 for &item in items.iter() {
-                    if mb_isinstance(obj, item).as_bool() == Some(true) {
+                    let res = mb_isinstance(obj, item);
+                    if res.is_none() || super::exception::current_exception_type().is_some() {
+                        return MbValue::none();
+                    }
+                    if res.as_bool() == Some(true) {
                         return MbValue::from_bool(true);
                     }
                 }
@@ -12971,7 +13173,11 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
     }
     if let Some(items) = union_type_args(class_name) {
         for item in items {
-            if mb_isinstance(obj, item).as_bool() == Some(true) {
+            let res = mb_isinstance(obj, item);
+            if res.is_none() || super::exception::current_exception_type().is_some() {
+                return MbValue::none();
+            }
+            if res.as_bool() == Some(true) {
                 return MbValue::from_bool(true);
             }
         }
@@ -13040,25 +13246,32 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
-    // Metaclass __instancecheck__: isinstance(x, C) defers to
-    // type(C).__instancecheck__(C, x) when the metaclass defines it.
+    // Metaclass / ABC __instancecheck__: isinstance(x, C) defers to
+    // type(C).__instancecheck__(C, x) when defined on metaclass or class.
     let meta_check = CLASS_REGISTRY.with(|reg| {
-        reg.borrow()
-            .get(target.as_str())
-            .and_then(|c| c.metaclass.clone())
-            .filter(|m| m != "type" && m != "ABCMeta")
-            .map(|m| lookup_method(&m, "__instancecheck__"))
-            .filter(|m| !m.is_none())
+        let reg = reg.borrow();
+        let cls_meta = reg.get(target.as_str()).and_then(|c| c.metaclass.clone());
+        if let Some(m) = cls_meta {
+            if m != "type" {
+                let method = lookup_method(&m, "__instancecheck__");
+                if !method.is_none() {
+                    return Some(method);
+                }
+            }
+        }
+        let self_method = lookup_method(target.as_str(), "__instancecheck__");
+        if !self_method.is_none() {
+            return Some(self_method);
+        }
+        None
     });
     if let Some(method) = meta_check {
         let cls_val = class_type_object(&target);
-        let out = call_method_value2(method, cls_val, obj);
+        let args = MbValue::from_ptr(MbObject::new_list(vec![cls_val, obj]));
+        let out = super::builtins::mb_call_spread(method, args);
         if super::exception::mb_has_exception().as_bool() == Some(true) || out.is_none() {
-            // The user dunder hit a runtime gap (e.g. cls.__dict__ /
-            // metaclass-bound methods) — fall back to the nominal check
-            // rather than reporting a wrong False.
             super::exception::mb_clear_exception();
-        } else {
+        } else if !out.is_not_implemented() {
             return MbValue::from_bool(super::builtins::mb_bool(out).as_bool() == Some(true));
         }
     }
@@ -13104,6 +13317,8 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
                             || (target == "staticmethod" && class_name == "__staticmethod__")
                             || (target == "classmethod" && class_name == "__classmethod__")
                             || (target == "dict" && class_name == "__instance_dict_proxy__")
+                            || (target == "types.UnionType" && class_name == "UnionType")
+                            || (target == "UnionType" && class_name == "types.UnionType")
                     }
                 });
                 if nominal {
@@ -13593,12 +13808,30 @@ fn normalize_issubclass_class_name(name: String) -> String {
 }
 
 pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
+    // Left side (child) is a UnionType (e.g. `issubclass(int | str, target)`):
+    // True iff ALL items in child are subclasses of parent.
+    if let Some(child_items) = union_type_args(child) {
+        for c_item in child_items {
+            let res = mb_issubclass(c_item, parent);
+            if res.is_none() || super::exception::current_exception_type().is_some() {
+                return MbValue::none();
+            }
+            if res.as_bool() != Some(true) {
+                return MbValue::from_bool(false);
+            }
+        }
+        return MbValue::from_bool(true);
+    }
     // Tuple of types: issubclass(C, (A, B, ...)) — true iff any element matches.
     if let Some(ptr) = parent.as_ptr() {
         unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 for &item in items.iter() {
-                    if mb_issubclass(child, item).as_bool() == Some(true) {
+                    let res = mb_issubclass(child, item);
+                    if res.is_none() || super::exception::current_exception_type().is_some() {
+                        return MbValue::none();
+                    }
+                    if res.as_bool() == Some(true) {
                         return MbValue::from_bool(true);
                     }
                 }
@@ -13608,7 +13841,11 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     }
     if let Some(items) = union_type_args(parent) {
         for item in items {
-            if mb_issubclass(child, item).as_bool() == Some(true) {
+            let res = mb_issubclass(child, item);
+            if res.is_none() || super::exception::current_exception_type().is_some() {
+                return MbValue::none();
+            }
+            if res.as_bool() == Some(true) {
                 return MbValue::from_bool(true);
             }
         }
@@ -13692,23 +13929,32 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
         }
         return MbValue::from_bool(protocol_structural_subclass(&child_name, &parent_name));
     }
-    // Metaclass __subclasscheck__: issubclass(S, C) defers to
-    // type(C).__subclasscheck__(C, S) when the metaclass defines it.
+    // Metaclass / ABC __subclasscheck__: issubclass(S, C) defers to
+    // type(C).__subclasscheck__(C, S) when defined on metaclass or class.
     let meta_check = CLASS_REGISTRY.with(|reg| {
-        reg.borrow()
-            .get(parent_name.as_str())
-            .and_then(|c| c.metaclass.clone())
-            .filter(|m| m != "type" && m != "ABCMeta")
-            .map(|m| lookup_method(&m, "__subclasscheck__"))
-            .filter(|m| !m.is_none())
+        let reg = reg.borrow();
+        let cls_meta = reg.get(parent_name.as_str()).and_then(|c| c.metaclass.clone());
+        if let Some(m) = cls_meta {
+            if m != "type" {
+                let method = lookup_method(&m, "__subclasscheck__");
+                if !method.is_none() {
+                    return Some(method);
+                }
+            }
+        }
+        let self_method = lookup_method(parent_name.as_str(), "__subclasscheck__");
+        if !self_method.is_none() {
+            return Some(self_method);
+        }
+        None
     });
     if let Some(method) = meta_check {
         let cls_val = class_type_object(&parent_name);
-        let out = call_method_value2(method, cls_val, child);
+        let args = MbValue::from_ptr(MbObject::new_list(vec![cls_val, child]));
+        let out = super::builtins::mb_call_spread(method, args);
         if super::exception::mb_has_exception().as_bool() == Some(true) || out.is_none() {
-            // User dunder hit a runtime gap — fall back to the nominal check.
             super::exception::mb_clear_exception();
-        } else {
+        } else if !out.is_not_implemented() {
             return MbValue::from_bool(super::builtins::mb_bool(out).as_bool() == Some(true));
         }
     }
@@ -13890,7 +14136,12 @@ pub fn class_mro_any<F: Fn(&str) -> bool>(child: &str, pred: F) -> bool {
 }
 
 fn class_is_or_inherits(class_name: &str, base_name: &str) -> bool {
-    class_name == base_name || class_mro_any(class_name, |name| name == base_name)
+    class_name == base_name
+        || class_name.ends_with(&format!(".{base_name}"))
+        || base_name.ends_with(&format!(".{class_name}"))
+        || class_mro_any(class_name, |name| {
+            name == base_name || name.ends_with(&format!(".{base_name}")) || base_name.ends_with(&format!(".{name}"))
+        })
 }
 
 // ── Metaclasses / ABC ──
@@ -13917,7 +14168,7 @@ pub fn mb_register_abstract(class_name: MbValue, method_names: MbValue) {
     unsafe {
         if let Some(ptr) = method_names.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 for item in items.iter() {
                     if let Some(s) = extract_str(*item) {
                         methods.push(s);
@@ -14014,6 +14265,12 @@ pub fn mb_super_no_args_error() -> MbValue {
         MbValue::from_ptr(MbObject::new_str("super(): no arguments".to_string())),
     );
     MbValue::none()
+}
+
+/// `globals()` — the module namespace as a live dict. Split out of the
+/// `super()` error path, which round 5 of #3069 had repurposed (#3069).
+pub fn mb_module_globals() -> MbValue {
+    super::stdlib::traceback_mod::get_or_sync_module_globals()
 }
 
 /// Explicit `super(cls, obj_or_type)` with argument validation matching
@@ -14612,7 +14869,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     {
                         if let Some(ip) = items_v.as_ptr() {
                             if let ObjData::List(ref lock) = (*ip).data {
-                                let items = lock.read().unwrap();
+                                let items = lock.read().unwrap().to_vec();
                                 let len = items.len() as i64;
                                 let actual = if idx < 0 { idx + len } else { idx };
                                 if actual >= 0 && actual < len {
@@ -14942,7 +15199,8 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     // Builtin type objects: PEP 585 generics subscript into
                     // aliases (list[int]); non-generic scalars raise (#22).
                     if class_name == "type" {
-                        let tn = super::builtins::type_object_registry_key(obj).unwrap_or_default();
+                        let tn =
+                            super::builtins::type_object_registry_key(obj).unwrap_or_default();
                         match tn.as_str() {
                             "list" | "dict" | "set" | "frozenset" | "tuple" | "type" => {
                                 return super::stdlib::typing_mod::pep585_subscript(obj, key);
@@ -15033,7 +15291,10 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     // A parameterized generic alias / union (`(int | T)[str]`,
                     // `list[T][int]`) substitutes its __parameters__ with the
                     // subscript args (arity-checked).
-                    if class_name == "typing.Alias" || class_name == "UnionType" {
+                    if matches!(
+                        class_name.as_str(),
+                        "typing.Alias" | "UnionType" | "GenericAlias" | "types.GenericAlias"
+                    ) {
                         return super::stdlib::typing_mod::alias_subscript(obj, key);
                     }
                     if class_name == "TypeAliasType" {
@@ -15139,12 +15400,28 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                             );
                             return MbValue::none();
                         }
+                        let offset = fields
+                            .read()
+                            .unwrap()
+                            .get("_offset")
+                            .and_then(|v| v.as_int())
+                            .unwrap_or(0);
+                        let stride = fields
+                            .read()
+                            .unwrap()
+                            .get("_stride")
+                            .and_then(|v| v.as_int())
+                            .unwrap_or(1);
+                        let itemsize = memoryview_itemsize(obj);
                         if let Some(data) = super::builtins::try_bytes_like(buf) {
-                            return memoryview_element_at(
-                                &data,
-                                &memoryview_format(obj),
-                                idx as usize,
-                            );
+                            let byte_pos = (offset + idx * stride * itemsize) as usize;
+                            if byte_pos < data.len() {
+                                return memoryview_element_at(
+                                    &data[byte_pos..],
+                                    &memoryview_format(obj),
+                                    0,
+                                );
+                            }
                         }
                         return MbValue::none();
                     }
@@ -15402,11 +15679,9 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                         return MbValue::none();
                     }
                     let buf = g.get("_buffer").copied();
+                    let offset = g.get("_offset").and_then(|v| v.as_int()).unwrap_or(0);
+                    let stride = g.get("_stride").and_then(|v| v.as_int()).unwrap_or(1);
                     drop(g);
-                    // Slice assignment must match the target slice's byte
-                    // length — memoryview never resizes on `mv[a:b] = rhs`
-                    // (CPython: ValueError "lvalue and rvalue have different
-                    // structures").
                     if let Some(kp) = key.as_ptr() {
                         if let super::rc::ObjData::Tuple(ref items) = (*kp).data {
                             if items.len() == 3 {
@@ -15434,7 +15709,48 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                                         return MbValue::none();
                                     }
                                 }
+                                let step = items[2].as_int().unwrap_or(1);
+                                let normalize = |v: MbValue, default: i64| -> i64 {
+                                    let mut i = v.as_int().unwrap_or(default);
+                                    if i < 0 {
+                                        i += shape_len;
+                                    }
+                                    i.clamp(0, shape_len)
+                                };
+                                let start_idx = normalize(items[0], 0);
+                                let stop_idx = normalize(items[1], shape_len);
+                                let target_start = offset + start_idx * itemsize;
+                                let target_stop = offset + stop_idx * itemsize;
+                                if let Some(buf) = buf {
+                                    super::list_ops::mb_list_setslice(
+                                        buf,
+                                        MbValue::from_int(target_start),
+                                        MbValue::from_int(target_stop),
+                                        MbValue::from_int(step),
+                                        value,
+                                    );
+                                }
+                                return MbValue::none();
                             }
+                        }
+                    }
+                    if let Some(idx_raw) = key.as_int() {
+                        let shape_len =
+                            memoryview_shape_values(obj).first().copied().unwrap_or(0);
+                        let itemsize = memoryview_itemsize(obj).max(1);
+                        let actual = if idx_raw < 0 { idx_raw + shape_len } else { idx_raw };
+                        if actual < 0 || actual >= shape_len {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "index out of bounds on dimension 1".to_string(),
+                                )),
+                            );
+                            return MbValue::none();
+                        }
+                        let target_idx = offset + actual * stride * itemsize;
+                        if let Some(buf) = buf {
+                            return mb_obj_setitem(buf, MbValue::from_int(target_idx), value);
                         }
                     }
                     buf
@@ -15484,9 +15800,10 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                         for v in &new_items {
                             super::rc::retain_if_ptr(*v);
                         }
-                        let removed: Vec<MbValue> = items.drain(a..b.max(a)).collect();
+                        let mut items_gen = items.ensure_generic();
+                        let removed: Vec<MbValue> = items_gen.drain(a..b.max(a)).collect();
                         for (off, v) in new_items.into_iter().enumerate() {
-                            items.insert(a + off, v);
+                            items_gen.insert(a + off, v);
                         }
                         drop(items);
                         for r in removed {
@@ -15495,14 +15812,15 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                         return MbValue::none();
                     }
                     if let Some(idx) = key.as_int() {
-                        let mut items = kl.write().unwrap();
+                        let mut items_guard = kl.write().unwrap();
+                        let items = items_guard.ensure_generic();
                         let n = items.len() as i64;
                         let i = if idx < 0 { idx + n } else { idx };
                         if i >= 0 && i < n {
                             super::rc::retain_if_ptr(value);
                             let old = items[i as usize];
                             items[i as usize] = value;
-                            drop(items);
+                            drop(items_guard);
                             super::rc::release_if_ptr(old);
                             return MbValue::none();
                         }
@@ -15659,7 +15977,8 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
                             .map(|v| if v < 0 { v + n } else { v })
                             .unwrap_or(n)
                             .clamp(0, n) as usize;
-                        let removed: Vec<MbValue> = items.drain(a..b.max(a)).collect();
+                        let mut items_gen = items.ensure_generic();
+                        let removed: Vec<MbValue> = items_gen.drain(a..b.max(a)).collect();
                         drop(items);
                         for r in removed {
                             super::rc::release_if_ptr(r);
@@ -15699,6 +16018,9 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
                 }
                 super::rc::ObjData::Dict(_) => {
                     super::dict_ops::mb_dict_delitem(obj, key);
+                }
+                super::rc::ObjData::Tuple(_) => {
+                    super::tuple_ops::mb_tuple_delitem(obj, key);
                 }
                 _ => {
                     if let super::rc::ObjData::Instance { ref class_name, .. } = (*ptr).data {
@@ -15758,14 +16080,24 @@ pub fn mb_context_enter(obj: MbValue) -> MbValue {
             return obj; // file.__enter__() → self
         }
     }
-    // threading.Lock / RLock / Condition stubs are Instances whose method
-    // table is not registered as a class; route their __enter__ to the
-    // direct acquire-handler so `with lock:` works.
+    // threading.Lock / RLock / Condition / Semaphore / BoundedSemaphore stubs are
+    // Instances whose method table is not registered as a class; route their
+    // __enter__ to the direct acquire-handler so `with lock:` / `with sem:` works.
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                if class_name == "Lock" || class_name == "RLock" || class_name == "Condition" {
-                    let _ = super::stdlib::threading_mod::mb_threading_lock_acquire(obj);
+                if class_name == "Lock" || class_name == "RLock" {
+                    let _ = super::stdlib::threading_mod::mb_threading_lock_acquire_with_args(obj, None, None);
+                    super::rc::retain_if_ptr(obj);
+                    return obj;
+                }
+                if class_name == "Condition" {
+                    let _ = super::stdlib::threading_mod::mb_threading_condition_acquire(obj);
+                    super::rc::retain_if_ptr(obj);
+                    return obj;
+                }
+                if class_name == "Semaphore" || class_name == "BoundedSemaphore" {
+                    let _ = super::stdlib::threading_mod::mb_threading_semaphore_acquire(obj, None, None);
                     super::rc::retain_if_ptr(obj);
                     return obj;
                 }
@@ -15800,9 +16132,9 @@ pub fn mb_context_enter(obj: MbValue) -> MbValue {
                 if let Some(cn) = cn {
                     if USER_CLASSES.with(|u| u.borrow().contains(cn.as_str())) {
                         super::exception::mb_raise(
-                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(format!(
-                                "'{cn}' object does not support the context manager protocol (missed __exit__ method)"
+                                "'{cn}' object has no attribute '__exit__'"
                             ))),
                         );
                         return MbValue::none();
@@ -15854,7 +16186,12 @@ pub fn value_supports_context_manager(obj: MbValue) -> bool {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                if class_name == "Lock" || class_name == "RLock" || class_name == "Condition" {
+                if class_name == "Lock"
+                    || class_name == "RLock"
+                    || class_name == "Condition"
+                    || class_name == "Semaphore"
+                    || class_name == "BoundedSemaphore"
+                {
                     return true;
                 }
             }
@@ -16001,8 +16338,22 @@ pub fn mb_context_exit(obj: MbValue, _has_exc: MbValue) -> MbValue {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                if class_name == "Lock" || class_name == "RLock" || class_name == "Condition" {
+                if class_name == "Lock" || class_name == "RLock" {
                     super::stdlib::threading_mod::mb_threading_lock_release(obj);
+                    if has_pending {
+                        super::exception::mb_reraise(pending);
+                    }
+                    return MbValue::from_bool(false);
+                }
+                if class_name == "Condition" {
+                    super::stdlib::threading_mod::mb_threading_condition_release(obj);
+                    if has_pending {
+                        super::exception::mb_reraise(pending);
+                    }
+                    return MbValue::from_bool(false);
+                }
+                if class_name == "Semaphore" || class_name == "BoundedSemaphore" {
+                    super::stdlib::threading_mod::mb_threading_semaphore_release(obj, None);
                     if has_pending {
                         super::exception::mb_reraise(pending);
                     }
@@ -16220,7 +16571,9 @@ pub fn mb_obj_str(obj: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 let display_name = class_display_name(class_name);
-                return MbValue::from_ptr(MbObject::new_str(format!("<{display_name} instance>")));
+                return MbValue::from_ptr(MbObject::new_str(format!(
+                    "<{display_name} instance>"
+                )));
             }
         }
     }
@@ -16321,14 +16674,17 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
     // Re-box primitive returns through mb_box_int. It preserves real NaN-boxed
     // values but also correctly boxes raw negative i64 values, whose high bits
     // otherwise look like a NaN-box prefix.
-    fn rebox(raw: MbValue, is_boxed: bool) -> MbValue {
+    fn rebox(func: MbValue, raw: MbValue, is_boxed: bool) -> MbValue {
         if is_boxed {
             return raw;
+        }
+        if super::module::is_bool_return_val(func) {
+            return super::builtins::mb_box_bool(raw.to_bits() as i64);
         }
         super::builtins::mb_box_int(raw.to_bits() as i64)
     }
     fn finish_call(func: MbValue, raw: MbValue, is_boxed: bool) -> MbValue {
-        let result = rebox(raw, is_boxed);
+        let result = rebox(func, raw, is_boxed);
         if super::stdlib::types_mod::is_coroutine_generator(result) {
             result
         } else {
@@ -16564,8 +16920,8 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
                         }
                         let is_boxed = super::module::is_boxed_return_func(addr as u64);
                         let f: extern "C" fn(MbValue) -> MbValue =
-                            std::mem::transmute(addr as usize);
-                        return rebox(f(func), is_boxed);
+                            unsafe { std::mem::transmute(addr as usize) };
+                        return finish_call(call_method, f(func), is_boxed);
                     }
                 }
             }
@@ -16607,14 +16963,17 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
     // Re-box primitive returns through mb_box_int. It preserves real NaN-boxed
     // values but also correctly boxes raw negative i64 values, whose high bits
     // otherwise look like a NaN-box prefix.
-    fn rebox(raw: MbValue, is_boxed: bool) -> MbValue {
+    fn rebox(func: MbValue, raw: MbValue, is_boxed: bool) -> MbValue {
         if is_boxed {
             return raw;
+        }
+        if super::module::is_bool_return_val(func) {
+            return super::builtins::mb_box_bool(raw.to_bits() as i64);
         }
         super::builtins::mb_box_int(raw.to_bits() as i64)
     }
     fn finish_call(func: MbValue, raw: MbValue, is_boxed: bool) -> MbValue {
-        let result = rebox(raw, is_boxed);
+        let result = rebox(func, raw, is_boxed);
         if super::stdlib::types_mod::is_coroutine_generator(result) {
             result
         } else {
@@ -18296,12 +18655,52 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // / set / clear / is_set / __enter__ / __exit__) directly to the
             // threading_mod handlers; otherwise the generic instance method-
             // lookup path raises AttributeError.
+            struct ExtractedArgs {
+                positional: Vec<MbValue>,
+                kw_dict: Option<MbValue>,
+            }
+
+            impl ExtractedArgs {
+                fn extract(args: MbValue) -> Self {
+                    let arg_items: Vec<MbValue> = super::builtins::extract_items(args);
+                    let kw_dict = arg_items.last().copied().filter(|v| {
+                        v.as_ptr()
+                            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+                            .unwrap_or(false)
+                    });
+                    let positional = if kw_dict.is_some() {
+                        arg_items[..arg_items.len() - 1].to_vec()
+                    } else {
+                        arg_items
+                    };
+                    Self { positional, kw_dict }
+                }
+
+                fn kw(&self, key: &str) -> Option<MbValue> {
+                    let ptr = self.kw_dict?.as_ptr()?;
+                    unsafe {
+                        if let ObjData::Dict(ref lock) = (*ptr).data {
+                            let guard = lock.read().unwrap();
+                            return super::dict_ops::dict_get_exact_str(&guard, key);
+                        }
+                    }
+                    None
+                }
+
+                fn arg(&self, pos: usize, key: &str) -> Option<MbValue> {
+                    self.positional.get(pos).copied().or_else(|| self.kw(key))
+                }
+            }
+
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 if class_name == "Lock" {
+                    let ext = ExtractedArgs::extract(args);
                     match name.as_str() {
                         "acquire" | "__enter__" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_acquire(
-                                receiver,
+                            let blocking = ext.arg(0, "blocking");
+                            let timeout = ext.arg(1, "timeout");
+                            return super::stdlib::threading_mod::mb_threading_lock_acquire_with_args(
+                                receiver, blocking, timeout,
                             );
                         }
                         "release" => {
@@ -18326,10 +18725,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                 }
                 if class_name == "RLock" {
+                    let ext = ExtractedArgs::extract(args);
                     match name.as_str() {
                         "acquire" | "__enter__" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_acquire(
-                                receiver,
+                            let blocking = ext.arg(0, "blocking");
+                            let timeout = ext.arg(1, "timeout");
+                            return super::stdlib::threading_mod::mb_threading_lock_acquire_with_args(
+                                receiver, blocking, timeout,
                             );
                         }
                         "release" => {
@@ -18345,6 +18747,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                 }
                 if class_name == "Event" {
+                    let ext = ExtractedArgs::extract(args);
                     match name.as_str() {
                         "set" => {
                             return super::stdlib::threading_mod::mb_threading_event_set(receiver);
@@ -18360,103 +18763,77 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             );
                         }
                         "wait" => {
-                            // Sync stub: report set state without blocking.
-                            return super::stdlib::threading_mod::mb_threading_event_is_set(
-                                receiver,
+                            let timeout = ext.arg(0, "timeout");
+                            return super::stdlib::threading_mod::mb_threading_event_wait(
+                                receiver, timeout,
                             );
                         }
                         _ => {}
                     }
                 }
                 if class_name == "Condition" {
+                    let ext = ExtractedArgs::extract(args);
                     match name.as_str() {
                         "acquire" | "__enter__" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_acquire(
+                            return super::stdlib::threading_mod::mb_threading_condition_acquire(
                                 receiver,
                             );
                         }
                         "release" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_release(
+                            return super::stdlib::threading_mod::mb_threading_condition_release(
                                 receiver,
                             );
                         }
                         "__exit__" => {
-                            super::stdlib::threading_mod::mb_threading_lock_release(receiver);
+                            super::stdlib::threading_mod::mb_threading_condition_release(receiver);
                             return MbValue::from_bool(false);
                         }
-                        "notify" | "notify_all" | "wait" | "wait_for" => {
-                            // CPython requires the condition's lock to be held.
-                            let held = if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                                fields
-                                    .read()
-                                    .unwrap()
-                                    .get("locked")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false)
-                            } else {
-                                false
-                            };
-                            if !held {
-                                let verb = if name.starts_with("notify") {
-                                    "notify on"
-                                } else {
-                                    "wait on"
-                                };
-                                super::exception::mb_raise(
-                                    MbValue::from_ptr(MbObject::new_str(
-                                        "RuntimeError".to_string(),
-                                    )),
-                                    MbValue::from_ptr(MbObject::new_str(format!(
-                                        "cannot {verb} un-acquired lock"
-                                    ))),
-                                );
-                                return MbValue::none();
-                            }
-                            return MbValue::none();
+                        "wait" => {
+                            let timeout = ext.arg(0, "timeout");
+                            return super::stdlib::threading_mod::mb_threading_condition_wait(
+                                receiver, timeout,
+                            );
+                        }
+                        "wait_for" => {
+                            let predicate = ext.arg(0, "predicate").unwrap_or_else(MbValue::none);
+                            let timeout = ext.arg(1, "timeout");
+                            return super::stdlib::threading_mod::mb_threading_condition_wait_for(
+                                receiver, predicate, timeout,
+                            );
+                        }
+                        "notify" => {
+                            let n = ext.arg(0, "n");
+                            return super::stdlib::threading_mod::mb_threading_condition_notify(
+                                receiver, n,
+                            );
+                        }
+                        "notify_all" => {
+                            return super::stdlib::threading_mod::mb_threading_condition_notify_all(
+                                receiver,
+                            );
                         }
                         _ => {}
                     }
                 }
                 if class_name == "Semaphore" || class_name == "BoundedSemaphore" {
+                    let ext = ExtractedArgs::extract(args);
                     match name.as_str() {
                         "acquire" | "__enter__" => {
-                            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                                let mut f = fields.write().unwrap();
-                                let v = f.get("value").and_then(|x| x.as_int()).unwrap_or(0);
-                                if v > 0 {
-                                    f.insert("value".into(), MbValue::from_int(v - 1));
-                                    return MbValue::from_bool(true);
-                                }
-                                // Sync stub: a zero semaphore cannot block.
-                                return MbValue::from_bool(false);
-                            }
-                            return MbValue::from_bool(false);
+                            let blocking = ext.arg(0, "blocking");
+                            let timeout = ext.arg(1, "timeout");
+                            return super::stdlib::threading_mod::mb_threading_semaphore_acquire(
+                                receiver, blocking, timeout,
+                            );
                         }
-                        "release" | "__exit__" => {
-                            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                                let mut f = fields.write().unwrap();
-                                let v = f.get("value").and_then(|x| x.as_int()).unwrap_or(0);
-                                let bound = f.get("bound").and_then(|x| x.as_int());
-                                if let Some(b) = bound {
-                                    if v + 1 > b {
-                                        drop(f);
-                                        super::exception::mb_raise(
-                                            MbValue::from_ptr(MbObject::new_str(
-                                                "ValueError".to_string(),
-                                            )),
-                                            MbValue::from_ptr(MbObject::new_str(
-                                                "Semaphore released too many times".to_string(),
-                                            )),
-                                        );
-                                        return MbValue::none();
-                                    }
-                                }
-                                f.insert("value".into(), MbValue::from_int(v + 1));
-                            }
-                            if name == "__exit__" {
-                                return MbValue::from_bool(false);
-                            }
-                            return MbValue::none();
+                        "release" => {
+                            let n = ext.arg(0, "n");
+                            return super::stdlib::threading_mod::mb_threading_semaphore_release(
+                                receiver, n,
+                            );
+                        }
+                        "__exit__" => {
+                            super::stdlib::threading_mod::mb_threading_semaphore_release(receiver, None);
+                            return MbValue::from_bool(false);
                         }
                         _ => {}
                     }
@@ -18501,7 +18878,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             let n = arg_items.first().copied().unwrap_or_else(MbValue::none);
                             return super::stdlib::io_mod::mb_stringio_truncate(receiver, n);
                         }
-                        "readable" | "writable" | "seekable" => return MbValue::from_bool(true),
+                        "seekable" => {
+                            return super::stdlib::io_mod::mb_stringio_seekable(receiver);
+                        }
+                        "readable" => {
+                            return super::stdlib::io_mod::mb_stringio_readable(receiver);
+                        }
+                        "writable" => {
+                            return super::stdlib::io_mod::mb_stringio_writable(receiver);
+                        }
                         "close" => return super::stdlib::io_mod::mb_stringio_close(receiver),
                         "flush" => return MbValue::none(),
                         "__enter__" => {
@@ -18557,7 +18942,18 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             let n = arg_items.first().copied().unwrap_or_else(MbValue::none);
                             return super::stdlib::io_mod::mb_bytesio_truncate(receiver, n);
                         }
-                        "readable" | "seekable" | "writable" => return MbValue::from_bool(true),
+                        "seekable" => {
+                            return super::stdlib::io_mod::mb_bytesio_seekable(receiver);
+                        }
+                        "readable" => {
+                            return super::stdlib::io_mod::mb_bytesio_readable(receiver);
+                        }
+                        "writable" => {
+                            return super::stdlib::io_mod::mb_bytesio_writable(receiver);
+                        }
+                        "getbuffer" => {
+                            return super::stdlib::io_mod::mb_bytesio_getbuffer(receiver);
+                        }
                         "close" => return super::stdlib::io_mod::mb_bytesio_close(receiver),
                         "flush" => return MbValue::none(),
                         "__enter__" => {
@@ -18784,6 +19180,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 let items = super::builtins::extract_items(args);
                 let a = items.first().copied().unwrap_or_else(MbValue::none);
                 let b = items.get(1).copied().unwrap_or_else(MbValue::none);
+                if name == "__format__" {
+                    return super::string_ops::mb_format_value(a, b);
+                }
                 if let Some(result) = super::builtins::complex_cmp_dunder(name.as_str(), a, b) {
                     return result;
                 }
@@ -18945,7 +19344,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     .as_ptr()
                     .and_then(|p| unsafe {
                         if let ObjData::List(ref lk) = (*p).data {
-                            Some(lk.read().unwrap().clone())
+                            Some(lk.read().unwrap().to_vec())
                         } else {
                             None
                         }
@@ -19208,7 +19607,8 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 let ptr = kw_dict?.as_ptr()?;
                 unsafe {
                     if let ObjData::Dict(ref lock) = (*ptr).data {
-                        return lock.read().unwrap().get(key).copied();
+                        let guard = lock.read().unwrap();
+                        return super::dict_ops::dict_get_exact_str(&guard, key);
                     }
                 }
                 None
@@ -19676,6 +20076,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         }
     }
 
+    if receiver.is_int() && super::iter::mb_is_iterator_handle(receiver) {
+        match name.as_str() {
+            "__next__" => return super::iter::mb_next_raise(receiver),
+            "__iter__" => return receiver,
+            "__length_hint__" => {
+                if let Some(hint) = super::iter::mb_iter_length_hint(receiver) {
+                    return hint;
+                }
+                return MbValue::from_int(0);
+            }
+            _ => {}
+        }
+    }
+
     if receiver.is_int() && name == "__setstate__" {
         let arg_items: Vec<MbValue> = args
             .as_ptr()
@@ -19819,7 +20233,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     .as_ptr()
                     .and_then(|p| unsafe {
                         if let ObjData::List(ref lk) = (*p).data {
-                            lk.read().unwrap().first().copied()
+                            lk.read().unwrap().first()
                         } else {
                             None
                         }
@@ -20059,7 +20473,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     .as_ptr()
                     .and_then(|p| unsafe {
                         if let ObjData::List(ref lk) = (*p).data {
-                            lk.read().unwrap().first().copied()
+                            lk.read().unwrap().first()
                         } else {
                             None
                         }
@@ -20133,7 +20547,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         .as_ptr()
                         .and_then(|p| {
                             if let ObjData::List(ref lk) = (*p).data {
-                                lk.read().unwrap().first().copied()
+                                lk.read().unwrap().first()
                             } else {
                                 None
                             }
@@ -20146,7 +20560,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         .as_ptr()
                         .and_then(|p| {
                             if let ObjData::List(ref lk) = (*p).data {
-                                lk.read().unwrap().first().copied()
+                                lk.read().unwrap().first()
                             } else {
                                 None
                             }
@@ -20211,7 +20625,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         .as_ptr()
                         .and_then(|p| {
                             if let ObjData::List(ref lk) = (*p).data {
-                                lk.read().unwrap().first().copied()
+                                lk.read().unwrap().first()
                             } else {
                                 None
                             }
@@ -20233,7 +20647,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         .as_ptr()
                         .and_then(|p| {
                             if let ObjData::List(ref lk) = (*p).data {
-                                lk.read().unwrap().last().copied()
+                                lk.read().unwrap().last()
                             } else {
                                 None
                             }
@@ -20257,16 +20671,21 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             }
                         })
                         .unwrap_or_default();
-                    // CPython: update/subtract take at most ONE positional
-                    // (`update(iterable=None, /, **kwds)`); a second positional
-                    // is a TypeError. Keyword args arrive as a single trailing
-                    // kwargs dict, so a >1 arg slice means 2+ positionals.
-                    if matches!(name.as_str(), "update" | "subtract") && arg_items.len() > 1 {
+                    let has_trailing_kwargs = arg_items.last().map_or(false, |last| {
+                        last.as_ptr().map_or(false, |p| unsafe {
+                            matches!((*p).data, ObjData::Dict(_))
+                        })
+                    });
+                    let pos_count = if has_trailing_kwargs {
+                        arg_items.len().saturating_sub(1)
+                    } else {
+                        arg_items.len()
+                    };
+                    if matches!(name.as_str(), "update" | "subtract") && pos_count > 1 {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(format!(
-                                "{name}() takes at most 1 positional argument ({} given)",
-                                arg_items.len()
+                                "{name}() takes at most 1 positional argument ({pos_count} given)",
                             ))),
                         );
                         return MbValue::none();
@@ -20812,7 +21231,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         let d = super::dict_ops::mb_dict_new();
                         if let Some(p) = names_val.as_ptr() {
                             if let ObjData::List(ref lk) = (*p).data {
-                                let names = lk.read().unwrap().clone();
+                                let names = lk.read().unwrap().to_vec();
                                 for nm in names {
                                     let nm_str = extract_str(nm).unwrap_or_default();
                                     let k = format!("group_name_{}", nm_str);
@@ -20923,8 +21342,8 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     }
                                     if let Some(args_ptr) = args.as_ptr() {
                                         if let ObjData::List(ref lock) = (*args_ptr).data {
-                                            let items = lock.read().unwrap();
-                                            all_args.extend(items.iter());
+                                            let items = lock.read().unwrap().to_vec();
+                                            all_args.extend(items);
                                         }
                                     }
                                     append_missing_method_defaults(
@@ -21151,8 +21570,8 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     }
                                     if let Some(args_ptr) = args.as_ptr() {
                                         if let ObjData::List(ref lock) = (*args_ptr).data {
-                                            let items = lock.read().unwrap();
-                                            all_args.extend(items.iter());
+                                            let items = lock.read().unwrap().to_vec();
+                                            all_args.extend(items);
                                         }
                                     }
                                     append_missing_method_defaults(
@@ -21243,7 +21662,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                         let mut all_args = vec![self_v];
                                         if let Some(args_ptr) = args.as_ptr() {
                                             if let ObjData::List(ref lock) = (*args_ptr).data {
-                                                all_args.extend(lock.read().unwrap().iter());
+                                                all_args.extend(lock.read().unwrap().to_vec());
                                             }
                                         }
                                         let args_list =
@@ -21535,6 +21954,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         "__complex__" => {
                             return MbValue::from_ptr(MbObject::new_complex(*re, *im));
                         }
+                        "__format__" => {
+                            let arg = super::builtins::extract_items(args)
+                                .first()
+                                .copied()
+                                .unwrap_or_else(MbValue::none);
+                            return super::string_ops::mb_format_value(receiver, arg);
+                        }
                         // CPython: complex(3,4).__getnewargs__() == (3.0, 4.0)
                         // (used by copy/pickle to reconstruct the value).
                         "__getnewargs__" => {
@@ -21549,7 +21975,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 .as_ptr()
                                 .and_then(|p| {
                                     if let ObjData::List(ref lk) = (*p).data {
-                                        lk.read().unwrap().first().copied()
+                                        lk.read().unwrap().first()
                                     } else {
                                         None
                                     }
@@ -21688,7 +22114,12 @@ fn union_type_args(val: MbValue) -> Option<Vec<MbValue>> {
             ref fields,
         } = (*ptr).data
         {
-            if cn == "UnionType" {
+            if cn == "UnionType"
+                || cn == "types.UnionType"
+                || cn == "_UnionGenericAlias"
+                || cn == "typing._UnionGenericAlias"
+                || cn == "typing.Union"
+            {
                 return fields
                     .read()
                     .ok()
@@ -21711,58 +22142,11 @@ fn reset_class_lookup_caches() {
 }
 
 pub(crate) fn snapshot_thread_class_state() -> ThreadClassState {
-    let kwargs_registry = KWARGS_REGISTRY.with(|c| c.borrow().clone());
-    for kwargs in kwargs_registry.values() {
-        for value in kwargs.values() {
-            unsafe {
-                super::rc::retain_if_ptr(*value);
-            }
-        }
-    }
-    let classcell_values = CLASSCELL_VALUES.with(|c| c.borrow().clone());
-    for value in classcell_values.values() {
-        unsafe {
-            super::rc::retain_if_ptr(*value);
-        }
-    }
-    ThreadClassState {
-        class_registry: CLASS_REGISTRY.with(|c| c.borrow().clone()),
-        class_runtime_key_aliases: CLASS_RUNTIME_KEY_ALIASES.with(|c| c.borrow().clone()),
-        user_classes: USER_CLASSES.with(|c| c.borrow().clone()),
-        callable_registry: CALLABLE_REGISTRY.with(|c| c.borrow().clone()),
-        slots_registry: SLOTS_REGISTRY.with(|c| c.borrow().clone()),
-        own_slots_registry: OWN_SLOTS_REGISTRY.with(|c| c.borrow().clone()),
-        dict_suppressed: DICT_SUPPRESSED.with(|c| c.borrow().clone()),
-        kwargs_registry,
-        classcell_required: CLASSCELL_REQUIRED.with(|c| c.borrow().clone()),
-        classcell_symbol_ids: CLASSCELL_SYMBOL_IDS.with(|c| c.borrow().clone()),
-        classcell_values,
-        namedtuple_base_shapes: NAMEDTUPLE_BASE_SHAPES.with(|c| c.borrow().clone()),
-        runtime_checkable_protocols: RUNTIME_CHECKABLE_PROTOCOLS.with(|c| c.borrow().clone()),
-        abc_virtual_subclasses: ABC_VIRTUAL_SUBCLASSES.with(|c| c.borrow().clone()),
-        user_abc_own_abstract: USER_ABC_OWN_ABSTRACT.with(|c| c.borrow().clone()),
-    }
+    ThreadClassState
 }
 
-pub(crate) fn replace_thread_class_state(next: ThreadClassState) -> ThreadClassState {
-    let previous = snapshot_thread_class_state();
-    CLASS_REGISTRY.with(|c| *c.borrow_mut() = next.class_registry);
-    CLASS_RUNTIME_KEY_ALIASES.with(|c| *c.borrow_mut() = next.class_runtime_key_aliases);
-    USER_CLASSES.with(|c| *c.borrow_mut() = next.user_classes);
-    CALLABLE_REGISTRY.with(|c| *c.borrow_mut() = next.callable_registry);
-    SLOTS_REGISTRY.with(|c| *c.borrow_mut() = next.slots_registry);
-    OWN_SLOTS_REGISTRY.with(|c| *c.borrow_mut() = next.own_slots_registry);
-    DICT_SUPPRESSED.with(|c| *c.borrow_mut() = next.dict_suppressed);
-    KWARGS_REGISTRY.with(|c| *c.borrow_mut() = next.kwargs_registry);
-    CLASSCELL_REQUIRED.with(|c| *c.borrow_mut() = next.classcell_required);
-    CLASSCELL_SYMBOL_IDS.with(|c| *c.borrow_mut() = next.classcell_symbol_ids);
-    CLASSCELL_VALUES.with(|c| *c.borrow_mut() = next.classcell_values);
-    NAMEDTUPLE_BASE_SHAPES.with(|c| *c.borrow_mut() = next.namedtuple_base_shapes);
-    RUNTIME_CHECKABLE_PROTOCOLS.with(|c| *c.borrow_mut() = next.runtime_checkable_protocols);
-    ABC_VIRTUAL_SUBCLASSES.with(|c| *c.borrow_mut() = next.abc_virtual_subclasses);
-    USER_ABC_OWN_ABSTRACT.with(|c| *c.borrow_mut() = next.user_abc_own_abstract);
-    reset_class_lookup_caches();
-    previous
+pub(crate) fn replace_thread_class_state(_next: ThreadClassState) -> ThreadClassState {
+    ThreadClassState
 }
 
 // ── Cleanup ──
@@ -21810,6 +22194,14 @@ pub(crate) fn cleanup_all_classes() {
 mod tests {
     use super::*;
 
+    static CLASS_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_test_mutex() -> std::sync::MutexGuard<'static, ()> {
+        CLASS_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))
     }
@@ -21831,6 +22223,32 @@ mod tests {
                 None
             })
             .unwrap_or_else(MbValue::none)
+    }
+
+    #[test]
+    fn test_3176_none_operations() {
+        let _g = lock_test_mutex();
+        super::super::exception::mb_clear_exception();
+        let res = mb_getattr(MbValue::none(), s("missing"));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("AttributeError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        mb_setattr_default(MbValue::none(), s("x"), MbValue::from_int(1));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("AttributeError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        mb_delattr_default(MbValue::none(), s("x"));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("AttributeError")
+        );
+        super::super::exception::mb_clear_exception();
     }
 
     fn test_param_sig(name: &str, has_default: bool) -> MbValue {
@@ -21855,6 +22273,7 @@ mod tests {
 
     #[test]
     fn test_pep695_type_alias_subscript_returns_generic_alias() {
+        let _guard = lock_test_mutex();
         let alias = super::super::pep695::mb_pep695_type_alias(
             s("Alias"),
             MbValue::none(),
@@ -21903,6 +22322,7 @@ mod tests {
 
     #[test]
     fn test_user_generic_alias_call_forwards_to_origin_constructor() {
+        let _guard = lock_test_mutex();
         let init_addr = pep695_box_init_test as *const () as usize;
         super::super::module::register_boxed_return_func(init_addr as u64);
         let init_func = MbValue::from_func(init_addr);
@@ -21937,6 +22357,7 @@ mod tests {
 
     #[test]
     fn test_pep695_generic_class_exposes_class_getitem_surface() {
+        let _guard = lock_test_mutex();
         mb_class_register("Pep695HasClassGetitem001", vec![], HashMap::new());
         mb_class_register("Pep695PlainNoClassGetitem001", vec![], HashMap::new());
         let type_param = super::super::pep695::mb_pep695_typevar(
@@ -22009,6 +22430,7 @@ mod tests {
 
     #[test]
     fn test_getattr_str_uses_canonical_method_surface() {
+        let _guard = lock_test_mutex();
         for name in [
             "casefold",
             "isidentifier",
@@ -22040,6 +22462,7 @@ mod tests {
 
     #[test]
     fn test_builtin_unknown_non_dunder_methods_raise_attribute_error() {
+        let _guard = lock_test_mutex();
         for (type_name, value, known_method) in [
             ("str", s("abc"), "upper"),
             (
@@ -22116,6 +22539,7 @@ mod tests {
 
     #[test]
     fn test_class_register_and_instance() {
+        let _guard = lock_test_mutex();
         let methods = HashMap::new();
         mb_class_register("Dog", vec!["Animal".to_string()], methods);
 
@@ -22135,6 +22559,7 @@ mod tests {
 
     #[test]
     fn test_class_annotations_resolve_typing_aliases() {
+        let _guard = lock_test_mutex();
         mb_class_register("AnnotationAliasHolder408", vec![], HashMap::new());
 
         let annotations = super::super::dict_ops::mb_dict_new();
@@ -22195,6 +22620,7 @@ mod tests {
 
     #[test]
     fn test_variadic_registered_method_preserves_float_return() {
+        let _guard = lock_test_mutex();
         let addr = variadic_float_return_method as usize;
         super::super::module::register_variadic_func(addr as u64);
         let mut methods = HashMap::new();
@@ -22214,6 +22640,7 @@ mod tests {
 
     #[test]
     fn test_isinstance() {
+        let _guard = lock_test_mutex();
         mb_class_register("Animal", vec![], HashMap::new());
         mb_class_register("Dog", vec!["Animal".to_string()], HashMap::new());
 
@@ -22231,6 +22658,7 @@ mod tests {
 
     #[test]
     fn test_primitive_isinstance() {
+        let _guard = lock_test_mutex();
         let int_type = MbValue::from_ptr(MbObject::new_str("int".to_string()));
         assert_eq!(
             mb_isinstance(MbValue::from_int(42), int_type).as_bool(),
@@ -22240,6 +22668,7 @@ mod tests {
 
     #[test]
     fn test_super_method_lookup() {
+        let _guard = lock_test_mutex();
         let mut base_methods = HashMap::new();
         base_methods.insert("greet".to_string(), MbValue::from_int(100));
         mb_class_register("Base2", vec![], base_methods);
@@ -22266,6 +22695,7 @@ mod tests {
 
     #[test]
     fn test_mro_single_inheritance() {
+        let _guard = lock_test_mutex();
         mb_class_register("Base", vec![], HashMap::new());
         mb_class_register("Child", vec!["Base".to_string()], HashMap::new());
 
@@ -22278,6 +22708,7 @@ mod tests {
 
     #[test]
     fn test_dunder_binop_dispatch() {
+        let _guard = lock_test_mutex();
         // Verifies the lookup half of mb_dispatch_binop. The full dispatch
         // path also invokes the method, which requires a real callable
         // (TAG_FUNC address or CALLABLE_REGISTRY entry). Setting one of
@@ -22297,6 +22728,7 @@ mod tests {
 
     #[test]
     fn test_dunder_unaryop_dispatch() {
+        let _guard = lock_test_mutex();
         // Same rationale as test_dunder_binop_dispatch.
         let mut methods = HashMap::new();
         methods.insert("__neg__".to_string(), MbValue::from_int(777));
@@ -22312,6 +22744,7 @@ mod tests {
 
     #[test]
     fn test_dunder_getitem_dispatch() {
+        let _guard = lock_test_mutex();
         // Verify that __getitem__ dunder is found via try_get_dunder.
         // mb_obj_getitem now actually calls the method (not just returns it),
         // so we test the lookup mechanism directly.
@@ -22329,6 +22762,7 @@ mod tests {
 
     #[test]
     fn test_dunder_setitem_dispatch() {
+        let _guard = lock_test_mutex();
         // Verify that __setitem__ dunder is found via try_get_dunder.
         let mut methods = HashMap::new();
         methods.insert("__setitem__".to_string(), MbValue::from_int(333));
@@ -22347,6 +22781,7 @@ mod tests {
 
     #[test]
     fn test_getattr_fallback_to_dunder() {
+        let _guard = lock_test_mutex();
         let mut methods = HashMap::new();
         methods.insert("__getattr__".to_string(), MbValue::from_int(888));
         mb_class_register("Dynamic", vec![], methods);
@@ -22366,6 +22801,7 @@ mod tests {
 
     #[test]
     fn test_delattr_removes_field() {
+        let _guard = lock_test_mutex();
         let methods = HashMap::new();
         mb_class_register("Deletable", vec![], methods);
 
@@ -22390,6 +22826,7 @@ mod tests {
 
     #[test]
     fn test_hasattr() {
+        let _guard = lock_test_mutex();
         mb_class_register("HasAttrTest", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("HasAttrTest".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22406,6 +22843,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_primitives() {
+        let _guard = lock_test_mutex();
         let str_type = MbValue::from_ptr(MbObject::new_str("str".to_string()));
         let list_type = MbValue::from_ptr(MbObject::new_str("list".to_string()));
         let dict_type = MbValue::from_ptr(MbObject::new_str("dict".to_string()));
@@ -22438,6 +22876,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_tuple() {
+        let _guard = lock_test_mutex();
         let tuple_type = MbValue::from_ptr(MbObject::new_str("tuple".to_string()));
         let t = MbValue::from_ptr(MbObject::new_tuple(vec![]));
         assert_eq!(mb_isinstance(t, tuple_type).as_bool(), Some(true));
@@ -22445,6 +22884,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_set() {
+        let _guard = lock_test_mutex();
         let set_type = MbValue::from_ptr(MbObject::new_str("set".to_string()));
         let s = MbValue::from_ptr(MbObject::new_set(vec![]));
         assert_eq!(mb_isinstance(s, set_type).as_bool(), Some(true));
@@ -22452,6 +22892,7 @@ mod tests {
 
     #[test]
     fn test_issubclass() {
+        let _guard = lock_test_mutex();
         mb_class_register("IsSubBase", vec![], HashMap::new());
         mb_class_register("IsSubChild", vec!["IsSubBase".to_string()], HashMap::new());
 
@@ -22465,6 +22906,7 @@ mod tests {
 
     #[test]
     fn test_issubclass_same() {
+        let _guard = lock_test_mutex();
         let name = MbValue::from_ptr(MbObject::new_str("SameClass".to_string()));
         let name2 = MbValue::from_ptr(MbObject::new_str("SameClass".to_string()));
         assert_eq!(mb_issubclass(name, name2).as_bool(), Some(true));
@@ -22472,6 +22914,7 @@ mod tests {
 
     #[test]
     fn test_class_define() {
+        let _guard = lock_test_mutex();
         let name = MbValue::from_ptr(MbObject::new_str("Defined".to_string()));
         let base = MbValue::none();
         let method_names = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
@@ -22489,6 +22932,7 @@ mod tests {
 
     #[test]
     fn test_getattr_default() {
+        let _guard = lock_test_mutex();
         mb_class_register("DefaultTest", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("DefaultTest".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22500,6 +22944,7 @@ mod tests {
 
     #[test]
     fn test_vars() {
+        let _guard = lock_test_mutex();
         mb_class_register("VarsTest", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("VarsTest".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22513,6 +22958,7 @@ mod tests {
 
     #[test]
     fn test_vars_module_dict_snapshot() {
+        let _guard = lock_test_mutex();
         let mut attrs = HashMap::new();
         attrs.insert(
             "__name__".to_string(),
@@ -22550,6 +22996,7 @@ mod tests {
 
     #[test]
     fn test_dir() {
+        let _guard = lock_test_mutex();
         let mut methods = HashMap::new();
         methods.insert("speak".to_string(), MbValue::from_int(1));
         mb_class_register("DirTest", vec![], methods);
@@ -22566,6 +23013,7 @@ mod tests {
 
     #[test]
     fn test_dir_module_dict_includes_module_keys() {
+        let _guard = lock_test_mutex();
         let module = MbObject::new_dict();
         unsafe {
             if let ObjData::Dict(ref lock) = (*module).data {
@@ -22597,7 +23045,7 @@ mod tests {
                 lock.read()
                     .unwrap()
                     .iter()
-                    .filter_map(|value| extract_str(*value))
+                    .filter_map(|value| extract_str(value))
                     .collect()
             } else {
                 Vec::new()
@@ -22609,6 +23057,7 @@ mod tests {
 
     #[test]
     fn test_property_new() {
+        let _guard = lock_test_mutex();
         let getter = MbValue::from_int(100);
         let prop = mb_property_new(getter);
         assert!(prop.is_ptr());
@@ -22619,6 +23068,7 @@ mod tests {
 
     #[test]
     fn test_property_setter_deleter() {
+        let _guard = lock_test_mutex();
         let prop = mb_property_new(MbValue::from_int(1));
         let prop = mb_property_setter(prop, MbValue::from_int(2));
         let prop = mb_property_deleter(prop, MbValue::from_int(3));
@@ -22632,6 +23082,7 @@ mod tests {
 
     #[test]
     fn test_classmethod_staticmethod() {
+        let _guard = lock_test_mutex();
         let cm = mb_classmethod_new(MbValue::from_int(42));
         assert!(cm.is_ptr());
         let func = mb_descriptor_unwrap(cm);
@@ -22644,12 +23095,14 @@ mod tests {
 
     #[test]
     fn test_abstractmethod_passthrough() {
+        let _guard = lock_test_mutex();
         let f = MbValue::from_int(42);
         assert_eq!(mb_abstractmethod(f).as_int(), Some(42));
     }
 
     #[test]
     fn test_check_abstract_concrete() {
+        let _guard = lock_test_mutex();
         let mut methods = HashMap::new();
         methods.insert("do_thing".to_string(), MbValue::from_int(1));
         mb_class_register("ConcreteABC", vec![], methods);
@@ -22667,6 +23120,7 @@ mod tests {
 
     #[test]
     fn test_obj_str_default() {
+        let _guard = lock_test_mutex();
         mb_class_register("ObjStrTest", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("ObjStrTest".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22681,6 +23135,7 @@ mod tests {
 
     #[test]
     fn test_obj_repr_fallback() {
+        let _guard = lock_test_mutex();
         mb_class_register("ObjReprTest", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("ObjReprTest".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22696,6 +23151,7 @@ mod tests {
 
     #[test]
     fn test_obj_bool_default() {
+        let _guard = lock_test_mutex();
         mb_class_register("ObjBoolTest", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("ObjBoolTest".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22705,6 +23161,7 @@ mod tests {
 
     #[test]
     fn test_obj_hash_default() {
+        let _guard = lock_test_mutex();
         mb_class_register("ObjHashTest", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("ObjHashTest".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22715,6 +23172,7 @@ mod tests {
 
     #[test]
     fn test_obj_contains_no_dunder() {
+        let _guard = lock_test_mutex();
         mb_class_register("NoContains", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("NoContains".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22727,6 +23185,7 @@ mod tests {
 
     #[test]
     fn test_obj_len_no_dunder() {
+        let _guard = lock_test_mutex();
         mb_class_register("NoLen", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("NoLen".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22736,6 +23195,7 @@ mod tests {
 
     #[test]
     fn test_obj_format_no_dunder() {
+        let _guard = lock_test_mutex();
         mb_class_register("NoFormat", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("NoFormat".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22751,6 +23211,7 @@ mod tests {
 
     #[test]
     fn test_obj_delitem_list() {
+        let _guard = lock_test_mutex();
         let list = MbValue::from_ptr(MbObject::new_list(vec![
             MbValue::from_int(1),
             MbValue::from_int(2),
@@ -22766,6 +23227,7 @@ mod tests {
 
     #[test]
     fn test_obj_delitem_dict() {
+        let _guard = lock_test_mutex();
         let dict = MbValue::from_ptr(MbObject::new_dict());
         let key = MbValue::from_ptr(MbObject::new_str("k".to_string()));
         crate::runtime::dict_ops::mb_dict_setitem(dict, key, MbValue::from_int(1));
@@ -22780,6 +23242,7 @@ mod tests {
 
     #[test]
     fn test_check_setattr_dunder_none() {
+        let _guard = lock_test_mutex();
         mb_class_register("NoSetattr", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("NoSetattr".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22788,6 +23251,7 @@ mod tests {
 
     #[test]
     fn test_check_delattr_dunder_none() {
+        let _guard = lock_test_mutex();
         mb_class_register("NoDelattr", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("NoDelattr".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22796,6 +23260,7 @@ mod tests {
 
     #[test]
     fn test_multiple_inheritance_mro() {
+        let _guard = lock_test_mutex();
         mb_class_register("MIBase1", vec![], HashMap::new());
         mb_class_register("MIBase2", vec![], HashMap::new());
         mb_class_register(
@@ -22816,6 +23281,7 @@ mod tests {
 
     #[test]
     fn test_register_slots() {
+        let _guard = lock_test_mutex();
         mb_class_register("Slotted", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("Slotted".to_string()));
         let slots = MbValue::from_ptr(MbObject::new_list(vec![
@@ -22835,6 +23301,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_binop_reverse() {
+        let _guard = lock_test_mutex();
         // Verify the reverse-dunder lookup half of mb_dispatch_binop.
         // Full reverse dispatch needs an invokable method (see
         // test_dunder_binop_dispatch comment); test the lookup directly.
@@ -22848,6 +23315,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_binop_not_found() {
+        let _guard = lock_test_mutex();
         mb_class_register("NoBinop", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("NoBinop".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22858,6 +23326,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_unaryop_not_found() {
+        let _guard = lock_test_mutex();
         mb_class_register("NoUnary", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("NoUnary".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22868,6 +23337,7 @@ mod tests {
 
     #[test]
     fn test_lookup_dunder() {
+        let _guard = lock_test_mutex();
         let mut methods = HashMap::new();
         methods.insert("__len__".to_string(), MbValue::from_int(42));
         mb_class_register("LenTest", vec![], methods);
@@ -22882,6 +23352,7 @@ mod tests {
 
     #[test]
     fn test_lookup_dunder_missing() {
+        let _guard = lock_test_mutex();
         mb_class_register("NoDunder", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("NoDunder".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -22892,6 +23363,7 @@ mod tests {
 
     #[test]
     fn test_extract_str() {
+        let _guard = lock_test_mutex();
         let s = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
         assert_eq!(extract_str(s), Some("hello".to_string()));
         assert_eq!(extract_str(MbValue::from_int(42)), None);
@@ -22902,6 +23374,7 @@ mod tests {
 
     #[test]
     fn test_py312_c3_mro_linear_chain() {
+        let _guard = lock_test_mutex();
         mb_class_register("MroBase", vec![], std::collections::HashMap::new());
         mb_class_register(
             "MroChild",
@@ -22926,6 +23399,7 @@ mod tests {
 
     #[test]
     fn test_py312_c3_mro_diamond() {
+        let _guard = lock_test_mutex();
         mb_class_register("DiaA", vec![], std::collections::HashMap::new());
         mb_class_register(
             "DiaB",
@@ -22953,6 +23427,7 @@ mod tests {
 
     #[test]
     fn test_py312_instance_inherits_parent_method() {
+        let _guard = lock_test_mutex();
         let mut parent_methods = std::collections::HashMap::new();
         parent_methods.insert("greet".to_string(), MbValue::from_int(42));
         mb_class_register("ParentCls", vec![], parent_methods);
@@ -22974,6 +23449,7 @@ mod tests {
 
     #[test]
     fn test_py312_class_override_shadows_parent() {
+        let _guard = lock_test_mutex();
         let mut parent_methods = std::collections::HashMap::new();
         parent_methods.insert("val".to_string(), MbValue::from_int(1));
         mb_class_register("OvBase", vec![], parent_methods);
@@ -22988,6 +23464,7 @@ mod tests {
 
     #[test]
     fn test_init_subclass_basic() {
+        let _guard = lock_test_mutex();
         static HOOK_INVOKED: std::sync::atomic::AtomicBool =
             std::sync::atomic::AtomicBool::new(false);
         static HOOK_OWNER: AtomicU64 = AtomicU64::new(0);
@@ -23034,6 +23511,7 @@ mod tests {
 
     #[test]
     fn test_mro_single_class_no_bases() {
+        let _guard = lock_test_mutex();
         // compute_mro on a class with no bases → MRO = [ClassName, object]
         let mro = compute_mro("MroSolo001", &[]);
         assert_eq!(mro[0], "MroSolo001");
@@ -23042,6 +23520,7 @@ mod tests {
 
     #[test]
     fn test_mro_two_levels() {
+        let _guard = lock_test_mutex();
         mb_class_register("MroTwoA001", vec![], HashMap::new());
         mb_class_register("MroTwoB001", vec!["MroTwoA001".to_string()], HashMap::new());
         CLASS_REGISTRY.with(|reg| {
@@ -23055,6 +23534,7 @@ mod tests {
 
     #[test]
     fn test_mro_three_levels() {
+        let _guard = lock_test_mutex();
         mb_class_register("Mro3A001", vec![], HashMap::new());
         mb_class_register("Mro3B001", vec!["Mro3A001".to_string()], HashMap::new());
         mb_class_register("Mro3C001", vec!["Mro3B001".to_string()], HashMap::new());
@@ -23071,6 +23551,7 @@ mod tests {
 
     #[test]
     fn test_mro_multiple_parents_no_diamond() {
+        let _guard = lock_test_mutex();
         mb_class_register("MroNdB001", vec![], HashMap::new());
         mb_class_register("MroNdC001", vec![], HashMap::new());
         mb_class_register(
@@ -23091,6 +23572,7 @@ mod tests {
 
     #[test]
     fn test_instance_default_attrs_empty() {
+        let _guard = lock_test_mutex();
         mb_class_register("InstEmpty001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("InstEmpty001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23101,6 +23583,7 @@ mod tests {
 
     #[test]
     fn test_setattr_and_getattr() {
+        let _guard = lock_test_mutex();
         mb_class_register("SetGetTest001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("SetGetTest001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23114,6 +23597,7 @@ mod tests {
 
     #[test]
     fn test_delattr_removes_attribute() {
+        let _guard = lock_test_mutex();
         mb_class_register("DelAttrTest001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("DelAttrTest001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23133,6 +23617,7 @@ mod tests {
 
     #[test]
     fn test_setattr_multiple_attrs() {
+        let _guard = lock_test_mutex();
         mb_class_register("MultiAttr001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("MultiAttr001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23149,6 +23634,7 @@ mod tests {
 
     #[test]
     fn test_getattr_missing_falls_through_to_class() {
+        let _guard = lock_test_mutex();
         let mut methods = HashMap::new();
         methods.insert("speak".to_string(), MbValue::from_int(555));
         mb_class_register("ClassMethod001", vec![], methods);
@@ -23163,6 +23649,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_basic_true() {
+        let _guard = lock_test_mutex();
         mb_class_register("IsinstA001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("IsinstA001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23172,6 +23659,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_basic_false() {
+        let _guard = lock_test_mutex();
         mb_class_register("IsinstB001", vec![], HashMap::new());
         mb_class_register("IsinstC001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("IsinstB001".to_string()));
@@ -23182,6 +23670,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_with_inheritance() {
+        let _guard = lock_test_mutex();
         mb_class_register("IsinstParent001", vec![], HashMap::new());
         mb_class_register(
             "IsinstChild001",
@@ -23196,6 +23685,7 @@ mod tests {
 
     #[test]
     fn test_issubclass_transitive() {
+        let _guard = lock_test_mutex();
         mb_class_register("IssubA001", vec![], HashMap::new());
         mb_class_register("IssubB001", vec!["IssubA001".to_string()], HashMap::new());
         mb_class_register("IssubC001", vec!["IssubB001".to_string()], HashMap::new());
@@ -23206,6 +23696,7 @@ mod tests {
 
     #[test]
     fn test_issubclass_self() {
+        let _guard = lock_test_mutex();
         mb_class_register("IssubSelf001", vec![], HashMap::new());
         let x1 = MbValue::from_ptr(MbObject::new_str("IssubSelf001".to_string()));
         let x2 = MbValue::from_ptr(MbObject::new_str("IssubSelf001".to_string()));
@@ -23214,6 +23705,7 @@ mod tests {
 
     #[test]
     fn test_slots_restricts_attrs() {
+        let _guard = lock_test_mutex();
         mb_class_register("SlotsRestrict001", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("SlotsRestrict001".to_string()));
         let slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
@@ -23237,6 +23729,7 @@ mod tests {
 
     #[test]
     fn test_slots_empty_allows_nothing() {
+        let _guard = lock_test_mutex();
         mb_class_register("SlotsEmpty001", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("SlotsEmpty001".to_string()));
         let slots = MbValue::from_ptr(MbObject::new_list(vec![]));
@@ -23251,6 +23744,7 @@ mod tests {
 
     #[test]
     fn test_property_fget_stored() {
+        let _guard = lock_test_mutex();
         let getter = MbValue::from_int(200);
         let prop = mb_property_new(getter);
         assert!(prop.is_ptr());
@@ -23260,6 +23754,7 @@ mod tests {
 
     #[test]
     fn test_property_fset_stored() {
+        let _guard = lock_test_mutex();
         let prop = mb_property_new(MbValue::from_int(1));
         let setter = MbValue::from_int(300);
         let prop = mb_property_setter(prop, setter);
@@ -23269,6 +23764,7 @@ mod tests {
 
     #[test]
     fn test_property_fdel_stored() {
+        let _guard = lock_test_mutex();
         let prop = mb_property_new(MbValue::from_int(1));
         let deleter = MbValue::from_int(400);
         let prop = mb_property_deleter(prop, deleter);
@@ -23278,6 +23774,7 @@ mod tests {
 
     #[test]
     fn test_class_with_init_method() {
+        let _guard = lock_test_mutex();
         let mut methods = HashMap::new();
         methods.insert("__init__".to_string(), MbValue::from_int(77));
         mb_class_register("WithInit001", vec![], methods);
@@ -23290,6 +23787,7 @@ mod tests {
 
     #[test]
     fn test_class_overrides_method_in_child() {
+        let _guard = lock_test_mutex();
         let mut parent_methods = HashMap::new();
         parent_methods.insert("m".to_string(), MbValue::from_int(1));
         mb_class_register("OvParent001", vec![], parent_methods);
@@ -23310,6 +23808,7 @@ mod tests {
 
     #[test]
     fn test_instance_setattr_overrides_class_method() {
+        let _guard = lock_test_mutex();
         let mut methods = HashMap::new();
         methods.insert("m".to_string(), MbValue::from_int(10));
         mb_class_register("InstOverride001", vec![], methods);
@@ -23328,6 +23827,7 @@ mod tests {
 
     #[test]
     fn test_mb_class_define_with_base() {
+        let _guard = lock_test_mutex();
         // Define DefBase first so the MRO walk can find it
         mb_class_register("DefBase001", vec![], HashMap::new());
 
@@ -23348,6 +23848,7 @@ mod tests {
 
     #[test]
     fn test_compute_mro_empty_bases() {
+        let _guard = lock_test_mutex();
         let mro = compute_mro("ComputeSolo001", &[]);
         assert_eq!(mro[0], "ComputeSolo001");
         assert!(mro.contains(&"object".to_string()));
@@ -23356,6 +23857,7 @@ mod tests {
 
     #[test]
     fn test_compute_mro_linear() {
+        let _guard = lock_test_mutex();
         // Pre-register A and B so compute_mro can walk their MROs
         mb_class_register("CmroA001", vec![], HashMap::new());
         mb_class_register("CmroB001", vec!["CmroA001".to_string()], HashMap::new());
@@ -23369,6 +23871,7 @@ mod tests {
 
     #[test]
     fn test_vars_returns_dict() {
+        let _guard = lock_test_mutex();
         mb_class_register("VarsDictTest001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("VarsDictTest001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23382,6 +23885,7 @@ mod tests {
 
     #[test]
     fn test_dir_returns_list() {
+        let _guard = lock_test_mutex();
         mb_class_register("DirListTest001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("DirListTest001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23392,6 +23896,7 @@ mod tests {
 
     #[test]
     fn test_getattr_default_present() {
+        let _guard = lock_test_mutex();
         mb_class_register("GadPresent001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("GadPresent001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23410,6 +23915,7 @@ mod tests {
 
     #[test]
     fn test_getattr_default_absent() {
+        let _guard = lock_test_mutex();
         mb_class_register("GadAbsent001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("GadAbsent001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23421,6 +23927,7 @@ mod tests {
 
     #[test]
     fn test_multiple_inheritance_attribute_lookup() {
+        let _guard = lock_test_mutex();
         // D(B, C): B has m=1, C has m=2 — D should get B's m (MRO order)
         let mut b_methods = HashMap::new();
         b_methods.insert("m".to_string(), MbValue::from_int(1));
@@ -23448,6 +23955,7 @@ mod tests {
 
     #[test]
     fn test_class_attrs_accessible_on_instance() {
+        let _guard = lock_test_mutex();
         // mb_class_define sets methods; verify they are accessible via getattr on instance
         mb_class_register("ClsAttrAccess001", vec![], HashMap::new());
 
@@ -23467,6 +23975,7 @@ mod tests {
 
     #[test]
     fn test_instance_repr_contains_class_name() {
+        let _guard = lock_test_mutex();
         mb_class_register("ReprClass001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("ReprClass001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -23489,6 +23998,7 @@ mod tests {
 
     #[test]
     fn test_p1_t1_1_classmethod_basic_wraps_function() {
+        let _guard = lock_test_mutex();
         // T1.1: @classmethod wraps a function and descriptor_unwrap retrieves it
         let func_val = MbValue::from_int(42);
         let cm = mb_classmethod_new(func_val);
@@ -23505,6 +24015,7 @@ mod tests {
 
     #[test]
     fn test_p1_t1_1_classmethod_descriptor_protocol_on_instance() {
+        let _guard = lock_test_mutex();
         // T1.1: When a classmethod is stored on a class, accessing it on an instance
         // should invoke the descriptor protocol and return the unwrapped function.
         let func_val = MbValue::from_int(77);
@@ -23530,6 +24041,7 @@ mod tests {
 
     #[test]
     fn test_p1_t1_2_classmethod_inheritance() {
+        let _guard = lock_test_mutex();
         // T1.2: Subclass inherits classmethod from parent via MRO
         let func_val = MbValue::from_int(55);
         let cm = mb_classmethod_new(func_val);
@@ -23557,6 +24069,7 @@ mod tests {
 
     #[test]
     fn test_p1_t1_3_classmethod_unwrap_descriptor_method() {
+        let _guard = lock_test_mutex();
         // T1.3: unwrap_descriptor_method extracts function from classmethod and reports ClassMethod
         let func_val = MbValue::from_int(99);
         let cm = mb_classmethod_new(func_val);
@@ -23576,6 +24089,7 @@ mod tests {
 
     #[test]
     fn test_p1_t1_3_staticmethod_unwrap() {
+        let _guard = lock_test_mutex();
         // T1.3 (related): staticmethod unwraps and is identified as StaticMethod
         let func_val = MbValue::from_int(88);
         let sm = mb_staticmethod_new(func_val);
@@ -23595,6 +24109,7 @@ mod tests {
 
     #[test]
     fn test_p1_t1_3_unwrap_plain_method() {
+        let _guard = lock_test_mutex();
         // T1.3 (related): Plain method value is returned unchanged
         let func_val = MbValue::from_int(66);
         let (unwrapped, dk) = unwrap_descriptor_method(func_val);
@@ -23606,6 +24121,7 @@ mod tests {
 
     #[test]
     fn test_p1_t2_1_property_getter_via_descriptor() {
+        let _guard = lock_test_mutex();
         // T2.1: @property getter is invoked when attribute is read on an instance
         // Uses a non-callable getter to verify the descriptor protocol path.
         let getter = MbValue::from_int(314);
@@ -23634,6 +24150,7 @@ mod tests {
 
     #[test]
     fn test_p1_t2_1_property_is_data_descriptor() {
+        let _guard = lock_test_mutex();
         // T2.1: Verify property is recognized as a data descriptor
         let prop = mb_property_new(MbValue::from_int(1));
         assert!(
@@ -23645,6 +24162,7 @@ mod tests {
 
     #[test]
     fn test_p1_t2_2_property_setter_stores_fset() {
+        let _guard = lock_test_mutex();
         // T2.2: @property.setter stores the setter function
         let prop = mb_property_new(MbValue::from_int(10));
         let setter = MbValue::from_int(20);
@@ -23657,6 +24175,7 @@ mod tests {
 
     #[test]
     fn test_p1_t2_3_property_deleter_stores_fdel() {
+        let _guard = lock_test_mutex();
         // T2.3: @property.deleter stores the deleter function
         let prop = mb_property_new(MbValue::from_int(10));
         let deleter = MbValue::from_int(30);
@@ -23669,6 +24188,7 @@ mod tests {
 
     #[test]
     fn test_p1_t2_4_property_readonly_no_setter() {
+        let _guard = lock_test_mutex();
         // T2.4: Property created with only getter has no fset
         let prop = mb_property_new(MbValue::from_int(100));
 
@@ -23679,6 +24199,7 @@ mod tests {
 
     #[test]
     fn test_p1_t2_property_data_descriptor_priority() {
+        let _guard = lock_test_mutex();
         // Property (data descriptor) should take priority over instance dict
         let prop = mb_property_new(MbValue::from_int(999));
 
@@ -23712,6 +24233,7 @@ mod tests {
 
     #[test]
     fn test_p1_t3_1_getattr_existing_attribute() {
+        let _guard = lock_test_mutex();
         // T3.1: getattr returns existing attribute value
         mb_class_register("GetAttrBox001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("GetAttrBox001".to_string()));
@@ -23731,6 +24253,7 @@ mod tests {
 
     #[test]
     fn test_function_dict_update_sets_function_attributes() {
+        let _guard = lock_test_mutex();
         let func = MbValue::from_func(0x12345);
         let dict_attr = MbValue::from_ptr(MbObject::new_str("__dict__".to_string()));
         let proxy = mb_getattr(func, dict_attr);
@@ -23754,6 +24277,7 @@ mod tests {
 
     #[test]
     fn test_function_name_setattr_updates_name_registry() {
+        let _guard = lock_test_mutex();
         let func = MbValue::from_func(0x12346);
         mb_setattr(
             func,
@@ -23770,6 +24294,7 @@ mod tests {
 
     #[test]
     fn test_p1_t3_2_getattr_missing_with_default() {
+        let _guard = lock_test_mutex();
         // T3.2: getattr with default returns default when attr absent
         mb_class_register("GetAttrDef001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("GetAttrDef001".to_string()));
@@ -23787,6 +24312,7 @@ mod tests {
 
     #[test]
     fn test_p1_t3_3_getattr_missing_no_default() {
+        let _guard = lock_test_mutex();
         // T3.3: getattr without default returns None for missing attribute
         mb_class_register("GetAttrMiss001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("GetAttrMiss001".to_string()));
@@ -23802,6 +24328,7 @@ mod tests {
 
     #[test]
     fn test_p1_t3_4_setattr_creates_and_updates() {
+        let _guard = lock_test_mutex();
         // T3.4: setattr creates attribute, then updates it
         mb_class_register("SetAttrBox001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("SetAttrBox001".to_string()));
@@ -23828,6 +24355,7 @@ mod tests {
 
     #[test]
     fn test_p1_t3_5_delattr_removes_attribute() {
+        let _guard = lock_test_mutex();
         // T3.5: delattr removes the attribute
         mb_class_register("DelAttrBox001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("DelAttrBox001".to_string()));
@@ -23858,6 +24386,7 @@ mod tests {
 
     #[test]
     fn test_p1_t3_hasattr_after_setattr_delattr_cycle() {
+        let _guard = lock_test_mutex();
         // Combined cycle: set, check, delete, check
         mb_class_register("HasAttrCycle001", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("HasAttrCycle001".to_string()));
@@ -23892,6 +24421,7 @@ mod tests {
 
     #[test]
     fn test_p1_t4_1_super_method_return_value() {
+        let _guard = lock_test_mutex();
         // T4.1: super().method() return value is propagated to caller
         let mut base_methods = HashMap::new();
         base_methods.insert("value".to_string(), MbValue::from_int(42));
@@ -23926,6 +24456,7 @@ mod tests {
 
     #[test]
     fn test_p1_t4_2_super_chain_three_levels() {
+        let _guard = lock_test_mutex();
         // T4.2: A→B→C super chain preserves returns through MRO
         let mut a_methods = HashMap::new();
         a_methods.insert("compute".to_string(), MbValue::from_int(10));
@@ -23969,6 +24500,7 @@ mod tests {
 
     #[test]
     fn test_p1_t4_3_super_init_lookup() {
+        let _guard = lock_test_mutex();
         // T4.3: super().__init__() finds parent __init__
         let mut base_methods = HashMap::new();
         base_methods.insert("__init__".to_string(), MbValue::from_int(777));
@@ -23999,6 +24531,7 @@ mod tests {
 
     #[test]
     fn test_super_missing_init_attr_remains_callable_noop() {
+        let _guard = lock_test_mutex();
         cleanup_all_classes();
         mb_class_register("SuperInitNoopChild1114", vec![], HashMap::new());
 
@@ -24034,6 +24567,7 @@ mod tests {
 
     #[test]
     fn test_super_builtin_dict_setitem_binds_hidden_payload() {
+        let _guard = lock_test_mutex();
         mb_class_register(
             "SuperDictPayload001",
             vec!["dict".to_string()],
@@ -24097,6 +24631,7 @@ mod tests {
 
     #[test]
     fn test_mb_call0_non_callable_int_raises_type_error() {
+        let _guard = lock_test_mutex();
         crate::runtime::exception::mb_clear_exception();
         let result = mb_call0(MbValue::from_int(42));
         assert!(result.is_none());
@@ -24114,6 +24649,7 @@ mod tests {
 
     #[test]
     fn test_mb_call1_val_non_callable_int_raises_type_error() {
+        let _guard = lock_test_mutex();
         crate::runtime::exception::mb_clear_exception();
         let result = mb_call1_val(MbValue::from_int(42), MbValue::from_int(3));
         assert!(result.is_none());
@@ -24131,6 +24667,7 @@ mod tests {
 
     #[test]
     fn test_tuple_subclass_hidden_payload_sequence_surface() {
+        let _guard = lock_test_mutex();
         mb_class_register("TuplePayload001", vec!["tuple".to_string()], HashMap::new());
         let source = MbValue::from_ptr(MbObject::new_list(vec![
             MbValue::from_int(10),
@@ -24170,6 +24707,7 @@ mod tests {
 
     #[test]
     fn test_set_subclass_constructor_preserves_payload_and_init_extra_arg() {
+        let _guard = lock_test_mutex();
         let init_addr = set_payload_init_test as *const () as usize;
         super::super::module::register_boxed_return_func(init_addr as u64);
         let init_func = MbValue::from_func(init_addr);
@@ -24207,6 +24745,7 @@ mod tests {
 
     #[test]
     fn test_set_subclass_constructor_kwargs_bind_init_but_reject_plain_subclass() {
+        let _guard = lock_test_mutex();
         mb_class_register(
             "SetPayloadKwReject001",
             vec!["set".to_string()],
@@ -24264,6 +24803,7 @@ mod tests {
 
     #[test]
     fn test_type_object_constructor_trailing_kwargs_uses_real_init() {
+        let _guard = lock_test_mutex();
         let init_addr = set_payload_init_test as *const () as usize;
         super::super::module::register_boxed_return_func(init_addr as u64);
         let init_func = MbValue::from_func(init_addr);
@@ -24298,6 +24838,7 @@ mod tests {
 
     #[test]
     fn test_frozenset_subclass_constructor_kwargs_bind_new() {
+        let _guard = lock_test_mutex();
         let new_addr = frozenset_payload_new_test as *const () as usize;
         super::super::module::register_boxed_return_func(new_addr as u64);
         let new_func = MbValue::from_func(new_addr);
@@ -24334,6 +24875,7 @@ mod tests {
 
     #[test]
     fn test_list_subclass_constructor_kwargs_bind_new_but_reject_plain_subclass() {
+        let _guard = lock_test_mutex();
         mb_class_register(
             "ListPayloadKwReject001",
             vec!["list".to_string()],
@@ -24390,6 +24932,7 @@ mod tests {
 
     #[test]
     fn test_float_subclass_with_custom_init_still_checks_float_arity() {
+        let _guard = lock_test_mutex();
         let init_addr = set_payload_init_test as *const () as usize;
         super::super::module::register_boxed_return_func(init_addr as u64);
         let init_func = MbValue::from_func(init_addr);
@@ -24428,6 +24971,7 @@ mod tests {
 
     #[test]
     fn test_complex_subclass_custom_new_payload_is_not_reseeded() {
+        let _guard = lock_test_mutex();
         let new_addr = complex_payload_new_override_test as *const () as usize;
         super::super::module::register_boxed_return_func(new_addr as u64);
         let new_func = MbValue::from_func(new_addr);
@@ -24466,6 +25010,7 @@ mod tests {
 
     #[test]
     fn test_p1_t4_super_proxy_structure() {
+        let _guard = lock_test_mutex();
         // Verify super proxy stores __super_class__ and __super_self__
         let cls = MbValue::from_ptr(MbObject::new_str("SomeClass".to_string()));
         let inst = MbValue::from_int(12345); // dummy instance
@@ -24502,6 +25047,7 @@ mod tests {
 
     #[test]
     fn test_p1_t4_super_method_not_found() {
+        let _guard = lock_test_mutex();
         // super().missing_method() should return None
         let mut methods = HashMap::new();
         methods.insert("greet".to_string(), MbValue::from_int(1));
@@ -24529,6 +25075,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_1_diamond_mro_exact_order() {
+        let _guard = lock_test_mutex();
         // T5.1: D(B, C) where B(A), C(A) → MRO must be [D, B, C, A, object]
         mb_class_register("DiamondA001", vec![], HashMap::new());
         mb_class_register(
@@ -24561,6 +25108,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_1_diamond_method_resolution() {
+        let _guard = lock_test_mutex();
         // T5.1: Method resolution follows MRO order in diamond inheritance
         let mut a_methods = HashMap::new();
         a_methods.insert("who".to_string(), MbValue::from_int(1));
@@ -24594,6 +25142,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_2_linear_mro_exact_order() {
+        let _guard = lock_test_mutex();
         // T5.2: C(B), B(A) → MRO = [C, B, A, object]
         mb_class_register("LinA001", vec![], HashMap::new());
         mb_class_register("LinB001", vec!["LinA001".to_string()], HashMap::new());
@@ -24612,6 +25161,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_3_inconsistent_mro_sets_typeerror() {
+        let _guard = lock_test_mutex();
         // T5.3: an inconsistent hierarchy sets a *catchable* TypeError (CPython
         // raises at the class statement) rather than panicking and aborting.
         // Create X(A, B) and Y(B, A) — then Z(X, Y) is inconsistent.
@@ -24644,6 +25194,7 @@ mod tests {
 
     #[test]
     fn test_pep695_explicit_object_and_generic_sets_typeerror() {
+        let _guard = lock_test_mutex();
         crate::runtime::exception::clear_current_exception();
         mb_class_register(
             "Pep695ExplicitObjectMro001",
@@ -24664,6 +25215,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_c3_merge_empty_lists() {
+        let _guard = lock_test_mutex();
         // c3_merge with empty input returns empty result
         let mut lists: Vec<Vec<String>> = Vec::new();
         let result = c3_merge(&mut lists).unwrap();
@@ -24675,6 +25227,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_c3_merge_single_list() {
+        let _guard = lock_test_mutex();
         // c3_merge with a single list returns that list
         let mut lists = vec![vec!["A".to_string(), "B".to_string()]];
         let result = c3_merge(&mut lists).unwrap();
@@ -24683,6 +25236,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_c3_merge_inconsistent() {
+        let _guard = lock_test_mutex();
         // c3_merge returns Err for inconsistent input
         // A appears in tail of second list, B appears in tail of first list → deadlock
         let mut lists = vec![
@@ -24695,6 +25249,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_class_define_multi_registers_bases() {
+        let _guard = lock_test_mutex();
         // mb_class_define_multi correctly registers a class with multiple bases
         mb_class_register("MultiDefA001", vec![], HashMap::new());
         mb_class_register("MultiDefB001", vec![], HashMap::new());
@@ -24722,6 +25277,7 @@ mod tests {
 
     #[test]
     fn test_p1_t5_single_base_mro_no_object_dup() {
+        let _guard = lock_test_mutex();
         // Single-base MRO should not duplicate "object"
         mb_class_register("NoDupBase001", vec![], HashMap::new());
         mb_class_register(
@@ -24742,6 +25298,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_all_classes_clears_registry() {
+        let _guard = lock_test_mutex();
         mb_class_register("CleanupClassTest", vec![], HashMap::new());
         CLASS_REGISTRY.with(|reg| {
             assert!(
@@ -24762,6 +25319,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_all_classes_clears_slots_registry() {
+        let _guard = lock_test_mutex();
         mb_class_register("CleanupSlots", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("CleanupSlots".to_string()));
         let slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
@@ -24781,6 +25339,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_all_classes_clears_abstract_methods() {
+        let _guard = lock_test_mutex();
         mb_class_register("CleanupABC", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("CleanupABC".to_string()));
         let abs_methods = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
@@ -24800,12 +25359,14 @@ mod tests {
 
     #[test]
     fn test_cleanup_all_classes_on_empty() {
+        let _guard = lock_test_mutex();
         cleanup_all_classes();
         // No panic = success
     }
 
     #[test]
     fn test_cleanup_all_classes_then_reregister() {
+        let _guard = lock_test_mutex();
         mb_class_register("CleanupRereg", vec![], HashMap::new());
         cleanup_all_classes();
 
@@ -24828,6 +25389,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_tuple_of_types_match() {
+        let _guard = lock_test_mutex();
         // isinstance(42, (int, str)) should return True
         let int_type = MbValue::from_ptr(MbObject::new_str("int".to_string()));
         let str_type = MbValue::from_ptr(MbObject::new_str("str".to_string()));
@@ -24841,6 +25403,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_tuple_of_types_second_match() {
+        let _guard = lock_test_mutex();
         // isinstance("hello", (int, str)) should return True (matches second type)
         let int_type = MbValue::from_ptr(MbObject::new_str("int".to_string()));
         let str_type = MbValue::from_ptr(MbObject::new_str("str".to_string()));
@@ -24855,6 +25418,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_tuple_of_types_no_match() {
+        let _guard = lock_test_mutex();
         // isinstance(3.14, (int, str)) should return False
         let int_type = MbValue::from_ptr(MbObject::new_str("int".to_string()));
         let str_type = MbValue::from_ptr(MbObject::new_str("str".to_string()));
@@ -24868,6 +25432,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_tuple_of_types_empty() {
+        let _guard = lock_test_mutex();
         // isinstance(42, ()) should return False
         let types = MbValue::from_ptr(MbObject::new_tuple(vec![]));
         assert_eq!(
@@ -24879,6 +25444,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_tuple_with_bool() {
+        let _guard = lock_test_mutex();
         // isinstance(True, (bool, int)) should return True
         let bool_type = MbValue::from_ptr(MbObject::new_str("bool".to_string()));
         let int_type = MbValue::from_ptr(MbObject::new_str("int".to_string()));
@@ -24894,6 +25460,7 @@ mod tests {
 
     #[test]
     fn test_getattr_default_found() {
+        let _guard = lock_test_mutex();
         mb_class_register("GetAttrTest", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("GetAttrTest".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -24910,6 +25477,7 @@ mod tests {
 
     #[test]
     fn test_getattr_default_not_found() {
+        let _guard = lock_test_mutex();
         mb_class_register("GetAttrMiss", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("GetAttrMiss".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -24925,6 +25493,7 @@ mod tests {
 
     #[test]
     fn test_getattr_default_with_str_default() {
+        let _guard = lock_test_mutex();
         mb_class_register("GetAttrStr", vec![], HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("GetAttrStr".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -24949,6 +25518,7 @@ mod tests {
 
     #[test]
     fn test_s1_init_subclass_receives_kwargs() {
+        let _guard = lock_test_mutex();
         // S1: class Base defines __init_subclass__(cls, kwargs_dict),
         //     class Child(Base, registry="users") passes kwargs through.
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -25004,6 +25574,7 @@ mod tests {
 
     #[test]
     fn test_s2_init_subclass_no_kwargs_no_handler() {
+        let _guard = lock_test_mutex();
         // S2: Parent has no __init_subclass__, Child(Parent) with no kwargs → no error.
         crate::runtime::exception::mb_clear_exception();
         mb_class_register("S2Parent", vec![], HashMap::new());
@@ -25021,6 +25592,7 @@ mod tests {
 
     #[test]
     fn test_s3_init_subclass_kwargs_without_handler_raises_type_error() {
+        let _guard = lock_test_mutex();
         // S3: Base has no __init_subclass__, Child(Base, key="val") → TypeError.
         crate::runtime::exception::mb_clear_exception();
         mb_class_register("S3Base", vec![], HashMap::new());
@@ -25050,6 +25622,7 @@ mod tests {
 
     #[test]
     fn test_s4_class_getitem_subscript() {
+        let _guard = lock_test_mutex();
         // S4: class MyList defines __class_getitem__, MyList[int] calls it.
         // The __class_getitem__ is dispatched via mb_obj_getitem on a class name string.
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -25099,6 +25672,7 @@ mod tests {
 
     #[test]
     fn test_s5_class_subscript_without_getitem_raises_type_error() {
+        let _guard = lock_test_mutex();
         // S5: class Foo with no __class_getitem__, Foo[int] → TypeError.
         crate::runtime::exception::mb_clear_exception();
         mb_class_register("S5Foo", vec![], HashMap::new());
@@ -25119,6 +25693,7 @@ mod tests {
 
     #[test]
     fn test_s6_set_name_called_on_descriptors() {
+        let _guard = lock_test_mutex();
         // S6: Descriptor with __set_name__ is called after class creation.
         // We simulate by creating a "descriptor" class with __set_name__, then
         // registering a class that has an instance of it as a class attribute.
@@ -25216,6 +25791,7 @@ mod tests {
 
     #[test]
     fn test_s7_slots_inheritance_merge() {
+        let _guard = lock_test_mutex();
         // S7: Base has __slots__=['x'], Child(Base) has __slots__=['y'].
         //     c.x=1 and c.y=2 both succeed; c.z=3 raises AttributeError.
         crate::runtime::exception::mb_clear_exception();
@@ -25288,6 +25864,7 @@ mod tests {
 
     #[test]
     fn test_s8_slots_suppresses_dict() {
+        let _guard = lock_test_mutex();
         // S8: class Compact with __slots__=['x','y'] → obj.__dict__ raises AttributeError.
         crate::runtime::exception::mb_clear_exception();
 
@@ -25325,6 +25902,7 @@ mod tests {
 
     #[test]
     fn test_s9_slots_with_dict_in_slots() {
+        let _guard = lock_test_mutex();
         // S9: class Hybrid with __slots__=['x', '__dict__'] → obj.x=1 and obj.z=3 both succeed.
         crate::runtime::exception::mb_clear_exception();
 
@@ -25378,6 +25956,7 @@ mod tests {
 
     #[test]
     fn test_s10_empty_slots_allows_nothing() {
+        let _guard = lock_test_mutex();
         // S10: class Empty with __slots__=() → obj.x = 1 raises AttributeError.
         crate::runtime::exception::mb_clear_exception();
 
@@ -25422,6 +26001,7 @@ mod tests {
 
     #[test]
     fn test_s11_register_slots_populates_registry() {
+        let _guard = lock_test_mutex();
         // S11: After mb_register_slots is called (as the compiler would emit),
         //      SLOTS_REGISTRY has the correct entry.
         mb_class_register("S11Foo", vec![], HashMap::new());
@@ -25453,6 +26033,7 @@ mod tests {
 
     #[test]
     fn test_slots_class_surface_and_member_descriptor_protocol() {
+        let _guard = lock_test_mutex();
         crate::runtime::exception::mb_clear_exception();
 
         mb_class_register("SlotsSurface", vec![], HashMap::new());
@@ -25560,6 +26141,7 @@ mod tests {
 
     #[test]
     fn test_class_attr_assignment_replaces_method_and_preserves_hash_none() {
+        let _guard = lock_test_mutex();
         cleanup_all_classes();
 
         let mut methods = HashMap::new();
@@ -25585,6 +26167,7 @@ mod tests {
 
     #[test]
     fn test_type_surface_metadata_for_builtin_user_and_super() {
+        let _guard = lock_test_mutex();
         crate::runtime::exception::mb_clear_exception();
 
         fn tuple_type_names(value: MbValue) -> Vec<String> {
@@ -25679,6 +26262,7 @@ mod tests {
 
     #[test]
     fn test_s12_child_without_slots_inherits_and_gets_dict() {
+        let _guard = lock_test_mutex();
         // S12: Base with __slots__=['x'], Child(Base) without __slots__ declaration.
         //      c.x=1 succeeds (inherited slot), c.z=99 succeeds (via __dict__).
         crate::runtime::exception::mb_clear_exception();
@@ -25741,6 +26325,7 @@ mod tests {
 
     #[test]
     fn test_r10_init_subclass_without_kwargs_calls_hook() {
+        let _guard = lock_test_mutex();
         // __init_subclass__ with no kwargs still gets called (1-arg form)
         use std::sync::atomic::{AtomicBool, Ordering};
         static R10_NO_KW_CALLED: AtomicBool = AtomicBool::new(false);
@@ -25777,6 +26362,7 @@ mod tests {
 
     #[test]
     fn test_r10_class_set_kwargs_stores_correctly() {
+        let _guard = lock_test_mutex();
         // Verify mb_class_set_kwargs populates KWARGS_REGISTRY correctly
         let cls = MbValue::from_ptr(MbObject::new_str("R10KwTest".to_string()));
         let keys = MbValue::from_ptr(MbObject::new_list(vec![
@@ -25805,6 +26391,7 @@ mod tests {
 
     #[test]
     fn test_r13_slots_merge_three_level_inheritance() {
+        let _guard = lock_test_mutex();
         // Base['x'] → Mid['y'] → Leaf['z'] → effective slots = ['z','y','x']
         crate::runtime::exception::mb_clear_exception();
 
@@ -25878,6 +26465,7 @@ mod tests {
 
     #[test]
     fn test_r13_slots_no_duplicate_in_merge() {
+        let _guard = lock_test_mutex();
         // If parent and child both declare slot 'x', effective set has only one 'x'
         mb_class_register("S13DupBase", vec![], HashMap::new());
         let base_name = MbValue::from_ptr(MbObject::new_str("S13DupBase".to_string()));
@@ -25910,6 +26498,7 @@ mod tests {
 
     #[test]
     fn test_r11_class_getitem_inherited() {
+        let _guard = lock_test_mutex();
         // __class_getitem__ can be inherited from a parent class
         use std::sync::atomic::{AtomicBool, Ordering};
         static R11_INHERITED_CALLED: AtomicBool = AtomicBool::new(false);
@@ -25945,6 +26534,7 @@ mod tests {
 
     #[test]
     fn test_r12_try_get_dunder_on_value_for_non_instance() {
+        let _guard = lock_test_mutex();
         // try_get_dunder_on_value should return None for non-instance values
         let result = try_get_dunder_on_value(MbValue::from_int(42), "__set_name__");
         assert!(
@@ -25961,6 +26551,7 @@ mod tests {
 
     #[test]
     fn test_r13_dict_suppressed_cleared_on_cleanup() {
+        let _guard = lock_test_mutex();
         // After cleanup_all_classes, DICT_SUPPRESSED should be empty
         mb_class_register("R13CleanupDict", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("R13CleanupDict".to_string()));
@@ -25990,6 +26581,7 @@ mod tests {
 
     #[test]
     fn test_issubclass_with_type_created_class() {
+        let _guard = lock_test_mutex();
         // Scenario: issubclass with type()-created class
         // GIVEN Base is a statically-defined class and Child created via type()
         // WHEN issubclass(Child, Base) is evaluated with both args as type objects
@@ -26013,6 +26605,7 @@ mod tests {
 
     #[test]
     fn test_issubclass_type_object_and_string() {
+        let _guard = lock_test_mutex();
         // Scenario: issubclass with type object and string
         // GIVEN MyClass = type('MyClass', (object,), {})
         // WHEN issubclass(MyClass, object) where MyClass is type obj, object is string
@@ -26035,6 +26628,7 @@ mod tests {
 
     #[test]
     fn test_isinstance_dynamic_class_with_inheritance() {
+        let _guard = lock_test_mutex();
         // Scenario: isinstance dispatch for dynamically-created class with inheritance
         // GIVEN class Animal: pass and Dog = type('Dog', (Animal,), {})
         // WHEN d = Dog() and isinstance(d, Animal)
@@ -26070,6 +26664,7 @@ mod tests {
 
     #[test]
     fn test_dunder_method_dispatch_type_created_class() {
+        let _guard = lock_test_mutex();
         // Scenario: dunder method dispatch on type()-created class
         // GIVEN MyClass registered with __repr__ and __eq__ in methods
         // WHEN lookup_method is called for those dunders
@@ -26101,6 +26696,7 @@ mod tests {
 
     #[test]
     fn test_callable_class_attr_dunder_repr_dispatches_via_mb_call_method1() {
+        let _guard = lock_test_mutex();
         cleanup_all_classes();
 
         let wrapper_call = decorated_repr_wrapper_call as usize;
@@ -26130,6 +26726,7 @@ mod tests {
 
     #[test]
     fn test_exception_add_note_type_error_and_notes_lifecycle() {
+        let _guard = lock_test_mutex();
         let exc = mb_instance_new_with_init(
             s("Exception"),
             MbValue::from_ptr(MbObject::new_list(vec![s("x")])),
@@ -26190,6 +26787,7 @@ mod tests {
 
     #[test]
     fn test_singledispatch_register_and_dispatch_bind_via_getattr() {
+        let _guard = lock_test_mutex();
         let wrapper =
             super::super::stdlib::functools_mod::mb_functools_singledispatch(MbValue::from_int(1));
 
@@ -26218,6 +26816,7 @@ mod tests {
 
     #[test]
     fn test_lzma_compressor_methods_bind_via_getattr() {
+        let _guard = lock_test_mutex();
         let compressor = MbValue::from_ptr(MbObject::new_instance("LZMACompressor".to_string()));
         for method_name in ["compress", "flush"] {
             let bound = mb_getattr(compressor, s(method_name));
@@ -26231,6 +26830,7 @@ mod tests {
 
     #[test]
     fn test_exception_group_methods_bind_via_getattr() {
+        let _guard = lock_test_mutex();
         let group = super::super::exception::mb_exception_group_new(
             s("eg"),
             MbValue::from_ptr(MbObject::new_list(vec![
@@ -26301,6 +26901,7 @@ mod tests {
 
     #[test]
     fn test_method_as_class_attr_callable() {
+        let _guard = lock_test_mutex();
         // Scenario: method as class_attr still callable
         // GIVEN a function value is set as class_attr on a type()-created class
         // WHEN getattr is called on an instance for that attribute
@@ -26331,6 +26932,7 @@ mod tests {
 
     #[test]
     fn test_mro_multi_base_type_class() {
+        let _guard = lock_test_mutex();
         // Scenario: MRO correct for multi-base type() class
         // GIVEN class A: pass, class B: pass, C = type('C', (A, B), {})
         // WHEN C's MRO is computed
@@ -26360,6 +26962,7 @@ mod tests {
 
     #[test]
     fn test_issubclass_both_type_objects() {
+        let _guard = lock_test_mutex();
         // Additional: both child and parent are type objects
         cleanup_all_classes();
 
@@ -26387,6 +26990,7 @@ mod tests {
 
     #[test]
     fn test_issubclass_type_object_with_object() {
+        let _guard = lock_test_mutex();
         // issubclass(SomeType, object) should be True for any class
         cleanup_all_classes();
 
@@ -26405,6 +27009,7 @@ mod tests {
 
     #[test]
     fn test_resolve_class_name_plain_string() {
+        let _guard = lock_test_mutex();
         // resolve_class_name with a plain string should return the string
         let val = MbValue::from_ptr(MbObject::new_str("MyClass".to_string()));
         assert_eq!(resolve_class_name(val), Some("MyClass".to_string()));
@@ -26412,6 +27017,7 @@ mod tests {
 
     #[test]
     fn test_resolve_class_name_type_object() {
+        let _guard = lock_test_mutex();
         // resolve_class_name with a type object should extract __name__
         let type_obj = make_type_object("DynClass");
         assert_eq!(resolve_class_name(type_obj), Some("DynClass".to_string()));
@@ -26419,6 +27025,7 @@ mod tests {
 
     #[test]
     fn test_resolve_class_name_non_type_instance() {
+        let _guard = lock_test_mutex();
         // resolve_class_name with a non-type instance should return None
         let inst = MbValue::from_ptr(MbObject::new_instance("SomeClass".to_string()));
         assert_eq!(
@@ -26430,6 +27037,7 @@ mod tests {
 
     #[test]
     fn test_resolve_class_name_none() {
+        let _guard = lock_test_mutex();
         // resolve_class_name with None should return None
         assert_eq!(resolve_class_name(MbValue::none()), None);
     }
@@ -26441,6 +27049,7 @@ mod tests {
     // this anchors the R13 inheritance-merge branch at class.rs:1382-1400.
     #[test]
     fn test_slots_inheritance_merges_parent_slots() {
+        let _guard = lock_test_mutex();
         mb_class_register("SlotsParent001", vec![], HashMap::new());
         let parent_name = MbValue::from_ptr(MbObject::new_str("SlotsParent001".to_string()));
         let parent_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
@@ -26472,6 +27081,7 @@ mod tests {
 
     #[test]
     fn metaclass_non_type_result_is_canonical_and_skips_init() {
+        let _guard = lock_test_mutex();
         static INIT_CALLS: AtomicU64 = AtomicU64::new(0);
 
         extern "C" fn meta_new(
@@ -26527,6 +27137,7 @@ mod tests {
 
     #[test]
     fn metaclass_type_new_reuses_staged_identity_and_initializes_result() {
+        let _guard = lock_test_mutex();
         static INIT_RECEIVER: AtomicU64 = AtomicU64::new(0);
         static INIT_SUBCLASS_CALLS: AtomicU64 = AtomicU64::new(0);
 
@@ -26603,6 +27214,7 @@ mod tests {
 
     #[test]
     fn classcell_validation_compares_the_actual_type_object() {
+        let _guard = lock_test_mutex();
         cleanup_all_classes();
         crate::runtime::exception::mb_clear_exception();
         let owner = "ClassCellCanonicalOwner";
@@ -26632,17 +27244,14 @@ mod tests {
 
     #[test]
     fn test_1821_closure_handle_descriptor_set_delete_dispatches_correctly() {
+        let _guard = lock_test_mutex();
         use std::sync::atomic::AtomicBool;
 
         static SET_CALLED: AtomicBool = AtomicBool::new(false);
         static SET_VALUE: AtomicU64 = AtomicU64::new(0);
         static DELETE_CALLED: AtomicBool = AtomicBool::new(false);
 
-        extern "C" fn closure_set_1821(
-            _desc: MbValue,
-            _instance: MbValue,
-            value: MbValue,
-        ) -> MbValue {
+        extern "C" fn closure_set_1821(_desc: MbValue, _instance: MbValue, value: MbValue) -> MbValue {
             SET_CALLED.store(true, Ordering::SeqCst);
             SET_VALUE.store(value.as_int().unwrap_or(-1) as u64, Ordering::SeqCst);
             MbValue::none()
@@ -26710,15 +27319,12 @@ mod tests {
 
     #[test]
     fn test_1821_closure_handle_set_name_dispatches_correctly() {
+        let _guard = lock_test_mutex();
         use std::sync::atomic::AtomicBool;
 
         static SET_NAME_CALLED: AtomicBool = AtomicBool::new(false);
 
-        extern "C" fn closure_set_name_1821(
-            _val: MbValue,
-            _owner: MbValue,
-            _name: MbValue,
-        ) -> MbValue {
+        extern "C" fn closure_set_name_1821(_val: MbValue, _owner: MbValue, _name: MbValue) -> MbValue {
             SET_NAME_CALLED.store(true, Ordering::SeqCst);
             MbValue::none()
         }
@@ -26738,9 +27344,7 @@ mod tests {
         mb_class_register("ClosureSetNameHost1821", vec![], HashMap::new());
 
         let desc_inst = mb_instance_new(
-            MbValue::from_ptr(MbObject::new_str(
-                "ClosureSetNameDescriptor1821".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("ClosureSetNameDescriptor1821".to_string())),
             MbValue::none(),
         );
 
@@ -26755,6 +27359,7 @@ mod tests {
 
     #[test]
     fn test_1821_class_set_class_attr_registers_resolved_addr_for_closure_handle() {
+        let _guard = lock_test_mutex();
         extern "C" fn closure_method_1821(_self_v: MbValue, _args: MbValue) -> MbValue {
             MbValue::none()
         }
@@ -26771,7 +27376,11 @@ mod tests {
         );
 
         mb_class_register("ClosureAttrHost1821", vec![], HashMap::new());
-        mb_class_set_class_attr(s("ClosureAttrHost1821"), s("method_1821"), closure_handle);
+        mb_class_set_class_attr(
+            s("ClosureAttrHost1821"),
+            s("method_1821"),
+            closure_handle,
+        );
 
         let real_addr_registered =
             CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&(real_addr as u64)));
@@ -26789,6 +27398,7 @@ mod tests {
 
     #[test]
     fn test_1843_closure_handle_missing_dispatches_without_wild_call() {
+        let _guard = lock_test_mutex();
         use std::sync::atomic::{AtomicBool, Ordering};
         static MISSING_CALLED: AtomicBool = AtomicBool::new(false);
 
@@ -26848,6 +27458,7 @@ mod tests {
 
     #[test]
     fn test_1843_closure_handle_binop_dispatches_not_silent_noop() {
+        let _guard = lock_test_mutex();
         use std::sync::atomic::{AtomicBool, Ordering};
         static EQ_CALLED: AtomicBool = AtomicBool::new(false);
 
@@ -26892,6 +27503,7 @@ mod tests {
 
     #[test]
     fn test_1843_closure_handle_class_getitem_dispatches_not_silent_noop() {
+        let _guard = lock_test_mutex();
         use std::sync::atomic::{AtomicBool, Ordering};
         static GETITEM_CALLED: AtomicBool = AtomicBool::new(false);
 
@@ -26941,4 +27553,25 @@ mod tests {
         }
         panic!("closure-handle __class_getitem__ must return the correct string result (#1843)");
     }
+
+    #[test]
+    fn test_diamond_inheritance_c3_mro() {
+        let _guard = lock_test_mutex();
+        // Base -> (Left, Right) -> Sub
+        mb_class_register("DiamondBase", vec![], HashMap::new());
+        mb_class_register("DiamondLeft", vec!["DiamondBase".to_string()], HashMap::new());
+        mb_class_register("DiamondRight", vec!["DiamondBase".to_string()], HashMap::new());
+
+        let mro = compute_mro("DiamondSub", &["DiamondLeft".to_string(), "DiamondRight".to_string()]);
+        assert_eq!(mro[0], "DiamondSub");
+        let left_pos = mro.iter().position(|x| x == "DiamondLeft").unwrap();
+        let right_pos = mro.iter().position(|x| x == "DiamondRight").unwrap();
+        let base_pos = mro.iter().position(|x| x == "DiamondBase").unwrap();
+        let obj_pos = mro.iter().position(|x| x == "object").unwrap();
+
+        assert!(left_pos < right_pos, "Left base must come before Right base in MRO");
+        assert!(right_pos < base_pos, "Right base must come before common Base in MRO");
+        assert!(base_pos < obj_pos, "Base must come before object in MRO");
+    }
 }
+
