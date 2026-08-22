@@ -1311,11 +1311,26 @@ pub fn mb_bytes_percent_format(template: MbValue, args: MbValue) -> MbValue {
             }
 
             let mut left_align = false;
+            let mut sign_plus = false;
+            let mut sign_space = false;
+            let mut alternate = false;
             let mut zero_pad = false;
             loop {
                 match fmt.get(i).copied() {
                     Some(b'-') => {
                         left_align = true;
+                        i += 1;
+                    }
+                    Some(b'+') => {
+                        sign_plus = true;
+                        i += 1;
+                    }
+                    Some(b' ') => {
+                        sign_space = true;
+                        i += 1;
+                    }
+                    Some(b'#') => {
+                        alternate = true;
                         i += 1;
                     }
                     Some(b'0') => {
@@ -1330,6 +1345,17 @@ pub fn mb_bytes_percent_format(template: MbValue, args: MbValue) -> MbValue {
                 width = width * 10 + (fmt[i] - b'0') as usize;
                 i += 1;
             }
+            let precision = if fmt.get(i) == Some(&b'.') {
+                i += 1;
+                let mut value = 0usize;
+                while let Some(b'0'..=b'9') = fmt.get(i).copied() {
+                    value = value * 10 + (fmt[i] - b'0') as usize;
+                    i += 1;
+                }
+                Some(value)
+            } else {
+                None
+            };
             let Some(kind) = fmt.get(i).copied() else {
                 break;
             };
@@ -1340,6 +1366,30 @@ pub fn mb_bytes_percent_format(template: MbValue, args: MbValue) -> MbValue {
                 return MbValue::none();
             };
             let piece = match kind {
+                b'f' | b'F' | b'e' | b'E' | b'g' | b'G' => {
+                    let opts = super::builtins::PercentFormatOptions {
+                        conv: kind as char,
+                        sign_plus,
+                        sign_space,
+                        alternate,
+                        zero_pad,
+                        left_align,
+                        width,
+                        precision,
+                    };
+                    let (prefix, body) = match super::builtins::format_numeric_percent(
+                        Some(arg), opts,
+                    ) {
+                        Ok(parts) => parts,
+                        Err(message) => {
+                            if super::exception::current_exception_type().is_none() {
+                                raise_type_error(&message);
+                            }
+                            return MbValue::none();
+                        }
+                    };
+                    format!("{prefix}{body}").into_bytes()
+                }
                 b'b' | b's' => {
                     let Some(data) = as_bytes_cloned(arg) else {
                         raise_type_error("%b requires a bytes-like object");
@@ -1415,8 +1465,10 @@ pub fn mb_bytes_percent_format(template: MbValue, args: MbValue) -> MbValue {
                 if left_align {
                     out.extend_from_slice(&piece);
                     out.extend(std::iter::repeat(pad).take(pad_len));
-                } else if pad == b'0' && piece.first() == Some(&b'-') {
-                    out.push(b'-');
+                } else if pad == b'0'
+                    && matches!(piece.first(), Some(b'-' | b'+' | b' '))
+                {
+                    out.push(piece[0]);
                     out.extend(std::iter::repeat(b'0').take(pad_len));
                     out.extend_from_slice(&piece[1..]);
                 } else {
@@ -2967,6 +3019,178 @@ mod tests {
 
     fn make_bytearray(data: &[u8]) -> MbValue {
         MbValue::from_ptr(MbObject::new_bytearray(data.to_vec()))
+    }
+
+    fn assert_bytes_result(value: MbValue, expected: &[u8]) {
+        let is_bytes = value.as_ptr().is_some_and(|ptr| unsafe {
+            matches!(&(*ptr).data, ObjData::Bytes(_))
+        });
+        assert!(is_bytes, "percent formatting must return bytes");
+        unsafe {
+            assert_eq!(as_bytes_cloned(value), Some(expected.to_vec()));
+        }
+        assert!(
+            super::super::exception::current_exception_type().is_none(),
+            "successful bytes formatting must not leave an exception"
+        );
+    }
+
+    #[test]
+    fn bytes_percent_float_family_matches_numeric_formatter() {
+        let cases = [
+            (b"%.3f".as_slice(), b"2.500".as_slice(), MbValue::from_float(2.5)),
+            (b"%.3F".as_slice(), b"2.500".as_slice(), MbValue::from_float(2.5)),
+            (
+                b"%.3e".as_slice(),
+                b"2.500e+00".as_slice(),
+                MbValue::from_float(2.5),
+            ),
+            (
+                b"%.3E".as_slice(),
+                b"2.500E+00".as_slice(),
+                MbValue::from_float(2.5),
+            ),
+            (
+                b"%.3g".as_slice(),
+                b"2.5e+03".as_slice(),
+                MbValue::from_float(2500.0),
+            ),
+            (
+                b"%.3G".as_slice(),
+                b"2.5E+03".as_slice(),
+                MbValue::from_float(2500.0),
+            ),
+            (b"%.3f".as_slice(), b"2.000".as_slice(), MbValue::from_int(2)),
+        ];
+
+        for (template, expected, value) in cases {
+            super::super::exception::mb_clear_exception();
+            let result = mb_bytes_percent_format(make_bytes(template), value);
+            assert_bytes_result(result, expected);
+        }
+    }
+
+    #[test]
+    fn bytearray_percent_float_preserves_receiver_type() {
+        super::super::exception::mb_clear_exception();
+        let result = mb_bytes_percent_format(make_bytearray(b"%.3f"), MbValue::from_float(2.5));
+        let is_bytearray = result.as_ptr().is_some_and(|ptr| unsafe {
+            matches!(&(*ptr).data, ObjData::ByteArray(_))
+        });
+        assert!(is_bytearray, "percent formatting must preserve bytearray type");
+        unsafe {
+            assert_eq!(as_bytes_cloned(result), Some(b"2.500".to_vec()));
+        }
+        assert!(super::super::exception::current_exception_type().is_none());
+    }
+
+    #[test]
+    fn bytes_percent_float_honors_precision_width_and_flags() {
+        let cases = [
+            (
+                b"%.2e".as_slice(),
+                b"2.50e+00".as_slice(),
+                MbValue::from_float(2.5),
+            ),
+            (
+                b"%.3G".as_slice(),
+                b"2.5E+03".as_slice(),
+                MbValue::from_float(2500.0),
+            ),
+            (
+                b"%08.2f".as_slice(),
+                b"00001.50".as_slice(),
+                MbValue::from_float(1.5),
+            ),
+            (
+                b"%-8.2f".as_slice(),
+                b"1.50    ".as_slice(),
+                MbValue::from_float(1.5),
+            ),
+            (
+                b"%+8.2f".as_slice(),
+                b"   +1.50".as_slice(),
+                MbValue::from_float(1.5),
+            ),
+            (
+                b"% 8.2f".as_slice(),
+                b"    1.50".as_slice(),
+                MbValue::from_float(1.5),
+            ),
+            (b"%#.0f".as_slice(), b"2.".as_slice(), MbValue::from_float(2.0)),
+        ];
+
+        for (template, expected, value) in cases {
+            super::super::exception::mb_clear_exception();
+            let result = mb_bytes_percent_format(make_bytes(template), value);
+            assert_bytes_result(result, expected);
+        }
+    }
+
+    #[test]
+    fn bytes_percent_float_rejects_non_real_values() {
+        let values = [
+            MbValue::none(),
+            MbValue::from_ptr(MbObject::new_str("abc".to_string())),
+            MbValue::from_ptr(MbObject::new_instance("PlainObject".to_string())),
+        ];
+        let mut all_none = true;
+        let mut all_type_error = true;
+
+        for value in values {
+            super::super::exception::mb_clear_exception();
+            let result = mb_bytes_percent_format(make_bytes(b"%.3f"), value);
+            all_none &= result.is_none();
+            all_type_error &=
+                super::super::exception::current_exception_type().as_deref() == Some("TypeError");
+        }
+        super::super::exception::mb_clear_exception();
+
+        assert!(all_none, "non-real values must return None after raising");
+        assert!(all_type_error, "non-real values must raise TypeError");
+    }
+
+    #[test]
+    fn bytes_percent_existing_conversions_remain_unchanged() {
+        let cases = [
+            (b"%b".as_slice(), b"ok".as_slice(), make_bytes(b"ok")),
+            (b"%s".as_slice(), b"ok".as_slice(), make_bytes(b"ok")),
+            (b"%d".as_slice(), b"7".as_slice(), MbValue::from_int(7)),
+            (b"%i".as_slice(), b"7".as_slice(), MbValue::from_int(7)),
+            (b"%o".as_slice(), b"10".as_slice(), MbValue::from_int(8)),
+            (b"%x".as_slice(), b"ff".as_slice(), MbValue::from_int(255)),
+            (b"%c".as_slice(), b"A".as_slice(), MbValue::from_int(65)),
+            (
+                b"%a".as_slice(),
+                b"'ok'".as_slice(),
+                MbValue::from_ptr(MbObject::new_str("ok".to_string())),
+            ),
+        ];
+
+        for (template, expected, value) in cases {
+            super::super::exception::mb_clear_exception();
+            let result = mb_bytes_percent_format(make_bytes(template), value);
+            assert_bytes_result(result, expected);
+        }
+
+        super::super::exception::mb_clear_exception();
+        let literal = mb_bytes_percent_format(
+            make_bytes(b"%%"),
+            MbValue::from_ptr(MbObject::new_tuple(vec![])),
+        );
+        assert_bytes_result(literal, b"%");
+
+        super::super::exception::mb_clear_exception();
+        let missing = mb_bytes_percent_format(
+            make_bytes(b"%d"),
+            MbValue::from_ptr(MbObject::new_tuple(vec![])),
+        );
+        assert!(missing.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
     }
 
     // ── bytes creation ──

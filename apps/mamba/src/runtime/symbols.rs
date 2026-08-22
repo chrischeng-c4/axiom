@@ -2975,6 +2975,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_module_globals",
+            class::mb_module_globals as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
             "mb_super_checked",
             class::mb_super_checked as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],

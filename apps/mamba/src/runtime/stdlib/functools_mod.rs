@@ -957,6 +957,8 @@ fn reduce_getitem_sequence(iterable: MbValue) -> Option<Vec<MbValue>> {
 fn finish_callable_result(func: MbValue, raw: MbValue, is_boxed_ret: bool) -> MbValue {
     let result = if is_boxed_ret {
         raw
+    } else if super::super::module::is_bool_return_val(func) {
+        super::super::builtins::mb_box_bool(raw.to_bits() as i64)
     } else {
         super::super::builtins::mb_box_int(raw.to_bits() as i64)
     };

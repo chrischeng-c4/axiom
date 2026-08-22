@@ -13,15 +13,15 @@ import tomllib
 def find_repo_root() -> pathlib.Path:
     current = pathlib.Path.cwd().resolve()
     while current != current.parent:
-        if (current / "projects/mamba").is_dir():
+        if (current / "apps/mamba").is_dir():
             return current
         current = current.parent
     file_dir = pathlib.Path(__file__).resolve().parent
     while file_dir != file_dir.parent:
-        if (file_dir / "projects/mamba").is_dir():
+        if (file_dir / "apps/mamba").is_dir():
             return file_dir
         file_dir = file_dir.parent
-    raise RuntimeError("Could not determine repository root containing projects/mamba")
+    raise RuntimeError("Could not determine repository root containing apps/mamba")
 
 
 def compute_length_framed_set_digest(repo_root: pathlib.Path, paths: list[str]) -> str:

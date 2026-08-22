@@ -1328,15 +1328,15 @@ fn build_frame_chain(top_locals: MbValue) -> MbValue {
         // No JIT-tracked call stack (e.g. called from a native/test context
         // outside compiled code) — fall back to the historical single
         // hollow-module-frame shape so non-JIT callers keep working.
-        entries.push(super::traceback_mod::TraceFrameSnapshot {
-            filename: "<unknown>".to_string(),
-            lineno: 1,
-            name: "<module>".to_string(),
-            locals: None,
-            local_trace_hook: None,
-        });
+        entries.push(super::traceback_mod::TraceFrameSnapshot::new(
+            "<unknown>".to_string(),
+            1,
+            "<module>".to_string(),
+            None,
+            None,
+        ));
     }
-    let globals = super::super::closure::build_globals_dict();
+    let globals = super::traceback_mod::get_or_sync_module_globals();
     let n = entries.len();
     let mut back = MbValue::none();
     let mut current = MbValue::none();
@@ -1347,7 +1347,9 @@ fn build_frame_chain(top_locals: MbValue) -> MbValue {
             "f_code",
             make_named_code_object(&entry.filename, &entry.name),
         );
-        let locals = if i + 1 == n {
+        let locals = if entry.name == "<module>" {
+            globals
+        } else if i + 1 == n {
             top_locals
         } else {
             entry

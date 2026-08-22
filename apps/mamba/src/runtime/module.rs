@@ -24,17 +24,19 @@ pub struct MbModule {
     pub cached_value: Option<MbValue>,
 }
 
+use super::execution_context::with_current_context;
+
 // Global module registry — equivalent to sys.modules.
 thread_local! {
-    pub(crate) static MODULES: std::cell::RefCell<HashMap<String, MbModule>> =
+    static FALLBACK_MODULES: std::cell::RefCell<HashMap<String, MbModule>> =
         std::cell::RefCell::new(HashMap::new());
     /// Heap pointers of dict objects that represent imported modules. A module
     /// is modeled as a dict of its attributes, so without this marker
     /// `isinstance(mod, types.ModuleType)` and `type(mod)` cannot tell a module
     /// dict from an ordinary dict. Populated in module_to_value.
-    pub(crate) static MODULE_VALUE_PTRS: std::cell::RefCell<HashSet<u64>> =
+    static FALLBACK_MODULE_VALUE_PTRS: std::cell::RefCell<HashSet<u64>> =
         std::cell::RefCell::new(HashSet::new());
-    pub(crate) static SEARCH_PATHS: std::cell::RefCell<Vec<PathBuf>> =
+    static FALLBACK_SEARCH_PATHS: std::cell::RefCell<Vec<PathBuf>> =
         std::cell::RefCell::new(vec![PathBuf::from(".")]);
     /// Set of function pointer addresses registered as native extern functions.
     /// Used by `mb_call0`/`mb_call1_val`/`mb_call_spread` to detect the
@@ -79,23 +81,24 @@ thread_local! {
     /// Populated post-finalize from `BOXED_RETURN_SYMBOL_IDS`.
     pub(crate) static BOXED_RETURN_FUNC_ADDRS: std::cell::RefCell<HashSet<u64>> =
         std::cell::RefCell::new(HashSet::new());
+
     /// JIT backends for imported file-based modules (#1190).
     /// Kept alive so that function pointers from compiled modules remain valid.
     /// Key = module name, Value = boxed JIT backend.
-    pub(crate) static MODULE_JIT_BACKENDS: std::cell::RefCell<
+    static FALLBACK_MODULE_JIT_BACKENDS: std::cell::RefCell<
         Vec<Box<crate::codegen::cranelift::jit::CraneliftJitBackend>>
     > = std::cell::RefCell::new(Vec::new());
     /// Directory of the currently executing script (#1190).
     /// Used by `find_module` to resolve relative imports from the script's
     /// directory (matching CPython's behavior where `import X` searches the
     /// directory of the __main__ script first).
-    pub(crate) static SCRIPT_DIR: std::cell::RefCell<Option<PathBuf>> =
+    static FALLBACK_SCRIPT_DIR: std::cell::RefCell<Option<PathBuf>> =
         std::cell::RefCell::new(None);
     /// The package name of the currently executing module (#1190 R3).
     /// Used by relative imports (`from . import X`) to anchor resolution
     /// to the importing module's package. Set before each module body
     /// execution in `compile_and_exec_module()`.
-    pub(crate) static CURRENT_MODULE_PACKAGE: std::cell::RefCell<Option<String>> =
+    static FALLBACK_CURRENT_MODULE_PACKAGE: std::cell::RefCell<Option<String>> =
         std::cell::RefCell::new(None);
     /// Audit trail for `register_native_type_name`: every time a NATIVE_TYPE_NAMES
     /// address key is overwritten with a DIFFERENT name than it already held
@@ -106,6 +109,152 @@ thread_local! {
     pub static NATIVE_TYPE_NAME_COLLISIONS: std::cell::RefCell<Vec<(u64, String, String)>> =
         std::cell::RefCell::new(Vec::new());
 }
+
+pub(crate) fn with_modules<F, R>(f: F) -> R
+where
+    F: FnOnce(&std::cell::RefCell<HashMap<String, MbModule>>) -> R,
+{
+    if with_current_context(|_| ()).is_some() {
+        with_current_context(|ctx| f(&ctx.modules)).unwrap()
+    } else {
+        FALLBACK_MODULES.with(f)
+    }
+}
+
+pub(crate) fn with_module_value_ptrs<F, R>(f: F) -> R
+where
+    F: FnOnce(&std::cell::RefCell<HashSet<u64>>) -> R,
+{
+    if with_current_context(|_| ()).is_some() {
+        with_current_context(|ctx| f(&ctx.module_value_ptrs)).unwrap()
+    } else {
+        FALLBACK_MODULE_VALUE_PTRS.with(f)
+    }
+}
+
+pub(crate) fn with_search_paths<F, R>(f: F) -> R
+where
+    F: FnOnce(&std::cell::RefCell<Vec<PathBuf>>) -> R,
+{
+    if with_current_context(|_| ()).is_some() {
+        with_current_context(|ctx| f(&ctx.search_paths)).unwrap()
+    } else {
+        FALLBACK_SEARCH_PATHS.with(f)
+    }
+}
+
+pub(crate) fn with_module_jit_backends<F, R>(f: F) -> R
+where
+    F: FnOnce(&std::cell::RefCell<Vec<Box<crate::codegen::cranelift::jit::CraneliftJitBackend>>>) -> R,
+{
+    if with_current_context(|_| ()).is_some() {
+        with_current_context(|ctx| f(&ctx.module_jit_backends)).unwrap()
+    } else {
+        FALLBACK_MODULE_JIT_BACKENDS.with(f)
+    }
+}
+
+/// Move any context-local module JIT backends to FALLBACK_MODULE_JIT_BACKENDS so they survive thread exit.
+pub(crate) fn preserve_module_jit_backends() {
+    let drained = if with_current_context(|_| ()).is_some() {
+        with_current_context(|ctx| std::mem::take(&mut *ctx.module_jit_backends.borrow_mut()))
+    } else {
+        None
+    };
+    if let Some(backends) = drained {
+        FALLBACK_MODULE_JIT_BACKENDS.with(|fallback| {
+            fallback.borrow_mut().extend(backends);
+        });
+    }
+}
+
+pub(crate) fn with_script_dir<F, R>(f: F) -> R
+where
+    F: FnOnce(&std::cell::RefCell<Option<PathBuf>>) -> R,
+{
+    if with_current_context(|_| ()).is_some() {
+        with_current_context(|ctx| f(&ctx.script_dir)).unwrap()
+    } else {
+        FALLBACK_SCRIPT_DIR.with(f)
+    }
+}
+
+pub(crate) fn with_current_module_package<F, R>(f: F) -> R
+where
+    F: FnOnce(&std::cell::RefCell<Option<String>>) -> R,
+{
+    if with_current_context(|_| ()).is_some() {
+        with_current_context(|ctx| f(&ctx.current_module_package)).unwrap()
+    } else {
+        FALLBACK_CURRENT_MODULE_PACKAGE.with(f)
+    }
+}
+
+pub(crate) struct ModulesSeam;
+impl ModulesSeam {
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&std::cell::RefCell<HashMap<String, MbModule>>) -> R,
+    {
+        with_modules(f)
+    }
+}
+pub(crate) static MODULES: ModulesSeam = ModulesSeam;
+
+pub(crate) struct ModuleValuePtrsSeam;
+impl ModuleValuePtrsSeam {
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&std::cell::RefCell<HashSet<u64>>) -> R,
+    {
+        with_module_value_ptrs(f)
+    }
+}
+pub(crate) static MODULE_VALUE_PTRS: ModuleValuePtrsSeam = ModuleValuePtrsSeam;
+
+pub(crate) struct SearchPathsSeam;
+impl SearchPathsSeam {
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&std::cell::RefCell<Vec<PathBuf>>) -> R,
+    {
+        with_search_paths(f)
+    }
+}
+pub(crate) static SEARCH_PATHS: SearchPathsSeam = SearchPathsSeam;
+
+pub(crate) struct ModuleJitBackendsSeam;
+impl ModuleJitBackendsSeam {
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&std::cell::RefCell<Vec<Box<crate::codegen::cranelift::jit::CraneliftJitBackend>>>) -> R,
+    {
+        with_module_jit_backends(f)
+    }
+}
+pub(crate) static MODULE_JIT_BACKENDS: ModuleJitBackendsSeam = ModuleJitBackendsSeam;
+
+pub(crate) struct ScriptDirSeam;
+impl ScriptDirSeam {
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&std::cell::RefCell<Option<PathBuf>>) -> R,
+    {
+        with_script_dir(f)
+    }
+}
+pub(crate) static SCRIPT_DIR: ScriptDirSeam = ScriptDirSeam;
+
+pub(crate) struct CurrentModulePackageSeam;
+impl CurrentModulePackageSeam {
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&std::cell::RefCell<Option<String>>) -> R,
+    {
+        with_current_module_package(f)
+    }
+}
+pub(crate) static CURRENT_MODULE_PACKAGE: CurrentModulePackageSeam = CurrentModulePackageSeam;
 
 /// Compile-time-evaluable FNV-1a 64-bit hash of a string. Used by
 /// [`icf_guard!`] to derive a unique per-callsite fingerprint (#962).
@@ -361,13 +510,19 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
     // the same pointer thereafter.
     let in_cache = MODULES.with(|mods| mods.borrow().contains_key(&name));
     if in_cache {
-        let file_backed = MODULES.with(|mods| {
-            mods.borrow()
-                .get(&name)
-                .and_then(|module| module.file.as_ref())
-                .is_some()
+        let (file_backed, cached_val) = MODULES.with(|mods| {
+            let m = mods.borrow();
+            let module = m.get(&name);
+            (
+                module.and_then(|m| m.file.as_ref()).is_some(),
+                module.and_then(|m| m.cached_value),
+            )
         });
-        if file_backed && lookup_sys_modules(&name).is_none() {
+        if let Some(val) = cached_val {
+            update_sys_modules(&name, val);
+        }
+        let sys_is_loaded = MODULES.with(|mods| mods.borrow().contains_key("sys"));
+        if file_backed && sys_is_loaded && lookup_sys_modules(&name).is_none() {
             MODULES.with(|mods| {
                 mods.borrow_mut().remove(&name);
             });
@@ -1358,6 +1513,44 @@ pub fn is_boxed_return_func(addr: u64) -> bool {
     BOXED_RETURN_FUNC_ADDRS.with(|addrs| addrs.borrow().contains(&addr))
 }
 
+/// Check if the given function address returns a `bool`.
+pub fn is_bool_return_func(addr: u64) -> bool {
+    if addr > 4096 {
+        let val = MbValue::from_func(addr as usize);
+        if let Some(anno) = super::closure::func_ret_anno(val) {
+            if anno == "bool" || anno == "Bool" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Check if the given callable MbValue returns a `bool`.
+pub fn is_bool_return_val(func: MbValue) -> bool {
+    if let Some(anno) = super::closure::func_ret_anno(func) {
+        if anno == "bool" || anno == "Bool" {
+            return true;
+        }
+    }
+    if let Some(addr) = func.as_func() {
+        if is_bool_return_func(addr as u64) {
+            return true;
+        }
+    }
+    if func.as_int().is_some() {
+        let inner = super::closure::mb_closure_get_func(func);
+        if !inner.is_none() {
+            if let Some(anno) = super::closure::func_ret_anno(inner) {
+                if anno == "bool" || anno == "Bool" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 // ── Built-in Module Registration ──
 
 /// Set the startup signal dispositions CPython sets in `Python/pylifecycle.c`
@@ -1440,17 +1633,13 @@ pub fn mb_register_builtins() {
 /// Pipeline: read source → parse → typecheck → lower (AST→HIR→MIR) → JIT → execute.
 ///
 /// The module's top-level code stores globals via `mb_global_set_id`. We:
-/// 1. Save the caller's global ID namespace
-/// 2. Clear it so the module gets a fresh namespace
-/// 3. Compile and execute the module's __main__
-/// 4. Read back all globals using the HIR sym_names mapping
-/// 5. Store them as module attrs
-/// 6. Restore the caller's globals
+/// 1. Push the active module name
+/// 2. Compile and execute the module's __main__
+/// 3. Read back all globals using the HIR sym_names mapping
+/// 4. Store them as module attrs
+/// 5. Pop active module name
 fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
-    use super::closure::{
-        restore_global_id_namespace, save_and_clear_global_id_namespace,
-        snapshot_current_module_global_id_namespace,
-    };
+    use super::closure::snapshot_current_module_global_id_namespace;
     use crate::codegen::cranelift::jit::CraneliftJitBackend;
     use crate::codegen::{CodegenBackend as _, CodegenOutput};
     use crate::lower::{lower_hir_to_mir_with_symbols_src, lower_module};
@@ -1565,8 +1754,7 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
     };
     let file_attr = path.display().to_string();
 
-    // 6. Save caller's globals and clear for module execution
-    let saved_globals = save_and_clear_global_id_namespace();
+    // 6. Push active module name for module execution
     super::closure::push_active_module_name(module_name.to_string());
     if let Some(file_sym) = checker.symbols.lookup("__file__") {
         super::closure::mb_global_set_id(
@@ -1721,9 +1909,6 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
     super::closure::pop_active_module_sym_ids();
     super::closure::pop_active_module_name();
 
-    // 11. Restore caller's globals regardless of success/failure
-    restore_global_id_namespace(saved_globals);
-
     // 11b. Restore CURRENT_MODULE_PACKAGE — R3.
     CURRENT_MODULE_PACKAGE.with(|cp| {
         *cp.borrow_mut() = saved_package;
@@ -1798,6 +1983,41 @@ fn nan_box_raw_value(
 /// that should appear in `globals()` (these don't live in
 /// GLOBAL_ID_NAMESPACE).
 /// @spec .aw/tech-design/cclab-mamba/logic/introspection-builtins.md#globals_impl
+/// Install the JIT introspection registry for a freshly code-generated module.
+///
+/// Every embedder that JITs a module must call this before entering it.
+/// `hir_to_mir` lowers a module-global read from inside a function to
+/// `mb_deferred_name_read`, which resolves the name by reverse mapping
+/// SymbolId -> name through `module_sym_info`. An embedder that skips this
+/// leaves that map empty, so every such read misses and execution dies with
+/// `NameError` on a name that is plainly bound.
+pub fn install_introspection_state(
+    checker: &crate::types::TypeChecker,
+    hir: &crate::hir::HirModule,
+    backend: &crate::codegen::cranelift::jit::CraneliftJitBackend,
+) {
+    let mut sym_names: HashMap<crate::resolve::SymbolId, String> = HashMap::new();
+    for sym in checker.symbols.all_symbols() {
+        sym_names.insert(sym.id, sym.name.clone());
+    }
+    for (id, name) in &hir.sym_names {
+        sym_names.insert(*id, name.clone());
+    }
+
+    let mut func_addrs: Vec<(u32, String, *const u8)> = Vec::new();
+    for f in &hir.functions {
+        if let Some(name) = sym_names.get(&f.name) {
+            if let Some(ptr) = backend.get_func_ptr(f.name.0) {
+                func_addrs.push((f.name.0, name.clone(), ptr));
+            }
+        }
+    }
+
+    let (sym_info, func_info) = build_introspection_state(checker, hir, &func_addrs);
+    super::closure::set_module_sym_info(sym_info);
+    super::closure::set_module_func_info(func_info);
+}
+
 pub fn build_introspection_state(
     checker: &crate::types::TypeChecker,
     hir: &crate::hir::HirModule,
@@ -2069,8 +2289,17 @@ pub fn mb_module_attr_lookup(module_name: &str, attr: &str) -> Option<MbValue> {
 /// Call this whenever a module is fully initialised so subsequent `module_to_value`
 /// calls return the same heap pointer.
 pub(crate) fn module_to_value_and_cache(module: &mut MbModule) -> MbValue {
+    if let Some(val) = module.cached_value {
+        unsafe {
+            super::rc::retain_if_ptr(val);
+        }
+        return val;
+    }
     let val = module_to_value(module);
     module.cached_value = Some(val);
+    unsafe {
+        super::rc::retain_if_ptr(val);
+    }
     val
 }
 
@@ -3577,6 +3806,9 @@ mod tests {
 
     #[test]
     fn test_imported_module_body_reads_package_dunder() {
+        let _jit_guard = crate::codegen::cranelift::jit::JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         cleanup_all_modules();
 
         let dir = tempfile::tempdir().unwrap();

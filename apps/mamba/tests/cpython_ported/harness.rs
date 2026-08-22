@@ -101,6 +101,14 @@ fn jit_capture_with_exception(src: &str) -> (String, Option<String>) {
                 return;
             };
 
+            // Install the runtime introspection registry before executing.
+            // `hir_to_mir` lowers a module-global read from inside a function
+            // to `mb_deferred_name_read`, which resolves the name by reverse
+            // mapping SymbolId -> name through `module_sym_info`. Without this
+            // the map is empty, every such read misses, and execution dies with
+            // `NameError: name 'X' is not defined`.
+            mamba::runtime::module::install_introspection_state(&checker, &hir, &backend);
+
             // cwd-sandbox (#2529 r3): some embedded fixtures write PID-named
             // scratch files (`@mamba_test_<pid>`) into the process cwd
             // without fully cleaning up after themselves. Since JIT_LOCK

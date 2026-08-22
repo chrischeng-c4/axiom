@@ -150,6 +150,10 @@ impl CompilerSession {
             return Err(errors.into_iter().next().unwrap());
         }
 
+        for diag in &checker.diagnostics {
+            eprintln!("{}", render_type_diagnostic(diag, &self.source_map));
+        }
+
         Ok(())
     }
 
@@ -312,7 +316,8 @@ impl CompilerSession {
             })
         };
 
-        crate::runtime::cleanup_all_runtime_state();
+        crate::runtime::stdlib::threading_mod::join_non_daemon_threads();
+        crate::runtime::cleanup_all_runtime_state_for_process_exit();
         pending_error.map_or(Ok(()), |message| Err(MambaError::Other(message)))
     }
 
@@ -645,6 +650,32 @@ impl CompilerSession {
     /// Render an error with source context.
     pub fn render_error(&self, err: &MambaError) -> String {
         diagnostic::render_error(err, &self.source_map)
+    }
+
+    /// Render a type diagnostic with source context.
+    pub fn render_type_diagnostic(&self, diag: &crate::types::check::Diagnostic) -> String {
+        render_type_diagnostic(diag, &self.source_map)
+    }
+}
+
+pub fn render_type_diagnostic(
+    diag: &crate::types::check::Diagnostic,
+    source_map: &crate::source::SourceMap,
+) -> String {
+    let level_str = match diag.level {
+        crate::types::check::DiagLevel::Warning => "warning",
+        crate::types::check::DiagLevel::Error => "error",
+    };
+    if diag.span.file.0 != 0 || diag.span.start != 0 || diag.span.end != 0 {
+        let file = source_map.get_file(diag.span.file);
+        let (line, col) = file.line_col(diag.span.start);
+        let src_line = file.line_text(line);
+        format!(
+            "{level_str}: {}\n  --> {}:{line}:{col}\n   |\n{line:>3} | {src_line}\n   |",
+            diag.message, file.name
+        )
+    } else {
+        format!("{level_str}: {}", diag.message)
     }
 }
 
@@ -1101,7 +1132,10 @@ print(Decorated)
         result.expect("repeated class definitions should run from source");
         assert_eq!(
             captured.lines().collect::<Vec<_>>(),
-            ["False", "True", "False", "1", "two", "C", "C", "True", "False", "True", "42"]
+            [
+                "False", "True", "False", "1", "two", "C", "C", "True", "False", "True",
+                "42"
+            ]
         );
     }
 
@@ -1167,14 +1201,7 @@ print(second)
         result.expect("each class statement execution should allocate a fresh identity");
         assert_eq!(
             captured.lines().collect::<Vec<_>>(),
-            [
-                "False",
-                "True",
-                "False",
-                "True",
-                "<C instance>",
-                "<C instance>"
-            ]
+            ["False", "True", "False", "True", "<C instance>", "<C instance>"]
         );
     }
 
@@ -1538,9 +1565,7 @@ class Value(metaclass=ValueMeta):
         crate::runtime::cleanup_all_runtime_state();
 
         assert!(
-            error
-                .to_string()
-                .contains("__class__ not set defining 'Value'"),
+            error.to_string().contains("__class__ not set defining 'Value'"),
             "unexpected error: {error}"
         );
     }
@@ -1623,9 +1648,7 @@ class Value(metaclass=ValueMeta):
         crate::runtime::cleanup_all_runtime_state();
 
         assert!(
-            error
-                .to_string()
-                .contains("__classcell__ must be a nonlocal cell"),
+            error.to_string().contains("__classcell__ must be a nonlocal cell"),
             "unexpected error: {error}"
         );
     }

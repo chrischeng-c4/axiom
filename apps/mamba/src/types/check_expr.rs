@@ -99,7 +99,9 @@ fn protocol_required_call_shapes(required: &[ProtocolParamShape]) -> Vec<Protoco
     let positional: Vec<_> = required
         .iter()
         .enumerate()
-        .filter(|(_, param)| matches!(param.kind, ParamSpecKind::PosOnly | ParamSpecKind::PosOrKw))
+        .filter(|(_, param)| {
+            matches!(param.kind, ParamSpecKind::PosOnly | ParamSpecKind::PosOrKw)
+        })
         .map(|(index, _)| index)
         .collect();
     let mut shapes = Vec::new();
@@ -108,7 +110,8 @@ fn protocol_required_call_shapes(required: &[ProtocolParamShape]) -> Vec<Protoco
     // singleton proves all subsets because explicit parameter names are unique.
     for prefix_len in 0..=positional.len() {
         if positional[prefix_len..].iter().any(|index| {
-            required[*index].kind == ParamSpecKind::PosOnly && !required[*index].has_default
+            required[*index].kind == ParamSpecKind::PosOnly
+                && !required[*index].has_default
         }) {
             continue;
         }
@@ -197,7 +200,10 @@ fn bind_protocol_call_shape(
 }
 
 enum UserProtocolMethod {
-    Found(super::protocol::MethodSig, Option<Vec<FunctionParamSig>>),
+    Found(
+        super::protocol::MethodSig,
+        Option<Vec<FunctionParamSig>>,
+    ),
     Missing,
     Indeterminate,
 }
@@ -368,7 +374,8 @@ fn bind_forwarded_param_pack(
             return if pack.tail == ParamPackTail::Closed {
                 ParamPackCallBinding::Rejected(
                     span,
-                    "forwarded call has an argument that the callback does not accept".to_string(),
+                    "forwarded call has an argument that the callback does not accept"
+                        .to_string(),
                 )
             } else {
                 ParamPackCallBinding::Matched(matched, true)
@@ -482,7 +489,9 @@ impl TypeChecker {
         let ty = match &expr.node {
             Expr::IntLit(_) | Expr::BigIntLit(_) => self.tcx.int(),
             Expr::FloatLit(_) => self.tcx.float(),
-            Expr::ComplexLit(_) => self.external_class_instance("builtins", "complex", Vec::new()),
+            Expr::ComplexLit(_) => {
+                self.external_class_instance("builtins", "complex", Vec::new())
+            }
             Expr::StrLit(_) => self.tcx.str(),
             Expr::FString(parts) => {
                 // Walk replacement fields for their binding side effects
@@ -505,7 +514,9 @@ impl TypeChecker {
                 walk(self, parts);
                 self.tcx.str()
             }
-            Expr::BytesLit(_) => self.external_class_instance("builtins", "bytes", Vec::new()),
+            Expr::BytesLit(_) => {
+                self.external_class_instance("builtins", "bytes", Vec::new())
+            }
             Expr::BoolLit(_) => self.tcx.bool(),
             Expr::NoneLit => self.tcx.none(),
             // `...` is a real runtime singleton (the `ellipsis` type) — type
@@ -514,7 +525,20 @@ impl TypeChecker {
             Expr::Ellipsis => self.tcx.any(),
             Expr::Ident(name) => {
                 match self.symbols.lookup(name) {
-                    Some(sym) => self.get_sym_type(sym.0),
+                    Some(sym) => {
+                        let ty = self.get_sym_type(sym.0);
+                        if matches!(self.tcx.get(ty), Ty::None) {
+                            if let Some(assigned) = self.module_global_assigned_types.get(&sym) {
+                                if let Some(&first_non_none) = assigned
+                                    .iter()
+                                    .find(|&&t| !matches!(self.tcx.get(t), Ty::None))
+                                {
+                                    return first_non_none;
+                                }
+                            }
+                        }
+                        ty
+                    }
                     None => {
                         // #1588: Python defers free-name lookup inside fn bodies to
                         // call time. If we're inside a function (current_return_ty is
@@ -614,8 +638,6 @@ impl TypeChecker {
                 }
             }
             Expr::Call { func, args } => {
-                let func_ty_id = self.check_expr(func);
-                let func_ty = self.tcx.get(func_ty_id).clone();
                 let func_name = if let Expr::Ident(n) = &func.node {
                     Some(n.clone())
                 } else {
@@ -624,6 +646,17 @@ impl TypeChecker {
                 let func_symbol = func_name
                     .as_deref()
                     .and_then(|name| self.symbols.lookup(name));
+                if let Some(fn_name) = &func_name {
+                    if let Some(assignments) = self.fn_global_assignments.get(fn_name).cloned() {
+                        for (module_id, assigned_ty) in assignments {
+                            self.import_origins.remove(&module_id);
+                            self.function_param_sigs.remove(&module_id);
+                            self.set_sym_type(module_id.0, assigned_ty);
+                        }
+                    }
+                }
+                let func_ty_id = self.check_expr(func);
+                let func_ty = self.tcx.get(func_ty_id).clone();
                 let mut builtin_constructor_result = func_symbol
                     .and_then(|symbol| self.builtin_class_aliases.get(&symbol).copied())
                     .or_else(|| {
@@ -652,7 +685,8 @@ impl TypeChecker {
                 // A resolved generated TypeSpec contract owns the call even
                 // when its result is indeterminate. The compact scalar table
                 // is only a fallback when no generated candidate exists.
-                let structured_stdlib = self.check_structured_stdlib_call(func, func_ty_id, args);
+                let structured_stdlib =
+                    self.check_structured_stdlib_call(func, func_ty_id, args);
                 let structured_stdlib_handled = structured_stdlib.is_some();
                 let structured_stdlib_authoritative =
                     structured_stdlib_handled && func_name.is_some();
@@ -713,21 +747,19 @@ impl TypeChecker {
                         let mut checked_arg_types = Vec::with_capacity(args.len());
                         let has_intrinsic_signature = signature.is_some();
                         let intrinsic_param_sigs = intrinsic_function_param_sigs(signature);
-                        let mut user_param_sigs = intrinsic_param_sigs.or_else(|| {
-                            method_key
-                                .as_ref()
-                                .and_then(|(class_symbol, method_name)| {
-                                    self.class_method_param_sigs
-                                        .get(class_symbol)
-                                        .and_then(|methods| methods.get(method_name))
-                                        .cloned()
+                        let mut user_param_sigs = intrinsic_param_sigs.or_else(|| method_key
+                            .as_ref()
+                            .and_then(|(class_symbol, method_name)| {
+                                self.class_method_param_sigs
+                                    .get(class_symbol)
+                                    .and_then(|methods| methods.get(method_name))
+                                    .cloned()
+                            })
+                            .or_else(|| {
+                                func_symbol.and_then(|symbol| {
+                                    self.function_param_sigs.get(&symbol).cloned()
                                 })
-                                .or_else(|| {
-                                    func_symbol.and_then(|symbol| {
-                                        self.function_param_sigs.get(&symbol).cloned()
-                                    })
-                                })
-                        });
+                            }));
                         if method_key.is_some() && !has_intrinsic_signature {
                             if let Some(sigs) = &mut user_param_sigs {
                                 let mut specialized = params.iter();
@@ -883,8 +915,11 @@ impl TypeChecker {
                                                     .find(|sig| sig.kind == ParamKind::DoubleStar)
                                             })
                                     }) {
-                                        let at =
-                                            self.refine_class_object_actual(param.ty, at, value);
+                                        let at = self.refine_class_object_actual(
+                                            param.ty,
+                                            at,
+                                            value,
+                                        );
                                         if let Some(last) = checked_arg_types.last_mut() {
                                             *last = Some(at);
                                         }
@@ -1205,7 +1240,8 @@ impl TypeChecker {
                 if let Some(external) = self.resolve_external_value_attr(obj_ty_id, attr) {
                     return external;
                 }
-                if let Some(method_ty) = self.resolve_unbound_class_method(object, obj_ty_id, attr)
+                if let Some(method_ty) =
+                    self.resolve_unbound_class_method(object, obj_ty_id, attr)
                 {
                     return method_ty;
                 }
@@ -1367,17 +1403,15 @@ impl TypeChecker {
                 let signature = params
                     .iter()
                     .zip(&param_types)
-                    .map(|(param, ty)| {
-                        FunctionParamSig {
-                            name: param.name.clone(),
-                            ty: *ty,
-                            kind: param.kind,
-                            pos_only: param.pos_only,
-                            kw_only: param.kw_only,
-                            has_default: param.default.is_some(),
-                        }
-                        .into_callable_param()
-                    })
+                    .map(|(param, ty)| FunctionParamSig {
+                        name: param.name.clone(),
+                        ty: *ty,
+                        kind: param.kind,
+                        pos_only: param.pos_only,
+                        kw_only: param.kw_only,
+                        has_default: param.default.is_some(),
+                    }
+                    .into_callable_param())
                     .collect();
                 self.tcx.intern(Ty::Fn {
                     params: param_types,
@@ -1565,9 +1599,7 @@ impl TypeChecker {
             }
         };
         if let Some((symbol, widened_ty)) = self_ref_widen {
-            self.truncate_errors(
-                self_ref_errors_mark.expect("mark taken alongside self_ref_widen"),
-            );
+            self.truncate_errors(self_ref_errors_mark.expect("mark taken alongside self_ref_widen"));
             self.set_sym_type(symbol.0, widened_ty);
         }
         ty
@@ -1611,9 +1643,9 @@ impl TypeChecker {
             // literal container that merely carries the receiver as one of
             // its elements is just as self-referential as `.extend(cyclic)`
             // itself.
-            Expr::ListLit(elems) | Expr::TupleLit(elems) if attr.as_str() == "extend" => elems
-                .iter()
-                .any(|e| matches!(&e.node, Expr::Ident(n) if n == name)),
+            Expr::ListLit(elems) | Expr::TupleLit(elems) if attr.as_str() == "extend" => {
+                elems.iter().any(|e| matches!(&e.node, Expr::Ident(n) if n == name))
+            }
             _ => false,
         };
         if !is_self_ref {
@@ -1626,7 +1658,9 @@ impl TypeChecker {
             ("append" | "insert" | "extend", Ty::List(elem)) if elem != any => {
                 Some((symbol, self.tcx.intern(Ty::List(any))))
             }
-            ("add", Ty::Set(elem)) if elem != any => Some((symbol, self.tcx.intern(Ty::Set(any)))),
+            ("add", Ty::Set(elem)) if elem != any => {
+                Some((symbol, self.tcx.intern(Ty::Set(any))))
+            }
             _ => None,
         }
     }
@@ -1830,7 +1864,9 @@ impl TypeChecker {
                 .map(|constraint| self.materialize_stdlib_type(*constraint))
                 .collect::<Option<Vec<_>>>()?;
             let default = match decl.default {
-                Some(default) => TypeParamDefault::Resolved(self.materialize_stdlib_type(default)?),
+                Some(default) => {
+                    TypeParamDefault::Resolved(self.materialize_stdlib_type(default)?)
+                }
                 None => TypeParamDefault::None,
             };
             Some((bound, constraints, default))
@@ -1885,7 +1921,9 @@ impl TypeChecker {
             ("builtins", "int") if args.is_empty() => self.tcx.int(),
             ("builtins", "float") if args.is_empty() => self.tcx.float(),
             ("builtins", "str") if args.is_empty() => self.tcx.str(),
-            ("builtins", "object") | ("typing", "Any") if args.is_empty() => self.tcx.any(),
+            ("builtins", "object") | ("typing", "Any") if args.is_empty() => {
+                self.tcx.any()
+            }
             ("typing" | "typing_extensions", "Never" | "NoReturn") if args.is_empty() => {
                 self.tcx.never()
             }
@@ -1897,8 +1935,12 @@ impl TypeChecker {
             {
                 self.tcx.str()
             }
-            ("builtins", "list") if args.is_empty() => self.tcx.intern(Ty::List(self.tcx.any())),
-            ("builtins", "set") if args.is_empty() => self.tcx.intern(Ty::Set(self.tcx.any())),
+            ("builtins", "list") if args.is_empty() => {
+                self.tcx.intern(Ty::List(self.tcx.any()))
+            }
+            ("builtins", "set") if args.is_empty() => {
+                self.tcx.intern(Ty::Set(self.tcx.any()))
+            }
             ("builtins", "dict") if args.is_empty() => {
                 self.tcx.intern(Ty::Dict(self.tcx.any(), self.tcx.any()))
             }
@@ -1911,9 +1953,10 @@ impl TypeChecker {
             }
             _ if matches!(
                 kind,
-                TypeNameKind::Nominal | TypeNameKind::Protocol | TypeNameKind::Builtin
-            ) =>
-            {
+                TypeNameKind::Nominal
+                    | TypeNameKind::Protocol
+                    | TypeNameKind::Builtin
+            ) => {
                 if let Some((_id, class)) =
                     super::stdlib_typespec::class_spec_any_name(module, name)
                 {
@@ -1960,11 +2003,7 @@ impl TypeChecker {
         let identity = super::context::AliasIdentity::Generated(alias.module, alias.name);
         let (instance, alias_ref) = self.tcx.intern_alias_instance(
             identity,
-            format!(
-                "{}.{}",
-                spec::string(alias.module),
-                spec::string(alias.name)
-            ),
+            format!("{}.{}", spec::string(alias.module), spec::string(alias.name)),
             args.clone(),
             args.len(),
         );
@@ -2147,7 +2186,9 @@ impl TypeChecker {
             TypeSpecNode::Ellipsis => self.tcx.any(),
             TypeSpecNode::TypeParam(id) => self.materialize_stdlib_type_param(id)?,
             TypeSpecNode::ParamSpecArgs(_) | TypeSpecNode::ParamSpecKwargs(_) => return None,
-            TypeSpecNode::ForwardRef { target, .. } => self.materialize_stdlib_type(target)?,
+            TypeSpecNode::ForwardRef { target, .. } => {
+                self.materialize_stdlib_type(target)?
+            }
             TypeSpecNode::Name { module, name, kind } => {
                 let module = spec::string(module);
                 let name = spec::string(name);
@@ -2168,12 +2209,15 @@ impl TypeChecker {
                 self.tcx.intern(Ty::Tuple(members))
             }
             TypeSpecNode::ParamList(_) => return None,
-            TypeSpecNode::Unpack(inner) => self.materialize_stdlib_type_var_tuple_unpack(inner)?,
+            TypeSpecNode::Unpack(inner) => {
+                self.materialize_stdlib_type_var_tuple_unpack(inner)?
+            }
             TypeSpecNode::LiteralInt(_)
             | TypeSpecNode::LiteralStr(_)
-            | TypeSpecNode::LiteralBool(_) => self
-                .tcx
-                .intern(Ty::Literal(self.stdlib_literal_values(spec_id)?)),
+            | TypeSpecNode::LiteralBool(_) => {
+                self.tcx
+                    .intern(Ty::Literal(self.stdlib_literal_values(spec_id)?))
+            }
             TypeSpecNode::LiteralBytes(_) => return None,
             TypeSpecNode::Apply { base, args } => {
                 let TypeSpecNode::Name {
@@ -2245,7 +2289,9 @@ impl TypeChecker {
                             .collect();
                         self.tcx.intern(Ty::Literal(values))
                     }
-                    ("typing", "Callable") | ("collections.abc", "Callable") if args.len() == 2 => {
+                    ("typing", "Callable") | ("collections.abc", "Callable")
+                        if args.len() == 2 =>
+                    {
                         let (params, variadic, param_spec) =
                             self.materialize_stdlib_callable_params(args[0])?;
                         let ret = self.materialize_stdlib_type(args[1])?;
@@ -2280,7 +2326,12 @@ impl TypeChecker {
                             .iter()
                             .map(|arg| self.materialize_stdlib_type(*arg))
                             .collect::<Option<Vec<_>>>()?;
-                        self.materialize_stdlib_named_type(module, name, *base_kind, materialized)?
+                        self.materialize_stdlib_named_type(
+                            module,
+                            name,
+                            *base_kind,
+                            materialized,
+                        )?
                     }
                 }
             }
@@ -2493,8 +2544,10 @@ impl TypeChecker {
                 external: Some(receiver),
                 ..
             } => {
-                let (module, qualifier, name) =
-                    Self::structured_stdlib_constructor(&receiver.module, &receiver.name)?;
+                let (module, qualifier, name) = Self::structured_stdlib_constructor(
+                    &receiver.module,
+                    &receiver.name,
+                )?;
                 // #1628: this is the path actually taken for a class-object
                 // call bound to a plain identifier (`NamedTuple(...)`) — the
                 // `constructor_result_receiver` skip must apply here too, or
@@ -2541,7 +2594,10 @@ impl TypeChecker {
         }
     }
 
-    fn inferred_structured_stdlib_instance(&self, base: &str) -> Option<(String, String)> {
+    fn inferred_structured_stdlib_instance(
+        &self,
+        base: &str,
+    ) -> Option<(String, String)> {
         let symbol = self.symbols.lookup(base)?;
         if let Some(origin) = self.instance_origins.get(&symbol) {
             return Some(origin.clone());
@@ -2559,6 +2615,15 @@ impl TypeChecker {
         func: &Spanned<Expr>,
         func_ty: TypeId,
     ) -> Option<ResolvedStdlibSpecCall> {
+        if let Expr::Ident(name) = &func.node {
+            if let Some(symbol) = self.symbols.lookup(name) {
+                if !self.import_origins.contains_key(&symbol)
+                    && self.module_global_assigned_types.contains_key(&symbol)
+                {
+                    return None;
+                }
+            }
+        }
         if let Some(target) = self.external_callable_target(func_ty) {
             return Some(target);
         }
@@ -2578,26 +2643,28 @@ impl TypeChecker {
                             receiver: None,
                         })
                     } else {
-                        Self::structured_stdlib_constructor(module, member).map(
-                            |(owner_module, owner_qualifier, constructor)| {
-                                let receiver = Self::constructor_result_receiver(
-                                    &owner_module,
-                                    &owner_qualifier,
-                                    ExternalClass {
-                                        module: module.clone(),
-                                        name: member.to_string(),
-                                        args: Vec::new(),
-                                    },
-                                );
-                                ResolvedStdlibSpecCall {
-                                    module: owner_module,
-                                    qualifier: owner_qualifier,
-                                    name: constructor.to_string(),
-                                    access: StdlibSpecAccess::Constructor,
-                                    receiver,
-                                }
-                            },
-                        )
+                        Self::structured_stdlib_constructor(module, member).map(|(
+                            owner_module,
+                            owner_qualifier,
+                            constructor,
+                        )| {
+                            let receiver = Self::constructor_result_receiver(
+                                &owner_module,
+                                &owner_qualifier,
+                                ExternalClass {
+                                    module: module.clone(),
+                                    name: member.to_string(),
+                                    args: Vec::new(),
+                                },
+                            );
+                            ResolvedStdlibSpecCall {
+                                module: owner_module,
+                                qualifier: owner_qualifier,
+                                name: constructor.to_string(),
+                                access: StdlibSpecAccess::Constructor,
+                                receiver,
+                            }
+                        })
                     }
                 })
                 .or_else(|| {
@@ -2613,8 +2680,12 @@ impl TypeChecker {
                             receiver: None,
                         })
                     } else {
-                        Self::structured_stdlib_constructor("builtins", name).map(
-                            |(owner_module, owner_qualifier, constructor)| ResolvedStdlibSpecCall {
+                        Self::structured_stdlib_constructor("builtins", name).map(|(
+                            owner_module,
+                            owner_qualifier,
+                            constructor,
+                        )| {
+                            ResolvedStdlibSpecCall {
                                 module: owner_module,
                                 qualifier: owner_qualifier,
                                 name: constructor.to_string(),
@@ -2624,8 +2695,8 @@ impl TypeChecker {
                                     name: name.clone(),
                                     args: Vec::new(),
                                 }),
-                            },
-                        )
+                            }
+                        })
                     }
                 }),
             Expr::Attr { object, attr } => {
@@ -2829,11 +2900,7 @@ impl TypeChecker {
                             None => unknown = true,
                         }
                     }
-                    if unknown {
-                        None
-                    } else {
-                        Some(true)
-                    }
+                    if unknown { None } else { Some(true) }
                 }
                 Ty::Any | Ty::Error | Ty::TypeVar(_) | Ty::Infer(_) => None,
                 _ => Some(false),
@@ -2855,7 +2922,11 @@ impl TypeChecker {
                 _ => None,
             },
             ("typing", "Iterable" | "Collection") => match self.tcx.get(actual) {
-                Ty::List(_) | Ty::Set(_) | Ty::Dict(_, _) | Ty::Tuple(_) | Ty::Str => Some(true),
+                Ty::List(_)
+                | Ty::Set(_)
+                | Ty::Dict(_, _)
+                | Ty::Tuple(_)
+                | Ty::Str => Some(true),
                 Ty::Int | Ty::Float | Ty::Bool | Ty::None => Some(false),
                 Ty::Class {
                     external: Some(actual),
@@ -2864,10 +2935,7 @@ impl TypeChecker {
                     && matches!(
                         actual.name.as_str(),
                         "bytes" | "bytearray" | "range" | "frozenset"
-                    ) =>
-                {
-                    Some(true)
-                }
+                    ) => Some(true),
                 _ => None,
             },
             ("typing", "Sequence") => match self.tcx.get(actual) {
@@ -2979,7 +3047,12 @@ impl TypeChecker {
         }
         let mut found = None;
         let mut ambiguous = false;
-        for base in self.class_base_symbols.get(&symbol).into_iter().flatten() {
+        for base in self
+            .class_base_symbols
+            .get(&symbol)
+            .into_iter()
+            .flatten()
+        {
             match self.user_protocol_method(*base, name, visiting) {
                 UserProtocolMethod::Found(method, params) => {
                     if found.is_some() {
@@ -3028,10 +3101,9 @@ impl TypeChecker {
             .iter()
             .filter(|param| !param.implicit_receiver)
             .collect();
-        if required_params
-            .iter()
-            .any(|param| matches!(param.kind, ParamSpecKind::VarPos | ParamSpecKind::VarKw))
-            || actual_params.len() != actual_method.params.len()
+        if required_params.iter().any(|param| {
+            matches!(param.kind, ParamSpecKind::VarPos | ParamSpecKind::VarKw)
+        }) || actual_params.len() != actual_method.params.len()
         {
             return StrictRelation::Indeterminate;
         }
@@ -3058,7 +3130,8 @@ impl TypeChecker {
 
         let mut saw_indeterminate = false;
         for shape in &call_shapes {
-            let Some(bindings) = bind_protocol_call_shape(&required_shapes, actual_params, shape)
+            let Some(bindings) =
+                bind_protocol_call_shape(&required_shapes, actual_params, shape)
             else {
                 return StrictRelation::Incompatible;
             };
@@ -3084,7 +3157,11 @@ impl TypeChecker {
             return StrictRelation::Indeterminate;
         };
         let required_ret = substitution.apply(required_ret, &mut self.tcx);
-        match self.stdlib_type_relation_inner(required_ret, actual_method.return_type, visiting) {
+        match self.stdlib_type_relation_inner(
+            required_ret,
+            actual_method.return_type,
+            visiting,
+        ) {
             StrictRelation::Compatible => {}
             StrictRelation::Incompatible => return StrictRelation::Incompatible,
             StrictRelation::Indeterminate => saw_indeterminate = true,
@@ -3113,8 +3190,7 @@ impl TypeChecker {
             return StrictRelation::Indeterminate;
         };
         let class_params = spec::class_type_params(class);
-        if !expected_external.args.is_empty() && expected_external.args.len() != class_params.len()
-        {
+        if !expected_external.args.is_empty() && expected_external.args.len() != class_params.len() {
             return StrictRelation::Indeterminate;
         }
         let mut substitution = Substitution::new();
@@ -3134,9 +3210,9 @@ impl TypeChecker {
         }
 
         let mut method_names = Vec::new();
-        for method in spec::class_methods(class)
-            .filter(|method| method.py312 && method.kind == CallableSpecKind::InstanceMethod)
-        {
+        for method in spec::class_methods(class).filter(|method| {
+            method.py312 && method.kind == CallableSpecKind::InstanceMethod
+        }) {
             let name = spec::string(method.name);
             if !method_names.contains(&name) {
                 method_names.push(name);
@@ -3229,7 +3305,12 @@ impl TypeChecker {
         let actual_node = self.tcx.get(actual).clone();
         if matches!(
             &actual_node,
-            Ty::Any | Ty::Error | Ty::Never | Ty::Infer(_) | Ty::TypeVar(_) | Ty::AliasRef(_)
+            Ty::Any
+                | Ty::Error
+                | Ty::Never
+                | Ty::Infer(_)
+                | Ty::TypeVar(_)
+                | Ty::AliasRef(_)
         ) {
             return StrictRelation::Indeterminate;
         }
@@ -3390,20 +3471,27 @@ impl TypeChecker {
             };
         };
 
-        let return_relation = self.stdlib_type_relation_inner(expected_ret, actual_ret, visiting);
+        let return_relation =
+            self.stdlib_type_relation_inner(expected_ret, actual_ret, visiting);
         if return_relation == StrictRelation::Incompatible {
             return StrictRelation::Incompatible;
         }
 
-        if expected_signature.is_none() && expected_param_spec.is_none() && !expected_variadic {
+        if expected_signature.is_none()
+            && expected_param_spec.is_none()
+            && !expected_variadic
+        {
             let actual = callable_param_pack(
                 actual_params.clone(),
                 actual_variadic,
                 actual_signature,
                 actual_param_spec,
             );
-            let parameter_relation =
-                self.stdlib_positional_invocation_relation(&actual, &expected_params, visiting);
+            let parameter_relation = self.stdlib_positional_invocation_relation(
+                &actual,
+                &expected_params,
+                visiting,
+            );
             return if parameter_relation == StrictRelation::Incompatible {
                 StrictRelation::Incompatible
             } else if parameter_relation == StrictRelation::Indeterminate
@@ -3417,7 +3505,11 @@ impl TypeChecker {
 
         let mut compare_prefix = |limit: usize| {
             let mut unknown = false;
-            for (&expected, &actual) in expected_params.iter().zip(&actual_params).take(limit) {
+            for (&expected, &actual) in expected_params
+                .iter()
+                .zip(&actual_params)
+                .take(limit)
+            {
                 match self.stdlib_type_relation_inner(actual, expected, visiting) {
                     StrictRelation::Compatible => {}
                     StrictRelation::Indeterminate => unknown = true,
@@ -3495,10 +3587,7 @@ impl TypeChecker {
 
         let expected_node = self.tcx.get(expected).clone();
         let actual_node = self.tcx.get(actual).clone();
-        if matches!(
-            actual_node,
-            Ty::Any | Ty::Error | Ty::TypeVar(_) | Ty::Infer(_)
-        ) {
+        if matches!(actual_node, Ty::Any | Ty::Error | Ty::TypeVar(_) | Ty::Infer(_)) {
             return StrictRelation::Indeterminate;
         }
         if let Ty::TypeVar(var) = expected_node {
@@ -3596,7 +3685,9 @@ impl TypeChecker {
                     StrictRelation::Compatible
                 }
             }
-            (Ty::Fn { .. }, _) => self.stdlib_callable_relation_inner(expected, actual, visiting),
+            (Ty::Fn { .. }, _) => {
+                self.stdlib_callable_relation_inner(expected, actual, visiting)
+            }
             (
                 Ty::Class {
                     external: Some(external),
@@ -3814,10 +3905,10 @@ impl TypeChecker {
                 ..
             } => {
                 let callable = self.user_protocol_method(
-                    user.symbol,
-                    "__call__",
-                    &mut std::collections::HashSet::new(),
-                );
+                        user.symbol,
+                        "__call__",
+                        &mut std::collections::HashSet::new(),
+                    );
                 match callable {
                     UserProtocolMethod::Found(..) | UserProtocolMethod::Indeterminate => {
                         StrictRelation::Indeterminate
@@ -3879,7 +3970,8 @@ impl TypeChecker {
         substitution: &Substitution,
         params: &GenericParams,
     ) -> Option<String> {
-        if self.stdlib_generic_bounds_relation(substitution, params) != StrictRelation::Incompatible
+        if self.stdlib_generic_bounds_relation(substitution, params)
+            != StrictRelation::Incompatible
         {
             return None;
         }
@@ -4109,12 +4201,8 @@ impl TypeChecker {
             });
             let inference_params: Vec<_> = inference_pairs.iter().map(|item| item.0).collect();
             let inference_args: Vec<_> = inference_pairs.iter().map(|item| item.1).collect();
-            let (mut subst, conflicts) = infer_type_args(
-                &generic_params,
-                &inference_params,
-                &inference_args,
-                &self.tcx,
-            );
+            let (mut subst, conflicts) =
+                infer_type_args(&generic_params, &inference_params, &inference_args, &self.tcx);
             if let Some(message) = conflicts.into_iter().next() {
                 let span = matched.first().map(|item| item.2).unwrap_or_default();
                 return StdlibSpecCandidate::Rejected(span, message, 1);
@@ -4126,9 +4214,9 @@ impl TypeChecker {
                     spec::string(sig.name),
                     &[sig.kind],
                 );
-                let receiver_substitution = resolution
-                    .as_ref()
-                    .and_then(|resolution| self.stdlib_receiver_substitution(receiver, resolution));
+                let receiver_substitution = resolution.as_ref().and_then(|resolution| {
+                    self.stdlib_receiver_substitution(receiver, resolution)
+                });
                 if let Some(receiver_substitution) = receiver_substitution {
                     for param in &generic_params.params {
                         let Some(receiver_arg) = receiver_substitution.get(param.id) else {
@@ -4192,13 +4280,12 @@ impl TypeChecker {
                             .find(|param| param.id == *var)
                             .map(|param| param.name.as_str())
                             .unwrap_or("Ts");
-                        let span = forwarded
-                            .first()
-                            .map(|(_, _, span)| *span)
-                            .unwrap_or_default();
+                        let span = forwarded.first().map(|(_, _, span)| *span).unwrap_or_default();
                         return StdlibSpecCandidate::Rejected(
                             span,
-                            format!("conflicting ordered type packs for type parameter '{name}'"),
+                            format!(
+                                "conflicting ordered type packs for type parameter '{name}'"
+                            ),
                             1,
                         );
                     }
@@ -4230,15 +4317,23 @@ impl TypeChecker {
             relation_substitution = Some(subst.clone());
             match complete_callable_type_args(&generic_params, subst, &mut self.tcx) {
                 Some(completed) => {
-                    if let Some(message) = check_bounds(&completed, &generic_params, &self.tcx)
-                        .into_iter()
-                        .next()
+                    if let Some(message) = check_bounds(
+                        &completed,
+                        &generic_params,
+                        &self.tcx,
+                    )
+                    .into_iter()
+                    .next()
                     {
-                        match self.stdlib_generic_bounds_relation(&completed, &generic_params) {
+                        match self.stdlib_generic_bounds_relation(
+                            &completed,
+                            &generic_params,
+                        ) {
                             StrictRelation::Compatible => {}
                             StrictRelation::Indeterminate => indeterminate = true,
                             StrictRelation::Incompatible => {
-                                let span = matched.first().map(|item| item.2).unwrap_or_default();
+                                let span =
+                                    matched.first().map(|item| item.2).unwrap_or_default();
                                 return StdlibSpecCandidate::Rejected(span, message, 1);
                             }
                         }
@@ -4320,11 +4415,8 @@ impl TypeChecker {
             None
         } else {
             let ret = spec::type_use(sig.ret).0;
-            self.materialize_stdlib_type(ret).map(|ret| {
-                completed
-                    .expect("determinate candidate")
-                    .apply(ret, &mut self.tcx)
-            })
+            self.materialize_stdlib_type(ret)
+                .map(|ret| completed.expect("determinate candidate").apply(ret, &mut self.tcx))
         };
         StdlibSpecCandidate::Accepted(ret)
     }
@@ -4583,11 +4675,7 @@ impl TypeChecker {
                 }
             }
             return Some(target.receiver.as_ref().map(|receiver| {
-                self.external_class_instance(
-                    &receiver.module,
-                    &receiver.name,
-                    receiver.args.clone(),
-                )
+                self.external_class_instance(&receiver.module, &receiver.name, receiver.args.clone())
             }));
         }
         let constructor_result = if target.access == StdlibSpecAccess::Constructor {
@@ -4612,10 +4700,14 @@ impl TypeChecker {
                     | CallableSpecKind::StaticMethod
             ),
         };
-        let candidates: Vec<_> = spec::overloads(&target.module, &target.qualifier, &target.name)
-            .filter(|sig| accepts_kind(sig.kind))
-            .cloned()
-            .collect();
+        let candidates: Vec<_> = spec::overloads(
+            &target.module,
+            &target.qualifier,
+            &target.name,
+        )
+        .filter(|sig| accepts_kind(sig.kind))
+        .cloned()
+        .collect();
         if candidates.is_empty() {
             return None;
         }
@@ -4741,7 +4833,8 @@ impl TypeChecker {
                     left.2
                         .cmp(&right.2)
                         .then_with(|| right.0.start.cmp(&left.0.start))
-                }) {
+                })
+                {
                     self.error(span, message);
                 }
                 return Some(constructor_result);
@@ -4784,23 +4877,31 @@ impl TypeChecker {
             // The `self` receiver is already stripped from `__init__` param rows,
             // so positional alignment starts at the first real argument. Names not
             // in `import_origins` (user-defined classes, locals) resolve to None.
-            Expr::Ident(name) => self
-                .symbols
-                .lookup(name)
-                .and_then(|symbol| self.import_origins.get(&symbol))
-                .and_then(|(module, member)| {
-                    let member = if member.is_empty() { name } else { member };
-                    super::stdlib_sigs::get(module, "", member)
-                        .or_else(|| super::stdlib_sigs::get(module, member, "__init__"))
-                })
-                .or_else(|| {
-                    if self.is_unshadowed_builtin(name) {
-                        super::stdlib_sigs::get("builtins", "", name)
-                            .or_else(|| super::stdlib_sigs::get("builtins", name, "__init__"))
-                    } else {
-                        None
+            Expr::Ident(name) => {
+                if let Some(symbol) = self.symbols.lookup(name) {
+                    if !self.import_origins.contains_key(&symbol)
+                        && self.module_global_assigned_types.contains_key(&symbol)
+                    {
+                        return None;
                     }
-                }),
+                }
+                self.symbols
+                    .lookup(name)
+                    .and_then(|symbol| self.import_origins.get(&symbol))
+                    .and_then(|(module, member)| {
+                        let member = if member.is_empty() { name } else { member };
+                        super::stdlib_sigs::get(module, "", member)
+                            .or_else(|| super::stdlib_sigs::get(module, member, "__init__"))
+                    })
+                    .or_else(|| {
+                        if self.is_unshadowed_builtin(name) {
+                            super::stdlib_sigs::get("builtins", "", name)
+                                .or_else(|| super::stdlib_sigs::get("builtins", name, "__init__"))
+                        } else {
+                            None
+                        }
+                    })
+            }
             // Attribute access: `os.strerror(...)` (module fn) or
             // `obj.handle_entityref(...)` (instance method).
             Expr::Attr { object, attr } => {
@@ -5346,7 +5447,9 @@ impl TypeChecker {
                         } if self.user_bare_class_symbols.contains(&user.symbol) => {
                             Some(name.clone())
                         }
-                        Ty::Class { user: None, .. } if self.user_bare_classes.contains(name) => {
+                        Ty::Class { user: None, .. }
+                            if self.user_bare_classes.contains(name) =>
+                        {
                             Some(name.clone())
                         }
                         _ => None,
@@ -5574,7 +5677,11 @@ impl TypeChecker {
             })))
     }
 
-    fn contextualize_stdlib_return(&mut self, ty: TypeId, receiver: &ExternalClass) -> TypeId {
+    fn contextualize_stdlib_return(
+        &mut self,
+        ty: TypeId,
+        receiver: &ExternalClass,
+    ) -> TypeId {
         match self.tcx.get(ty).clone() {
             Ty::SelfType => self.external_class_instance(
                 &receiver.module,
@@ -5720,7 +5827,9 @@ impl TypeChecker {
                         loaded,
                     })));
                 }
-                if let Some((module, name)) = super::stdlib_typespec::exported_class(&path, attr) {
+                if let Some((module, name)) =
+                    super::stdlib_typespec::exported_class(&path, attr)
+                {
                     return Some(self.external_class_object(module, name, Vec::new()));
                 }
                 if Self::structured_stdlib_module_fn_exists(&path, attr) {
@@ -5744,14 +5853,23 @@ impl TypeChecker {
                         return Some(property);
                     }
                 }
-                let (module, qualifier) =
-                    Self::structured_stdlib_member_owner(&receiver.module, &receiver.name, attr)?;
+                let (module, qualifier) = Self::structured_stdlib_member_owner(
+                    &receiver.module,
+                    &receiver.name,
+                    attr,
+                )?;
                 let access = if role == ClassRole::Object {
                     ExternalCallableAccess::ClassMember
                 } else {
                     ExternalCallableAccess::BoundMember
                 };
-                Some(self.external_callable_type(module, qualifier, attr, access, Some(receiver)))
+                Some(self.external_callable_type(
+                    module,
+                    qualifier,
+                    attr,
+                    access,
+                    Some(receiver),
+                ))
             }
             _ => None,
         }
@@ -5759,8 +5877,11 @@ impl TypeChecker {
 
     fn resolve_generated_bound_member(&mut self, object_ty: TypeId, attr: &str) -> Option<TypeId> {
         let receiver = self.structured_stdlib_receiver(object_ty)?;
-        let (module, qualifier) =
-            Self::structured_stdlib_member_owner(&receiver.module, &receiver.name, attr)?;
+        let (module, qualifier) = Self::structured_stdlib_member_owner(
+            &receiver.module,
+            &receiver.name,
+            attr,
+        )?;
         Some(self.external_callable_type(
             module,
             qualifier,
@@ -6945,21 +7066,24 @@ mod tests {
     #[test]
     fn unproven_imported_stdlib_names_do_not_materialize_as_public_classes() {
         let mut checker = TypeChecker::new();
-        assert!(checker
-            .materialize_stdlib_named_type(
-                "collections.abc",
-                "Callable",
-                crate::types::stdlib_typespec::TypeNameKind::Imported,
-                Vec::new(),
-            )
-            .is_none());
+        assert!(
+            checker
+                .materialize_stdlib_named_type(
+                    "collections.abc",
+                    "Callable",
+                    crate::types::stdlib_typespec::TypeNameKind::Imported,
+                    Vec::new(),
+                )
+                .is_none()
+        );
     }
 
     #[test]
     fn generated_type_var_tuple_unpack_apply_is_kind_checked() {
         use crate::types::stdlib_typespec::{self as spec, TypeSpecNode};
 
-        let pack_apply = generated_param_type_spec("operator", "itemgetter", "__new__", "items");
+        let pack_apply =
+            generated_param_type_spec("operator", "itemgetter", "__new__", "items");
         let pack_operand = generated_unpack_operand(pack_apply, "typing_extensions");
         let mut checker = TypeChecker::new();
         let pack = checker
@@ -6992,12 +7116,16 @@ mod tests {
             .materialize_stdlib_type_var_tuple_unpack(ordinary_type_var)
             .is_none());
 
-        let typed_dict_apply = generated_param_type_spec("ast", "stmt", "__init__", "kwargs");
-        let typed_dict_operand = generated_unpack_operand(typed_dict_apply, "typing_extensions");
+        let typed_dict_apply =
+            generated_param_type_spec("ast", "stmt", "__init__", "kwargs");
+        let typed_dict_operand =
+            generated_unpack_operand(typed_dict_apply, "typing_extensions");
         assert!(checker
             .materialize_stdlib_type_var_tuple_unpack(typed_dict_operand)
             .is_none());
-        assert!(checker.materialize_stdlib_type(typed_dict_apply).is_none());
+        assert!(checker
+            .materialize_stdlib_type(typed_dict_apply)
+            .is_none());
     }
 
     #[test]
@@ -7047,9 +7175,11 @@ mod tests {
         );
         assert_eq!(many.get(suffix), Some(checker.tcx.bool()));
 
-        let zero_middle =
-            bind_generated_alias_args(&params, &[checker.tcx.int(), checker.tcx.bool()])
-                .expect("fixed generated alias arguments must allow an empty middle pack");
+        let zero_middle = bind_generated_alias_args(
+            &params,
+            &[checker.tcx.int(), checker.tcx.bool()],
+        )
+        .expect("fixed generated alias arguments must allow an empty middle pack");
         assert_eq!(zero_middle.get(prefix), Some(checker.tcx.int()));
         assert_eq!(
             zero_middle
@@ -7061,7 +7191,11 @@ mod tests {
 
         let one_middle = bind_generated_alias_args(
             &params,
-            &[checker.tcx.int(), checker.tcx.str(), checker.tcx.bool()],
+            &[
+                checker.tcx.int(),
+                checker.tcx.str(),
+                checker.tcx.bool(),
+            ],
         )
         .expect("fixed generated alias arguments must allow one middle pack member");
         assert_eq!(
@@ -7312,8 +7446,11 @@ mod tests {
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
         assert!(errors.is_empty(), "class setup must type-check: {errors:?}");
-        let (_, protocol) = crate::types::stdlib_typespec::class_spec("typing", "SupportsRound")
-            .expect("generated SupportsRound protocol");
+        let (_, protocol) = crate::types::stdlib_typespec::class_spec(
+            "typing",
+            "SupportsRound",
+        )
+        .expect("generated SupportsRound protocol");
         let expected = ExternalClass {
             module: "typing".to_string(),
             name: "SupportsRound".to_string(),

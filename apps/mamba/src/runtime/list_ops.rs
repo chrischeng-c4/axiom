@@ -1989,6 +1989,15 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
             return super::stdlib::array_mod::mb_array_contains(container, value);
         }
     }
+    if container.is_none() {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "argument of type 'NoneType' is not iterable".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     unsafe {
         if let Some(ptr) = container.as_ptr() {
             match &(*ptr).data {

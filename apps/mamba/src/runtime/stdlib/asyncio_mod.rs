@@ -679,9 +679,8 @@ struct ThreadCallSpec {
     is_boxed_ret: bool,
     module_name: String,
     args: Vec<MbValue>,
-    globals: HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
     active_cells:
-        HashMap<super::super::closure::ScopedSymbolKey, super::super::closure::ActiveCellSnapshot>,
+        HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
 }
 
 fn extract_str_value(value: MbValue) -> Option<String> {
@@ -795,7 +794,6 @@ fn prepare_to_thread_call(func: MbValue, pos: &[MbValue], kw: MbValue) -> Option
         is_boxed_ret: super::super::module::is_boxed_return_func(raw_addr as u64),
         module_name: callable_module_name(func),
         args,
-        globals: super::super::closure::snapshot_global_id_namespace(),
         active_cells: super::super::closure::snapshot_active_cells(),
     })
 }
@@ -873,8 +871,11 @@ fn dispatch_thread_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: b
             _ => MbValue::none(),
         }
     };
+    let is_bool_ret = super::super::module::is_bool_return_func(raw_addr as u64);
     if is_boxed_ret {
         raw_result
+    } else if is_bool_ret {
+        super::super::builtins::mb_box_bool(raw_result.to_bits() as i64)
     } else {
         super::super::builtins::mb_box_int(raw_result.to_bits() as i64)
     }
@@ -929,7 +930,6 @@ fn spawn_to_thread_worker(future: MbValue, spec: ThreadCallSpec) {
             is_boxed_ret,
             module_name,
             args,
-            globals,
             active_cells,
         } = spec;
         super::super::closure::push_active_module_name(module_name);
@@ -940,7 +940,6 @@ fn spawn_to_thread_worker(future: MbValue, spec: ThreadCallSpec) {
             }
         }
         let _module_guard = ModuleGuard;
-        let previous_globals = super::super::closure::replace_global_id_namespace(globals);
         let previous_cells = super::super::closure::replace_active_cells(active_cells);
 
         let panic_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -960,10 +959,10 @@ fn spawn_to_thread_worker(future: MbValue, spec: ThreadCallSpec) {
 
         release_owned_values(&args);
         let _ = super::super::closure::replace_active_cells(previous_cells);
-        let _ = super::super::closure::replace_global_id_namespace(previous_globals);
         unsafe {
             super::super::rc::release_if_ptr(future);
         }
+        super::super::module::preserve_module_jit_backends();
     });
 }
 

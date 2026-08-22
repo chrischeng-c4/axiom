@@ -361,24 +361,20 @@ impl Resolver {
             Stmt::Global(names) => {
                 for name in names {
                     let current = self.symbols.current_scope_idx();
-                    let id = if self.function_scope_stack.contains(&current) {
-                        self.symbols
-                            .lookup_in_scope(current, name)
-                            .unwrap_or_else(|| {
-                                self.symbols.define(name.clone(), SymbolKind::Variable)
-                            })
-                    } else {
-                        let module_id =
-                            self.symbols.lookup_in_scope(0, name).unwrap_or_else(|| {
-                                self.symbols
-                                    .define_in_scope(0, name.clone(), SymbolKind::Variable)
-                            });
-                        self.symbols
-                            .bind_symbol_in_scope(current, name.clone(), module_id);
-                        module_id
-                    };
-                    self.symbols.set_var_class(id, VariableClass::Global);
-                    self.name_map.push((stmt.span, id));
+                    let module_id = self
+                        .symbols
+                        .lookup_in_scope(0, name)
+                        .unwrap_or_else(|| {
+                            self.symbols.define_in_scope(
+                                0,
+                                name.clone(),
+                                SymbolKind::Variable,
+                            )
+                        });
+                    self.symbols
+                        .bind_symbol_in_scope(current, name.clone(), module_id);
+                    self.symbols.set_var_class(module_id, VariableClass::Global);
+                    self.name_map.push((stmt.span, module_id));
                 }
             }
             Stmt::Nonlocal(names) => {

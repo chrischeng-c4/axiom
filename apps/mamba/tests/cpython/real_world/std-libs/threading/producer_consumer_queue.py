@@ -22,7 +22,7 @@ import queue
 N = 500
 q = queue.Queue(maxsize=16)
 SENTINEL = object()
-consumed = []
+consumed: list[int] = []
 
 
 def producer():

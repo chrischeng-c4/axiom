@@ -1235,7 +1235,6 @@ pub(crate) fn cleanup_generator_state_for_runtime_reset() {
         a.last_resumed_ctx.set(std::ptr::null_mut());
         a.last_resumed_capture_context.set(std::ptr::null());
     });
-    NEXT_GEN_ID.store(GEN_ID_BASE, Ordering::Relaxed);
     GEN_XFER.with(|x| {
         x.yield_v.set(0);
         x.send.set(0);
@@ -1719,6 +1718,24 @@ mod tests {
             id2 < id3,
             "IDs should be strictly increasing: {id2} < {id3}"
         );
+    }
+
+    #[test]
+    fn test_cleanup_on_other_thread_does_not_cause_gen_id_collision() {
+        let name1 = MbValue::from_ptr(MbObject::new_str("gen_b1".to_string()));
+        let gen1 = mb_generator_create(name1, MbValue::none(), MbValue::none());
+        assert!(is_known_generator(gen1));
+
+        std::thread::spawn(|| {
+            cleanup_generator_state_for_runtime_reset();
+        }).join().unwrap();
+
+        let name2 = MbValue::from_ptr(MbObject::new_str("gen_b2".to_string()));
+        let gen2 = mb_generator_create(name2, MbValue::none(), MbValue::none());
+
+        assert_ne!(gen1.as_int(), gen2.as_int(), "generator handles must not collide after cross-thread cleanup");
+        assert!(is_known_generator(gen1), "live generator on thread B must stay registered");
+        assert!(is_known_generator(gen2), "new generator on thread B must be registered");
     }
 
     #[test]

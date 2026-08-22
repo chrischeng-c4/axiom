@@ -9,7 +9,7 @@
 # case = "concurrent_mutation_stress"
 # subject = "threading.Thread"
 # kind = "semantic"
-# xfail = "shared-state SIGABRT under concurrent mutation (project_mamba_conformance_blockers)"
+# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
@@ -24,9 +24,9 @@ ITERS = 4000
 JOIN_TIMEOUT = 5.0  # seconds; generous vs the < 2s deterministic CPython budget
 
 shared_dict = {}
-shared_list = []
+shared_list: list[object] = []
 stop = threading.Event()
-errors = []  # worker exceptions are recorded, not swallowed
+errors: list[tuple[int, str]] = []  # worker exceptions are recorded, not swallowed
 
 
 def _hammer(wid):

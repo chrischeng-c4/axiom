@@ -314,22 +314,16 @@ fn class_ref_target_name(wref: MbValue) -> Option<String> {
 }
 
 fn class_ref_has_live_global(target: MbValue, target_name: &str) -> bool {
-    super::super::closure::snapshot_global_id_namespace()
-        .values()
-        .copied()
-        .any(|value| {
-            if value.to_bits() == target.to_bits() {
-                return true;
-            }
-            super::super::class::resolve_class_name(value).as_deref() == Some(target_name)
-        })
+    super::super::closure::global_id_namespace_any(|value| {
+        if value.to_bits() == target.to_bits() {
+            return true;
+        }
+        super::super::class::resolve_class_name(value).as_deref() == Some(target_name)
+    })
 }
 
 fn value_has_live_global(target: MbValue) -> bool {
-    super::super::closure::snapshot_global_id_namespace()
-        .values()
-        .copied()
-        .any(|value| value.to_bits() == target.to_bits())
+    super::super::closure::global_id_namespace_any(|value| value.to_bits() == target.to_bits())
 }
 
 pub(crate) fn expire_unbound_class_refs() {
@@ -1553,15 +1547,8 @@ fn referent_type_name(target: MbValue) -> String {
     "object".to_string()
 }
 
-fn weakref_entry_is_publicly_live(
-    wref: MbValue,
-    globals: &std::collections::HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
-) -> bool {
-    if !globals
-        .values()
-        .copied()
-        .any(|value| value.to_bits() == wref.to_bits())
-    {
+fn weakref_entry_is_publicly_live(wref: MbValue) -> bool {
+    if !super::super::closure::global_id_namespace_any(|value| value.to_bits() == wref.to_bits()) {
         return false;
     }
     let Some(ptr) = wref.as_ptr() else {
@@ -1589,7 +1576,6 @@ fn weakref_entry_is_publicly_live(
 
 fn live_registry_items(obj: MbValue) -> Vec<MbValue> {
     let key = referent_key(obj);
-    let globals = super::super::closure::snapshot_global_id_namespace();
     WEAKREF_REGISTRY.with(|r| {
         r.borrow()
             .get(&key)
@@ -1597,7 +1583,7 @@ fn live_registry_items(obj: MbValue) -> Vec<MbValue> {
                 items
                     .iter()
                     .copied()
-                    .filter(|wref| weakref_entry_is_publicly_live(*wref, &globals))
+                    .filter(|wref| weakref_entry_is_publicly_live(*wref))
                     .collect()
             })
             .unwrap_or_default()

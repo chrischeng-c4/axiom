@@ -8,6 +8,7 @@ pub mod class;
 pub mod closure;
 pub mod dict_ops;
 pub mod exception;
+pub mod execution_context;
 pub mod file_io;
 pub mod gc;
 pub mod generator;
@@ -17,6 +18,7 @@ pub mod list_ops;
 pub mod module;
 pub mod output;
 pub mod pep695;
+pub mod program_state;
 pub mod rc;
 pub mod registry_bridge;
 pub mod repr_guard;
@@ -32,7 +34,7 @@ pub mod value;
 pub use rc::{MbObject, MbObjectHeader};
 pub use value::MbValue;
 
-/// Centralized runtime cleanup: reset all thread_local state in dependency order.
+/// Centralized runtime cleanup: reset thread_local and process-global runtime state in dependency order.
 ///
 /// Order: iterators → generators → closures → classes → exceptions → files →
 /// modules → async → **GC clear** → module JIT backend cleanup.
@@ -68,6 +70,24 @@ pub fn cleanup_all_runtime_state() {
     // Phase 3: Drop module JIT backend handles last. Imported module values
     // have been detached before this point, so backend drops cannot cascade
     // through mixed-owned module attrs.
+    module::cleanup_module_jit_backends();
+}
+
+/// Process-exit variant of centralized runtime cleanup: reset thread_local state
+/// in dependency order without wiping process-global shared state (ProgramState, coroutines, and tasks).
+pub fn cleanup_all_runtime_state_for_process_exit() {
+    iter::cleanup_all_iterators();
+    generator::cleanup_generator_state_for_runtime_reset();
+    stdlib::types_mod::cleanup_all_types_state();
+    closure::cleanup_thread_local_closures();
+    class::cleanup_all_classes();
+    stdlib::dataclasses_mod::cleanup_all_dataclasses();
+    exception::cleanup_all_exceptions();
+    file_io::cleanup_all_files();
+    module::cleanup_all_modules();
+    string_ops::cleanup_all_surrogate_strings();
+    async_rt::cleanup_thread_local_async();
+    gc::gc_clear_all_state();
     module::cleanup_module_jit_backends();
 }
 
@@ -302,31 +322,31 @@ mod cleanup_tests {
 
         let t1 = std::thread::spawn(move || {
             // Thread 1: populate state
-            let name = MbValue::from_ptr(rc::MbObject::new_str("t1_global".into()));
-            closure::mb_global_set(name, MbValue::from_int(111));
+            let typ = MbValue::from_ptr(rc::MbObject::new_str("TypeError".into()));
+            let msg = MbValue::from_ptr(rc::MbObject::new_str("t1_exception".into()));
+            exception::mb_raise(typ, msg);
             b1.wait(); // sync: both threads have set state
             b1.wait(); // sync: wait for t2 to cleanup
                        // Thread 1's state should still be present (t2's cleanup is independent)
-            let name2 = MbValue::from_ptr(rc::MbObject::new_str("t1_global".into()));
-            let val = closure::mb_global_get(name2);
             assert_eq!(
-                val.as_int(),
-                Some(111),
+                exception::mb_has_exception().as_bool(),
+                Some(true),
                 "thread 1's state should survive thread 2's cleanup"
             );
         });
 
         let t2 = std::thread::spawn(move || {
             // Thread 2: populate and cleanup
-            let name = MbValue::from_ptr(rc::MbObject::new_str("t2_global".into()));
-            closure::mb_global_set(name, MbValue::from_int(222));
+            let typ = MbValue::from_ptr(rc::MbObject::new_str("ValueError".into()));
+            let msg = MbValue::from_ptr(rc::MbObject::new_str("t2_exception".into()));
+            exception::mb_raise(typ, msg);
             b2.wait(); // sync: both threads have set state
             cleanup_all_runtime_state();
             b2.wait(); // sync: signal t1 that cleanup is done
                        // Thread 2's state should be gone
-            let name2 = MbValue::from_ptr(rc::MbObject::new_str("t2_global".into()));
-            assert!(
-                closure::mb_global_get(name2).is_none(),
+            assert_eq!(
+                exception::mb_has_exception().as_bool(),
+                Some(false),
                 "thread 2's state should be cleared after its own cleanup"
             );
         });

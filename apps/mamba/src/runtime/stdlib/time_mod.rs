@@ -62,6 +62,7 @@ use crate::runtime::rc::MbRwLock as RwLock;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
+use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, TimeZone, Timelike, Utc};
@@ -628,18 +629,16 @@ pub fn mb_time_time_ns() -> MbValue {
     super::super::bigint_ops::int_from_i64(duration.as_nanos() as i64)
 }
 
-thread_local! {
-    static MONO_EPOCH: Instant = Instant::now();
-}
+static MONO_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 /// time.monotonic() -> float
 pub fn mb_time_monotonic() -> MbValue {
-    MONO_EPOCH.with(|e| MbValue::from_float(e.elapsed().as_secs_f64()))
+    MbValue::from_float(MONO_EPOCH.elapsed().as_secs_f64())
 }
 
 /// time.monotonic_ns() -> int
 pub fn mb_time_monotonic_ns() -> MbValue {
-    MONO_EPOCH.with(|e| super::super::bigint_ops::int_from_i64(e.elapsed().as_nanos() as i64))
+    super::super::bigint_ops::int_from_i64(MONO_EPOCH.elapsed().as_nanos() as i64)
 }
 
 /// time.perf_counter() -> float
@@ -669,13 +668,13 @@ fn cpu_time_ns(thread: bool) -> i64 {
     if rc == 0 {
         (ts.tv_sec as i64) * 1_000_000_000 + (ts.tv_nsec as i64)
     } else {
-        MONO_EPOCH.with(|e| e.elapsed().as_nanos() as i64)
+        MONO_EPOCH.elapsed().as_nanos() as i64
     }
 }
 
 #[cfg(not(unix))]
 fn cpu_time_ns(_thread: bool) -> i64 {
-    MONO_EPOCH.with(|e| e.elapsed().as_nanos() as i64)
+    MONO_EPOCH.elapsed().as_nanos() as i64
 }
 
 /// time.process_time() -> float (CPU time for this process)

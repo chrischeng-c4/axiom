@@ -380,6 +380,7 @@ fn needs_continuation(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codegen::cranelift::jit::JIT_LOCK;
 
     fn has_global(repl: &Repl, name: &str) -> bool {
         repl.known_globals.iter().any(|symbol| {
@@ -411,6 +412,9 @@ mod tests {
 
     #[test]
     fn test_repl_variable_persistence() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         // Iteration 1: define variable
         let (_, echo) = repl.eval_raw("x: int = 42\n").unwrap();
@@ -424,6 +428,9 @@ mod tests {
 
     #[test]
     fn test_repl_function_persistence() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         // Iteration 1: define function
         let r = repl.eval_raw("def double(n: int) -> int:\n    return n * 2\n");
@@ -437,6 +444,9 @@ mod tests {
 
     #[test]
     fn test_repl_repeated_classes_keep_runtime_identity() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         repl.eval_raw(
             "class C:\n    def value(self) -> int:\n        return 1\nOld = C\nold = Old()\n",
@@ -456,6 +466,9 @@ mod tests {
 
     #[test]
     fn test_repl_prior_class_can_be_a_new_base() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         repl.eval_raw("class Base:\n    def value(self) -> int:\n        return 7\n")
             .unwrap();
@@ -465,6 +478,9 @@ mod tests {
 
     #[test]
     fn test_repl_accumulated_function_keeps_nested_class_metadata() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         repl.eval_raw("def make():\n    class Local:\n        pass\n    return Local\n")
             .unwrap();
@@ -480,6 +496,9 @@ mod tests {
 
     #[test]
     fn test_repl_accumulated_function_keeps_nested_class_body_metadata() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         repl.eval_raw(
             "def make():\n    class Outer:\n        class Inner:\n            pass\n    return Outer.Inner\n",
@@ -497,6 +516,9 @@ mod tests {
 
     #[test]
     fn test_repl_class_binding_is_visible_to_same_eval_methods() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         let (value, echo) = repl
             .eval_raw(
@@ -509,6 +531,9 @@ mod tests {
 
     #[test]
     fn test_repl_failed_iteration_no_ghost_state() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         // Iteration 1: define variable
         let r = repl.eval_raw("x: int = 10\n");
@@ -541,6 +566,9 @@ mod tests {
 
     #[test]
     fn test_repl_failed_function_definition_rolls_back_checker() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         repl.eval_raw("keep: int = 40\n").unwrap();
         let keep_symbol = repl
@@ -565,6 +593,9 @@ mod tests {
 
     #[test]
     fn test_repl_failed_class_definition_rolls_back_checker() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         repl.eval_raw("keep: int = 39\n").unwrap();
         let keep_symbol = repl
@@ -590,6 +621,9 @@ mod tests {
 
     #[test]
     fn test_repl_multiple_variables_across_iterations() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         repl.eval_raw("a: int = 1\n").unwrap();
         repl.eval_raw("b: int = 2\n").unwrap();
@@ -603,6 +637,9 @@ mod tests {
 
     #[test]
     fn test_repl_expression_echo() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         let (val, echo) = repl.eval_raw("42\n").unwrap();
         assert!(echo, "bare expression should echo");
@@ -611,6 +648,9 @@ mod tests {
 
     #[test]
     fn test_repl_expression_echo_zero() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         let (val, echo) = repl.eval_raw("0\n").unwrap();
         assert!(echo, "expression `0` should echo");
@@ -619,6 +659,9 @@ mod tests {
 
     #[test]
     fn test_repl_assignment_no_echo() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         let (_, echo) = repl.eval_raw("x: int = 99\n").unwrap();
         assert!(!echo, "assignment should not echo");
@@ -626,6 +669,9 @@ mod tests {
 
     #[test]
     fn test_repl_print_no_echo() {
+        let _jit_guard = JIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut repl = Repl::new();
         // print() is an expression statement, so has_echo must be true
         let (val, has_echo) = repl.eval_raw("print(42)\n").unwrap();

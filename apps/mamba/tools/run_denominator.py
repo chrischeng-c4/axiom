@@ -34,7 +34,7 @@ def main():
             dir_name = slug
         
         script_dir = Path(__file__).resolve().parent
-        project_root = script_dir.parent  # projects/mamba
+        project_root = script_dir.parent  # apps/mamba
         gates_dir = project_root / "tests" / "governance" / "gates" / dir_name
         if not gates_dir.is_dir():
             cwd_gates_dir = Path.cwd() / "tests" / "governance" / "gates" / dir_name

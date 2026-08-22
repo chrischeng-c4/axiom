@@ -497,6 +497,9 @@ pub fn mb_print(val: MbValue) -> MbValue {
                         };
                         if !method.is_none() {
                             let result = super::class::mb_call_method1(method, val);
+                            if super::exception::has_current_exception() {
+                                return MbValue::none();
+                            }
                             if let Some(p) = result.as_ptr() {
                                 if let ObjData::Str(ref s) = (*p).data {
                                     mb_outln!("{s}");
@@ -616,6 +619,9 @@ pub fn mb_print_args(args_list: MbValue) -> MbValue {
                         mb_out!(" ");
                     }
                     print_value_str(item);
+                    if super::exception::has_current_exception() {
+                        return MbValue::none();
+                    }
                 }
                 mb_outln!("");
                 return MbValue::none();
@@ -779,6 +785,9 @@ fn print_value_str(val: MbValue) {
                         };
                         if let Some(method) = method {
                             let result = super::class::mb_call_method1(method, val);
+                            if super::exception::has_current_exception() {
+                                return;
+                            }
                             if let Some(p) = result.as_ptr() {
                                 if let ObjData::Str(ref s) = (*p).data {
                                     mb_out!("{s}");
@@ -2517,6 +2526,20 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
     let a = int_enum_like_value(a).unwrap_or(a);
     let b = int_enum_like_value(b).unwrap_or(b);
+    // String-like left operands use printf-style formatting, even when the
+    // right operand is a Decimal or Fraction numeric handle. Keep this ahead
+    // of numeric-handle and numeric-subclass dispatch so the formatter sees
+    // the original right-hand value and performs its own conversion logic.
+    if let Some(ptr) = a.as_ptr() {
+        unsafe {
+            if let ObjData::Str(ref tmpl) = (*ptr).data {
+                return super::string_ops::mb_str_percent_format(tmpl.clone(), b);
+            }
+            if matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) {
+                return super::bytes_ops::mb_bytes_percent_format(a, b);
+            }
+        }
+    }
     // int/float-SUBCLASS operand unwrap (#1030).
     if let Some((na, nb)) = numeric_subclass_operands(a, b, "__mod__") {
         return mb_mod(na, nb);
@@ -2527,15 +2550,9 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = bigint_numeric_binop("%", a, b) {
         return r;
     }
-    // complex doesn't support the numeric modulo operator (CPython TypeError).
-    // Don't intercept `str % complex` — that's printf-style formatting, where
-    // the left operand is a string — so only guard a complex left operand or a
-    // complex right operand against a non-string (numeric) left.
-    let a_is_str = unsafe {
-        a.as_ptr()
-            .map_or(false, |p| matches!(&(*p).data, ObjData::Str(_)))
-    };
-    if is_complex_obj(a) || (is_complex_obj(b) && !a_is_str) {
+    // Percent-format operands were handled above; any complex operand that
+    // reaches this point is therefore a numeric modulo operation.
+    if is_complex_obj(a) || is_complex_obj(b) {
         raise_type_error(format!(
             "unsupported operand type(s) for %: '{}' and '{}'",
             value_type_name(a),
@@ -2594,17 +2611,6 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
             return MbValue::none();
         }
         _ => {}
-    }
-    // `str % X` — printf-style formatting (fallback after numeric paths).
-    if let Some(ptr) = a.as_ptr() {
-        unsafe {
-            if let ObjData::Str(ref tmpl) = (*ptr).data {
-                return super::string_ops::mb_str_percent_format(tmpl.clone(), b);
-            }
-            if matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) {
-                return super::bytes_ops::mb_bytes_percent_format(a, b);
-            }
-        }
     }
     if raise_datetime_op_type_error("%", a, b) {
         return MbValue::none();
@@ -3356,9 +3362,9 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
             v.as_ptr().and_then(|p| unsafe {
                 match &(*p).data {
                     ObjData::Str(ref s) => Some(s.clone()),
-                    ObjData::Instance { ref class_name, .. } if class_name == "type" => {
-                        type_object_registry_key(v)
-                    }
+                    ObjData::Instance {
+                        ref class_name, ..
+                    } if class_name == "type" => type_object_registry_key(v),
                     _ => None,
                 }
             })
@@ -4225,6 +4231,16 @@ fn compare_values(a: MbValue, b: MbValue) -> bool {
 
 // ── Conversion builtins (#378) ──
 
+fn default_user_instance_repr(instance: *mut MbObject, class_name: &str) -> String {
+    let display_name = super::class::class_display_name(class_name);
+    let type_obj = make_type_object_with_display_name(class_name, &display_name);
+    let qualified_name = type_object_display_name(type_obj).unwrap_or(display_name);
+    unsafe {
+        super::rc::release_if_ptr(type_obj);
+    }
+    format!("<{qualified_name} object at 0x{:x}>", instance as usize)
+}
+
 /// repr(value) — return string representation.
 pub fn mb_repr(val: MbValue) -> MbValue {
     if let Some(name) = pep695_display_name(val) {
@@ -4774,7 +4790,11 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     if class_name == "functools.partial" {
                         return super::stdlib::functools_mod::mb_functools_partial_repr(val);
                     }
-                    super::string_ops::value_to_string(val)
+                    if super::class::class_is_user_defined(class_name) {
+                        default_user_instance_repr(ptr, class_name)
+                    } else {
+                        super::string_ops::value_to_string(val)
+                    }
                 }
                 _ => super::string_ops::value_to_string(val),
             }
@@ -4825,6 +4845,9 @@ pub fn mb_print_kwargs(args_list: MbValue, sep: MbValue, end: MbValue) -> MbValu
                         mb_out!("{}", sep_str);
                     }
                     print_value_str(item);
+                    if super::exception::has_current_exception() {
+                        return MbValue::none();
+                    }
                 }
                 mb_out!("{}", end_str);
                 return MbValue::none();
@@ -5407,7 +5430,10 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                     }
                 }
             }
-            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name, ..
+            } = (*ptr).data
+            {
                 // `weakref.ref(obj[, cb])` — the `ref` attribute is a type
                 // stub (class_name="type", __name__="ReferenceType"); calling
                 // it constructs a new ReferenceType instance.
@@ -6038,6 +6064,8 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
         // (e.g. a float, whose untagged bits lack a NaN-prefix), so the re-box
         // steps below must pass it through rather than mis-boxing it as an int.
         let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
+        let is_bool_ret = super::module::is_bool_return_func(raw_addr as u64)
+            || super::module::is_bool_return_val(func);
         // *args/**kwargs presence: addr-registry (native / struct-seq) with a
         // func_params fallback for user JIT functions, which register these flags
         // by symbol-id rather than address.
@@ -6091,7 +6119,7 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
         // owns the arity-keyed transmute (shared with invoke_args_kwargs) and
         // re-boxes raw-int returns (CheckedAdd unboxes inline ints for perf).
         let result = super::closure::with_closure_cells(func, || {
-            dispatch_jit_frame(raw_addr, &items, is_boxed_ret)
+            dispatch_jit_frame(raw_addr, &items, is_boxed_ret, is_bool_ret)
         });
         if super::stdlib::types_mod::is_coroutine_generator(result) {
             result
@@ -6474,7 +6502,10 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
     };
     let fname = callable_display_name(func);
     for (param, value) in params.iter().zip(items.iter_mut()) {
-        let contract = param.contract.as_deref().and_then(runtime_scalar_contract);
+        let contract = param
+            .contract
+            .as_deref()
+            .and_then(runtime_scalar_contract);
         match param.kind {
             // The packed entry container is ABI state, not the declared
             // scalar. Validate only its elements, retaining the original list
@@ -6581,7 +6612,12 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
 /// ..)` Rust type; arities beyond that (no ceiling — #1950) route through
 /// `wide_call::dispatch_wide`, which lazily JIT-compiles a small Cranelift loader
 /// shim per distinct wide arity so a single Rust-callable type covers all of them.
-fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) -> MbValue {
+fn dispatch_jit_frame(
+    raw_addr: usize,
+    items: &[MbValue],
+    is_boxed_ret: bool,
+    is_bool_ret: bool,
+) -> MbValue {
     let raw_result: MbValue = unsafe {
         match items.len() {
             0 => {
@@ -6825,6 +6861,9 @@ fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) ->
     if is_boxed_ret {
         return raw_result;
     }
+    if is_bool_ret {
+        return mb_box_bool(raw_result.to_bits() as i64);
+    }
     mb_box_int(raw_result.to_bits() as i64)
 }
 
@@ -6872,6 +6911,8 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
         return unsafe { f(items.as_ptr(), items.len()) };
     }
     let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
+    let is_bool_ret = super::module::is_bool_return_func(raw_addr as u64)
+        || super::module::is_bool_return_val(func);
     let (has_star, has_kwargs) = detect_star_kw(func, Some(raw_addr));
     if !has_star && !has_kwargs {
         // No declared variadic/kwargs slot: fall back to positional spread.
@@ -6896,7 +6937,7 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
             return MbValue::none();
         }
         return super::closure::with_closure_cells(func, || {
-            dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
+            dispatch_jit_frame(raw_addr, &frame, is_boxed_ret, is_bool_ret)
         });
     }
     let mut frame = Vec::new();
@@ -6906,7 +6947,9 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
     if has_kwargs {
         frame.push(kwargs_dict);
     }
-    super::closure::with_closure_cells(func, || dispatch_jit_frame(raw_addr, &frame, is_boxed_ret))
+    super::closure::with_closure_cells(func, || {
+        dispatch_jit_frame(raw_addr, &frame, is_boxed_ret, is_bool_ret)
+    })
 }
 
 /// Dynamic call with positional args AND keyword args kept structurally
@@ -7204,8 +7247,10 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
                 return MbValue::none();
             }
             let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
+            let is_bool_ret = super::module::is_bool_return_func(raw_addr as u64)
+                || super::module::is_bool_return_val(func);
             return super::closure::with_closure_cells(func, || {
-                dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
+                dispatch_jit_frame(raw_addr, &frame, is_boxed_ret, is_bool_ret)
             });
         }
     }
@@ -7433,6 +7478,26 @@ pub fn mb_ne(a: MbValue, b: MbValue) -> MbValue {
 mod tests {
     use super::super::rc::mb_release;
     use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex, MutexGuard, OnceLock,
+    };
+
+    static OBJECT_RENDER_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    static OBJECT_RENDER_STR_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn object_render_test_guard() -> MutexGuard<'static, ()> {
+        OBJECT_RENDER_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    extern "C" fn object_render_str_raises(_self_v: MbValue) -> MbValue {
+        OBJECT_RENDER_STR_CALLS.fetch_add(1, Ordering::SeqCst);
+        super::super::exception::mb_raise(make_str("ValueError"), make_str("boom"));
+        MbValue::none()
+    }
 
     extern "C" fn kwonly_sum_test_fn(a: MbValue, b: MbValue) -> MbValue {
         MbValue::from_int(a.as_int().unwrap() + b.as_int().unwrap())
@@ -7496,6 +7561,140 @@ mod tests {
                 .unwrap_or_else(MbValue::none),
         );
         MbValue::from_ptr(MbObject::new_tuple(fields))
+    }
+
+    fn assert_str_result(value: MbValue, expected: &str) {
+        let Some(ptr) = value.as_ptr() else {
+            panic!("expected a str object");
+        };
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Str(data) => assert_eq!(data, expected),
+                _ => panic!("expected ObjData::Str"),
+            }
+        }
+    }
+
+    fn assert_bytes_result(value: MbValue, expected: &[u8], bytearray: bool) {
+        let Some(ptr) = value.as_ptr() else {
+            panic!("expected a bytes-like object");
+        };
+        unsafe {
+            match (&(*ptr).data, bytearray) {
+                (ObjData::Bytes(data), false) => assert_eq!(data, expected),
+                (ObjData::ByteArray(data), true) => assert_eq!(&*data.read().unwrap(), expected),
+                (_, expected_bytearray) => {
+                    panic!("unexpected result, bytearray={expected_bytearray}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mb_mod_routes_str_numeric_handles_to_percent_formatter() {
+        let decimal = super::super::stdlib::decimal_mod::mb_decimal_new(make_str("2.5"));
+        let fraction = super::super::stdlib::fractions_mod::mb_fraction_new(
+            MbValue::from_int(5),
+            MbValue::from_int(2),
+        );
+
+        super::super::exception::mb_clear_exception();
+        let decimal_result = mb_mod(make_str("%.3f"), decimal);
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert_str_result(decimal_result, "2.500");
+
+        super::super::exception::mb_clear_exception();
+        let fraction_result = mb_mod(make_str("%.3f"), fraction);
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert_str_result(fraction_result, "2.500");
+    }
+
+    #[test]
+    fn mb_mod_routes_bytes_numeric_handles_to_percent_formatter() {
+        let decimal = super::super::stdlib::decimal_mod::mb_decimal_new(make_str("2.5"));
+        let fraction = super::super::stdlib::fractions_mod::mb_fraction_new(
+            MbValue::from_int(5),
+            MbValue::from_int(2),
+        );
+
+        super::super::exception::mb_clear_exception();
+        let raw_bytes_decimal = mb_mod(
+            MbValue::from_ptr(MbObject::new_bytes(b"%.3f".to_vec())),
+            decimal,
+        );
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert_bytes_result(raw_bytes_decimal, b"2.500", false);
+
+        super::super::exception::mb_clear_exception();
+        let raw_bytes_fraction = mb_mod(
+            MbValue::from_ptr(MbObject::new_bytes(b"%.3f".to_vec())),
+            fraction,
+        );
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert_bytes_result(raw_bytes_fraction, b"2.500", false);
+
+        super::super::exception::mb_clear_exception();
+        let raw_bytearray_decimal = mb_mod(
+            MbValue::from_ptr(MbObject::new_bytearray(b"%.3f".to_vec())),
+            decimal,
+        );
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert_bytes_result(raw_bytearray_decimal, b"2.500", true);
+    }
+
+    #[test]
+    fn mb_mod_preserves_decimal_fraction_numeric_remainder() {
+        let decimal_left = super::super::stdlib::decimal_mod::mb_decimal_new(make_str("5.5"));
+        let decimal_right = super::super::stdlib::decimal_mod::mb_decimal_new(make_str("2"));
+        super::super::exception::mb_clear_exception();
+        let decimal_remainder = mb_mod(decimal_left, decimal_right);
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert!(is_decimal_handle_value(decimal_remainder));
+        assert_str_result(
+            super::super::stdlib::decimal_mod::mb_decimal_str(decimal_remainder),
+            "1.5",
+        );
+
+        let fraction_left = super::super::stdlib::fractions_mod::mb_fraction_new(
+            MbValue::from_int(5),
+            MbValue::from_int(2),
+        );
+        let fraction_right = super::super::stdlib::fractions_mod::mb_fraction_new(
+            MbValue::from_int(2),
+            MbValue::from_int(1),
+        );
+        super::super::exception::mb_clear_exception();
+        let fraction_remainder = mb_mod(fraction_left, fraction_right);
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert!(is_fraction_handle_value(fraction_remainder));
+        assert_str_result(
+            super::super::stdlib::fractions_mod::mb_fraction_str(fraction_remainder),
+            "1/2",
+        );
+    }
+
+    #[test]
+    fn mb_mod_preserves_primitive_percent_controls() {
+        super::super::exception::mb_clear_exception();
+        let str_result = mb_mod(make_str("%.3f"), MbValue::from_float(2.5));
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert_str_result(str_result, "2.500");
+
+        super::super::exception::mb_clear_exception();
+        let bytes_result = mb_mod(
+            MbValue::from_ptr(MbObject::new_bytes(b"%.3f".to_vec())),
+            MbValue::from_float(2.5),
+        );
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert_bytes_result(bytes_result, b"2.500", false);
+
+        super::super::exception::mb_clear_exception();
+        let bytearray_result = mb_mod(
+            MbValue::from_ptr(MbObject::new_bytearray(b"%.3f".to_vec())),
+            MbValue::from_float(2.5),
+        );
+        assert_eq!(super::super::exception::current_exception_type(), None);
+        assert_bytes_result(bytearray_result, b"2.500", true);
     }
 
     #[test]
@@ -7569,18 +7768,12 @@ mod tests {
         assert_eq!(accepted[0].to_bits(), values.to_bits());
         assert_eq!(accepted[1].to_bits(), named.to_bits());
         let accepted_values = extract_items(accepted[0]);
-        assert_eq!(
-            accepted_values[0].to_bits(),
-            MbValue::from_bool(true).to_bits()
-        );
+        assert_eq!(accepted_values[0].to_bits(), MbValue::from_bool(true).to_bits());
         assert_eq!(accepted_values[1].to_bits(), MbValue::from_int(2).to_bits());
         let accepted_named = kwargs_dict_pairs(accepted[1]);
         assert_eq!(accepted_named.len(), 1);
         assert_eq!(accepted_named[0].0, "count");
-        assert_eq!(
-            accepted_named[0].1.to_bits(),
-            MbValue::from_int(3).to_bits()
-        );
+        assert_eq!(accepted_named[0].1.to_bits(), MbValue::from_int(3).to_bits());
 
         let wrong_values = MbValue::from_ptr(MbObject::new_list(vec![
             MbValue::from_int(1),
@@ -7606,9 +7799,7 @@ mod tests {
         let exception = super::super::exception::mb_get_exception();
         assert_eq!(
             super::super::exception::get_exception_message_pub(exception).as_deref(),
-            Some(
-                "variadic_target() variadic argument 'named' at key 'wrong' expected int, got str"
-            )
+            Some("variadic_target() variadic argument 'named' at key 'wrong' expected int, got str")
         );
         super::super::exception::mb_clear_exception();
         super::super::closure::cleanup_all_closures();
@@ -11297,6 +11488,234 @@ def f():
         let max_res2 = mb_max(MbValue::from_ptr(MbObject::new_list(vec![i1, f1])));
         assert!(max_res2.is_int());
         assert_eq!(max_res2.as_int(), Some(1));
+    }
+
+    #[test]
+    fn test_print_value_str_propagates_dunder_str_exception() {
+        let _registry_guard = object_render_test_guard();
+        const CLASS_NAME: &str = "__mamba_test_3597_boom";
+
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+        OBJECT_RENDER_STR_CALLS.store(0, Ordering::SeqCst);
+
+        let addr = object_render_str_raises as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let register_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__str__".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register_user_named(
+            CLASS_NAME,
+            "__main__.Boom",
+            vec![],
+            methods,
+        );
+        let class_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let instance =
+            super::super::class::mb_instance_new(make_str(CLASS_NAME), MbValue::none());
+        let instance_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let previous_capture = super::super::output::begin_capture();
+        print_value_str(instance);
+        let output = super::super::output::end_capture(previous_capture);
+        let exception_type = super::super::exception::current_exception_type();
+        let exception_message = super::super::exception::current_exception_message();
+        let str_call_count = OBJECT_RENDER_STR_CALLS.load(Ordering::SeqCst);
+        super::super::exception::mb_clear_exception();
+
+        super::super::class::cleanup_all_classes();
+        let cleanup_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(register_exception.is_none());
+        assert!(class_exception.is_none());
+        assert!(instance_exception.is_none());
+        assert_eq!(output, "");
+        assert_eq!(str_call_count, 1);
+        assert_eq!(exception_type.as_deref(), Some("ValueError"));
+        assert_eq!(exception_message.as_deref(), Some("boom"));
+        assert!(cleanup_exception.is_none());
+    }
+
+    #[test]
+    fn test_print_value_str_preserves_prefix_before_dunder_str_failure() {
+        let _registry_guard = object_render_test_guard();
+        const CLASS_NAME: &str = "__mamba_test_3597_boom_prefix";
+
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+        OBJECT_RENDER_STR_CALLS.store(0, Ordering::SeqCst);
+
+        let addr = object_render_str_raises as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let register_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__str__".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register_user_named(
+            CLASS_NAME,
+            "__main__.Boom",
+            vec![],
+            methods,
+        );
+        let class_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let instance =
+            super::super::class::mb_instance_new(make_str(CLASS_NAME), MbValue::none());
+        let instance_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let args = MbValue::from_ptr(MbObject::new_list(vec![make_str("prefix"), instance]));
+        let previous_capture = super::super::output::begin_capture();
+        let result = mb_print_args(args);
+        let output = super::super::output::end_capture(previous_capture);
+        let exception_type = super::super::exception::current_exception_type();
+        let exception_message = super::super::exception::current_exception_message();
+        let str_call_count = OBJECT_RENDER_STR_CALLS.load(Ordering::SeqCst);
+        super::super::exception::mb_clear_exception();
+
+        super::super::class::cleanup_all_classes();
+        let cleanup_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(register_exception.is_none());
+        assert!(class_exception.is_none());
+        assert!(instance_exception.is_none());
+        assert!(result.is_none());
+        assert_eq!(output, "prefix ");
+        assert_eq!(str_call_count, 1);
+        assert_eq!(exception_type.as_deref(), Some("ValueError"));
+        assert_eq!(exception_message.as_deref(), Some("boom"));
+        assert!(cleanup_exception.is_none());
+    }
+
+    #[test]
+    fn test_mb_repr_never_dispatches_dunder_str() {
+        let _registry_guard = object_render_test_guard();
+        const CLASS_NAME: &str = "__mamba_test_3597_repr";
+
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+        OBJECT_RENDER_STR_CALLS.store(0, Ordering::SeqCst);
+
+        let addr = object_render_str_raises as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let register_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__str__".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register_user_named(
+            CLASS_NAME,
+            "Boom",
+            vec![],
+            methods,
+        );
+        let class_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        set_type_object_attr(
+            CLASS_NAME,
+            "__module__",
+            MbValue::from_ptr(MbObject::new_str("__main__".to_string())),
+        );
+        let module_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let instance =
+            super::super::class::mb_instance_new(make_str(CLASS_NAME), MbValue::none());
+        let instance_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let instance_address = instance
+            .as_ptr()
+            .map(|ptr| ptr as usize)
+            .expect("expected instance pointer");
+        let expected_repr = format!("<__main__.Boom object at 0x{instance_address:x}>");
+
+        let result = mb_repr(instance);
+        let result_text = mb_str_value(result);
+        let exception_type = super::super::exception::current_exception_type();
+        let exception_message = super::super::exception::current_exception_message();
+        let str_call_count = OBJECT_RENDER_STR_CALLS.load(Ordering::SeqCst);
+        super::super::exception::mb_clear_exception();
+
+        super::super::class::cleanup_all_classes();
+        let cleanup_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(register_exception.is_none());
+        assert!(class_exception.is_none());
+        assert!(module_exception.is_none());
+        assert!(instance_exception.is_none());
+        assert_eq!(str_call_count, 0);
+        assert_eq!(result_text.as_deref(), Some(expected_repr.as_str()));
+        assert!(exception_type.is_none());
+        assert!(exception_message.is_none());
+        assert!(cleanup_exception.is_none());
+    }
+
+    #[test]
+    fn test_mb_repr_default_instance_has_class_and_address() {
+        let _registry_guard = object_render_test_guard();
+        const CLASS_NAME: &str = "__mamba_test_3597_plain";
+
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+
+        let methods = std::collections::HashMap::new();
+        super::super::class::mb_class_register_user_named(
+            CLASS_NAME,
+            "Plain",
+            vec![],
+            methods,
+        );
+        let class_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        set_type_object_attr(
+            CLASS_NAME,
+            "__module__",
+            MbValue::from_ptr(MbObject::new_str("__main__".to_string())),
+        );
+        let module_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let instance =
+            super::super::class::mb_instance_new(make_str(CLASS_NAME), MbValue::none());
+        let instance_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let instance_address = instance
+            .as_ptr()
+            .map(|ptr| ptr as usize)
+            .expect("expected instance pointer");
+        let expected_repr = format!("<__main__.Plain object at 0x{instance_address:x}>");
+
+        let result = mb_repr(instance);
+        let result_text = mb_str_value(result);
+        let exception_type = super::super::exception::current_exception_type();
+        let exception_message = super::super::exception::current_exception_message();
+        super::super::exception::mb_clear_exception();
+
+        super::super::class::cleanup_all_classes();
+        let cleanup_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(class_exception.is_none());
+        assert!(module_exception.is_none());
+        assert!(instance_exception.is_none());
+        assert_eq!(result_text.as_deref(), Some(expected_repr.as_str()));
+        assert!(exception_type.is_none());
+        assert!(exception_message.is_none());
+        assert!(cleanup_exception.is_none());
     }
     // HANDWRITE-END
 }

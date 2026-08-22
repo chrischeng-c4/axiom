@@ -14,13 +14,13 @@ def find_repo_root() -> pathlib.Path:
     script_path = pathlib.Path(__file__).resolve()
     fdir = script_path.parent
     while fdir != fdir.parent:
-        if (fdir / "projects/mamba").is_dir() and (
+        if (fdir / "apps/mamba").is_dir() and (
             (fdir / ".git").exists() or (fdir / "aw.toml").exists()
         ):
             return fdir
         fdir = fdir.parent
     raise RuntimeError(
-        "Could not determine repository root containing projects/mamba and (.git or aw.toml)"
+        "Could not determine repository root containing apps/mamba and (.git or aw.toml)"
     )
 
 

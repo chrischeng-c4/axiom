@@ -5,7 +5,9 @@ Rust-owned asyncio event loop, and the thread/process/futures surface shims. The
 GIL is a no-op flag; mamba tells the parallelism story CPython-with-GIL cannot.
 Coroutine *lowering* (HIR→MIR state machine) is owned by `codegen/` + `iterators/`
 (todo); cross-thread capture by `../closures/capture-and-scope.md`; refcount
-hand-off by `../memory/object-lifetime.md`.
+hand-off by `../memory/object-lifetime.md`. The target ownership boundary for
+removing ambient runtime state and contracting `JIT_LOCK` is
+`execution-context.md`.
 
 ## Responsibilities
 - **Real parallelism** — `threading.Thread.start` + `asyncio.to_thread` run

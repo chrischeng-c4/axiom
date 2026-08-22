@@ -545,7 +545,7 @@ N4-H1 is complete only when:
   ABI behavior while carrying the new typed license only for authored Any;
 - the normalized-type, checker, parser, lowering, and strict dynamic-ingress
   floors remain green;
-- no process-global registry, runtime lock, MIR payload, or `projects/mamba`
+- no process-global registry, runtime lock, MIR payload, or `apps/mamba`
   path outside the four exact source files changes.
 
 After H1 lands, #2011 may close if its seven paired ingress families and

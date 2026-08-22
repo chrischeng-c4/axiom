@@ -286,7 +286,10 @@ impl TypeChecker {
                 if let Expr::Ident(name) = &target.node {
                     let current_scope = self.symbols.current_scope_idx();
                     let binding_scope = self.current_binding_scope();
-                    if self.symbols.lookup_in_scope(current_scope, name).is_none()
+                    if self
+                        .symbols
+                        .lookup_in_scope(current_scope, name)
+                        .is_none()
                         || self.is_unshadowed_builtin(name)
                     {
                         let value_ty = self.check_expr(value);
@@ -410,6 +413,12 @@ impl TypeChecker {
                             class_ref_origin,
                         );
                         self.set_builtin_class_alias(symbol, builtin_class_alias);
+                        if self.global_symbol_module_map.contains_key(&symbol)
+                            || matches!(self.tcx.get(target_ty), Ty::None)
+                        {
+                            self.set_sym_type(symbol.0, value_ty);
+                            return;
+                        }
                         if self.inferred_local_placeholders.remove(&symbol) {
                             let binding_scope = self.current_binding_scope();
                             let selected_ty = self.check_n3_list_binding_inference(
@@ -444,8 +453,14 @@ impl TypeChecker {
                     // still error — those respect the object's type contract.
                     if let Expr::Ident(name) = &target.node {
                         if let Some(sym) = self.symbols.lookup(name) {
-                            let any_ty = self.tcx.any();
-                            self.set_sym_type(sym.0, any_ty);
+                            let new_ty = if matches!(self.tcx.get(target_ty), Ty::None | Ty::Error)
+                                || self.global_symbol_module_map.contains_key(&sym)
+                            {
+                                value_ty
+                            } else {
+                                self.tcx.any()
+                            };
+                            self.set_sym_type(sym.0, new_ty);
                             return;
                         }
                     }
@@ -925,22 +940,24 @@ impl TypeChecker {
                 let current = self.symbols.current_scope_idx();
                 for name in names {
                     let id = if self.function_scope_stack.contains(&current) {
-                        if let Some(existing) = self.symbols.lookup_in_scope(current, name) {
+                        let module_id = self
+                            .symbols
+                            .lookup_in_scope(0, name)
+                            .unwrap_or_else(|| {
+                                self.symbols.define_in_scope(
+                                    0,
+                                    name.clone(),
+                                    SymbolKind::Variable,
+                                )
+                            });
+                        let proxy = if let Some(existing) = self.symbols.lookup_in_scope(current, name) {
                             existing
                         } else {
-                            let module_id = self.symbols.lookup_in_scope(0, name);
-                            let module_ty = module_id
-                                .map(|symbol| self.get_sym_type(symbol.0))
-                                .unwrap_or_else(|| self.tcx.any());
-                            let import_origin = module_id
-                                .and_then(|symbol| self.import_origins.get(&symbol).cloned());
-                            let instance_origin = module_id
-                                .and_then(|symbol| self.instance_origins.get(&symbol).cloned());
-                            let class_ref_origin = module_id
-                                .and_then(|symbol| self.class_ref_origins.get(&symbol).copied());
-                            let builtin_alias = module_id.and_then(|symbol| {
-                                self.builtin_class_aliases.get(&symbol).copied()
-                            });
+                            let module_ty = self.get_sym_type(module_id.0);
+                            let import_origin = self.import_origins.get(&module_id).cloned();
+                            let instance_origin = self.instance_origins.get(&module_id).cloned();
+                            let class_ref_origin = self.class_ref_origins.get(&module_id).copied();
+                            let builtin_alias = self.builtin_class_aliases.get(&module_id).copied();
                             let proxy = self.symbols.define(name.clone(), SymbolKind::Variable);
                             self.set_sym_type(proxy.0, module_ty);
                             self.set_builtin_class_alias(proxy, builtin_alias);
@@ -951,12 +968,19 @@ impl TypeChecker {
                                 class_ref_origin,
                             );
                             proxy
-                        }
+                        };
+                        self.global_symbol_module_map.insert(proxy, module_id);
+                        proxy
                     } else {
-                        let module_id =
-                            self.symbols.lookup_in_scope(0, name).unwrap_or_else(|| {
-                                self.symbols
-                                    .define_in_scope(0, name.clone(), SymbolKind::Variable)
+                        let module_id = self
+                            .symbols
+                            .lookup_in_scope(0, name)
+                            .unwrap_or_else(|| {
+                                self.symbols.define_in_scope(
+                                    0,
+                                    name.clone(),
+                                    SymbolKind::Variable,
+                                )
                             });
                         self.symbols
                             .bind_symbol_in_scope(current, name.clone(), module_id);
@@ -1055,7 +1079,8 @@ impl TypeChecker {
                         .symbols
                         .lookup_in_scope(self.symbols.current_scope_idx(), alias)
                         .map(|symbol| self.get_sym_type(symbol.0));
-                    let imported_ty = self.stdlib_module_import_type(&dotted, &dotted, previous);
+                    let imported_ty =
+                        self.stdlib_module_import_type(&dotted, &dotted, previous);
                     let sym = self.symbols.define(alias.clone(), SymbolKind::Variable);
                     self.set_sym_type(sym.0, imported_ty);
                     self.set_binding_origins(sym, None, None, None);
@@ -1068,7 +1093,8 @@ impl TypeChecker {
                             .symbols
                             .lookup_in_scope(self.symbols.current_scope_idx(), root)
                             .map(|symbol| self.get_sym_type(symbol.0));
-                        let imported_ty = self.stdlib_module_import_type(root, &dotted, previous);
+                        let imported_ty =
+                            self.stdlib_module_import_type(root, &dotted, previous);
                         let sym = self.symbols.define(root.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, imported_ty);
                         self.set_binding_origins(sym, None, None, None);
@@ -1192,6 +1218,7 @@ impl TypeChecker {
         self.symbols.push_scope_with_parent(lexical_parent);
         self.function_scope_stack
             .push(self.symbols.current_scope_idx());
+        self.fn_decl_stack.push(name.to_string());
         for (param, ty) in params.iter().zip(body_param_types) {
             let sym = self
                 .symbols
@@ -1245,6 +1272,7 @@ impl TypeChecker {
             self.inferred_local_placeholders.remove(&symbol);
             self.builtin_class_aliases.remove(&symbol);
         }
+        self.fn_decl_stack.pop();
         self.function_scope_stack.pop();
         self.symbols.pop_scope();
         // Reassert the declaration at its execution point. A prior assignment
