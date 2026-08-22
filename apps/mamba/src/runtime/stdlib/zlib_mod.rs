@@ -923,7 +923,8 @@ pub fn register() {
         "ZLIB_RUNTIME_VERSION".to_string(),
         MbValue::from_ptr(MbObject::new_str("1.2.12".to_string())),
     );
-    super::register_module("zlib", attrs);
+    super::register_module("zlib", attrs.clone());
+    super::register_module("_zlib", attrs);
 }
 
 fn make_compressobj_stub(level: i64, wbits: i64, zdict: Vec<u8>) -> MbValue {

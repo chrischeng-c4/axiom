@@ -50,7 +50,7 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
         }
     }
     // Integer fast path — Python floor division (round towards -∞)
-    if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
+    if let (Some(ai), Some(bi)) = (a.as_int_pyint(), b.as_int_pyint()) {
         if bi != 0 {
             let d = ai / bi;
             let r = ai % bi;
@@ -69,8 +69,8 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
         return MbValue::none();
     }
     // Float path
-    let af = a.as_int().map(|i| i as f64).or(a.as_float());
-    let bf = b.as_int().map(|i| i as f64).or(b.as_float());
+    let af = a.as_int_pyint().map(|i| i as f64).or(a.as_float());
+    let bf = b.as_int_pyint().map(|i| i as f64).or(b.as_float());
     match (af, bf) {
         (Some(af), Some(bf)) if bf != 0.0 => MbValue::from_float((af / bf).floor()),
         (Some(_), Some(_)) => {

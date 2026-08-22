@@ -446,7 +446,9 @@ pub fn register() {
 
     // NSIG — max signal number + 1 (32 on darwin per CPython).
     attrs.insert("NSIG".to_string(), MbValue::from_int(32));
-
+    super::register_module("_signal", attrs.clone());
+    let _signal_mod = super::super::module::mb_import(MbValue::from_ptr(MbObject::new_str("_signal".to_string())));
+    attrs.insert("_signal".to_string(), _signal_mod);
     super::register_module("signal", attrs);
 }
 
@@ -608,17 +610,47 @@ pub(crate) fn mb_signal_deliver_if_registered(signum: MbValue) -> Option<MbValue
 ///     `ValueError`, matching CPython's "invalid fd" rejection without
 ///     probing host descriptor ownership.
 pub fn mb_signal_set_wakeup_fd(args: &[MbValue]) -> MbValue {
-    if args.len() != 1 {
+    let mut positional: Vec<MbValue> = Vec::new();
+    let mut kwarg_dict: Option<MbValue> = None;
+    for &a in args {
+        let is_dict = a
+            .as_ptr()
+            .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if is_dict {
+            kwarg_dict = Some(a);
+        } else {
+            positional.push(a);
+        }
+    }
+    if positional.len() != 1 {
         return raise_type_error(&format!(
-            "set_wakeup_fd() takes exactly 1 argument ({} given)",
-            args.len()
+            "set_wakeup_fd() takes 1 positional argument but {} were given",
+            positional.len()
         ));
     }
-    match signal_int_value(args[0]) {
+    if let Some(dict) = kwarg_dict {
+        if let Some(ptr) = dict.as_ptr() {
+            let invalid_kw = unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    lock.read().ok().and_then(|map| {
+                        map.keys()
+                            .find(|k| k.as_str() != Some("warn_on_full_buffer"))
+                            .cloned()
+                    })
+                } else {
+                    None
+                }
+            };
+            if let Some(kw) = invalid_kw {
+                return raise_type_error(&format!(
+                    "set_wakeup_fd() got an unexpected keyword argument '{kw}'"
+                ));
+            }
+        }
+    }
+    match signal_int_value(positional[0]) {
         Some(fd) => {
-            // CPython rejects descriptors that cannot refer to an open file.
-            // We do not own a wakeup fd, so treat anything outside a small
-            // plausible descriptor window as an invalid descriptor.
             if fd < -1 || fd > 1_000_000 {
                 return raise_value_error(&format!("invalid fd: {fd}"));
             }
@@ -752,9 +784,9 @@ fn seq_items(v: MbValue) -> Option<Vec<MbValue>> {
     let ptr = v.as_ptr()?;
     unsafe {
         match &(*ptr).data {
-            ObjData::List(lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::List(lock) => Some(lock.read().unwrap().to_vec()),
             // MbSet derefs to its ordered MbList for read-only access.
-            ObjData::Set(lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::Set(lock) => Some(lock.read().unwrap().to_vec()),
             ObjData::Tuple(items) | ObjData::FrozenSet(items) => Some(items.clone()),
             _ => None,
         }

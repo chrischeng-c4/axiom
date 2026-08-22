@@ -1439,13 +1439,16 @@ impl TypeChecker {
                         self.check_expr(cond);
                     }
                 }
-                self.check_expr(element);
+                let elem_ty = self.check_expr(element);
                 self.comprehension_depth -= 1;
                 self.symbols.pop_scope();
                 let mut conditional = Vec::new();
                 crate::resolve::pass::collect_walrus_targets(&expr.node, &mut conditional);
                 self.invalidate_conditional_binding_names(conditional);
-                self.tcx.any()
+                match &expr.node {
+                    Expr::ListComp { .. } => self.tcx.intern(Ty::List(elem_ty)),
+                    _ => self.tcx.any(),
+                }
             }
             Expr::DictComp {
                 key,
@@ -4337,6 +4340,16 @@ impl TypeChecker {
         use super::stdlib_typespec::CallableSpecKind;
 
         let target = self.resolve_structured_stdlib_call(func, func_ty)?;
+        // #1964: linecache signatures are over-walled: module_globals can be None or not present,
+        // and float lineno should be rejected at runtime instead of static boundaries.
+        if target.module == "linecache"
+            && matches!(
+                target.name.as_str(),
+                "getline" | "getlines" | "lazycache" | "updatecache"
+            )
+        {
+            return None;
+        }
         // #1611: `classmethod.__get__`/`staticmethod.__get__`'s typeshed
         // overloads type `instance` as an unresolved TypeVar (`_T`) bound
         // from the wrapped callable's own (usually unannotated) parameter.
@@ -6141,7 +6154,7 @@ impl TypeChecker {
     /// genuinely non-overriding classes is unchanged.
     fn class_defines_dunder(&self, ty_id: TypeId, dunder: &str) -> bool {
         let Ty::Class {
-            name, role, user, ..
+            name, role, user, external, ..
         } = self.tcx.get(ty_id)
         else {
             return false;
@@ -6163,11 +6176,23 @@ impl TypeChecker {
                 {
                     return true;
                 }
+                // #1973 check if the base refers to an imported stdlib/external class
+                if let Some((module, class_name)) = self.import_origins.get(&symbol) {
+                    if !class_name.is_empty() && super::stdlib_sigs::get(module, class_name, dunder).is_some() {
+                        return true;
+                    }
+                }
                 if let Some(bases) = self.class_base_symbols.get(&symbol) {
                     queue.extend(bases.iter().copied());
                 }
             }
             return false;
+        }
+        // #1973 check external classes directly
+        if let Some(ext) = external {
+            if super::stdlib_sigs::get(&ext.module, &ext.name, dunder).is_some() {
+                return true;
+            }
         }
         let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut queue: Vec<&str> = vec![name.as_str()];

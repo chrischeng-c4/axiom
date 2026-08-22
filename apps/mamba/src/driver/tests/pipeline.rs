@@ -1748,3 +1748,41 @@ fn test_pipeline_raise_from_lowers_to_mir() {
         "raise in except handler must emit mb_raise CallExtern"
     );
 }
+
+#[test]
+fn explicit_any_signature_serializes_an_eighth_license_field() {
+    let mir = pipeline(
+        "from typing import Any\n\n\
+         def twice(value: Any):\n\
+         \x20   return value + value\n",
+    );
+    let explicit_any_vreg = mir
+        .bodies
+        .iter()
+        .flat_map(|body| body.blocks.iter())
+        .flat_map(|block| block.stmts.iter())
+        .find_map(|inst| match inst {
+            MirInst::LoadConst {
+                dest,
+                value: MirConst::Str(value),
+                ..
+            } if value == "explicit-any" => Some(*dest),
+            _ => None,
+        })
+        .expect("authored Any must emit the closed explicit-any license tag");
+    let metadata = mir
+        .bodies
+        .iter()
+        .flat_map(|body| body.blocks.iter())
+        .flat_map(|block| block.stmts.iter())
+        .find_map(|inst| match inst {
+            MirInst::MakeTuple { elements, .. }
+                if elements.len() == 8 && elements.last() == Some(&explicit_any_vreg) =>
+            {
+                Some(elements)
+            }
+            _ => None,
+        })
+        .expect("authored Any parameter metadata must end with the eighth license field");
+    assert_eq!(metadata.len(), 8);
+}

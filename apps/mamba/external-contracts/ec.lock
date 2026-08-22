@@ -3,9 +3,9 @@ project = "mamba"
 ir_kind = "ec"
 ec_path = "apps/mamba/external-contracts"
 inventory_path = "apps/mamba/aw.toml"
-generated_at = "2026-07-19T08:09:26.401364+00:00"
-ir_digest = "sha256:efdd5e9070e4bcd61f35d51a627141fa348755d16de5bf67383976509f66bffc"
-source_digest = "sha256:33c297f1c14849acfa1eccbd8fef6adc7f5e7cbaefe9a7854dd74efd003362fd"
+generated_at = "2026-07-27T23:15:33.029806+00:00"
+ir_digest = "sha256:5efe8c7a60c16ed45e794daf9b7a052d193e9c1d5d69496e44c1d4241605d410"
+source_digest = "sha256:e0d1962380e7fd8f773051b81bb3a475f1e90012d1db3051cc6bea2cd10cc34b"
 tool_contracts = []
 
 [[sources]]
@@ -15,6 +15,10 @@ digest = "sha256:87557a7bddcf5b4591e914bd5cb2f2736d6af8d80e6ae51e1f07517067c1827
 [[sources]]
 path = "apps/mamba/external-contracts/README.md"
 digest = "sha256:73ff8646348b2161a918624d4dd7dffed4df41fceb77dc423620cd9d687e2b37"
+
+[[sources]]
+path = "apps/mamba/external-contracts/behavior/1942.md"
+digest = "sha256:70d0c9987b31065673a185e8d8f76357c45e9afa287716185c3e74a469099b53"
 
 [[sources]]
 path = "apps/mamba/external-contracts/behavior/mamba-t1-to-thread-gather-results.md"
@@ -77,6 +81,10 @@ path = "apps/mamba/external-contracts/object-model.md"
 digest = "sha256:a367810ec4ce5e3d9b1182df48c3f2e5b162abc957af61082bbffcbe7a720886"
 
 [[sources]]
+path = "apps/mamba/external-contracts/stability/build-globals-dict-key-leak-free.md"
+digest = "sha256:8ce869984e11eef03af785b7e11d036feb1df358103a50822a413c8103d68721"
+
+[[sources]]
 path = "apps/mamba/external-contracts/stability/mamba-t1-to-thread-gather-stability.md"
 digest = "sha256:0e3f27756a722fc7e4d8ecf8a77e90f118b8b4fbab4eb6f70743bb27f6fdebe8"
 
@@ -89,8 +97,32 @@ path = "apps/mamba/external-contracts/strings.md"
 digest = "sha256:a3640002cb96d8c61939aa115bebb8110f6203a134b80e723e6b2c88d2bc0a14"
 
 [[sources]]
+path = "apps/mamba/external-contracts/third-party.md"
+digest = "sha256:920955b215c125b178b66280861a4ea50427e488a90d13870fa5ec59208722ef"
+
+[[sources]]
 path = "apps/mamba/external-contracts/type-system.md"
 digest = "sha256:87e13f2a436505bf63e6ff3a89b1ecdb25388d39fe11c017a8184d7bd4cba88e"
+
+[[cases]]
+id = "build-globals-dict-key-leak-free"
+capability_id = "mamba-core-semantics"
+claim_id = "build-globals-dict-leaks-no-key-references"
+contract_id = "MAMBA-T1-BUILD-GLOBALS-DICT-KEY-LEAK-FREE"
+dimension = "stability"
+source_ref = "apps/mamba/external-contracts/stability/build-globals-dict-key-leak-free.md#build-globals-dict-key-leak-free"
+test_path = "apps/mamba/tests/external_contracts/ec_build_globals_dict_key_leak_free.rs"
+command = "cargo test -p mamba --release --test mamba_core_semantics_ec -- build_globals_dict_key_leak_free --exact"
+required_for_production = true
+assertions = [
+    "Comparing two mamba runs that call globals() 100 times versus 50,000 times (42 exposed names per call: 20 id_ns values, 20 func_info functions, plus the __name__ and total module globals), peak process RSS for the 50,000-call run is no greater than the 100-call run's peak RSS plus 24 MiB; unreleased per-call key allocations would instead grow roughly linearly with call count.",
+    "Equal id_ns and func_info name counts (20 each) ensure a leak isolated to either loop alone still produces per-call growth far in excess of the 24 MiB slack, so the gate cannot pass by exercising only one of the two loops build_globals_dict populates.",
+    "Each run's script accumulates and prints the sum of len(globals()) across every call; the gate asserts this sum exactly equals iterations times the expected 42-key count, so a degenerate or empty build_globals_dict cannot pass vacuously by having nothing left to leak.",
+    "Peak RSS is sampled via the OS process resource-usage counter (wait4/getrusage-equivalent) on the real compiled mamba binary, not a runtime-internal self-reported counter.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:5a10b8a4882b058edbd834c4d6dce66e417a99bf98aa71dce55f838e9899644f"
 
 [[cases]]
 id = "mamba-t1-to-thread-gather-efficiency"
@@ -151,3 +183,32 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:982db232a5f2c0819feda65da917fc77c2ebba5f7c364b514fe44c0b8df610d2"
+
+[[cases]]
+id = "mamba-t1-type-wall-conformance-determinism"
+capability_id = "mamba-core-semantics"
+claim_id = "deterministic-type-wall-outcomes"
+contract_id = "MAMBA-T1-TYPE-WALL-CONFORMANCE-DETERMINISM"
+dimension = "stability"
+source_ref = "apps/mamba/external-contracts/behavior/1942.md#mamba-t1-type-wall-conformance-determinism"
+test_path = "apps/mamba/tests/external_contracts/ec_mamba_t1_type_wall_conformance_determinism.rs"
+command = "cargo test -p mamba --release --test mamba_core_semantics_ec -- type_wall_conformance_determinism --exact"
+required_for_production = true
+assertions = [
+    "The external contract verifier verifies fixture inventory against manifest apps/mamba/tests/governance/gates/t1_type_wall_denominator/manifest.toml, asserting exact expected row_count = 7407 and exact expected denominator_sha256 = eb45a673ca92c766c1df6596592aa226fae56ab81f8f27fea47e1168743eae28.",
+    "Before repeated evaluation, the verifier proves the denominator-scoped executable surface by invoking the current release cpython_ported_integration test binary twice with --list: first without a libtest filter, which must yield exactly 13767 unique terminal test names for the whole target, and then with the exact libtest filter cpython_ported::gen::_type, which must yield exactly 7407 unique terminal test names that are set-equal to apps/mamba/tests/governance/gates/t1_type_wall_denominator/denominator.txt.",
+    "The evaluation consists of three fresh isolated subprocess executions of exactly cargo test -p mamba --release --test cpython_ported_integration cpython_ported::gen::_type -- --nocapture. Before run 1, the verifier must observe and record the current run revision and current-run environment fingerprint, then assert that the same current run revision, exact rustup toolchain surface (rustc 1.96.1 (31fca3adb 2026-06-26) and cargo 1.96.1 (356927216 2026-06-26)), current-run environment fingerprint, and manifest digest remain unchanged through run 3. Each subprocess has its own run-local output/temp capture and shares no prior-run in-memory state.",
+    "Evaluation requires a named baseline evidence artifact at apps/mamba/external-contracts/evidence/mamba-t1-type-wall-conformance-determinism-baseline.json whose required fields include source_revision as immutable provenance of the historical baseline capture, manifest path (apps/mamba/tests/governance/gates/t1_type_wall_denominator/manifest.toml), manifest digest (denominator_sha256), manifest row count (row_count), exact rustup_toolchain string, exact cargo_version string, baseline environment_fingerprint, full normalized allowed failing-path set, failure count, command (cargo test -p mamba --release --test cpython_ported_integration cpython_ported::gen::_type -- --nocapture), and capture timestamp. Missing baseline artifact or missing required fields constitutes a hard failure.",
+    "The verifier must treat baseline source_revision and baseline environment_fingerprint as immutable capture provenance only. It must separately record and verify the three-run current run revision and current-run environment fingerprint, and it must not require current HEAD to equal the historical baseline source_revision. Lifecycle commits after baseline capture are therefore allowed only if the three post-fix executions themselves stay on one unchanged current run revision and one unchanged current-run environment.",
+    "Every one of the three post-fix runs must produce an executed terminal-name set that is exactly set-equal to the denominator's 7407 cpython_ported::gen::_type names, with no ignored or skipped executed rows, duplicates, missing rows, cross-namespace rows, or unparseable rows.",
+    "For every one of the three post-fix runs, passed plus failed executed rows must equal exactly 7407.",
+    "For every one of the three post-fix runs, the verifier must reconcile whole-target libtest filtering by proving exactly 6360 filtered-out rows, equal to the pinned whole-target preflight count 13767 minus the executed denominator count 7407.",
+    "The three post-fix normalized failing sets and total failure counts across all three repetitions must be exactly equal.",
+    "Every post-fix failing path must be a member of the pinned baseline allowed set recorded in apps/mamba/external-contracts/evidence/mamba-t1-type-wall-conformance-determinism-baseline.json, and the post-fix total failure count must be less than or equal to the baseline failure count, closing both subset and equal-count replacement.",
+    "The verifier includes fail-closed self-tests/canaries that remove one fixture result and flip one outcome in captured test data, asserting that both simulated mutations are rejected before real evidence can pass.",
+    "Timeouts, crash or signal termination, nonzero exit without complete terminal accounting, output truncation, missing baseline, parse errors, or manifest/toolchain/current-run revision/current-run environment drift across the three post-fix executions are hard failures.",
+    "Internal implementation causes, runtime micro-optimizations, CPython parity comparisons, and any inferred bijection to unrelated run_conformance::<path> cases do not constitute proof of external contract compliance and remain explicitly non-oracles.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7f164e284abf504fea1a051b8487529364340ec82191395445f25cda7da583ab"

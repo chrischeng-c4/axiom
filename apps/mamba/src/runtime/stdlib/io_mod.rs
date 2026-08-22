@@ -296,12 +296,29 @@ pub fn register() {
     register_io_class(
         "BytesIO",
         &["BufferedIOBase"],
-        vec![("__iter__", dispatch_bytesio_iter as *const ())],
+        vec![
+            ("__iter__", dispatch_bytesio_iter as *const ()),
+            ("getvalue", mb_bytesio_getvalue as *const ()),
+            ("seekable", mb_bytesio_seekable as *const ()),
+            ("readable", mb_bytesio_readable as *const ()),
+            ("writable", mb_bytesio_writable as *const ()),
+            ("truncate", mb_bytesio_truncate as *const ()),
+            ("getbuffer", mb_bytesio_getbuffer as *const ()),
+            ("close", mb_bytesio_close as *const ()),
+        ],
     );
     register_io_class(
         "StringIO",
         &["TextIOBase"],
-        vec![("__iter__", dispatch_stringio_iter as *const ())],
+        vec![
+            ("__iter__", dispatch_stringio_iter as *const ()),
+            ("getvalue", mb_stringio_getvalue as *const ()),
+            ("seekable", mb_stringio_seekable as *const ()),
+            ("readable", mb_stringio_readable as *const ()),
+            ("writable", mb_stringio_writable as *const ()),
+            ("truncate", mb_stringio_truncate as *const ()),
+            ("close", mb_stringio_close as *const ()),
+        ],
     );
 
     let mut attrs = HashMap::new();
@@ -388,7 +405,20 @@ pub fn register() {
     attrs.insert("SEEK_CUR".into(), MbValue::from_int(1));
     attrs.insert("SEEK_END".into(), MbValue::from_int(2));
 
-    super::register_module("io", attrs);
+    super::register_module("io", attrs.clone());
+
+    let mut _io_attrs = attrs.clone();
+    _io_attrs.insert("_IOBase".into(), new_str("_IOBase"));
+    _io_attrs.insert("_RawIOBase".into(), new_str("_RawIOBase"));
+    _io_attrs.insert("_BufferedIOBase".into(), new_str("_BufferedIOBase"));
+    _io_attrs.insert("_TextIOBase".into(), new_str("_TextIOBase"));
+    _io_attrs.insert("_BytesIO".into(), attrs.get("BytesIO").cloned().unwrap_or_else(MbValue::none));
+    _io_attrs.insert("_StringIO".into(), attrs.get("StringIO").cloned().unwrap_or_else(MbValue::none));
+    _io_attrs.insert("_FileIO".into(), new_str("_FileIO"));
+    _io_attrs.insert("_BufferedReader".into(), attrs.get("BufferedReader").cloned().unwrap_or_else(MbValue::none));
+    _io_attrs.insert("_BufferedWriter".into(), attrs.get("BufferedWriter").cloned().unwrap_or_else(MbValue::none));
+    _io_attrs.insert("_TextIOWrapper".into(), attrs.get("TextIOWrapper").cloned().unwrap_or_else(MbValue::none));
+    super::register_module("_io", _io_attrs);
 }
 
 /// io.text_encoding(encoding[, stacklevel]) → encoding or "utf-8" when None.
@@ -635,8 +665,33 @@ pub fn mb_stringio_truncate(sio: MbValue, size: MbValue) -> MbValue {
         buf.truncate(n);
         let s: String = buf.iter().collect();
         field_set(sio, "_buffer", new_str(s));
+    } else if n > buf.len() {
+        buf.resize(n, '\0');
+        let s: String = buf.iter().collect();
+        field_set(sio, "_buffer", new_str(s));
     }
     MbValue::from_int(n as i64)
+}
+
+pub fn mb_stringio_seekable(sio: MbValue) -> MbValue {
+    if check_closed(sio) {
+        return MbValue::none();
+    }
+    MbValue::from_bool(true)
+}
+
+pub fn mb_stringio_readable(sio: MbValue) -> MbValue {
+    if check_closed(sio) {
+        return MbValue::none();
+    }
+    MbValue::from_bool(true)
+}
+
+pub fn mb_stringio_writable(sio: MbValue) -> MbValue {
+    if check_closed(sio) {
+        return MbValue::none();
+    }
+    MbValue::from_bool(true)
 }
 
 pub fn mb_stringio_close(sio: MbValue) -> MbValue {
@@ -800,8 +855,41 @@ pub fn mb_bytesio_truncate(bio: MbValue, size: MbValue) -> MbValue {
     if n < buf.len() {
         buf.truncate(n);
         field_set(bio, "_buffer", MbValue::from_ptr(MbObject::new_bytes(buf)));
+    } else if n > buf.len() {
+        buf.resize(n, 0);
+        field_set(bio, "_buffer", MbValue::from_ptr(MbObject::new_bytes(buf)));
     }
     MbValue::from_int(n as i64)
+}
+
+pub fn mb_bytesio_seekable(bio: MbValue) -> MbValue {
+    if check_closed(bio) {
+        return MbValue::none();
+    }
+    MbValue::from_bool(true)
+}
+
+pub fn mb_bytesio_readable(bio: MbValue) -> MbValue {
+    if check_closed(bio) {
+        return MbValue::none();
+    }
+    MbValue::from_bool(true)
+}
+
+pub fn mb_bytesio_writable(bio: MbValue) -> MbValue {
+    if check_closed(bio) {
+        return MbValue::none();
+    }
+    MbValue::from_bool(true)
+}
+
+pub fn mb_bytesio_getbuffer(bio: MbValue) -> MbValue {
+    if check_closed(bio) {
+        return MbValue::none();
+    }
+    let buf = bytesio_buffer(bio);
+    let bytes_obj = MbValue::from_ptr(MbObject::new_bytes(buf));
+    super::super::builtins::mb_memoryview(bytes_obj)
 }
 
 pub fn mb_bytesio_close(bio: MbValue) -> MbValue {

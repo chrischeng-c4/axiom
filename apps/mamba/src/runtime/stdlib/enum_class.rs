@@ -710,7 +710,7 @@ pub fn enum_class_call(class_name: &str, args_list: MbValue) -> Option<MbValue> 
                 if items.len() != 1 {
                     return None;
                 }
-                items[0]
+                items.first().unwrap_or_else(MbValue::none)
             } else {
                 return None;
             }

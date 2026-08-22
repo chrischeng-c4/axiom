@@ -8,8 +8,10 @@ built, and the rules the super/`__new__`/`__init__` machinery must uphold.
 `PendingClassRegistration` drains in a fixed order at each class's textual
 `ClassDefPlaceholder` (and a fallback loop for hand-built HIR):
 
-1. `mb_class_define_multi` — create the record.
-2. `mb_class_update_bases` — resolve runtime-valued bases, finalize MRO.
+1. `mb_class_define_multi` — create the record, then immediately propagate any
+   pending exception raised while computing its static-base MRO.
+2. `mb_class_update_bases` — resolve runtime-valued bases, finalize MRO, then
+   immediately propagate any pending exception raised by that recomputation.
 3. `emit_class_slots_for` — register `__slots__` (MUST follow step 2: the
    slot merge reads the MRO; running it before update_bases drops inherited
    slots). Statically-based classes keep immediate registration (R3).
@@ -20,6 +22,52 @@ Invariant: a class with runtime bases follows define → update_bases →
 register_slots; the queue-and-drain pattern (`pending_class_*` vecs +
 `class_runtime_key_value` cached vreg) exists to enforce it.
 
+### MRO rejection barrier
+
+Class registration is a transaction boundary even though the registry may
+hold a provisional record internally. `compute_mro` owns C3 validation and
+sets a catchable `TypeError` for duplicate bases or an inconsistent
+linearization. Lowering MUST place an exception-propagation barrier directly
+after both runtime calls that can compute an MRO:
+`mb_class_define_multi[_named]` and `mb_class_update_bases`.
+
+If either barrier observes an exception, execution leaves the class statement
+before slots, body side effects, attributes, finalizers, decorators, or the
+source name binding run. An enclosing `try/except TypeError` can catch the
+error; an uncaught top-level error remains observable to the execution
+boundary before runtime cleanup. The fallback MRO stored by the runtime is
+recovery-only internal state and MUST NOT make the rejected class observable.
+
+Valid single inheritance, diamonds, and consistent multiple inheritance cross
+both barriers unchanged. Verification therefore needs paired witnesses:
+an inconsistent `A(X, Y)` / `B(Y, X)` / `C(A, B)` hierarchy that is caught at
+the `C` statement, and a valid diamond whose MRO and class body remain live.
+
+### Slot layout and attribute-admission boundary
+
+Slot metadata has two meanings and they must not be collapsed:
+
+- declared-own slots are the exact names written on the class and back the
+  observable `cls.__slots__` value;
+- effective slots merge inherited layouts in MRO order and decide which
+  instance attributes storage may admit.
+
+An instance whose class declares `__slots__` without `__dict__` rejects a
+write outside the effective slot set with deterministic `AttributeError`.
+Declared slots remain writable, inherited slots remain writable on a derived
+instance, and including `__dict__` in the declared-own slots deliberately
+restores dynamic attributes. An empty slot tuple suppresses every dynamic
+instance attribute. These are one admission policy, not independent special
+cases.
+
+The class-registration order above is part of this boundary: effective slots
+cannot be computed before runtime bases finalize the MRO. Enforcement belongs
+at the instance attribute-write seam after data-descriptor dispatch and before
+the direct instance-field insert; global serialization or a class-name-only
+special case is forbidden. Verification needs all four controls—rejected
+undeclared write, accepted declared write, inherited-slot write, and explicit
+`__dict__` dynamic write—plus the exact exception class/message anchor.
+
 Step 4's `__init_subclass__` dispatch (`dispatch_type_new_creation_hooks`,
 mod.rs:1631) carries the same closure-handle hazard as `__init__` (Instance
 construction, below): the hook's dispatch address MUST come from
@@ -29,8 +77,10 @@ the raw extractor's int fallback is never in `CALLABLE_REGISTRY`, so
 `is_registered` reads false and the whole hook silently no-ops — no error,
 no dispatch.
 
-Known gap: `cls.__slots__` reports the merged effective layout instead of the
-declared tuple (layout itself is correct) — tracked: #1523.
+Historical gap #1523 collapsed declared and effective slots. The current
+`OWN_SLOTS_REGISTRY` / `SLOTS_REGISTRY` split is the required boundary; a
+regression that reports merged inherited slots as `cls.__slots__` is a
+metadata defect even if instance admission still works.
 
 ## Instance construction
 

@@ -123,9 +123,11 @@ pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
                     if !super::super::exception::has_current_exception() {
                         super::super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(
-                                "unsupported operand type(s) for pow()".to_string(),
-                            )),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "unsupported operand type(s) for ** or pow(): '{}' and '{}'",
+                                super::value_type_name(base),
+                                super::value_type_name(exp)
+                            ))),
                         );
                     }
                     MbValue::none()

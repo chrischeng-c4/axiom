@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "project": "mamba",
+  "source_digest": "sha256:531439f2e486b7674f2c25d51f3a54d376477f180902bd0864815ae9b76c854f",
+  "decision": "accepted",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer-1942-filter-accounting",
+  "reviewed_at": "2026-07-27T23:15:04.196683+00:00",
+  "summary": "Accepted after independent semantic re-review of WI #1942. The revision correctly separates immutable historical baseline provenance from the live three-run evaluation identity: baseline source_revision and baseline environment_fingerprint are retained and validated as capture metadata but are not required to equal current HEAD, while the verifier must independently observe the current revision and current-run environment fingerprint before run 1 and prove that both, the exact rustup rustc/cargo identities, and the manifest digest remain unchanged through run 3. This removes the impossible lifecycle self-reference without weakening intra-evaluation drift detection. The case still pins the independent 7,407-row denominator and digest, proves 13,767 whole-target and exact denominator-set-equal 7,407 filtered preflight names, requires each executed terminal set to equal the denominator with passed plus failed exactly 7,407 and filtered-out exactly 6,360, compares all three failure sets and counts exactly, bounds failures to the historical baseline allowed set/count, runs missing-result and outcome-flip canaries, and fails closed on incomplete accounting, drift, crash, timeout, truncation, missing evidence, or parse errors.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": true,
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
+  },
+  "findings": [],
+  "target_path": "apps/mamba/external-contracts/behavior/1942.md"
+}

@@ -487,7 +487,7 @@ fn make_class_object(name: &str, extra: &[(&str, MbValue)]) -> MbValue {
 fn method_arg0(args: MbValue) -> Option<MbValue> {
     args.as_ptr().and_then(|p| unsafe {
         if let ObjData::List(ref lk) = (*p).data {
-            lk.read().unwrap().first().copied()
+            lk.read().unwrap().first()
         } else {
             None
         }

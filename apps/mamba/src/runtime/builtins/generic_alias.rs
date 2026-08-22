@@ -19,7 +19,7 @@ pub(super) fn generic_alias_origin_args(
         .map(|ptr| unsafe {
             match &(*ptr).data {
                 ObjData::Tuple(items) => items.to_vec(),
-                ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                ObjData::List(lock) => lock.read().unwrap().to_vec(),
                 _ => vec![args_val],
             }
         })

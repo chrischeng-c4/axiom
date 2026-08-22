@@ -7,7 +7,7 @@ use crate::hir::*;
 use crate::mir::*;
 use crate::resolve::{SymbolId, SymbolTable, VariableClass};
 use crate::source::span::Span;
-use crate::types::{Ty, TypeContext, TypeId};
+use crate::types::{DynamicBoundaryLicense, Ty, TypeContext, TypeId};
 use std::collections::{HashMap, HashSet};
 
 /// Decorator kind applied to a class method. Used during class registration
@@ -1567,6 +1567,7 @@ struct HirToMir<'a> {
     blocks: Vec<BasicBlock>,
     current_stmts: Vec<MirInst>,
     sym_to_vreg: HashMap<SymbolId, VReg>,
+    handle_syms: HashSet<SymbolId>,
     /// SymbolId.0 of module-scope Vars whose `sym_to_vreg` entry is
     /// synced with a paired boxed StoreGlobal (the plain-assignment write
     /// path). Reads of these that expect Any can safely re-load from
@@ -1872,6 +1873,7 @@ impl<'a> HirToMir<'a> {
             blocks: Vec::new(),
             current_stmts: Vec::new(),
             sym_to_vreg: HashMap::new(),
+            handle_syms: HashSet::new(),
             global_synced_syms: HashSet::new(),
             module_scope_sync_suppressed: false,
             loop_exit: None,
@@ -2071,6 +2073,10 @@ impl<'a> HirToMir<'a> {
                 Some(contract) => self.emit_str_const(contract),
                 None => self.emit_none(),
             };
+            let license_vreg = match p.dynamic_boundary_license {
+                Some(DynamicBoundaryLicense::ExplicitAny) => self.emit_str_const("explicit-any"),
+                None => self.emit_none(),
+            };
             let tup_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tup_vreg,
@@ -2082,6 +2088,7 @@ impl<'a> HirToMir<'a> {
                     anno_vreg,
                     abi_vreg,
                     contract_vreg,
+                    license_vreg,
                 ],
                 ty: any_ty,
             });
@@ -2149,6 +2156,7 @@ impl<'a> HirToMir<'a> {
             let anno_vreg = self.emit_none();
             let abi_vreg = self.emit_str_const("boxed");
             let contract_vreg = self.emit_none();
+            let license_vreg = self.emit_none();
             let tuple_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tuple_vreg,
@@ -2160,6 +2168,7 @@ impl<'a> HirToMir<'a> {
                     anno_vreg,
                     abi_vreg,
                     contract_vreg,
+                    license_vreg,
                 ],
                 ty: any_ty,
             });
@@ -2193,6 +2202,7 @@ impl<'a> HirToMir<'a> {
             blocks: Vec::new(),
             current_stmts: Vec::new(),
             sym_to_vreg: HashMap::new(),
+            handle_syms: HashSet::new(),
             global_synced_syms: HashSet::new(),
             module_scope_sync_suppressed: false,
             loop_exit: None,
@@ -3863,6 +3873,9 @@ impl<'a> HirToMir<'a> {
                 let val = self.lower_expr(value);
                 match target {
                     HirLValue::Var(sym) => {
+                        if hir_expr_may_return_boxed_value(value) || self.hir_expr_may_be_handle(value) {
+                            self.handle_syms.insert(*sym);
+                        }
                         // Check cell_override first: synthetic (1M+) nonlocal-shared symbols
                         // always use global storage regardless of symbol_table classification.
                         if self.cell_override.contains(&sym.0) {
@@ -6241,6 +6254,7 @@ impl<'a> HirToMir<'a> {
             ],
             ty: self.tcx.none(),
         });
+        self.emit_exception_propagate();
         if let Some(pos) = self
             .pending_class_docs
             .iter()
@@ -6454,6 +6468,7 @@ impl<'a> HirToMir<'a> {
                 args: vec![cls_vreg, bases_list],
                 ty: self.tcx.none(),
             });
+            self.emit_exception_propagate();
         }
 
         let mut i = 0;
@@ -6474,6 +6489,7 @@ impl<'a> HirToMir<'a> {
                 args: vec![cls_vreg, bases_list],
                 ty: self.tcx.none(),
             });
+            self.emit_exception_propagate();
         }
     }
 
@@ -6989,6 +7005,8 @@ impl<'a> HirToMir<'a> {
         }
 
         let iterable = self.lower_expr(iter);
+        // #1976: check and propagate exception from evaluating the iterable expression
+        self.emit_exception_propagate();
 
         // Create iterator: iter_obj = mb_iter(iterable)
         let iter_obj = self.fresh_vreg();
@@ -6998,6 +7016,8 @@ impl<'a> HirToMir<'a> {
             args: vec![iterable],
             ty: self.tcx.any(),
         });
+        // #1976: check and propagate exception from calling mb_iter
+        self.emit_exception_propagate();
 
         let header = self.fresh_block();
         let body_block = self.fresh_block();
@@ -7117,6 +7137,8 @@ impl<'a> HirToMir<'a> {
         else_body: &[HirStmt],
     ) {
         let iterable = self.lower_expr(iter);
+        // #1976: check and propagate exception from evaluating the iterable expression
+        self.emit_exception_propagate();
 
         let iter_obj = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
@@ -7125,6 +7147,7 @@ impl<'a> HirToMir<'a> {
             args: vec![iterable],
             ty: self.tcx.any(),
         });
+        // #1976: check and propagate exception from calling mb_async_iter
         self.emit_exception_propagate();
 
         let header = self.fresh_block();
@@ -9299,8 +9322,14 @@ impl<'a> HirToMir<'a> {
                         | (crate::types::Ty::Float, crate::types::Ty::Bool)
                 );
                 let is_true_div = matches!(op, HirBinOp::Div)
-                    && matches!(lt, crate::types::Ty::Int)
-                    && matches!(rt, crate::types::Ty::Int);
+                    && matches!(
+                        lt,
+                        crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
+                    )
+                    && matches!(
+                        rt,
+                        crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
+                    );
                 let needs_runtime = !matches!(
                     lt,
                     crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
@@ -9436,7 +9465,8 @@ impl<'a> HirToMir<'a> {
                 // icmp/fcmp would compare boxed bits against a raw primitive.
                 let has_any = matches!(lt, crate::types::Ty::Any | crate::types::Ty::TypeVar(_))
                     || matches!(rt, crate::types::Ty::Any | crate::types::Ty::TypeVar(_));
-                if (has_class || has_any) && binop_to_runtime(*op).is_some() {
+                let has_handle = self.hir_expr_may_be_handle(lhs) || self.hir_expr_may_be_handle(rhs);
+                if (has_class || has_any || has_handle) && binop_to_runtime(*op).is_some() {
                     let boxed_l = self.box_operand(l, lhs.ty());
                     let boxed_r = self.box_operand(r, rhs.ty());
                     let opcode = self.emit_int_const(lower_mir_binop(*op).to_opcode());
@@ -10371,12 +10401,16 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
-                    // Special case: sorted(iterable, reverse=True) → pass both args.
-                    if extern_name == "mb_sorted" && boxed_args.len() >= 2 {
+                    // Special case: sorted positional arity error when >1 positional args are passed.
+                    if extern_name == "mb_sorted" && boxed_args.len() > 1 {
+                        let msg = self.emit_str_const(&format!(
+                            "sorted expected at most 1 argument, got {}",
+                            boxed_args.len()
+                        ));
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
-                            name: extern_name,
-                            args: vec![boxed_args[0], boxed_args[1]],
+                            name: "mb_arg_bind_error".to_string(),
+                            args: vec![msg],
                             ty: *ty,
                         });
                         return dest;
@@ -11849,7 +11883,7 @@ impl<'a> HirToMir<'a> {
                         args: vec![closure_vreg, names_list],
                         ty: self.tcx.none(),
                     });
-                    // FUNC_PARAMS: seven fields; lambda declarations have no
+                    // FUNC_PARAMS: eight fields; lambda declarations have no
                     // scalar source contract and enter boxed.
                     // per param — defaults reuse the already-evaluated outer
                     // vregs (positionally trailing, Python rule).
@@ -11889,6 +11923,7 @@ impl<'a> HirToMir<'a> {
                         let anno_vreg = self.emit_none();
                         let abi_vreg = self.emit_str_const("boxed");
                         let contract_vreg = self.emit_none();
+                        let license_vreg = self.emit_none();
                         let tup = self.fresh_vreg();
                         self.current_stmts.push(MirInst::MakeTuple {
                             dest: tup,
@@ -11900,6 +11935,7 @@ impl<'a> HirToMir<'a> {
                                 anno_vreg,
                                 abi_vreg,
                                 contract_vreg,
+                                license_vreg,
                             ],
                             ty: any_ty,
                         });
@@ -13587,7 +13623,7 @@ fn binop_to_runtime(op: HirBinOp) -> Option<&'static str> {
     }
 }
 
-fn hir_expr_may_return_boxed_value(expr: &HirExpr) -> bool {
+pub(crate) fn hir_expr_may_return_boxed_value(expr: &HirExpr) -> bool {
     matches!(
         expr,
         HirExpr::Index { .. }
@@ -13595,6 +13631,21 @@ fn hir_expr_may_return_boxed_value(expr: &HirExpr) -> bool {
             | HirExpr::Call { .. }
             | HirExpr::IfExpr { .. }
     )
+}
+
+impl<'a> HirToMir<'a> {
+    pub(crate) fn hir_expr_may_be_handle(&self, expr: &HirExpr) -> bool {
+        let ty = self.tcx.get(expr.ty());
+        if !matches!(ty, crate::types::Ty::Int | crate::types::Ty::Bool | crate::types::Ty::Float) {
+            if hir_expr_may_return_boxed_value(expr) {
+                return true;
+            }
+        }
+        match expr {
+            HirExpr::Var(sym, _) => self.handle_syms.contains(sym),
+            _ => false,
+        }
+    }
 }
 
 fn lower_mir_unaryop(op: HirUnaryOp) -> MirUnaryOp {
@@ -13829,6 +13880,32 @@ mod tests {
                 op: MirBinOp::FloorDiv,
                 ..
             }
+        )));
+    }
+
+    #[test]
+    fn test_lower_binop_div_float_float_routes_to_mb_div() {
+        let tcx = TypeContext::new();
+        let float_ty = tcx.float();
+        let hir = make_top_level_hir(vec![HirStmt::Expr {
+            expr: HirExpr::BinOp {
+                op: HirBinOp::Div,
+                lhs: Box::new(HirExpr::FloatLit(1.0, float_ty)),
+                rhs: Box::new(HirExpr::FloatLit(0.0, float_ty)),
+                ty: float_ty,
+            },
+            span: Span::dummy(),
+        }]);
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        assert_eq!(mir.bodies.len(), 1);
+        let all_stmts: Vec<_> = mir.bodies[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+        assert!(all_stmts.iter().any(|s| matches!(
+            s,
+            MirInst::CallExtern { name, .. } if name == "mb_div"
         )));
     }
 
@@ -14774,6 +14851,8 @@ mod tests {
         let tcx = TypeContext::new();
         let child_sym = SymbolId(9_991);
         let mut lowerer = HirToMir::new(&tcx);
+        let entry = lowerer.fresh_block();
+        lowerer.start_block(entry);
         lowerer.pending_runtime_class_bases.push((
             "Child".to_string(),
             child_sym,
@@ -14789,8 +14868,14 @@ mod tests {
         lowerer.emit_runtime_class_bases_for(Some(child_sym));
         lowerer.emit_class_slots_for(Some(child_sym));
 
-        let update_index = lowerer
-            .current_stmts
+        let all_stmts: Vec<&MirInst> = lowerer
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .chain(lowerer.current_stmts.iter())
+            .collect();
+
+        let update_index = all_stmts
             .iter()
             .position(|stmt| {
                 matches!(
@@ -14799,8 +14884,14 @@ mod tests {
                 )
             })
             .expect("runtime base expression must update the class MRO");
-        let slots_index = lowerer
-            .current_stmts
+        let has_exc_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_has_exception"
+            ))
+            .expect("runtime base update must emit exception propagation check");
+        let slots_index = all_stmts
             .iter()
             .position(|stmt| {
                 matches!(
@@ -14811,8 +14902,109 @@ mod tests {
             .expect("declared slots must be registered");
 
         assert!(
-            update_index < slots_index,
-            "slot registration must observe the runtime-resolved parent MRO"
+            update_index < has_exc_index,
+            "exception propagation check must follow update_bases"
+        );
+        assert!(
+            has_exc_index < slots_index,
+            "slot registration must be emitted on success continuation after update_bases barrier"
+        );
+    }
+
+    #[test]
+    fn test_class_registration_emits_exception_propagate() {
+        let tcx = TypeContext::new();
+        let class_sym = SymbolId(9_992);
+        let mut lowerer = HirToMir::new(&tcx);
+        let entry = lowerer.fresh_block();
+        lowerer.start_block(entry);
+        let reg = PendingClassRegistration {
+            runtime_key: "InconsistentClass".to_string(),
+            display_name: "InconsistentClass".to_string(),
+            class_sym,
+            bind_sym: class_sym,
+            all_base_names: vec!["Base1".to_string(), "Base2".to_string()],
+            namedtuple_base: None,
+            methods: Vec::new(),
+            match_args: Vec::new(),
+            metaclass: None,
+            slots: None,
+            class_cell_required: false,
+            class_kwargs: Vec::new(),
+        };
+        lowerer.emit_class_registration(&reg);
+
+        let all_stmts: Vec<&MirInst> = lowerer
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .chain(lowerer.current_stmts.iter())
+            .collect();
+
+        let define_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_class_define_multi_named"
+            ))
+            .expect("class registration must emit mb_class_define_multi_named");
+
+        let has_exc_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_has_exception"
+            ))
+            .expect("class registration must emit exception propagation check");
+
+        assert!(
+            has_exc_index > define_index,
+            "exception propagation check must follow mb_class_define_multi_named"
+        );
+    }
+
+    #[test]
+    fn test_runtime_class_bases_emits_exception_propagate() {
+        let tcx = TypeContext::new();
+        let child_sym = SymbolId(9_993);
+        let mut lowerer = HirToMir::new(&tcx);
+        let entry = lowerer.fresh_block();
+        lowerer.start_block(entry);
+        lowerer.pending_runtime_class_bases.push((
+            "Child".to_string(),
+            child_sym,
+            vec![HirExpr::StrLit("Base".to_string(), tcx.any())],
+            Vec::new(),
+        ));
+
+        lowerer.emit_runtime_class_bases_for(Some(child_sym));
+
+        let all_stmts: Vec<&MirInst> = lowerer
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .chain(lowerer.current_stmts.iter())
+            .collect();
+
+        let update_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_class_update_bases"
+            ))
+            .expect("runtime base update must emit mb_class_update_bases");
+
+        let has_exc_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_has_exception"
+            ))
+            .expect("runtime base update must emit exception propagation check");
+
+        assert!(
+            has_exc_index > update_index,
+            "exception propagation check must follow mb_class_update_bases"
         );
     }
 

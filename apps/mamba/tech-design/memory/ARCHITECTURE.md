@@ -4,6 +4,8 @@ Scope: value representation, refcount contracts, cycle GC, escape analysis, and 
 JIT-emitted refcount protocol. Fix-family hazards in this directory
 (`object-lifetime.md` §Escape analysis licenses GC-tracking elision,
 §With-protocol refcount contract) are cross-referenced, not restated.
+Ownership-violation evidence and its four-part detector / control / balance /
+audit model live in `ownership-violation-evidence.md`.
 
 ## Responsibilities
 
@@ -25,6 +27,7 @@ JIT-emitted refcount protocol. Fix-family hazards in this directory
 | Ownership contract | `rc.rs:17-73` | Every registered symbol returning `MbValue` is NEW (rc=1, caller owns), BORROWED (must `return_owned` before returning), or VOID. Helpers `store_owned/return_owned/store_and_return_owned/release_owned` carry debug refcount-delta asserts. |
 | Emitter rules as pure fns | `rc.rs:should_release_local_slot`, `should_retain_borrowed_return`, `should_preseed_loop_owner_slot` | Single authoritative predicate per JIT release/retain decision — change here, not in jit.rs. |
 | `GcState` | `gc.rs:16`, `thread_local!` | tracked `FxHashSet<usize>`, threshold 10_000 (#2100 1A), `roots: Vec<MbValue>`. Safepoint API (`gc_safepoint` etc.) = no-op stubs; per-thread GC has no stop-the-world. |
+| GC control state | `gc.rs:gc_enable`, `gc_disable`, `gc_is_enabled` | `enabled` is configuration local to the calling thread. A test that changes it snapshots the prior value and restores it with a drop guard so panic/early return cannot leak state. Bookkeeping reset and configuration reset are separate operations; parallel proof uses independent threads, never a suite-wide mutex. |
 | gc_track coverage | `rc.rs:new_*` ctors | Lists/dicts/sets always tracked; tuples/frozensets only if any element `value_is_cycle_capable` (rc.rs:402, #2128); str/bytes/bigint never. Untracked-ctor variants (`new_list_untracked` …) exist ONLY for escape-proven literals. |
 | Escape classification | `escape_analysis.rs:analyze_literal_escapes` | Flow-sensitive: alias map updated per-`Copy` in program order, classification uses the alias live AT the use point. Never precompute over non-SSA VRegs — see `1610-…md`. |
 | With-protocol refcount contract | `class/mod.rs:mb_context_enter` (15458), `hir_to_mir.rs:5265` exit block | Exit lowering double-releases a temporary ctx (explicit `mb_release_value` + `Copy` pre-write release, #1129 R2) ⇒ every `mb_context_enter` branch retains the receiver once; `__enter__` returning non-self must ALSO retain the returned value — see `1627-…md`. |
@@ -47,10 +50,21 @@ JIT-emitted refcount protocol. Fix-family hazards in this directory
 - **Re-enabling the `__main__` epilogue release sweep** — deliberately off (jit.rs:488). WHY: double-free, oscillating conformance gate (#1663 T4c5; suspect BigInt inner-Vec drop path; rationale block at mod.rs:1751).
 - **#2111 carve-out: fresh per-iter VRegs bypass rebind release** (jit.rs:653 comment). WHY: module-scope hot-loop allocations leak monotonically with iteration count; fix surface = per-back-edge release sweep.
 - **`gc_clear_all_state` must never run `collect()`** (gc.rs:139 doc; called from `runtime/mod.rs:66` + JIT teardown). WHY: `module_to_value` dicts hold borrowed rc=1 copies — a sweep double-frees them.
+- **Test reset must not invent the asserted GC mode**: clearing tracked objects,
+  roots, counters, or the re-entrancy bit is bookkeeping cleanup; forcing
+  `enabled` at the same time makes the next test depend on helper ordering.
+  Tests of `enable()`/`disable()` explicitly establish their starting mode,
+  restore the caller's prior mode through RAII, and use a two-thread canary to
+  prove thread-local isolation. Global test serialization would hide the
+  contract rather than prove it.
 - **Integer-handle id collision** — handle bases must be ≥ `HANDLE_MIN_ID = 1<<40` (`integer_handle_registry.rs`). WHY: `MbValue::from_int(1)` is bit-identical to handle id 1; primitive-int releases would corrupt handle tables.
 - **`NEG_CANON_NAN == from_ptr(null)`** (value.rs:47-55). WHY: boxing a null pointer would create a value indistinguishable from a float NaN.
 - **Wrong `NonEscaping` is a delayed-symptom bug class** — untracked ctors don't crash at alloc; corruption surfaces as hang/SIGTRAP in unrelated fixtures. Bisect with repeated sampling (intermittency defeats single-sample bisects — 1627 lesson).
 - **rc is not a valid signal mid-dealloc** — both `mb_release` and GC sweep stamp IMMORTAL before cascading; code reading rc during teardown sees u32::MAX.
+- **A green crash reproducer is not ownership evidence by itself** — an extra
+  retain can convert a double-release into a leak. Consumer fixes use the
+  detector, positive control, leak balance, and site-count reconciliation in
+  `ownership-violation-evidence.md`.
 
 ## Extension points
 
@@ -60,6 +74,10 @@ JIT-emitted refcount protocol. Fix-family hazards in this directory
 - **New handle-pattern stdlib module**: register `IntegerHandleHooks{retain,release}` and start ids ≥ `HANDLE_MIN_ID`.
 - **New typed-list element kind**: `escape_analysis.rs:scalar_typed_list_element_kind`; eligibility stays gated on `NonEscaping`.
 - **GC tuning / gc-module surface**: `gc.rs:mb_gc_*` wrappers; threshold via `gc_set_threshold`.
+- **GC state tests**: use a scoped configuration guard around mutations of
+  `enabled`; keep `reset_gc_for_test` limited to collector bookkeeping. Prove
+  opposing enable/disable states can coexist across a synchronization barrier
+  on two threads.
 
 ## EC surface
 

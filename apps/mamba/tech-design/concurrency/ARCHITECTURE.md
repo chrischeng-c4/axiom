@@ -115,6 +115,65 @@ flips `alive=false`.
   stubs in `threading_mod.rs` with handle-keyed `std::sync` types. Real
   subprocess: `multiprocessing_mod.rs defer_process` → `std::process`/fork.
 
+## Gather invocation aggregate and quiescence boundary
+
+`asyncio.gather(asyncio.to_thread(...), ...)` is one `GatherInvocation`
+aggregate. The aggregate root owns the input-order slots, the task/coroutine
+registrations created for those slots, and the transition from active work to
+an ordered terminal result. A worker thread and its `Future` are implementation
+details of a slot; they must not become independently terminal from the
+aggregate's point of view.
+
+The aggregate state is:
+
+```
+Created -> Scheduled -> AwaitingWorkers -> Collecting -> Quiescent
+                                  \-> Failed
+```
+
+- `Created` captures a stable copy of the input coroutine handles. No borrowed
+  container guard crosses the scheduling boundary.
+- `Scheduled` creates exactly one task registration per input slot.
+- `AwaitingWorkers` drives or waits for progress without starving worker
+  threads. An iteration counter is diagnostic protection, not the semantic
+  completion condition.
+- `Collecting` begins only after every slot has one terminal outcome. Results
+  are read in original input order.
+- `Quiescent` means every result has an independent owner, task/coroutine
+  bookkeeping created by this invocation is retired, and no worker owned by
+  the invocation can publish a later result.
+- `Failed` is an explicit exception or deadline outcome. It must not silently
+  synthesize `None` for a pending slot.
+
+### Invariants
+
+1. **Exactly one terminal outcome per slot.** Each slot publishes either a
+   value or exception once; pending is never interpreted as success.
+2. **Publication precedes readiness.** A worker publishes `_result` or
+   `_exception` before the synchronized `FINISHED` transition. The driver that
+   observes `FINISHED` must observe the corresponding payload.
+3. **Progress is scheduling-independent.** Once a worker has been spawned, a
+   gather driver may yield or block for notification, but it cannot monopolize
+   a lock or CPU path the worker needs to publish completion.
+4. **Wall-clock liveness is observable.** A bounded external deadline either
+   observes `Quiescent` or reports a non-success timeout with the set of pending
+   slot identities. A fixed number of rapid polls cannot masquerade as a
+   liveness proof.
+5. **Ordering is not completion order.** Workers may finish in any order;
+   `GatherInvocation` returns values in input order.
+6. **Cleanup follows capture.** Result ownership is retained before
+   registrations are tombstoned. Cleanup never races a still-publishing worker.
+
+### Regression shape
+
+The Tier-1 behavior probe performs five invocations with two CPU-bound
+`to_thread` slots whose relative work sizes alternate. On the same release
+binary it has completed in about 0.55 seconds and has also remained sleeping at
+0% CPU until an external 30-second deadline killed it. The latter is a
+`GatherInvocation` liveness failure even when a later retry is green. Acceptance
+therefore requires deterministic state-machine canaries plus repeated
+process-level runs; one successful retry is not evidence of quiescence.
+
 ## EC surface
 - **Dedicated `concurrency/` dimension** (`tests/cpython/concurrency/`) —
   `atomicity/{list,dict,set}`, `safety/lock`, `primitives/threading`; self-checked

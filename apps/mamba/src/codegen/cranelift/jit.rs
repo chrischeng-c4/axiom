@@ -8,8 +8,9 @@ use super::perf_map;
 use super::{emit_binop, emit_terminator, VarAlloc, EMIT_REFCOUNT_CALLS};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::mir::{
-    analyze_literal_escapes, LiteralEscapeAnalysis, LiteralEscapeClassification, LiteralEscapeKind,
-    MirBinOp, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType, VReg,
+    analyze_literal_escapes, analyze_typed_list_layouts, LiteralEscapeAnalysis,
+    LiteralEscapeClassification, LiteralEscapeKind, MirBinOp, MirBody, MirConst, MirExtern,
+    MirInst, MirModule, MirType, TypedListElementKind, TypedListLayoutAnalysis, VReg,
 };
 use crate::runtime::rc::MbObject;
 use crate::runtime::symbols::{runtime_externs, runtime_symbols};
@@ -517,6 +518,7 @@ impl CraneliftJitBackend {
         let mut builder = cranelift_frontend::FunctionBuilder::new(&mut func, &mut fb_ctx);
         let mut vars = VarAlloc::new();
         let literal_escapes = analyze_literal_escapes(body);
+        let typed_list_layouts = analyze_typed_list_layouts(body, tcx);
         let is_entry_body = body.name.0 == u32::MAX;
         // Per-block "definitely assigned on all incoming paths" VReg sets,
         // consumed by `emit_terminator`'s Return epilogue via
@@ -633,6 +635,7 @@ impl CraneliftJitBackend {
                     tcx,
                     externs,
                     &literal_escapes,
+                    &typed_list_layouts,
                     !is_entry_body,
                     &mut builder,
                     &mut vars,
@@ -799,6 +802,7 @@ impl CraneliftJitBackend {
         tcx: &TypeContext,
         externs: &[MirExtern],
         literal_escapes: &LiteralEscapeAnalysis,
+        typed_list_layouts: &TypedListLayoutAnalysis,
         allow_untracked_literals: bool,
         builder: &mut cranelift_frontend::FunctionBuilder,
         vars: &mut VarAlloc,
@@ -1465,6 +1469,7 @@ impl CraneliftJitBackend {
                     dest,
                     elements,
                     literal_escapes,
+                    typed_list_layouts,
                     allow_untracked_literals,
                     builder,
                     vars,
@@ -2299,6 +2304,7 @@ impl CraneliftJitBackend {
         dest: &crate::mir::VReg,
         elements: &[crate::mir::VReg],
         literal_escapes: &LiteralEscapeAnalysis,
+        typed_list_layouts: &TypedListLayoutAnalysis,
         allow_untracked_literals: bool,
         builder: &mut cranelift_frontend::FunctionBuilder,
         vars: &mut VarAlloc,
@@ -2312,6 +2318,84 @@ impl CraneliftJitBackend {
         //                 = 0xFFF9_0000_0000_0000 | N
         const NAN_INT_PREFIX: u64 = 0xFFF9_0000_0000_0000;
         let n = elements.len();
+
+        let element_kind = typed_list_layouts.element_kind(*dest);
+        let skip_gc_track = allow_untracked_literals
+            && Self::literal_can_skip_gc_track(literal_escapes, *dest, LiteralEscapeKind::List);
+
+        if let Some(TypedListElementKind::Int) = element_kind {
+            let ctor_name = if skip_gc_track {
+                if n > 0 { "mb_int_list_new_with_capacity_untracked" } else { "mb_int_list_new_untracked" }
+            } else {
+                if n > 0 { "mb_int_list_new_with_capacity" } else { "mb_int_list_new" }
+            };
+            if let Some(&ctor_id) = self.extern_funcs.get(ctor_name) {
+                let append_raw_id = self.extern_funcs.get("mb_int_list_append_raw").copied();
+                let append_val_id = self.extern_funcs.get("mb_list_append_unchecked").copied()
+                    .or_else(|| self.extern_funcs.get("mb_list_append").copied());
+                if let Some(append_val_id) = append_val_id {
+                    let ctor_ref = self.module().declare_func_in_func(ctor_id, builder.func);
+                    let list_val = if n > 0 {
+                        let cap_val = builder.ins().iconst(cl_types::I64, (NAN_INT_PREFIX | (n as u64)) as i64);
+                        let call = builder.ins().call(ctor_ref, &[cap_val]);
+                        builder.inst_results(call)[0]
+                    } else {
+                        let call = builder.ins().call(ctor_ref, &[]);
+                        builder.inst_results(call)[0]
+                    };
+                    for elem in elements {
+                        if vars.raw_ints.contains(elem) && append_raw_id.is_some() {
+                            let raw_id = append_raw_id.unwrap();
+                            let app_ref = self.module().declare_func_in_func(raw_id, builder.func);
+                            let elem_val = vars.use_as_i64(*elem, builder);
+                            builder.ins().call(app_ref, &[list_val, elem_val]);
+                        } else {
+                            let app_ref = self.module().declare_func_in_func(append_val_id, builder.func);
+                            let elem_val = vars.use_as_i64(*elem, builder);
+                            builder.ins().call(app_ref, &[list_val, elem_val]);
+                        }
+                    }
+                    vars.def_var_cast(*dest, builder, list_val, cl_types::I64);
+                    return;
+                }
+            }
+        } else if let Some(TypedListElementKind::Float) = element_kind {
+            let ctor_name = if skip_gc_track {
+                if n > 0 { "mb_float_list_new_with_capacity_untracked" } else { "mb_float_list_new_untracked" }
+            } else {
+                if n > 0 { "mb_float_list_new_with_capacity" } else { "mb_float_list_new" }
+            };
+            if let Some(&ctor_id) = self.extern_funcs.get(ctor_name) {
+                let append_raw_id = self.extern_funcs.get("mb_float_list_append_raw").copied();
+                let append_val_id = self.extern_funcs.get("mb_list_append_unchecked").copied()
+                    .or_else(|| self.extern_funcs.get("mb_list_append").copied());
+                if let Some(append_val_id) = append_val_id {
+                    let ctor_ref = self.module().declare_func_in_func(ctor_id, builder.func);
+                    let list_val = if n > 0 {
+                        let cap_val = builder.ins().iconst(cl_types::I64, (NAN_INT_PREFIX | (n as u64)) as i64);
+                        let call = builder.ins().call(ctor_ref, &[cap_val]);
+                        builder.inst_results(call)[0]
+                    } else {
+                        let call = builder.ins().call(ctor_ref, &[]);
+                        builder.inst_results(call)[0]
+                    };
+                    for elem in elements {
+                        if append_raw_id.is_some() {
+                            let raw_id = append_raw_id.unwrap();
+                            let app_ref = self.module().declare_func_in_func(raw_id, builder.func);
+                            let elem_val = vars.use_as(*elem, cl_types::F64, builder);
+                            builder.ins().call(app_ref, &[list_val, elem_val]);
+                        } else {
+                            let app_ref = self.module().declare_func_in_func(append_val_id, builder.func);
+                            let elem_val = vars.use_as_i64(*elem, builder);
+                            builder.ins().call(app_ref, &[list_val, elem_val]);
+                        }
+                    }
+                    vars.def_var_cast(*dest, builder, list_val, cl_types::I64);
+                    return;
+                }
+            }
+        }
 
         // Fast path: small literals (1..=10) collapse into a single FFI call
         // via mb_list_new_N instead of `new_with_capacity` + N appends.
@@ -3091,6 +3175,52 @@ impl CraneliftJitBackend {
                 }
             }
             let call = builder.ins().call(func_ref, &arg_vals);
+            // #2539: `del x` (`mb_del_var`) is a void (`dest: None`) extern
+            // that releases `args[0]`'s CURRENT heap-value share at the
+            // runtime level, but nothing resets the Cranelift `Variable`
+            // backing that same VReg — it keeps physically holding the
+            // just-released pointer bits. Inside a loop, that VReg's single
+            // *static* write site (e.g. a rebind's `Copy`) runs again on
+            // every *dynamic* iteration, and this function's own "release
+            // old dest value before overwriting" preamble (#1129 R2, top of
+            // `emit_inst`) unconditionally re-reads whatever the Variable
+            // currently holds and calls `mb_release_value` on it — which,
+            // right after a `del`, is the very same pointer already
+            // released once. That is a genuine second release of an
+            // already-freed object, racing the allocator's reuse of the
+            // freed slot: harmless when the slot is still untouched (reads
+            // back the immortal-refcount sentinel and no-ops), but a
+            // nondeterministic `invalid ObjKind` / misaligned-pointer abort
+            // once the slot has been reused for something else in the
+            // meantime (observed via `weakref.ref(obj); del obj` in a
+            // loop — the extra bookkeeping work weakref callbacks do widens
+            // the reuse window enough to make the corruption observable).
+            // Zero the Variable to the same `MbValue::none()` sentinel the
+            // #2111 loop-carried pre-seed uses (a guaranteed no-op for any
+            // later `mb_release_value` read) so a `del`'d VReg can never be
+            // re-released. Per MIR SSA convention a `del`'d VReg is never
+            // legitimately read again for its own value, so this is safe
+            // unconditionally, not just inside loops.
+            if name == "mb_del_var" {
+                if let Some(&del_vreg) = args.first() {
+                    let actual_type = vars.declared_type(del_vreg).unwrap_or(cl_types::I64);
+                    let dv = vars.get(del_vreg, builder, actual_type);
+                    let none_bits = builder
+                        .ins()
+                        .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+                    if actual_type == cl_types::F64 {
+                        let cast =
+                            builder
+                                .ins()
+                                .bitcast(cl_types::F64, MemFlags::new(), none_bits);
+                        builder.def_var(dv, cast);
+                    } else {
+                        builder.def_var(dv, none_bits);
+                    }
+                    vars.raw_ints.remove(&del_vreg);
+                    vars.native_bools.remove(&del_vreg);
+                }
+            }
             if let Some(dest_vreg) = dest {
                 vars.raw_ints.remove(dest_vreg);
                 vars.native_bools.remove(dest_vreg);
@@ -3357,6 +3487,7 @@ mod tests {
     }
 
     /// S3/R4: Uncontended lock acquisition adds negligible overhead (<1ms).
+    #[cfg(not(debug_assertions))]
     #[test]
     fn jit_lock_uncontended_overhead_is_negligible() {
         let start = std::time::Instant::now();

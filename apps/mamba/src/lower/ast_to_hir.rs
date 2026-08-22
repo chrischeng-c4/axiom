@@ -3003,25 +3003,31 @@ fn func_sig_meta(
         } else {
             Option::None
         };
+        let dynamic_boundary_license = p
+            .authored_type()
+            .and_then(|ty| lowerer.checker.get_declared_type(ty.span))
+            .and_then(|decl| decl.dynamic_boundary_license());
+
         out.push(HirParamSig {
             name: p.name.clone(),
             kind,
             default,
             default_opaque,
             frozen_default,
-            annotation: annotation_repr_opt(&p.ty.node),
+            annotation: p.authored_type().map(|ty| type_expr_repr(&ty.node)),
             // Keep the source declaration before the entry ABI is rewritten
             // for methods, decorators, closures, or default mutation.
             declared_ty: Some(lowerer.resolve_type_expr_ro(&p.ty)),
             entry_ty: None,
             boxed_primitive_entry: false,
+            dynamic_boundary_license,
         });
     }
     HirFuncSig {
         params: out,
         return_annotation: return_ty
             .as_ref()
-            .and_then(|t| annotation_repr_opt(&t.node)),
+            .map(|t| type_expr_repr(&t.node)),
     }
 }
 
@@ -3035,17 +3041,6 @@ fn attach_entry_types(
     for (param, (_, entry_ty)) in sig.params.iter_mut().zip(params.iter()) {
         param.entry_ty = Some(*entry_ty);
         param.boxed_primitive_entry = boxed_primitive_entry;
-    }
-}
-
-/// Textual annotation for introspection, or None for the parser's implicit
-/// `Any` filler (an un-annotated param/return parses as `Named("Any")`).
-fn annotation_repr_opt(ty: &ast::TypeExpr) -> Option<String> {
-    let repr = type_expr_repr(ty);
-    if repr == "Any" {
-        None
-    } else {
-        Some(repr)
     }
 }
 
@@ -3119,6 +3114,7 @@ fn erase_param_annotations(params: &[ast::Param]) -> Vec<ast::Param> {
         .cloned()
         .map(|mut p| {
             p.ty = Spanned::new(ast::TypeExpr::Named("Any".to_string()), p.ty.span);
+            p.annotation = ast::ParamAnnotation::Omitted;
             p
         })
         .collect()
@@ -3941,7 +3937,7 @@ impl<'a> AstLowerer<'a> {
                 if simple {
                     let unann: Vec<bool> = params
                         .iter()
-                        .map(|p| matches!(&p.ty.node, ast::TypeExpr::Named(n) if n == "Any"))
+                        .map(|p| p.is_omitted())
                         .collect();
                     unannotated_params.insert(name.clone(), unann);
                     fn_bodies.push((name.clone(), body.as_slice()));
@@ -4740,7 +4736,7 @@ impl<'a> AstLowerer<'a> {
         // Method params use `any` because they receive NaN-boxed MbValues via mb_call_method.
         // Non-method params use the resolved annotation type so match patterns see the
         // correct subject type (e.g. Class{...} for `p: Point`, List(int) for `xs: list[int]`).
-        // EXCEPTION: truly unannotated params (annotation is a bare `Any` name) keep `int` to
+        // EXCEPTION: truly unannotated params (source presence is ParamAnnotation::Omitted) keep `int` to
         // preserve the raw-i64 calling convention used by arithmetic and generators.
         // Complex annotations (Generic, Union, Tuple) that fail interning stay `any` so they
         // are treated as boxed NaN-values (needed for `xs: list[int]` sequence patterns) (#827).
@@ -4841,14 +4837,14 @@ impl<'a> AstLowerer<'a> {
                     // wrapper passes boxed values but primitive annotations let
                     // hir_to_mir insert an unbox at entry.
                     let resolved = self.resolve_type_expr_ro(&p.ty);
-                    if resolved == any_ty {
+                    if p.is_omitted() {
                         any_ty
                     } else {
                         resolved
                     }
                 } else {
                     let resolved = self.resolve_type_expr_ro(&p.ty);
-                    if resolved == any_ty {
+                    if p.is_omitted() {
                         // Only fall back to raw-int convention for bare/unannotated params.
                         // Generic/Union/Tuple annotations that failed interning must stay `any`
                         // so the param is treated as a boxed NaN-value at pattern-match time.
@@ -4878,11 +4874,6 @@ impl<'a> AstLowerer<'a> {
                             // generator trampoline ABI.
                             _ if is_gen_fn => any_ty,
                             _ => {
-                                // Unannotated param: default int, but promote to float
-                                // when every call site passes a float at this position,
-                                // or to `any` (boxed) when float is mixed with a
-                                // non-float — a raw f64 in an int slot leaks its bits
-                                // as an int (e.g. `isinstance(0.5, int)` → True).
                                 match param_float_hints.as_ref().and_then(|h| h.get(idx)).copied() {
                                     Some(FloatHint::Float) => float_ty,
                                     Some(FloatHint::Boxed) => any_ty,
@@ -6650,8 +6641,8 @@ impl<'a> AstLowerer<'a> {
                 // Update variable type when we widened so subsequent reads
                 // (print(x), x == 0.5) don't treat the float result as a raw int.
                 if widen {
-                    if let HirLValue::Var(sym) = &lv {
-                        self.local_types.insert(*sym, ty);
+                    if let HirLValue::Var(sym) = lv {
+                        self.local_types.insert(sym, ty);
                     }
                 }
                 Some(HirStmt::Assign {
@@ -7710,7 +7701,20 @@ impl<'a> AstLowerer<'a> {
                             .iter()
                             .filter(|a| matches!(a, ast::CallArg::Positional(_)))
                             .count();
-                        if positional_count != 1
+                        if positional_count == 0 {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    "sorted expected 1 argument, got 0".to_string(),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                        if positional_count > 1
                             || args.iter().any(|a| {
                                 matches!(
                                     a,
@@ -7724,7 +7728,7 @@ impl<'a> AstLowerer<'a> {
                                     any_ty,
                                 )),
                                 args: vec![HirExpr::StrLit(
-                                    format!("sorted expected 1 argument, got {}", positional_count),
+                                    format!("sorted expected at most 1 positional argument, got {}", positional_count),
                                     str_ty,
                                 )],
                                 ty: any_ty,
@@ -8184,6 +8188,18 @@ impl<'a> AstLowerer<'a> {
                         }
                         // sorted(iterable, key=None, reverse=False) → mb_sorted_kwargs
                         if name == "sorted" {
+                            let has_star = args.iter().any(|a| matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)));
+                            let pos_count = args.iter().filter(|a| matches!(a, ast::CallArg::Positional(_))).count();
+                            let has_bad_kw = args.iter().any(|a| {
+                                if let ast::CallArg::Keyword { name: n, .. } = a {
+                                    n != "key" && n != "reverse"
+                                } else {
+                                    false
+                                }
+                            });
+                            if pos_count > 1 || has_bad_kw || has_star {
+                                return None;
+                            }
                             let pos: Vec<HirExpr> = args
                                 .iter()
                                 .filter_map(|a| {
@@ -8229,6 +8245,35 @@ impl<'a> AstLowerer<'a> {
                         }
                         // min(iterable, key=None, default=None) → mb_min_kwargs
                         if name == "min" {
+                            let has_star = args.iter().any(|a| matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)));
+                            let pos_count = args.iter().filter(|a| matches!(a, ast::CallArg::Positional(_))).count();
+                            let has_default_kw = args.iter().any(|a| matches!(a, ast::CallArg::Keyword { name: n, .. } if n == "default"));
+                            let has_bad_kw = args.iter().any(|a| {
+                                if let ast::CallArg::Keyword { name: n, .. } = a {
+                                    n != "key" && n != "default"
+                                } else {
+                                    false
+                                }
+                            });
+                            if has_star {
+                                return None;
+                            }
+                            if pos_count >= 2 && has_default_kw {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        "Cannot specify a default for min() with multiple positional arguments".to_string(),
+                                        self.checker.tcx.str(),
+                                    )],
+                                    ty: any_ty,
+                                });
+                            }
+                            if has_bad_kw {
+                                return None;
+                            }
                             let pos: Vec<HirExpr> = args
                                 .iter()
                                 .filter_map(|a| {
@@ -8258,6 +8303,7 @@ impl<'a> AstLowerer<'a> {
                                     None
                                 })
                                 .unwrap_or_else(|| none_hir.clone());
+                            let no_def_sentinel = HirExpr::StrLit("__mb_no_default__".to_string(), any_ty);
                             let default = args
                                 .iter()
                                 .find_map(|a| {
@@ -8268,7 +8314,7 @@ impl<'a> AstLowerer<'a> {
                                     }
                                     None
                                 })
-                                .unwrap_or_else(|| none_hir.clone());
+                                .unwrap_or(no_def_sentinel);
                             return Some(HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit(
                                     "mb_min_kwargs".to_string(),
@@ -8280,6 +8326,35 @@ impl<'a> AstLowerer<'a> {
                         }
                         // max(iterable, key=None, default=None) → mb_max_kwargs
                         if name == "max" {
+                            let has_star = args.iter().any(|a| matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)));
+                            let pos_count = args.iter().filter(|a| matches!(a, ast::CallArg::Positional(_))).count();
+                            let has_default_kw = args.iter().any(|a| matches!(a, ast::CallArg::Keyword { name: n, .. } if n == "default"));
+                            let has_bad_kw = args.iter().any(|a| {
+                                if let ast::CallArg::Keyword { name: n, .. } = a {
+                                    n != "key" && n != "default"
+                                } else {
+                                    false
+                                }
+                            });
+                            if has_star {
+                                return None;
+                            }
+                            if pos_count >= 2 && has_default_kw {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        "Cannot specify a default for max() with multiple positional arguments".to_string(),
+                                        self.checker.tcx.str(),
+                                    )],
+                                    ty: any_ty,
+                                });
+                            }
+                            if has_bad_kw {
+                                return None;
+                            }
                             let pos: Vec<HirExpr> = args
                                 .iter()
                                 .filter_map(|a| {
@@ -8309,6 +8384,7 @@ impl<'a> AstLowerer<'a> {
                                     None
                                 })
                                 .unwrap_or_else(|| none_hir.clone());
+                            let no_def_sentinel = HirExpr::StrLit("__mb_no_default__".to_string(), any_ty);
                             let default = args
                                 .iter()
                                 .find_map(|a| {
@@ -8319,7 +8395,7 @@ impl<'a> AstLowerer<'a> {
                                     }
                                     None
                                 })
-                                .unwrap_or_else(|| none_hir.clone());
+                                .unwrap_or(no_def_sentinel);
                             return Some(HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit(
                                     "mb_max_kwargs".to_string(),
@@ -10046,11 +10122,32 @@ impl<'a> AstLowerer<'a> {
                         .collect()
                 };
 
+                // #1977: Evaluate outermost iterable immediately in the parent scope.
+                let outer_iter = self.lower_expr(&generators[0].iter)?;
+
+                let param_name = ".0".to_string();
+                let _param_sym = self.define_local(&param_name, any_ty);
+                let param = ast::Param {
+                    name: param_name.clone(),
+                    ty: Spanned::new(ast::TypeExpr::Named("Any".to_string()), expr.span),
+                    annotation: ast::ParamAnnotation::Omitted,
+                    default: None,
+                    kind: ast::ParamKind::Regular,
+                    pos_only: false,
+                    kw_only: false,
+                    span: expr.span,
+                };
+
+                let mut mutated_generators = generators.to_vec();
+                if let Some(first_gen) = mutated_generators.first_mut() {
+                    first_gen.iter = Spanned::new(ast::Expr::Ident(param_name.clone()), first_gen.iter.span);
+                }
+
                 let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
                 let fn_sym = self.define_local(&fn_name, any_ty);
                 let body = genexpr_body_from_comprehensions(
                     element,
-                    generators,
+                    &mutated_generators,
                     &walrus_targets,
                     self.in_function_body,
                     expr.span,
@@ -10061,7 +10158,7 @@ impl<'a> AstLowerer<'a> {
                     self.forced_global_names.insert(target.clone(), *sym);
                 }
                 if let Some(mut func) =
-                    self.lower_fn(fn_sym, &fn_name, &[], &return_ty, &body, expr.span)
+                    self.lower_fn(fn_sym, &fn_name, &[param], &return_ty, &body, expr.span)
                 {
                     self.forced_global_names = saved_forced_global_names;
                     if !module_walrus_target_syms.is_empty() {
@@ -10079,7 +10176,7 @@ impl<'a> AstLowerer<'a> {
                     self.result.functions.push(func);
                     return Some(HirExpr::Call {
                         func: Box::new(HirExpr::Var(fn_sym, any_ty)),
-                        args: Vec::new(),
+                        args: vec![outer_iter],
                         ty: int_ty,
                     });
                 }
@@ -11402,6 +11499,7 @@ mod tests {
         Param {
             name: name.to_string(),
             ty: sp(TypeExpr::Named("Any".to_string())),
+            annotation: ParamAnnotation::Omitted,
             default: None,
             kind: ParamKind::Regular,
             pos_only: false,
@@ -13427,7 +13525,7 @@ async def main():
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert!(args.is_empty());
+                assert_eq!(args.len(), 1);
                 assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
             }
             other => panic!("expected synthetic generator call, got {other:?}"),
@@ -13482,7 +13580,7 @@ async def main():
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert!(args.is_empty());
+                assert_eq!(args.len(), 1);
                 assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
             }
             other => panic!("expected synthetic generator call, got {other:?}"),
@@ -15130,5 +15228,178 @@ async def main():
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_hir_metadata_omitted_vs_authored_any_all_shapes() {
+        let src = r#"
+def f_reg_omitted(x):
+    pass
+
+def f_reg_authored_any(x: Any):
+    pass
+
+def f_reg_authored_typing_any(x: typing.Any):
+    pass
+
+def f_reg_authored_int(x: int):
+    pass
+
+def f_pos_omitted(x, /):
+    pass
+
+def f_pos_authored_any(x: Any, /):
+    pass
+
+def f_kw_omitted(*, x):
+    pass
+
+def f_kw_authored_any(*, x: Any):
+    pass
+
+def f_star_omitted(*args):
+    pass
+
+def f_star_authored_any(*args: Any):
+    pass
+
+def f_dstar_omitted(**kwargs):
+    pass
+
+def f_dstar_authored_any(**kwargs: Any):
+    pass
+
+class C:
+    def m_omitted(self):
+        pass
+    def m_authored_any(self: Any):
+        pass
+
+def dec(fn):
+    return fn
+
+@dec
+def fn_dec_omitted(x):
+    pass
+
+@dec
+def fn_dec_authored_any(x: Any):
+    pass
+
+def gen_omitted(x):
+    yield x
+
+def gen_authored_any(x: Any):
+    yield x
+"#;
+        let module = crate::parser::parse(src, FileId(0)).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        let find_sig = |name: &str| {
+            hir.func_sigs
+                .iter()
+                .find(|(sym, _)| checker.symbols.get_symbol(crate::resolve::scope::SymbolId(**sym)).name == name)
+                .map(|(_, sig)| sig)
+                .or_else(|| {
+                    hir.functions
+                        .iter()
+                        .find(|f| checker.symbols.get_symbol(f.name).name == name)
+                        .and_then(|f| f.func_sig.as_ref())
+                })
+                .unwrap_or_else(|| panic!("missing function signature for {}", name))
+        };
+
+        use crate::types::DynamicBoundaryLicense;
+
+        // Regular parameter
+        assert_eq!(find_sig("f_reg_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_reg_omitted").params[0].dynamic_boundary_license, None);
+
+        assert_eq!(find_sig("f_reg_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_reg_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        assert_eq!(find_sig("f_reg_authored_typing_any").params[0].annotation, Some("typing.Any".to_string()));
+        assert_eq!(
+            find_sig("f_reg_authored_typing_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        assert_eq!(find_sig("f_reg_authored_int").params[0].annotation, Some("int".to_string()));
+        assert_eq!(find_sig("f_reg_authored_int").params[0].dynamic_boundary_license, None);
+
+        // Positional-only parameter
+        assert_eq!(find_sig("f_pos_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_pos_omitted").params[0].dynamic_boundary_license, None);
+
+        assert_eq!(find_sig("f_pos_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_pos_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        // Keyword-only parameter
+        assert_eq!(find_sig("f_kw_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_kw_omitted").params[0].dynamic_boundary_license, None);
+
+        assert_eq!(find_sig("f_kw_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_kw_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        // Star args parameter
+        assert_eq!(find_sig("f_star_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_star_omitted").params[0].dynamic_boundary_license, None);
+
+        assert_eq!(find_sig("f_star_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_star_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        // Double star kwargs parameter
+        assert_eq!(find_sig("f_dstar_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_dstar_omitted").params[0].dynamic_boundary_license, None);
+
+        assert_eq!(find_sig("f_dstar_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_dstar_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        // Method self parameter
+        assert_eq!(find_sig("m_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("m_omitted").params[0].dynamic_boundary_license, None);
+
+        assert_eq!(find_sig("m_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("m_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        // Decorated function parameter
+        assert_eq!(find_sig("fn_dec_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("fn_dec_omitted").params[0].dynamic_boundary_license, None);
+
+        assert_eq!(find_sig("fn_dec_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("fn_dec_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        // Generator function parameter
+        assert_eq!(find_sig("gen_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("gen_omitted").params[0].dynamic_boundary_license, None);
+
+        assert_eq!(find_sig("gen_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("gen_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
     }
 }

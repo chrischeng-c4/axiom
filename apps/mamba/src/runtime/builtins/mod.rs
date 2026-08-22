@@ -5,6 +5,7 @@ use super::rc::{MbObject, ObjData};
 /// These are the actual implementations of built-in functions that the
 /// compiled code calls at runtime via function pointers or extern calls.
 use super::value::MbValue;
+pub use super::class::{mb_getattr as mb_get_attr, mb_setattr as mb_set_attr};
 use rustc_hash::FxHashMap;
 
 mod absolute;
@@ -27,7 +28,7 @@ mod comparison_adapters;
 mod complex_constructor;
 mod complex_helpers;
 mod datetime_errors;
-mod errors;
+pub mod errors;
 mod eval_exec;
 mod floor_division;
 mod generic_alias;
@@ -39,7 +40,7 @@ mod int_base_constructor;
 mod length;
 mod map_filter;
 mod memoryview;
-mod numeric_format;
+pub mod numeric_format;
 mod numeric_handles;
 mod numeric_parsing;
 mod numeric_subclass;
@@ -50,8 +51,11 @@ mod power;
 mod range_slice;
 mod set_constructors;
 mod str_constructor;
-mod str_conversion;
+pub mod str_conversion;
 mod truthiness;
+
+pub use numeric_format::{format_numeric_percent, PercentFormatOptions};
+pub use str_conversion::mb_str_repr;
 mod type_objects;
 mod type_union;
 mod unary_negation;
@@ -254,11 +258,11 @@ pub fn mb_print(val: MbValue) -> MbValue {
                     } else {
                         let items = lock.read().unwrap();
                         mb_out!("[");
-                        for (i, item) in items.iter().enumerate() {
+                        for (i, item) in items.to_vec().into_iter().enumerate() {
                             if i > 0 {
                                 mb_out!(", ");
                             }
-                            print_repr(*item);
+                            print_repr(item);
                         }
                         mb_outln!("]");
                         super::repr_guard::leave(self_ptr);
@@ -337,7 +341,8 @@ pub fn mb_print(val: MbValue) -> MbValue {
                                     Some(
                                         lk.read()
                                             .unwrap()
-                                            .iter()
+                                            .to_vec()
+                                            .into_iter()
                                             .filter_map(|v| {
                                                 v.as_ptr().and_then(|pp| {
                                                     if let ObjData::Str(ref s) = (*pp).data {
@@ -606,11 +611,11 @@ pub fn mb_print_args(args_list: MbValue) -> MbValue {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                for (i, item) in items.iter().enumerate() {
+                for (i, item) in items.to_vec().into_iter().enumerate() {
                     if i > 0 {
                         mb_out!(" ");
                     }
-                    print_value_str(*item);
+                    print_value_str(item);
                 }
                 mb_outln!("");
                 return MbValue::none();
@@ -905,11 +910,11 @@ fn print_repr(val: MbValue) {
                     } else {
                         let items = lock.read().unwrap();
                         mb_out!("[");
-                        for (i, item) in items.iter().enumerate() {
+                        for (i, item) in items.to_vec().into_iter().enumerate() {
                             if i > 0 {
                                 mb_out!(", ");
                             }
-                            print_repr(*item);
+                            print_repr(item);
                         }
                         mb_out!("]");
                         super::repr_guard::leave(self_ptr);
@@ -1580,9 +1585,9 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                                 if let (ObjData::List(ref la), ObjData::List(ref lb)) =
                                     (&(*pla).data, &(*plb).data)
                                 {
-                                    let mut result = la.read().unwrap().clone();
-                                    result.extend_from_slice(&lb.read().unwrap());
-                                    return MbValue::from_ptr(MbObject::new_list_inline(result));
+                                    let mut result = la.read().unwrap().to_vec();
+                                    result.extend(lb.read().unwrap().to_vec());
+                                    return MbValue::from_ptr(MbObject::new_list(result));
                                 }
                             }
                         }
@@ -2010,16 +2015,6 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
             if let (Some(av), Some(bv)) = (dict_like_operand(a), dict_like_operand(b)) {
                 return super::dict_ops::mb_dict_or(av, bv);
             }
-            // `dict | <non-dict>` reaches here only as the fallback for `|=`
-            // (`mb_ior` → `mb_inplace` hands the dict receiver to `mb_bitor`,
-            // since `dict` has no Instance `__ior__`). PEP 584's in-place merge
-            // is as permissive as `dict.update`: it accepts any iterable of
-            // key/value pairs and mutates the receiver in place. Route it to
-            // `mb_dict_ior`, which validates and raises TypeError/ValueError to
-            // match CPython.
-            if matches!((*pa).data, ObjData::Dict(_)) {
-                return super::dict_ops::mb_dict_ior(a, b);
-            }
             // Counter | Counter — CPython multiset max. (#1636)
             if super::stdlib::collections_mod::is_counter_instance(a)
                 && super::stdlib::collections_mod::is_counter_instance(b)
@@ -2065,9 +2060,11 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
             if !super::exception::has_current_exception() {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        "unsupported operand type(s) for |".to_string(),
-                    )),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "unsupported operand type(s) for |: '{}' and '{}'",
+                        value_type_name(a),
+                        value_type_name(b)
+                    ))),
                 );
             }
             return MbValue::none();
@@ -2296,14 +2293,14 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
         return super::stdlib::array_mod::mb_array_repeat(b, a);
     }
 
-    match (a.as_int(), b.as_int()) {
+    match (a.as_int_pyint(), b.as_int_pyint()) {
         (Some(_), Some(_)) => unsafe { super::bigint_ops::mb_int_mul(a, b) },
         _ => {
             // List * Int or Int * List → repetition
-            let (list_val, n) = if a.as_ptr().is_some() && b.as_int().is_some() {
-                (a, b.as_int().unwrap())
-            } else if b.as_ptr().is_some() && a.as_int().is_some() {
-                (b, a.as_int().unwrap())
+            let (list_val, n) = if a.as_ptr().is_some() && b.as_int_pyint().is_some() {
+                (a, b.as_int_pyint().unwrap())
+            } else if b.as_ptr().is_some() && a.as_int_pyint().is_some() {
+                (b, a.as_int_pyint().unwrap())
             } else {
                 (MbValue::none(), 0)
             };
@@ -2323,7 +2320,7 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
                 unsafe {
                     match &(*ptr).data {
                         ObjData::List(ref lock) => {
-                            let items = lock.read().unwrap();
+                            let items = lock.read().unwrap().to_vec();
                             let n = n.max(0) as usize;
                             let mut result = Vec::with_capacity(items.len() * n);
                             for _ in 0..n {
@@ -2742,11 +2739,11 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         };
         return a.as_int().unwrap_or(i64::MIN) == bi;
     }
-    // Int-float cross-comparison
-    if let (Some(ai), Some(bf)) = (a.as_int(), b.as_float()) {
+    // Int-float and Bool-float cross-comparison
+    if let (Some(ai), Some(bf)) = (a.as_int_pyint(), b.as_float()) {
         return (ai as f64) == bf;
     }
-    if let (Some(af), Some(bi)) = (a.as_float(), b.as_int()) {
+    if let (Some(af), Some(bi)) = (a.as_float(), b.as_int_pyint()) {
         return af == (bi as f64);
     }
     // BigInt value equality: two heap big integers (or a heap big int and an
@@ -3562,7 +3559,22 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
                     };
                     seq_lt(&av, &bv)
                 }
-                // Instance: dispatch __lt__ dunder
+                // Instance: dispatch __lt__ dunder (with subclass reflected __gt__ priority)
+                (
+                    ObjData::Instance { class_name: ca, .. },
+                    ObjData::Instance { class_name: cb, .. },
+                ) => {
+                    if ca != cb
+                        && super::class::class_mro_list(cb).iter().any(|m| m == ca || m.ends_with(&format!(".{ca}")) || ca.ends_with(&format!(".{m}")))
+                        && !super::class::lookup_method(cb, "__gt__").is_none()
+                    {
+                        if let Some(res) = dispatch_richcmp_dunder_result(b, a, cb, "__gt__") {
+                            return res;
+                        }
+                    }
+                    dispatch_richcmp_dunder_result(a, b, ca, "__lt__")
+                        .unwrap_or_else(|| values_lt_fallback(a, b))
+                }
                 (ObjData::Instance { class_name, .. }, _) => {
                     dispatch_richcmp_dunder_result(a, b, class_name, "__lt__")
                         .unwrap_or_else(|| values_lt_fallback(a, b))
@@ -3619,6 +3631,9 @@ fn dispatch_richcmp_dunder_result(
     let method_name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
     let args = MbValue::from_ptr(MbObject::new_list(vec![b]));
     let result = super::class::mb_call_method(a, method_name, args);
+    if super::exception::has_current_exception() {
+        return None;
+    }
     if result.is_not_implemented() {
         return None;
     }
@@ -3627,6 +3642,9 @@ fn dispatch_richcmp_dunder_result(
     }
     if let Some(iv) = result.as_int() {
         return Some(iv != 0);
+    }
+    if !result.is_none() {
+        return Some(mb_is_truthy(result) != 0);
     }
     Some(false)
 }
@@ -3690,15 +3708,24 @@ pub fn mb_min(args: MbValue) -> MbValue {
         return MbValue::none();
     }
     let items = extract_items(args);
+    if super::exception::has_current_exception() {
+        return MbValue::none();
+    }
     if items.is_empty() {
         // CPython: min(()) raises ValueError (no silent None default).
         raise_value_error("min() arg is an empty sequence".to_string());
         return MbValue::none();
     }
-    items
-        .into_iter()
-        .reduce(|a, b| if compare_values(a, b) { a } else { b })
-        .unwrap_or(MbValue::none())
+    let mut min_val = items[0];
+    for item in items.into_iter().skip(1) {
+        if compare_values(item, min_val) {
+            min_val = item;
+        }
+        if super::exception::has_current_exception() {
+            return MbValue::none();
+        }
+    }
+    min_val
 }
 
 /// max(iterable) or max(a, b) — return the largest value.
@@ -3707,15 +3734,24 @@ pub fn mb_max(args: MbValue) -> MbValue {
         return MbValue::none();
     }
     let items = extract_items(args);
-    if items.is_empty() {
-        // CPython: max(()) raises ValueError (no silent None default).
-        raise_value_error("max() iterable argument is empty".to_string());
+    if super::exception::has_current_exception() {
         return MbValue::none();
     }
-    items
-        .into_iter()
-        .reduce(|a, b| if compare_values(b, a) { a } else { b })
-        .unwrap_or(MbValue::none())
+    if items.is_empty() {
+        // CPython: max(()) raises ValueError (no silent None default).
+        raise_value_error("max() arg is an empty sequence".to_string());
+        return MbValue::none();
+    }
+    let mut max_val = items[0];
+    for item in items.into_iter().skip(1) {
+        if compare_values(max_val, item) {
+            max_val = item;
+        }
+        if super::exception::has_current_exception() {
+            return MbValue::none();
+        }
+    }
+    max_val
 }
 
 /// sum(iterable) — sum all numeric values.
@@ -3726,9 +3762,44 @@ pub fn mb_sum(args: MbValue) -> MbValue {
 /// One sum() fold step. mb_add covers numerics, sequences, and the stdlib
 /// handle types; instances dispatch __add__/__radd__; anything mb_add
 /// declines (returns None without a pending exception) is a TypeError.
+fn check_sum_start_rejected(start: MbValue) -> Option<&'static str> {
+    if let Some(ptr) = start.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Str(_) => return Some("strings [use ''.join(seq) instead]"),
+                ObjData::Bytes(_) => return Some("bytes [use b''.join(seq) instead]"),
+                ObjData::ByteArray(_) => return Some("bytearray [use b''.join(seq) instead]"),
+                ObjData::Instance { ref class_name, .. } => {
+                    let is_str = |name: &str| name == "str" || name == "builtins.str" || name.ends_with(".str");
+                    let is_bytes = |name: &str| name == "bytes" || name == "builtins.bytes" || name.ends_with(".bytes");
+                    let is_bytearray = |name: &str| name == "bytearray" || name == "builtins.bytearray" || name.ends_with(".bytearray");
+
+                    if is_str(class_name)
+                        || super::class::class_mro_list(class_name).iter().any(|b| is_str(b))
+                    {
+                        return Some("strings [use ''.join(seq) instead]");
+                    }
+                    if is_bytes(class_name)
+                        || super::class::class_mro_list(class_name).iter().any(|b| is_bytes(b))
+                    {
+                        return Some("bytes [use b''.join(seq) instead]");
+                    }
+                    if is_bytearray(class_name)
+                        || super::class::class_mro_list(class_name).iter().any(|b| is_bytearray(b))
+                    {
+                        return Some("bytearray [use b''.join(seq) instead]");
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn sum_fold_add(acc: MbValue, item: MbValue) -> MbValue {
     let r = mb_add(acc, item);
-    if !r.is_none() || eval_pending() {
+    if (!r.is_none() && !r.is_not_implemented()) || eval_pending() {
         return r;
     }
     for (recv, arg, dunder) in [(acc, item, "__add__"), (item, acc, "__radd__")] {
@@ -3739,7 +3810,7 @@ fn sum_fold_add(acc: MbValue, item: MbValue) -> MbValue {
                     let name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
                     let call_args = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     let out = super::class::mb_call_method(recv, name, call_args);
-                    if !out.is_none() || eval_pending() {
+                    if (!out.is_none() && !out.is_not_implemented()) || eval_pending() {
                         return out;
                     }
                 }
@@ -3769,9 +3840,60 @@ fn neumaier_step(ftotal: f64, c: f64, x: f64) -> (f64, f64) {
 }
 
 fn sum_from(args: MbValue, start: MbValue) -> MbValue {
+    if let Some(kind) = check_sum_start_rejected(start) {
+        raise_type_error(format!("sum() can't sum {kind}"));
+        return MbValue::none();
+    }
     if raise_if_not_iterable(args) {
         return MbValue::none();
     }
+    // Fast path: contiguous unboxed i64/f64 scalar buffers (WI #1075 / #1071-4)
+    if let Some(ptr) = args.as_ptr() {
+        if unsafe { (*ptr).header.kind } == super::rc::ObjKind::List {
+            if let ObjData::List(ref lock) = unsafe { &(*ptr).data } {
+                let guard = lock.read().unwrap();
+                match &*guard {
+                    super::rc::MbListBuffer::Int(vec) => {
+                        if let Some(s) = start.as_int_pyint() {
+                            let mut total: i128 = s as i128;
+                            for &item in vec.iter() {
+                                total += item as i128;
+                            }
+                            if let Ok(small) = i64::try_from(total) {
+                                return super::bigint_ops::int_from_i64(small);
+                            }
+                            return super::bigint_ops::bigint_from_i128(total);
+                        } else if start.is_float() {
+                            let mut ftotal = start.as_float().unwrap();
+                            let mut c = 0.0;
+                            for &item in vec.iter() {
+                                let (nt, nc) = neumaier_step(ftotal, c, item as f64);
+                                ftotal = nt;
+                                c = nc;
+                            }
+                            return MbValue::from_float(ftotal + c);
+                        }
+                    }
+                    super::rc::MbListBuffer::Float(vec) => {
+                        if start.as_int_pyint().is_some() || start.is_float() {
+                            let mut ftotal = start.as_float().unwrap_or_else(|| {
+                                start.as_int_pyint().map(|i| i as f64).unwrap_or(0.0)
+                            });
+                            let mut c = 0.0;
+                            for &item in vec.iter() {
+                                let (nt, nc) = neumaier_step(ftotal, c, item);
+                                ftotal = nt;
+                                c = nc;
+                            }
+                            return MbValue::from_float(ftotal + c);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     let items = extract_items(args);
     // Fast path: numeric start and all-numeric items (i128 accumulator so
     // inline-int sums can never overflow; result normalizes to BigInt).
@@ -3850,7 +3972,14 @@ pub fn mb_sorted(iterable: MbValue, reverse: MbValue) -> MbValue {
         return MbValue::none();
     }
     let mut items = extract_items(iterable);
-    let do_reverse = reverse.as_bool() == Some(true) || reverse.as_int() == Some(1);
+    if super::exception::has_current_exception() {
+        if super::exception::current_exception_is("StopIteration") {
+            super::exception::mb_clear_exception();
+        } else {
+            return MbValue::none();
+        }
+    }
+    let do_reverse = mb_is_truthy(reverse) != 0;
 
     // Type-specialized sort: detect homogeneous lists and use a cheaper comparator.
     // For all-int lists (common: sorted(range(N))), use direct i64 comparison
@@ -3882,6 +4011,14 @@ pub fn mb_sorted(iterable: MbValue, reverse: MbValue) -> MbValue {
         }
     }
 
+    if super::exception::has_current_exception() {
+        if super::exception::current_exception_is("StopIteration") {
+            super::exception::mb_clear_exception();
+        } else {
+            return MbValue::none();
+        }
+    }
+
     // Items are borrowed from the source container via extract_items — retain them.
     MbValue::from_ptr(MbObject::new_list_borrowed(items))
 }
@@ -3909,7 +4046,11 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
     // (#1547). CPython's real sort aborts at the first failing comparison,
     // so preserving the first exception is what matches its behavior.
     if super::exception::has_current_exception() {
-        return std::cmp::Ordering::Equal;
+        if super::exception::current_exception_is("StopIteration") {
+            super::exception::mb_clear_exception();
+        } else {
+            return std::cmp::Ordering::Equal;
+        }
     }
     // Fast path: both ints — direct i64 comparison (no float conversion).
     if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
@@ -4461,7 +4602,8 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                                 if let ObjData::List(ref lk) = (*p).data {
                                     lk.read()
                                         .unwrap()
-                                        .iter()
+                                        .to_vec()
+                                        .into_iter()
                                         .filter_map(|k| {
                                             k.as_ptr().and_then(|kp| {
                                                 if let ObjData::Str(ref s) = (*kp).data {
@@ -4678,11 +4820,11 @@ pub fn mb_print_kwargs(args_list: MbValue, sep: MbValue, end: MbValue) -> MbValu
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                for (i, item) in items.iter().enumerate() {
+                for (i, item) in items.to_vec().into_iter().enumerate() {
                     if i > 0 {
                         mb_out!("{}", sep_str);
                     }
-                    print_value_str(*item);
+                    print_value_str(item);
                 }
                 mb_out!("{}", end_str);
                 return MbValue::none();
@@ -4761,11 +4903,11 @@ pub fn mb_print_kwargs_file(
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                for (i, item) in items.iter().enumerate() {
+                for (i, item) in items.to_vec().into_iter().enumerate() {
                     if i > 0 {
                         line.push_str(&sep_str);
                     }
-                    let s = mb_str(*item);
+                    let s = mb_str(item);
                     if let Some(sp) = s.as_ptr() {
                         if let ObjData::Str(ref st) = (*sp).data {
                             line.push_str(st);
@@ -4878,7 +5020,8 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                             if let Ok(guard) = lock.try_read() {
                                 let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
                                     std::mem::transmute(addr);
-                                return f(guard.as_ptr(), guard.len());
+                                let items = guard.to_vec();
+                                return f(items.as_ptr(), items.len());
                             }
                         }
                         ObjData::Tuple(items) => {
@@ -5520,10 +5663,16 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                                     items.clone(),
                                 )))
                             }),
-                            "map" => Some(mb_map(
-                                items.first().copied().unwrap_or_else(MbValue::none),
-                                items.get(1).copied().unwrap_or_else(MbValue::none),
-                            )),
+                            "map" => Some(match items.len() {
+                                0 | 1 => type_error_value("map() must have at least two arguments."),
+                                2 => mb_map(items[0], items[1]),
+                                _ => {
+                                    let func = items[0];
+                                    let iterables = items[1..].to_vec();
+                                    let list_val = MbValue::from_ptr(MbObject::new_list(iterables));
+                                    super::iter::mb_map_n(func, list_val)
+                                }
+                            }),
                             "filter" => Some(match items.len() {
                                 2 => mb_filter(items[0], items[1]),
                                 n => type_error_value(format!(
@@ -5986,6 +6135,11 @@ fn kwargs_dict_pairs(dict: MbValue) -> Vec<(String, MbValue)> {
                 for (k, v) in lock.read().unwrap().iter() {
                     match k {
                         super::dict_ops::DictKey::Str(ref s) => out.push((s.clone(), *v)),
+                        super::dict_ops::DictKey::Other(ref s) => out.push((s.clone(), *v)),
+                        super::dict_ops::DictKey::StrCodepoints(ref cp) => {
+                            let s: String = cp.iter().filter_map(|&c| char::from_u32(c)).collect();
+                            out.push((s, *v));
+                        }
                         _ => {
                             raise_type_error("keywords must be strings".to_string());
                             return out;
@@ -6053,6 +6207,7 @@ fn bind_declared_call_frame(
     pos: &[MbValue],
     kw_pairs: &[(String, MbValue)],
 ) -> Option<Vec<MbValue>> {
+    let fname = callable_display_name(func);
     let params = super::closure::func_params(func)?;
     let has_varargs = params.iter().any(|p| p.kind == 2);
     let has_varkw = params.iter().any(|p| p.kind == 4);
@@ -6103,7 +6258,7 @@ fn bind_declared_call_frame(
                     Vec::new()
                 };
                 pos_idx = pos.len();
-                frame.push(MbValue::from_ptr(MbObject::new_list(rest)));
+                frame.push(MbValue::from_ptr(MbObject::new_tuple(rest)));
             }
             3 => {
                 if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
@@ -6306,6 +6461,10 @@ fn adapt_value_for_entry_abi(value: MbValue, entry_abi: &str) -> MbValue {
     }
 }
 
+fn has_explicit_any_license(param: &super::closure::MbParamInfo) -> bool {
+    param.dynamic_boundary_license == Some(crate::types::DynamicBoundaryLicense::ExplicitAny)
+}
+
 /// Enforce the declared scalar wall after Python binding and adapt once to the
 /// actual JIT entry representation. Missing/unknown contracts remain dynamic;
 /// an ABI conversion is best effort and is never an independent rejection.
@@ -6323,10 +6482,20 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
             // participate in scalar entry-ABI adaptation, even when their
             // element contract is absent or unsupported.
             2 => {
+                if matches!(param.annotation.as_deref(), Some("Any" | "typing.Any"))
+                    && !has_explicit_any_license(param)
+                {
+                    raise_type_error(format!(
+                        "{fname}() argument '{}' requires an explicit Any dynamic-boundary license",
+                        param.name
+                    ));
+                    return false;
+                }
                 if let Some(contract) = contract {
                     let elements = value.as_ptr().and_then(|ptr| unsafe {
                         match &(*ptr).data {
-                            ObjData::List(lock) => Some(lock.read().unwrap().clone()),
+                            ObjData::List(lock) => Some(lock.read().unwrap().to_vec()),
+                            ObjData::Tuple(vec) => Some(vec.clone()),
                             _ => None,
                         }
                     });
@@ -6351,6 +6520,15 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
             // Likewise, inspect values in the packed kwargs dict without
             // rebuilding or unboxing the entry-frame container.
             4 => {
+                if matches!(param.annotation.as_deref(), Some("Any" | "typing.Any"))
+                    && !has_explicit_any_license(param)
+                {
+                    raise_type_error(format!(
+                        "{fname}() argument '{}' requires an explicit Any dynamic-boundary license",
+                        param.name
+                    ));
+                    return false;
+                }
                 if let Some(contract) = contract {
                     if let Some((key, actual)) = kwargs_dict_pairs(*value)
                         .into_iter()
@@ -6380,6 +6558,14 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
                 ));
                 return false;
             }
+        } else if matches!(param.annotation.as_deref(), Some("Any" | "typing.Any"))
+            && !has_explicit_any_license(param)
+        {
+            raise_type_error(format!(
+                "{fname}() argument '{}' requires an explicit Any dynamic-boundary license",
+                param.name
+            ));
+            return false;
         }
         *value = adapt_value_for_entry_abi(*value, &param.entry_abi);
     }
@@ -6715,7 +6901,7 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
     }
     let mut frame = Vec::new();
     if has_star {
-        frame.push(MbValue::from_ptr(MbObject::new_list(pos)));
+        frame.push(MbValue::from_ptr(MbObject::new_tuple(pos)));
     }
     if has_kwargs {
         frame.push(kwargs_dict);
@@ -6795,24 +6981,59 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
         .as_func()
         .filter(|addr| super::module::is_native_func(*addr as u64))
         .and_then(|_| super::class::resolve_class_name(func));
-    if let Some(type_name) = native_type_ctor.clone().or_else(|| {
-        func.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
+    let resolved_name = native_type_ctor
+        .clone()
+        .or_else(|| {
+            func.as_ptr().and_then(|ptr| unsafe {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
         })
-    }) {
-        if type_name == "list" {
-            raise_type_error("list() takes no keyword arguments".to_string());
+        .or_else(|| super::class::resolve_class_name(func))
+        .or_else(|| {
+            func.as_func().and_then(|addr| {
+                if addr == mb_abs as usize {
+                    Some("abs".to_string())
+                } else if addr == mb_chr as usize {
+                    Some("chr".to_string())
+                } else if addr == mb_ord as usize {
+                    Some("ord".to_string())
+                } else if addr == mb_len as usize {
+                    Some("len".to_string())
+                } else if addr == mb_bool as usize {
+                    Some("bool".to_string())
+                } else if addr == mb_str as usize {
+                    Some("str".to_string())
+                } else {
+                    None
+                }
+            })
+        });
+    if let Some(type_name) = resolved_name {
+        if matches!(
+            type_name.as_str(),
+            "len" | "bool" | "str" | "tuple" | "range" | "slice" | "chr" | "ord" | "abs" | "list" | "float"
+        ) {
+            raise_type_error(format!("{type_name}() takes no keyword arguments"));
             return MbValue::none();
         }
-        // float() takes no keyword arguments at all (unlike int(), it has no
-        // `base` keyword). Mirrors the list() check above. (#1057)
-        if type_name == "float" {
-            raise_type_error("float() takes no keyword arguments".to_string());
-            return MbValue::none();
+        if type_name == "min" || type_name == "max" {
+            let has_default = kw_pairs.iter().any(|(k, _)| k == "default");
+            if let Some((bad_key, _)) = kw_pairs.iter().find(|(k, _)| *k != "key" && *k != "default") {
+                raise_type_error(format!(
+                    "{type_name}() got an unexpected keyword argument '{bad_key}'"
+                ));
+                return MbValue::none();
+            }
+            if pos.len() >= 2 && has_default {
+                raise_type_error(format!(
+                    "Cannot specify a default for {type_name}() with multiple positional arguments"
+                ));
+                return MbValue::none();
+            }
         }
         // int() accepts only `base` as a keyword; any other keyword name is
         // rejected with CPython's exact per-key message. (#1057)
@@ -7251,6 +7472,32 @@ mod tests {
         ]))
     }
 
+    fn strict_param_sig_with_license(
+        name: &str,
+        kind: i64,
+        annotation: Option<&str>,
+        entry_abi: &str,
+        contract: Option<&str>,
+        license: Option<&str>,
+    ) -> MbValue {
+        let base = strict_param_sig(name, kind, annotation, entry_abi, contract);
+        let Some(ptr) = base.as_ptr() else {
+            unreachable!("parameter signature must be a tuple");
+        };
+        let mut fields = unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(fields) => fields.clone(),
+                _ => unreachable!("parameter signature must be a tuple"),
+            }
+        };
+        fields.push(
+            license
+                .map(|value| MbValue::from_ptr(MbObject::new_str(value.to_string())))
+                .unwrap_or_else(MbValue::none),
+        );
+        MbValue::from_ptr(MbObject::new_tuple(fields))
+    }
+
     #[test]
     fn test_dynamic_ingress_contract_and_abi_are_independent() {
         super::super::closure::cleanup_all_closures();
@@ -7392,14 +7639,105 @@ mod tests {
         let five = super::super::closure::func_params(legacy_five).unwrap();
         assert_eq!(five[0].entry_abi, "boxed");
         assert!(five[0].contract.is_none());
+        assert!(five[0].dynamic_boundary_license.is_none());
         let six = super::super::closure::func_params(legacy_six).unwrap();
         assert_eq!(six[0].entry_abi, "raw-int");
         assert!(six[0].contract.is_none());
+        assert!(six[0].dynamic_boundary_license.is_none());
 
         let dynamic = MbValue::from_ptr(MbObject::new_str("dynamic".to_string()));
         let mut frame = vec![dynamic];
         assert!(validate_and_adapt_declared_frame(legacy_six, &mut frame));
         assert_eq!(frame[0].to_bits(), dynamic.to_bits());
+        super::super::closure::cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_dynamic_ingress_license_round_trip_and_fail_closed_unknown() {
+        super::super::closure::cleanup_all_closures();
+        let licensed = MbValue::from_func(995);
+        let malformed = MbValue::from_func(996);
+        let missing = MbValue::from_func(997);
+        super::super::closure::mb_func_set_name(
+            licensed,
+            MbValue::from_ptr(MbObject::new_str("licensed_target".to_string())),
+        );
+        super::super::closure::mb_func_set_name(
+            malformed,
+            MbValue::from_ptr(MbObject::new_str("malformed_target".to_string())),
+        );
+        super::super::closure::mb_func_set_name(
+            missing,
+            MbValue::from_ptr(MbObject::new_str("missing_target".to_string())),
+        );
+        super::super::closure::mb_func_set_params(
+            licensed,
+            MbValue::from_ptr(MbObject::new_list(vec![strict_param_sig_with_license(
+                "value",
+                1,
+                Some("Any"),
+                "boxed",
+                None,
+                Some("explicit-any"),
+            )])),
+        );
+        super::super::closure::mb_func_set_params(
+            malformed,
+            MbValue::from_ptr(MbObject::new_list(vec![strict_param_sig_with_license(
+                "value",
+                1,
+                Some("Any"),
+                "boxed",
+                None,
+                Some("not-a-license"),
+            )])),
+        );
+        super::super::closure::mb_func_set_params(
+            missing,
+            MbValue::from_ptr(MbObject::new_list(vec![strict_param_sig(
+                "value",
+                1,
+                Some("Any"),
+                "boxed",
+                None,
+            )])),
+        );
+
+        let licensed_params = super::super::closure::func_params(licensed).unwrap();
+        assert_eq!(
+            licensed_params[0].dynamic_boundary_license,
+            Some(crate::types::DynamicBoundaryLicense::ExplicitAny)
+        );
+        let malformed_params = super::super::closure::func_params(malformed).unwrap();
+        assert!(malformed_params[0].dynamic_boundary_license.is_none());
+        let missing_params = super::super::closure::func_params(missing).unwrap();
+        assert!(missing_params[0].dynamic_boundary_license.is_none());
+
+        let mut int_frame = vec![MbValue::from_int(21)];
+        assert!(validate_and_adapt_declared_frame(licensed, &mut int_frame));
+        let mut str_frame = vec![MbValue::from_ptr(MbObject::new_str("ab".to_string()))];
+        assert!(validate_and_adapt_declared_frame(licensed, &mut str_frame));
+
+        let mut malformed_frame = vec![MbValue::from_int(21)];
+        assert!(!validate_and_adapt_declared_frame(
+            malformed,
+            &mut malformed_frame
+        ));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+        let mut missing_frame = vec![MbValue::from_int(21)];
+        assert!(!validate_and_adapt_declared_frame(
+            missing,
+            &mut missing_frame
+        ));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
         super::super::closure::cleanup_all_closures();
     }
 
@@ -8243,9 +8581,9 @@ mod tests {
             let ptr = sorted.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                assert_eq!(items[0].as_int(), Some(1));
-                assert_eq!(items[1].as_int(), Some(2));
-                assert_eq!(items[2].as_int(), Some(3));
+                assert_eq!(items.get(0).unwrap().as_int(), Some(1));
+                assert_eq!(items.get(1).unwrap().as_int(), Some(2));
+                assert_eq!(items.get(2).unwrap().as_int(), Some(3));
             }
         }
     }
@@ -9930,13 +10268,49 @@ def f():
             let ptr = result.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                assert_eq!(items[0].as_int(), Some(3));
-                assert_eq!(items[1].as_int(), Some(2));
-                assert_eq!(items[2].as_int(), Some(1));
+                assert_eq!(items.get(0).unwrap().as_int(), Some(3));
+                assert_eq!(items.get(1).unwrap().as_int(), Some(2));
+                assert_eq!(items.get(2).unwrap().as_int(), Some(1));
             } else {
                 panic!("expected list");
             }
         }
+    }
+
+    #[test]
+    fn test_sorted_kwargs_reverse_non_bool_truthy() {
+        let list = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+        let str_truthy = MbValue::from_ptr(MbObject::new_str("true".to_string()));
+        let result = mb_sorted_kwargs(list, MbValue::none(), str_truthy);
+        unsafe {
+            let ptr = result.as_ptr().unwrap();
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.get(0).unwrap().as_int(), Some(3));
+                assert_eq!(items.get(1).unwrap().as_int(), Some(2));
+                assert_eq!(items.get(2).unwrap().as_int(), Some(1));
+            } else {
+                panic!("expected list");
+            }
+        }
+    }
+
+    #[test]
+    fn test_sum_subclass_start_rejection() {
+        let custom_str_instance = MbValue::from_ptr(MbObject::new_instance("MyStr".to_string()));
+        crate::runtime::class::mb_class_register(
+            "MyStr",
+            vec!["builtins.str".to_string()],
+            std::collections::HashMap::new(),
+        );
+        assert_eq!(
+            check_sum_start_rejected(custom_str_instance),
+            Some("strings [use ''.join(seq) instead]")
+        );
     }
 
     #[test]
@@ -9957,9 +10331,9 @@ def f():
             let ptr = result.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                assert_eq!(items[0].to_bits(), first.to_bits());
-                assert_eq!(items[1].to_bits(), second.to_bits());
-                assert_eq!(items[2].to_bits(), short.to_bits());
+                assert_eq!(items.get(0).unwrap().to_bits(), first.to_bits());
+                assert_eq!(items.get(1).unwrap().to_bits(), second.to_bits());
+                assert_eq!(items.get(2).unwrap().to_bits(), short.to_bits());
             } else {
                 panic!("expected list");
             }
@@ -9978,9 +10352,9 @@ def f():
             let ptr = result.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                assert_eq!(items[0].as_int(), Some(1));
-                assert_eq!(items[1].as_int(), Some(3));
-                assert_eq!(items[2].as_int(), Some(5));
+                assert_eq!(items.get(0).unwrap().as_int(), Some(1));
+                assert_eq!(items.get(1).unwrap().as_int(), Some(3));
+                assert_eq!(items.get(2).unwrap().as_int(), Some(5));
             } else {
                 panic!("expected list");
             }
@@ -10902,5 +11276,28 @@ def f():
         // int must not coerce.
         assert!(super::try_bytes_like(MbValue::from_int(42)).is_none());
     }
+
+    #[test]
+    fn test_wi2051_min_max_float_int_stability_rust() {
+        let f1 = MbValue::from_float(1.0);
+        let i1 = MbValue::from_int(1);
+
+        let min_res1 = mb_min(MbValue::from_ptr(MbObject::new_list(vec![f1, i1])));
+        assert!(min_res1.is_float());
+        assert_eq!(min_res1.as_float(), Some(1.0));
+
+        let max_res1 = mb_max(MbValue::from_ptr(MbObject::new_list(vec![f1, i1])));
+        assert!(max_res1.is_float());
+        assert_eq!(max_res1.as_float(), Some(1.0));
+
+        let min_res2 = mb_min(MbValue::from_ptr(MbObject::new_list(vec![i1, f1])));
+        assert!(min_res2.is_int());
+        assert_eq!(min_res2.as_int(), Some(1));
+
+        let max_res2 = mb_max(MbValue::from_ptr(MbObject::new_list(vec![i1, f1])));
+        assert!(max_res2.is_int());
+        assert_eq!(max_res2.as_int(), Some(1));
+    }
     // HANDWRITE-END
 }
+

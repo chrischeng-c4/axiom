@@ -797,7 +797,8 @@ pub fn register() {
     // Streaming method table shared with bz2.BZ2File / gzip.GzipFile.
     super::compressed_file::register_class("LZMAFile");
 
-    super::register_module("lzma", attrs);
+    super::register_module("lzma", attrs.clone());
+    super::register_module("_lzma", attrs);
 }
 
 /// Borrow the byte payload of `val` as `&[u8]` for the duration of `f`.

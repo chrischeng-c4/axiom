@@ -88,7 +88,7 @@ unsafe fn collect_strings(val: MbValue) -> Vec<String> {
             .read()
             .unwrap()
             .iter()
-            .filter_map(|v| as_str(*v))
+            .filter_map(|v| as_str(v))
             .collect(),
         ObjData::Tuple(items) => items.iter().filter_map(|v| as_str(*v)).collect(),
         _ => Vec::new(),
@@ -418,7 +418,8 @@ mod tests {
                     if let ObjData::List(lock) = &(*ptr).data {
                         lock.read()
                             .unwrap()
-                            .iter()
+                            .to_vec()
+                            .into_iter()
                             .filter_map(|x| {
                                 let xp = x.as_ptr()?;
                                 if let ObjData::Str(s) = &(*xp).data {

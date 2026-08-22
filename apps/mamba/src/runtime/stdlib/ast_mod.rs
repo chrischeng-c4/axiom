@@ -2192,7 +2192,7 @@ fn feature_version_from_value(value: MbValue) -> Option<AstFeatureVersion> {
                 Some(AstFeatureVersion { major, minor })
             }
             ObjData::List(lock) => {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 let major = items.first().and_then(|v| v.as_int())?;
                 let minor = items.get(1).and_then(|v| v.as_int())?;
                 Some(AstFeatureVersion { major, minor })
@@ -5721,7 +5721,7 @@ fn ast_dump_value_with_options(
         unsafe {
             match &(*ptr).data {
                 super::super::rc::ObjData::List(lock) => {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     let rendered: Vec<String> = items
                         .iter()
                         .copied()
@@ -5804,7 +5804,7 @@ fn ast_dump_value(value: MbValue) -> String {
                 ObjData::Str(s) => return python_repr_str(s),
                 ObjData::Bytes(bytes) => return format!("{bytes:?}"),
                 ObjData::List(lock) => {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     let rendered: Vec<String> = items.iter().copied().map(ast_dump_value).collect();
                     return format!("[{}]", rendered.join(", "));
                 }
@@ -6387,7 +6387,7 @@ fn ast_docstring_body_first(node: MbValue) -> Option<MbValue> {
     let body = ast_attr_value(node, "body")?;
     body.as_ptr().and_then(|ptr| unsafe {
         if let super::super::rc::ObjData::List(ref items) = (*ptr).data {
-            items.read().unwrap().first().copied()
+            items.read().unwrap().first()
         } else {
             None
         }
@@ -6475,7 +6475,17 @@ pub fn mb_ast_fix_missing_locations(node: MbValue) -> MbValue {
             end_col_offset: 0,
         },
     );
-    node
+    // `node` is an alias of the caller's argument (e.g. still owned by an
+    // arg-list element), not a freshly constructed value. The JIT's
+    // dest-VReg preamble treats this CallExtern's result as an
+    // independently owned reference and will release it on its own —
+    // so returning `node` bare here under-retains it: the caller's dest
+    // slot and the original owner both end up releasing the same retain
+    // count, causing a premature free / use-after-free (#2692). Hand
+    // back a genuinely new owned reference via the established
+    // `rc::return_owned` convention (see `dict_ops::mb_dict_setdefault`
+    // for the same pattern).
+    super::super::rc::return_owned(node)
 }
 
 /// ast.increment_lineno(node, n=1) -> node
@@ -6496,7 +6506,15 @@ fn mb_ast_increment_lineno_checked(node: MbValue, n: MbValue, n_provided: bool) 
     }
     let delta = n.as_int().unwrap_or(1);
     increment_ast_node_locations(node, delta);
-    node
+    // `node` is an alias of the caller's argument, not a freshly constructed
+    // value. The JIT's dest-VReg preamble treats this CallExtern's result as
+    // an independently owned reference and will release it on its own — so
+    // returning `node` bare here under-retains it: the caller's dest slot
+    // and the original owner both end up releasing the same retain count,
+    // causing a premature free / use-after-free (#2715). Hand back a
+    // genuinely new owned reference via the established `rc::return_owned`
+    // convention (see `mb_ast_fix_missing_locations` above, #2692).
+    super::super::rc::return_owned(node)
 }
 
 /// ast.copy_location(new_node, old_node) -> new_node
@@ -6511,7 +6529,16 @@ pub fn mb_ast_copy_location(new_node: MbValue, old_node: MbValue) -> MbValue {
     copy_non_none_ast_attr(old_node, new_node, "col_offset");
     copy_ast_attr(old_node, new_node, "end_lineno");
     copy_ast_attr(old_node, new_node, "end_col_offset");
-    new_node
+    // `new_node` is an alias of the caller's argument, not a freshly
+    // constructed value. The JIT's dest-VReg preamble treats this
+    // CallExtern's result as an independently owned reference and will
+    // release it on its own — so returning `new_node` bare here
+    // under-retains it: the caller's dest slot and the original owner both
+    // end up releasing the same retain count, causing a premature free /
+    // use-after-free (#2715). Hand back a genuinely new owned reference via
+    // the established `rc::return_owned` convention (see
+    // `mb_ast_fix_missing_locations` above, #2692).
+    super::super::rc::return_owned(new_node)
 }
 
 fn ast_attr_value(node: MbValue, attr: &str) -> Option<MbValue> {
@@ -6751,7 +6778,7 @@ fn push_ast_child_values(value: MbValue, children: &mut Vec<MbValue>) {
     } else if let Some(list_ptr) = value.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*list_ptr).data {
-                let list = lock.read().unwrap();
+                let list = lock.read().unwrap().to_vec();
                 for item in list.iter() {
                     if is_ast_node_value(*item) {
                         children.push(*item);
@@ -6772,8 +6799,369 @@ pub fn mb_ast_walk(node: MbValue) -> MbValue {
 }
 
 /// ast.unparse(node) -> str
-pub fn mb_ast_unparse(_node: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("<unparsed>".to_string()))
+pub fn mb_ast_unparse(node: MbValue) -> MbValue {
+    let s = ast_unparse_val(node);
+    MbValue::from_ptr(MbObject::new_str(s))
+}
+
+fn ast_unparse_val(node: MbValue) -> String {
+    if node.is_none() {
+        return String::new();
+    }
+    let Some(ptr) = node.as_ptr() else {
+        if let Some(i) = node.as_int() {
+            return i.to_string();
+        }
+        if let Some(f) = node.as_float() {
+            return f.to_string();
+        }
+        if let Some(b) = node.as_bool() {
+            return if b { "True".to_string() } else { "False".to_string() };
+        }
+        return String::new();
+    };
+
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Str(s) => s.clone(),
+            ObjData::Bytes(b) => format!("{b:?}"),
+            ObjData::Instance { class_name, fields } => {
+                let f = fields.read().unwrap();
+                let get = |k: &str| f.get(k).copied().unwrap_or_else(MbValue::none);
+
+                match class_name.as_str() {
+                    "Module" | "Interactive" => {
+                        let body = get("body");
+                        ast_unparse_body(body)
+                    }
+                    "Expression" => ast_unparse_val(get("body")),
+                    "Constant" => {
+                        let val = get("value");
+                        if val.is_none() {
+                            "None".to_string()
+                        } else if let Some(b) = val.as_bool() {
+                            if b { "True".to_string() } else { "False".to_string() }
+                        } else if let Some(i) = val.as_int() {
+                            i.to_string()
+                        } else if let Some(fl) = val.as_float() {
+                            fl.to_string()
+                        } else if let Some(p) = val.as_ptr() {
+                            match &(*p).data {
+                                ObjData::Str(s) => format!("{s:?}"),
+                                ObjData::Bytes(b) => format!("{b:?}"),
+                                _ => "None".to_string(),
+                            }
+                        } else {
+                            "None".to_string()
+                        }
+                    }
+                    "Name" => {
+                        let id = get("id");
+                        extract_str(id).unwrap_or_default()
+                    }
+                    "Attribute" => {
+                        let value = ast_unparse_val(get("value"));
+                        let attr = extract_str(get("attr")).unwrap_or_default();
+                        format!("{value}.{attr}")
+                    }
+                    "Subscript" => {
+                        let value = ast_unparse_val(get("value"));
+                        let slice = ast_unparse_val(get("slice"));
+                        format!("{value}[{slice}]")
+                    }
+                    "Slice" => {
+                        let lower = ast_unparse_val(get("lower"));
+                        let upper = ast_unparse_val(get("upper"));
+                        let step = get("step");
+                        if step.is_none() {
+                            format!("{lower}:{upper}")
+                        } else {
+                            let st = ast_unparse_val(step);
+                            format!("{lower}:{upper}:{st}")
+                        }
+                    }
+                    "Starred" => {
+                        format!("*{}", ast_unparse_val(get("value")))
+                    }
+                    "Call" => {
+                        let func = ast_unparse_val(get("func"));
+                        let args = ast_unparse_list(get("args"), ", ");
+                        let keywords = ast_unparse_list(get("keywords"), ", ");
+                        let mut all_args = Vec::new();
+                        if !args.is_empty() {
+                            all_args.push(args);
+                        }
+                        if !keywords.is_empty() {
+                            all_args.push(keywords);
+                        }
+                        format!("{func}({})", all_args.join(", "))
+                    }
+                    "keyword" => {
+                        let arg = get("arg");
+                        let val = ast_unparse_val(get("value"));
+                        if arg.is_none() {
+                            format!("**{val}")
+                        } else {
+                            let arg_s = extract_str(arg).unwrap_or_default();
+                            format!("{arg_s}={val}")
+                        }
+                    }
+                    "BinOp" => {
+                        let left = ast_unparse_val(get("left"));
+                        let op = ast_unparse_val(get("op"));
+                        let right = ast_unparse_val(get("right"));
+                        format!("({left} {op} {right})")
+                    }
+                    "UnaryOp" => {
+                        let op = ast_unparse_val(get("op"));
+                        let operand = ast_unparse_val(get("operand"));
+                        let space = if op == "not" { " " } else { "" };
+                        format!("{op}{space}{operand}")
+                    }
+                    "BoolOp" => {
+                        let op = ast_unparse_val(get("op"));
+                        let values = ast_unparse_list(get("values"), &format!(" {op} "));
+                        format!("({values})")
+                    }
+                    "Compare" => {
+                        let left = ast_unparse_val(get("left"));
+                        let ops = get("ops");
+                        let comparators = get("comparators");
+                        let ops_str = ast_unparse_list_vec(ops);
+                        let comp_str = ast_unparse_list_vec(comparators);
+                        let mut res = left;
+                        for (o, c) in ops_str.iter().zip(comp_str.iter()) {
+                            res.push_str(&format!(" {o} {c}"));
+                        }
+                        res
+                    }
+                    "Add" => "+".to_string(),
+                    "Sub" => "-".to_string(),
+                    "Mult" => "*".to_string(),
+                    "Div" => "/".to_string(),
+                    "FloorDiv" => "//".to_string(),
+                    "Mod" => "%".to_string(),
+                    "Pow" => "**".to_string(),
+                    "LShift" => "<<".to_string(),
+                    "RShift" => ">>".to_string(),
+                    "BitOr" => "|".to_string(),
+                    "BitXor" => "^".to_string(),
+                    "BitAnd" => "&".to_string(),
+                    "MatMult" => "@".to_string(),
+                    "UAdd" => "+".to_string(),
+                    "USub" => "-".to_string(),
+                    "Not" => "not".to_string(),
+                    "Invert" => "~".to_string(),
+                    "And" => "and".to_string(),
+                    "Or" => "or".to_string(),
+                    "Eq" => "==".to_string(),
+                    "NotEq" => "!=".to_string(),
+                    "Lt" => "<".to_string(),
+                    "LtE" => "<=".to_string(),
+                    "Gt" => ">".to_string(),
+                    "GtE" => ">=".to_string(),
+                    "Is" => "is".to_string(),
+                    "IsNot" => "is not".to_string(),
+                    "In" => "in".to_string(),
+                    "NotIn" => "not in".to_string(),
+
+                    "Assign" => {
+                        let targets = ast_unparse_list(get("targets"), " = ");
+                        let value = ast_unparse_val(get("value"));
+                        format!("{targets} = {value}")
+                    }
+                    "AugAssign" => {
+                        let target = ast_unparse_val(get("target"));
+                        let op = ast_unparse_val(get("op"));
+                        let value = ast_unparse_val(get("value"));
+                        format!("{target} {op}= {value}")
+                    }
+                    "AnnAssign" => {
+                        let target = ast_unparse_val(get("target"));
+                        let annotation = ast_unparse_val(get("annotation"));
+                        let value = get("value");
+                        if value.is_none() {
+                            format!("{target}: {annotation}")
+                        } else {
+                            format!("{target}: {annotation} = {}", ast_unparse_val(value))
+                        }
+                    }
+                    "Expr" => ast_unparse_val(get("value")),
+                    "Return" => {
+                        let val = get("value");
+                        if val.is_none() {
+                            "return".to_string()
+                        } else {
+                            format!("return {}", ast_unparse_val(val))
+                        }
+                    }
+                    "Pass" => "pass".to_string(),
+                    "Break" => "break".to_string(),
+                    "Continue" => "continue".to_string(),
+                    "Raise" => {
+                        let exc = get("exc");
+                        if exc.is_none() {
+                            "raise".to_string()
+                        } else {
+                            format!("raise {}", ast_unparse_val(exc))
+                        }
+                    }
+                    "Import" => {
+                        let names = ast_unparse_list(get("names"), ", ");
+                        format!("import {names}")
+                    }
+                    "ImportFrom" => {
+                        let module = extract_str(get("module")).unwrap_or_default();
+                        let level = get("level").as_int().unwrap_or(0);
+                        let dots = ".".repeat(level as usize);
+                        let names = ast_unparse_list(get("names"), ", ");
+                        format!("from {dots}{module} import {names}")
+                    }
+                    "alias" => {
+                        let name = extract_str(get("name")).unwrap_or_default();
+                        let asname = extract_str(get("asname"));
+                        if let Some(as_n) = asname {
+                            format!("{name} as {as_n}")
+                        } else {
+                            name
+                        }
+                    }
+                    "FunctionDef" | "AsyncFunctionDef" => {
+                        let prefix = if class_name == "AsyncFunctionDef" { "async " } else { "" };
+                        let name = extract_str(get("name")).unwrap_or_default();
+                        let args = ast_unparse_val(get("args"));
+                        let body = ast_unparse_body(get("body"));
+                        let returns = get("returns");
+                        let ret_str = if returns.is_none() {
+                            String::new()
+                        } else {
+                            format!(" -> {}", ast_unparse_val(returns))
+                        };
+                        format!("{prefix}def {name}({args}){ret_str}:\n{}", indent_str(&body))
+                    }
+                    "ClassDef" => {
+                        let name = extract_str(get("name")).unwrap_or_default();
+                        let bases = ast_unparse_list(get("bases"), ", ");
+                        let bases_str = if bases.is_empty() { String::new() } else { format!("({bases})") };
+                        let body = ast_unparse_body(get("body"));
+                        format!("class {name}{bases_str}:\n{}", indent_str(&body))
+                    }
+                    "If" => {
+                        let test = ast_unparse_val(get("test"));
+                        let body = ast_unparse_body(get("body"));
+                        let orelse = get("orelse");
+                        let orelse_str = if orelse.is_none() {
+                            String::new()
+                        } else {
+                            let o_body = ast_unparse_body(orelse);
+                            if o_body.is_empty() {
+                                String::new()
+                            } else {
+                                format!("\nelse:\n{}", indent_str(&o_body))
+                            }
+                        };
+                        format!("if {test}:\n{}{orelse_str}", indent_str(&body))
+                    }
+                    "For" | "AsyncFor" => {
+                        let prefix = if class_name == "AsyncFor" { "async " } else { "" };
+                        let target = ast_unparse_val(get("target"));
+                        let iter = ast_unparse_val(get("iter"));
+                        let body = ast_unparse_body(get("body"));
+                        format!("{prefix}for {target} in {iter}:\n{}", indent_str(&body))
+                    }
+                    "While" => {
+                        let test = ast_unparse_val(get("test"));
+                        let body = ast_unparse_body(get("body"));
+                        format!("while {test}:\n{}", indent_str(&body))
+                    }
+                    "With" | "AsyncWith" => {
+                        let prefix = if class_name == "AsyncWith" { "async " } else { "" };
+                        let items = ast_unparse_list(get("items"), ", ");
+                        let body = ast_unparse_body(get("body"));
+                        format!("{prefix}with {items}:\n{}", indent_str(&body))
+                    }
+                    "withitem" => {
+                        let expr = ast_unparse_val(get("context_expr"));
+                        let vars = get("optional_vars");
+                        if vars.is_none() {
+                            expr
+                        } else {
+                            format!("{expr} as {}", ast_unparse_val(vars))
+                        }
+                    }
+                    "List" => format!("[{}]", ast_unparse_list(get("elts"), ", ")),
+                    "Tuple" => format!("({})", ast_unparse_list(get("elts"), ", ")),
+                    "Set" => format!("{{{}}}", ast_unparse_list(get("elts"), ", ")),
+                    "Dict" => {
+                        let keys = ast_unparse_list_vec(get("keys"));
+                        let values = ast_unparse_list_vec(get("values"));
+                        let mut pairs = Vec::new();
+                        for (k, v) in keys.iter().zip(values.iter()) {
+                            pairs.push(format!("{k}: {v}"));
+                        }
+                        format!("{{{}}}", pairs.join(", "))
+                    }
+                    "arg" => {
+                        let arg = extract_str(get("arg")).unwrap_or_default();
+                        let ann = get("annotation");
+                        if ann.is_none() {
+                            arg
+                        } else {
+                            format!("{arg}: {}", ast_unparse_val(ann))
+                        }
+                    }
+                    "arguments" => {
+                        let pos = ast_unparse_list_vec(get("args"));
+                        let kwonly = ast_unparse_list_vec(get("kwonlyargs"));
+                        let mut parts = pos;
+                        if !kwonly.is_empty() {
+                            parts.push("*".to_string());
+                            parts.extend(kwonly);
+                        }
+                        parts.join(", ")
+                    }
+                    "FormattedValue" => {
+                        let val = ast_unparse_val(get("value"));
+                        format!("{{{val}}}")
+                    }
+                    "JoinedStr" => {
+                        let values = ast_unparse_list_vec(get("values"));
+                        format!("f\"{}\"", values.join(""))
+                    }
+                    _ => format!("<ast.{class_name}>"),
+                }
+            }
+            _ => String::new(),
+        }
+    }
+}
+
+fn indent_str(s: &str) -> String {
+    s.lines().map(|line| format!("    {line}")).collect::<Vec<_>>().join("\n")
+}
+
+fn ast_unparse_body(body_val: MbValue) -> String {
+    ast_unparse_list(body_val, "\n")
+}
+
+fn ast_unparse_list(list_val: MbValue, sep: &str) -> String {
+    ast_unparse_list_vec(list_val).join(sep)
+}
+
+fn ast_unparse_list_vec(list_val: MbValue) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(ptr) = list_val.as_ptr() else {
+        return out;
+    };
+    unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            let items = lock.read().unwrap().to_vec();
+            for item in items {
+                out.push(ast_unparse_val(item));
+            }
+        }
+    }
+    out
 }
 
 /// NodeVisitor stub
@@ -6904,7 +7292,7 @@ fn push_ast_iter_child_value(
     } else if let Some(lp) = value.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*lp).data {
-                let list = lock.read().unwrap();
+                let list = lock.read().unwrap().to_vec();
                 for item in list.iter() {
                     if is_ast_node(item) {
                         out.push(*item);
@@ -7026,7 +7414,7 @@ mod tests {
         let ptr = list.as_ptr().expect("list object");
         unsafe {
             if let super::super::super::rc::ObjData::List(ref items) = (*ptr).data {
-                items.read().unwrap()[index]
+                items.read().unwrap().get(index).unwrap()
             } else {
                 panic!("expected list")
             }
@@ -7608,10 +7996,10 @@ mod tests {
         let list_ptr = list.as_ptr().expect("list literal");
         unsafe {
             if let ObjData::List(ref lock) = (*list_ptr).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 assert_eq!(items.len(), 3);
-                assert_eq!(items[0].as_int(), Some(1));
-                assert_eq!(items[2].as_int(), Some(3));
+                assert_eq!(items.get(0).and_then(|v| v.as_int()), Some(1));
+                assert_eq!(items.get(2).and_then(|v| v.as_int()), Some(3));
             } else {
                 panic!("expected list");
             }

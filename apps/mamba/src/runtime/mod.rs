@@ -2,6 +2,7 @@ pub mod async_rt;
 pub mod async_task;
 pub mod bigint_ops;
 pub mod builtins;
+pub mod bytearray_ops;
 pub mod bytes_ops;
 pub mod class;
 pub mod closure;
@@ -351,4 +352,5 @@ mod tests {
     mod stdlib_coverage_remaining;
     mod string_concat_perf_gate;
     mod thread_safety;
+    mod adversarial_refcount_challenge;
 }

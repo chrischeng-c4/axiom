@@ -544,3 +544,51 @@ pub fn mb_descriptor_unwrap(desc: MbValue) -> MbValue {
     let key = MbValue::from_ptr(MbObject::new_str("__func__".to_string()));
     mb_getattr(desc, key)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_classmethod_and_staticmethod_wrappers() {
+        let dummy_func = MbValue::from_int(12345);
+
+        let cm = mb_classmethod_new(dummy_func);
+        let sm = mb_staticmethod_new(dummy_func);
+
+        let (unwrapped_cm, kind_cm) = unwrap_descriptor_method(cm);
+        assert_eq!(kind_cm, DescriptorKind::ClassMethod);
+        assert_eq!(unwrapped_cm.as_int(), Some(12345));
+
+        let (unwrapped_sm, kind_sm) = unwrap_descriptor_method(sm);
+        assert_eq!(kind_sm, DescriptorKind::StaticMethod);
+        assert_eq!(unwrapped_sm.as_int(), Some(12345));
+
+        assert_eq!(mb_descriptor_unwrap(cm).as_int(), Some(12345));
+        assert_eq!(mb_descriptor_unwrap(sm).as_int(), Some(12345));
+    }
+
+    #[test]
+    fn test_member_descriptor() {
+        let desc = make_member_descriptor("MyClass", "my_field");
+        assert!(is_member_descriptor(desc));
+
+        let non_desc = MbValue::from_int(42);
+        assert!(!is_member_descriptor(non_desc));
+    }
+
+    #[test]
+    fn test_property_construction() {
+        let getter = MbValue::from_int(1001);
+        let setter = MbValue::from_int(1002);
+        let deleter = MbValue::from_int(1003);
+
+        let prop = mb_property_new(getter);
+        let prop = mb_property_setter(prop, setter);
+        let prop = mb_property_deleter(prop, deleter);
+        assert_eq!(property_accessor(prop, "fget"), Some(getter));
+        assert_eq!(property_accessor(prop, "fset"), Some(setter));
+        assert_eq!(property_accessor(prop, "fdel"), Some(deleter));
+    }
+}
+

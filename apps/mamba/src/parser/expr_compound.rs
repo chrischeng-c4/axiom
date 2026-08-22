@@ -87,7 +87,8 @@ impl<'a> Parser<'a> {
                 // the next call arg. Only confirm on `:` / `=`, or on `,`
                 // followed by a depth-0 body-`:` further ahead (which marks
                 // a real typed-lambda continuation `lambda x: T, y: U: body`).
-                let ty = if kind == ParamKind::Regular && self.peek_kind() == Some(TokenKind::Colon)
+                let (ty, annotation) = if kind == ParamKind::Regular
+                    && self.peek_kind() == Some(TokenKind::Colon)
                 {
                     let saved = self.pos;
                     self.advance(); // tentatively consume :
@@ -99,17 +100,26 @@ impl<'a> Parser<'a> {
                             _ => false,
                         };
                         if confirmed {
-                            type_expr
+                            (type_expr.clone(), ParamAnnotation::Authored(type_expr))
                         } else {
                             self.pos = saved; // backtrack — : is body separator
-                            Spanned::new(TypeExpr::Named("Any".into()), self.span_from(p_start))
+                            (
+                                Spanned::new(TypeExpr::Named("Any".into()), self.span_from(p_start)),
+                                ParamAnnotation::Omitted,
+                            )
                         }
                     } else {
                         self.pos = saved; // backtrack
-                        Spanned::new(TypeExpr::Named("Any".into()), self.span_from(p_start))
+                        (
+                            Spanned::new(TypeExpr::Named("Any".into()), self.span_from(p_start)),
+                            ParamAnnotation::Omitted,
+                        )
                     }
                 } else {
-                    Spanned::new(TypeExpr::Named("Any".into()), self.span_from(p_start))
+                    (
+                        Spanned::new(TypeExpr::Named("Any".into()), self.span_from(p_start)),
+                        ParamAnnotation::Omitted,
+                    )
                 };
 
                 let default = if self.peek_kind() == Some(TokenKind::Eq) {
@@ -122,6 +132,7 @@ impl<'a> Parser<'a> {
                 params.push(Param {
                     name,
                     ty,
+                    annotation,
                     default,
                     kind,
                     pos_only: false,
@@ -1378,6 +1389,25 @@ mod tests {
         match parse_expr("{x for x in items}") {
             Expr::SetComp { .. } => {}
             other => panic!("expected SetComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_param_annotation_presence_lambda() {
+        match parse_expr("lambda x: x") {
+            Expr::Lambda { params, .. } => {
+                assert!(params[0].is_omitted());
+                assert!(!params[0].is_authored());
+            }
+            other => panic!("expected Lambda, got {other:?}"),
+        }
+
+        match parse_expr("lambda x: int: x") {
+            Expr::Lambda { params, .. } => {
+                assert!(params[0].is_authored());
+                assert!(!params[0].is_omitted());
+            }
+            other => panic!("expected Lambda, got {other:?}"),
         }
     }
 }

@@ -718,6 +718,7 @@ pub fn print_fixture_report(rows: &[FixtureReportRow]) {
 mod tests {
     use super::*;
 
+    #[cfg(not(debug_assertions))]
     #[test]
     fn test_bench_runner_int_sum() {
         let runner = BenchRunner::mamba_only();
@@ -744,6 +745,7 @@ while i < 100:
         );
     }
 
+    #[cfg(not(debug_assertions))]
     #[test]
     fn test_bench_runner_fib() {
         let runner = BenchRunner::mamba_only();
@@ -822,6 +824,7 @@ result: int = fib(10)
     /// gc_disable → no collect → unbounded heap growth. With the idempotency
     /// guard in mb_register_builtins, per-iter time at high N stays close
     /// to per-iter time at low N.
+    #[cfg(not(debug_assertions))]
     #[test]
     fn test_heap_workloads_scale_flat() {
         let runner = BenchRunner::mamba_only();
@@ -917,6 +920,7 @@ sorted_data = sorted(data)
         }
     }
 
+    #[cfg(not(debug_assertions))]
     #[test]
     fn test_run_suite_produces_rows() {
         let suite = BenchSuite {

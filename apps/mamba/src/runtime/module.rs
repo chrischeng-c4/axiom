@@ -335,7 +335,9 @@ fn propagate_submodule_to_parents(full_name: &str) {
             });
             let leaf_val = map.get(&leaf_full).map(module_to_value);
             if let (Some(parent_mod), Some(val)) = (map.get_mut(&parent), leaf_val) {
-                parent_mod.attrs.insert(leaf_name.to_string(), val);
+                if let Some(old_val) = parent_mod.attrs.insert(leaf_name.to_string(), val) {
+                    super::rc::release_owned(old_val);
+                }
             }
         });
     }
@@ -506,8 +508,8 @@ fn module_package_dirs(module: &MbModule) -> Vec<PathBuf> {
         if let Some(ptr) = path_val.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    for entry in lock.read().unwrap().iter() {
-                        if let Some(path) = extract_str(*entry) {
+                    for entry in lock.read().unwrap().to_vec() {
+                        if let Some(path) = extract_str(entry) {
                             let candidate = PathBuf::from(path);
                             if !dirs.iter().any(|existing| existing == &candidate) {
                                 dirs.push(candidate);
@@ -541,10 +543,10 @@ fn update_sys_modules(name: &str, val: MbValue) {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let mut map = lock.write().unwrap();
-                    unsafe {
-                        super::rc::retain_if_ptr(val);
+                    super::rc::store_owned(val);
+                    if let Some(old_val) = map.insert(name.into(), val) {
+                        super::rc::release_owned(old_val);
                     }
-                    map.insert(name.into(), val);
                 }
             }
         }
@@ -594,10 +596,10 @@ pub fn mb_import_from(module_name: MbValue, names: MbValue) -> MbValue {
             if let Some(ptr) = names.as_ptr() {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
-                        let name_list = lock.read().unwrap();
+                        let name_list = lock.read().unwrap().to_vec();
                         let mut values: Vec<MbValue> = Vec::with_capacity(name_list.len());
-                        for n in name_list.iter() {
-                            let attr_name = extract_str(*n).unwrap_or_default();
+                        for n in name_list {
+                            let attr_name = extract_str(n).unwrap_or_default();
                             match module.attrs.get(&attr_name).copied() {
                                 Some(val) => {
                                     super::rc::retain_if_ptr(val);
@@ -649,8 +651,8 @@ pub fn mb_import_star(module_name: MbValue) -> MbValue {
                     let names_to_export: Vec<String> = unsafe {
                         match &(*ptr).data {
                             ObjData::List(ref lock) => {
-                                let list = lock.read().unwrap();
-                                list.iter().filter_map(|v| extract_str(*v)).collect()
+                                let list = lock.read().unwrap().to_vec();
+                                list.into_iter().filter_map(extract_str).collect()
                             }
                             _ => Vec::new(),
                         }
@@ -1089,6 +1091,40 @@ pub fn mb_module_setattr(module_name: MbValue, attr: MbValue, value: MbValue) {
             // No matching module — drop the retain we just took.
             unsafe {
                 super::rc::release_if_ptr(value);
+            }
+        }
+    });
+}
+
+/// Create a new module and register it.
+pub fn mb_module_new(name: MbValue, doc: MbValue) -> MbValue {
+    let name_str = extract_str(name).unwrap_or_default();
+    let mut attrs = HashMap::new();
+    if !doc.is_none() {
+        unsafe {
+            super::rc::retain_if_ptr(doc);
+        }
+        attrs.insert("__doc__".to_string(), doc);
+    }
+    unsafe {
+        super::rc::retain_if_ptr(name);
+    }
+    attrs.insert("__name__".to_string(), name);
+    mb_module_register(&name_str, attrs);
+    name
+}
+
+/// Delete an attribute from a module.
+pub fn mb_module_delattr(module_name: MbValue, attr: MbValue) {
+    let name = extract_str(module_name).unwrap_or_default();
+    let attr_name = extract_str(attr).unwrap_or_default();
+    MODULES.with(|mods| {
+        let mut mods = mods.borrow_mut();
+        if let Some(module) = mods.get_mut(&name) {
+            if let Some(prev) = module.attrs.remove(&attr_name) {
+                unsafe {
+                    super::rc::release_if_ptr(prev);
+                }
             }
         }
     });
@@ -1895,8 +1931,9 @@ fn live_sys_path_paths() -> Vec<PathBuf> {
         };
         lock.read()
             .unwrap()
-            .iter()
-            .filter_map(|entry| extract_str(*entry))
+            .to_vec()
+            .into_iter()
+            .filter_map(extract_str)
             .map(|entry| {
                 if entry.is_empty() {
                     PathBuf::from(".")

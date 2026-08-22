@@ -201,6 +201,19 @@ fn dict_remove_str(d: MbValue, key: &str) -> bool {
     false
 }
 
+fn dict_clear_all(d: MbValue) {
+    if let Some(ptr) = d.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let mut map = lock.write().unwrap();
+                for (_k, v) in map.drain(..) {
+                    super::super::rc::release_if_ptr(v);
+                }
+            }
+        }
+    }
+}
+
 fn dict_contains_str(d: MbValue, key: &str) -> bool {
     dict_get_str(d, key).is_some()
 }
@@ -1058,7 +1071,7 @@ fn lines_from_arg(arg: MbValue) -> Option<String> {
         unsafe {
             match &(*ptr).data {
                 ObjData::List(lock) => {
-                    return Some(join_line_items(&lock.read().unwrap()));
+                    return Some(join_line_items(&lock.read().unwrap().to_vec()));
                 }
                 ObjData::Tuple(items) => {
                     return Some(join_line_items(items));
@@ -1835,6 +1848,93 @@ unsafe extern "C" fn p_name(self_v: MbValue, _args: MbValue) -> MbValue {
     new_str(&proxy_name(self_v))
 }
 
+unsafe extern "C" fn p_values(self_v: MbValue, _args: MbValue) -> MbValue {
+    let parser = proxy_parser(self_v);
+    let sec = proxy_name(self_v);
+    let mut out = Vec::new();
+    for (_, v) in merged_options(parser, &sec) {
+        let value = match v {
+            Some(rawval) => match do_interpolate(parser, &sec, &rawval) {
+                Ok(s) => new_str(&s),
+                Err((exc, msg)) => return raise_named(exc, &msg),
+            },
+            None => MbValue::none(),
+        };
+        out.push(value);
+    }
+    new_list(out)
+}
+
+unsafe extern "C" fn p_set(self_v: MbValue, args: MbValue) -> MbValue {
+    p_setitem(self_v, args)
+}
+
+unsafe extern "C" fn p_clear(self_v: MbValue, _args: MbValue) -> MbValue {
+    let parser = proxy_parser(self_v);
+    let sec = proxy_name(self_v);
+    if let Some(opts) = section_options(parser, &sec) {
+        dict_clear_all(opts);
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn p_delitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let (pos, _kw) = split_args(args);
+    let key = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
+    let parser = proxy_parser(self_v);
+    let sec = proxy_name(self_v);
+    let folded = optionxform(&key);
+    if let Some(opts) = section_options(parser, &sec) {
+        if dict_remove_str(opts, &folded) {
+            return MbValue::none();
+        }
+    }
+    raise_named("KeyError", &format!("{}", pyrepr(&folded)))
+}
+
+unsafe extern "C" fn p_pop(self_v: MbValue, args: MbValue) -> MbValue {
+    let (pos, kw) = split_args(args);
+    let key = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
+    let fallback = kw_get(kw, "fallback").or_else(|| pos.get(1).copied());
+    let parser = proxy_parser(self_v);
+    let sec = proxy_name(self_v);
+    let folded = optionxform(&key);
+    if let Some(opts) = section_options(parser, &sec) {
+        if let Some(val) = dict_get_str(opts, &folded) {
+            dict_remove_str(opts, &folded);
+            return val;
+        }
+    }
+    if let Some(fb) = fallback {
+        return fb;
+    }
+    raise_named("KeyError", &format!("{}", pyrepr(&folded)))
+}
+
+unsafe extern "C" fn p_popitem(self_v: MbValue, _args: MbValue) -> MbValue {
+    let parser = proxy_parser(self_v);
+    let sec = proxy_name(self_v);
+    if let Some(opts) = section_options(parser, &sec) {
+        let keys = dict_str_keys(opts);
+        if let Some(last_key) = keys.last() {
+            if let Some(val) = dict_get_str(opts, last_key) {
+                dict_remove_str(opts, last_key);
+                return MbValue::from_ptr(MbObject::new_tuple(vec![
+                    new_str(last_key),
+                    val,
+                ]));
+            }
+        }
+    }
+    raise_named("KeyError", "popitem(): dictionary is empty")
+}
+
 unsafe extern "C" fn p_getattr(self_v: MbValue, name_v: MbValue) -> MbValue {
     let name = extract_str(name_v).unwrap_or_default();
     if name == "name" {
@@ -2344,10 +2444,16 @@ pub fn register() {
             ("getfloat", p_getfloat as usize, true),
             ("getboolean", p_getboolean as usize, true),
             ("keys", p_keys as usize, true),
+            ("values", p_values as usize, true),
             ("items", p_items as usize, true),
+            ("set", p_set as usize, true),
+            ("clear", p_clear as usize, true),
+            ("pop", p_pop as usize, true),
+            ("popitem", p_popitem as usize, true),
             ("name", p_name as usize, true),
             ("__getitem__", p_getitem as usize, true),
             ("__setitem__", p_setitem as usize, true),
+            ("__delitem__", p_delitem as usize, true),
             ("__contains__", p_contains as usize, true),
             ("__iter__", p_iter as usize, true),
             ("__len__", p_len as usize, true),
@@ -2571,8 +2677,9 @@ mod tests {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     lock.read()
                         .unwrap()
-                        .iter()
-                        .filter_map(|v| extract_str(*v))
+                        .to_vec()
+                        .into_iter()
+                        .filter_map(|v| extract_str(v))
                         .collect()
                 } else {
                     vec![]

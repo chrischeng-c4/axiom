@@ -1,5 +1,6 @@
 use super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::value::MbValue;
+use crate::types::DynamicBoundaryLicense;
 use rustc_hash::FxHashMap;
 /// Closure and nested function support for the Mamba runtime (#289).
 ///
@@ -757,7 +758,7 @@ pub fn mb_apply_decorators(func: MbValue, decorators: MbValue) -> MbValue {
     if let Some(ptr) = decorators.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let decs = lock.read().unwrap();
+                let decs = lock.read().unwrap().to_vec();
                 let mut result = func;
                 // Apply in reverse order (innermost first)
                 for dec in decs.iter().rev() {
@@ -852,18 +853,22 @@ pub struct MbParamInfo {
     /// Resolved scalar contract; unlike annotation, this is authoritative for
     /// runtime rejection and is absent for Any/generic/container/forward refs.
     pub contract: Option<String>,
+    /// Closed dynamic-boundary license carried from authored source
+    /// provenance. Only the exact `explicit-any` tag is accepted.
+    pub dynamic_boundary_license: Option<DynamicBoundaryLicense>,
 }
 
 /// Register a function's declared parameters. `params` is a list of
-/// seven-field (name, kind, has_default, default, annotation, entry_abi,
-/// contract) tuples. Five/six-field tuples remain accepted for old modules.
+/// eight-field (name, kind, has_default, default, annotation, entry_abi,
+/// contract, dynamic-boundary-license) tuples. Five/six/seven-field tuples
+/// remain accepted for old modules and are conservatively unlicensed.
 /// lower_top_level priming loop in hir_to_mir.rs.
 pub fn mb_func_set_params(func: MbValue, params: MbValue) {
     let mut infos: Vec<MbParamInfo> = Vec::new();
     if let Some(ptr) = params.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for item in lock.read().unwrap().iter() {
+                for item in lock.read().unwrap().to_vec() {
                     let Some(tp) = item.as_ptr() else { continue };
                     let ObjData::Tuple(ref elems) = (*tp).data else {
                         continue;
@@ -882,6 +887,13 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
                         .and_then(|value| extract_str(*value))
                         .unwrap_or_else(|| "boxed".to_string());
                     let contract = elems.get(6).and_then(|value| extract_str(*value));
+                    let dynamic_boundary_license = elems
+                        .get(7)
+                        .and_then(|value| extract_str(*value))
+                        .and_then(|value| match value.as_str() {
+                            "explicit-any" => Some(DynamicBoundaryLicense::ExplicitAny),
+                            _ => None,
+                        });
                     infos.push(MbParamInfo {
                         name,
                         kind,
@@ -890,6 +902,7 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
                         annotation,
                         entry_abi,
                         contract,
+                        dynamic_boundary_license,
                     });
                 }
             }
@@ -1313,7 +1326,7 @@ pub fn mb_func_set_varnames(func: MbValue, names: MbValue) {
                     }
                 }
                 ObjData::List(lock) => {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     for item in items.iter() {
                         if let Some(s) = extract_str(*item) {
                             collected.push(s);
@@ -1368,7 +1381,7 @@ pub fn mb_func_set_freevars(func: MbValue, freevars: MbValue) {
     if let Some(ptr) = freevars.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for item in lock.read().unwrap().iter() {
+                for item in lock.read().unwrap().to_vec() {
                     let Some(pair_ptr) = item.as_ptr() else {
                         continue;
                     };
@@ -2194,6 +2207,7 @@ pub fn restore_module_sym_info(saved: (HashMap<i64, (String, SymTy)>, HashMap<St
     MODULE_FUNC_INFO.with(|m| *m.borrow_mut() = saved.1);
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1979" reason="logic section in closure.rs is hand-written pending codegen support">
 /// Build a dict containing the current module's globals, drawing from
 /// MODULE_SYM_INFO + GLOBAL_ID_NAMESPACE + MODULE_FUNC_INFO. Skips dunder
 /// names except the standard CPython-visible ones.
@@ -2236,6 +2250,11 @@ pub fn build_globals_dict() -> MbValue {
         };
         let key = MbValue::from_ptr(super::rc::MbObject::new_str(name.clone()));
         dict_ops::mb_dict_setitem(dict, key, boxed);
+        // to_dict_key copies the Str content out; the dict never retains
+        // this key pointer, so release our fabricated key here or it leaks.
+        unsafe {
+            super::rc::release_if_ptr(key);
+        }
     }
 
     let func_info = MODULE_FUNC_INFO.with(|m| m.borrow().clone());
@@ -2245,9 +2264,13 @@ pub fn build_globals_dict() -> MbValue {
         }
         let key = MbValue::from_ptr(super::rc::MbObject::new_str(name.clone()));
         dict_ops::mb_dict_setitem(dict, key, *fv);
+        unsafe {
+            super::rc::release_if_ptr(key);
+        }
     }
     dict
 }
+// </HANDWRITE>
 // HANDWRITE-END
 
 // ── Cleanup ──

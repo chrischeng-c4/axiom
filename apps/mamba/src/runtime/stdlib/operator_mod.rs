@@ -164,7 +164,7 @@ fn seq_items(v: MbValue) -> Option<Vec<MbValue>> {
     let ptr = v.as_ptr()?;
     unsafe {
         match &(*ptr).data {
-            ObjData::List(lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::List(lock) => Some(lock.read().unwrap().to_vec()),
             ObjData::Tuple(items) => Some(items.clone()),
             _ => None,
         }
@@ -202,7 +202,7 @@ fn subscript(obj: MbValue, key: MbValue) -> MbValue {
         match &(*ptr).data {
             ObjData::List(lock) => {
                 let guard = lock.read().unwrap();
-                seq_index(&guard, key, "list")
+                seq_index(&guard.to_vec(), key, "list")
             }
             ObjData::Tuple(items) => seq_index(items, key, "tuple"),
             ObjData::Str(s) => {
@@ -1310,85 +1310,91 @@ fn operator_length_hint(obj: MbValue, default: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
-    // For user/stdlib instances, consult the dunders explicitly: mb_len returns
-    // 0 for instances that define neither __len__ nor __length_hint__, which
-    // would mask the proper fallback, so we do not trust it for instances.
+    // For user/stdlib instances, consult __length_hint__ FIRST (PEP 424 priority), then __len__.
     if let Some(cls) = instance_class_name(obj) {
-        if !class::lookup_method(&cls, "__len__").is_none() {
-            return class::mb_call_method(
-                obj,
-                MbValue::from_ptr(MbObject::new_str("__len__".to_string())),
-                MbValue::from_ptr(MbObject::new_list(vec![])),
-            );
-        }
         if !class::lookup_method(&cls, "__length_hint__").is_none() {
             let r = class::mb_call_method(
                 obj,
                 MbValue::from_ptr(MbObject::new_str("__length_hint__".to_string())),
                 MbValue::from_ptr(MbObject::new_list(vec![])),
             );
-            // CPython's PyObject_LengthHint: a TypeError raised inside
-            // __length_hint__ is swallowed and the default is returned; any
-            // other exception propagates.
+            // CPython's PyObject_LengthHint: TypeError or AttributeError raised inside
+            // __length_hint__ is swallowed and falls back to __len__ / default.
             if has_exc() {
-                // A TypeError (or subclass) is swallowed → default; else propagate.
-                if exception::current_exception_type().as_deref() == Some("TypeError") {
+                let exc_type = exception::current_exception_type();
+                if exc_type.as_deref() == Some("TypeError")
+                    || exc_type.as_deref() == Some("AttributeError")
+                {
                     exception::mb_clear_exception();
-                    return length_hint_default(default);
-                }
-                return MbValue::none();
-            }
-            // NotImplemented → fall back to the supplied default.
-            if r.is_not_implemented() {
-                return length_hint_default(default);
-            }
-            // Result must be a non-negative integer.
-            match r.as_int() {
-                Some(n) if n < 0 => {
-                    raise("ValueError", "__length_hint__() should return >= 0");
+                    // Fall through to __len__ check below
+                } else {
                     return MbValue::none();
                 }
-                Some(_) => return r,
-                None => {
+            } else if !r.is_not_implemented() {
+                if let Some(n) = r.as_int() {
+                    if n < 0 {
+                        raise("ValueError", "__length_hint__() should return >= 0");
+                        return MbValue::none();
+                    }
+                    return r;
+                } else if let Some(big) = unsafe { super::super::bigint_ops::extract_bigint(r) } {
+                    if num_traits::Signed::is_negative(&big) {
+                        raise("ValueError", "__length_hint__() should return >= 0");
+                        return MbValue::none();
+                    }
+                    return r;
+                } else {
                     raise(
                         "TypeError",
-                        &format!("__length_hint__ must be an integer, not {}", type_name(r)),
+                        &format!("'{}' object cannot be interpreted as an integer", type_name(r)),
                     );
                     return MbValue::none();
                 }
             }
         }
-        // No length information on this instance → supplied default.
+        if !class::lookup_method(&cls, "__len__").is_none() {
+            let res = class::mb_call_method(
+                obj,
+                MbValue::from_ptr(MbObject::new_str("__len__".to_string())),
+                MbValue::from_ptr(MbObject::new_list(vec![])),
+            );
+            if has_exc() {
+                let exc_type = exception::current_exception_type();
+                if exc_type.as_deref() == Some("TypeError")
+                    || exc_type.as_deref() == Some("AttributeError")
+                {
+                    exception::mb_clear_exception();
+                    return length_hint_default(default);
+                } else {
+                    return MbValue::none();
+                }
+            }
+            return res;
+        }
         return length_hint_default(default);
     }
-    // Iterator handles are bare ints (no __len__). Consult the iterator's
-    // __length_hint__ (remaining-element count) first — mb_len returns a
-    // misleading 0 for these.
-    if obj.as_ptr().is_none() {
-        if let Some(n) = super::super::iter::mb_iter_length_hint(obj) {
-            return MbValue::from_int(n);
-        }
-        return if default.is_none() {
-            MbValue::from_int(0)
-        } else {
-            default
-        };
+    // Consult the iterator's __length_hint__ (remaining-element count)
+    if let Some(hint_val) = super::super::iter::mb_iter_length_hint(obj) {
+        return hint_val;
     }
-    // Built-in sized containers: __len__ wins.
+    // Built-in sized containers: __len__
     let l = builtins::mb_len(obj);
-    if !l.is_none() && l.as_int().is_some() {
+    if has_exc() {
+        let exc_type = exception::current_exception_type();
+        if exc_type.as_deref() == Some("TypeError")
+            || exc_type.as_deref() == Some("AttributeError")
+        {
+            exception::mb_clear_exception();
+            return length_hint_default(default);
+        } else {
+            return MbValue::none();
+        }
+    }
+    if !l.is_none() {
         return l;
     }
-    // Iterators expose a __length_hint__ — the count of remaining elements.
-    if let Some(n) = super::super::iter::mb_iter_length_hint(obj) {
-        return MbValue::from_int(n);
-    }
     // Fall back to the supplied default (0 when omitted).
-    if default.is_none() {
-        MbValue::from_int(0)
-    } else {
-        default
-    }
+    length_hint_default(default)
 }
 
 pub fn mb_operator_length_hint(a: MbValue) -> MbValue {
@@ -1636,9 +1642,9 @@ fn operator_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                         let n = guard.len() as i64;
                         let r = if i < 0 { i + n } else { i };
                         if r >= 0 && r < n {
-                            let old = guard[r as usize];
+                            let old = guard.get(r as usize).unwrap_or_else(MbValue::none);
                             super::super::rc::retain_if_ptr(value);
-                            guard[r as usize] = value;
+                            guard.set(r as usize, value);
                             drop(guard);
                             super::super::rc::release_if_ptr(old);
                         } else {
@@ -1859,5 +1865,29 @@ mod tests {
             mb_operator_is_not(MbValue::from_int(1), MbValue::from_int(2)).as_bool(),
             Some(true)
         );
+    }
+
+    #[test]
+    fn test_wi2048_operator_length_hint_filter() {
+        let lst = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+        ]));
+        let filter_obj = builtins::mb_filter(MbValue::none(), lst);
+        let res = operator_length_hint(filter_obj, MbValue::none());
+        assert_eq!(res.as_int(), Some(3));
+        assert!(!has_exc());
+
+        // Object without len() or __length_hint__
+        let obj_no_len = MbValue::from_int(42);
+        let res2 = operator_length_hint(obj_no_len, MbValue::none());
+        assert_eq!(res2.as_int(), Some(0));
+        assert!(!has_exc());
+
+        // Object without len() with explicit custom default
+        let res3 = operator_length_hint(obj_no_len, MbValue::from_int(100));
+        assert_eq!(res3.as_int(), Some(100));
+        assert!(!has_exc());
     }
 }

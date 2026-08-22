@@ -1771,7 +1771,7 @@ pub fn mb_unittest_assert_in(item: MbValue, collection: MbValue) -> MbValue {
             found = match &(*ptr).data {
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
-                    items.iter().any(|v| values_equal(*v, item))
+                    items.iter().any(|v| values_equal(v, item))
                 }
                 ObjData::Str(s) => {
                     if let Some(needle) = extract_str(item) {
