@@ -22,7 +22,7 @@ pub fn mb_neg(a: MbValue) -> MbValue {
     if let Some(v) = super::numeric_subclass_unary_operand(a, "__neg__") {
         return mb_neg(v);
     }
-    if let Some(i) = a.as_int() {
+    if let Some(i) = a.as_int_pyint() {
         MbValue::from_int(-i)
     } else if let Some(f) = a.as_float() {
         MbValue::from_float(-f)

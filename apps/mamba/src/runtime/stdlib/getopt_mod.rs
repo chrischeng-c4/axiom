@@ -38,7 +38,7 @@ fn extract_list_of_strings(val: MbValue) -> Vec<String> {
             use super::super::rc::ObjData;
             if let ObjData::List(ref rw) = (*ptr).data {
                 let guard = rw.read().ok()?;
-                let results: Vec<String> = guard.iter().filter_map(|v| extract_str(*v)).collect();
+                let results: Vec<String> = guard.iter().filter_map(|v| extract_str(v)).collect();
                 Some(results)
             } else {
                 None
@@ -62,7 +62,7 @@ fn extract_sequence_of_strings(val: MbValue) -> Result<Vec<String>, MbValue> {
                     guard
                         .iter()
                         .map(|v| {
-                            extract_str(*v).ok_or_else(|| {
+                            extract_str(v).ok_or_else(|| {
                                 raise_type_error(
                                     "getopt() argument 1 must be a sequence of strings",
                                 )
@@ -451,7 +451,7 @@ mod tests {
                 let opts_ptr = items[0].as_ptr().unwrap();
                 if let ObjData::List(ref rw) = (*opts_ptr).data {
                     let guard = rw.read().unwrap();
-                    let pair_ptr = guard[index].as_ptr().unwrap();
+                    let pair_ptr = guard.get(index).unwrap().as_ptr().unwrap();
                     if let ObjData::Tuple(ref pair) = (*pair_ptr).data {
                         return extract_str(pair[0]).unwrap_or_default();
                     }
@@ -469,7 +469,7 @@ mod tests {
                 let opts_ptr = items[0].as_ptr().unwrap();
                 if let ObjData::List(ref rw) = (*opts_ptr).data {
                     let guard = rw.read().unwrap();
-                    let pair_ptr = guard[index].as_ptr().unwrap();
+                    let pair_ptr = guard.get(index).unwrap().as_ptr().unwrap();
                     if let ObjData::Tuple(ref pair) = (*pair_ptr).data {
                         return extract_str(pair[1]).unwrap_or_default();
                     }
@@ -487,7 +487,7 @@ mod tests {
                 let rem_ptr = items[1].as_ptr().unwrap();
                 if let ObjData::List(ref rw) = (*rem_ptr).data {
                     let guard = rw.read().unwrap();
-                    return extract_str(guard[index]).unwrap_or_default();
+                    return extract_str(guard.get(index).unwrap()).unwrap_or_default();
                 }
             }
             panic!("could not extract remaining at index {}", index);

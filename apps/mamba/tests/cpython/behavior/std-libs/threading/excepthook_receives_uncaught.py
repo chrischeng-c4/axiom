@@ -17,7 +17,7 @@
 """threading.excepthook: an exception escaping a worker's run() is delivered to a custom threading.excepthook (exc_type/exc_value/thread.name), not re-raised in the joiner"""
 import threading
 
-captured = []
+captured: list[tuple[str, str, str]] = []
 
 def hook(args):
     captured.append((args.exc_type.__name__, str(args.exc_value), args.thread.name))

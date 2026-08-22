@@ -51,6 +51,7 @@ fn jit_capture(src: &str) -> String {
     let output = backend
         .codegen(&mir, &checker.tcx)
         .expect("JIT codegen failed");
+    crate::runtime::module::install_introspection_state(&checker, &hir, &backend);
 
     match output {
         CodegenOutput::Jit { entry } => {
@@ -110,9 +111,158 @@ fn assert_output(actual: &str, expected: &str) {
     }
 }
 
+// ── Python Oracle Selection & Floor Validation (#2803) ───────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OracleCandidate {
+    path: std::path::PathBuf,
+    source: &'static str,
+}
+
+fn select_oracle_candidate_pure<F>(
+    env_var: Option<&str>,
+    cache_file: Option<&std::path::Path>,
+    path_resolver: F,
+) -> Result<OracleCandidate, String>
+where
+    F: FnOnce() -> Option<std::path::PathBuf>,
+{
+    if let Some(val) = env_var.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(OracleCandidate {
+            path: std::path::PathBuf::from(val),
+            source: "MAMBA_ORACLE_PYTHON",
+        });
+    }
+    if let Some(cache) = cache_file {
+        return Ok(OracleCandidate {
+            path: cache.to_path_buf(),
+            source: "oracle-env cache",
+        });
+    }
+    if let Some(path) = path_resolver() {
+        return Ok(OracleCandidate {
+            path,
+            source: "PATH python3 (sys.executable)",
+        });
+    }
+    Err("Oracle candidate python3 unavailable: no valid candidate found in MAMBA_ORACLE_PYTHON, oracle-env cache, or PATH python3".into())
+}
+
+fn select_oracle_candidate() -> Result<OracleCandidate, String> {
+    let env_var = std::env::var("MAMBA_ORACLE_PYTHON").ok();
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let oracle_env = manifest_dir.join("tests/cpython/.cache/oracle-env/bin/python3");
+    let cache_file = Some(oracle_env.as_path()).filter(|p| p.is_file());
+    select_oracle_candidate_pure(env_var.as_deref(), cache_file, || {
+        let out = std::process::Command::new("python3")
+            .args(["-c", "import sys; print(sys.executable)"])
+            .current_dir(std::env::temp_dir())
+            .output()
+            .ok()?;
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(std::path::PathBuf::from(s));
+            }
+        }
+        None
+    })
+}
+
+fn default_version_prober(path: &std::path::Path) -> Result<(u32, u32), String> {
+    let out = std::process::Command::new(path)
+        .args([
+            "-c",
+            "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+        ])
+        .output()
+        .map_err(|e| format!("Oracle candidate '{}' unavailable: {e}", path.display()))?;
+    if !out.status.success() {
+        return Err(format!(
+            "Oracle candidate '{}' probe failed",
+            path.display()
+        ));
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let v: Vec<u32> = s.trim().split('.').filter_map(|p| p.parse().ok()).collect();
+    if v.len() >= 2 {
+        Ok((v[0], v[1]))
+    } else {
+        Err(format!(
+            "Oracle candidate '{}' invalid version: '{s}'",
+            path.display()
+        ))
+    }
+}
+
+fn validate_oracle_candidate_with_prober<F>(
+    cand: &OracleCandidate,
+    min_version: (u32, u32),
+    prober: F,
+) -> Result<(u32, u32), String>
+where
+    F: FnOnce(&std::path::Path) -> Result<(u32, u32), String>,
+{
+    let (maj, min) = prober(&cand.path)?;
+    let (req_maj, req_min) = min_version;
+    if (maj, min) < (req_maj, req_min) {
+        Err(format!(
+            "Incompatible Python oracle candidate '{}': detected {maj}.{min}, required >={req_maj}.{req_min}",
+            cand.path.display()
+        ))
+    } else {
+        eprintln!(
+            "Using Python oracle at '{}' (Python {maj}.{min})",
+            cand.path.display()
+        );
+        Ok((maj, min))
+    }
+}
+
+fn default_fixture_executor(
+    bin: &std::path::Path,
+    py_path: &std::path::Path,
+) -> Result<String, String> {
+    let out = std::process::Command::new(bin)
+        .arg(py_path)
+        .output()
+        .map_err(|e| format!("Failed to spawn oracle '{}': {e}", bin.display()))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!(
+            "CPython oracle failed for {}: {}\nstderr:\n{}",
+            py_path.display(),
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
+fn execute_oracle_fixture<R, V, E>(
+    res: R,
+    min_version: (u32, u32),
+    prob: V,
+    exec: E,
+    fix: &std::path::Path,
+) -> Result<String, String>
+where
+    R: FnOnce() -> Result<OracleCandidate, String>,
+    V: FnOnce(&std::path::Path) -> Result<(u32, u32), String>,
+    E: FnOnce(&std::path::Path, &std::path::Path) -> Result<String, String>,
+{
+    let cand = res()?;
+    let _ver = validate_oracle_candidate_with_prober(&cand, min_version, prob)?;
+    exec(&cand.path, fix)
+}
+
+const PATTERN_MATCHING_SYNTAX_FLOOR: (u32, u32) = (3, 10);
+
 /// Load a fixture file, run through JIT, and compare against the live
-/// CPython 3.12 oracle (D5.6: golden `.expected` files are retired; the
-/// oracle output is captured per run, matching the conformance harness).
+/// CPython oracle using a configured compatible CPython oracle while
+/// retaining the pattern-matching syntax floor (D5.6: golden `.expected`
+/// files are retired; the oracle output is captured per run, matching the
+/// conformance harness).
 fn run_fixture(fixture_rel_path: &str) {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(crate::conformance::FIXTURES_ROOT)
@@ -122,20 +272,14 @@ fn run_fixture(fixture_rel_path: &str) {
     let src = std::fs::read_to_string(&py_path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", py_path.display()));
 
-    let oracle = std::process::Command::new("python3").arg(&py_path).output();
-    let expected = match oracle {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
-        Ok(out) => panic!(
-            "CPython oracle failed for {}: {}\nstderr:\n{}",
-            py_path.display(),
-            out.status,
-            String::from_utf8_lossy(&out.stderr)
-        ),
-        Err(_) => {
-            eprintln!("  [skip] python3 unavailable; cannot oracle {fixture_rel_path}");
-            return;
-        }
-    };
+    let expected = execute_oracle_fixture(
+        select_oracle_candidate,
+        PATTERN_MATCHING_SYNTAX_FLOOR,
+        default_version_prober,
+        default_fixture_executor,
+        &py_path,
+    )
+    .unwrap_or_else(|e| panic!("Oracle resolution/execution failed for {fixture_rel_path}: {e}"));
 
     // Strip any residual xfail directive
     let clean_src: String = src
@@ -876,4 +1020,81 @@ fn test_xfail_removed_from_non_stdlib_fixtures() {
             "{fixture} should not have active mamba-xfail marker"
         );
     }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// S19: Oracle selection and floor validation canaries (#2803)
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_canary_configured_compatible_candidate_wins_over_path() {
+    let cfg = std::path::PathBuf::from("/c/py3");
+    let cache = std::path::PathBuf::from("/cache/py3");
+    let path = std::path::PathBuf::from("/usr/py3");
+
+    let c1 =
+        select_oracle_candidate_pure(Some("/c/py3"), Some(&cache), || Some(path.clone())).unwrap();
+    assert_eq!((c1.path, c1.source), (cfg, "MAMBA_ORACLE_PYTHON"));
+
+    let c2 = select_oracle_candidate_pure(None, Some(&cache), || Some(path.clone())).unwrap();
+    assert_eq!((c2.path, c2.source), (cache, "oracle-env cache"));
+
+    let c3 = select_oracle_candidate_pure(None, None, || Some(path.clone())).unwrap();
+    assert_eq!(
+        (c3.path, c3.source),
+        (path, "PATH python3 (sys.executable)")
+    );
+}
+
+#[test]
+fn test_canary_python_3_9_rejected_before_fixture_execution() {
+    let fake_cand = OracleCandidate {
+        path: std::path::PathBuf::from("/f/py39"),
+        source: "fake",
+    };
+    let mut exec_called = false;
+    let res = execute_oracle_fixture(
+        || Ok(fake_cand),
+        (3, 10),
+        |_| Ok((3, 9)),
+        |_, _| {
+            exec_called = true;
+            Ok("".into())
+        },
+        std::path::Path::new("d.py"),
+    );
+    assert!(!exec_called, "withheld");
+    let err = res.expect_err("3.9 candidate rejected");
+    assert!(
+        err.contains("/f/py39") && err.contains("detected 3.9") && err.contains("required >=3.10"),
+        "{err}"
+    );
+}
+
+#[test]
+fn test_canary_unavailable_candidate_produces_hard_diagnostic() {
+    let res_err = select_oracle_candidate_pure(None, None, || None).expect_err("selection fail");
+    assert!(res_err.contains("unavailable"), "{res_err}");
+
+    let cand = OracleCandidate {
+        path: std::path::PathBuf::from("/no/py3"),
+        source: "missing",
+    };
+    let mut exec_called = false;
+    let exec_err = execute_oracle_fixture(
+        || Ok(cand),
+        (3, 10),
+        |p| Err(format!("unavailable: {}", p.display())),
+        |_, _| {
+            exec_called = true;
+            Ok("".into())
+        },
+        std::path::Path::new("d.py"),
+    )
+    .expect_err("probe fail");
+    assert!(!exec_called, "withheld");
+    assert!(
+        exec_err.contains("unavailable") || exec_err.contains("/no/py3"),
+        "{exec_err}"
+    );
 }

@@ -372,3 +372,572 @@ pub fn mb_format(val: MbValue, spec: MbValue) -> MbValue {
     }
     string_ops::mb_format_value(val, spec)
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct PercentFormatOptions {
+    pub conv: char,
+    pub sign_plus: bool,
+    pub sign_space: bool,
+    pub alternate: bool,
+    pub zero_pad: bool,
+    pub left_align: bool,
+    pub width: usize,
+    pub precision: Option<usize>,
+}
+
+/// Convert a value for printf-style real conversions without applying the
+/// general `float()` string/bytes parsing rules.  `%f` accepts real numbers
+/// and the numeric conversion protocols, but a numeric-looking string is not
+/// a valid operand.
+fn percent_real_value(val: MbValue) -> Result<f64, String> {
+    if let Some(f) = val.as_float() {
+        return Ok(f);
+    }
+    // Decimal/Fraction values are integer-encoded handles; intercept them
+    // before the inline-int fast path so their handle ids are never formatted.
+    if super::is_decimal_handle_value(val) {
+        return decimal_mod::mb_decimal_float(val)
+            .as_float()
+            .ok_or_else(|| "Decimal handle did not produce a float".to_string());
+    }
+    if super::is_fraction_handle_value(val) {
+        return fractions_mod::mb_fraction_float(val)
+            .as_float()
+            .ok_or_else(|| "Fraction handle did not produce a float".to_string());
+    }
+    if let Some(i) = val.as_int_pyint() {
+        return Ok(i as f64);
+    }
+    if let Some(big) = unsafe { bigint_ops::int_as_f64(val) } {
+        return Ok(big);
+    }
+
+    // Preserve the existing numeric-subclass payload path when the subclass
+    // does not override the conversion protocol.
+    if let Some((_base, payload)) = class::builtin_data_payload_if_unoverridden(val, "__float__") {
+        return percent_real_value(payload);
+    }
+
+    let class_name = val.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, .. } => Some(class_name.clone()),
+            _ => None,
+        }
+    });
+    let Some(class_name) = class_name else {
+        return Err(format!(
+            "must be real number, not {}",
+            super::value_type_name(val)
+        ));
+    };
+
+    for dunder in ["__float__", "__index__"] {
+        let method = class::lookup_method(&class_name, dunder);
+        if method.is_none() {
+            continue;
+        }
+        let name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let result = class::mb_call_method(val, name, args);
+        if exception::current_exception_type().is_some() {
+            return Err(String::new());
+        }
+
+        if dunder == "__float__" {
+            if let Some(f) = result.as_float() {
+                return Ok(f);
+            }
+            if let Some((_base, payload)) = class::builtin_data_payload(result) {
+                if let Some(f) = payload.as_float() {
+                    return Ok(f);
+                }
+            }
+            return Err(format!(
+                "{}.__float__ returned non-float (type {})",
+                super::value_type_name(val),
+                super::value_type_name(result)
+            ));
+        }
+
+        if let Some(i) = result.as_int_pyint() {
+            return Ok(i as f64);
+        }
+        if let Some(big) = unsafe { bigint_ops::int_as_f64(result) } {
+            return Ok(big);
+        }
+        if let Some((_base, payload)) = class::builtin_data_payload(result) {
+            if let Some(i) = payload.as_int_pyint() {
+                return Ok(i as f64);
+            }
+            if let Some(big) = unsafe { bigint_ops::int_as_f64(payload) } {
+                return Ok(big);
+            }
+        }
+        return Err(format!(
+            "__index__ returned non-int (type {})",
+            super::value_type_name(result)
+        ));
+    }
+
+    Err(format!(
+        "must be real number, not {}",
+        super::value_type_name(val)
+    ))
+}
+
+pub fn format_numeric_percent(
+    val: Option<MbValue>,
+    opts: PercentFormatOptions,
+) -> Result<(String, String), String> {
+    let conv = opts.conv;
+    let sign_plus = opts.sign_plus;
+    let sign_space = opts.sign_space;
+    let alternate = opts.alternate;
+    let precision = opts.precision;
+
+    match conv {
+        'd' | 'i' | 'u' | 'o' | 'x' | 'X' | 'b' => {
+            let radix = match conv {
+                'o' => 8,
+                'b' => 2,
+                'x' | 'X' => 16,
+                _ => 10,
+            };
+            let (negative, mut body) = if let Some(v) = val {
+                if let Some((neg, digits)) = int_digits_for_percent_val(v, radix) {
+                    (neg, digits)
+                } else if let Some(f) = v.as_float() {
+                    let neg = f.is_sign_negative();
+                    let abs_f = f.abs().trunc();
+                    let digits = match radix {
+                        2 => format!("{:b}", abs_f as u64),
+                        8 => format!("{:o}", abs_f as u64),
+                        16 => format!("{:x}", abs_f as u64),
+                        _ => abs_f.to_string(),
+                    };
+                    (neg, digits)
+                } else {
+                    return Err(format!(
+                        "%{conv} format: a real number is required, not {}",
+                        super::value_type_name(v)
+                    ));
+                }
+            } else {
+                (false, "0".to_string())
+            };
+
+            if conv == 'X' {
+                body = body.to_ascii_uppercase();
+            }
+
+            if let Some(p) = precision {
+                if p == 0 && body == "0" {
+                    body = String::new();
+                } else if body.len() < p {
+                    let pad = p - body.len();
+                    body = format!("{}{body}", "0".repeat(pad));
+                }
+            }
+
+            let sign_part = if negative {
+                "-".to_string()
+            } else if sign_plus {
+                "+".to_string()
+            } else if sign_space {
+                " ".to_string()
+            } else {
+                String::new()
+            };
+
+            let alt = if alternate {
+                match conv {
+                    'x' => "0x",
+                    'X' => "0X",
+                    'o' => if body.starts_with('0') { "" } else { "0o" },
+                    'b' => "0b",
+                    _ => "",
+                }
+            } else {
+                ""
+            };
+
+            Ok((format!("{sign_part}{alt}"), body))
+        }
+        'f' | 'F' | 'e' | 'E' | 'g' | 'G' => {
+            let v = match val {
+                Some(value) => percent_real_value(value)?,
+                None => return Err("not enough arguments for format string".to_string()),
+            };
+            let negative = !v.is_nan() && v.is_sign_negative();
+            if !v.is_finite() {
+                let prefix = if negative {
+                    "-"
+                } else if sign_plus {
+                    "+"
+                } else if sign_space {
+                    " "
+                } else {
+                    ""
+                };
+                let body = if v.is_nan() {
+                    if matches!(conv, 'F' | 'E' | 'G') {
+                        "NAN"
+                    } else {
+                        "nan"
+                    }
+                } else if matches!(conv, 'F' | 'E' | 'G') {
+                    "INF"
+                } else {
+                    "inf"
+                };
+                return Ok((prefix.to_string(), body.to_string()));
+            }
+            let prec = precision.unwrap_or(6);
+            let abs_v = v.abs();
+
+            let (prefix_sign, body) = match conv {
+                'f' | 'F' => {
+                    let mut b = format!("{:.prec$}", abs_v, prec = prec);
+                    if alternate && !b.contains('.') {
+                        b.push('.');
+                    }
+                    if conv == 'F' {
+                        b = b.to_ascii_uppercase();
+                    }
+                    (if negative { "-" } else if sign_plus { "+" } else if sign_space { " " } else { "" }, b)
+                }
+                'e' | 'E' => {
+                    let s = format!("{:.prec$e}", abs_v, prec = prec);
+                    let mut parts = s.split('e');
+                    let mantissa = parts.next().unwrap_or("0");
+                    let exp: i32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                    let exp_char = if conv == 'E' { 'E' } else { 'e' };
+                    let mut b = format!("{mantissa}{exp_char}{exp:+03}");
+                    if alternate && !b.contains('.') {
+                        if let Some(idx) = b.find(exp_char) {
+                            b.insert(idx, '.');
+                        }
+                    }
+                    (if negative { "-" } else if sign_plus { "+" } else if sign_space { " " } else { "" }, b)
+                }
+                'g' | 'G' => {
+                    let p = if prec == 0 { 1 } else { prec };
+                    let mut b = if abs_v == 0.0 {
+                        "0".to_string()
+                    } else {
+                        let exp = abs_v.log10().floor() as i32;
+                        if -4 <= exp && exp < p as i32 {
+                            let dec = (p as i32 - 1 - exp).max(0) as usize;
+                            format!("{:.dec$}", abs_v, dec = dec)
+                        } else {
+                            let dec = (p as i32 - 1).max(0) as usize;
+                            let s = format!("{:.dec$e}", abs_v, dec = dec);
+                            let mut parts = s.split('e');
+                            let mantissa = parts.next().unwrap_or("0");
+                            let exp_val: i32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                            let exp_char = if conv == 'G' { 'E' } else { 'e' };
+                            format!("{mantissa}{exp_char}{exp_val:+03}")
+                        }
+                    };
+                    if !alternate {
+                        if b.contains('.') && !b.contains('e') && !b.contains('E') {
+                            b = b.trim_end_matches('0').trim_end_matches('.').to_string();
+                        } else if b.contains('e') || b.contains('E') {
+                            let exp_char = if conv == 'G' { 'E' } else { 'e' };
+                            if let Some(idx) = b.find(exp_char) {
+                                let (mant, exp_str) = b.split_at(idx);
+                                let trimmed_mant = if mant.contains('.') {
+                                    mant.trim_end_matches('0').trim_end_matches('.')
+                                } else {
+                                    mant
+                                };
+                                b = format!("{trimmed_mant}{exp_str}");
+                            }
+                        }
+                    } else if !b.contains('.') {
+                        if let Some(idx) = b.find(if conv == 'G' { 'E' } else { 'e' }) {
+                            b.insert(idx, '.');
+                        } else {
+                            b.push('.');
+                        }
+                    }
+                    if conv == 'G' {
+                        b = b.to_ascii_uppercase();
+                    }
+                    (if negative { "-" } else if sign_plus { "+" } else if sign_space { " " } else { "" }, b)
+                }
+                _ => unreachable!(),
+            };
+
+            Ok((prefix_sign.to_string(), body))
+        }
+        _ => Err(format!("unsupported conversion '{conv}'")),
+    }
+}
+
+fn int_digits_for_percent_val(v: MbValue, radix: u32) -> Option<(bool, String)> {
+    if let Some(i) = v.as_int() {
+        let abs = i.unsigned_abs();
+        let digits = match radix {
+            2 => format!("{:b}", abs),
+            8 => format!("{:o}", abs),
+            16 => format!("{:x}", abs),
+            _ => abs.to_string(),
+        };
+        return Some((i < 0, digits));
+    }
+    if let Some(b) = v.as_bool() {
+        return Some((false, if b { "1" } else { "0" }.to_string()));
+    }
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::BigInt(ref big) = (*ptr).data {
+            let s = big.to_str_radix(radix);
+            if let Some(rest) = s.strip_prefix('-') {
+                Some((true, rest.to_string()))
+            } else {
+                Some((false, s))
+            }
+        } else if let Some(("int", payload)) = class::builtin_data_payload(v) {
+            int_digits_for_percent_val(payload, radix)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn float_opts(conv: char) -> PercentFormatOptions {
+        PercentFormatOptions {
+            conv,
+            sign_plus: false,
+            sign_space: false,
+            alternate: false,
+            zero_pad: false,
+            left_align: false,
+            width: 0,
+            precision: Some(3),
+        }
+    }
+
+    #[test]
+    fn format_numeric_percent_rejects_non_numeric_float_conversions() {
+        let conversions = ['f', 'F', 'e', 'E', 'g', 'G'];
+        let non_numeric = [
+            None,
+            Some(MbValue::from_ptr(MbObject::new_str("abc".to_string()))),
+            Some(MbValue::from_ptr(MbObject::new_list(vec![]))),
+        ];
+
+        for conv in conversions {
+            for value in non_numeric {
+                assert!(
+                    format_numeric_percent(value, float_opts(conv)).is_err(),
+                    "%{conv} must reject a non-numeric receiver"
+                );
+            }
+
+            assert!(
+                format_numeric_percent(Some(MbValue::from_int(7)), float_opts(conv)).is_ok(),
+                "%{conv} must accept an int"
+            );
+            assert!(
+                format_numeric_percent(Some(MbValue::from_float(2.5)), float_opts(conv)).is_ok(),
+                "%{conv} must accept a float"
+            );
+        }
+    }
+
+    fn exact_opts(
+        conv: char,
+        precision: Option<usize>,
+        sign_plus: bool,
+        sign_space: bool,
+        alternate: bool,
+    ) -> PercentFormatOptions {
+        PercentFormatOptions {
+            conv,
+            sign_plus,
+            sign_space,
+            alternate,
+            zero_pad: false,
+            left_align: false,
+            width: 0,
+            precision,
+        }
+    }
+
+    #[test]
+    fn format_numeric_percent_nonfinite_float_family() {
+        let cases = [
+            ('f', f64::INFINITY, ("", "inf")),
+            ('f', f64::NEG_INFINITY, ("-", "inf")),
+            ('f', f64::NAN, ("", "nan")),
+            ('f', -f64::NAN, ("", "nan")),
+            ('F', f64::INFINITY, ("", "INF")),
+            ('F', f64::NEG_INFINITY, ("-", "INF")),
+            ('F', f64::NAN, ("", "NAN")),
+            ('F', -f64::NAN, ("", "NAN")),
+            ('e', f64::INFINITY, ("", "inf")),
+            ('e', f64::NEG_INFINITY, ("-", "inf")),
+            ('e', f64::NAN, ("", "nan")),
+            ('e', -f64::NAN, ("", "nan")),
+            ('E', f64::INFINITY, ("", "INF")),
+            ('E', f64::NEG_INFINITY, ("-", "INF")),
+            ('E', f64::NAN, ("", "NAN")),
+            ('E', -f64::NAN, ("", "NAN")),
+            ('g', f64::INFINITY, ("", "inf")),
+            ('g', f64::NEG_INFINITY, ("-", "inf")),
+            ('g', f64::NAN, ("", "nan")),
+            ('g', -f64::NAN, ("", "nan")),
+            ('G', f64::INFINITY, ("", "INF")),
+            ('G', f64::NEG_INFINITY, ("-", "INF")),
+            ('G', f64::NAN, ("", "NAN")),
+            ('G', -f64::NAN, ("", "NAN")),
+        ];
+
+        for (conv, value, expected) in cases {
+            assert_eq!(
+                format_numeric_percent(
+                    Some(MbValue::from_float(value)),
+                    exact_opts(conv, Some(2), false, false, false),
+                )
+                .expect("non-finite real formatting should succeed"),
+                (expected.0.to_string(), expected.1.to_string()),
+                "%{conv} non-finite formatting mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn format_numeric_percent_nonfinite_case_and_sign() {
+        let cases = [
+            ('f', false, false, f64::NAN, ("", "nan")),
+            ('F', false, false, f64::NAN, ("", "NAN")),
+            ('f', false, false, -f64::NAN, ("", "nan")),
+            ('F', false, false, -f64::NAN, ("", "NAN")),
+            ('f', true, false, f64::INFINITY, ("+", "inf")),
+            ('f', false, true, f64::INFINITY, (" ", "inf")),
+            ('f', true, false, -f64::NAN, ("+", "nan")),
+            ('f', false, true, -f64::NAN, (" ", "nan")),
+            ('f', false, false, f64::NEG_INFINITY, ("-", "inf")),
+        ];
+
+        for (conv, sign_plus, sign_space, value, expected) in cases {
+            assert_eq!(
+                format_numeric_percent(
+                    Some(MbValue::from_float(value)),
+                    exact_opts(conv, Some(2), sign_plus, sign_space, false),
+                )
+                .expect("non-finite sign formatting should succeed"),
+                (expected.0.to_string(), expected.1.to_string()),
+                "%{conv} non-finite sign/case mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn format_numeric_percent_nonfinite_ignores_precision_and_alternate() {
+        let cases = [
+            ('f', f64::INFINITY, ("", "inf")),
+            ('E', f64::NEG_INFINITY, ("-", "INF")),
+            ('g', f64::NAN, ("", "nan")),
+            ('G', f64::NAN, ("", "NAN")),
+        ];
+
+        for (conv, value, expected) in cases {
+            assert_eq!(
+                format_numeric_percent(
+                    Some(MbValue::from_float(value)),
+                    exact_opts(conv, Some(0), false, false, true),
+                )
+                .expect("non-finite alternate formatting should succeed"),
+                (expected.0.to_string(), expected.1.to_string()),
+                "%{conv} non-finite formatting must not add punctuation"
+            );
+        }
+    }
+
+    #[test]
+    fn format_numeric_percent_finite_controls_remain_unchanged() {
+        let cases = [
+            (
+                Some(MbValue::from_float(2.5)),
+                exact_opts('f', Some(3), false, false, false),
+                ("", "2.500"),
+            ),
+            (
+                Some(MbValue::from_float(2.5)),
+                exact_opts('e', Some(3), false, false, false),
+                ("", "2.500e+00"),
+            ),
+            (
+                Some(MbValue::from_float(2.5)),
+                exact_opts('F', Some(3), false, false, false),
+                ("", "2.500"),
+            ),
+            (
+                Some(MbValue::from_float(2.5)),
+                exact_opts('E', Some(3), false, false, false),
+                ("", "2.500E+00"),
+            ),
+            (
+                Some(MbValue::from_float(2500.0)),
+                exact_opts('g', Some(3), false, false, false),
+                ("", "2.5e+03"),
+            ),
+            (
+                Some(MbValue::from_float(2500.0)),
+                exact_opts('G', Some(3), false, false, false),
+                ("", "2.5E+03"),
+            ),
+            (
+                Some(MbValue::from_float(2.5)),
+                exact_opts('f', None, false, false, false),
+                ("", "2.500000"),
+            ),
+            (
+                Some(MbValue::from_float(2.5)),
+                exact_opts('e', None, false, false, false),
+                ("", "2.500000e+00"),
+            ),
+            (
+                Some(MbValue::from_float(2500.0)),
+                exact_opts('g', None, false, false, false),
+                ("", "2500"),
+            ),
+            (
+                Some(MbValue::from_float(1.5)),
+                exact_opts('f', Some(3), true, false, false),
+                ("+", "1.500"),
+            ),
+            (
+                Some(MbValue::from_float(1.5)),
+                exact_opts('f', Some(3), false, true, false),
+                (" ", "1.500"),
+            ),
+            (
+                Some(MbValue::from_float(2.0)),
+                exact_opts('f', Some(0), false, false, true),
+                ("", "2."),
+            ),
+            (
+                Some(MbValue::from_int(10)),
+                exact_opts('x', None, false, false, true),
+                ("0x", "a"),
+            ),
+        ];
+
+        for (value, opts, expected) in cases {
+            assert_eq!(
+                format_numeric_percent(value, opts)
+                    .expect("finite percent formatting should succeed"),
+                (expected.0.to_string(), expected.1.to_string())
+            );
+        }
+    }
+
+}

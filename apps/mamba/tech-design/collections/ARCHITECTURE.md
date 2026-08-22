@@ -22,7 +22,7 @@ their C-ABI ops. Source: `src/runtime/{list,dict,set,tuple}_ops.rs`.
 
 | Type | Repr (rc.rs) | Notes |
 |---|---|---|
-| list | `List(MbRwLock<MbList>)` :489 | `MbList = SmallVec<[MbValue;8]>` :99 — inline ≤8, spills to heap |
+| list | `List(MbRwLock<MbListBuffer>)` :489 | `MbListBuffer::{Generic,Int,Float}`; generic uses `MbList = SmallVec<[MbValue;8]>` :99, while scalar-specialized buffers remain unboxed until an `Any` boundary |
 | dict | `Dict(MbRwLock<MbDictMap>)` :490 | `MbDictMap = IndexMap<DictKey,MbValue>` :394 — insertion-ordered |
 | tuple | `Tuple(Vec<MbValue>)` :491 | immutable; no lock |
 | set | `Set(MbRwLock<MbSet>)` :496 | `MbSet{items:MbList, buckets:FxHashMap<u64,pos>}` :118 |
@@ -44,6 +44,13 @@ their C-ABI ops. Source: `src/runtime/{list,dict,set,tuple}_ops.rs`.
 - **MbSet consistency**: `set_hash` (rc.rs:146) agrees with `eq_py` (int/bool/
   integral-float share a bucket, resolved by `mb_eq`); mutation ONLY through
   `set_insert`/`set_remove`/`pop_front` (no `DerefMut`) so `buckets` stays synced.
+- **List shallow-copy contract**: `list.copy()`, `list(x)` when `x` is a list,
+  and `copy.copy(list)` allocate a distinct outer container while preserving
+  length, order, and element identity. The copy seam must explicitly invoke
+  `MbListBuffer`'s representation-aware conversion/clone; method lookup through
+  `Deref<Target=[MbValue]>` is not valid for `Int`/`Float`, whose deref slice is
+  deliberately empty. Generic pointer elements gain exactly one owner in the
+  destination; scalar-specialized elements require no heap retain.
 - Tuple/frozenset are hashable dict keys; list/dict/set are not
   (`unhashable_type_name`, set_ops.rs:448) → `TypeError: unhashable type`.
 
@@ -86,6 +93,12 @@ their C-ABI ops. Source: `src/runtime/{list,dict,set,tuple}_ops.rs`.
 
 - Raw `IndexMap<DictKey,_>::get(&str)` — compiles (Equivalent impls exist) but
   hits the wrong bucket → silent None for present keys (dict_ops.rs:494 warning).
+- Calling an ambiguous slice method such as `.to_vec()` through an
+  `RwLockReadGuard<MbListBuffer>` can resolve through the buffer's
+  `Deref<[MbValue]>`. That slice is empty for `Int`/`Float`, so a shallow copy
+  silently loses every scalar. Disambiguate the representation-aware
+  `MbListBuffer` operation (or clone the enum) before constructing the new
+  list, and cover generic, int, float, empty, and nested-reference shapes.
 - `MbSet` `DerefMut` absence is deliberate: mutating `items` directly desyncs
   `buckets`; any new mutator must be an inherent method (rc.rs:117).
 - `mb_list_sort` drops the lock while the key callable runs and watches for
@@ -105,6 +118,10 @@ their C-ABI ops. Source: `src/runtime/{list,dict,set,tuple}_ops.rs`.
   AND `to_dict_key` AND `set_hash` (all four must agree or buckets split).
 - New view: register `dict_view_class_kind` (:1957) + a `dict_view_make` name;
   set-likeness via `dict_view_is_setlike`.
+- New list-copy path: reuse one representation-aware snapshot primitive and
+  the borrowed-element ownership constructor. Its proof matrix includes
+  `Generic`, `Int`, `Float`, empty, and nested heap references; assert distinct
+  outer pointer plus identical nested pointer, then release both owners.
 - Perf knobs: `MbList` inline cap (8), `MbSet` bucket layout (coordinate with
   `memory/`); frozenset indexing is the obvious unfilled O(n)→O(1) slot.
 

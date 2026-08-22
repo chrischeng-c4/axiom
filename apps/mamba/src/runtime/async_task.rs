@@ -1,5 +1,6 @@
 use super::async_rt::{
-    alloc_task_id, mb_coroutine_step, mb_coroutine_suspend_current, MbTask, COROUTINES, TASKS,
+    alloc_task_id, mb_coroutine_step, mb_coroutine_suspend_current, tombstone_completed_coroutine,
+    MbTask, COROUTINES, TASKS,
 };
 use super::rc::{MbObject, MbRwLock, ObjData};
 use super::value::MbValue;
@@ -669,7 +670,7 @@ where
                 .filter(|(_, task)| {
                     coros
                         .get(&task.coroutine_id)
-                        .is_some_and(|coro| !coro.exhausted && coro.state == 0)
+                        .is_some_and(|coro| !coro.exhausted && !coro.running)
                 })
                 .map(|(&task_id, _)| task_id)
                 .collect()
@@ -1146,64 +1147,113 @@ fn poll_asyncio_future_state(awaitable: MbValue) -> Option<FutureState> {
 
 // ── asyncio-compatible Functions ──
 
+#[cfg(test)]
+pub(crate) static GATHER_OBSERVED_INCOMPLETE_HOOK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+// <HANDWRITE gap="missing-generator:logic" tracker="#1841" reason="logic section in async_task.rs is hand-written pending codegen support">
 /// asyncio.gather(*coros) — run multiple coroutines concurrently.
 pub fn mb_gather(coros: MbValue) -> MbValue {
-    if let Some(ptr) = coros.as_ptr() {
-        unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                let coro_list = lock.read().unwrap();
-                let mut event_loop = EventLoop::new();
-                let task_ids: Vec<(u64, u64)> = coro_list
-                    .iter()
-                    .map(|c| {
-                        let coro_id = c.as_int().unwrap_or(0) as u64;
-                        let task = mb_create_task(*c);
-                        let tid = task.as_int().unwrap_or(0) as u64;
-                        event_loop.schedule(tid);
-                        (coro_id, tid)
-                    })
-                    .collect();
-
-                let max_iterations = 100_000;
-                let mut completed = false;
-                for _ in 0..max_iterations {
-                    let all_done = task_ids.iter().all(|(cid, _)| {
-                        COROUTINES
-                            .read()
-                            .unwrap()
-                            .get(cid)
-                            .map(|c| c.exhausted)
-                            .unwrap_or(true)
-                    });
-                    if all_done {
-                        completed = true;
-                        break;
-                    }
-                    event_loop.tick();
-                }
-                if !completed {
-                    eprintln!(
-                        "mamba: mb_gather: iteration limit reached, some tasks may be incomplete"
-                    );
-                }
-
-                let results: Vec<MbValue> = task_ids
-                    .iter()
-                    .map(|(cid, _)| {
-                        COROUTINES
-                            .read()
-                            .unwrap()
-                            .get(cid)
-                            .and_then(|c| c.result)
-                            .unwrap_or(MbValue::none())
-                    })
-                    .collect();
-                return MbValue::from_ptr(MbObject::new_list_borrowed(results));
-            }
-        }
-    }
-    MbValue::none()
+    mb_gather_with_budget(coros, 100_000)
 }
+
+pub(crate) fn mb_gather_with_budget(coros: MbValue, max_iterations: usize) -> MbValue {
+    let coro_list: Vec<MbValue> = coros
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref l) = (*p).data {
+                Some(l.read().unwrap().to_vec())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    if coro_list.is_empty() {
+        return MbValue::none();
+    }
+
+    let mut event_loop = EventLoop::new();
+    let task_ids: Vec<(u64, u64)> = coro_list
+        .into_iter()
+        .map(|c| {
+            (
+                c.as_int().unwrap_or(0) as u64,
+                mb_create_task(c).as_int().unwrap_or(0) as u64,
+            )
+        })
+        .inspect(|(_, tid)| event_loop.schedule(*tid))
+        .collect();
+
+    let mut completed = false;
+    for _ in 0..max_iterations {
+        let all_done = task_ids.iter().all(|(cid, _)| {
+            COROUTINES
+                .read()
+                .unwrap()
+                .get(cid)
+                .map(|c| c.exhausted)
+                .unwrap_or(true)
+        });
+        if all_done {
+            completed = true;
+            break;
+        }
+        #[cfg(test)]
+        GATHER_OBSERVED_INCOMPLETE_HOOK.store(true, std::sync::atomic::Ordering::SeqCst);
+        event_loop.tick();
+    }
+
+    if !completed {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "mamba: mb_gather: iteration limit reached".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+
+    if super::exception::has_current_exception() {
+        for (cid, tid) in &task_ids {
+            tombstone_completed_coroutine(MbValue::from_int(*cid as i64));
+            TASKS.write().unwrap().remove(tid);
+        }
+        return MbValue::none();
+    }
+
+    let mut missing_result = false;
+    let results: Vec<MbValue> = task_ids
+        .iter()
+        .map(|(cid, tid)| {
+            if let Some((true, res)) = TASKS.read().unwrap().get(tid).map(|t| (t.done, t.result)) {
+                res
+            } else if let Some(res) = COROUTINES.read().unwrap().get(cid).and_then(|c| c.result) {
+                res
+            } else {
+                missing_result = true;
+                MbValue::none()
+            }
+        })
+        .collect();
+
+    for (cid, tid) in &task_ids {
+        tombstone_completed_coroutine(MbValue::from_int(*cid as i64));
+        TASKS.write().unwrap().remove(tid);
+    }
+
+    if missing_result {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "mamba: mb_gather: missing result".to_string(),
+            )),
+        );
+        MbValue::none()
+    } else {
+        MbValue::from_ptr(MbObject::new_list_borrowed(results))
+    }
+}
+// </HANDWRITE>
 
 /// asyncio.sleep(seconds) — cooperative sleep.
 pub fn mb_sleep(seconds: MbValue) -> MbValue {
@@ -1247,12 +1297,12 @@ pub fn mb_async_wait(tasks: MbValue, _timeout: MbValue) -> MbValue {
                 let task_list = lock.read().unwrap();
                 let mut done = Vec::new();
                 let mut pending = Vec::new();
-                for t in task_list.iter() {
-                    let is_done = mb_task_done(*t).as_bool().unwrap_or(false);
+                for t in task_list.to_vec() {
+                    let is_done = mb_task_done(t).as_bool().unwrap_or(false);
                     if is_done {
-                        done.push(*t);
+                        done.push(t);
                     } else {
-                        pending.push(*t);
+                        pending.push(t);
                     }
                 }
                 return MbValue::from_ptr(MbObject::new_tuple(vec![
@@ -1416,19 +1466,70 @@ mod tests {
 
     #[test]
     fn test_gather_completed_coroutines() {
-        let n1 = MbValue::from_ptr(MbObject::new_str("c1".to_string()));
-        let l1 = MbValue::from_ptr(MbObject::new_list(vec![]));
-        let c1 = mb_coroutine_new(n1, l1);
-        mb_coroutine_complete(c1, MbValue::from_int(10));
+        let _async_guard = crate::runtime::async_rt::ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::runtime::async_rt::cleanup_all_async();
+        crate::runtime::exception::mb_clear_exception();
 
-        let n2 = MbValue::from_ptr(MbObject::new_str("c2".to_string()));
-        let l2 = MbValue::from_ptr(MbObject::new_list(vec![]));
-        let c2 = mb_coroutine_new(n2, l2);
-        mb_coroutine_complete(c2, MbValue::from_int(20));
+        let list = |v| MbValue::from_ptr(MbObject::new_list(v));
+        let make_coro = |n: &str, res: Option<i64>| {
+            let name = MbValue::from_ptr(MbObject::new_str(n.into()));
+            let c = mb_coroutine_new(name, list(vec![]));
+            if let Some(v) = res {
+                mb_coroutine_complete(c, MbValue::from_int(v));
+            }
+            (c, c.as_int().unwrap_or(0) as u64)
+        };
+        let items = |v: MbValue| unsafe {
+            v.as_ptr()
+                .and_then(|p| match (*p).data {
+                    ObjData::List(ref l) => Some(l.read().unwrap().to_vec()),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+        let ints = |v| items(v).into_iter().map(|x| x.as_int()).collect::<Vec<_>>();
 
-        let coros = MbValue::from_ptr(MbObject::new_list(vec![c1, c2]));
-        let results = mb_gather(coros);
-        assert!(results.as_ptr().is_some(), "gather should return a list");
+        let (cn, _) = make_coro("cn", None);
+        mb_coroutine_complete(cn, MbValue::none());
+        let g_none = items(mb_gather(list(vec![cn])));
+        let is_none_ok = g_none.len() == 1 && g_none[0].is_none();
+        assert!(is_none_ok && !crate::runtime::exception::has_current_exception());
+
+        GATHER_OBSERVED_INCOMPLETE_HOOK.store(false, std::sync::atomic::Ordering::SeqCst);
+        let (c1, _) = make_coro("c1", Some(100));
+        let (c2, _) = make_coro("c2", None);
+        let worker = std::thread::spawn(move || {
+            while !GATHER_OBSERVED_INCOMPLETE_HOOK.load(std::sync::atomic::Ordering::SeqCst) {
+                std::thread::yield_now();
+            }
+            mb_coroutine_complete(c2, MbValue::from_int(200));
+        });
+        let g_post = mb_gather(list(vec![c1, c2]));
+        worker.join().unwrap();
+        assert_eq!(ints(g_post), vec![Some(100), Some(200)]);
+
+        let (ca, _) = make_coro("ca", None);
+        let (cb, _) = make_coro("cb", Some(222));
+        mb_coroutine_complete(ca, MbValue::from_int(111));
+        let g_ab = mb_gather(list(vec![ca, cb]));
+        assert_eq!(ints(g_ab), vec![Some(111), Some(222)]);
+
+        let (cx, cidx) = make_coro("cx", Some(555));
+        assert_eq!(ints(mb_gather(list(vec![cx]))), vec![Some(555)]);
+        assert_eq!(COROUTINES.read().unwrap().len(), 0);
+        assert_eq!(TASKS.read().unwrap().len(), 0);
+        assert!(!COROUTINES.read().unwrap().contains_key(&cidx));
+
+        let c_never = mb_sleep(MbValue::from_int(60));
+        let cid_never = c_never.as_int().unwrap_or(0) as u64;
+        assert!(mb_gather_with_budget(list(vec![c_never]), 5).is_none());
+        assert!(crate::runtime::exception::has_current_exception());
+        assert!(COROUTINES.read().unwrap().contains_key(&cid_never));
+
+        crate::runtime::async_rt::cleanup_all_async();
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
@@ -1458,7 +1559,7 @@ mod tests {
             .unwrap()
             .get(&(timer_coro.as_int().unwrap() as u64))
             .map(|c| c.exhausted)
-            .unwrap_or(false);
+            .unwrap_or_else(|| crate::runtime::async_rt::is_completed_coroutine(timer_coro));
         assert!(exhausted, "zero-duration timer should expire after tick");
     }
 }

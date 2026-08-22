@@ -49,6 +49,7 @@ fn jit_capture(src: &str) -> String {
     let output = backend
         .codegen(&mir, &checker.tcx)
         .expect("JIT codegen failed");
+    crate::runtime::module::install_introspection_state(&checker, &hir, &backend);
 
     match output {
         CodegenOutput::Jit { entry } => {

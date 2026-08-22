@@ -435,9 +435,24 @@ pub fn local_hostname() -> Option<String> {
 /// since they are not portable across machines (different CPUs, thermal
 /// state, background load).
 pub fn baseline_is_same_host(baseline: &CpythonPerfBaseline) -> bool {
-    match (baseline.host.as_deref(), local_hostname().as_deref()) {
-        (Some(baseline_host), Some(local_host)) => baseline_host == local_host,
-        _ => false,
+    classify_baseline_host(baseline.host.as_deref(), local_hostname().as_deref()).is_none()
+}
+
+/// Pure host-affinity classifier (#1981 policy, #3070 split). `None` means
+/// "this row is this machine's and may be graded"; `Some(reason)` names why it
+/// may not be. Kept free of I/O so the policy is testable without a baseline
+/// DB — see `perf_pin_gate_policy.rs`.
+pub fn classify_baseline_host(
+    baseline_host: Option<&str>,
+    local_host: Option<&str>,
+) -> Option<NoBaselineReason> {
+    match (baseline_host, local_host) {
+        // No recorded host is not verifiably this host's, whether the failure
+        // is on the row's side or ours.
+        (None, _) => Some(NoBaselineReason::NoHost),
+        (Some(_), None) => Some(NoBaselineReason::NoHost),
+        (Some(b), Some(l)) if b == l => None,
+        (Some(_), Some(_)) => Some(NoBaselineReason::CrossHost),
     }
 }
 
@@ -446,9 +461,14 @@ pub fn baseline_is_same_host(baseline: &CpythonPerfBaseline) -> bool {
 pub enum NoBaselineReason {
     /// No baseline row exists for this pin at all.
     Missing,
-    /// A baseline row exists but fails [`baseline_is_same_host`] — recorded
-    /// on a different host, or a legacy pre-#966 row with no recorded host.
+    /// A baseline row exists and names a host, but not this one.
     CrossHost,
+    /// A baseline row exists but carries no host at all — a legacy pre-#966
+    /// row, or one recorded where the hostname was undetectable. Kept
+    /// distinct from [`NoBaselineReason::CrossHost`] because it is the
+    /// majority of the committed corpus and has a different remedy
+    /// (re-record, rather than "you are on the wrong machine").
+    NoHost,
 }
 
 impl NoBaselineReason {
@@ -456,8 +476,52 @@ impl NoBaselineReason {
         match self {
             NoBaselineReason::Missing => "missing",
             NoBaselineReason::CrossHost => "cross-host",
+            NoBaselineReason::NoHost => "no-host",
         }
     }
+
+    /// Human-readable explanation of why this pin cannot be graded here.
+    pub fn explain(self) -> &'static str {
+        match self {
+            NoBaselineReason::Missing => "no baseline row exists for this pin",
+            NoBaselineReason::CrossHost => {
+                "the baseline row was recorded on a different host; CPU/RSS \
+                 ratios are not portable across machines"
+            }
+            NoBaselineReason::NoHost => {
+                "the baseline row carries no recorded host (legacy pre-#966 \
+                 row), so it cannot be shown to have come from this machine"
+            }
+        }
+    }
+}
+
+/// Fail-closed guard for a pin that cannot be graded on this host (#3070).
+///
+/// [`baseline_required`] is the caller's promise that this run must actually
+/// grade something. Before #3070 only [`load_cpython_baseline`] honored it, so
+/// the cross-host and no-host branches short-circuited ahead of every
+/// assertion and every pin reported `ok` while grading nothing. #2011 clause 41
+/// rules that out in as many words: "cross-host skip, missing host, missing
+/// baseline, or JSONL to SQLite mismatch is a hard failure, not a passing
+/// skip."
+///
+/// Call this from grading callers (`perf_pin.rs`) before skipping. Reporting
+/// callers (`perf_gate_report.rs`) deliberately do not call it — a report
+/// records `no-baseline(<reason>)` as data rather than failing.
+pub fn require_gradable_baseline(reason: NoBaselineReason, pin_issue: u64, pin_lib: &str, toml_path: &Path) {
+    assert!(
+        !baseline_required(),
+        "MAMBA_REQUIRE_CPYTHON_PERF_BASELINE is set, so #{} {} must be graded, \
+         but it cannot be: {} ({}). Re-record on this host with `python3 \
+         tests/harness/cpython/tools/perf_baseline.py record --pin {}`, or unset \
+         the flag to allow the skip.",
+        pin_issue,
+        pin_lib,
+        reason.explain(),
+        reason.as_str(),
+        toml_path.display()
+    );
 }
 
 /// Load `toml_path`'s CPython baseline and apply host-affinity (#1981): a
@@ -470,8 +534,12 @@ impl NoBaselineReason {
 /// `no-baseline("cross-host")`, never a ratio, for that case).
 pub fn load_same_host_baseline(toml_path: &Path) -> Result<CpythonPerfBaseline, NoBaselineReason> {
     match load_cpython_baseline(toml_path) {
-        Some(baseline) if baseline_is_same_host(&baseline) => Ok(baseline),
-        Some(_) => Err(NoBaselineReason::CrossHost),
+        Some(baseline) => {
+            match classify_baseline_host(baseline.host.as_deref(), local_hostname().as_deref()) {
+                None => Ok(baseline),
+                Some(reason) => Err(reason),
+            }
+        }
         None => Err(NoBaselineReason::Missing),
     }
 }

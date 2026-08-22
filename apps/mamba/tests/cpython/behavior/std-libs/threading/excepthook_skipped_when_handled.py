@@ -18,7 +18,7 @@
 import threading
 
 original = threading.excepthook
-seen = []
+seen: list[type] = []
 threading.excepthook = lambda args: seen.append(args.exc_type)
 try:
     class Caught(threading.Thread):

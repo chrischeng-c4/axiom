@@ -192,15 +192,20 @@ pub(crate) fn alloc_task_id() -> u64 {
     NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Reset all global async state — coroutines, tasks, and ID counters.
+/// Reset thread-local async state (current coroutine ID) without clearing
+/// process-global coroutine and task registries.
+pub(crate) fn cleanup_thread_local_async() {
+    CURRENT_COROUTINE_ID.with(|cell| cell.set(None));
+}
+
+/// Reset all global and thread-local async state — coroutines and tasks.
 /// Must be called between test runs to prevent stale function pointers
 /// from causing SIGBUS on aarch64.
 pub(crate) fn cleanup_all_async() {
+    cleanup_thread_local_async();
     COROUTINES.write().unwrap().clear();
     COMPLETED_COROUTINES.write().unwrap().clear();
     TASKS.write().unwrap().clear();
-    NEXT_CORO_ID.store(CORO_ID_BASE, Ordering::Relaxed);
-    NEXT_TASK_ID.store(1, Ordering::Relaxed);
 }
 
 // ── Coroutine Creation ──
@@ -626,6 +631,7 @@ pub(crate) fn await_target_coroutine(coro_like: MbValue) -> Option<MbValue> {
     coroutine_wrapper_target(coro_like)
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1841" reason="logic section in async_rt.rs is hand-written pending codegen support">
 pub(crate) fn tombstone_completed_coroutine(coro_handle: MbValue) {
     let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
         return;
@@ -650,6 +656,7 @@ pub(crate) fn tombstone_completed_coroutine(coro_handle: MbValue) {
     }
     COMPLETED_COROUTINES.write().unwrap().insert(id);
 }
+// </HANDWRITE>
 
 pub fn mb_coroutine_is_exhausted(coro_handle: MbValue) -> MbValue {
     let exhausted = coro_handle
@@ -1241,6 +1248,7 @@ mod tests {
 
     #[test]
     fn test_coroutine_lifecycle() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         let name = MbValue::from_ptr(MbObject::new_str("test_coro".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
         let coro = mb_coroutine_new(name, locals);
@@ -1263,6 +1271,7 @@ mod tests {
 
     #[test]
     fn test_coroutine_local_set_get() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         let name = MbValue::from_ptr(MbObject::new_str("local_test".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
         let coro = mb_coroutine_new(name, locals);
@@ -1275,6 +1284,7 @@ mod tests {
 
     #[test]
     fn test_await_completed_coroutine_returns_immediately() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         let name = MbValue::from_ptr(MbObject::new_str("done_coro".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
         let coro = mb_coroutine_new(name, locals);
@@ -1287,6 +1297,7 @@ mod tests {
 
     #[test]
     fn test_completed_coroutine_discards_execution_payload() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         let name = MbValue::from_ptr(MbObject::new_str("done_coro".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
             MbObject::new_str("payload".to_string()),
@@ -1314,6 +1325,7 @@ mod tests {
 
     #[test]
     fn test_tombstoned_coroutine_stays_known_and_rejects_reuse() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         let name = MbValue::from_ptr(MbObject::new_str("done_coro".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
         let coro = mb_coroutine_new(name, locals);
@@ -1345,6 +1357,7 @@ mod tests {
 
     #[test]
     fn test_internal_await_poll_returns_completion_without_stop_iteration() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         unsafe extern "C" fn complete_immediately(coro_bits: i64) -> i64 {
             let coro = MbValue::from_bits(coro_bits as u64);
             mb_coroutine_complete(coro, MbValue::from_int(7));
@@ -1380,6 +1393,7 @@ mod tests {
 
     #[test]
     fn test_coroutine_new_with_body_presizes_locals_and_registers_body() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         unsafe extern "C" fn body(_: i64) -> i64 {
             MbValue::none().to_bits() as i64
         }
@@ -1400,6 +1414,7 @@ mod tests {
 
     #[test]
     fn test_coroutine_new_with_body_unnamed_presizes_locals_and_registers_body() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         unsafe extern "C" fn body(_: i64) -> i64 {
             MbValue::none().to_bits() as i64
         }
@@ -1419,6 +1434,7 @@ mod tests {
 
     #[test]
     fn test_live_await_target_coroutine_skips_tombstones() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         let name = MbValue::from_ptr(MbObject::new_str("done_coro".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
         let coro = mb_coroutine_new(name, locals);
@@ -1440,6 +1456,7 @@ mod tests {
 
     #[test]
     fn test_coroutine_should_suspend_set_state_combines_hot_suspend_path() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         let name = MbValue::from_ptr(MbObject::new_str("await_parent".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
         let coro = mb_coroutine_new(name, locals);
@@ -1467,6 +1484,7 @@ mod tests {
 
     #[test]
     fn test_coroutine_send_sets_awaiting_on_non_terminal_suspend() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         unsafe extern "C" fn suspend_once(coro_bits: i64) -> i64 {
             let coro = MbValue::from_bits(coro_bits as u64);
             mb_coroutine_suspend_current(coro);
@@ -1487,6 +1505,7 @@ mod tests {
 
     #[test]
     fn test_coroutine_step_restores_module_name_after_suspend() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         unsafe extern "C" fn suspend_once(coro_bits: i64) -> i64 {
             let coro = MbValue::from_bits(coro_bits as u64);
             mb_coroutine_suspend_current(coro);
@@ -1539,6 +1558,7 @@ mod tests {
 
     #[test]
     fn test_missing_body_fails_fast() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         // Coroutine with no body fn should fail fast on step, not spin
         let name = MbValue::from_ptr(MbObject::new_str("no_body".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
@@ -1561,6 +1581,7 @@ mod tests {
 
     #[test]
     fn test_deferred_body_not_executed_before_step() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
         // Creating a coroutine should NOT execute the body
         let name = MbValue::from_ptr(MbObject::new_str("deferred".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
@@ -1589,5 +1610,73 @@ mod tests {
         let id4 = alloc_task_id();
         assert_ne!(id1, id2, "coroutine IDs must be unique");
         assert_ne!(id3, id4, "task IDs must be unique");
+    }
+
+    #[test]
+    fn test_cleanup_all_async_prevents_handle_aliasing() {
+        let _guard = ASYNC_STATE_TEST_LOCK.lock().unwrap();
+
+        let name_b = MbValue::from_ptr(MbObject::new_str("coro_b".to_string()));
+        let locals_b = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let coro_b = mb_coroutine_new(name_b, locals_b);
+        let id_b = coro_b.as_int().unwrap() as u64;
+
+        let task_id_b = alloc_task_id();
+        TASKS.write().unwrap().insert(
+            task_id_b,
+            MbTask {
+                name: "task_b".to_string(),
+                coroutine_id: id_b,
+                done: false,
+                cancelled: false,
+                result: MbValue::none(),
+            },
+        );
+
+        cleanup_all_async();
+
+        let name_a = MbValue::from_ptr(MbObject::new_str("coro_a".to_string()));
+        let locals_a = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let coro_a = mb_coroutine_new(name_a, locals_a);
+        let id_a = coro_a.as_int().unwrap() as u64;
+
+        let task_id_a = alloc_task_id();
+        TASKS.write().unwrap().insert(
+            task_id_a,
+            MbTask {
+                name: "task_a".to_string(),
+                coroutine_id: id_a,
+                done: true,
+                cancelled: false,
+                result: MbValue::from_int(42),
+            },
+        );
+
+        assert_ne!(
+            id_b, id_a,
+            "coroutine ID must not rewind and alias new coroutine"
+        );
+        assert_ne!(
+            task_id_b, task_id_a,
+            "task ID must not rewind and alias new task"
+        );
+        assert!(
+            id_a > id_b,
+            "coroutine ID must be strictly monotonic across cleanup_all_async"
+        );
+        assert!(
+            task_id_a > task_id_b,
+            "task ID must be strictly monotonic across cleanup_all_async"
+        );
+        assert!(
+            !is_live_coroutine(coro_b),
+            "stale coroutine handle must not resolve to new coroutine"
+        );
+        assert!(
+            TASKS.read().unwrap().get(&task_id_b).is_none(),
+            "stale task ID must not resolve to new task object"
+        );
+
+        cleanup_all_async();
     }
 }

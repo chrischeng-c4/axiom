@@ -26,6 +26,9 @@ Runtime semantics (class registry, exceptions, GC) belong to their own domains; 
 | `jit.rs:41 CACHED_ISA` / `:61 CACHED_RT_SYMBOLS` / `:75 warm_jit_caches` | Process-global, immutable, forced in the `test-batch` zygote parent pre-fork (`main.rs:800-812`) for COW inheritance. |
 | ABI: every VReg is I64 (`jit.rs:298 mamba_to_cl_type`) | NaN-boxed MbValue; floats bitcast I64↔F64; raw int/bool tracked out-of-band in `VarAlloc.raw_ints`/`native_bools` (`cranelift/mod.rs:603`). |
 | `cranelift/mod.rs:14 EMIT_REFCOUNT_CALLS = true` | Release/retain emission; entry body (`__main__`) emits NO releases (#1663 UAF, `jit.rs:488`); loop-carried VRegs pre-seeded with None so release-before-overwrite fires per iteration (#1013/#2111, `jit.rs:502`). |
+| Native `range` loop state | `lower_for_range` owns a private counter VReg for header/latch control and a distinct user-visible binding synchronized at body entry. Accumulator assignments must write back to their original VReg so Cranelift inserts the loop-back-edge phi; `continue` targets the latch. A stress oracle must be independently derived from the source recurrence before it is allowed to accuse this state machine. |
+| Python division routing | `/` is exception-bearing Python semantics, not IEEE-754-only arithmetic. HIR→MIR must route every primitive numeric pairing, including Float/Float, through `mb_div`; `//` routes through `mb_floordiv`. Native `fdiv`/`sdiv` may only be used after an equivalent zero guard has installed the canonical Python exception, so a backend cannot turn zero division into infinity, NaN, or a host trap. |
+| JIT execution boundary | After invoking an entry pointer, capture any uncaught pending exception type/message **before** `cleanup_all_runtime_state`; cleanup is unconditional, and success is reported only when neither panic nor pending Python exception exists. Production `execute_jit_entry` and test helpers such as stress `jit_try` must preserve this ordering. |
 
 ## Control flow
 
@@ -39,6 +42,53 @@ Runtime semantics (class registry, exceptions, GC) belong to their own domains; 
 8. Backend: `CraneliftJitBackend::codegen` (`jit.rs:2969`) — Phase 1 declare externs, Phase 2 forward-declare internals, Phase 3 `compile_function` per body, `finalize_definitions`, register variadic/kwargs/boxed-return ptrs + perf map (`MAMBA_PERF_MAP=1`, #2094), return entry ptr.
 9. `execute_jit_entry` (`driver/mod.rs:244`): transmute → call → drain pending exception/uncaught traceback → `cleanup_all_runtime_state`.
 
+### Uncaught runtime-error observation
+
+Arithmetic/runtime helpers signal Python failures by setting thread-local
+pending exception state and returning a sentinel. Lowering propagates that
+state through MIR control flow; the outer JIT caller is the final ownership
+boundary. It MUST snapshot the pending exception before cleanup erases
+thread-local state, then perform cleanup regardless of success, panic, or
+Python exception.
+
+Division-by-zero is the canonical witness: integer/float `/` and `//` must
+surface deterministic `ZeroDivisionError` anchors, never a successful empty
+result or a host crash. A subsequent clean JIT execution must still succeed,
+proving the error path did not poison shared runtime state. Test-only JIT
+helpers are part of this observation contract; they may not treat a normal
+native return as success while a Python exception remains pending.
+
+This contract starts before the observation boundary. Lowering owns the
+semantic dispatch decision: a Float/Float `/` must not fall through to native
+Cranelift `fdiv`, whose legal IEEE result for a zero divisor bypasses
+`mb_div` and therefore creates no pending `ZeroDivisionError`. Route all
+primitive true-division pairs through the runtime helper so JIT and AOT share
+the same exception class and message; the outer boundary then preserves and
+reports that exception.
+
+### Loop oracle discipline
+
+Large-loop witnesses are recurrence contracts, not magic constants. For:
+
+```python
+acc = 0
+for i in range(50000):
+    acc = (acc + i) % 1000000
+```
+
+the independent closed form is
+`(50000 * 49999 / 2) mod 1000000 = 975000`; CPython and Mamba must both
+produce `975000`. The historical `775000` expectation is an invalid oracle,
+not evidence of a stale-value or induction-variable bug. A minimized witness
+should use a short range whose every intermediate recurrence can be asserted,
+then retain the 50,000-iteration case as the stress control.
+
+When a derived oracle actually differs, inspect the three DDD-owned seams in
+order: original-VReg assignment/phi writeback, private-counter to
+user-binding synchronization at body entry, and latch targeting/increment.
+An interpreter fallback is not an acceptable repair because it bypasses the
+native-loop contract under test.
+
 ## Known hazards
 
 - **JIT without JIT_LOCK**: any new threaded harness that compiles+runs without the lock — intermittent SIGBUS on aarch64, looks like a bisect-resistant flake.
@@ -51,6 +101,9 @@ Runtime semantics (class registry, exceptions, GC) belong to their own domains; 
 - **Recursion fast path** (`jit.rs:2688`): inline increment commits ONLY on the fast path; slow path defers wholly to `mb_recursion_enter` (no double count, byte-identical raise). Changing either side desyncs depth or the error message.
 - **`--emit` on `check`**: only `Ast` is honored (`driver/mod.rs:139`); use `build --emit hir|mir` for later stages.
 - **Entry = last body** (`jit.rs:3043`): reordering `MirModule.bodies` silently changes the program entry.
+- **Cleanup before exception snapshot**: erases an uncaught Python runtime error and turns division-by-zero or class-construction failure into false success. Snapshot error facts first, clean unconditionally second, classify the result last.
+- **Native Float/Float true division**: direct `fdiv` returns IEEE infinity/NaN for a zero divisor and never installs Python exception state. `/` must reach `mb_div` (or an exactly equivalent checked path) before backend emission.
+- **Un-derived stress constants**: a wrong expected accumulator can make correct native loop output look like stale state. Derive the recurrence (and confirm with the oracle runtime) before changing phi, counter, or latch emission.
 - **Last-expression capture** (`hir_to_mir.rs:3465`): only a trailing *Call* expr becomes `__main__`'s return; typed-prim results route through `mb_unbox_*_if_boxed` (`:3529`) — new terminal shapes must follow it.
 - **settrace exception under-emission**: event fires once at the raising frame, not per unwound frame — the open fix is `tracing-and-frames.md` §Exception events fire in every unwinding frame (this dir); its seams are `emit_try_exception_guard` (`hir_to_mir.rs:12425`) and the epilogue unwind checks.
 - **`sym_to_vreg` stale-raw-for-Any read** (`hir_to_mir.rs:1573`, tracked: #1794): the VReg cache holds no raw/boxed tag, so an Any-typed read of a module-scope symbol last cached raw (e.g. an accumulator widened after its first assignment) can hand a raw bit pattern to a callsite expecting boxed — `box_operand` treats Any as already-boxed and skips it, so NaN-box decoding misreads the raw int as a float. Full mechanism and the `global_synced_syms` fix: `value-representation.md`.

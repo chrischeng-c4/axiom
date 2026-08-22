@@ -246,49 +246,167 @@ unsafe extern "C" fn dispatch_bool(args_ptr: *const MbValue, nargs: usize) -> Mb
 }
 
 unsafe extern "C" fn dispatch_abs(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("abs() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_abs(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_abs(args[0])
 }
 
 unsafe extern "C" fn dispatch_min(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    if nargs == 1 {
-        super::super::builtins::mb_min(args[0])
+    let (pos, kwargs) = split_kwargs(args);
+    if pos.is_empty() {
+        return raise_type_error("min expected at least 1 argument, got 0");
+    }
+    let key = kwargs.as_ref().and_then(|kw| dict_get(*kw, "key")).unwrap_or_else(MbValue::none);
+    let default = kwargs.as_ref().and_then(|kw| dict_get(*kw, "default"));
+
+    if let Some(kw) = kwargs {
+        if let Some(ptr) = kw.as_ptr() {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                for (k, _) in lock.read().unwrap().iter() {
+                    if let super::super::dict_ops::DictKey::Str(ref s) = k {
+                        if s != "key" && s != "default" {
+                            return raise_type_error(&format!("min() got an unexpected keyword argument '{s}'"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let pos_len = pos.len();
+    let first_pos = pos[0];
+    if pos_len >= 2 && default.is_some() {
+        return raise_type_error("Cannot specify a default for min() with multiple positional arguments");
+    }
+
+    let def_val = default.unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str("__mb_no_default__".to_string())));
+    let iterable = if pos_len >= 2 {
+        MbValue::from_ptr(MbObject::new_list(pos))
     } else {
-        let list = MbValue::from_ptr(MbObject::new_list(args.to_vec()));
-        super::super::builtins::mb_min(list)
+        first_pos
+    };
+
+    if !key.is_none() || default.is_some() {
+        super::super::builtins::mb_min_kwargs(iterable, key, def_val)
+    } else if pos_len >= 2 {
+        super::super::builtins::mb_min(iterable)
+    } else {
+        super::super::builtins::mb_min_kwargs(first_pos, MbValue::none(), def_val)
     }
 }
 
 unsafe extern "C" fn dispatch_max(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    if nargs == 1 {
-        super::super::builtins::mb_max(args[0])
+    let (pos, kwargs) = split_kwargs(args);
+    if pos.is_empty() {
+        return raise_type_error("max expected at least 1 argument, got 0");
+    }
+    let key = kwargs.as_ref().and_then(|kw| dict_get(*kw, "key")).unwrap_or_else(MbValue::none);
+    let default = kwargs.as_ref().and_then(|kw| dict_get(*kw, "default"));
+
+    if let Some(kw) = kwargs {
+        if let Some(ptr) = kw.as_ptr() {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                for (k, _) in lock.read().unwrap().iter() {
+                    if let super::super::dict_ops::DictKey::Str(ref s) = k {
+                        if s != "key" && s != "default" {
+                            return raise_type_error(&format!("max() got an unexpected keyword argument '{s}'"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let pos_len = pos.len();
+    let first_pos = pos[0];
+    if pos_len >= 2 && default.is_some() {
+        return raise_type_error("Cannot specify a default for max() with multiple positional arguments");
+    }
+
+    let def_val = default.unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str("__mb_no_default__".to_string())));
+    let iterable = if pos_len >= 2 {
+        MbValue::from_ptr(MbObject::new_list(pos))
     } else {
-        let list = MbValue::from_ptr(MbObject::new_list(args.to_vec()));
-        super::super::builtins::mb_max(list)
+        first_pos
+    };
+
+    if !key.is_none() || default.is_some() {
+        super::super::builtins::mb_max_kwargs(iterable, key, def_val)
+    } else if pos_len >= 2 {
+        super::super::builtins::mb_max(iterable)
+    } else {
+        super::super::builtins::mb_max_kwargs(first_pos, MbValue::none(), def_val)
     }
 }
 
 unsafe extern "C" fn dispatch_sum(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    if nargs >= 2 {
-        super::super::builtins::mb_sum_with_start(args[0], args[1])
+    let (pos, kwargs) = split_kwargs(args);
+    let iterable = arg_or_kw(&pos, 0, &kwargs, "iterable");
+    let start = arg_or_kw(&pos, 1, &kwargs, "start");
+
+    if pos.is_empty() && iterable.is_none() {
+        return raise_type_error("sum() takes at least 1 positional argument (0 given)");
+    }
+    if pos.len() > 2 {
+        return raise_type_error(&format!("sum() takes at most 2 arguments ({} given)", pos.len()));
+    }
+
+    if let Some(kw) = kwargs {
+        if let Some(ptr) = kw.as_ptr() {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                for (k, _) in lock.read().unwrap().iter() {
+                    if let super::super::dict_ops::DictKey::Str(ref s) = k {
+                        if s != "start" && s != "iterable" {
+                            return raise_type_error(&format!("sum() got an unexpected keyword argument '{s}'"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let iter_val = iterable.unwrap_or_else(MbValue::none);
+    if let Some(st) = start {
+        super::super::builtins::mb_sum_with_start(iter_val, st)
     } else {
-        super::super::builtins::mb_sum(args.first().copied().unwrap_or_else(MbValue::none))
+        super::super::builtins::mb_sum(iter_val)
     }
 }
 
 unsafe extern "C" fn dispatch_sorted(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    let iterable = args.first().copied().unwrap_or_else(MbValue::none);
-    if nargs >= 3 {
-        super::super::builtins::mb_sorted_kwargs(iterable, args[1], args[2])
-    } else if nargs >= 2 {
-        super::super::builtins::mb_sorted(iterable, args[1])
-    } else {
-        super::super::builtins::mb_sorted(iterable, MbValue::from_bool(false))
+    let (pos, kwargs) = split_kwargs(args);
+    if pos.is_empty() {
+        return raise_type_error("sorted expected at least 1 argument, got 0");
     }
+    if pos.len() > 1 {
+        return raise_type_error(&format!("sorted expected at most 1 positional argument, got {}", pos.len()));
+    }
+    if let Some(kw) = kwargs {
+        if let Some(ptr) = kw.as_ptr() {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                for (k, _) in lock.read().unwrap().iter() {
+                    if let super::super::dict_ops::DictKey::Str(ref s) = k {
+                        if s != "key" && s != "reverse" {
+                            return raise_type_error(&format!("sorted() got an unexpected keyword argument '{s}'"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let kw_key = kwargs.as_ref().and_then(|kw| dict_get(*kw, "key"));
+    let kw_reverse = kwargs.as_ref().and_then(|kw| dict_get(*kw, "reverse"));
+
+    let key = kw_key.unwrap_or_else(MbValue::none);
+    let reverse = kw_reverse.unwrap_or_else(|| MbValue::from_bool(false));
+
+    super::super::builtins::mb_sorted_kwargs(pos[0], key, reverse)
 }
 
 unsafe extern "C" fn dispatch_reversed(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -330,9 +448,16 @@ unsafe extern "C" fn dispatch_zip(args_ptr: *const MbValue, nargs: usize) -> MbV
 
 unsafe extern "C" fn dispatch_map(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    let func = args.first().copied().unwrap_or_else(MbValue::none);
-    let iterable = args.get(1).copied().unwrap_or_else(MbValue::none);
-    super::super::builtins::mb_map(func, iterable)
+    if nargs < 2 {
+        return raise_type_error("map() must have at least two arguments.");
+    }
+    if nargs == 2 {
+        super::super::builtins::mb_map(args[0], args[1])
+    } else {
+        let func = args[0];
+        let iterables = MbValue::from_ptr(MbObject::new_list(args[1..].to_vec()));
+        super::super::iter::mb_map_n(func, iterables)
+    }
 }
 
 unsafe extern "C" fn dispatch_filter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -346,13 +471,19 @@ unsafe extern "C" fn dispatch_filter(args_ptr: *const MbValue, nargs: usize) -> 
 }
 
 unsafe extern "C" fn dispatch_all(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("all() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_all(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_all(args[0])
 }
 
 unsafe extern "C" fn dispatch_any(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("any() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_any(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_any(args[0])
 }
 
 unsafe extern "C" fn dispatch_input(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -383,28 +514,43 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
 }
 
 unsafe extern "C" fn dispatch_chr(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("chr() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_chr(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_chr(args[0])
 }
 
 unsafe extern "C" fn dispatch_ord(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("ord() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_ord(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_ord(args[0])
 }
 
 unsafe extern "C" fn dispatch_hex(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("hex() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_hex(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_hex(args[0])
 }
 
 unsafe extern "C" fn dispatch_oct(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("oct() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_oct(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_oct(args[0])
 }
 
 unsafe extern "C" fn dispatch_bin(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("bin() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_bin(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_bin(args[0])
 }
 
 unsafe extern "C" fn dispatch_round(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -445,18 +591,27 @@ unsafe extern "C" fn dispatch_divmod(args_ptr: *const MbValue, nargs: usize) -> 
 }
 
 unsafe extern "C" fn dispatch_repr(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("repr() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_repr(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_repr(args[0])
 }
 
 unsafe extern "C" fn dispatch_hash(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("hash() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_hash(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_hash(args[0])
 }
 
 unsafe extern "C" fn dispatch_id(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("id() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_id(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_id(args[0])
 }
 
 unsafe extern "C" fn dispatch_isinstance(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -509,8 +664,11 @@ unsafe extern "C" fn dispatch_delattr(args_ptr: *const MbValue, nargs: usize) ->
 }
 
 unsafe extern "C" fn dispatch_callable(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("callable() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_callable(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_callable(args[0])
 }
 
 unsafe extern "C" fn dispatch_format(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -525,8 +683,11 @@ unsafe extern "C" fn dispatch_format(args_ptr: *const MbValue, nargs: usize) -> 
 }
 
 unsafe extern "C" fn dispatch_ascii(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error(&format!("ascii() takes exactly one argument ({nargs} given)"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_ascii(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_ascii(args[0])
 }
 
 unsafe extern "C" fn dispatch_eval(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -598,21 +759,32 @@ unsafe extern "C" fn dispatch_vars(args_ptr: *const MbValue, nargs: usize) -> Mb
 }
 
 unsafe extern "C" fn dispatch_iter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs == 0 {
+        return raise_type_error("iter() expected at least 1 argument, got 0");
+    }
+    if nargs > 2 {
+        return raise_type_error(&format!("iter() expected at most 2 arguments, got {nargs}"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    if nargs >= 2 {
+    if nargs == 2 {
         super::super::iter::mb_iter_sentinel(args[0], args[1])
     } else {
-        super::super::iter::mb_iter(args.first().copied().unwrap_or_else(MbValue::none))
+        super::super::iter::mb_iter(args[0])
     }
 }
 
 unsafe extern "C" fn dispatch_next(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs == 0 {
+        return raise_type_error("next() expected at least 1 argument, got 0");
+    }
+    if nargs > 2 {
+        return raise_type_error(&format!("next() expected at most 2 arguments, got {nargs}"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    let iter_handle = args.first().copied().unwrap_or_else(MbValue::none);
-    if nargs >= 2 {
-        super::super::iter::mb_next_default(iter_handle, args[1])
+    if nargs == 2 {
+        super::super::iter::mb_next_default(args[0], args[1])
     } else {
-        super::super::iter::mb_next_raise(iter_handle)
+        super::super::iter::mb_next_raise(args[0])
     }
 }
 
@@ -721,13 +893,13 @@ unsafe extern "C" fn dispatch_bytearray(args_ptr: *const MbValue, nargs: usize) 
 }
 
 unsafe extern "C" fn dispatch_memoryview(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let args = unsafe { safe_args(args_ptr, nargs) };
-    if nargs > 1 {
+    if nargs != 1 {
         return raise_type_error(&format!(
-            "memoryview() takes at most 1 argument ({nargs} given)"
+            "memoryview() takes exactly one argument ({nargs} given)"
         ));
     }
-    super::super::builtins::mb_memoryview(args.first().copied().unwrap_or_else(MbValue::none))
+    let args = unsafe { safe_args(args_ptr, nargs) };
+    super::super::builtins::mb_memoryview(args[0])
 }
 
 unsafe extern "C" fn dispatch_slice(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -1317,4 +1489,194 @@ mod tests {
         exception::clear_current_exception();
         class::clear_last_raised_instance();
     }
+
+    #[test]
+    fn test_wi2050_dispatch_min_zero_args() {
+        exception::clear_current_exception();
+        let res = unsafe { dispatch_min(empty_args_ptr(), 0) };
+        assert!(res.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("min expected at least 1 argument, got 0")
+        );
+        exception::clear_current_exception();
+    }
+
+    #[test]
+    fn test_wi2050_dispatch_len_arity_validation() {
+        exception::clear_current_exception();
+        let res0 = unsafe { dispatch_len(empty_args_ptr(), 0) };
+        assert!(res0.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("len() takes exactly one argument (0 given)")
+        );
+        exception::clear_current_exception();
+
+        let two_args = [MbValue::from_int(1), MbValue::from_int(2)];
+        let res2 = unsafe { dispatch_len(two_args.as_ptr(), 2) };
+        assert!(res2.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("len() takes exactly one argument (2 given)")
+        );
+        exception::clear_current_exception();
+    }
+
+    #[test]
+    fn test_wi2050_dispatch_abs_arity_validation() {
+        exception::clear_current_exception();
+        let res0 = unsafe { dispatch_abs(empty_args_ptr(), 0) };
+        assert!(res0.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("abs() takes exactly one argument (0 given)")
+        );
+        exception::clear_current_exception();
+
+        let two_args = [MbValue::from_int(1), MbValue::from_int(2)];
+        let res2 = unsafe { dispatch_abs(two_args.as_ptr(), 2) };
+        assert!(res2.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("abs() takes exactly one argument (2 given)")
+        );
+        exception::clear_current_exception();
+    }
+
+    #[test]
+    fn test_wi2050_kwarg_rejection_pos_only() {
+        use crate::runtime::builtins::mb_call_spread_kwargs;
+        use crate::runtime::dict_ops::{mb_dict_new, mb_dict_setitem};
+
+        exception::clear_current_exception();
+        let kwargs = mb_dict_new();
+        let key = str_value("x");
+        let val = MbValue::from_int(1);
+        mb_dict_setitem(kwargs, key, val);
+
+        let pos_args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1)]));
+
+        // len(x=1)
+        let len_func = str_value("len");
+        let res = mb_call_spread_kwargs(len_func, pos_args, kwargs);
+        assert!(res.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("len() takes no keyword arguments")
+        );
+        exception::clear_current_exception();
+
+        // abs(x=1)
+        let abs_func = str_value("abs");
+        let res = mb_call_spread_kwargs(abs_func, pos_args, kwargs);
+        assert!(res.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("abs() takes no keyword arguments")
+        );
+        exception::clear_current_exception();
+
+        // bool(x=1)
+        let bool_func = str_value("bool");
+        let res = mb_call_spread_kwargs(bool_func, pos_args, kwargs);
+        assert!(res.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("bool() takes no keyword arguments")
+        );
+        exception::clear_current_exception();
+    }
+
+    #[test]
+    fn test_wi2051_remediation_min_max_default_positional_rejection() {
+        use crate::runtime::dict_ops::{mb_dict_new, mb_dict_setitem};
+
+        exception::clear_current_exception();
+        let kwargs = mb_dict_new();
+        mb_dict_setitem(kwargs, str_value("default"), MbValue::from_int(0));
+
+        let pos_args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+
+        // min(1, 2, default=0)
+        let min_func = str_value("min");
+        let res = crate::runtime::builtins::mb_call_spread_kwargs(min_func, pos_args, kwargs);
+        assert!(res.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("Cannot specify a default for min() with multiple positional arguments")
+        );
+        exception::clear_current_exception();
+
+        // max(1, 2, default=0)
+        let max_func = str_value("max");
+        let res = crate::runtime::builtins::mb_call_spread_kwargs(max_func, pos_args, kwargs);
+        assert!(res.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("Cannot specify a default for max() with multiple positional arguments")
+        );
+        exception::clear_current_exception();
+    }
+
+    #[test]
+    fn test_wi2051_remediation_sorted_positional_arity() {
+        exception::clear_current_exception();
+        let two_args = [MbValue::from_int(1), MbValue::from_int(2)];
+        let res = unsafe { dispatch_sorted(two_args.as_ptr(), 2) };
+        assert!(res.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            exception::current_exception_message().as_deref(),
+            Some("sorted expected at most 1 positional argument, got 2")
+        );
+        exception::clear_current_exception();
+    }
 }
+

@@ -9,7 +9,7 @@
 # case = "barrier_rounds_complete_without_deadlock"
 # subject = "threading.Barrier.wait"
 # kind = "semantic"
-# xfail = "threading.Barrier.wait is not yet reliable in mamba's threaded runtime"
+# xfail = "issue #3132: each thread snapshots module globals, so `completed` counts per-thread and only one worker's total is written back"
 # mem_carveout = ""
 # source = "issue #1126 targeted concurrency stress probe"
 # status = "filled"

@@ -15,8 +15,15 @@ use std::collections::HashMap;
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            if nargs != 1 {
+                crate::runtime::builtins::errors::raise_type_error(format!(
+                    "{}() takes exactly 1 argument ({nargs} given)",
+                    stringify!($fn)
+                ));
+                return MbValue::none();
+            }
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-            $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
+            $fn(a[0])
         }
     };
 }
@@ -24,8 +31,14 @@ macro_rules! dispatch_unary {
 macro_rules! dispatch_unary_number {
     ($name:ident, $fn:ident, $py_name:literal) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            if nargs != 1 {
+                return raise_type_error(&format!(
+                    "{}() takes exactly 1 argument ({nargs} given)",
+                    $py_name
+                ));
+            }
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-            let arg = a.get(0).copied().unwrap_or_else(MbValue::none);
+            let arg = a[0];
             if as_f64(arg).is_none() {
                 return raise_type_error(concat!($py_name, "() argument must be a real number"));
             }
@@ -38,11 +51,15 @@ macro_rules! dispatch_unary_number {
 macro_rules! dispatch_binary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            if nargs != 2 {
+                crate::runtime::builtins::errors::raise_type_error(format!(
+                    "{}() takes exactly 2 arguments ({nargs} given)",
+                    stringify!($fn)
+                ));
+                return MbValue::none();
+            }
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-            $fn(
-                a.get(0).copied().unwrap_or_else(MbValue::none),
-                a.get(1).copied().unwrap_or_else(MbValue::none),
-            )
+            $fn(a[0], a[1])
         }
     };
 }
@@ -101,7 +118,6 @@ dispatch_binary_number!(dispatch_fmod, mb_math_fmod, "fmod");
 dispatch_binary_number!(dispatch_copysign, mb_math_copysign, "copysign");
 dispatch_binary!(dispatch_comb, mb_math_comb);
 dispatch_binary!(dispatch_perm, mb_math_perm);
-dispatch_binary!(dispatch_isclose, mb_math_isclose);
 dispatch_unary!(dispatch_isqrt, mb_math_isqrt);
 dispatch_unary!(dispatch_expm1, mb_math_expm1);
 dispatch_unary!(dispatch_log1p, mb_math_log1p);
@@ -224,6 +240,101 @@ unsafe extern "C" fn dispatch_log(args_ptr: *const MbValue, nargs: usize) -> MbV
     }
 }
 
+fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
+    use super::super::rc::ObjData;
+    if let Some(ptr) = dict.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                if let Ok(guard) = lock.read() {
+                    for (k, v) in guard.iter() {
+                        if let super::super::dict_ops::DictKey::Str(ref s) = k {
+                            if s == key {
+                                return Some(*v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// math.isclose(a, b, *, rel_tol=1e-09, abs_tol=0.0)
+unsafe extern "C" fn dispatch_isclose(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    use super::super::rc::ObjData;
+    let raw_args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let mut kwargs_dict: Option<MbValue> = None;
+    let mut pos_args = raw_args;
+    if let Some(last) = raw_args.last() {
+        let is_dict = last
+            .as_ptr()
+            .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if is_dict {
+            kwargs_dict = Some(*last);
+            pos_args = &raw_args[..raw_args.len() - 1];
+        }
+    }
+    if pos_args.len() < 2 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "isclose() takes at least 2 positional arguments".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let a = pos_args[0];
+    let b = pos_args[1];
+    let mut rel_tol = 1e-9f64;
+    let mut abs_tol = 0.0f64;
+    if pos_args.len() >= 3 {
+        if let Some(r) = as_f64(pos_args[2]) {
+            rel_tol = r;
+        }
+    }
+    if pos_args.len() >= 4 {
+        if let Some(at) = as_f64(pos_args[3]) {
+            abs_tol = at;
+        }
+    }
+    if let Some(dict) = kwargs_dict {
+        if let Some(rel_v) = dict_get_str(dict, "rel_tol") {
+            if let Some(r) = as_f64(rel_v) {
+                rel_tol = r;
+            }
+        }
+        if let Some(abs_v) = dict_get_str(dict, "abs_tol") {
+            if let Some(at) = as_f64(abs_v) {
+                abs_tol = at;
+            }
+        }
+    }
+    if rel_tol < 0.0 || abs_tol < 0.0 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "tolerances must be non-negative".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    match (as_f64(a), as_f64(b)) {
+        (Some(x), Some(y)) => {
+            if x.is_nan() || y.is_nan() {
+                return MbValue::from_bool(false);
+            }
+            if x.is_infinite() || y.is_infinite() {
+                return MbValue::from_bool(x == y);
+            }
+            let diff = (x - y).abs();
+            MbValue::from_bool(diff <= f64::max(abs_tol, rel_tol * f64::max(x.abs(), y.abs())))
+        }
+        _ => MbValue::from_bool(false),
+    }
+}
+
 /// Register the math module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -303,6 +414,9 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
+
+    super::super::module::register_variadic_func(dispatch_isclose as *const () as u64);
+    super::super::module::register_kwargs_func(dispatch_isclose as *const () as u64);
 
     super::register_module("math", attrs);
 }

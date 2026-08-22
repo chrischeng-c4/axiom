@@ -98,6 +98,378 @@ fn is_typed_native_wrapper(val: super::value::MbValue) -> bool {
 /// through `mb_list_new_8` fixed-arity JIT shims).
 pub type MbList = SmallVec<[super::value::MbValue; 8]>;
 
+/// Backing storage representation for `ObjData::List`.
+///
+/// Stage 1 (#1071-4 / WI #1075) introduces unboxed contiguous scalar buffers
+/// (`Int` for `i64` and `Float` for `f64`) alongside `Generic` (`MbValue`).
+/// Boundary rule: crossing into an `Any` context boxes lazily via `ensure_generic`.
+#[derive(Clone, Debug)]
+pub enum MbListBuffer {
+    Generic(MbList),
+    Int(SmallVec<[i64; 8]>),
+    Float(SmallVec<[f64; 8]>),
+}
+
+impl Default for MbListBuffer {
+    #[inline]
+    fn default() -> Self {
+        MbListBuffer::Generic(SmallVec::new())
+    }
+}
+
+impl std::ops::Deref for MbListBuffer {
+    type Target = [super::value::MbValue];
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Generic(v) => v.as_slice(),
+            _ => &[],
+        }
+    }
+}
+
+impl std::ops::DerefMut for MbListBuffer {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [super::value::MbValue] {
+        self.ensure_generic().as_mut_slice()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut MbListBuffer {
+    type Item = &'a mut super::value::MbValue;
+    type IntoIter = std::slice::IterMut<'a, super::value::MbValue>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.ensure_generic().iter_mut()
+    }
+}
+
+impl IntoIterator for MbListBuffer {
+    type Item = super::value::MbValue;
+    type IntoIter = std::vec::IntoIter<super::value::MbValue>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.to_vec().into_iter()
+    }
+}
+
+impl MbListBuffer {
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Generic(v) => v.len(),
+            Self::Int(v) => v.len(),
+            Self::Float(v) => v.len(),
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Generic(v) => v.is_empty(),
+            Self::Int(v) => v.is_empty(),
+            Self::Float(v) => v.is_empty(),
+        }
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        match self {
+            Self::Generic(v) => v.capacity(),
+            Self::Int(v) => v.capacity(),
+            Self::Float(v) => v.capacity(),
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<super::value::MbValue> {
+        match self {
+            Self::Generic(v) => v.get(index).copied(),
+            Self::Int(v) => v.get(index).map(|&x| super::bigint_ops::int_from_i64(x)),
+            Self::Float(v) => v.get(index).map(|&x| super::value::MbValue::from_float(x)),
+        }
+    }
+
+    #[inline]
+    pub fn first(&self) -> Option<super::value::MbValue> {
+        self.get(0)
+    }
+
+    #[inline]
+    pub fn last(&self) -> Option<super::value::MbValue> {
+        let len = self.len();
+        if len == 0 {
+            None
+        } else {
+            self.get(len - 1)
+        }
+    }
+
+    #[inline]
+    pub fn iter(&self) -> std::vec::IntoIter<super::value::MbValue> {
+        self.to_vec().into_iter()
+    }
+
+    pub fn slice(&self, start: usize, end: usize) -> Vec<super::value::MbValue> {
+        let len = self.len();
+        let s = start.min(len);
+        let e = end.min(len).max(s);
+        match self {
+            Self::Generic(v) => v[s..e].to_vec(),
+            Self::Int(v) => v[s..e].iter().map(|&x| super::bigint_ops::int_from_i64(x)).collect(),
+            Self::Float(v) => v[s..e].iter().map(|&x| super::value::MbValue::from_float(x)).collect(),
+        }
+    }
+
+    pub fn swap(&mut self, a: usize, b: usize) {
+        match self {
+            Self::Generic(v) => v.swap(a, b),
+            Self::Int(v) => v.swap(a, b),
+            Self::Float(v) => v.swap(a, b),
+        }
+    }
+
+    pub fn ensure_generic(&mut self) -> &mut MbList {
+        match self {
+            Self::Generic(v) => v,
+            Self::Int(v) => {
+                let gen: MbList = v.iter().map(|&x| super::bigint_ops::int_from_i64(x)).collect();
+                *self = Self::Generic(gen);
+                match self {
+                    Self::Generic(v) => v,
+                    _ => unreachable!(),
+                }
+            }
+            Self::Float(v) => {
+                let gen: MbList = v.iter().map(|&x| super::value::MbValue::from_float(x)).collect();
+                *self = Self::Generic(gen);
+                match self {
+                    Self::Generic(v) => v,
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+
+    pub fn push(&mut self, val: super::value::MbValue) {
+        match self {
+            Self::Int(v) => {
+                if let Some(i) = val.as_int() {
+                    v.push(i);
+                } else {
+                    self.ensure_generic().push(val);
+                }
+            }
+            Self::Float(v) => {
+                if let Some(f) = val.as_float() {
+                    v.push(f);
+                } else {
+                    self.ensure_generic().push(val);
+                }
+            }
+            Self::Generic(v) => {
+                v.push(val);
+            }
+        }
+    }
+
+    pub fn push_int(&mut self, val: i64) {
+        match self {
+            Self::Int(v) => v.push(val),
+            Self::Generic(v) => v.push(super::bigint_ops::int_from_i64(val)),
+            Self::Float(_) => {
+                self.ensure_generic().push(super::bigint_ops::int_from_i64(val));
+            }
+        }
+    }
+
+    pub fn push_float(&mut self, val: f64) {
+        match self {
+            Self::Float(v) => v.push(val),
+            Self::Generic(v) => v.push(super::value::MbValue::from_float(val)),
+            Self::Int(_) => {
+                self.ensure_generic().push(super::value::MbValue::from_float(val));
+            }
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<super::value::MbValue> {
+        match self {
+            Self::Generic(v) => v.to_vec(),
+            Self::Int(v) => v.iter().map(|&x| super::bigint_ops::int_from_i64(x)).collect(),
+            Self::Float(v) => v.iter().map(|&x| super::value::MbValue::from_float(x)).collect(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        match self {
+            Self::Generic(v) => {
+                for elem in v.drain(..) {
+                    unsafe {
+                        release_owned(elem);
+                    }
+                }
+            }
+            Self::Int(v) => v.clear(),
+            Self::Float(v) => v.clear(),
+        }
+    }
+
+    pub fn extend<I: IntoIterator<Item = super::value::MbValue>>(&mut self, iter: I) {
+        for val in iter {
+            self.push(val);
+        }
+    }
+
+    pub fn reverse(&mut self) {
+        match self {
+            Self::Generic(v) => v.reverse(),
+            Self::Int(v) => v.reverse(),
+            Self::Float(v) => v.reverse(),
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<super::value::MbValue> {
+        match self {
+            Self::Generic(v) => v.pop(),
+            Self::Int(v) => v.pop().map(super::bigint_ops::int_from_i64),
+            Self::Float(v) => v.pop().map(super::value::MbValue::from_float),
+        }
+    }
+
+    pub fn remove(&mut self, index: usize) -> super::value::MbValue {
+        match self {
+            Self::Generic(v) => v.remove(index),
+            Self::Int(v) => super::bigint_ops::int_from_i64(v.remove(index)),
+            Self::Float(v) => super::value::MbValue::from_float(v.remove(index)),
+        }
+    }
+
+    pub fn swap_remove(&mut self, index: usize) -> super::value::MbValue {
+        match self {
+            Self::Generic(v) => v.swap_remove(index),
+            Self::Int(v) => super::bigint_ops::int_from_i64(v.swap_remove(index)),
+            Self::Float(v) => super::value::MbValue::from_float(v.swap_remove(index)),
+        }
+    }
+
+    pub fn insert(&mut self, index: usize, element: super::value::MbValue) {
+        match self {
+            Self::Int(v) => {
+                if let Some(i) = element.as_int() {
+                    v.insert(index, i);
+                } else {
+                    self.ensure_generic().insert(index, element);
+                }
+            }
+            Self::Float(v) => {
+                if let Some(f) = element.as_float() {
+                    v.insert(index, f);
+                } else {
+                    self.ensure_generic().insert(index, element);
+                }
+            }
+            Self::Generic(v) => {
+                v.insert(index, element);
+            }
+        }
+    }
+
+    pub fn retain<F: FnMut(&super::value::MbValue) -> bool>(&mut self, mut f: F) {
+        match self {
+            Self::Generic(v) => v.retain(|elem| f(elem)),
+            Self::Int(v) => {
+                v.retain(|i| f(&super::bigint_ops::int_from_i64(*i)));
+            }
+            Self::Float(v) => {
+                v.retain(|fl| f(&super::value::MbValue::from_float(*fl)));
+            }
+        }
+    }
+
+    pub fn extend_from_slice(&mut self, other: &[super::value::MbValue]) {
+        for &val in other {
+            self.push(val);
+        }
+    }
+
+    pub fn as_slice(&self) -> &[super::value::MbValue] {
+        match self {
+            Self::Generic(v) => v.as_slice(),
+            _ => &[],
+        }
+    }
+
+    pub fn as_ptr(&self) -> *const super::value::MbValue {
+        match self {
+            Self::Generic(v) => v.as_ptr(),
+            _ => std::ptr::null(),
+        }
+    }
+
+    pub fn iter_values(&self) -> Vec<super::value::MbValue> {
+        self.to_vec()
+    }
+
+    pub fn insert_from_slice(&mut self, index: usize, slice: &[super::value::MbValue]) {
+        self.ensure_generic();
+        if let Self::Generic(v) = self {
+            v.insert_many(index, slice.iter().copied());
+        }
+    }
+
+    pub fn sort_by<F: FnMut(&super::value::MbValue, &super::value::MbValue) -> std::cmp::Ordering>(&mut self, compare: F) {
+        self.ensure_generic().sort_by(compare);
+    }
+
+    pub fn sort_by_key<K, F: FnMut(&super::value::MbValue) -> K>(&mut self, f: F) where K: Ord {
+        self.ensure_generic().sort_by_key(f);
+    }
+
+    pub fn set(&mut self, index: usize, val: super::value::MbValue) -> bool {
+        if index >= self.len() {
+            return false;
+        }
+        match self {
+            Self::Int(v) => {
+                if let Some(i) = val.as_int() {
+                    v[index] = i;
+                } else {
+                    let generic_vec = self.ensure_generic();
+                    let old_val = std::mem::replace(&mut generic_vec[index], val);
+                    release_owned(old_val);
+                }
+                true
+            }
+            Self::Float(v) => {
+                if let Some(f) = val.as_float() {
+                    v[index] = f;
+                } else {
+                    let generic_vec = self.ensure_generic();
+                    let old_val = std::mem::replace(&mut generic_vec[index], val);
+                    release_owned(old_val);
+                }
+                true
+            }
+            Self::Generic(v) => {
+                let old_val = std::mem::replace(&mut v[index], val);
+                release_owned(old_val);
+                true
+            }
+        }
+    }
+}
+
+impl FromIterator<super::value::MbValue> for MbListBuffer {
+    fn from_iter<T: IntoIterator<Item = super::value::MbValue>>(iter: T) -> Self {
+        MbListBuffer::Generic(iter.into_iter().collect())
+    }
+}
+
+
 /// Hash-indexed backing store for `ObjData::Set` (#set-perf).
 ///
 /// Previously a set was a bare `MbList` (a `Vec`), so membership / `add`
@@ -120,6 +492,7 @@ pub struct MbSet {
     items: MbList,
     /// `set_hash(value) -> positions into `items`` with that hash.
     buckets: FxHashMap<u64, SmallVec<[u32; 1]>>,
+    version: u64,
 }
 
 impl std::ops::Deref for MbSet {
@@ -138,59 +511,18 @@ impl std::ops::Deref for MbSet {
 /// - other float → its bit pattern
 /// - str → the string contents
 /// - tuple → structural `mb_tuple_hash`
+/// - frozenset → structural `mb_frozenset_hash`
 /// - everything else (custom `__eq__` instances, bytes-like, namedtuples,
 ///   …) → a single shared bucket (0) so `eq_py` still resolves them
 ///   correctly. These rarer types fall back to a linear scan *within that
 ///   one bucket*, exactly matching the old behavior, while the common
 ///   int/str/tuple element types get true O(1).
 pub(crate) fn set_hash(v: super::value::MbValue) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = rustc_hash::FxHasher::default();
-    if let Some(i) = v.as_int() {
-        0u8.hash(&mut h);
-        i.hash(&mut h);
-        return h.finish();
+    let hash_val = super::builtins::mb_hash(v);
+    if let Some(h) = hash_val.as_int() {
+        return h as u64;
     }
-    if let Some(b) = v.as_bool() {
-        0u8.hash(&mut h);
-        (b as i64).hash(&mut h);
-        return h.finish();
-    }
-    if let Some(f) = v.as_float() {
-        // Integral floats hash as the matching integer so `1.0` and `1`
-        // land in the same bucket (they compare equal under eq_py).
-        if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
-            0u8.hash(&mut h);
-            (f as i64).hash(&mut h);
-        } else {
-            1u8.hash(&mut h);
-            f.to_bits().hash(&mut h);
-        }
-        return h.finish();
-    }
-    if let Some(ptr) = v.as_ptr() {
-        unsafe {
-            match &(*ptr).data {
-                ObjData::Str(s) => {
-                    2u8.hash(&mut h);
-                    s.hash(&mut h);
-                    return h.finish();
-                }
-                ObjData::Tuple(_) => {
-                    3u8.hash(&mut h);
-                    super::tuple_ops::mb_tuple_hash(v)
-                        .as_int()
-                        .unwrap_or(0)
-                        .hash(&mut h);
-                    return h.finish();
-                }
-                _ => {}
-            }
-        }
-    }
-    // Fallback: a single shared bucket for value types whose cross-type
-    // equality we don't want to risk splitting. eq_py resolves these.
-    0xFFFF_FFFF_FFFF_FFFF
+    0
 }
 
 impl MbSet {
@@ -208,6 +540,7 @@ impl MbSet {
         let mut s = MbSet {
             items: MbList::with_capacity(elements.len()),
             buckets: FxHashMap::default(),
+            version: 0,
         };
         for e in elements {
             let pos = s.items.len() as u32;
@@ -215,6 +548,14 @@ impl MbSet {
             s.buckets.entry(set_hash(e)).or_default().push(pos);
         }
         s
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    pub fn bump_version(&mut self) {
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Find the position of `value` in `items`, or `None`. O(1) amortized.
@@ -241,13 +582,21 @@ impl MbSet {
     /// added. Returns true if newly inserted. O(1) amortized.
     #[inline]
     pub fn set_insert(&mut self, value: super::value::MbValue) -> bool {
+        let hh = set_hash(value);
+        if super::exception::current_exception_type().is_some() {
+            return false;
+        }
         if self.position_of(value).is_some() {
             return false;
         }
+        if super::exception::current_exception_type().is_some() {
+            return false;
+        }
+        self.version = self.version.wrapping_add(1);
         store_owned(value);
         let pos = self.items.len() as u32;
         self.items.push(value);
-        self.buckets.entry(set_hash(value)).or_default().push(pos);
+        self.buckets.entry(hh).or_default().push(pos);
         true
     }
 
@@ -263,6 +612,7 @@ impl MbSet {
     /// hash index consistent (the element previously at the last position is
     /// moved to `idx`, so its bucket entry is repointed).
     fn remove_at(&mut self, idx: usize) -> super::value::MbValue {
+        self.version = self.version.wrapping_add(1);
         let last = self.items.len() - 1;
         let removed = self.items[idx];
         // Drop `removed`'s index entry (it hashed to bucket of `removed`).
@@ -308,6 +658,7 @@ impl MbSet {
 
     /// Clear all elements and the index (callers release element refs).
     pub fn clear_all(&mut self) {
+        self.version = self.version.wrapping_add(1);
         self.items.clear();
         self.buckets.clear();
     }
@@ -486,7 +837,7 @@ unsafe impl Sync for MbObject {}
 /// Mutable collections are wrapped in RwLock for thread-safe access.
 pub enum ObjData {
     Str(String),
-    List(MbRwLock<MbList>),
+    List(MbRwLock<MbListBuffer>),
     Dict(MbRwLock<MbDictMap>),
     Tuple(Vec<super::value::MbValue>),
     Instance {
@@ -542,7 +893,7 @@ impl MbObject {
             },
             data: ObjData::Str(s),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate an immortal string — rc is set to IMMORTAL_REFCOUNT so
@@ -555,37 +906,30 @@ impl MbObject {
             },
             data: ObjData::Str(s),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Create a new list, taking ownership of elements (no retain).
     /// Use `new_list_borrowed` when elements are borrowed from another container.
     ///
     /// Converts the input `Vec<MbValue>` to an inline `MbList` (SmallVec
-    /// inline-8) at the boundary. For `len <= 8` the conversion copies
-    /// elements into the inline storage and drops the Vec's heap buffer
-    /// (net: 1 heap free at boundary, but every subsequent `.read()` on
-    /// the list avoids an indirection). For `len > 8` `SmallVec::from_vec`
-    /// reuses the Vec's existing heap buffer as the spilled allocation
-    /// (zero extra copies, just a pointer transfer). #2517.
+    /// inline-8) or unboxed scalar buffer at the boundary. #2517 / #1075.
     fn new_list_with_tracking(elements: Vec<super::value::MbValue>, track_gc: bool) -> *mut Self {
-        let buf: MbList = if elements.len() <= 8 {
-            MbList::from_slice(&elements)
+        let buf: MbListBuffer = if elements.is_empty() {
+            MbListBuffer::Generic(SmallVec::new())
+        } else if elements.iter().all(|v| v.as_int().is_some()) {
+            MbListBuffer::Int(elements.iter().map(|v| v.as_int().unwrap()).collect())
+        } else if elements.iter().all(|v| v.as_float().is_some()) {
+            MbListBuffer::Float(elements.iter().map(|v| v.as_float().unwrap()).collect())
         } else {
-            MbList::from_vec(elements)
+            let small: MbList = if elements.len() <= 8 {
+                MbList::from_slice(&elements)
+            } else {
+                MbList::from_vec(elements)
+            };
+            MbListBuffer::Generic(small)
         };
-        let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::List,
-            },
-            data: ObjData::List(MbRwLock::new(buf)),
-        });
-        let ptr = Box::into_raw(obj);
-        if track_gc {
-            super::gc::gc_track(ptr);
-        }
-        ptr
+        Self::new_list_buffer_with_tracking(buf, track_gc)
     }
 
     pub fn new_list(elements: Vec<super::value::MbValue>) -> *mut Self {
@@ -596,13 +940,7 @@ impl MbObject {
         Self::new_list_with_tracking(elements, false)
     }
 
-    /// Create a new list from an inline-built `MbList`, skipping the
-    /// `Vec` boundary entirely. Used by the JIT `mb_list_new_<N>`
-    /// fixed-arity shims (`list_ops.rs`) where the literal arity is
-    /// known at compile time and the SmallVec is built inline via
-    /// `smallvec![a,b,c,d]` without ever touching a `Vec` heap
-    /// allocation. #2517.
-    fn new_list_inline_with_tracking(buf: MbList, track_gc: bool) -> *mut Self {
+    fn new_list_buffer_with_tracking(buf: MbListBuffer, track_gc: bool) -> *mut Self {
         let obj = Box::new(MbObject {
             header: MbObjectHeader {
                 rc: atomic_rc(1),
@@ -610,11 +948,15 @@ impl MbObject {
             },
             data: ObjData::List(MbRwLock::new(buf)),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         if track_gc {
             super::gc::gc_track(ptr);
         }
         ptr
+    }
+
+    fn new_list_inline_with_tracking(buf: MbList, track_gc: bool) -> *mut Self {
+        Self::new_list_buffer_with_tracking(MbListBuffer::Generic(buf), track_gc)
     }
 
     pub fn new_list_inline(buf: MbList) -> *mut Self {
@@ -623,6 +965,22 @@ impl MbObject {
 
     pub fn new_list_inline_untracked(buf: MbList) -> *mut Self {
         Self::new_list_inline_with_tracking(buf, false)
+    }
+
+    pub fn new_int_list_inline(buf: SmallVec<[i64; 8]>) -> *mut Self {
+        Self::new_list_buffer_with_tracking(MbListBuffer::Int(buf), true)
+    }
+
+    pub fn new_int_list_inline_untracked(buf: SmallVec<[i64; 8]>) -> *mut Self {
+        Self::new_list_buffer_with_tracking(MbListBuffer::Int(buf), false)
+    }
+
+    pub fn new_float_list_inline(buf: SmallVec<[f64; 8]>) -> *mut Self {
+        Self::new_list_buffer_with_tracking(MbListBuffer::Float(buf), true)
+    }
+
+    pub fn new_float_list_inline_untracked(buf: SmallVec<[f64; 8]>) -> *mut Self {
+        Self::new_list_buffer_with_tracking(MbListBuffer::Float(buf), false)
     }
 
     /// Create a new list, retaining all pointer elements.
@@ -645,7 +1003,7 @@ impl MbObject {
             },
             data: ObjData::Dict(MbRwLock::new(MbDictMap::default())),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         if track_gc {
             super::gc::gc_track(ptr);
         }
@@ -670,7 +1028,7 @@ impl MbObject {
             },
             data: ObjData::Dict(MbRwLock::new(MbDictMap::with_capacity(capacity))),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         super::gc::gc_track(ptr);
         ptr
     }
@@ -684,7 +1042,7 @@ impl MbObject {
             },
             data: ObjData::Tuple(elements),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         if needs_tracking {
             super::gc::gc_track(ptr);
         }
@@ -710,7 +1068,7 @@ impl MbObject {
             },
             data: ObjData::Set(MbRwLock::new(set)),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         super::gc::gc_track(ptr);
         ptr
     }
@@ -770,7 +1128,7 @@ impl MbObject {
             },
             data: ObjData::Bytes(data),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate immortal bytes — rc is set to IMMORTAL_REFCOUNT so
@@ -786,7 +1144,7 @@ impl MbObject {
             },
             data: ObjData::Bytes(data),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     pub fn new_bytearray(data: Vec<u8>) -> *mut Self {
@@ -797,7 +1155,7 @@ impl MbObject {
             },
             data: ObjData::ByteArray(MbRwLock::new(data)),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     pub fn new_frozenset(elements: Vec<super::value::MbValue>) -> *mut Self {
@@ -809,7 +1167,7 @@ impl MbObject {
             },
             data: ObjData::FrozenSet(elements),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         if needs_tracking {
             super::gc::gc_track(ptr);
         }
@@ -825,7 +1183,7 @@ impl MbObject {
             },
             data: ObjData::BigInt(value),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate an immortal BigInt for compile-time integer constants.
@@ -837,7 +1195,7 @@ impl MbObject {
             },
             data: ObjData::BigInt(value),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate a Complex heap object (R3 CPython 3.12 conformance).
@@ -849,7 +1207,7 @@ impl MbObject {
             },
             data: ObjData::Complex(real, imag),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate a CodeObject heap object produced by compile() (#976).
@@ -875,7 +1233,7 @@ impl MbObject {
                 ast: Box::new(ast),
             },
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     pub fn new_instance(class_name: String) -> *mut Self {
@@ -889,7 +1247,7 @@ impl MbObject {
                 fields: MbRwLock::new(InstanceFields::default()),
             },
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         super::gc::gc_track(ptr);
         ptr
     }
@@ -911,31 +1269,345 @@ impl MbObject {
                 )),
             },
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         super::gc::gc_track(ptr);
         ptr
     }
 }
 
+// #2585 E2: explicit arming control for the release-path UAF/dangling-
+// pointer detector (`debug_validate_obj`, A1). Monotonic (never disarms
+// once set) so there is no ordering hazard between the lazy env-var read
+// and `force_arm_uaf_detector()`. Two knobs, both gate the *same* flag:
+//   - env var `MAMBA_UAF_DETECTOR=1` (any non-empty, non-"0" value):
+//     arms for the whole process — the dedicated detector run.
+//   - `force_arm_uaf_detector()`: arms in-process — used by the A2
+//     positive control so it trips regardless of the env var.
+// Default (neither set) is DISARMED: `debug_validate_obj` is a no-op,
+// reproducing the pre-#2539 code path exactly (the regression anchor,
+// AC5a, `13,765 passed; 0 failed; 2 ignored`). Armed is AC5b: the
+// dedicated detector run.
+#[cfg(debug_assertions)]
+static UAF_DETECTOR_ARMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(debug_assertions)]
+static UAF_DETECTOR_ENV_CHECKED: std::sync::Once = std::sync::Once::new();
+
+#[cfg(debug_assertions)]
+fn parse_uaf_detector_env(val: Option<&str>) -> bool {
+    match val {
+        Some(v) => v != "0" && !v.is_empty(),
+        None => false,
+    }
+}
+
+#[cfg(debug_assertions)]
+fn uaf_detector_armed() -> bool {
+    UAF_DETECTOR_ENV_CHECKED.call_once(|| {
+        let env_val = std::env::var("MAMBA_UAF_DETECTOR").ok();
+        if parse_uaf_detector_env(env_val.as_deref()) {
+            UAF_DETECTOR_ARMED.store(true, Ordering::Relaxed);
+        }
+    });
+    UAF_DETECTOR_ARMED.load(Ordering::Relaxed)
+}
+
+/// Force-arm the UAF/dangling-pointer detector in-process, independent of
+/// `MAMBA_UAF_DETECTOR`. Monotonic — never disarms. Used by the A2
+/// positive control (`test_uaf_detector_trips_on_misaligned_pointer`) so
+/// it keeps tripping even when the regression anchor runs disarmed by
+/// default (#2585 E2).
+#[cfg(debug_assertions)]
+pub fn force_arm_uaf_detector() {
+    UAF_DETECTOR_ARMED.store(true, Ordering::Relaxed);
+}
+
+// #2585 E2: attribution breadcrumb. The JIT executes on a *spawned* worker
+// thread (see `tests/cpython_ported/harness.rs::jit_capture_with_exception`)
+// that does not inherit the outer test thread's name, so a violation
+// previously panicked as `thread '<unnamed>' panicked at ...` with no way
+// to attribute it to a test. `JIT_LOCK` serializes JIT execution to at
+// most one in flight per process, so a single process-global (not
+// thread-local) "currently executing test" string is sufficient — no
+// per-thread bookkeeping needed. Best-effort only: an unset/poisoned name
+// degrades to "<unknown test>" rather than panicking-while-panicking.
+#[cfg(debug_assertions)]
+static CURRENT_TEST_NAME: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+#[cfg(debug_assertions)]
+pub fn set_current_test_name(name: &str) {
+    if let Ok(mut guard) = CURRENT_TEST_NAME.write() {
+        guard.clear();
+        guard.push_str(name);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn current_test_name_for_diagnostics() -> String {
+    match CURRENT_TEST_NAME.try_read() {
+        Ok(guard) if !guard.is_empty() => guard.clone(),
+        Ok(_) => "<unknown test>".to_string(),
+        Err(_) => "<test-name lock unavailable>".to_string(),
+    }
+}
+
 /// Debug: validate an MbObject pointer looks reasonable before dereferencing.
 /// Checks pointer alignment and that the kind field is a valid ObjKind variant.
+/// No-op unless the detector is armed (see `uaf_detector_armed`, #2585 E2).
 #[cfg(debug_assertions)]
 unsafe fn debug_validate_obj(obj: *mut MbObject, caller: &str) {
+    if !uaf_detector_armed() {
+        return;
+    }
     let addr = obj as usize;
     // Check alignment (MbObject should be at least 4-byte aligned for AtomicU32)
     if addr % 4 != 0 {
-        panic!("{caller}: misaligned MbObject pointer {obj:?} (addr={addr:#x})");
+        panic!(
+            "{caller}: misaligned MbObject pointer {obj:?} (addr={addr:#x}) \
+             [test={}]",
+            current_test_name_for_diagnostics()
+        );
     }
     // Check that kind field is a valid ObjKind variant (0..=13)
     let kind_byte = (*obj).header.kind as u8;
     if kind_byte > 13 {
         panic!(
             "{caller}: invalid ObjKind={kind_byte} at {obj:?} — likely use-after-free \
-             or dangling pointer. rc={:#x}",
-            (*obj).header.rc.load(Ordering::Relaxed)
+             or dangling pointer. rc={:#x} [test={}]",
+            (*obj).header.rc.load(Ordering::Relaxed),
+            current_test_name_for_diagnostics()
         );
     }
 }
+
+// =========================================================================
+// #2830: Debug-only allocation & final-deallocation leak balance recorder
+// =========================================================================
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LeakBalanceStatus {
+    Inactive,
+    Active,
+    Finished,
+    Incomplete,
+}
+
+#[cfg(debug_assertions)]
+impl Default for LeakBalanceStatus {
+    fn default() -> Self { LeakBalanceStatus::Inactive }
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LeakBalanceSnapshot {
+    name: &'static str,
+    allocations: usize,
+    deallocations: usize,
+    status: LeakBalanceStatus,
+}
+
+#[cfg(debug_assertions)]
+impl LeakBalanceSnapshot {
+    pub fn name(&self) -> &'static str { self.name }
+    pub fn allocations(&self) -> usize { self.allocations }
+    pub fn deallocations(&self) -> usize { self.deallocations }
+    pub fn status(&self) -> LeakBalanceStatus { self.status }
+    pub fn delta(&self) -> isize { self.allocations as isize - self.deallocations as isize }
+    pub fn is_balanced(&self) -> bool {
+        (self.status == LeakBalanceStatus::Active || self.status == LeakBalanceStatus::Finished)
+            && self.allocations == self.deallocations
+    }
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Default)]
+struct LeakBalanceState {
+    name: &'static str,
+    status: LeakBalanceStatus,
+    allocations: usize,
+    deallocations: usize,
+}
+
+#[cfg(debug_assertions)]
+std::thread_local! {
+    static LEAK_BALANCE_STATE: std::cell::RefCell<LeakBalanceState> =
+        std::cell::RefCell::new(LeakBalanceState::default());
+}
+
+#[cfg(debug_assertions)]
+fn record_allocation_event() {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        if s.status == LeakBalanceStatus::Active {
+            s.allocations += 1;
+        }
+    });
+}
+
+#[cfg(debug_assertions)]
+fn record_deallocation_event() {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        if s.status == LeakBalanceStatus::Active {
+            s.deallocations += 1;
+        }
+    });
+}
+
+#[cfg(debug_assertions)]
+#[inline]
+fn into_raw_tracked(obj: Box<MbObject>) -> *mut MbObject {
+    record_allocation_event();
+    Box::into_raw(obj)
+}
+
+#[cfg(not(debug_assertions))]
+#[inline(always)]
+fn into_raw_tracked(obj: Box<MbObject>) -> *mut MbObject {
+    Box::into_raw(obj)
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug)]
+pub(crate) struct LeakBalanceScopeGuard {
+    finished: bool,
+    _phantom: std::marker::PhantomData<*const ()>,
+}
+
+#[cfg(debug_assertions)]
+impl Drop for LeakBalanceScopeGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            LEAK_BALANCE_STATE.with(|st| {
+                let mut s = st.borrow_mut();
+                if s.status == LeakBalanceStatus::Active {
+                    s.status = LeakBalanceStatus::Incomplete;
+                }
+            });
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+impl LeakBalanceScopeGuard {
+    pub fn finish(mut self) -> Result<LeakBalanceSnapshot, String> {
+        let snap = finish_leak_balance_scope()?;
+        self.finished = true;
+        Ok(snap)
+    }
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn start_leak_balance_scope(name: &'static str) -> Result<LeakBalanceScopeGuard, String> {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        match s.status {
+            LeakBalanceStatus::Active => Err(format!(
+                "cannot start leak balance scope '{name}': scope '{}' is already active",
+                s.name
+            )),
+            LeakBalanceStatus::Incomplete => Err(format!(
+                "cannot start leak balance scope '{name}': previous scope '{}' is incomplete",
+                s.name
+            )),
+            LeakBalanceStatus::Inactive | LeakBalanceStatus::Finished => {
+                s.name = name;
+                s.status = LeakBalanceStatus::Active;
+                s.allocations = 0;
+                s.deallocations = 0;
+                Ok(LeakBalanceScopeGuard {
+                    finished: false,
+                    _phantom: std::marker::PhantomData,
+                })
+            }
+        }
+    })
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn finish_leak_balance_scope() -> Result<LeakBalanceSnapshot, String> {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        match s.status {
+            LeakBalanceStatus::Inactive => Err("leak balance scope is inactive".to_string()),
+            LeakBalanceStatus::Incomplete => Err(format!(
+                "leak balance scope '{}' is incomplete (allocations={}, deallocations={})",
+                s.name, s.allocations, s.deallocations
+            )),
+            LeakBalanceStatus::Finished => Err(format!(
+                "leak balance scope '{}' is already finished",
+                s.name
+            )),
+            LeakBalanceStatus::Active => {
+                let snap = LeakBalanceSnapshot {
+                    name: s.name,
+                    allocations: s.allocations,
+                    deallocations: s.deallocations,
+                    status: LeakBalanceStatus::Active,
+                };
+                if !snap.is_balanced() {
+                    Err(format!(
+                        "leak balance mismatch for scope '{}': allocations={}, deallocations={}, delta={}",
+                        s.name, s.allocations, s.deallocations, snap.delta()
+                    ))
+                } else {
+                    s.status = LeakBalanceStatus::Finished;
+                    Ok(LeakBalanceSnapshot {
+                        status: LeakBalanceStatus::Finished,
+                        ..snap
+                    })
+                }
+            }
+        }
+    })
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn get_leak_balance_snapshot() -> Result<LeakBalanceSnapshot, String> {
+    LEAK_BALANCE_STATE.with(|st| {
+        let s = st.borrow();
+        match s.status {
+            LeakBalanceStatus::Inactive => Err("leak balance scope is inactive".to_string()),
+            LeakBalanceStatus::Incomplete => Err(format!(
+                "leak balance scope '{}' is incomplete (allocations={}, deallocations={})",
+                s.name, s.allocations, s.deallocations
+            )),
+            LeakBalanceStatus::Finished | LeakBalanceStatus::Active => Ok(LeakBalanceSnapshot {
+                name: s.name,
+                allocations: s.allocations,
+                deallocations: s.deallocations,
+                status: s.status,
+            }),
+        }
+    })
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn assert_leak_balanced() -> Result<LeakBalanceSnapshot, String> {
+    let snap = match get_leak_balance_snapshot() {
+        Ok(s) => s,
+        Err(e) => panic!("{e}"),
+    };
+    if !snap.is_balanced() {
+        panic!(
+            "leak balance mismatch for scope '{}': allocations={}, deallocations={}, delta={}",
+            snap.name, snap.allocations, snap.deallocations, snap.delta()
+        );
+    }
+    Ok(snap)
+}
+
+#[cfg(all(debug_assertions, test))]
+pub(crate) fn reset_leak_balance_scope_for_testing() {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        s.status = LeakBalanceStatus::Inactive;
+        s.allocations = 0;
+        s.deallocations = 0;
+    });
+}
+
 
 /// Increment the reference count atomically.
 ///
@@ -981,6 +1653,8 @@ pub unsafe fn mb_release(obj: *mut MbObject) {
         // and contained-values walk. Drop the Box (which frees the
         // Vec<u8> buffer) directly.
         if matches!((*obj).header.kind, ObjKind::Bytes) {
+            #[cfg(debug_assertions)]
+            record_deallocation_event();
             drop(Box::from_raw(obj));
             return;
         }
@@ -989,6 +1663,8 @@ pub unsafe fn mb_release(obj: *mut MbObject) {
         (*obj).header.rc.store(IMMORTAL_REFCOUNT, Ordering::Relaxed);
         super::gc::gc_untrack(obj);
         release_contained_values(obj);
+        #[cfg(debug_assertions)]
+        record_deallocation_event();
         drop(Box::from_raw(obj));
     }
 }
@@ -1004,9 +1680,11 @@ pub unsafe fn release_contained_values_pub(obj: *mut MbObject) {
 unsafe fn release_contained_values(obj: *mut MbObject) {
     match &(*obj).data {
         ObjData::List(lock) => {
-            let items = lock.read().unwrap();
-            for item in items.iter() {
-                release_if_ptr(*item);
+            let buf = lock.read().unwrap();
+            if let MbListBuffer::Generic(ref items) = *buf {
+                for item in items.iter() {
+                    release_if_ptr(*item);
+                }
             }
         }
         ObjData::Dict(lock) => {
@@ -1275,18 +1953,16 @@ pub unsafe extern "C" fn mb_release_value(val: u64) {
         return;
     }
     if let Some(ptr) = v.as_ptr() {
-        #[cfg(debug_assertions)]
-        {
-            let kind_byte = (*ptr).header.kind as u8;
-            if kind_byte > 13 {
-                // Log but do NOT panic — this is extern "C" so panicking
-                // would abort the entire process.  Skipping the release
-                // leaks memory but avoids a double-free crash.
-                #[cfg(debug_assertions)]
-                eprintln!("mb_release_value: UAF detected (kind={kind_byte}), skipping release");
-                return;
-            }
-        }
+        // `mb_release` runs `debug_validate_obj` under `cfg(debug_assertions)`,
+        // which panics deterministically on a use-after-free / dangling
+        // pointer (invalid ObjKind byte or misaligned address) instead of
+        // silently skipping the release. This function is `extern "C"`
+        // (called from JIT-compiled code), so a panic here unwinds straight
+        // into an abort rather than being catchable — that is intentional:
+        // a corrupted refcount slipping past as a silent leak is exactly
+        // the failure mode that let this bug family go undetected before
+        // (#1985, #2539). A loud, deterministic crash naming the offending
+        // site is strictly preferable to a quiet double-release.
         mb_release(ptr);
         return;
     }
@@ -1323,6 +1999,108 @@ mod tests {
 
             mb_release(obj); // should free
         }
+    }
+
+    /// A2 positive control (issue #2539): proves the release-path UAF /
+    /// dangling-pointer detector (`debug_validate_obj`, invoked from both
+    /// `mb_retain`/`mb_release` and, since the #2539 fix, unconditionally
+    /// from `mb_release_value`) still fires deterministically. This test
+    /// must keep panicking forever — if it ever stops panicking, either the
+    /// detector was weakened/disabled or a real regression silently
+    /// resurrected the double-release class of bug.
+    ///
+    /// Two designs were tried and rejected before this one:
+    ///
+    /// 1. A naive back-to-back `mb_release(obj); mb_release(obj);` is NOT a
+    ///    reliable trigger: the first release stores `IMMORTAL_REFCOUNT`
+    ///    into the header immediately before freeing, deallocation does not
+    ///    zero memory, and the stale header therefore often still reads as
+    ///    "immortal" on the second release — which silently no-ops instead
+    ///    of tripping the guard. That is exactly why the original bug was
+    ///    intermittent: it only manifested once the freed slot was reused
+    ///    for a *different*, incompatible allocation.
+    /// 2. Corrupting `header.kind` in place to an out-of-range `ObjKind`
+    ///    discriminant (then reading it back through `debug_validate_obj`'s
+    ///    `(*obj).header.kind as u8`) is UB per Rust's enum validity
+    ///    invariant, and it is NOT reliable across optimization levels in
+    ///    practice: verified empirically that this trips the panic at
+    ///    `CARGO_PROFILE_TEST_OPT_LEVEL=0` but the panic silently fails to
+    ///    fire at `=1` (the compiler is entitled to assume an `ObjKind`
+    ///    place always holds a valid discriminant once read as that type,
+    ///    and may fold the out-of-range comparison away) — i.e. exactly the
+    ///    kind of opt-level-sensitive false-negative this whole ticket
+    ///    exists to rule out, so it cannot be the control.
+    ///
+    /// Instead, exercise `debug_validate_obj`'s *alignment* check, which is
+    /// plain address arithmetic on a `usize` with no type-punning and no
+    /// enum validity invariant involved, so it is optimization-level
+    /// agnostic: offset a legitimately allocated object pointer by one byte
+    /// (no real `MbObject` allocation is ever byte-unaligned) and release
+    /// through it.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "misaligned MbObject pointer")]
+    fn test_uaf_detector_trips_on_misaligned_pointer() {
+        // #2585 E2: the detector is disarmed by default (regression-anchor
+        // behavior); force-arm it in-process so this positive control
+        // still trips regardless of `MAMBA_UAF_DETECTOR`.
+        force_arm_uaf_detector();
+        unsafe {
+            let obj = MbObject::new_str("doomed".into());
+            let bad_ptr = (obj as *mut u8).add(1) as *mut MbObject;
+            mb_release(bad_ptr); // must panic via debug_validate_obj, not silently proceed
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_uaf_detector_env_decision() {
+        assert!(!parse_uaf_detector_env(None));
+        assert!(!parse_uaf_detector_env(Some("")));
+        assert!(!parse_uaf_detector_env(Some("0")));
+        assert!(parse_uaf_detector_env(Some("1")));
+        assert!(parse_uaf_detector_env(Some("false")));
+        assert!(parse_uaf_detector_env(Some("enabled")));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_uaf_detector_monotonic_force_arm() {
+        force_arm_uaf_detector();
+        assert!(uaf_detector_armed());
+        force_arm_uaf_detector();
+        assert!(uaf_detector_armed());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_uaf_detector_caught_panic_attribution() {
+        force_arm_uaf_detector();
+        set_current_test_name("test_uaf_detector_caught_panic_attribution");
+        let res = std::panic::catch_unwind(|| unsafe {
+            let dummy = 0x12345677 as *mut MbObject;
+            mb_retain(dummy);
+        });
+        assert!(
+            res.is_err(),
+            "expected panic from misaligned pointer in mb_retain"
+        );
+        let err = res.unwrap_err();
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&'static str>().map(|s| s.to_string()))
+            .expect("panic payload should be a string");
+        assert!(
+            msg.contains("mb_retain"),
+            "expected 'mb_retain' in panic msg, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("[test=test_uaf_detector_caught_panic_attribution]"),
+            "expected test identity in panic msg, got: {}",
+            msg
+        );
     }
 
     #[test]
@@ -1860,5 +2638,149 @@ mod tests {
             }
             mb_release(cx);
         }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_ownership_leak_balance_clean_scalar() {
+        let guard = start_leak_balance_scope("clean_scalar").expect("start");
+
+        unsafe {
+            let s = MbObject::new_str("clean_scalar".to_string());
+            mb_release(s);
+        }
+        let snap1 = get_leak_balance_snapshot().expect("active scope");
+        assert_eq!(snap1.allocations, 1);
+        assert_eq!(snap1.deallocations, 1);
+        assert!(snap1.is_balanced());
+
+        unsafe {
+            let b = MbObject::new_bytes(vec![1, 2, 3, 4]);
+            mb_release(b);
+        }
+        let snap2 = get_leak_balance_snapshot().expect("active scope");
+        assert_eq!(snap2.allocations, 2);
+        assert_eq!(snap2.deallocations, 2);
+        assert!(snap2.is_balanced());
+
+        unsafe {
+            mb_release(MbObject::new_list(vec![]));
+            mb_release(MbObject::new_dict());
+            mb_release(MbObject::new_dict_with_capacity(4));
+            mb_release(MbObject::new_tuple(vec![]));
+            mb_release(MbObject::new_set(vec![]));
+            mb_release(MbObject::new_bytearray(vec![0]));
+            mb_release(MbObject::new_frozenset(vec![]));
+            mb_release(MbObject::new_bigint(BigInt::from(42)));
+            mb_release(MbObject::new_complex(1.0, 2.0));
+            mb_release(MbObject::new_code_object(
+                "x = 1".into(),
+                "test.py".into(),
+                "exec".into(),
+                crate::parser::ast::Module { stmts: vec![] },
+            ));
+            mb_release(MbObject::new_instance("Foo".into()));
+            mb_release(MbObject::new_instance_with_capacity("Bar".into(), 4));
+        }
+
+        let snap_final = guard.finish().expect("balanced");
+        assert_eq!(snap_final.name, "clean_scalar");
+        assert_eq!(snap_final.allocations, 14);
+        assert_eq!(snap_final.deallocations, 14);
+        assert_eq!(snap_final.delta(), 0);
+        assert_eq!(snap_final.status, LeakBalanceStatus::Finished);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_ownership_leak_balance_nested_container() {
+        let guard = start_leak_balance_scope("nested_container").expect("start");
+
+        unsafe {
+            let child = MbObject::new_str("child_str".to_string());
+            let child_val = MbValue::from_ptr(child);
+            let list = MbObject::new_list(vec![child_val]);
+
+            let mid_snap = get_leak_balance_snapshot().expect("active scope");
+            assert_eq!(mid_snap.allocations, 2);
+            assert_eq!(mid_snap.deallocations, 0);
+            assert_eq!(mid_snap.delta(), 2);
+            assert!(!mid_snap.is_balanced());
+
+            mb_release(list);
+        }
+
+        let final_snap = guard.finish().expect("balanced after releasing root");
+        assert_eq!(final_snap.name, "nested_container");
+        assert_eq!(final_snap.allocations, 2);
+        assert_eq!(final_snap.deallocations, 2);
+        assert_eq!(final_snap.delta(), 0);
+        assert_eq!(final_snap.status, LeakBalanceStatus::Finished);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_ownership_leak_balance_deliberate_leak() {
+        let guard = start_leak_balance_scope("deliberate_leak").expect("start");
+        let leaked_ptr = unsafe { MbObject::new_str("deliberately_leaked".to_string()) };
+
+        let mid_snap = get_leak_balance_snapshot().expect("active scope");
+        assert_eq!(mid_snap.allocations, 1);
+        assert_eq!(mid_snap.deallocations, 0);
+        assert_eq!(mid_snap.delta(), 1);
+
+        let res = std::panic::catch_unwind(|| {
+            let _ = assert_leak_balanced();
+        });
+        assert!(res.is_err(), "assert_leak_balanced must panic on leak");
+
+        unsafe {
+            mb_release(leaked_ptr);
+        }
+
+        let post_cleanup_snap = guard.finish().expect("balanced after cleanup");
+        assert_eq!(post_cleanup_snap.name, "deliberate_leak");
+        assert_eq!(post_cleanup_snap.allocations, 1);
+        assert_eq!(post_cleanup_snap.deallocations, 1);
+        assert_eq!(post_cleanup_snap.delta(), 0);
+        assert_eq!(post_cleanup_snap.status, LeakBalanceStatus::Finished);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_ownership_leak_balance_missing_scope_falsification() {
+        reset_leak_balance_scope_for_testing();
+
+        let snap_res = get_leak_balance_snapshot();
+        assert!(snap_res.is_err());
+        assert_eq!(snap_res.unwrap_err(), "leak balance scope is inactive");
+
+        let assert_res = std::panic::catch_unwind(|| {
+            let _ = assert_leak_balanced();
+        });
+        assert!(assert_res.is_err(), "assert_leak_balanced must panic when scope is inactive");
+
+        let outer_guard = start_leak_balance_scope("outer_scope").expect("start outer");
+        let inner_res = start_leak_balance_scope("inner_scope");
+        assert!(inner_res.is_err(), "nested start must be rejected");
+        assert!(inner_res.unwrap_err().contains("already active"));
+
+        outer_guard.finish().expect("finish outer");
+
+        {
+            let _unfinished_guard =
+                start_leak_balance_scope("unfinished_scope").expect("start unfinished");
+        }
+
+        let inc_snap_res = get_leak_balance_snapshot();
+        assert!(inc_snap_res.is_err(), "incomplete scope must return Err");
+        let inc_err = inc_snap_res.unwrap_err();
+        assert!(inc_err.contains("unfinished_scope"), "error must include unfinished scope name");
+        assert!(inc_err.contains("incomplete"), "error must identify incomplete status");
+
+        let new_start_res = start_leak_balance_scope("new_scope");
+        assert!(new_start_res.is_err(), "new start must be rejected while scope is incomplete");
+
+        reset_leak_balance_scope_for_testing();
     }
 }

@@ -6,11 +6,7 @@ use super::super::value::MbValue;
 /// Used by complex-aware arithmetic helpers to coerce mixed operands.
 /// (#1256 — complex arithmetic gap)
 pub(super) fn as_complex_pair(val: MbValue) -> Option<(f64, f64)> {
-    // Decimal / Fraction are tagged-int handles: as_int() below would read the
-    // handle id as a bogus real component (`Decimal("3.0") == 3+0j` compared the
-    // handle id against 3.0 → False). They are not directly complex-coercible
-    // here; (Decimal/Fraction vs complex) equality flows through the
-    // numeric-handle path in mb_values_eq instead.
+    let val = super::numeric_subclass_unary_operand(val, "__complex__").unwrap_or(val);
     if super::is_decimal_handle_value(val) || super::is_fraction_handle_value(val) {
         return None;
     }
@@ -27,6 +23,18 @@ pub(super) fn as_complex_pair(val: MbValue) -> Option<(f64, f64)> {
         unsafe {
             if let ObjData::Complex(re, im) = (*ptr).data {
                 return Some((re, im));
+            }
+            if let ObjData::BigInt(_) = (*ptr).data {
+                match super::super::bigint_ops::int_as_f64_checked(val) {
+                    Ok(f) => return Some((f, 0.0)),
+                    Err(msg) => {
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(super::super::rc::MbObject::new_str("OverflowError".to_string())),
+                            MbValue::from_ptr(super::super::rc::MbObject::new_str(msg)),
+                        );
+                        return None;
+                    }
+                }
             }
         }
     }

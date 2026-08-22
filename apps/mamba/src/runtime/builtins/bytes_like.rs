@@ -36,8 +36,39 @@ pub fn try_bytes_like(v: MbValue) -> Option<Vec<u8>> {
                 if class_name != "memoryview" {
                     return None;
                 }
-                let buf = fields.read().unwrap().get("_buffer").copied()?;
-                try_bytes_like(buf)
+                let g = fields.read().unwrap();
+                let buf = g.get("_buffer").copied()?;
+                let offset = g.get("_offset").and_then(|v| v.as_int()).unwrap_or(0) as usize;
+                let shape = g.get("_shape").copied().and_then(crate::runtime::class::memoryview_i64_items);
+                let itemsize = g.get("_itemsize").and_then(|v| v.as_int()).unwrap_or(1) as usize;
+                let stride = g.get("_stride").and_then(|v| v.as_int()).unwrap_or(1);
+                drop(g);
+                let raw_bytes = try_bytes_like(buf)?;
+                let nbytes = if let Some(s) = shape {
+                    let elem_count = s.iter().fold(1i64, |acc, d| acc * d.max(&0)) as usize;
+                    elem_count * itemsize
+                } else {
+                    raw_bytes.len().saturating_sub(offset)
+                };
+                if offset >= raw_bytes.len() {
+                    return Some(Vec::new());
+                }
+                let end = (offset + nbytes).min(raw_bytes.len());
+                if stride == 1 {
+                    Some(raw_bytes[offset..end].to_vec())
+                } else if stride > 1 {
+                    let mut out = Vec::new();
+                    let step = (stride as usize) * itemsize;
+                    let mut cur = offset;
+                    while cur < end && cur < raw_bytes.len() {
+                        let to = (cur + itemsize).min(raw_bytes.len());
+                        out.extend_from_slice(&raw_bytes[cur..to]);
+                        cur += step;
+                    }
+                    Some(out)
+                } else {
+                    Some(raw_bytes[offset..end].to_vec())
+                }
             }
             ObjData::Dict(lock) => {
                 let map = lock.read().unwrap();
@@ -68,7 +99,7 @@ pub fn try_bytes_like(v: MbValue) -> Option<Vec<u8>> {
                 };
                 let items = items_lock.read().unwrap();
                 let mut out = Vec::with_capacity(items.len());
-                for item in items.iter() {
+                for item in items.to_vec() {
                     let i = item.as_int()?;
                     out.push(i as u8);
                 }

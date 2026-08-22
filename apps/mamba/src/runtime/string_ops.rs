@@ -593,14 +593,25 @@ pub fn mb_str_repeat(s: MbValue, n: MbValue) -> MbValue {
 /// str[index] → single character string
 pub fn mb_str_getitem(s: MbValue, index: MbValue) -> MbValue {
     unsafe {
-        if let (Some(st), Some(idx)) = (as_str(s), index.as_int()) {
-            let chars: Vec<char> = st.chars().collect();
-            let len = chars.len() as i64;
-            let actual = if idx < 0 { idx + len } else { idx };
-            if actual >= 0 && actual < len {
-                new_str(chars[actual as usize].to_string())
+        if let Some(st) = as_str(s) {
+            if let Some(idx) = index.as_int().or_else(|| index.as_int_pyint()) {
+                let chars: Vec<char> = st.chars().collect();
+                let len = chars.len() as i64;
+                let actual = if idx < 0 { idx + len } else { idx };
+                if actual >= 0 && actual < len {
+                    new_str(chars[actual as usize].to_string())
+                } else {
+                    raise_index_error("string index out of range")
+                }
             } else {
-                raise_index_error("string index out of range")
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "string indices must be integers or slices, not {}",
+                        super::builtins::value_type_name(index)
+                    ))),
+                );
+                MbValue::none()
             }
         } else {
             MbValue::none()
@@ -696,16 +707,35 @@ pub fn mb_str_slice_full(s: MbValue, start: MbValue, stop: MbValue, step: MbValu
 
 // ── Case Methods ──
 
+pub(crate) fn is_cased_char(c: char) -> bool {
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    c.is_uppercase()
+        || c.is_lowercase()
+        || c.general_category() == GeneralCategory::TitlecaseLetter
+}
+
 fn push_unicode_titlecase(out: &mut String, c: char) {
     match c {
-        // Unicode titlecase digraph DZ: upper/title/lower forms all titlecase
-        // to U+01C5, while uppercase maps to U+01C4.
+        // Unicode titlecase digraphs (LJ, NJ, DZ)
         '\u{01C4}' | '\u{01C5}' | '\u{01C6}' => out.push('\u{01C5}'),
+        '\u{01C7}' | '\u{01C8}' | '\u{01C9}' => out.push('\u{01C8}'),
+        '\u{01CA}' | '\u{01CB}' | '\u{01CC}' => out.push('\u{01CB}'),
+        '\u{01F1}' | '\u{01F2}' | '\u{01F3}' => out.push('\u{01F2}'),
+        // Polytonic Greek titlecase mappings
+        '\u{1F80}'..='\u{1F87}' => out.push(char::from_u32(c as u32 + 8).unwrap()),
+        '\u{1F90}'..='\u{1F97}' => out.push(char::from_u32(c as u32 + 8).unwrap()),
+        '\u{1FA0}'..='\u{1FA7}' => out.push(char::from_u32(c as u32 + 8).unwrap()),
+        '\u{1FB3}' => out.push('\u{1FBC}'),
+        '\u{1FC3}' => out.push('\u{1FCC}'),
+        '\u{1FF3}' => out.push('\u{1FFC}'),
         _ => out.extend(c.to_uppercase()),
     }
 }
 
 pub fn mb_str_upper(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return s;
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             new_str(st.to_uppercase())
@@ -716,6 +746,9 @@ pub fn mb_str_upper(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_lower(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return s;
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             new_str(st.to_lowercase())
@@ -729,6 +762,40 @@ fn push_casefold_char(out: &mut String, c: char) {
     match c {
         '\u{00df}' | '\u{1e9e}' => out.push_str("ss"),
         '\u{00b5}' => out.push('\u{03bc}'),
+        '\u{017f}' => out.push('s'),
+        '\u{03c2}' => out.push('\u{03c3}'),
+        '\u{0390}' => out.push_str("\u{03b9}\u{0308}\u{0301}"),
+        '\u{03b0}' => out.push_str("\u{03c5}\u{0308}\u{0301}"),
+        '\u{0130}' => out.push_str("i\u{0307}"),
+        '\u{0149}' => out.push_str("'n"),
+        '\u{0587}' => out.push_str("\u{0565}\u{0582}"),
+        '\u{1e96}' => out.push_str("h\u{0331}"),
+        '\u{1e97}' => out.push_str("t\u{0308}"),
+        '\u{1e98}' => out.push_str("w\u{030a}"),
+        '\u{1e99}' => out.push_str("y\u{030a}"),
+        '\u{1e9a}' => out.push_str("a\u{02be}"),
+        '\u{1f50}' => out.push_str("\u{03c5}\u{0313}"),
+        '\u{1f52}' => out.push_str("\u{03c5}\u{0313}\u{0300}"),
+        '\u{1f54}' => out.push_str("\u{03c5}\u{0313}\u{0301}"),
+        '\u{1f56}' => out.push_str("\u{03c5}\u{0313}\u{0342}"),
+        '\u{1f80}'..='\u{1f87}' | '\u{1f88}'..='\u{1f8f}' => {
+            let offset = (c as u32 - 0x1f80) % 8;
+            out.push(char::from_u32(0x1f80 + offset).unwrap());
+            out.push('\u{03b9}');
+        }
+        '\u{1f90}'..='\u{1f97}' | '\u{1f98}'..='\u{1f9f}' => {
+            let offset = (c as u32 - 0x1f90) % 8;
+            out.push(char::from_u32(0x1f90 + offset).unwrap());
+            out.push('\u{03b9}');
+        }
+        '\u{1fa0}'..='\u{1fa7}' | '\u{1fa8}'..='\u{1faf}' => {
+            let offset = (c as u32 - 0x1fa0) % 8;
+            out.push(char::from_u32(0x1fa0 + offset).unwrap());
+            out.push('\u{03b9}');
+        }
+        '\u{1fb3}' | '\u{1fbc}' => out.push_str("\u{03b1}\u{03b9}"),
+        '\u{1fc3}' | '\u{1fcc}' => out.push_str("\u{03b7}\u{03b9}"),
+        '\u{1ff3}' | '\u{1ffc}' => out.push_str("\u{03c9}\u{03b9}"),
         '\u{fb00}' => out.push_str("ff"),
         '\u{fb01}' => out.push_str("fi"),
         '\u{fb02}' => out.push_str("fl"),
@@ -736,12 +803,20 @@ fn push_casefold_char(out: &mut String, c: char) {
         '\u{fb04}' => out.push_str("ffl"),
         '\u{fb05}' => out.push_str("st"),
         '\u{fb06}' => out.push_str("st"),
+        '\u{fb13}' => out.push_str("\u{0574}\u{0576}"),
+        '\u{fb14}' => out.push_str("\u{0574}\u{0565}"),
+        '\u{fb15}' => out.push_str("\u{0574}\u{056b}"),
+        '\u{fb16}' => out.push_str("\u{057e}\u{0576}"),
+        '\u{fb17}' => out.push_str("\u{0574}\u{056d}"),
         _ => out.extend(c.to_lowercase()),
     }
 }
 
 /// str.casefold() — aggressive lowercase for caseless comparison.
 pub fn mb_str_casefold(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return s;
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             let mut folded = String::with_capacity(st.len());
@@ -756,6 +831,9 @@ pub fn mb_str_casefold(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_capitalize(s: MbValue) -> MbValue {
+    if is_surrogate_backed_string(s) {
+        return s;
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             let mut chars = st.chars();
@@ -777,15 +855,17 @@ pub fn mb_str_capitalize(s: MbValue) -> MbValue {
 
 pub fn mb_str_title(s: MbValue) -> MbValue {
     // CPython's str.title() upper-cases each cased character that follows a
-    // non-cased character. "Cased" = alphabetic (letters with upper/lower
-    // forms); digits, punctuation, whitespace, and apostrophes are all
-    // non-cased, so e.g. "123abc" -> "123Abc" and "don't" -> "Don'T".
+    // non-cased character. "Cased" = letters with upper/lower/title forms;
+    // digits, CJK, punctuation, whitespace, etc. are non-cased.
+    if is_surrogate_backed_string(s) {
+        return s;
+    }
     unsafe {
         if let Some(st) = as_str(s) {
             let mut result = String::with_capacity(st.len());
             let mut prev_cased = false;
             for c in st.chars() {
-                let cased = c.is_alphabetic();
+                let cased = is_cased_char(c);
                 if cased {
                     if prev_cased {
                         result.extend(c.to_lowercase());
@@ -805,18 +885,22 @@ pub fn mb_str_title(s: MbValue) -> MbValue {
 }
 
 pub fn mb_str_swapcase(s: MbValue) -> MbValue {
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    if is_surrogate_backed_string(s) {
+        return s;
+    }
     unsafe {
         if let Some(st) = as_str(s) {
-            let result: String = st
-                .chars()
-                .map(|c| {
-                    if c.is_uppercase() {
-                        c.to_lowercase().to_string()
-                    } else {
-                        c.to_uppercase().to_string()
-                    }
-                })
-                .collect();
+            let mut result = String::with_capacity(st.len());
+            for c in st.chars() {
+                if c.is_uppercase() || c.general_category() == GeneralCategory::TitlecaseLetter {
+                    result.extend(c.to_lowercase());
+                } else if c.is_lowercase() {
+                    result.extend(c.to_uppercase());
+                } else {
+                    result.push(c);
+                }
+            }
             new_str(result)
         } else {
             MbValue::none()
@@ -1497,13 +1581,15 @@ pub fn mb_str_isascii(s: MbValue) -> MbValue {
 /// Per PEP 3131: first char must be `_` or `XID_Start`; the rest must be
 /// `XID_Continue`. Empty string returns False.
 pub fn mb_str_isidentifier(s: MbValue) -> MbValue {
+    use unicode_normalization::UnicodeNormalization;
     use unicode_xid::UnicodeXID;
     if is_surrogate_backed_string(s) {
         return MbValue::from_bool(false);
     }
     unsafe {
         if let Some(st) = as_str(s) {
-            let mut chars = st.chars();
+            let normalized: String = st.nfkc().collect();
+            let mut chars = normalized.chars();
             let first = match chars.next() {
                 Some(c) => c,
                 None => return MbValue::from_bool(false),
@@ -2662,6 +2748,39 @@ fn format_with_spec(val: MbValue, spec: &str) -> String {
     apply_format_spec(val, spec)
 }
 
+/// Return the already-numeric payload used by the built-in scalar formatter.
+/// User-defined `__float__`/`__index__` protocols are intentionally excluded:
+/// format-spec dispatch must not coerce an arbitrary object through `float()`.
+fn builtin_format_float_value(val: MbValue) -> Option<f64> {
+    if let Some(f) = val.as_float() {
+        return Some(f);
+    }
+    if let Some(i) = val.as_int_pyint() {
+        return Some(i as f64);
+    }
+    if let Some(big) = unsafe { super::bigint_ops::int_as_f64(val) } {
+        return Some(big);
+    }
+    if let Some((_base, payload)) =
+        super::class::builtin_data_payload_if_unoverridden(val, "__format__")
+    {
+        return builtin_format_float_value(payload);
+    }
+    None
+}
+
+fn builtin_format_str_value(val: MbValue) -> bool {
+    if unsafe { as_str(val).is_some() } {
+        return true;
+    }
+    if let Some((base, payload)) =
+        super::class::builtin_data_payload_if_unoverridden(val, "__format__")
+    {
+        return base == "str" && unsafe { as_str(payload).is_some() };
+    }
+    false
+}
+
 /// Spec-less f-string field (`f"{x}"`): CPython calls format(x, "") which
 /// dispatches type-level `__format__`; objects without one fall back to
 /// str(). Keeps the historical mb_str fast path for every non-instance.
@@ -2890,20 +3009,20 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
     // scalar type (or an unknown code) raises ValueError instead of silently
     // coercing. Only scalar values participate — container/instance handling
     // keeps its existing behavior.
+    let is_str_val = builtin_format_str_value(val);
     {
-        let is_str_val = unsafe { as_str(val).is_some() };
         let is_bool_val = val.as_bool().is_some();
         let is_int_val = val.as_int().is_some() || is_bool_val;
         let is_float_val = !is_int_val && val.as_float().is_some();
         if is_str_val || is_int_val || is_float_val {
             let type_name = if is_str_val {
-                "str"
+                super::builtins::value_type_name(val)
             } else if is_float_val {
-                "float"
+                "float".to_string()
             } else if is_bool_val {
-                "bool"
+                "bool".to_string()
             } else {
-                "int"
+                "int".to_string()
             };
             let bad = match type_char {
                 'b' | 'c' | 'd' | 'o' | 'x' | 'X' => !is_int_val,
@@ -2925,6 +3044,20 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
                 return String::new();
             }
         }
+    }
+
+    if matches!(type_char, 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%')
+        && !is_str_val
+        && builtin_format_float_value(val).is_none()
+    {
+        super::exception::mb_raise(
+            new_str("TypeError".to_string()),
+            new_str(format!(
+                "unsupported format string passed to {}.__format__",
+                super::builtins::value_type_name(val)
+            )),
+        );
+        return String::new();
     }
 
     // Build the sign/magnitude pieces separately so `+`/` ` prefix survives
@@ -2993,10 +3126,9 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         match type_char {
             '%' => {
                 // Percent type: multiply by 100, format as fixed-point, append '%'.
-                let f_val = val
-                    .as_float()
-                    .or_else(|| val.as_int().map(|i| i as f64))
-                    .unwrap_or(0.0);
+                let Some(f_val) = builtin_format_float_value(val) else {
+                    return String::new();
+                };
                 let scaled = f_val * 100.0;
                 let prec = precision.unwrap_or(6);
                 let raw = format!("{:.prec$}", scaled.abs(), prec = prec);
@@ -3012,10 +3144,9 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
                 (prefix, format!("{raw}%"))
             }
             'e' | 'E' => {
-                let f_val = val
-                    .as_float()
-                    .or_else(|| val.as_int().map(|i| i as f64))
-                    .unwrap_or(0.0);
+                let Some(f_val) = builtin_format_float_value(val) else {
+                    return String::new();
+                };
                 let prec = precision.unwrap_or(6);
                 let raw = if type_char == 'e' {
                     format!("{:.prec$e}", f_val.abs(), prec = prec)
@@ -3035,10 +3166,9 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
                 (prefix, raw)
             }
             'g' | 'G' => {
-                let f_val = val
-                    .as_float()
-                    .or_else(|| val.as_int().map(|i| i as f64))
-                    .unwrap_or(0.0);
+                let Some(f_val) = builtin_format_float_value(val) else {
+                    return String::new();
+                };
                 let raw = format_g_magnitude(f_val, precision, type_char == 'G', alternate, false);
                 let prefix = if f_val.is_sign_negative() {
                     "-".to_string()
@@ -3052,10 +3182,9 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
                 (prefix, raw)
             }
             'f' | 'F' => {
-                let f_val = val
-                    .as_float()
-                    .or_else(|| val.as_int().map(|i| i as f64))
-                    .unwrap_or(0.0);
+                let Some(f_val) = builtin_format_float_value(val) else {
+                    return String::new();
+                };
                 let prec = precision.unwrap_or(6);
                 let raw = format!("{:.prec$}", f_val.abs(), prec = prec);
                 let digits_body = if let Some(sep) = thousands {
@@ -3590,22 +3719,29 @@ fn format_complex_spec(re: f64, im: f64, spec: &str) -> String {
 /// / zero-pad flag / sign flag. Doesn't aim for full CPython fidelity; covers
 /// the common cases that tests and everyday code exercise.
 pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
-    // Flatten args: single value → [value], tuple → tuple items, dict →
-    // mapping (used by `%(key)s` conversions), other → [value].
+    // Flatten tuples positionally. Every other raw operand, including a dict,
+    // remains one positional scalar until a named conversion proves that it
+    // is a mapping operand.
     let mut arg_slots: Vec<MbValue> = Vec::new();
-    let mut mapping: Option<MbValue> = None;
-    if let Some(ptr) = args.as_ptr() {
+    let args_is_tuple = if let Some(ptr) = args.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::Tuple(items) => arg_slots.extend(items.iter().copied()),
-                ObjData::Dict(_) => mapping = Some(args),
-                _ => arg_slots.push(args),
+                ObjData::Tuple(items) => {
+                    arg_slots.extend(items.iter().copied());
+                    true
+                }
+                _ => {
+                    arg_slots.push(args);
+                    false
+                }
             }
         }
     } else {
         arg_slots.push(args);
-    }
+        false
+    };
     let mut arg_idx = 0usize;
+    let mut saw_unknown_conversion = false;
     let mut out = String::new();
     let mut chars = tmpl.chars().peekable();
     while let Some(c) = chars.next() {
@@ -3620,7 +3756,8 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
             continue;
         }
 
-        // Mapping key: `%(name)s` looks up `name` in the dict argument.
+        // Mapping key: `%(name)s` requires the original operand to be a dict
+        // and looks up `name` in that mapping.
         let mut mapping_value: Option<MbValue> = None;
         if chars.peek() == Some(&'(') {
             chars.next();
@@ -3640,9 +3777,16 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                     key.push(ch);
                 }
             }
-            if let Some(map) = mapping {
-                let key_val = MbValue::from_ptr(super::rc::MbObject::new_str(key));
-                mapping_value = Some(super::dict_ops::mb_dict_getitem(map, key_val));
+            let is_mapping_operand = args.as_ptr().is_some_and(|ptr| unsafe {
+                matches!(&(*ptr).data, ObjData::Dict(_))
+            });
+            if !is_mapping_operand {
+                return raise_type_error("format requires a mapping");
+            }
+            let key_val = MbValue::from_ptr(super::rc::MbObject::new_str(key));
+            mapping_value = Some(super::dict_ops::mb_dict_getitem(args, key_val));
+            if super::exception::current_exception_type().is_some() {
+                return MbValue::none();
             }
         }
 
@@ -3743,72 +3887,73 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
         } else {
             arg_slots.get(arg_idx).copied()
         };
+        let recognized_conversion = matches!(
+            conv,
+            'd' | 'i'
+                | 'u'
+                | 'o'
+                | 'x'
+                | 'X'
+                | 'b'
+                | 'f'
+                | 'F'
+                | 'e'
+                | 'E'
+                | 'g'
+                | 'G'
+                | 's'
+                | 'r'
+                | 'a'
+                | 'c'
+        );
+        if mapping_value.is_none() && recognized_conversion && val.is_none() {
+            return raise_type_error("not enough arguments for format string");
+        }
         if mapping_value.is_none() && !matches!(conv, '%') {
             arg_idx += 1;
         }
 
         let (mut sign_prefix, body) = match conv {
-            'd' | 'i' => {
-                if let Some((negative, digits)) = val.and_then(|a| int_digits_for_percent(a, 10)) {
-                    let prefix = if negative {
-                        "-".to_string()
-                    } else if sign_plus {
-                        "+".to_string()
-                    } else if sign_space {
-                        " ".to_string()
-                    } else {
-                        String::new()
-                    };
-                    (prefix, digits)
-                } else if let Some(f) = val.and_then(|a| a.as_float()) {
-                    // CPython accepts float for %d/%i (truncates toward 0).
-                    let v = f as i64;
-                    let prefix = if v < 0 {
-                        "-".to_string()
-                    } else if sign_plus {
-                        "+".to_string()
-                    } else if sign_space {
-                        " ".to_string()
-                    } else {
-                        String::new()
-                    };
-                    (prefix, v.unsigned_abs().to_string())
-                } else if let Some(v) = val {
-                    // #1794: an argument WAS supplied (`val` is Some) but it's
-                    // neither int-like nor float-like (e.g. str/list/dict/
-                    // None) — CPython raises TypeError here rather than
-                    // silently substituting 0. `val: None` (no argument
-                    // supplied at all — arg_slots exhausted) is a separate,
-                    // out-of-scope "not enough arguments" path and keeps the
-                    // old fallback below.
-                    return raise_type_error(format!(
-                        "%{conv} format: a real number is required, not {}",
-                        super::builtins::value_type_name(v)
-                    ));
-                } else {
-                    (String::new(), "0".to_string())
+            'd' | 'i' | 'u' | 'o' | 'x' | 'X' | 'b' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' => {
+                let opts = super::builtins::numeric_format::PercentFormatOptions {
+                    conv,
+                    sign_plus,
+                    sign_space,
+                    alternate,
+                    zero_pad,
+                    left_align,
+                    width,
+                    precision,
+                };
+                match super::builtins::numeric_format::format_numeric_percent(val, opts) {
+                    Ok(res) => res,
+                    Err(msg) => {
+                        if super::exception::current_exception_type().is_some() {
+                            return MbValue::none();
+                        }
+                        return raise_type_error(msg);
+                    }
                 }
             }
-            'f' | 'F' => {
-                let v = val
-                    .and_then(|a| a.as_float())
-                    .or_else(|| val.and_then(|a| a.as_int()).map(|i| i as f64))
-                    .unwrap_or(0.0);
-                let prec = precision.unwrap_or(6);
-                let body = format!("{:.prec$}", v.abs(), prec = prec);
-                let prefix = if v.is_sign_negative() {
-                    "-".to_string()
-                } else if sign_plus {
-                    "+".to_string()
-                } else if sign_space {
-                    " ".to_string()
+            's' => {
+                let s = if let Some(v) = val {
+                    if super::builtins::is_decimal_handle_value(v)
+                        || super::builtins::is_fraction_handle_value(v)
+                    {
+                        let converted = super::builtins::mb_str(v);
+                        if super::exception::current_exception_type().is_some() {
+                            return MbValue::none();
+                        }
+                        match as_str_owned(converted) {
+                            Some(text) => text,
+                            None => return raise_type_error("str() returned non-string"),
+                        }
+                    } else {
+                        value_to_string(v)
+                    }
                 } else {
                     String::new()
                 };
-                (prefix, body)
-            }
-            's' => {
-                let s = val.map(value_to_string).unwrap_or_default();
                 let body = if let Some(p) = precision {
                     s.chars().take(p).collect()
                 } else {
@@ -3831,48 +3976,56 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                             .unwrap_or_default()
                     })
                     .unwrap_or_default();
-                (String::new(), s)
-            }
-            'x' | 'X' | 'o' | 'b' => {
-                let radix = match conv {
-                    'o' => 8,
-                    'b' => 2,
-                    _ => 16,
+                let body = if let Some(p) = precision {
+                    s.chars().take(p).collect()
+                } else {
+                    s
                 };
-                let (negative, mut body) = val
-                    .and_then(|a| int_digits_for_percent(a, radix))
-                    .unwrap_or_else(|| (false, "0".to_string()));
-                if conv == 'X' {
-                    body = body.to_ascii_uppercase();
-                }
-                let sign_part = if negative {
-                    "-".to_string()
-                } else if sign_plus {
-                    "+".to_string()
-                } else if sign_space {
-                    " ".to_string()
+                (String::new(), body)
+            }
+            'a' => {
+                let s = val
+                    .map(|v| {
+                        let codepoints: Vec<u32> = if let Some(cps) = surrogate_codepoints(v) {
+                            cps
+                        } else {
+                            value_to_string(v).chars().map(|c| c as u32).collect()
+                        };
+                        ascii_string_from_codepoints(&codepoints)
+                    })
+                    .unwrap_or_default();
+                let body = if let Some(p) = precision {
+                    s.chars().take(p).collect()
+                } else {
+                    s
+                };
+                (String::new(), body)
+            }
+            'c' => {
+                let s = if let Some(v) = val {
+                    if let Some(i) = v.as_int() {
+                        if let Some(c) = char::from_u32(i as u32) {
+                            c.to_string()
+                        } else {
+                            return raise_overflow_error("%c arg not in range(0x110000)");
+                        }
+                    } else if let Some(st) = unsafe { as_str(v) } {
+                        let mut chars = st.chars();
+                        let first = chars.next();
+                        if first.is_some() && chars.next().is_none() {
+                            st.to_string()
+                        } else {
+                            return raise_type_error("%c requires int or char");
+                        }
+                    } else {
+                        return raise_type_error(format!(
+                            "%c requires int or char, not {}",
+                            super::builtins::value_type_name(v)
+                        ));
+                    }
                 } else {
                     String::new()
                 };
-                let alt = if alternate {
-                    match conv {
-                        'x' => "0x",
-                        'X' => "0X",
-                        'o' => "0o",
-                        'b' => "0b",
-                        _ => "",
-                    }
-                } else {
-                    ""
-                };
-                (format!("{sign_part}{alt}"), body)
-            }
-            'c' => {
-                let s = val
-                    .and_then(|a| a.as_int())
-                    .and_then(|i| char::from_u32(i as u32).map(|c| c.to_string()))
-                    .or_else(|| val.map(value_to_string))
-                    .unwrap_or_default();
                 (String::new(), s)
             }
             '%' => {
@@ -3881,7 +4034,8 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
             }
             _ => {
                 // Unknown conversion — emit as-is and consume no arg.
-                if !matches!(conv, '%') {
+                saw_unknown_conversion = true;
+                if mapping_value.is_none() && !matches!(conv, '%') {
                     arg_idx -= 1;
                 }
                 out.push('%');
@@ -3892,6 +4046,11 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
 
         // Apply width / alignment. Zero-pad lives between sign and body when
         // align is default (right) and zero flag is set.
+        let mut effective_zero_pad = zero_pad;
+        if left_align || (precision.is_some() && matches!(conv, 'd' | 'i' | 'u' | 'o' | 'x' | 'X' | 'b')) {
+            effective_zero_pad = false;
+        }
+
         let total_len = sign_prefix.chars().count() + body.chars().count();
         if total_len < width {
             let pad = width - total_len;
@@ -3901,7 +4060,7 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                 for _ in 0..pad {
                     out.push(' ');
                 }
-            } else if zero_pad && matches!(conv, 'd' | 'i' | 'f' | 'F' | 'x' | 'X' | 'o' | 'b') {
+            } else if effective_zero_pad {
                 out.push_str(&sign_prefix);
                 for _ in 0..pad {
                     out.push('0');
@@ -3919,6 +4078,9 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
             out.push_str(&body);
         }
         let _ = (&mut sign_prefix,); // quiet mut-only-when-fused warning
+    }
+    if args_is_tuple && !saw_unknown_conversion && arg_idx < arg_slots.len() {
+        return raise_type_error("not all arguments converted during string formatting");
     }
     new_str(out)
 }
@@ -4359,7 +4521,12 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
                 (field.as_str(), "")
             };
             match lookup(field_name) {
-                Some(val) => out.push_str(&apply_format_spec(val, fmt_spec)),
+                Some(val) => {
+                    let Some(formatted) = format_field_value(val, None, fmt_spec) else {
+                        return MbValue::none();
+                    };
+                    out.push_str(&formatted);
+                }
                 None => {
                     if super::exception::mb_has_exception().as_bool() == Some(true) {
                         return MbValue::none();
@@ -4935,7 +5102,7 @@ pub fn value_to_string(val: MbValue) -> String {
                     let result = {
                         let items = lock.read().unwrap();
                         let parts: Vec<String> =
-                            items.iter().map(|v| repr_in_container(*v)).collect();
+                            items.to_vec().into_iter().map(repr_in_container).collect();
                         format!("[{}]", parts.join(", "))
                     };
                     super::repr_guard::leave(self_ptr);
@@ -5397,7 +5564,7 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             if let Some(ptr) = args.as_ptr() {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     let items = lock.read().unwrap();
-                    return items.get(i).copied().unwrap_or(MbValue::none());
+                    return items.get(i).unwrap_or(MbValue::none());
                 }
             }
             MbValue::none()
@@ -5411,6 +5578,27 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                 }
             }
             0
+        }
+    };
+    let check_arity = |min_args: usize, max_args: usize| -> bool {
+        let n = argc();
+        if n < min_args || n > max_args {
+            let msg = if min_args == max_args {
+                format!("{name}() takes exactly {min_args} argument ({n} given)")
+            } else if max_args == usize::MAX {
+                format!("{name}() takes at least {min_args} argument ({n} given)")
+            } else if min_args == 0 {
+                format!("{name}() takes at most {max_args} argument ({n} given)")
+            } else {
+                format!("{name}() takes between {min_args} and {max_args} arguments ({n} given)")
+            };
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(msg)),
+            );
+            false
+        } else {
+            true
         }
     };
     match name {
@@ -5431,65 +5619,96 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         }
         // Iterator dunder: `s.__iter__()` yields the same character iterator as
         // `iter(s)` / a `for` loop, walkable by `next()`.
-        "__iter__" => super::iter::mb_iter(receiver),
+        "__iter__" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            super::iter::mb_iter(receiver)
+        }
         // Case methods
-        "upper" => mb_str_upper(receiver),
-        "lower" => mb_str_lower(receiver),
-        "casefold" => mb_str_casefold(receiver),
-        "capitalize" => mb_str_capitalize(receiver),
-        "title" => mb_str_title(receiver),
-        "swapcase" => mb_str_swapcase(receiver),
+        "upper" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_upper(receiver)
+        }
+        "lower" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_lower(receiver)
+        }
+        "casefold" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_casefold(receiver)
+        }
+        "capitalize" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_capitalize(receiver)
+        }
+        "title" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_title(receiver)
+        }
+        "swapcase" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_swapcase(receiver)
+        }
         // Strip methods
         "strip" => {
+            if !check_arity(0, 1) { return MbValue::none(); }
             let chars = if argc() > 0 { arg(0) } else { MbValue::none() };
             mb_str_strip(receiver, chars)
         }
         "lstrip" => {
+            if !check_arity(0, 1) { return MbValue::none(); }
             let chars = if argc() > 0 { arg(0) } else { MbValue::none() };
             mb_str_lstrip(receiver, chars)
         }
         "rstrip" => {
+            if !check_arity(0, 1) { return MbValue::none(); }
             let chars = if argc() > 0 { arg(0) } else { MbValue::none() };
             mb_str_rstrip(receiver, chars)
         }
         // Search methods
         "find" => {
+            if !check_arity(1, 3) { return MbValue::none(); }
             let sub = arg(0);
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_find(receiver, sub, start, end)
         }
         "rfind" => {
+            if !check_arity(1, 3) { return MbValue::none(); }
             let sub = arg(0);
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_rfind(receiver, sub, start, end)
         }
         "index" => {
+            if !check_arity(1, 3) { return MbValue::none(); }
             let sub = arg(0);
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_index(receiver, sub, start, end)
         }
         "rindex" => {
+            if !check_arity(1, 3) { return MbValue::none(); }
             let sub = arg(0);
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_rindex(receiver, sub, start, end)
         }
         "count" => {
+            if !check_arity(1, 3) { return MbValue::none(); }
             let sub = arg(0);
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_count(receiver, sub, start, end)
         }
         "startswith" => {
+            if !check_arity(1, 3) { return MbValue::none(); }
             let pfx = arg(0);
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_startswith(receiver, pfx, start, end)
         }
         "endswith" => {
+            if !check_arity(1, 3) { return MbValue::none(); }
             let sfx = arg(0);
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
@@ -5497,50 +5716,104 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         }
         // Modification methods
         "replace" => {
+            if !check_arity(2, 3) { return MbValue::none(); }
             let count = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_replace(receiver, arg(0), arg(1), count)
         }
         "split" => {
+            if !check_arity(0, 2) { return MbValue::none(); }
             let sep = if argc() > 0 { arg(0) } else { MbValue::none() };
             let maxsplit = if argc() > 1 { arg(1) } else { MbValue::none() };
             mb_str_split(receiver, sep, maxsplit)
         }
         "rsplit" => {
+            if !check_arity(0, 2) { return MbValue::none(); }
             let sep = if argc() > 0 { arg(0) } else { MbValue::none() };
             let maxsplit = if argc() > 1 { arg(1) } else { MbValue::none() };
             mb_str_rsplit(receiver, sep, maxsplit)
         }
-        "join" => mb_str_join(receiver, arg(0)),
+        "join" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_str_join(receiver, arg(0))
+        }
         // Predicate methods
-        "isdigit" => mb_str_isdigit(receiver),
-        "isalpha" => mb_str_isalpha(receiver),
-        "isalnum" => mb_str_isalnum(receiver),
-        "isspace" => mb_str_isspace(receiver),
-        "isupper" => mb_str_isupper(receiver),
-        "islower" => mb_str_islower(receiver),
-        "istitle" => mb_str_istitle(receiver),
-        "isascii" => mb_str_isascii(receiver),
-        "isidentifier" => mb_str_isidentifier(receiver),
-        "isnumeric" => mb_str_isnumeric(receiver),
-        "isdecimal" => mb_str_isdecimal(receiver),
-        "isprintable" => mb_str_isprintable(receiver),
+        "isdigit" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isdigit(receiver)
+        }
+        "isalpha" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isalpha(receiver)
+        }
+        "isalnum" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isalnum(receiver)
+        }
+        "isspace" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isspace(receiver)
+        }
+        "isupper" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isupper(receiver)
+        }
+        "islower" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_islower(receiver)
+        }
+        "istitle" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_istitle(receiver)
+        }
+        "isascii" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isascii(receiver)
+        }
+        "isidentifier" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isidentifier(receiver)
+        }
+        "isnumeric" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isnumeric(receiver)
+        }
+        "isdecimal" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isdecimal(receiver)
+        }
+        "isprintable" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_str_isprintable(receiver)
+        }
         // Padding methods
-        "center" => mb_str_center(
-            receiver,
-            arg(0),
-            if argc() > 1 { arg(1) } else { MbValue::none() },
-        ),
-        "ljust" => mb_str_ljust(
-            receiver,
-            arg(0),
-            if argc() > 1 { arg(1) } else { MbValue::none() },
-        ),
-        "rjust" => mb_str_rjust(
-            receiver,
-            arg(0),
-            if argc() > 1 { arg(1) } else { MbValue::none() },
-        ),
-        "zfill" => mb_str_zfill(receiver, arg(0)),
+        "center" => {
+            if !check_arity(1, 2) { return MbValue::none(); }
+            mb_str_center(
+                receiver,
+                arg(0),
+                if argc() > 1 { arg(1) } else { MbValue::none() },
+            )
+        }
+        "ljust" => {
+            if !check_arity(1, 2) { return MbValue::none(); }
+            mb_str_ljust(
+                receiver,
+                arg(0),
+                if argc() > 1 { arg(1) } else { MbValue::none() },
+            )
+        }
+        "rjust" => {
+            if !check_arity(1, 2) { return MbValue::none(); }
+            mb_str_rjust(
+                receiver,
+                arg(0),
+                if argc() > 1 { arg(1) } else { MbValue::none() },
+            )
+        }
+        "zfill" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_str_zfill(receiver, arg(0))
+        }
         // Other methods
         "encode" => {
             // `s.encode()` — default UTF-8.
@@ -5618,15 +5891,34 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             mb_str_splitlines(receiver, keepends)
         }
         "expandtabs" => {
+            if !check_arity(0, 1) { return MbValue::none(); }
             mb_str_expandtabs(receiver, if argc() > 0 { arg(0) } else { MbValue::none() })
         }
-        "partition" => mb_str_partition(receiver, arg(0)),
-        "rpartition" => mb_str_rpartition(receiver, arg(0)),
-        "removeprefix" => mb_str_removeprefix(receiver, arg(0)),
-        "removesuffix" => mb_str_removesuffix(receiver, arg(0)),
+        "partition" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_str_partition(receiver, arg(0))
+        }
+        "rpartition" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_str_rpartition(receiver, arg(0))
+        }
+        "removeprefix" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_str_removeprefix(receiver, arg(0))
+        }
+        "removesuffix" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_str_removesuffix(receiver, arg(0))
+        }
         "format" => mb_str_format(receiver, args),
-        "format_map" => mb_str_format_map(receiver, arg(0)),
-        "translate" => mb_str_translate(receiver, arg(0)),
+        "format_map" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_str_format_map(receiver, arg(0))
+        }
+        "translate" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_str_translate(receiver, arg(0))
+        }
         "maketrans" => mb_str_maketrans(
             arg(0),
             if argc() > 1 { arg(1) } else { MbValue::none() },
@@ -5727,6 +6019,21 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
 mod tests {
     use super::*;
     use crate::runtime::dict_ops::DictKey;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex, MutexGuard, OnceLock,
+    };
+
+    static CLASS_REGISTRY_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    static FORMAT_MAP_CUSTOM_FORMAT_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static VALUE_TO_STRING_REPR_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn class_registry_test_guard() -> MutexGuard<'static, ()> {
+        CLASS_REGISTRY_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn s(val: &str) -> MbValue {
         new_str(val.to_string())
@@ -5739,7 +6046,7 @@ mod tests {
                 lock.read()
                     .unwrap()
                     .iter()
-                    .map(|item| as_str(*item).unwrap().to_string())
+                    .map(|item| as_str(item.clone()).unwrap().to_string())
                     .collect()
             } else {
                 panic!("expected list")
@@ -5752,9 +6059,49 @@ mod tests {
         s(&format!("<{key_s}>"))
     }
 
+    extern "C" fn value_to_string_repr_test_fn(_self_v: MbValue) -> MbValue {
+        VALUE_TO_STRING_REPR_CALLS.fetch_add(1, Ordering::SeqCst);
+        s("repr-sentinel")
+    }
+
     extern "C" fn format_spec_test_fn(_self_v: MbValue, spec: MbValue) -> MbValue {
         let spec_s = unsafe { as_str(spec).unwrap_or_default().to_string() };
         s(&format!("spec={spec_s}"))
+    }
+
+    extern "C" fn format_map_custom_format_test_fn(
+        _self_v: MbValue,
+        spec: MbValue,
+    ) -> MbValue {
+        FORMAT_MAP_CUSTOM_FORMAT_CALLS.fetch_add(1, Ordering::SeqCst);
+        let spec_s = unsafe { as_str(spec).unwrap_or_default().to_string() };
+        s(&format!("format_map_sentinel:{spec_s}"))
+    }
+
+    extern "C" fn percent_float_protocol_test_fn(_self_v: MbValue) -> MbValue {
+        MbValue::from_float(2.5)
+    }
+
+    extern "C" fn percent_index_protocol_test_fn(_self_v: MbValue) -> MbValue {
+        MbValue::from_int(7)
+    }
+
+    extern "C" fn percent_float_invalid_return_test_fn(_self_v: MbValue) -> MbValue {
+        MbValue::from_int(3)
+    }
+
+    extern "C" fn percent_index_invalid_return_test_fn(_self_v: MbValue) -> MbValue {
+        MbValue::from_float(2.5)
+    }
+
+    extern "C" fn percent_float_raises_test_fn(_self_v: MbValue) -> MbValue {
+        super::super::exception::mb_raise(s("ValueError"), s("float sentinel"));
+        MbValue::none()
+    }
+
+    extern "C" fn percent_index_raises_test_fn(_self_v: MbValue) -> MbValue {
+        super::super::exception::mb_raise(s("OverflowError"), s("index sentinel"));
+        MbValue::none()
     }
 
     #[test]
@@ -5912,6 +6259,450 @@ mod tests {
                 Some("42   ")
             );
         }
+    }
+
+    #[test]
+    fn percent_format_propagates_float_operand_type_error() {
+        let conversions = ['f', 'F', 'e', 'E', 'g', 'G'];
+        let non_numeric = [
+            MbValue::none(),
+            s("abc"),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+            MbValue::from_ptr(MbObject::new_instance("PlainObject".to_string())),
+        ];
+
+        for value in non_numeric {
+            for conv in conversions {
+                super::super::exception::mb_clear_exception();
+                let _ = mb_str_percent_format(format!("%.3{conv}"), value);
+                assert_eq!(
+                    super::super::exception::current_exception_type().as_deref(),
+                    Some("TypeError"),
+                    "%.3{conv} must propagate a TypeError"
+                );
+                super::super::exception::mb_clear_exception();
+            }
+        }
+
+        for (value, expected) in [
+            (MbValue::from_int(7), "7.000"),
+            (MbValue::from_float(2.5), "2.500"),
+        ] {
+            super::super::exception::mb_clear_exception();
+            let result = mb_str_percent_format("%.3f".to_string(), value);
+            unsafe {
+                assert_eq!(as_str(result), Some(expected));
+            }
+            assert!(super::super::exception::current_exception_type().is_none());
+        }
+    }
+
+    #[test]
+    fn format_spec_rejects_non_numeric_float_receivers() {
+        let type_chars = ['f', 'F', 'e', 'E', 'g', 'G'];
+        let non_numeric = [
+            MbValue::none(),
+            MbValue::from_ptr(MbObject::new_instance("PlainObject".to_string())),
+        ];
+
+        for value in non_numeric {
+            for type_char in type_chars {
+                super::super::exception::mb_clear_exception();
+                let _ = apply_format_spec(value, &format!(".3{type_char}"));
+                assert_eq!(
+                    super::super::exception::current_exception_type().as_deref(),
+                    Some("TypeError"),
+                    ".3{type_char} must reject a non-numeric receiver"
+                );
+                super::super::exception::mb_clear_exception();
+            }
+        }
+    }
+
+    #[test]
+    fn percent_format_accepts_float_and_index_protocols() {
+        let _registry_guard = class_registry_test_guard();
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+
+        let float_addr = percent_float_protocol_test_fn as *const () as usize;
+        let index_addr = percent_index_protocol_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(float_addr as u64);
+        super::super::module::register_boxed_return_func(index_addr as u64);
+
+        let mut float_methods = std::collections::HashMap::new();
+        float_methods.insert("__float__".to_string(), MbValue::from_func(float_addr));
+        super::super::class::mb_class_register("PercentFloatProtocol3125", vec![], float_methods);
+
+        let mut index_methods = std::collections::HashMap::new();
+        index_methods.insert("__index__".to_string(), MbValue::from_func(index_addr));
+        super::super::class::mb_class_register("PercentIndexProtocol3125", vec![], index_methods);
+
+        let float_obj =
+            super::super::class::mb_instance_new(s("PercentFloatProtocol3125"), MbValue::none());
+        let index_obj =
+            super::super::class::mb_instance_new(s("PercentIndexProtocol3125"), MbValue::none());
+
+        let float_result = mb_str_percent_format("%.3f".to_string(), float_obj);
+        let float_matches = unsafe { as_str(float_result) == Some("2.500") };
+        let float_exception_clear = super::super::exception::current_exception_type().is_none();
+        super::super::exception::mb_clear_exception();
+
+        let index_result = mb_str_percent_format("%.3f".to_string(), index_obj);
+        let index_matches = unsafe { as_str(index_result) == Some("7.000") };
+        let index_exception_clear = super::super::exception::current_exception_type().is_none();
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+
+        assert!(float_exception_clear);
+        assert!(index_exception_clear);
+        assert!(float_matches, "__float__ protocol should render 2.500");
+        assert!(index_matches, "__index__ protocol should render 7.000");
+    }
+
+    #[test]
+    fn format_spec_does_not_use_float_protocol_without_dunder_format() {
+        let _registry_guard = class_registry_test_guard();
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+
+        let float_addr = percent_float_protocol_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(float_addr as u64);
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__float__".to_string(), MbValue::from_func(float_addr));
+        super::super::class::mb_class_register("FloatOnlyFormat3125", vec![], methods);
+        let obj = super::super::class::mb_instance_new(s("FloatOnlyFormat3125"), MbValue::none());
+
+        let _ = mb_format_value(obj, s(".3f"));
+        let exception_type = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+
+        assert_eq!(exception_type.as_deref(), Some("TypeError"));
+    }
+
+    #[test]
+    fn percent_format_accepts_decimal_and_fraction_handles() {
+        let decimal = super::super::stdlib::decimal_mod::mb_decimal_new(s("2.5"));
+        let fraction = super::super::stdlib::fractions_mod::mb_fraction_new(
+            MbValue::from_int(5),
+            MbValue::from_int(2),
+        );
+
+        let decimal_result = mb_str_percent_format("%.3f".to_string(), decimal);
+        let fraction_result = mb_str_percent_format("%.3f".to_string(), fraction);
+        unsafe {
+            assert_eq!(as_str(decimal_result), Some("2.500"));
+            assert_eq!(as_str(fraction_result), Some("2.500"));
+        }
+    }
+
+    #[test]
+    fn percent_s_formats_decimal_and_fraction_handles() {
+        super::super::exception::mb_clear_exception();
+        let decimal = super::super::stdlib::decimal_mod::mb_decimal_new(s("2.5"));
+        let decimal_constructor_exception =
+            super::super::exception::current_exception_type();
+        assert!(super::super::builtins::is_decimal_handle_value(decimal));
+        super::super::exception::mb_clear_exception();
+        let fraction = super::super::stdlib::fractions_mod::mb_fraction_new(
+            MbValue::from_int(5),
+            MbValue::from_int(2),
+        );
+        let fraction_constructor_exception =
+            super::super::exception::current_exception_type();
+        assert!(super::super::builtins::is_fraction_handle_value(fraction));
+
+        super::super::exception::mb_clear_exception();
+        let decimal_result = mb_str_percent_format("%s".to_string(), decimal);
+        let decimal_format_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        let fraction_result = mb_str_percent_format("%s".to_string(), fraction);
+        let fraction_format_exception = super::super::exception::current_exception_type();
+        assert!(decimal_constructor_exception.is_none());
+        assert!(fraction_constructor_exception.is_none());
+        assert!(decimal_format_exception.is_none());
+        assert!(fraction_format_exception.is_none());
+        unsafe {
+            assert_eq!(as_str(decimal_result), Some("2.5"));
+            assert_eq!(as_str(fraction_result), Some("5/2"));
+        }
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn percent_s_applies_width_and_precision_after_handle_conversion() {
+        super::super::exception::mb_clear_exception();
+        let decimal = super::super::stdlib::decimal_mod::mb_decimal_new(s("2.5"));
+        let decimal_constructor_exception =
+            super::super::exception::current_exception_type();
+        assert!(super::super::builtins::is_decimal_handle_value(decimal));
+        super::super::exception::mb_clear_exception();
+        let fraction = super::super::stdlib::fractions_mod::mb_fraction_new(
+            MbValue::from_int(5),
+            MbValue::from_int(2),
+        );
+        let fraction_constructor_exception =
+            super::super::exception::current_exception_type();
+        assert!(super::super::builtins::is_fraction_handle_value(fraction));
+
+        super::super::exception::mb_clear_exception();
+        let width_result = mb_str_percent_format("%8s".to_string(), decimal);
+        let width_format_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        let precision_result = mb_str_percent_format("%.2s".to_string(), fraction);
+        let precision_format_exception = super::super::exception::current_exception_type();
+        assert!(decimal_constructor_exception.is_none());
+        assert!(fraction_constructor_exception.is_none());
+        assert!(width_format_exception.is_none());
+        assert!(precision_format_exception.is_none());
+        unsafe {
+            assert_eq!(as_str(width_result), Some("     2.5"));
+            assert_eq!(as_str(precision_result), Some("5/"));
+        }
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn percent_s_preserves_primitive_control_and_exception_state() {
+        super::super::exception::mb_clear_exception();
+        let result = mb_str_percent_format("%s".to_string(), MbValue::from_int(42));
+        unsafe {
+            assert_eq!(as_str(result), Some("42"));
+        }
+        assert!(super::super::exception::current_exception_type().is_none());
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn percent_format_rejects_positional_arity_mismatch() {
+        super::super::exception::mb_clear_exception();
+        let scalar_result = mb_str_percent_format("%s %s".to_string(), s("single"));
+        let scalar_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        super::super::exception::mb_clear_exception();
+        let short_tuple = MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(1)]));
+        let short_result = mb_str_percent_format("%s %s".to_string(), short_tuple);
+        let short_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(scalar_result.is_none());
+        assert_eq!(scalar_exception.as_deref(), Some("TypeError"));
+        assert!(short_result.is_none());
+        assert_eq!(short_exception.as_deref(), Some("TypeError"));
+    }
+
+    #[test]
+    fn percent_format_rejects_unused_positional_args() {
+        super::super::exception::mb_clear_exception();
+        let residual_tuple = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
+        let residual_result = mb_str_percent_format("%s".to_string(), residual_tuple);
+        let residual_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        super::super::exception::mb_clear_exception();
+        let zero_conversion_tuple =
+            MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(1)]));
+        let zero_conversion_result =
+            mb_str_percent_format("literal".to_string(), zero_conversion_tuple);
+        let zero_conversion_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(residual_result.is_none());
+        assert_eq!(residual_exception.as_deref(), Some("TypeError"));
+        assert!(zero_conversion_result.is_none());
+        assert_eq!(zero_conversion_exception.as_deref(), Some("TypeError"));
+    }
+
+    #[test]
+    fn percent_format_rejects_non_mapping_key_operand() {
+        super::super::exception::mb_clear_exception();
+        let result = mb_str_percent_format("%(name)s".to_string(), s("Ada"));
+        let exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(result.is_none());
+        assert_eq!(exception.as_deref(), Some("TypeError"));
+    }
+
+    #[test]
+    fn percent_format_propagates_missing_mapping_key() {
+        super::super::exception::mb_clear_exception();
+        let empty_dict = MbValue::from_ptr(MbObject::new_dict());
+        let setup_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        super::super::exception::mb_clear_exception();
+        let result = mb_str_percent_format("%(name)s".to_string(), empty_dict);
+        let exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(setup_exception.is_none());
+        assert!(result.is_none());
+        assert_eq!(exception.as_deref(), Some("KeyError"));
+    }
+
+    #[test]
+    fn percent_format_preserves_mapping_vs_positional_dict_semantics() {
+        super::super::exception::mb_clear_exception();
+        let shared_dict = MbValue::from_ptr(MbObject::new_dict());
+        let constructor_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        super::super::exception::mb_clear_exception();
+        super::super::dict_ops::mb_dict_setitem(shared_dict, s("name"), s("Ada"));
+        let setup_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        super::super::exception::mb_clear_exception();
+        let named_result = mb_str_percent_format("%(name)s".to_string(), shared_dict);
+        let named_exception = super::super::exception::current_exception_type();
+        let named_text = unsafe { as_str(named_result).map(|text| text.to_owned()) };
+        super::super::exception::mb_clear_exception();
+
+        super::super::exception::mb_clear_exception();
+        let positional_result = mb_str_percent_format("%s".to_string(), shared_dict);
+        let positional_exception = super::super::exception::current_exception_type();
+        let positional_text = unsafe { as_str(positional_result).map(|text| text.to_owned()) };
+        super::super::exception::mb_clear_exception();
+
+        assert!(constructor_exception.is_none());
+        assert!(setup_exception.is_none());
+        assert_eq!(named_text.as_deref(), Some("Ada"));
+        assert_eq!(positional_text.as_deref(), Some("{'name': 'Ada'}"));
+        assert!(named_exception.is_none());
+        assert!(positional_exception.is_none());
+    }
+
+    fn register_percent_protocol_class(class_name: &str, method: &str, addr: usize) {
+        super::super::module::register_boxed_return_func(addr as u64);
+        let mut methods = std::collections::HashMap::new();
+        methods.insert(method.to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register(class_name, vec![], methods);
+    }
+
+    #[test]
+    fn percent_format_rejects_invalid_dunder_float_return_message() {
+        let _registry_guard = class_registry_test_guard();
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+        let addr = percent_float_invalid_return_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__float__".to_string(), MbValue::from_func(addr));
+        let runtime_key = "__mamba_dynamic_class__:FloatBad3125@42";
+        super::super::class::mb_class_register_user_named(
+            runtime_key,
+            "FloatBad3125",
+            vec![],
+            methods,
+        );
+        let obj = super::super::class::mb_instance_new(s(runtime_key), MbValue::none());
+
+        let _ = mb_str_percent_format("%.3f".to_string(), obj);
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            super::super::exception::current_exception_message().as_deref(),
+            Some("FloatBad3125.__float__ returned non-float (type int)")
+        );
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
+    fn percent_format_rejects_invalid_dunder_index_return_message() {
+        let _registry_guard = class_registry_test_guard();
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+        let addr = percent_index_invalid_return_test_fn as *const () as usize;
+        register_percent_protocol_class("IndexBad3125", "__index__", addr);
+        let obj = super::super::class::mb_instance_new(s("IndexBad3125"), MbValue::none());
+
+        let _ = mb_str_percent_format("%.3f".to_string(), obj);
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            super::super::exception::current_exception_message().as_deref(),
+            Some("__index__ returned non-int (type float)")
+        );
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
+    fn percent_format_preserves_dunder_exception_type_and_message() {
+        let _registry_guard = class_registry_test_guard();
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+        let float_addr = percent_float_raises_test_fn as *const () as usize;
+        let index_addr = percent_index_raises_test_fn as *const () as usize;
+        register_percent_protocol_class("FloatRaises3125", "__float__", float_addr);
+        register_percent_protocol_class("IndexRaises3125", "__index__", index_addr);
+
+        let float_obj = super::super::class::mb_instance_new(s("FloatRaises3125"), MbValue::none());
+        let _ = mb_str_percent_format("%.3f".to_string(), float_obj);
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("ValueError")
+        );
+        assert_eq!(
+            super::super::exception::current_exception_message().as_deref(),
+            Some("float sentinel")
+        );
+
+        super::super::exception::mb_clear_exception();
+        let index_obj = super::super::class::mb_instance_new(s("IndexRaises3125"), MbValue::none());
+        let _ = mb_str_percent_format("%.3f".to_string(), index_obj);
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("OverflowError")
+        );
+        assert_eq!(
+            super::super::exception::current_exception_message().as_deref(),
+            Some("index sentinel")
+        );
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
+    fn inherited_str_format_taxonomy_is_value_error_for_fstring_and_str_format() {
+        let _registry_guard = class_registry_test_guard();
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+        super::super::class::mb_class_register(
+            "StrSubFormat3125",
+            vec!["str".to_string()],
+            std::collections::HashMap::new(),
+        );
+        let obj = super::super::class::mb_instance_new_with_init(
+            s("StrSubFormat3125"),
+            MbValue::from_ptr(MbObject::new_list(vec![s("abc")])),
+        );
+
+        let _ = mb_format_value(obj, s(".3f"));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("ValueError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        let _ = mb_format_value(obj, s(".3f"));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("ValueError")
+        );
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
     }
 
     #[test]
@@ -7655,7 +8446,109 @@ mod tests {
     }
 
     #[test]
+    fn format_map_formats_decimal_and_fraction_through_value_dispatch() {
+        super::super::exception::mb_clear_exception();
+        let decimal = super::super::stdlib::decimal_mod::mb_decimal_new(s("2.5"));
+        let decimal_constructor_exception =
+            super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        let fraction = super::super::stdlib::fractions_mod::mb_fraction_new(
+            MbValue::from_int(5),
+            MbValue::from_int(2),
+        );
+        let fraction_constructor_exception =
+            super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        super::super::exception::mb_clear_exception();
+        let mapping = super::super::dict_ops::mb_dict_new();
+        let mapping_constructor_exception =
+            super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        super::super::dict_ops::mb_dict_setitem(mapping, s("decimal"), decimal);
+        let decimal_setitem_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        super::super::dict_ops::mb_dict_setitem(mapping, s("fraction"), fraction);
+        let fraction_setitem_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let result = mb_str_format_map(s("{decimal:.3f}/{fraction:.3f}"), mapping);
+        let format_exception = super::super::exception::current_exception_type();
+        let result_text = as_str_owned(result);
+        super::super::exception::mb_clear_exception();
+
+        assert!(decimal_constructor_exception.is_none());
+        assert!(fraction_constructor_exception.is_none());
+        assert!(mapping_constructor_exception.is_none());
+        assert!(decimal_setitem_exception.is_none());
+        assert!(fraction_setitem_exception.is_none());
+        assert_eq!(result_text.as_deref(), Some("2.500/2.500"));
+        assert!(format_exception.is_none());
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn format_map_dispatches_custom_format_once_with_full_spec() {
+        let _registry_guard = class_registry_test_guard();
+        super::super::exception::mb_clear_exception();
+        FORMAT_MAP_CUSTOM_FORMAT_CALLS.store(0, Ordering::SeqCst);
+        super::super::class::cleanup_all_classes();
+        let cleanup_before_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let addr = format_map_custom_format_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let register_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__format__".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register(
+            "FormatMapCustomFormat3599",
+            vec![],
+            methods,
+        );
+        let class_register_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        let instance = super::super::class::mb_instance_new(
+            s("FormatMapCustomFormat3599"),
+            MbValue::none(),
+        );
+        let instance_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        super::super::exception::mb_clear_exception();
+        let mapping = super::super::dict_ops::mb_dict_new();
+        let mapping_constructor_exception =
+            super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        super::super::dict_ops::mb_dict_setitem(mapping, s("x"), instance);
+        let setitem_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+        let result = mb_str_format_map(s("{x:.3f}"), mapping);
+        let format_exception = super::super::exception::current_exception_type();
+        let result_text = as_str_owned(result);
+        let call_count = FORMAT_MAP_CUSTOM_FORMAT_CALLS.load(Ordering::SeqCst);
+        super::super::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+        let cleanup_after_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(cleanup_before_exception.is_none());
+        assert!(register_exception.is_none());
+        assert!(class_register_exception.is_none());
+        assert!(instance_exception.is_none());
+        assert!(mapping_constructor_exception.is_none());
+        assert!(setitem_exception.is_none());
+        assert_eq!(result_text.as_deref(), Some("format_map_sentinel:.3f"));
+        assert_eq!(call_count, 1);
+        assert!(format_exception.is_none());
+        assert!(cleanup_after_exception.is_none());
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
     fn test_format_map_uses_dict_subclass_payload_and_missing() {
+        let _registry_guard = class_registry_test_guard();
         super::super::class::cleanup_all_classes();
         let addr = format_map_missing_test_fn as *const () as usize;
         super::super::module::register_boxed_return_func(addr as u64);
@@ -7683,6 +8576,7 @@ mod tests {
 
     #[test]
     fn test_format_kwargs_conversions_custom_format_and_numbering() {
+        let _registry_guard = class_registry_test_guard();
         let empty_kwargs = MbValue::from_ptr(MbObject::new_dict());
 
         let converted = mb_str_format_kwargs(
@@ -7758,5 +8652,131 @@ mod tests {
     #[test]
     fn test_istitle_empty() {
         assert_eq!(mb_str_istitle(s("")).as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_unicode_tier3_method_parity() {
+        // title
+        unsafe {
+            assert_eq!(as_str(mb_str_title(s("hello world"))), Some("Hello World"));
+            assert_eq!(as_str(mb_str_title(s("hello123world"))), Some("Hello123World"));
+            assert_eq!(as_str(mb_str_title(s("hello字world"))), Some("Hello字World"));
+            assert_eq!(as_str(mb_str_title(s("don't"))), Some("Don'T"));
+            assert_eq!(as_str(mb_str_title(s("\u{01C5}"))), Some("\u{01C5}"));
+        }
+
+        // casefold
+        unsafe {
+            assert_eq!(as_str(mb_str_casefold(s("HELLO"))), Some("hello"));
+            assert_eq!(as_str(mb_str_casefold(s("\u{00df}"))), Some("ss"));
+            assert_eq!(as_str(mb_str_casefold(s("\u{00b5}"))), Some("\u{03bc}"));
+            assert_eq!(as_str(mb_str_casefold(s("\u{03c2}"))), Some("\u{03c3}"));
+            assert_eq!(as_str(mb_str_casefold(s("\u{fb13}"))), Some("\u{0574}\u{0576}"));
+        }
+
+        // swapcase
+        unsafe {
+            assert_eq!(as_str(mb_str_swapcase(s("Hello 123 \u{01C5}"))), Some("hELLO 123 \u{01C6}"));
+            assert_eq!(as_str(mb_str_swapcase(s("Python字"))), Some("pYTHON字"));
+        }
+
+        // isidentifier
+        assert_eq!(mb_str_isidentifier(s("a")).as_bool(), Some(true));
+        assert_eq!(mb_str_isidentifier(s("_x1")).as_bool(), Some(true));
+        assert_eq!(mb_str_isidentifier(s("\u{00b5}")).as_bool(), Some(true)); // NFKC converts U+00B5 to U+03BC
+        assert_eq!(mb_str_isidentifier(s("1a")).as_bool(), Some(false));
+        assert_eq!(mb_str_isidentifier(s("")).as_bool(), Some(false));
+
+        // isprintable
+        assert_eq!(mb_str_isprintable(s("hello 123")).as_bool(), Some(true));
+        assert_eq!(mb_str_isprintable(s("hello\nworld")).as_bool(), Some(false));
+        assert_eq!(mb_str_isprintable(s("hello\tworld")).as_bool(), Some(false));
+        assert_eq!(mb_str_isprintable(s("")).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_percent_format_mini_language() {
+        unsafe {
+            // Integer formatting with flags, width, precision, and base
+            assert_eq!(as_str(mb_str_percent_format("%05d".to_string(), MbValue::from_int(12))), Some("00012"));
+            assert_eq!(as_str(mb_str_percent_format("%+5d".to_string(), MbValue::from_int(12))), Some("  +12"));
+            assert_eq!(as_str(mb_str_percent_format("%-5d".to_string(), MbValue::from_int(12))), Some("12   "));
+            assert_eq!(as_str(mb_str_percent_format("%#x".to_string(), MbValue::from_int(255))), Some("0xff"));
+            assert_eq!(as_str(mb_str_percent_format("%#08x".to_string(), MbValue::from_int(255))), Some("0x0000ff"));
+            assert_eq!(as_str(mb_str_percent_format("%.5d".to_string(), MbValue::from_int(12))), Some("00012"));
+            assert_eq!(as_str(mb_str_percent_format("%08.5d".to_string(), MbValue::from_int(12))), Some("   00012"));
+            assert_eq!(as_str(mb_str_percent_format("%b".to_string(), MbValue::from_int(5))), Some("101"));
+
+            // Float formatting
+            assert_eq!(as_str(mb_str_percent_format("%.2f".to_string(), MbValue::from_float(3.14159))), Some("3.14"));
+            assert_eq!(as_str(mb_str_percent_format("%e".to_string(), MbValue::from_float(100.0))), Some("1.000000e+02"));
+
+            // Character and string formatting
+            assert_eq!(as_str(mb_str_percent_format("%c".to_string(), MbValue::from_int(65))), Some("A"));
+            assert_eq!(as_str(mb_str_percent_format("%.3s".to_string(), s("helloworld"))), Some("hel"));
+        }
+    }
+
+    #[test]
+    fn test_value_to_string_str_fallback_uses_repr_without_recursing() {
+        let _registry_guard = class_registry_test_guard();
+        const CLASS_NAME: &str = "__mamba_test_3597_only_repr";
+
+        super::super::exception::mb_clear_exception();
+        VALUE_TO_STRING_REPR_CALLS.store(0, Ordering::SeqCst);
+
+        let addr = value_to_string_repr_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let register_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let mut methods = std::collections::HashMap::new();
+        methods.insert("__repr__".to_string(), MbValue::from_func(addr));
+        super::super::class::mb_class_register_user_named(
+            CLASS_NAME,
+            "__main__.OnlyRepr",
+            vec![],
+            methods,
+        );
+        let class_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let instance = super::super::class::mb_instance_new(s(CLASS_NAME), MbValue::none());
+        let instance_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        let result_text = value_to_string(instance);
+        let render_exception = super::super::exception::current_exception_type();
+        let render_message = super::super::exception::current_exception_message();
+        let repr_call_count = VALUE_TO_STRING_REPR_CALLS.load(Ordering::SeqCst);
+        super::super::exception::mb_clear_exception();
+
+        super::super::class::cleanup_all_classes();
+        let cleanup_exception = super::super::exception::current_exception_type();
+        super::super::exception::mb_clear_exception();
+
+        assert!(register_exception.is_none());
+        assert!(class_exception.is_none());
+        assert!(instance_exception.is_none());
+        assert_eq!(result_text, "repr-sentinel");
+        assert_eq!(repr_call_count, 1);
+        assert!(render_exception.is_none());
+        assert!(render_message.is_none());
+        assert!(cleanup_exception.is_none());
+    }
+
+    #[test]
+    fn test_mb_str_repr_non_bmp_and_surrogates() {
+        let non_bmp = s("\u{1F600}");
+        let repr_val = crate::runtime::builtins::str_conversion::mb_str_repr(non_bmp);
+        unsafe {
+            assert_eq!(as_str(repr_val), Some("'\u{1F600}'"));
+        }
+
+        let surrogate = new_lone_surrogate_str(0xD800);
+        let surr_repr = crate::runtime::builtins::str_conversion::mb_str_repr(surrogate);
+        unsafe {
+            assert_eq!(as_str(surr_repr), Some("'\\ud800'"));
+        }
     }
 }

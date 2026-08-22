@@ -70,16 +70,59 @@ struct TraceFrame {
 thread_local! {
     static TRACE_FRAME_STACK: std::cell::RefCell<Vec<TraceFrame>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static MODULE_GLOBALS_DICT: std::cell::RefCell<Option<MbValue>> =
+        const { std::cell::RefCell::new(None) };
 }
 
-#[derive(Clone)]
-pub(crate) struct TraceFrameSnapshot {
-    pub filename: String,
-    pub lineno: u32,
-    pub name: String,
-    pub locals: Option<MbValue>,
-    pub local_trace_hook: Option<MbValue>,
+pub fn get_or_sync_module_globals() -> MbValue {
+    MODULE_GLOBALS_DICT.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        let dict = match *borrow {
+            Some(d) => d,
+            None => {
+                let d = super::super::dict_ops::mb_dict_new();
+                unsafe {
+                    super::super::rc::retain_if_ptr(d);
+                }
+                *borrow = Some(d);
+                d
+            }
+        };
+        let snapshot = super::super::closure::build_globals_dict();
+        if let (Some(dict_ptr), Some(snap_ptr)) = (dict.as_ptr(), snapshot.as_ptr()) {
+            unsafe {
+                if let (ObjData::Dict(ref d_lock), ObjData::Dict(ref s_lock)) =
+                    (&(*dict_ptr).data, &(*snap_ptr).data)
+                {
+                    let snap_map = s_lock.read().unwrap().clone();
+                    let mut d_map = d_lock.write().unwrap();
+                    d_map.clear();
+                    for (k, v) in snap_map {
+                        d_map.insert(k, v);
+                    }
+                }
+            }
+        }
+        dict
+    })
 }
+
+pub fn reset_module_globals() {
+    MODULE_GLOBALS_DICT.with(|cell| {
+        let borrow = cell.borrow();
+        if let Some(dict) = *borrow {
+            if let Some(dict_ptr) = dict.as_ptr() {
+                unsafe {
+                    if let ObjData::Dict(ref d_lock) = (*dict_ptr).data {
+                        d_lock.write().unwrap().clear();
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub(crate) use super::super::exception::TraceFrameSnapshot;
 
 fn release_trace_frame(frame: TraceFrame) {
     if let Some(locals) = frame.locals {
@@ -261,6 +304,14 @@ pub fn register() {
         fs.insert(
             "__eq__".into(),
             MbValue::from_func(fs_eq as *const () as usize),
+        );
+        fs.insert(
+            "__repr__".into(),
+            var(fs_repr as *const () as usize),
+        );
+        fs.insert(
+            "__str__".into(),
+            var(fs_repr as *const () as usize),
         );
         super::super::class::mb_class_register("FrameSummary", vec![], fs);
 
@@ -992,13 +1043,13 @@ pub(crate) fn trace_stack_snapshot_with_locals() -> Vec<TraceFrameSnapshot> {
         stack
             .borrow()
             .iter()
-            .map(|f| TraceFrameSnapshot {
-                filename: f.filename.clone(),
-                lineno: f.lineno,
-                name: f.name.clone(),
-                locals: f.locals,
-                local_trace_hook: f.local_trace_hook,
-            })
+            .map(|f| TraceFrameSnapshot::new(
+                f.filename.clone(),
+                f.lineno,
+                f.name.clone(),
+                f.locals,
+                f.local_trace_hook,
+            ))
             .collect()
     })
 }
@@ -1018,6 +1069,9 @@ pub fn mb_traceback_push_frame(filename: MbValue, lineno: MbValue, name: MbValue
     let filename = extract_str(filename).unwrap_or_else(|| "<string>".to_string());
     let name = extract_str(name).unwrap_or_else(|| "<module>".to_string());
     let lineno = trace_lineno(lineno);
+    if name == "<module>" {
+        reset_module_globals();
+    }
     // #878: deterministic cProfile/profile backend hook — every compiled
     // function call reaches here at entry, giving an exact (not sampled)
     // per-function call count including for recursion.
@@ -1075,12 +1129,18 @@ pub(crate) fn mb_traceback_current_frame_local_trace_hook() -> MbValue {
 pub fn mb_traceback_set_current_line(lineno: MbValue) {
     let lineno = trace_lineno(lineno);
     let mut updated = false;
-    TRACE_FRAME_STACK.with(|stack| {
+    let is_module = TRACE_FRAME_STACK.with(|stack| {
         if let Some(frame) = stack.borrow_mut().last_mut() {
             frame.lineno = lineno;
             updated = frame.trace_line_events_enabled;
+            frame.name == "<module>"
+        } else {
+            false
         }
     });
+    if is_module {
+        let _ = get_or_sync_module_globals();
+    }
     if updated {
         super::threading_mod::mb_threading_emit_line_event();
     }
@@ -1090,8 +1150,9 @@ pub fn mb_traceback_set_current_locals(locals: MbValue) {
     unsafe {
         super::super::rc::retain_if_ptr(locals);
     }
-    TRACE_FRAME_STACK.with(|stack| {
+    let is_module = TRACE_FRAME_STACK.with(|stack| {
         let mut stack = stack.borrow_mut();
+        let is_mod = stack.last().map_or(false, |f| f.name == "<module>");
         if let Some(frame) = stack.last_mut() {
             if let Some(prev) = frame.locals.replace(locals) {
                 unsafe {
@@ -1103,7 +1164,11 @@ pub fn mb_traceback_set_current_locals(locals: MbValue) {
                 super::super::rc::release_if_ptr(locals);
             }
         }
+        is_mod
     });
+    if is_module {
+        let _ = get_or_sync_module_globals();
+    }
 }
 
 pub fn mb_traceback_pop_frame() {
@@ -1178,7 +1243,7 @@ pub(crate) fn mb_traceback_reset_current_frame_exception_notified() {
 
 pub fn mb_traceback_capture_raise(lineno: MbValue) {
     let raise_lineno = trace_lineno(lineno);
-    let entries: Vec<(String, u32, String)> = TRACE_FRAME_STACK.with(|stack| {
+    let snapshots: Vec<TraceFrameSnapshot> = TRACE_FRAME_STACK.with(|stack| {
         let mut stack = stack.borrow_mut();
         if let Some(last) = stack.last_mut() {
             last.lineno = raise_lineno;
@@ -1203,12 +1268,18 @@ pub fn mb_traceback_capture_raise(lineno: MbValue) {
         }
         frames
             .into_iter()
-            .map(|frame| (frame.filename, frame.lineno, frame.name))
+            .map(|frame| TraceFrameSnapshot::new(
+                frame.filename,
+                frame.lineno,
+                frame.name,
+                frame.locals,
+                frame.local_trace_hook,
+            ))
             .collect()
     });
 
-    let tb = make_tb_from_traceback_entries(&entries);
-    super::super::exception::set_current_traceback(entries);
+    let tb = make_tb_from_traceback_snapshots(&snapshots);
+    super::super::exception::set_current_traceback(snapshots);
     if let Some(instance) = super::super::class::peek_last_raised_instance() {
         unsafe {
             super::super::rc::retain_if_ptr(tb);
@@ -1234,17 +1305,17 @@ pub fn mb_traceback_note_propagation(lineno: MbValue) {
 }
 
 pub(crate) fn trim_traceback_to_current_handler(
-    entries: &[(String, u32, String)],
-) -> Vec<(String, u32, String)> {
+    snapshots: &[TraceFrameSnapshot],
+) -> Vec<TraceFrameSnapshot> {
     let current = TRACE_FRAME_STACK.with(|stack| stack.borrow().last().cloned());
     let Some(current) = current else {
-        return entries.to_vec();
+        return snapshots.to_vec();
     };
-    match entries.iter().rposition(|(filename, _lineno, name)| {
-        filename == &current.filename && name == &current.name
+    match snapshots.iter().rposition(|s| {
+        s.filename == current.filename && s.name == current.name
     }) {
-        Some(idx) => entries[idx..].to_vec(),
-        None => entries.to_vec(),
+        Some(idx) => snapshots[idx..].to_vec(),
+        None => snapshots.to_vec(),
     }
 }
 
@@ -1456,6 +1527,16 @@ unsafe extern "C" fn fs_getitem(self_v: MbValue, args: MbValue) -> MbValue {
 /// len(FrameSummary) == 4 (filename, lineno, name, line).
 unsafe extern "C" fn fs_len(_self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_int(4)
+}
+
+/// <FrameSummary file filename, line lineno, in name>
+unsafe extern "C" fn fs_repr(self_v: MbValue, _args: MbValue) -> MbValue {
+    let items = frame_summary_tuple_items(self_v).unwrap_or_default();
+    let filename = extract_str(items.get(0).copied().unwrap_or_else(MbValue::none)).unwrap_or_default();
+    let lineno = items.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+    let name = extract_str(items.get(2).copied().unwrap_or_else(MbValue::none)).unwrap_or_default();
+    let formatted = format!("<FrameSummary file {filename}, line {lineno}, in {name}>");
+    MbValue::from_ptr(MbObject::new_str(formatted))
 }
 
 fn make_stack_summary(entries: Vec<MbValue>) -> MbValue {
@@ -2134,7 +2215,25 @@ fn make_tb_instance_with_local_index(
     let depth = depth.max(1);
     let mut next = MbValue::none();
     for i in 0..depth {
-        next = make_tb_node(next, i == local_from_innermost);
+        let frame = if i == local_from_innermost {
+            let locals = super::super::dict_ops::mb_dict_new();
+            super::super::dict_ops::mb_dict_setitem(
+                locals,
+                MbValue::from_ptr(MbObject::new_str("synthetic_local".to_string())),
+                MbValue::from_int(1),
+            );
+            make_frame_instance_for("test.py", 1, "test", locals)
+        } else {
+            make_frame_instance()
+        };
+        next = make_instance(
+            "traceback",
+            vec![
+                ("tb_lineno", MbValue::from_int(1)),
+                ("tb_next", next),
+                ("tb_frame", frame),
+            ],
+        );
     }
     set_instance_field(
         next,
@@ -2144,8 +2243,8 @@ fn make_tb_instance_with_local_index(
     next
 }
 
-fn make_tb_node(next: MbValue, with_local: bool) -> MbValue {
-    let frame = make_frame_instance(with_local);
+fn make_tb_node(next: MbValue) -> MbValue {
+    let frame = make_frame_instance();
     make_instance(
         "traceback",
         vec![
@@ -2156,13 +2255,49 @@ fn make_tb_node(next: MbValue, with_local: bool) -> MbValue {
     )
 }
 
+pub(crate) fn make_tb_from_traceback_snapshots(snapshots: &[TraceFrameSnapshot]) -> MbValue {
+    if snapshots.is_empty() {
+        return make_tb_instance();
+    }
+    let mut next = MbValue::none();
+    for snapshot in snapshots.iter().rev() {
+        let locals = snapshot
+            .locals
+            .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
+        unsafe {
+            super::super::rc::retain_if_ptr(locals);
+        }
+        let frame = make_frame_instance_for(
+            &snapshot.filename,
+            snapshot.lineno,
+            &snapshot.name,
+            locals,
+        );
+        next = make_instance(
+            "traceback",
+            vec![
+                ("tb_lineno", MbValue::from_int((snapshot.lineno).max(1) as i64)),
+                ("tb_next", next),
+                ("tb_frame", frame),
+            ],
+        );
+    }
+    set_instance_field(
+        next,
+        "__mamba_walk_depth",
+        MbValue::from_int(snapshots.len() as i64),
+    );
+    next
+}
+
 pub fn make_tb_from_traceback_entries(entries: &[(String, u32, String)]) -> MbValue {
     if entries.is_empty() {
         return make_tb_instance();
     }
     let mut next = MbValue::none();
-    for (idx, (filename, lineno, name)) in entries.iter().rev().enumerate() {
-        let frame = make_frame_instance_for(filename, *lineno, name, idx == 0);
+    for (filename, lineno, name) in entries.iter().rev() {
+        let locals = MbValue::from_ptr(MbObject::new_dict());
+        let frame = make_frame_instance_for(filename, *lineno, name, locals);
         next = make_instance(
             "traceback",
             vec![
@@ -2180,30 +2315,23 @@ pub fn make_tb_from_traceback_entries(entries: &[(String, u32, String)]) -> MbVa
     next
 }
 
-fn make_frame_instance(with_local: bool) -> MbValue {
-    make_frame_instance_for("<string>", 1, "<module>", with_local)
+fn make_frame_instance() -> MbValue {
+    make_frame_instance_for("<string>", 1, "<module>", MbValue::from_ptr(MbObject::new_dict()))
 }
 
-fn make_frame_instance_for(filename: &str, lineno: u32, name: &str, with_local: bool) -> MbValue {
-    let locals = MbValue::from_ptr(MbObject::new_dict());
-    if with_local {
-        if let Some(ptr) = locals.as_ptr() {
-            unsafe {
-                if let ObjData::Dict(ref lock) = (*ptr).data {
-                    lock.write().unwrap().insert(
-                        super::super::dict_ops::DictKey::Str("_i".to_string()),
-                        MbValue::from_int(1),
-                    );
-                }
-            }
-        }
-    }
+fn make_frame_instance_for(filename: &str, lineno: u32, name: &str, locals: MbValue) -> MbValue {
+    let frame_locals = if name == "<module>" {
+        get_or_sync_module_globals()
+    } else {
+        locals
+    };
+    let frame_globals = get_or_sync_module_globals();
     make_instance(
         "frame",
         vec![
             ("f_lineno", MbValue::from_int(lineno.max(1) as i64)),
-            ("f_locals", locals),
-            ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
+            ("f_locals", frame_locals),
+            ("f_globals", frame_globals),
             ("f_code", make_code_object_for_frame(filename, lineno, name)),
             (
                 "f_filename",
@@ -2432,7 +2560,7 @@ fn current_trace_stack_pairs(current_first: bool) -> Vec<MbValue> {
     }
     frames
         .into_iter()
-        .map(|frame| make_trace_stack_pair(frame.filename, frame.lineno, frame.name))
+        .map(|frame| make_trace_stack_pair(frame.filename.clone(), frame.lineno, frame.name.clone()))
         .collect()
 }
 
@@ -3070,8 +3198,9 @@ mod tests {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     lock.read().ok().map(|items| {
                         items
-                            .iter()
-                            .filter_map(|item| extract_str(*item))
+                            .to_vec()
+                            .into_iter()
+                            .filter_map(|item| extract_str(item))
                             .collect::<Vec<_>>()
                     })
                 } else {
@@ -3147,7 +3276,6 @@ mod tests {
                         .read()
                         .unwrap()
                         .first()
-                        .copied()
                         .unwrap_or_else(MbValue::none);
                 }
             }
@@ -3342,7 +3470,7 @@ mod tests {
             let ObjData::List(ref lock) = (*ptr).data else {
                 panic!("format_exception did not return a list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(
                 extract_str(items[0]).as_deref(),
                 Some("Exception: projector\n")
@@ -3363,7 +3491,7 @@ mod tests {
             let ObjData::List(ref lock) = (*ptr).data else {
                 panic!("format_exception_only did not return a list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(
                 extract_str(items[0]).as_deref(),
                 Some("Exception: projector\n")
@@ -3401,7 +3529,7 @@ mod tests {
         if let Some(ptr) = r.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     let text = extract_str(items[0]).unwrap_or_default();
                     assert!(text.contains(".py"));
                     assert!(text.contains("raise TypeError"));
@@ -3414,7 +3542,13 @@ mod tests {
 
     #[test]
     fn test_stack_summary_extract_captures_synthetic_locals() {
-        let frame = make_frame_instance(true);
+        let frame = make_frame_instance();
+        let locals = instance_field(frame, "f_locals").unwrap();
+        super::super::super::dict_ops::mb_dict_setitem(
+            locals,
+            MbValue::from_ptr(MbObject::new_str("test_key".to_string())),
+            MbValue::from_ptr(MbObject::new_str("1".to_string())),
+        );
         let pair = MbValue::from_ptr(MbObject::new_tuple(vec![frame, MbValue::from_int(1)]));
         let src = MbValue::from_ptr(MbObject::new_list(vec![pair]));
         let kwargs = MbValue::from_ptr(MbObject::new_dict());
@@ -3427,14 +3561,14 @@ mod tests {
         let with_args = [src, kwargs];
         let with = unsafe { dispatch_ss_extract(with_args.as_ptr(), with_args.len()) };
         let entry = stack_entries(with)[0];
-        let locals = instance_field(entry, "locals").unwrap();
-        assert_eq!(dict_len(locals), 1);
+        let locals_field = instance_field(entry, "locals").unwrap();
+        assert_eq!(dict_len(locals_field), 1);
         let value = super::super::super::dict_ops::mb_dict_get(
-            locals,
-            MbValue::from_ptr(MbObject::new_str("_i".to_string())),
+            locals_field,
+            MbValue::from_ptr(MbObject::new_str("test_key".to_string())),
             MbValue::none(),
         );
-        assert_eq!(extract_str(value).as_deref(), Some("1"));
+        assert_eq!(extract_str(value).as_deref(), Some("'1'"));
 
         let without_args = [src];
         let without = unsafe { dispatch_ss_extract(without_args.as_ptr(), without_args.len()) };
@@ -3449,7 +3583,7 @@ mod tests {
         if let Some(ptr) = r.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     assert!(extract_str(items[0]).is_some());
                     return;
                 }

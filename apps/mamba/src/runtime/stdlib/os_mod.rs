@@ -1371,12 +1371,13 @@ fn collect_path_sequence(args: &[MbValue]) -> Vec<String> {
                         return lock
                             .read()
                             .unwrap()
-                            .iter()
-                            .filter_map(|v| extract_str(*v))
+                            .clone()
+                            .into_iter()
+                            .filter_map(extract_str)
                             .collect();
                     }
                     ObjData::Tuple(items) => {
-                        return items.iter().filter_map(|v| extract_str(*v)).collect();
+                        return items.clone().into_iter().filter_map(extract_str).collect();
                     }
                     _ => {}
                 }
@@ -3131,16 +3132,17 @@ mod tests {
         let mut names = Vec::new();
         unsafe {
             if let ObjData::List(ref lock) = (*entries.as_ptr().unwrap()).data {
-                for e in lock.read().unwrap().iter() {
+                let guard = lock.read().unwrap();
+                for e in guard.iter() {
                     // class_name is os.DirEntry
                     if let ObjData::Instance { ref class_name, .. } = (*e.as_ptr().unwrap()).data {
                         assert_eq!(class_name, "os.DirEntry");
                     } else {
                         panic!("scandir entry is not a DirEntry instance");
                     }
-                    let name = direntry_field_str(*e, "name").unwrap();
-                    let is_file = method_direntry_is_file(*e, MbValue::none()).as_bool();
-                    let is_dir = method_direntry_is_dir(*e, MbValue::none()).as_bool();
+                    let name = direntry_field_str(e, "name").unwrap();
+                    let is_file = method_direntry_is_file(e, MbValue::none()).as_bool();
+                    let is_dir = method_direntry_is_dir(e, MbValue::none()).as_bool();
                     if name == "a.txt" {
                         assert_eq!(is_file, Some(true));
                         assert_eq!(is_dir, Some(false));

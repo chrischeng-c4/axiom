@@ -1,4 +1,4 @@
-use super::super::rc::{MbObject, ObjData};
+use super::super::rc::{mb_refcount, release_owned, MbListBuffer, MbObject, ObjData};
 use super::super::value::MbValue;
 use rustc_hash::FxHashMap;
 /// copy module for Mamba (#414).
@@ -153,7 +153,7 @@ pub fn mb_copy_copy(obj: MbValue) -> MbValue {
                 ObjData::Tuple(_) => return_identity(obj),
                 ObjData::List(lock) => {
                     let items = lock.read().unwrap();
-                    MbValue::from_ptr(MbObject::new_list_borrowed(items.to_vec()))
+                    MbValue::from_ptr(MbObject::new_list_borrowed(MbListBuffer::to_vec(&items)))
                 }
                 ObjData::Dict(lock) => {
                     let map = lock.read().unwrap();
@@ -1163,11 +1163,150 @@ mod tests {
             if let ObjData::List(ref lock) = (*copied.as_ptr().unwrap()).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 1);
-                assert_eq!(items[0].as_int(), Some(10));
+                assert_eq!(items.get(0).and_then(|v| v.as_int()), Some(10));
             } else {
                 panic!("expected list");
             }
         }
+    }
+
+    #[test]
+    fn test_shallow_copy_list_generic_mixed() {
+        let str_val = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
+        let int_val = MbValue::from_int(42);
+        let list = MbValue::from_ptr(MbObject::new_list_borrowed(vec![int_val, str_val]));
+        let copied = mb_copy_copy(list);
+        assert_ne!(list.as_ptr(), copied.as_ptr());
+        unsafe {
+            if let ObjData::List(ref lock) = (*copied.as_ptr().unwrap()).data {
+                let items = lock.read().unwrap();
+                assert!(matches!(*items, MbListBuffer::Generic(_)));
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0].as_int(), Some(42));
+                assert_eq!(items[1].as_ptr(), str_val.as_ptr());
+            } else {
+                panic!("expected list");
+            }
+        }
+    }
+
+    #[test]
+    fn test_shallow_copy_list_int_specialized() {
+        let list = MbValue::from_ptr(MbObject::new_int_list_inline(smallvec::smallvec![1, 2, 3]));
+        let copied = mb_copy_copy(list);
+        assert_ne!(list.as_ptr(), copied.as_ptr());
+        unsafe {
+            if let ObjData::List(ref lock) = (*copied.as_ptr().unwrap()).data {
+                let items = lock.read().unwrap();
+                assert!(
+                    matches!(*items, MbListBuffer::Int(_)),
+                    "int list must remain MbListBuffer::Int"
+                );
+                assert_eq!(items.len(), 3);
+                assert_eq!(items.get(0).and_then(|v| v.as_int()), Some(1));
+                assert_eq!(items.get(1).and_then(|v| v.as_int()), Some(2));
+                assert_eq!(items.get(2).and_then(|v| v.as_int()), Some(3));
+            } else {
+                panic!("expected list");
+            }
+        }
+    }
+
+    #[test]
+    fn test_shallow_copy_list_float_specialized() {
+        let list = MbValue::from_ptr(MbObject::new_float_list_inline(smallvec::smallvec![
+            1.5, 2.5
+        ]));
+        let copied = mb_copy_copy(list);
+        assert_ne!(list.as_ptr(), copied.as_ptr());
+        unsafe {
+            if let ObjData::List(ref lock) = (*copied.as_ptr().unwrap()).data {
+                let items = lock.read().unwrap();
+                assert!(
+                    matches!(*items, MbListBuffer::Float(_)),
+                    "float list must remain MbListBuffer::Float"
+                );
+                assert_eq!(items.len(), 2);
+                assert_eq!(items.get(0).and_then(|v| v.as_float()), Some(1.5));
+                assert_eq!(items.get(1).and_then(|v| v.as_float()), Some(2.5));
+            } else {
+                panic!("expected list");
+            }
+        }
+    }
+
+    #[test]
+    fn test_shallow_copy_list_empty() {
+        let list = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let copied = mb_copy_copy(list);
+        assert_ne!(list.as_ptr(), copied.as_ptr());
+        unsafe {
+            if let ObjData::List(ref lock) = (*copied.as_ptr().unwrap()).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.len(), 0);
+            } else {
+                panic!("expected list");
+            }
+        }
+    }
+
+    #[test]
+    fn test_shallow_copy_list_nested_reference_and_ownership() {
+        let inner_heap_obj = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(99)]));
+        let inner_ptr = inner_heap_obj.as_ptr().unwrap();
+        let src_list = MbValue::from_ptr(MbObject::new_list_borrowed(vec![inner_heap_obj]));
+        let src_ptr = src_list.as_ptr().unwrap();
+
+        let initial_inner_rc = unsafe { mb_refcount(inner_ptr) };
+        assert_eq!(
+            initial_inner_rc, 2,
+            "inner_heap_obj refcount = 1 from new_list + 1 from new_list_borrowed"
+        );
+
+        let copied = mb_copy_copy(src_list);
+        let dst_ptr = copied.as_ptr().unwrap();
+
+        // Distinct outer list pointers
+        assert_ne!(src_ptr, dst_ptr);
+
+        unsafe {
+            let copied_inner = if let ObjData::List(ref lock) = (*dst_ptr).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.len(), 1);
+                items.get(0).unwrap()
+            } else {
+                panic!("expected list");
+            };
+
+            // Identical inner element pointer (shallow copy, not deep copy)
+            assert_eq!(copied_inner.as_ptr().unwrap(), inner_ptr);
+
+            // Exactly one additional owner gained for the destination
+            assert_eq!(
+                mb_refcount(inner_ptr),
+                initial_inner_rc + 1,
+                "inner refcount must increment by exactly 1"
+            );
+        }
+
+        // Release source container
+        release_owned(src_list);
+        assert_eq!(
+            unsafe { mb_refcount(inner_ptr) },
+            initial_inner_rc,
+            "releasing source reduces inner refcount back to pre-copy state"
+        );
+
+        // Release destination container
+        release_owned(copied);
+        assert_eq!(
+            unsafe { mb_refcount(inner_ptr) },
+            1,
+            "releasing destination reduces inner refcount to 1 (held by local inner_heap_obj)"
+        );
+
+        // Clean release of inner object
+        release_owned(inner_heap_obj);
     }
 
     #[test]

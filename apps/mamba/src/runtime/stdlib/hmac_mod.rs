@@ -825,7 +825,7 @@ unsafe extern "C" fn method_update(self_v: MbValue, args: MbValue) -> MbValue {
         .as_ptr()
         .and_then(|p| unsafe {
             if let ObjData::List(ref lock) = (*p).data {
-                lock.read().unwrap().first().copied()
+                lock.read().unwrap().first()
             } else {
                 None
             }

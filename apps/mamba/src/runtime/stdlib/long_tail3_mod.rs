@@ -1046,7 +1046,7 @@ fn zi_str_list(v: MbValue) -> Vec<String> {
                 .read()
                 .unwrap()
                 .iter()
-                .filter_map(|item| zi_extract_str(*item))
+                .filter_map(|item| zi_extract_str(item))
                 .collect(),
             ObjData::Tuple(items) => items
                 .iter()

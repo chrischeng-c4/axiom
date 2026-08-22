@@ -11,6 +11,7 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Iterator state — stores the current position and source.
 pub struct MbIterator {
@@ -49,6 +50,7 @@ pub enum IterKind {
     Set {
         source: MbValue,
         expected_len: usize,
+        expected_version: u64,
     },
     /// Iterating over a tuple
     Tuple(MbValue),
@@ -98,6 +100,10 @@ pub enum IterKind {
         items: Vec<MbValue>,
         index: usize,
         list_source: Option<(MbValue, usize)>,
+        /// Retained tuple root for borrowed snapshot elements.  The tuple
+        /// owns each element until the iterator is released or drained; the
+        /// root is transferred to result owners only by the tuple drain path.
+        tuple_source: Option<MbValue>,
     },
     /// User-defined iterator: object with __next__ dunder
     UserDefined(MbValue),
@@ -162,16 +168,18 @@ pub struct GroupByState {
 /// ordinary small ints.
 const ITER_ID_BASE: u64 = 0x1_0000_0000;
 
+/// Iterator IDs start at 0x1_0000_0000 to avoid ordinary small ints. The
+/// generator and coroutine runtimes use higher disjoint ranges; all three
+/// handle kinds still share the integer tag space. Global atomic counter ensures
+/// IDs do not alias across threads.
+static NEXT_ITER_ID: AtomicU64 = AtomicU64::new(ITER_ID_BASE);
+
 // Thread-local iterator storage.
 thread_local! {
     static ITERATORS: std::cell::RefCell<HashMap<u64, MbIterator>> =
         std::cell::RefCell::new(HashMap::new());
     static RANGE_ITERATOR_IDS: std::cell::RefCell<HashSet<u64>> =
         std::cell::RefCell::new(HashSet::new());
-    /// Iterator IDs start at 0x1_0000_0000 to avoid ordinary small ints. The
-    /// generator and coroutine runtimes use higher disjoint ranges; all three
-    /// handle kinds still share the integer tag space.
-    static NEXT_ITER_ID: std::cell::Cell<u64> = std::cell::Cell::new(ITER_ID_BASE);
     /// StopIteration flag — set by __next__ to signal exhaustion.
     /// Separates "yielded None" from "iterator is done".
     static STOP_ITERATION: std::cell::Cell<bool> = std::cell::Cell::new(false);
@@ -229,7 +237,7 @@ fn dict_current_len(source: MbValue) -> Option<usize> {
             // the write paths (#969) use — this also gives correct,
             // *live* mutation detection (CPython's check is itself a size
             // comparison), not just a one-time snapshot.
-            ObjData::Instance { ref class_name, .. } if class_name == "__instance_dict_proxy__" => {
+            ObjData::Instance { ref class_name, .. } if class_name == "__instance_dict_proxy__" || class_name == "function.__dict__" => {
                 super::dict_ops::mb_dict_len(source)
                     .as_int()
                     .map(|n| n as usize)
@@ -255,8 +263,9 @@ fn set_current_len(source: MbValue) -> Option<usize> {
     }
 }
 
-fn set_iter_changed(source: MbValue, expected_len: usize) -> bool {
+fn set_iter_changed(source: MbValue, expected_len: usize, expected_version: u64) -> bool {
     set_current_len(source).map_or(true, |len| len != expected_len)
+        || super::set_ops::mb_set_version(source) != expected_version
 }
 
 fn list_current_len(source: MbValue) -> Option<usize> {
@@ -274,7 +283,7 @@ fn list_item_at(source: MbValue, index: usize) -> Option<MbValue> {
     let ptr = source.as_ptr()?;
     unsafe {
         if let ObjData::List(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(index).copied()
+            lock.read().unwrap().get(index)
         } else {
             None
         }
@@ -400,6 +409,18 @@ pub fn mb_is_iterator_handle(val: MbValue) -> bool {
     }
 }
 
+/// Decode the local identifier from an iterator token for runtime unit tests.
+///
+/// This is intentionally a pure token/local-id decode: it does not consult
+/// `ITERATORS`, invoke a predicate, allocate, or substitute a collision-free
+/// value.  The legacy representation stores the local id in the integer
+/// payload; a typed-token representation may update this test-only seam while
+/// preserving the same oracle contract.
+#[cfg(test)]
+pub(crate) fn iterator_local_id_for_test(handle: MbValue) -> Option<u64> {
+    handle.as_int().and_then(|id| u64::try_from(id).ok())
+}
+
 pub fn mb_iter_supports_setstate(val: MbValue) -> bool {
     let Some(id) = val.as_int().map(|v| v as u64) else {
         return false;
@@ -454,11 +475,7 @@ fn has_non_stop_exception() -> bool {
 }
 
 fn alloc_iter_id() -> u64 {
-    NEXT_ITER_ID.with(|cell| {
-        let id = cell.get();
-        cell.set(id + 1);
-        id
-    })
+    NEXT_ITER_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Is `v` an iterator handle (i.e. a NaN-boxed int that maps to an entry
@@ -590,6 +607,7 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
                         // The list may have shrunk below the iterator's cursor
                         // after it was advanced (CPython then drains to empty);
                         // clamp so the slice cannot panic on an out-of-range start.
+                        let items = lock.read().unwrap().to_vec();
                         let start = iter.index.min(items.len());
                         for &it in &items[start..] {
                             super::rc::retain_if_ptr(it);
@@ -632,6 +650,7 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             items,
             index,
             list_source,
+            tuple_source,
         } => {
             if let Some((source, original_len)) = list_source {
                 let out = drain_reversed_list(source, original_len, index);
@@ -639,6 +658,19 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
                     super::rc::release_if_ptr(source);
                 }
                 Some(out)
+            } else if let Some(source) = tuple_source {
+                // Tuple snapshots borrow their element bits.  Transfer one
+                // owner for each value still covered by the iterator before
+                // releasing the retained tuple root.  Values already yielded
+                // are not part of this suffix and must not be retained here.
+                let start = index.min(items.len());
+                unsafe {
+                    for &item in &items[start..] {
+                        super::rc::retain_if_ptr(item);
+                    }
+                    super::rc::release_if_ptr(source);
+                }
+                Some(items[start..].to_vec())
             } else {
                 // Remaining items from the reversed iterator.
                 let start = index.min(items.len());
@@ -677,7 +709,7 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             } else if let Some(ptr) = items.as_ptr() {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
-                        let values = lock.read().unwrap();
+                        let values = lock.read().unwrap().to_vec();
                         let start = iter.index.min(values.len());
                         for &item in &values[start..] {
                             super::rc::retain_if_ptr(item);
@@ -699,8 +731,9 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
         IterKind::Set {
             source,
             expected_len,
+            expected_version,
         } => {
-            let out = if set_iter_changed(source, expected_len) {
+            let out = if set_iter_changed(source, expected_len, expected_version) {
                 raise_set_changed_size_error();
                 Vec::new()
             } else if let Some(ptr) = source.as_ptr() {
@@ -858,11 +891,14 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     }
                 }
                 ObjData::Set(ref lock) => {
-                    let expected_len = lock.read().unwrap().len();
+                    let guard = lock.read().unwrap();
+                    let expected_len = guard.len();
+                    let expected_version = guard.version();
                     super::rc::retain_if_ptr(obj);
                     IterKind::Set {
                         source: obj,
                         expected_len,
+                        expected_version,
                     }
                 }
                 ObjData::Instance {
@@ -871,7 +907,7 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                 } => {
                     if let Some(data) = super::dict_ops::mappingproxy_mapping(obj) {
                         return mb_iter(data);
-                    } else if class_name == "__instance_dict_proxy__" {
+                    } else if class_name == "__instance_dict_proxy__" || class_name == "function.__dict__" {
                         // `for k in obj.__dict__:` / `iter(obj.__dict__)`
                         // (#1036): the proxy has no registered `__iter__`,
                         // so this previously fell through to the "not
@@ -1084,6 +1120,13 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
 /// Create a callable-sentinel iterator: iter(callable, sentinel).
 /// Calls callable() on each step; stops when the return value equals sentinel.
 pub fn mb_iter_sentinel(callable: MbValue, sentinel: MbValue) -> MbValue {
+    if !super::builtins::mb_callable(callable).as_bool().unwrap_or(false) {
+        return raise_type_error("iter(v, w): v must be callable");
+    }
+    unsafe {
+        super::rc::retain_if_ptr(callable);
+        super::rc::retain_if_ptr(sentinel);
+    }
     let iter = MbIterator {
         kind: IterKind::Callable {
             func: callable,
@@ -1235,20 +1278,19 @@ pub fn mb_iter_range_is_nonempty(handle: MbValue) -> Option<bool> {
 
 /// Best-effort `__length_hint__` for a live iterator handle: the number of
 /// elements remaining. Returns None when the handle is not a length-known
-/// iterator (generators, callable, map/filter/count/cycle, etc.) so callers can
-/// fall back to a default. Used by `operator.length_hint`.
-pub fn mb_iter_length_hint(handle: MbValue) -> Option<i64> {
+/// iterator so callers can fall back to a default. Used by `operator.length_hint`.
+pub fn mb_iter_length_hint(handle: MbValue) -> Option<MbValue> {
     let id = handle.as_int()? as u64;
     ITERATORS.with(|iters| {
         let borrowed = iters.borrow();
         let it = borrowed.get(&id)?;
         if it.exhausted {
-            return Some(0);
+            return Some(MbValue::from_int(0));
         }
         match &it.kind {
             IterKind::Range { .. } => {
                 drop(borrowed);
-                mb_iter_range_len(handle)
+                mb_iter_range_len_value(handle)
             }
             IterKind::List(v) | IterKind::Tuple(v) => {
                 let total = v.as_ptr().map(|ptr| unsafe {
@@ -1258,10 +1300,10 @@ pub fn mb_iter_length_hint(handle: MbValue) -> Option<i64> {
                         _ => 0,
                     }
                 })?;
-                Some((total as i64 - it.index as i64).max(0))
+                Some(MbValue::from_int((total as i64 - it.index as i64).max(0)))
             }
-            IterKind::Str(chars) => Some((chars.len() as i64 - it.index as i64).max(0)),
-            IterKind::DictKeys { keys, .. } => Some((keys.len() as i64 - it.index as i64).max(0)),
+            IterKind::Str(chars) => Some(MbValue::from_int((chars.len() as i64 - it.index as i64).max(0))),
+            IterKind::DictKeys { keys, .. } => Some(MbValue::from_int((keys.len() as i64 - it.index as i64).max(0))),
             IterKind::DictView { items, .. } => {
                 let total = items.as_ptr().map(|ptr| unsafe {
                     match &(*ptr).data {
@@ -1269,24 +1311,67 @@ pub fn mb_iter_length_hint(handle: MbValue) -> Option<i64> {
                         _ => 0,
                     }
                 })?;
-                Some((total as i64 - it.index as i64).max(0))
+                Some(MbValue::from_int((total as i64 - it.index as i64).max(0)))
             }
             IterKind::Set { source, .. } => {
                 let total = set_current_len(*source)?;
-                Some((total as i64 - it.index as i64).max(0))
+                Some(MbValue::from_int((total as i64 - it.index as i64).max(0)))
             }
             IterKind::Reversed {
                 items,
                 index,
                 list_source,
+                ..
             } => {
                 if let Some((source, original_len)) = list_source {
-                    Some(reversed_list_remaining_len(*source, *original_len, *index) as i64)
+                    Some(MbValue::from_int(reversed_list_remaining_len(*source, *original_len, *index) as i64))
                 } else {
-                    Some((items.len() as i64 - *index as i64).max(0))
+                    Some(MbValue::from_int((items.len() as i64 - *index as i64).max(0)))
                 }
             }
-            IterKind::Repeat { remaining, .. } => remaining.map(|r| r as i64),
+            IterKind::Repeat { remaining, .. } => remaining.map(|r| MbValue::from_int(r as i64)),
+            IterKind::Enumerate { inner_id, .. }
+            | IterKind::Map { inner_id, .. }
+            | IterKind::Filter { inner_id, .. } => {
+                let inner_h = MbValue::from_int(*inner_id as i64);
+                drop(borrowed);
+                mb_iter_length_hint(inner_h)
+            }
+            IterKind::Zip { inner_ids, .. } | IterKind::MapN { inner_ids, .. } => {
+                let ids = inner_ids.clone();
+                drop(borrowed);
+                if ids.is_empty() {
+                    return Some(MbValue::from_int(0));
+                }
+                let mut min_val: Option<MbValue> = None;
+                for inner_id in ids {
+                    let inner_h = MbValue::from_int(inner_id as i64);
+                    if let Some(h) = mb_iter_length_hint(inner_h) {
+                        min_val = match min_val {
+                            None => Some(h),
+                            Some(curr) => {
+                                if super::builtins::mb_lt(h, curr).as_bool() == Some(true) {
+                                    Some(h)
+                                } else {
+                                    Some(curr)
+                                }
+                            }
+                        };
+                    }
+                }
+                min_val
+            }
+            IterKind::UserDefined(iter_obj) => {
+                let obj = *iter_obj;
+                drop(borrowed);
+                let val = super::stdlib::operator_mod::mb_operator_length_hint(obj);
+                if super::exception::current_exception_type().is_some() {
+                    super::exception::mb_clear_exception();
+                    None
+                } else {
+                    Some(val)
+                }
+            }
             _ => None,
         }
     })
@@ -1333,6 +1418,7 @@ pub fn mb_iter_setstate(handle: MbValue, state: MbValue) -> Option<MbValue> {
                 items,
                 index: pos,
                 list_source,
+                ..
             } => {
                 let limit = list_source
                     .as_ref()
@@ -1391,6 +1477,11 @@ pub fn ranges_value_eq(a: MbValue, b: MbValue) -> Option<bool> {
         return Some(true);
     }
     Some(ast == bst)
+}
+
+/// Canonical range equality check (CPython range_equal).
+pub fn range_eq(a: MbValue, b: MbValue) -> Option<bool> {
+    ranges_value_eq(a, b)
 }
 
 fn range_contains_big(current: &BigInt, stop: &BigInt, step: &BigInt, value: &BigInt) -> bool {
@@ -1870,8 +1961,18 @@ pub fn mb_groupby_iter(items: Vec<MbValue>, groups: Vec<GroupByGroupSpec>) -> Mb
 
 /// Create an enumerate iterator.
 pub fn mb_enumerate(iterable: MbValue, start: MbValue) -> MbValue {
+    let start_count = if let Some(c) = start.as_int() {
+        c
+    } else if let Some(b) = start.as_bool() {
+        if b { 1 } else { 0 }
+    } else {
+        return raise_type_error(&format!(
+            "'{}' object cannot be interpreted as an integer",
+            super::builtins::value_type_name(start)
+        ));
+    };
+
     let inner_id = mb_iter(iterable);
-    let start_count = start.as_int().unwrap_or(0);
 
     if let Some(inner_id_val) = inner_id.as_int() {
         // Keep the inner registered under its own id; the Enumerate kind drives
@@ -1909,24 +2010,25 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
         }
         return mb_reversed(target);
     }
-    // Iterator handle path: support reversed(range(...)) and other iterators
-    // whose full contents can be materialized.
+    // Iterator handle path: support reversed(range(...))
     if let Some(id) = seq.as_int() {
         let is_iter = ITERATORS.with(|iters| iters.borrow().contains_key(&(id as u64)));
         if is_iter {
             let preserve_source = is_range_handle(seq);
+            if !preserve_source {
+                return raise_type_error(&format!(
+                    "'{}' object is not reversible",
+                    mb_iter_type_name(seq).unwrap_or("iterator")
+                ));
+            }
             let mut items = range_iter_to_vec(seq).unwrap_or_default();
             items.reverse();
-            if !preserve_source {
-                ITERATORS.with(|iters| {
-                    iters.borrow_mut().remove(&(id as u64));
-                });
-            }
             let iter = MbIterator {
                 kind: IterKind::Reversed {
                     items,
                     index: 0,
                     list_source: None,
+                    tuple_source: None,
                 },
                 index: 0,
                 exhausted: false,
@@ -1942,14 +2044,22 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
     if let Some(ptr) = seq.as_ptr() {
         unsafe {
             let mut list_source = None;
+            let mut tuple_source = None;
             let items: Vec<MbValue> = match &(*ptr).data {
                 ObjData::List(ref lock) => {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     list_source = Some((seq, items.len()));
                     super::rc::retain_if_ptr(seq);
+                    items.into_iter().rev().collect()
+                }
+                ObjData::Tuple(items) => {
+                    // The snapshot stores borrowed element bits.  Keep the
+                    // tuple root alive exactly once so those bits remain
+                    // valid while the reversed iterator is live.
+                    super::rc::retain_if_ptr(seq);
+                    tuple_source = Some(seq);
                     items.iter().rev().copied().collect()
                 }
-                ObjData::Tuple(items) => items.iter().rev().copied().collect(),
                 ObjData::Str(ref s) => s
                     .chars()
                     .rev()
@@ -1974,7 +2084,7 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
                         items
                     } else {
                         // User __reversed__ dunder returns its own iterator;
-                        // without one, reversed(obj) is a TypeError, not None.
+                        // without one, reversed(obj) checks sequence protocol.
                         let cls = class_name.clone();
                         let m = super::class::lookup_method(&cls, "__reversed__");
                         if !m.is_none() {
@@ -2000,23 +2110,25 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
                             }
                             items
                         } else {
-                            super::exception::mb_raise(
-                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                                MbValue::from_ptr(MbObject::new_str(format!(
-                                    "'{cls}' object is not reversible"
-                                ))),
-                            );
-                            return MbValue::none();
+                            return raise_type_error(&format!(
+                                "'{cls}' object is not reversible"
+                            ));
                         }
                     }
                 }
-                _ => return MbValue::none(),
+                _ => {
+                    return raise_type_error(&format!(
+                        "'{}' object is not reversible",
+                        super::builtins::value_type_name(seq)
+                    ));
+                }
             };
             let iter = MbIterator {
                 kind: IterKind::Reversed {
                     items,
                     index: 0,
                     list_source,
+                    tuple_source,
                 },
                 index: 0,
                 exhausted: false,
@@ -2029,7 +2141,10 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
             MbValue::from_int(id as i64)
         }
     } else {
-        MbValue::none()
+        raise_type_error(&format!(
+            "'{}' object is not reversible",
+            super::builtins::value_type_name(seq)
+        ))
     }
 }
 
@@ -2054,13 +2169,10 @@ pub fn mb_map_iter(func: MbValue, iterable: MbValue) -> MbValue {
 
     let inner_handle = mb_iter(iterable);
     if let Some(inner_id_val) = inner_handle.as_int() {
-        // The inner iterator stays in ITERATORS under its own ID.
-        // `IterKind::Map` stores only the inner_id (not the embedded iterator)
-        // so that the out-of-line advance can release the ITERATORS borrow
-        // before calling `func` (which may re-enter ITERATORS via mb_hasattr).
         let inner_exists =
             ITERATORS.with(|iters| iters.borrow().contains_key(&(inner_id_val as u64)));
         if inner_exists {
+            unsafe { super::rc::retain_if_ptr(func) };
             let id = alloc_iter_id();
             let iter = MbIterator {
                 kind: IterKind::Map {
@@ -2090,6 +2202,7 @@ pub fn mb_filter_iter(func: MbValue, iterable: MbValue) -> MbValue {
         let inner_exists =
             ITERATORS.with(|iters| iters.borrow().contains_key(&(inner_id_val as u64)));
         if inner_exists {
+            unsafe { super::rc::retain_if_ptr(func) };
             let id = alloc_iter_id();
             let iter = MbIterator {
                 kind: IterKind::Filter {
@@ -2156,6 +2269,7 @@ pub fn mb_map_n(func: MbValue, iterables: MbValue) -> MbValue {
         return MbValue::none();
     }
 
+    unsafe { super::rc::retain_if_ptr(func) };
     let id = alloc_iter_id();
     let iter = MbIterator {
         kind: IterKind::MapN { func, inner_ids },
@@ -2208,7 +2322,7 @@ pub fn mb_zip(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_int(id as i64)
 }
 
-/// Create a zip iterator from N iterables (N >= 3).
+/// Create a zip iterator from N iterables (N >= 3 or N == 0).
 /// Takes a list of iterables packed by the lowerer.
 pub fn mb_zip_n(iterables: MbValue) -> MbValue {
     let iter_list = if let Some(ptr) = iterables.as_ptr() {
@@ -2231,9 +2345,6 @@ pub fn mb_zip_n(iterables: MbValue) -> MbValue {
                 inner_ids.push(id as u64);
             }
         }
-    }
-    if inner_ids.is_empty() {
-        return MbValue::none();
     }
 
     let iter = MbIterator {
@@ -2501,40 +2612,6 @@ pub fn mb_next(iter_handle: MbValue) -> MbValue {
 /// next(iterator, default) — return default when iterator is exhausted.
 pub fn mb_next_default(iter_handle: MbValue, default: MbValue) -> MbValue {
     super::gc::gc_safepoint();
-    if let Some(id) = iter_handle.as_int() {
-        let handled = ITERATORS.with(|iters| {
-            let mut iters = iters.borrow_mut();
-            if let Some(iter) = iters.get_mut(&(id as u64)) {
-                if iter.exhausted {
-                    // Retain: JIT releases both default arg VReg and result VReg.
-                    unsafe { super::rc::retain_if_ptr(default) };
-                    return Some(default);
-                }
-                if let Some(peeked) = iter.peeked.take() {
-                    return Some(peeked);
-                }
-                let val = advance_iter(iter);
-                // If iterator just became exhausted, return default
-                if iter.exhausted {
-                    unsafe { super::rc::retain_if_ptr(default) };
-                    Some(default)
-                } else {
-                    Some(val)
-                }
-            } else {
-                // Int that is not a known handle iterator (e.g. a bare generator
-                // handle) — fall through to the generic __next__ path below.
-                None
-            }
-        });
-        if let Some(v) = handled {
-            return v;
-        }
-    }
-    // Generic path: a raw user-defined iterator instance, generator handle, or
-    // callable iterator passed directly to `next(it, default)`. Delegate to
-    // mb_next_raise (which dispatches to __next__ / generator-next) and swallow
-    // StopIteration → default, matching CPython's two-arg next().
     let val = mb_next_raise(iter_handle);
     if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
         super::exception::mb_clear_exception();
@@ -2596,6 +2673,14 @@ pub fn mb_next_or_stop(iter_handle: MbValue) -> MbValue {
             GenFast::Resume(gen_handle) => {
                 check_stop_iteration();
                 let val = super::generator::mb_generator_next(gen_handle);
+                if has_non_stop_exception() {
+                    ITERATORS.with(|iters| {
+                        if let Some(iter) = iters.borrow_mut().get_mut(&id_u) {
+                            iter.exhausted = true;
+                        }
+                    });
+                    return MbValue::stop_iter_sentinel();
+                }
                 if check_stop_iteration() {
                     super::exception::mb_clear_exception();
                     ITERATORS.with(|iters| {
@@ -2642,14 +2727,16 @@ pub fn mb_is_stop_iter(v: MbValue) -> MbValue {
 /// Used for direct `next(it)` calls (not in for-loop lowering which uses mb_next).
 pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
     super::gc::gc_safepoint();
-    if super::stdlib::weakref_mod::proxy_references_int_function(iter_handle) {
-        return raise_type_error("object is not an iterator");
-    }
-    if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(iter_handle) {
-        if target.is_none() {
-            return MbValue::none();
+    if iter_handle.as_ptr().is_none() {
+        if super::stdlib::weakref_mod::proxy_references_int_function(iter_handle) {
+            return raise_type_error("'function' object is not an iterator");
         }
-        return mb_next_raise(target);
+        if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(iter_handle) {
+            if target.is_none() {
+                return MbValue::none();
+            }
+            return mb_next_raise(target);
+        }
     }
     if let Some(id) = iter_handle.as_int() {
         let is_iter = ITERATORS.with(|iters| iters.borrow().contains_key(&(id as u64)));
@@ -2663,7 +2750,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(true)
                 });
-                if exhausted && val.is_none() {
+                if exhausted && val.is_none() && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2682,7 +2769,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(true)
                 });
-                if exhausted {
+                if exhausted && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2701,7 +2788,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(true)
                 });
-                if exhausted {
+                if exhausted && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2722,7 +2809,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(false)
                 });
-                if exhausted && val.is_none() {
+                if exhausted && val.is_none() && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2742,7 +2829,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(false)
                 });
-                if exhausted && val.is_none() {
+                if exhausted && val.is_none() && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2763,7 +2850,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(false)
                 });
-                if exhausted && val.is_none() {
+                if exhausted && val.is_none() && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2782,7 +2869,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(false)
                 });
-                if exhausted && val.is_none() {
+                if exhausted && val.is_none() && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2801,7 +2888,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(false)
                 });
-                if exhausted && val.is_none() {
+                if exhausted && val.is_none() && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2820,7 +2907,7 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         .map(|i| i.exhausted)
                         .unwrap_or(false)
                 });
-                if exhausted && val.is_none() {
+                if exhausted && val.is_none() && !has_non_stop_exception() {
                     super::exception::set_current_exception(super::exception::MbException::new(
                         "StopIteration",
                         "",
@@ -2835,9 +2922,11 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                 let mut iters = iters.borrow_mut();
                 if let Some(iter) = iters.get_mut(&(id as u64)) {
                     if iter.exhausted {
-                        super::exception::set_current_exception(
-                            super::exception::MbException::new("StopIteration", ""),
-                        );
+                        if !has_non_stop_exception() {
+                            super::exception::set_current_exception(
+                                super::exception::MbException::new("StopIteration", ""),
+                            );
+                        }
                         return MbValue::none();
                     }
                     if let Some(peeked) = iter.peeked.take() {
@@ -2861,10 +2950,12 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                     }
                     val
                 } else {
-                    super::exception::set_current_exception(super::exception::MbException::new(
-                        "StopIteration",
-                        "",
-                    ));
+                    if !has_non_stop_exception() {
+                        super::exception::set_current_exception(super::exception::MbException::new(
+                            "StopIteration",
+                            "",
+                        ));
+                    }
                     MbValue::none()
                 }
             });
@@ -2874,7 +2965,11 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
             return val;
         }
         if super::generator::is_known_generator(iter_handle) {
+            check_stop_iteration(); // clear stale flag
             let val = super::generator::mb_generator_next(iter_handle);
+            if has_non_stop_exception() {
+                return MbValue::none();
+            }
             if check_stop_iteration() {
                 super::exception::set_current_exception(super::exception::MbException::new(
                     "StopIteration",
@@ -2893,9 +2988,13 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
             let file_iter = mb_iter(iter_handle);
             return mb_next_raise(file_iter);
         }
+        let msg = format!(
+            "'{}' object is not an iterator",
+            super::builtins::value_type_name(iter_handle)
+        );
         super::exception::set_current_exception(super::exception::MbException::new(
             "TypeError",
-            "object is not an iterator",
+            &msg,
         ));
         MbValue::none()
     } else if let Some(ptr) = iter_handle.as_ptr() {
@@ -2913,15 +3012,23 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                 }
             }
         }
+        let msg = format!(
+            "'{}' object is not an iterator",
+            super::builtins::value_type_name(iter_handle)
+        );
         super::exception::set_current_exception(super::exception::MbException::new(
             "TypeError",
-            "object is not an iterator",
+            &msg,
         ));
         MbValue::none()
     } else {
+        let msg = format!(
+            "'{}' object is not an iterator",
+            super::builtins::value_type_name(iter_handle)
+        );
         super::exception::set_current_exception(super::exception::MbException::new(
             "TypeError",
-            "object is not an iterator",
+            &msg,
         ));
         MbValue::none()
     }
@@ -2978,7 +3085,9 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
                     return MbValue::from_bool(false);
                 }
                 if check_stop_iteration() {
-                    super::exception::mb_clear_exception();
+                    if super::exception::current_exception_is("StopIteration") {
+                        super::exception::mb_clear_exception();
+                    }
                     return ITERATORS.with(|iters| {
                         if let Some(iter) = iters.borrow_mut().get_mut(&id_u) {
                             iter.exhausted = true;
@@ -3395,11 +3504,21 @@ fn release_iter(iter: &MbIterator) {
             super::rc::release_if_ptr(*source);
         },
         IterKind::Reversed {
-            list_source: Some((source, _)),
+            list_source,
+            tuple_source,
             ..
-        } => unsafe {
-            super::rc::release_if_ptr(*source);
-        },
+        } => {
+            if let Some((source, _)) = list_source {
+                unsafe {
+                    super::rc::release_if_ptr(*source);
+                }
+            }
+            if let Some(source) = tuple_source {
+                unsafe {
+                    super::rc::release_if_ptr(*source);
+                }
+            }
+        }
         // Enumerate/Zip: inner iterator(s) are separate ITERATORS entries
         // identified by id. Release each by removing and dropping via release_iter.
         IterKind::Enumerate { inner_id, .. } => {
@@ -3418,19 +3537,34 @@ fn release_iter(iter: &MbIterator) {
         }
         // Map/Filter: inner iterator is a separate ITERATORS entry identified
         // by inner_id. Release it by removing and dropping via release_iter.
-        IterKind::Map { inner_id, .. } | IterKind::Filter { inner_id, .. } => {
+        IterKind::Map { func, inner_id } => {
+            unsafe { super::rc::release_if_ptr(*func) };
+            let removed = ITERATORS.with(|iters| iters.borrow_mut().remove(inner_id));
+            if let Some(inner) = removed {
+                release_iter(&inner);
+            }
+        }
+        IterKind::Filter { func, inner_id } => {
+            unsafe { super::rc::release_if_ptr(*func) };
             let removed = ITERATORS.with(|iters| iters.borrow_mut().remove(inner_id));
             if let Some(inner) = removed {
                 release_iter(&inner);
             }
         }
         // MapN: all inner iterators are separate ITERATORS entries.
-        IterKind::MapN { inner_ids, .. } => {
+        IterKind::MapN { func, inner_ids } => {
+            unsafe { super::rc::release_if_ptr(*func) };
             for inner_id in inner_ids.iter() {
                 let removed = ITERATORS.with(|iters| iters.borrow_mut().remove(inner_id));
                 if let Some(inner) = removed {
                     release_iter(&inner);
                 }
+            }
+        }
+        IterKind::Callable { func, sentinel } => {
+            unsafe {
+                super::rc::release_if_ptr(*func);
+                super::rc::release_if_ptr(*sentinel);
             }
         }
         IterKind::ChainFromIterable { outer_id, inner_id } => {
@@ -3767,6 +3901,14 @@ fn advance_map_filter_if_applicable(id: u64) -> Option<MbValue> {
     if is_map {
         // Advance inner once (with ITERATORS borrow released).
         let inner_val = mb_next(inner_handle);
+        if has_non_stop_exception() {
+            ITERATORS.with(|iters| {
+                if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                    iter.exhausted = true;
+                }
+            });
+            return Some(MbValue::none());
+        }
         // Check exhaustion.
         let inner_exhausted = ITERATORS.with(|iters| {
             iters
@@ -3785,11 +3927,27 @@ fn advance_map_filter_if_applicable(id: u64) -> Option<MbValue> {
         }
         // Apply func.
         let result = super::builtins::call_any_callable(func, inner_val);
+        if has_non_stop_exception() {
+            ITERATORS.with(|iters| {
+                if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                    iter.exhausted = true;
+                }
+            });
+            return Some(MbValue::none());
+        }
         Some(result)
     } else {
         // Filter: advance inner until predicate passes or inner is exhausted.
         loop {
             let cur_val = mb_next(inner_handle);
+            if has_non_stop_exception() {
+                ITERATORS.with(|iters| {
+                    if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                        iter.exhausted = true;
+                    }
+                });
+                return Some(MbValue::none());
+            }
             let inner_exhausted = ITERATORS.with(|iters| {
                 iters
                     .borrow()
@@ -3810,6 +3968,14 @@ fn advance_map_filter_if_applicable(id: u64) -> Option<MbValue> {
                 super::builtins::mb_bool(cur_val).as_bool().unwrap_or(false)
             } else {
                 let r = super::builtins::call_any_callable(func, cur_val);
+                if has_non_stop_exception() {
+                    ITERATORS.with(|iters| {
+                        if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                            iter.exhausted = true;
+                        }
+                    });
+                    return Some(MbValue::none());
+                }
                 super::builtins::mb_bool(r).as_bool().unwrap_or(false)
             };
             if passes {
@@ -3869,6 +4035,14 @@ fn advance_map_n_if_applicable(id: u64) -> Option<MbValue> {
     for &inner_id in &inner_ids {
         let inner_handle = MbValue::from_int(inner_id as i64);
         let val = mb_next(inner_handle);
+        if has_non_stop_exception() {
+            ITERATORS.with(|iters| {
+                if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                    iter.exhausted = true;
+                }
+            });
+            return Some(MbValue::none());
+        }
         let inner_exhausted = ITERATORS.with(|iters| {
             iters
                 .borrow()
@@ -3890,6 +4064,14 @@ fn advance_map_n_if_applicable(id: u64) -> Option<MbValue> {
     // Call func with all collected values (ITERATORS borrow released).
     let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(values));
     let result = super::builtins::mb_call_spread(func, args_list);
+    if has_non_stop_exception() {
+        ITERATORS.with(|iters| {
+            if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                iter.exhausted = true;
+            }
+        });
+        return Some(MbValue::none());
+    }
     Some(result)
 }
 
@@ -3942,6 +4124,14 @@ fn advance_enumerate_if_applicable(id: u64) -> Option<MbValue> {
 
     // Advance inner once (ITERATORS borrow released).
     let inner_val = mb_next(inner_handle);
+    if has_non_stop_exception() {
+        ITERATORS.with(|iters| {
+            if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                iter.exhausted = true;
+            }
+        });
+        return Some(MbValue::none());
+    }
     let inner_exhausted = ITERATORS.with(|iters| {
         iters
             .borrow()
@@ -4019,12 +4209,29 @@ fn advance_zip_if_applicable(id: u64) -> Option<MbValue> {
     } = info_opt;
     let n = inner_ids.len();
 
+    if n == 0 {
+        ITERATORS.with(|iters| {
+            if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                iter.exhausted = true;
+            }
+        });
+        return Some(MbValue::none());
+    }
+
     // Pull one value from each inner (ITERATORS borrow released between calls).
     let mut vals = Vec::with_capacity(n);
     let mut exhausted_at: Option<usize> = None;
     for i in 0..n {
         let inner_handle = MbValue::from_int(inner_ids[i] as i64);
         let val = mb_next(inner_handle);
+        if has_non_stop_exception() {
+            ITERATORS.with(|iters| {
+                if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                    iter.exhausted = true;
+                }
+            });
+            return Some(MbValue::none());
+        }
         let inner_exhausted = ITERATORS.with(|iters| {
             iters
                 .borrow()
@@ -4344,9 +4551,7 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
             if let Some(ptr) = list_val.as_ptr() {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
-                        let items = lock.read().unwrap();
-                        if iter.index < items.len() {
-                            let val = items[iter.index];
+                        if let Some(val) = lock.read().unwrap().get(iter.index) {
                             iter.index += 1;
                             return val;
                         }
@@ -4415,9 +4620,7 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
             if let Some(ptr) = items.as_ptr() {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
-                        let values = lock.read().unwrap();
-                        if iter.index < values.len() {
-                            let value = values[iter.index];
+                        if let Some(value) = lock.read().unwrap().get(iter.index) {
                             iter.index += 1;
                             return value;
                         }
@@ -4430,8 +4633,9 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
         IterKind::Set {
             source,
             expected_len,
+            expected_version,
         } => {
-            if set_iter_changed(*source, *expected_len) {
+            if set_iter_changed(*source, *expected_len, *expected_version) {
                 iter.exhausted = true;
                 raise_set_changed_size_error();
                 return MbValue::none();
@@ -4478,6 +4682,7 @@ fn advance_iter(iter: &mut MbIterator) -> MbValue {
             items,
             index,
             list_source,
+            ..
         } => {
             if let Some((source, original_len)) = list_source {
                 if let Some(val) = reversed_list_next(*source, *original_len, index) {
@@ -4677,13 +4882,77 @@ pub fn mb_list_from_iter(iter_handle: MbValue) -> MbValue {
 pub(crate) fn cleanup_all_iterators() {
     let _ = ITERATORS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = RANGE_ITERATOR_IDS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = NEXT_ITER_ID.with(|c| c.set(ITER_ID_BASE));
     let _ = STOP_ITERATION.with(|c| c.set(false));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test-only ownership guard for heap-backed values.  The guard makes
+    /// assertion failures unwind through the same single release path as the
+    /// passing case; integer tokens and sentinels are never passed here.
+    struct HeapValueGuard(Option<MbValue>);
+
+    impl HeapValueGuard {
+        fn new(value: MbValue) -> Self {
+            debug_assert!(value.is_ptr());
+            Self(Some(value))
+        }
+
+        fn value(&self) -> MbValue {
+            self.0.expect("heap guard already released")
+        }
+    }
+
+    impl Drop for HeapValueGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.0.take() {
+                unsafe { super::super::rc::release_if_ptr(value) };
+            }
+        }
+    }
+
+    /// Test-only ownership guard for a live iterator registry entry.  This is
+    /// deliberately distinct from `HeapValueGuard`: releasing a plain integer
+    /// token through the pointer RC API would be invalid, while releasing an
+    /// iterator twice would remove the wrong live entry after token migration.
+    struct IteratorGuard(Option<MbValue>);
+
+    impl IteratorGuard {
+        fn new(value: MbValue) -> Self {
+            // Do not assert the legacy integer representation here: after the
+            // typed-token migration a live iterator may no longer be an int.
+            Self(Some(value))
+        }
+
+        fn value(&self) -> MbValue {
+            self.0.expect("iterator guard already released")
+        }
+
+        fn release_now(&mut self) {
+            if let Some(value) = self.0.take() {
+                mb_iter_release(value);
+            }
+        }
+    }
+
+    impl Drop for IteratorGuard {
+        fn drop(&mut self) {
+            self.release_now();
+        }
+    }
+
+    fn container_items(value: MbValue) -> Vec<MbValue> {
+        let ptr = value.as_ptr().expect("expected owned list or tuple");
+        unsafe {
+            match &(*ptr).data {
+                ObjData::List(items) => items.read().unwrap().to_vec(),
+                ObjData::Tuple(items) => items.clone(),
+                _ => panic!("expected list or tuple"),
+            }
+        }
+    }
 
     #[test]
     fn test_list_iter() {
@@ -4826,9 +5095,9 @@ mod tests {
             if let ObjData::List(ref lock) = (*list.as_ptr().unwrap()).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 3);
-                assert_eq!(items[0].as_int(), Some(0));
-                assert_eq!(items[1].as_int(), Some(1));
-                assert_eq!(items[2].as_int(), Some(2));
+                assert_eq!(items.get(0).unwrap().as_int(), Some(0));
+                assert_eq!(items.get(1).unwrap().as_int(), Some(1));
+                assert_eq!(items.get(2).unwrap().as_int(), Some(2));
             }
             super::super::rc::mb_release(list.as_ptr().unwrap());
         }
@@ -4878,6 +5147,152 @@ mod tests {
     fn test_iter_primitive_not_iterable() {
         let it = mb_iter(MbValue::from_int(42));
         assert!(it.is_none());
+    }
+
+    #[test]
+    fn test_t1_iterator_handle_is_not_an_integer_phase_a() {
+        // The iterator is kept live by the guard until the test exits.  Its
+        // decoded local id is intentionally obtained without consulting the
+        // iterator registry.
+        let source = HeapValueGuard::new(MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(7),
+        ])));
+        let iterator = IteratorGuard::new(mb_iter(source.value()));
+        let iterator_value = iterator.value();
+        let local_id = iterator_local_id_for_test(iterator_value)
+            .expect("live iterator must expose a local id to the test seam");
+        let ordinary_int = MbValue::from_int(local_id as i64);
+
+        assert_eq!(ordinary_int.as_int(), Some(local_id as i64));
+        assert!(mb_is_iterator_handle(iterator_value));
+        // RED before the typed-token migration: the legacy integer payload
+        // makes an independently-created ordinary int look like the handle.
+        assert!(
+            !mb_is_iterator_handle(ordinary_int),
+            "ordinary int {local_id} must not be recognized as an iterator"
+        );
+    }
+
+    #[test]
+    fn test_t1_iterator_container_copies_release_safely_phase_a() {
+        let source = HeapValueGuard::new(MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(7),
+        ])));
+        let mut iterator = IteratorGuard::new(mb_iter(source.value()));
+        let iterator_value = iterator.value();
+        let local_id = iterator_local_id_for_test(iterator_value)
+            .expect("live iterator must expose a local id to the test seam");
+        let ordinary_int = MbValue::from_int(local_id as i64);
+
+        let list = HeapValueGuard::new(MbValue::from_ptr(MbObject::new_list_borrowed(vec![
+            iterator_value,
+            ordinary_int,
+        ])));
+        let tuple = HeapValueGuard::new(MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![
+            iterator_value,
+            ordinary_int,
+        ])));
+
+        for (name, items) in [
+            ("list", container_items(list.value())),
+            ("tuple", container_items(tuple.value())),
+        ] {
+            assert_eq!(items.len(), 2, "{name} must preserve both values");
+            assert_eq!(iterator_local_id_for_test(items[0]), Some(local_id));
+            assert_eq!(items[1].as_int(), Some(local_id as i64));
+            assert!(
+                mb_is_iterator_handle(items[0]),
+                "extracted {name} iterator lost identity"
+            );
+        }
+
+        // Release the caller's genuine handle exactly once, then inspect only
+        // the surviving ordinary integers.  The borrowed constructors retain
+        // pointer/token inputs for their own lifetime; this is a forward
+        // ownership oracle even though the current legacy integer hook is a
+        // no-op for iterator IDs.  Container teardown therefore releases its
+        // borrowed token exactly once after this inspection.
+        iterator.release_now();
+        for (items, name) in [
+            (container_items(list.value()), "list"),
+            (container_items(tuple.value()), "tuple"),
+        ] {
+            assert_eq!(items[1].as_int(), Some(local_id as i64));
+            assert!(
+                !mb_is_iterator_handle(items[1]),
+                "post-release {name} ordinary int must not become an iterator"
+            );
+        }
+    }
+
+    #[test]
+    fn test_t1_iterator_container_copy_keeps_ordinary_int_distinct_phase_a() {
+        let source = HeapValueGuard::new(MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(7),
+        ])));
+        let iterator = IteratorGuard::new(mb_iter(source.value()));
+        let iterator_value = iterator.value();
+        let local_id = iterator_local_id_for_test(iterator_value)
+            .expect("live iterator must expose a local id to the test seam");
+        let ordinary_int = MbValue::from_int(local_id as i64);
+        let list = HeapValueGuard::new(MbValue::from_ptr(MbObject::new_list_borrowed(vec![
+            iterator_value,
+            ordinary_int,
+        ])));
+        let tuple = HeapValueGuard::new(MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![
+            iterator_value,
+            ordinary_int,
+        ])));
+
+        let list_items = container_items(list.value());
+        let tuple_items = container_items(tuple.value());
+        assert_eq!(list_items[1].as_int(), Some(local_id as i64));
+        assert_eq!(tuple_items[1].as_int(), Some(local_id as i64));
+        // RED before the typed-token migration: borrowed containers copy the
+        // same legacy integer payload as the live iterator token.  Evaluate
+        // both predicates before asserting so list and tuple are both probed.
+        let list_distinct = !mb_is_iterator_handle(list_items[1]);
+        let tuple_distinct = !mb_is_iterator_handle(tuple_items[1]);
+        assert!(
+            list_distinct,
+            "borrowed list ordinary int must not be an iterator"
+        );
+        assert!(
+            tuple_distinct,
+            "borrowed tuple ordinary int must not be an iterator"
+        );
+    }
+
+    #[test]
+    fn test_t1_range_sequence_predicate_distinguishes_iter_range_phase_a() {
+        let range = IteratorGuard::new(mb_range_iter(
+            MbValue::from_int(0),
+            MbValue::from_int(4),
+            MbValue::from_int(1),
+        ));
+        let range_iter = IteratorGuard::new(mb_iter(range.value()));
+
+        // The original range value is a sequence object; `iter(range)` is an
+        // iterator over that sequence and must not inherit range-sequence
+        // predicates.  The latter assertion is intentionally RED today.
+        assert!(is_range_handle(range.value()));
+        assert!(mb_is_iterator_handle(range_iter.value()));
+        assert!(
+            !is_range_handle(range_iter.value()),
+            "iter(range) must not be classified as a range sequence"
+        );
+    }
+
+    #[test]
+    fn test_t1_integer_controls_are_never_opaque_or_range_handles() {
+        let high = MbValue::from_int(1i64 << 40);
+        let negative = MbValue::from_int(-(1i64 << 40));
+        assert_eq!(high.as_int(), Some(1i64 << 40));
+        assert_eq!(negative.as_int(), Some(-(1i64 << 40)));
+        assert!(!mb_is_iterator_handle(high));
+        assert!(!mb_is_iterator_handle(negative));
+        assert!(!is_range_handle(high));
+        assert!(!is_range_handle(negative));
     }
 
     #[test]
@@ -4950,6 +5365,277 @@ mod tests {
     }
 
     #[test]
+    fn test_drain_reversed_tuple_retains_each_heap_element() {
+        let left = MbValue::from_ptr(MbObject::new_str("left".to_string()));
+        let right = MbValue::from_ptr(MbObject::new_str("right".to_string()));
+        let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![left, right]));
+        unsafe {
+            super::super::rc::retain_if_ptr(left);
+            super::super::rc::retain_if_ptr(right);
+        }
+
+        let reversed = mb_reversed(tuple);
+        let drained = drain_iter_to_vec(reversed).expect("reversed tuple should be drainable");
+        let text = |value: MbValue| unsafe {
+            match &(*value.as_ptr().expect("drained value should be a pointer")).data {
+                ObjData::Str(value) => value.clone(),
+                _ => String::new(),
+            }
+        };
+        let drained_ptrs: Vec<usize> = drained
+            .iter()
+            .map(|value| value.as_ptr().expect("drained value should be a pointer") as usize)
+            .collect();
+        let drained_texts: Vec<String> = drained.iter().copied().map(text).collect();
+        let drained_refcounts: Vec<u32> = drained
+            .iter()
+            .map(|value| unsafe { super::super::rc::mb_refcount(value.as_ptr().unwrap()) })
+            .collect();
+        let expected_ptrs = vec![right.as_ptr().unwrap() as usize, left.as_ptr().unwrap() as usize];
+        let stale_next = mb_next(reversed);
+
+        // Keep the tuple+observer baseline alive on both the red and fixed versions.
+        for (&value, &refcount) in drained.iter().zip(&drained_refcounts) {
+            for _ in 0..refcount.saturating_sub(2) {
+                unsafe { super::super::rc::release_if_ptr(value) };
+            }
+        }
+        unsafe {
+            super::super::rc::release_if_ptr(tuple);
+        }
+        let observer_texts = [left, right].map(text);
+        unsafe {
+            super::super::rc::release_if_ptr(left);
+            super::super::rc::release_if_ptr(right);
+        }
+
+        assert_eq!(drained_ptrs, expected_ptrs);
+        assert_eq!(drained_texts, vec!["right", "left"]);
+        assert_eq!(drained_refcounts, vec![3, 3]);
+        assert!(stale_next.is_none());
+        assert_eq!(observer_texts, ["left".to_string(), "right".to_string()]);
+    }
+
+    #[test]
+    fn test_drain_reversed_list_keeps_existing_single_result_owner() {
+        let value = MbValue::from_ptr(MbObject::new_str("list-value".to_string()));
+        let list = MbValue::from_ptr(MbObject::new_list(vec![value]));
+        unsafe {
+            super::super::rc::retain_if_ptr(value);
+        }
+
+        let reversed = mb_reversed(list);
+        let drained = drain_iter_to_vec(reversed).expect("reversed list should be drainable");
+        let text = |value: MbValue| unsafe {
+            match &(*value.as_ptr().expect("drained value should be a pointer")).data {
+                ObjData::Str(value) => value.clone(),
+                _ => String::new(),
+            }
+        };
+        let drained_ptrs: Vec<usize> = drained
+            .iter()
+            .map(|item| item.as_ptr().expect("drained value should be a pointer") as usize)
+            .collect();
+        let drained_texts: Vec<String> = drained.iter().copied().map(text).collect();
+        let drained_refcounts: Vec<u32> = drained
+            .iter()
+            .map(|item| unsafe { super::super::rc::mb_refcount(item.as_ptr().unwrap()) })
+            .collect();
+        let expected_ptrs = vec![value.as_ptr().unwrap() as usize];
+        let stale_next = mb_next(reversed);
+
+        // The list+observer baseline already accounts for the two owners below.
+        for (&item, &refcount) in drained.iter().zip(&drained_refcounts) {
+            for _ in 0..refcount.saturating_sub(2) {
+                unsafe { super::super::rc::release_if_ptr(item) };
+            }
+        }
+        unsafe {
+            super::super::rc::release_if_ptr(list);
+        }
+        let observer_text = text(value);
+        unsafe {
+            super::super::rc::release_if_ptr(value);
+        }
+
+        assert_eq!(drained_ptrs, expected_ptrs);
+        assert_eq!(drained_texts, vec!["list-value"]);
+        assert_eq!(drained_refcounts, vec![3]);
+        assert!(stale_next.is_none());
+        assert_eq!(observer_text, "list-value");
+    }
+
+    #[test]
+    fn test_drain_reversed_string_transfers_fresh_character_owners_once() {
+        let input = MbValue::from_ptr(MbObject::new_str("abc".to_string()));
+        let reversed = mb_reversed(input);
+        let drained = drain_iter_to_vec(reversed).expect("reversed string should be drainable");
+        let text = |value: MbValue| unsafe {
+            match &(*value.as_ptr().expect("drained value should be a pointer")).data {
+                ObjData::Str(value) => value.clone(),
+                _ => String::new(),
+            }
+        };
+        let drained_ptrs: Vec<usize> = drained
+            .iter()
+            .map(|item| item.as_ptr().expect("drained value should be a pointer") as usize)
+            .collect();
+        let drained_texts: Vec<String> = drained.iter().copied().map(text).collect();
+        let recorded_owner_counts: Vec<u32> = drained
+            .iter()
+            .map(|item| unsafe { super::super::rc::mb_refcount(item.as_ptr().unwrap()) })
+            .collect();
+        let stale_next = mb_next(reversed);
+
+        // Each fresh character has exactly its one returned-result owner.
+        for (&item, &owner_count) in drained.iter().zip(&recorded_owner_counts) {
+            for _ in 0..owner_count {
+                unsafe { super::super::rc::release_if_ptr(item) };
+            }
+        }
+        unsafe {
+            super::super::rc::release_if_ptr(input);
+        }
+
+        assert_eq!(drained_ptrs.len(), 3);
+        assert!(drained_ptrs.windows(2).all(|pair| pair[0] != pair[1]));
+        assert_eq!(drained_texts, vec!["c", "b", "a"]);
+        assert_eq!(recorded_owner_counts, vec![1, 1, 1]);
+        assert!(stale_next.is_none());
+    }
+
+    #[test]
+    fn test_reversed_tuple_iterator_retains_source_until_release() {
+        let left = MbValue::from_ptr(MbObject::new_str("left".to_string()));
+        let right = MbValue::from_ptr(MbObject::new_str("right".to_string()));
+        let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![left, right]));
+        unsafe {
+            // One tuple-object observer keeps the source alive after the caller release.
+            super::super::rc::retain_if_ptr(tuple);
+        }
+
+        let reversed = mb_reversed(tuple);
+        unsafe {
+            super::super::rc::release_if_ptr(tuple);
+        }
+        let refcount_before_release =
+            unsafe { super::super::rc::mb_refcount(tuple.as_ptr().unwrap()) };
+        let yielded = mb_next(reversed);
+        let yielded_text = unsafe {
+            match &(*yielded.as_ptr().expect("reversed tuple value should be a pointer")).data {
+                ObjData::Str(value) => value.clone(),
+                _ => String::new(),
+            }
+        };
+        // mb_next returns an owned result in the current dispatcher; relinquish
+        // that result so the tuple remains the sole source owner here.
+        unsafe {
+            super::super::rc::release_if_ptr(yielded);
+        }
+
+        mb_iter_release(reversed);
+        let refcount_after_release =
+            unsafe { super::super::rc::mb_refcount(tuple.as_ptr().unwrap()) };
+        let tuple_texts_after_release = unsafe {
+            match &(*tuple.as_ptr().unwrap()).data {
+                ObjData::Tuple(items) => items
+                    .iter()
+                    .copied()
+                    .map(|value| match &(*value.as_ptr().unwrap()).data {
+                        ObjData::Str(text) => text.clone(),
+                        _ => String::new(),
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            }
+        };
+        unsafe {
+            super::super::rc::release_if_ptr(tuple);
+        }
+
+        assert_eq!(refcount_before_release, 2);
+        assert_eq!(yielded_text, "right");
+        assert_eq!(refcount_after_release, 1);
+        assert_eq!(tuple_texts_after_release, vec!["left", "right"]);
+    }
+
+    #[test]
+    fn test_drain_reversed_tuple_after_next_retains_only_remaining_values() {
+        let left = MbValue::from_ptr(MbObject::new_str("left".to_string()));
+        let right = MbValue::from_ptr(MbObject::new_str("right".to_string()));
+        let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![left, right]));
+        unsafe {
+            // One external observer per element keeps both borrowed values safe.
+            super::super::rc::retain_if_ptr(left);
+            super::super::rc::retain_if_ptr(right);
+        }
+
+        let reversed = mb_reversed(tuple);
+        let yielded = mb_next(reversed);
+        let yielded_text = unsafe {
+            match &(*yielded.as_ptr().expect("reversed tuple value should be a pointer")).data {
+                ObjData::Str(value) => value.clone(),
+                _ => String::new(),
+            }
+        };
+        let yielded_ptr = yielded.as_ptr().unwrap() as usize;
+        // The yielded prefix is borrowed for this unit; release mb_next's
+        // generic caller-result owner before checking its source baseline.
+        unsafe {
+            super::super::rc::release_if_ptr(yielded);
+        }
+        let yielded_refcount =
+            unsafe { super::super::rc::mb_refcount(yielded.as_ptr().unwrap()) };
+        let drained = drain_iter_to_vec(reversed).expect("reversed tuple should be drainable");
+        let drained_ptrs: Vec<usize> = drained
+            .iter()
+            .map(|value| value.as_ptr().expect("remaining value should be a pointer") as usize)
+            .collect();
+        let drained_texts: Vec<String> = drained
+            .iter()
+            .map(|value| unsafe {
+                match &(*value.as_ptr().unwrap()).data {
+                    ObjData::Str(text) => text.clone(),
+                    _ => String::new(),
+                }
+            })
+            .collect();
+        let drained_refcounts: Vec<u32> = drained
+            .iter()
+            .map(|value| unsafe { super::super::rc::mb_refcount(value.as_ptr().unwrap()) })
+            .collect();
+
+        // Drop only drain-result owners; the tuple and observers remain as the baseline.
+        for (&value, &refcount) in drained.iter().zip(&drained_refcounts) {
+            for _ in 0..refcount.saturating_sub(2) {
+                unsafe { super::super::rc::release_if_ptr(value) };
+            }
+        }
+        unsafe {
+            super::super::rc::release_if_ptr(tuple);
+        }
+        let observer_texts = [left, right]
+            .map(|value| unsafe {
+                match &(*value.as_ptr().unwrap()).data {
+                    ObjData::Str(text) => text.clone(),
+                    _ => String::new(),
+                }
+            });
+        unsafe {
+            super::super::rc::release_if_ptr(left);
+            super::super::rc::release_if_ptr(right);
+        }
+
+        assert_eq!(yielded_ptr, right.as_ptr().unwrap() as usize);
+        assert_eq!(yielded_text, "right");
+        assert_eq!(yielded_refcount, 2);
+        assert_eq!(drained_ptrs, vec![left.as_ptr().unwrap() as usize]);
+        assert_eq!(drained_texts, vec!["left"]);
+        assert_eq!(drained_refcounts, vec![3]);
+        assert_eq!(observer_texts, ["left".to_string(), "right".to_string()]);
+    }
+
+    #[test]
     fn test_stop_iteration_flag() {
         mb_stop_iteration(MbValue::none());
         assert!(check_stop_iteration());
@@ -4986,26 +5672,71 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_all_iterators_resets_id_counter() {
+    fn test_cleanup_all_iterators_invalidates_handles_and_maintains_monotonic_id() {
         let list1 = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1)]));
         let it1 = mb_iter(list1);
+        let id1 = it1.as_int().unwrap();
 
         cleanup_all_iterators();
 
+        // Stale handle should no longer resolve after cleanup
+        assert!(mb_next(it1).is_none(), "stale iterator handle should no longer resolve");
+
         let list2 = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(2)]));
         let it2 = mb_iter(list2);
-        // Both should get the same ID (1) since counter was reset
-        assert_eq!(
-            it1.as_int(),
-            it2.as_int(),
-            "iter ID counter should reset after cleanup"
-        );
+        let id2 = it2.as_int().unwrap();
+
+        // Monotonic allocator guarantee: next ID after cleanup must strictly exceed id1
+        assert!(id2 > id1, "iter ID allocator must be strictly monotonic across cleanup");
+    }
+
+    #[test]
+    fn test_cleanup_on_other_thread_does_not_cause_id_collision_for_live_iterator() {
+        // Thread B mints an iterator and keeps it live
+        let list_b = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(10),
+            MbValue::from_int(20),
+        ]));
+        let it_b1 = mb_iter(list_b);
+        assert_eq!(mb_next(it_b1).as_int(), Some(10));
+
+        // Thread A runs cleanup on a separate thread
+        std::thread::spawn(|| {
+            cleanup_all_iterators();
+        }).join().unwrap();
+
+        // Thread B mints another iterator
+        let list_b2 = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(999),
+        ]));
+        let it_b2 = mb_iter(list_b2);
+
+        // Handles must not collide
+        assert_ne!(it_b1.as_int(), it_b2.as_int(), "iter handles must not collide after cross-thread cleanup");
+
+        // The original iterator on Thread B must still yield its next element (20), not be overwritten
+        assert_eq!(mb_next(it_b1).as_int(), Some(20), "live iterator on thread B must retain its state");
     }
 
     #[test]
     fn test_cleanup_all_iterators_on_empty() {
         cleanup_all_iterators();
         // No panic = success
+    }
+
+    #[test]
+    fn test_cross_thread_iterator_ids_are_distinct() {
+        let l1 = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(10)]));
+        let it1 = mb_iter(l1);
+        let handle1 = it1.as_int().unwrap();
+
+        let handle2 = std::thread::spawn(|| {
+            let l2 = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(777)]));
+            let it2 = mb_iter(l2);
+            it2.as_int().unwrap()
+        }).join().unwrap();
+
+        assert_ne!(handle1, handle2);
     }
 
     #[test]
@@ -5030,7 +5761,7 @@ mod tests {
     /// Verify that mb_iter_sentinel creates a valid iterator handle.
     #[test]
     fn test_iter_sentinel_creates_handle() {
-        let callable = MbValue::none(); // placeholder
+        let callable = MbValue::from_func(0x10000);
         let sentinel = MbValue::from_int(0);
         let it = mb_iter_sentinel(callable, sentinel);
         assert!(it.is_int(), "iter_sentinel should return an int handle");
@@ -5040,8 +5771,9 @@ mod tests {
     /// Verify that multiple callable-sentinel iterators get distinct handles.
     #[test]
     fn test_iter_sentinel_distinct_handles() {
-        let it1 = mb_iter_sentinel(MbValue::none(), MbValue::from_int(0));
-        let it2 = mb_iter_sentinel(MbValue::none(), MbValue::from_int(0));
+        let callable = MbValue::from_func(0x10000);
+        let it1 = mb_iter_sentinel(callable, MbValue::from_int(0));
+        let it2 = mb_iter_sentinel(callable, MbValue::from_int(0));
         assert_ne!(
             it1.as_int(),
             it2.as_int(),
@@ -5055,7 +5787,8 @@ mod tests {
     /// store and can be released without panic.
     #[test]
     fn test_iter_sentinel_release() {
-        let it = mb_iter_sentinel(MbValue::none(), MbValue::from_int(42));
+        let callable = MbValue::from_func(0x10000);
+        let it = mb_iter_sentinel(callable, MbValue::from_int(42));
         assert!(it.is_int());
         mb_iter_release(it);
         // After release, next() should return None
@@ -5244,5 +5977,56 @@ mod tests {
         ITERATORS.with(|iters| {
             iters.borrow_mut().remove(&id);
         });
+    }
+
+    #[test]
+    fn test_wi2048_next_non_iterator_type_name() {
+        super::super::exception::mb_clear_exception();
+        let non_iter = MbValue::from_int(42);
+        let res = mb_next_raise(non_iter);
+        assert!(res.is_none());
+        let exc = super::super::exception::current_exception_message();
+        assert_eq!(exc, Some("'int' object is not an iterator".to_string()));
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_wi2048_enumerate_start_type_validation() {
+        super::super::exception::mb_clear_exception();
+        let list = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1)]));
+        let res = mb_enumerate(list, MbValue::none());
+        assert!(res.is_none());
+        let exc = super::super::exception::current_exception_message();
+        assert_eq!(
+            exc,
+            Some("'NoneType' object cannot be interpreted as an integer".to_string())
+        );
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_wi2048_reversed_non_range_iter() {
+        super::super::exception::mb_clear_exception();
+        let list = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1)]));
+        let list_iter = mb_iter(list);
+        let res = mb_reversed(list_iter);
+        assert!(res.is_none());
+        let exc = super::super::exception::current_exception_message();
+        assert_eq!(
+            exc,
+            Some("'list_iterator' object is not reversible".to_string())
+        );
+        mb_iter_release(list_iter);
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_wi2048_zip_0_arg_length_hint() {
+        super::super::exception::mb_clear_exception();
+        let zip_iter = mb_zip_n(MbValue::from_ptr(MbObject::new_list(vec![])));
+        assert!(zip_iter.is_int());
+        let hint = mb_iter_length_hint(zip_iter);
+        assert_eq!(hint.and_then(|v| v.as_int()), Some(0));
+        mb_iter_release(zip_iter);
     }
 }

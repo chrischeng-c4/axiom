@@ -377,8 +377,8 @@ fn seq_tokens(val: MbValue) -> Vec<String> {
                         .unwrap()
                         .iter()
                         .map(|v| {
-                            extract_str(*v).unwrap_or_else(|| {
-                                super::super::builtins::mb_str(*v)
+                            extract_str(v).unwrap_or_else(|| {
+                                super::super::builtins::mb_str(v)
                                     .as_ptr()
                                     .and_then(|p| {
                                         if let ObjData::Str(ref s) = (*p).data {
@@ -1518,7 +1518,7 @@ fn check_types(a: MbValue, b: MbValue, args: &[MbValue]) -> bool {
         // from an iterator handle would drain it before the diff runs.
         let first = seq.as_ptr().and_then(|ptr| unsafe {
             match (*ptr).data {
-                ObjData::List(ref lock) => lock.read().unwrap().first().copied(),
+                ObjData::List(ref lock) => lock.read().unwrap().first(),
                 ObjData::Tuple(ref t) => t.first().copied(),
                 _ => None,
             }
@@ -2694,8 +2694,9 @@ mod tests {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     lock.read()
                         .unwrap()
-                        .iter()
-                        .filter_map(|v| extract_str(*v))
+                        .to_vec()
+                        .into_iter()
+                        .filter_map(|v| extract_str(v))
                         .collect()
                 } else {
                     vec![]

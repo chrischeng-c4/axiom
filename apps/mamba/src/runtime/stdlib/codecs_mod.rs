@@ -12,7 +12,15 @@ use super::super::value::MbValue;
 /// codegen. Same shape as base64_mod/zlib_mod — handwrite during
 /// brute-force Phase 2, replace when aw standardize lands the
 /// stdlib-shim section type.
+use std::cell::RefCell;
 use std::collections::HashMap;
+
+thread_local! {
+    static SEARCH_PATH: RefCell<Vec<MbValue>> = RefCell::new(Vec::new());
+    static CODEC_CACHE: RefCell<HashMap<String, MbValue>> = RefCell::new(HashMap::new());
+    static ERROR_HANDLERS: RefCell<HashMap<String, MbValue>> = RefCell::new(HashMap::new());
+}
+
 
 // ── Exception helpers ──
 // Raise catchable Python exceptions via the thread-local exception machinery
@@ -26,7 +34,7 @@ fn raise_exc(exc_type: &str, msg: &str) -> MbValue {
     );
     MbValue::none()
 }
-fn raise_lookup_error(msg: &str) -> MbValue {
+pub(crate) fn raise_lookup_error(msg: &str) -> MbValue {
     raise_exc("LookupError", msg)
 }
 fn raise_type_error(msg: &str) -> MbValue {
@@ -187,6 +195,15 @@ disp_unary!(
     mb_codecs_backslashreplace_errors
 );
 disp_unary!(dispatch_namereplace_errors, mb_codecs_namereplace_errors);
+disp_unary!(
+    dispatch_surrogateescape_errors,
+    mb_codecs_surrogateescape_errors
+);
+disp_unary!(
+    dispatch_surrogatepass_errors,
+    mb_codecs_surrogatepass_errors
+);
+
 disp_unary!(dispatch_utf_8_encode, mb_codecs_utf_8_encode);
 disp_unary!(dispatch_utf_8_decode, mb_codecs_utf_8_decode);
 disp_unary!(dispatch_utf_16_encode, mb_codecs_utf_16_encode);
@@ -256,16 +273,70 @@ unsafe extern "C" fn dispatch_codecinfo(args_ptr: *const MbValue, nargs: usize) 
     )
 }
 unsafe extern "C" fn dispatch_incrementalencoder(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
+    args_ptr: *const MbValue,
+    nargs: usize,
 ) -> MbValue {
-    MbValue::from_ptr(MbObject::new_instance("IncrementalEncoder".to_string()))
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let is_kwargs = |v: MbValue| {
+        v.as_ptr().map_or(false, |ptr| unsafe {
+            matches!((*ptr).data, ObjData::Dict(_))
+        })
+    };
+    let errors = args
+        .first()
+        .copied()
+        .filter(|v| !is_kwargs(*v))
+        .or_else(|| {
+            args.last().and_then(|v| v.as_ptr()).and_then(|ptr| unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), "errors")
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str("strict".to_string())));
+    let inst = MbValue::from_ptr(MbObject::new_instance(
+        "codecs.IncrementalEncoder".to_string(),
+    ));
+    set_inst_field(inst, "errors", errors);
+    set_inst_field(inst, "first", MbValue::from_bool(true));
+    set_inst_field(inst, "buffer", MbValue::from_ptr(MbObject::new_str(String::new())));
+    set_inst_field(inst, "mode", MbValue::from_ptr(MbObject::new_str("utf-8".to_string())));
+    inst
 }
 unsafe extern "C" fn dispatch_incrementaldecoder(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
+    args_ptr: *const MbValue,
+    nargs: usize,
 ) -> MbValue {
-    MbValue::from_ptr(MbObject::new_instance("IncrementalDecoder".to_string()))
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let is_kwargs = |v: MbValue| {
+        v.as_ptr().map_or(false, |ptr| unsafe {
+            matches!((*ptr).data, ObjData::Dict(_))
+        })
+    };
+    let errors = args
+        .first()
+        .copied()
+        .filter(|v| !is_kwargs(*v))
+        .or_else(|| {
+            args.last().and_then(|v| v.as_ptr()).and_then(|ptr| unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), "errors")
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str("strict".to_string())));
+    let inst = MbValue::from_ptr(MbObject::new_instance(
+        "codecs.IncrementalDecoder".to_string(),
+    ));
+    set_inst_field(inst, "errors", errors);
+    set_inst_field(inst, "buffer", new_bytes(Vec::new()));
+    set_inst_field(inst, "bom_done", MbValue::from_bool(false));
+    set_inst_field(inst, "mode", MbValue::from_ptr(MbObject::new_str("utf-8".to_string())));
+    inst
 }
 unsafe extern "C" fn dispatch_streamreader(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_instance("StreamReader".to_string()))
@@ -281,6 +352,10 @@ unsafe extern "C" fn dispatch_streamreaderwriter(
 }
 unsafe extern "C" fn dispatch_streamrecoder(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_instance("StreamRecoder".to_string()))
+}
+
+pub fn mb_init_codecs() {
+    register();
 }
 
 pub fn register() {
@@ -338,6 +413,15 @@ pub fn register() {
             "namereplace_errors",
             dispatch_namereplace_errors as *const () as usize,
         ),
+        (
+            "surrogateescape_errors",
+            dispatch_surrogateescape_errors as *const () as usize,
+        ),
+        (
+            "surrogatepass_errors",
+            dispatch_surrogatepass_errors as *const () as usize,
+        ),
+
         // Convenience codec functions
         ("utf_8_encode", dispatch_utf_8_encode as *const () as usize),
         ("utf_8_decode", dispatch_utf_8_decode as *const () as usize),
@@ -574,6 +658,9 @@ fn normalize_encoding(name: &str) -> &str {
         s if s.starts_with("ascii") || s == "usascii" || s == "646" => "ascii",
         s if s == "idna" => "idna",
         s if s == "punycode" => "punycode",
+        s if s == "mbcs" || s == "dbcs" => "mbcs",
+        s if s.starts_with("unicodeescape") => "unicode-escape",
+        s if s.starts_with("rawunicodeescape") => "raw-unicode-escape",
         s if s.starts_with("latin1")
             || s == "iso88591"
             || s == "8859"
@@ -609,6 +696,9 @@ fn canonical_codec_name(name: &str) -> Option<&'static str> {
         "utf-32-be" => Some("utf-32-be"),
         "idna" => Some("idna"),
         "punycode" => Some("punycode"),
+        "mbcs" => Some("mbcs"),
+        "unicode-escape" => Some("unicode-escape"),
+        "raw-unicode-escape" => Some("raw-unicode-escape"),
         _ => None,
     }
 }
@@ -616,35 +706,116 @@ fn canonical_codec_name(name: &str) -> Option<&'static str> {
 /// Build a `codecs.CodecInfo`-typed instance. `type(x).__name__` resolves to
 /// "CodecInfo" and `.name` reads the stored field — no class.rs edit needed
 /// (plain instance field access goes through the generic getattr path).
-fn make_codec_info(name: MbValue, encode: MbValue, decode: MbValue) -> MbValue {
+fn make_codec_info_full(
+    name: MbValue,
+    encode: MbValue,
+    decode: MbValue,
+    streamreader: MbValue,
+    streamwriter: MbValue,
+    incrementalencoder: MbValue,
+    incrementaldecoder: MbValue,
+) -> MbValue {
     let inst = MbObject::new_instance("CodecInfo".to_string());
+    let tuple_name = "CodecInfo".to_string();
+    let field_names = vec![
+        "encode",
+        "decode",
+        "streamreader",
+        "streamwriter",
+        "incrementalencoder",
+        "incrementaldecoder",
+        "name",
+    ];
+    let ordered: Vec<MbValue> = field_names
+        .iter()
+        .map(|f| MbValue::from_ptr(MbObject::new_str((*f).to_string())))
+        .collect();
     if let Some(ptr) = MbValue::from_ptr(inst).as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut f = fields.write().unwrap();
+                f.insert(
+                    "_namedtuple_name".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(tuple_name)),
+                );
+                f.insert(
+                    "_namedtuple_fields".to_string(),
+                    MbValue::from_ptr(MbObject::new_list(ordered)),
+                );
                 f.insert("name".to_string(), name);
                 f.insert("encode".to_string(), encode);
                 f.insert("decode".to_string(), decode);
+                f.insert("streamreader".to_string(), streamreader);
+                f.insert("streamwriter".to_string(), streamwriter);
+                f.insert("incrementalencoder".to_string(), incrementalencoder);
+                f.insert("incrementaldecoder".to_string(), incrementaldecoder);
+                f.insert("stream_reader".to_string(), streamreader);
+                f.insert("stream_writer".to_string(), streamwriter);
             }
         }
     }
     MbValue::from_ptr(inst)
 }
 
-/// True for the well-known non-raising handlers we model exactly.
-fn known_error_handler(name: &str) -> bool {
-    matches!(
-        name,
-        "strict"
-            | "ignore"
-            | "replace"
-            | "xmlcharrefreplace"
-            | "backslashreplace"
-            | "namereplace"
-            | "surrogateescape"
-            | "surrogatepass"
-    )
+fn make_codec_info(name: MbValue, encode: MbValue, decode: MbValue) -> MbValue {
+    let sr = MbValue::from_func(dispatch_streamreader as *const () as usize);
+    let sw = MbValue::from_func(dispatch_streamwriter as *const () as usize);
+    let ie = MbValue::from_func(dispatch_incrementalencoder as *const () as usize);
+    let id = MbValue::from_func(dispatch_incrementaldecoder as *const () as usize);
+    make_codec_info_full(name, encode, decode, sr, sw, ie, id)
 }
+
+fn ensure_builtin_error_handlers() {
+    ERROR_HANDLERS.with(|map| {
+        let mut m = map.borrow_mut();
+        if m.is_empty() {
+            m.insert(
+                "strict".to_string(),
+                MbValue::from_func(dispatch_strict_errors as *const () as usize),
+            );
+            m.insert(
+                "replace".to_string(),
+                MbValue::from_func(dispatch_replace_errors as *const () as usize),
+            );
+            m.insert(
+                "ignore".to_string(),
+                MbValue::from_func(dispatch_ignore_errors as *const () as usize),
+            );
+            m.insert(
+                "xmlcharrefreplace".to_string(),
+                MbValue::from_func(dispatch_xmlcharrefreplace_errors as *const () as usize),
+            );
+            m.insert(
+                "backslashreplace".to_string(),
+                MbValue::from_func(dispatch_backslashreplace_errors as *const () as usize),
+            );
+            m.insert(
+                "namereplace".to_string(),
+                MbValue::from_func(dispatch_namereplace_errors as *const () as usize),
+            );
+            m.insert(
+                "surrogateescape".to_string(),
+                MbValue::from_func(dispatch_surrogateescape_errors as *const () as usize),
+            );
+            m.insert(
+                "surrogatepass".to_string(),
+                MbValue::from_func(dispatch_surrogatepass_errors as *const () as usize),
+            );
+        }
+    });
+}
+
+/// True for the well-known non-raising handlers we model exactly.
+pub(crate) fn known_error_handler(name: &str) -> bool {
+    ensure_builtin_error_handlers();
+    ERROR_HANDLERS.with(|map| map.borrow().contains_key(name))
+}
+
+pub fn get_registered_error_handler(name: &str) -> Option<MbValue> {
+    ensure_builtin_error_handlers();
+    ERROR_HANDLERS.with(|map| map.borrow().get(name).copied())
+}
+
 
 pub(crate) fn punycode_encode_bytes(s: &str) -> Option<Vec<u8>> {
     idna::punycode::encode_str(s).map(String::into_bytes)
@@ -781,36 +952,123 @@ pub fn mb_codecs_decode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
 ///
 /// Raises LookupError for an unknown codec (CPython 3.12). The returned value
 /// is a `CodecInfo`-typed instance whose `.name` is the canonical codec name.
+fn ensure_codec_info_instance(res: MbValue, enc_name: &str) -> MbValue {
+    if let Some(ptr) = res.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => {
+                    if items.len() >= 2 {
+                        let encode = items[0];
+                        let decode = items[1];
+                        let sr = items.get(2).copied().unwrap_or_else(|| MbValue::from_func(dispatch_streamreader as *const () as usize));
+                        let sw = items.get(3).copied().unwrap_or_else(|| MbValue::from_func(dispatch_streamwriter as *const () as usize));
+                        let ie = items.get(4).copied().unwrap_or_else(|| MbValue::from_func(dispatch_incrementalencoder as *const () as usize));
+                        let id = items.get(5).copied().unwrap_or_else(|| MbValue::from_func(dispatch_incrementaldecoder as *const () as usize));
+                        let name_val = items
+                            .get(6)
+                            .copied()
+                            .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str(enc_name.to_string())));
+                        return make_codec_info_full(name_val, encode, decode, sr, sw, ie, id);
+                    }
+                }
+                ObjData::Instance { .. } => {
+                    return res;
+                }
+                _ => {}
+            }
+        }
+    }
+    res
+}
+
+/// codecs.lookup(encoding) -> CodecInfo
+///
+/// Raises LookupError for an unknown codec (CPython 3.12). The returned value
+/// is a `CodecInfo`-typed instance whose `.name` is the canonical codec name.
 pub fn mb_codecs_lookup(encoding: MbValue) -> MbValue {
     let enc = match extract_str(encoding) {
         Some(e) => e,
         None => return raise_type_error("lookup() argument must be str"),
     };
-    let canonical = match canonical_codec_name(&enc) {
-        Some(c) => c,
-        None => return raise_lookup_error(&format!("unknown encoding: {}", enc)),
+    let norm_key = enc.to_lowercase().replace(['-', '_', ' '], "");
+
+    if let Some(cached) = CODEC_CACHE.with(|c| c.borrow().get(&norm_key).copied()) {
+        return cached;
+    }
+
+    let search_funcs = SEARCH_PATH.with(|sp| sp.borrow().clone());
+    for sf in search_funcs {
+        let res = super::super::class::mb_call1_val(
+            sf,
+            MbValue::from_ptr(MbObject::new_str(enc.clone())),
+        );
+        if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+            return MbValue::none();
+        }
+        if !res.is_none() {
+            let codec_info = ensure_codec_info_instance(res, &enc);
+            CODEC_CACHE.with(|c| c.borrow_mut().insert(norm_key, codec_info));
+            return codec_info;
+        }
+    }
+
+    if let Some(canonical) = canonical_codec_name(&enc) {
+        let encode_fn = make_factory("codecs._EncoderFunc", canonical);
+        let decode_fn = make_factory("codecs._DecoderFunc", canonical);
+        let info = make_codec_info(
+            MbValue::from_ptr(MbObject::new_str(canonical.to_string())),
+            encode_fn,
+            decode_fn,
+        );
+        CODEC_CACHE.with(|c| c.borrow_mut().insert(norm_key, info));
+        return info;
+    }
+
+    raise_lookup_error(&format!("unknown encoding: {}", enc))
+}
+
+/// codecs.register(search_function)
+pub fn mb_codecs_register(func: MbValue) -> MbValue {
+    if super::super::builtins::mb_callable(func).as_bool() != Some(true) {
+        return raise_type_error("register() argument must be callable");
+    }
+    SEARCH_PATH.with(|sp| {
+        sp.borrow_mut().push(func);
+    });
+    CODEC_CACHE.with(|c| c.borrow_mut().clear());
+    MbValue::none()
+}
+
+/// codecs.register_error(name, handler)
+pub fn mb_codecs_register_error(name: MbValue, handler: MbValue) -> MbValue {
+    let name_str = match extract_str(name) {
+        Some(s) => s,
+        None => return raise_type_error("register_error() argument 1 must be str"),
     };
-    make_codec_info(
-        MbValue::from_ptr(MbObject::new_str(canonical.to_string())),
-        MbValue::none(),
-        MbValue::none(),
-    )
-}
-
-/// codecs.register(search_function) — stub
-pub fn mb_codecs_register(_func: MbValue) -> MbValue {
+    if super::super::builtins::mb_callable(handler).as_bool() != Some(true) {
+        return raise_type_error("handler must be callable");
+    }
+    ensure_builtin_error_handlers();
+    ERROR_HANDLERS.with(|map| {
+        map.borrow_mut().insert(name_str, handler);
+    });
     MbValue::none()
 }
 
-/// codecs.register_error(name, handler) — stub
-pub fn mb_codecs_register_error(_name: MbValue, _handler: MbValue) -> MbValue {
-    MbValue::none()
+/// codecs.lookup_error(name) -> handler
+pub fn mb_codecs_lookup_error(name: MbValue) -> MbValue {
+    let name_str = match extract_str(name) {
+        Some(s) => s,
+        None => return raise_type_error("lookup_error() argument 1 must be str"),
+    };
+    ensure_builtin_error_handlers();
+    let handler = ERROR_HANDLERS.with(|map| map.borrow().get(&name_str).copied());
+    match handler {
+        Some(h) => h,
+        None => raise_lookup_error(&format!("unknown error handler name '{}'", name_str)),
+    }
 }
 
-/// codecs.lookup_error(name) -> handler — stub
-pub fn mb_codecs_lookup_error(_name: MbValue) -> MbValue {
-    MbValue::none()
-}
 
 /// codecs.open(filename, mode, encoding) — stub
 pub fn mb_codecs_open(_filename: MbValue) -> MbValue {
@@ -1570,23 +1828,199 @@ pub fn mb_codecs_encodedfile(_file: MbValue) -> MbValue {
 // strict handler raising semantics queue for Phase 3 exception plumbing.
 // What matters for Gate 3 is that the names are registered.
 
-pub fn mb_codecs_strict_errors(_exc: MbValue) -> MbValue {
+fn extract_exc_end(exc: MbValue) -> i64 {
+    exc.as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.read().unwrap().get("end").and_then(|v| v.as_int())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
+fn extract_exc_start(exc: MbValue) -> i64 {
+    exc.as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.read().unwrap().get("start").and_then(|v| v.as_int())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
+fn extract_exc_object(exc: MbValue) -> Option<MbValue> {
+    exc.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get("object").copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_exc_type_name(exc: MbValue) -> Option<String> {
+    exc.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })
+}
+
+pub fn mb_codecs_strict_errors(exc: MbValue) -> MbValue {
+    if !exc.is_none() {
+        super::super::class::mb_raise_instance(exc);
+    }
     MbValue::none()
 }
-pub fn mb_codecs_replace_errors(_exc: MbValue) -> MbValue {
-    MbValue::none()
+
+pub fn mb_codecs_replace_errors(exc: MbValue) -> MbValue {
+    if exc.is_none() {
+        return MbValue::none();
+    }
+    let start = extract_exc_start(exc);
+    let end = extract_exc_end(exc);
+    let count = (end - start).max(0) as usize;
+    let type_name = extract_exc_type_name(exc).unwrap_or_default();
+    let rep = if type_name == "UnicodeDecodeError" {
+        "\u{FFFD}".repeat(count)
+    } else {
+        "?".repeat(count)
+    };
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(rep)),
+        MbValue::from_int(end),
+    ]))
 }
-pub fn mb_codecs_ignore_errors(_exc: MbValue) -> MbValue {
-    MbValue::none()
+
+pub fn mb_codecs_ignore_errors(exc: MbValue) -> MbValue {
+    if exc.is_none() {
+        return MbValue::none();
+    }
+    let end = extract_exc_end(exc);
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+        MbValue::from_int(end),
+    ]))
 }
-pub fn mb_codecs_xmlcharrefreplace_errors(_exc: MbValue) -> MbValue {
-    MbValue::none()
+
+pub fn mb_codecs_xmlcharrefreplace_errors(exc: MbValue) -> MbValue {
+    if exc.is_none() {
+        return MbValue::none();
+    }
+    let type_name = extract_exc_type_name(exc).unwrap_or_default();
+    if type_name == "UnicodeDecodeError" {
+        return raise_type_error("don't know how to handle UnicodeDecodeError in error callback");
+    }
+    let start = extract_exc_start(exc) as usize;
+    let end = extract_exc_end(exc) as usize;
+    let obj = match extract_exc_object(exc).and_then(extract_str) {
+        Some(s) => s,
+        None => String::new(),
+    };
+    let mut out = String::new();
+    let chars: Vec<char> = obj.chars().collect();
+    for i in start..end.min(chars.len()) {
+        out.push_str(&format!("&#{};", chars[i] as u32));
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(out)),
+        MbValue::from_int(end as i64),
+    ]))
 }
-pub fn mb_codecs_backslashreplace_errors(_exc: MbValue) -> MbValue {
-    MbValue::none()
+
+pub fn mb_codecs_backslashreplace_errors(exc: MbValue) -> MbValue {
+    if exc.is_none() {
+        return MbValue::none();
+    }
+    let type_name = extract_exc_type_name(exc).unwrap_or_default();
+    let start = extract_exc_start(exc) as usize;
+    let end = extract_exc_end(exc) as usize;
+    let obj = extract_exc_object(exc);
+    let mut out = String::new();
+
+    if type_name == "UnicodeDecodeError" {
+        let bytes = obj.and_then(|v| unsafe { extract_bytes_ref(&v) }.map(|b| b.to_vec())).unwrap_or_default();
+        for i in start..end.min(bytes.len()) {
+            out.push_str(&format!("\\x{:02x}", bytes[i]));
+        }
+    } else {
+        let st = obj.and_then(extract_str).unwrap_or_default();
+        let chars: Vec<char> = st.chars().collect();
+        for i in start..end.min(chars.len()) {
+            let cp = chars[i] as u32;
+            if cp <= 0xFF {
+                out.push_str(&format!("\\x{:02x}", cp));
+            } else if cp <= 0xFFFF {
+                out.push_str(&format!("\\u{:04x}", cp));
+            } else {
+                out.push_str(&format!("\\U{:08x}", cp));
+            }
+        }
+    }
+
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(out)),
+        MbValue::from_int(end as i64),
+    ]))
 }
-pub fn mb_codecs_namereplace_errors(_exc: MbValue) -> MbValue {
-    MbValue::none()
+
+pub fn mb_codecs_namereplace_errors(exc: MbValue) -> MbValue {
+    if exc.is_none() {
+        return MbValue::none();
+    }
+    let type_name = extract_exc_type_name(exc).unwrap_or_default();
+    if type_name == "UnicodeDecodeError" {
+        return raise_type_error("don't know how to handle UnicodeDecodeError in error callback");
+    }
+    let start = extract_exc_start(exc) as usize;
+    let end = extract_exc_end(exc) as usize;
+    let obj = match extract_exc_object(exc).and_then(extract_str) {
+        Some(s) => s,
+        None => String::new(),
+    };
+    let mut out = String::new();
+    let chars: Vec<char> = obj.chars().collect();
+    for i in start..end.min(chars.len()) {
+        let ch = chars[i];
+        let cp = ch as u32;
+        if ch.is_control() {
+            if cp <= 0xFF {
+                out.push_str(&format!("\\x{:02x}", cp));
+            } else if cp <= 0xFFFF {
+                out.push_str(&format!("\\u{:04x}", cp));
+            } else {
+                out.push_str(&format!("\\U{:08x}", cp));
+            }
+        } else {
+            out.push_str(&format!("\\N{{UNICODE CHAR {:04X}}}", cp));
+        }
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(out)),
+        MbValue::from_int(end as i64),
+    ]))
+}
+
+pub fn mb_codecs_surrogateescape_errors(exc: MbValue) -> MbValue {
+    let end = extract_exc_end(exc);
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+        MbValue::from_int(end),
+    ]))
+}
+
+pub fn mb_codecs_surrogatepass_errors(exc: MbValue) -> MbValue {
+    let end = extract_exc_end(exc);
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+        MbValue::from_int(end),
+    ]))
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1640,7 +2074,7 @@ fn inst_str(obj: MbValue, name: &str) -> String {
 fn pos_arg(args_list: MbValue, i: usize) -> Option<MbValue> {
     args_list.as_ptr().and_then(|ptr| unsafe {
         match &(*ptr).data {
-            ObjData::List(lock) => lock.read().unwrap().get(i).copied(),
+            ObjData::List(lock) => lock.read().unwrap().get(i),
             ObjData::Tuple(items) => items.get(i).copied(),
             _ => None,
         }
@@ -3375,4 +3809,22 @@ mod tests {
         assert!(mb_codecs_backslashreplace_errors(MbValue::none()).is_none());
         assert!(mb_codecs_namereplace_errors(MbValue::none()).is_none());
     }
+
+    #[test]
+    fn test_codecs_lookup_and_register_error() {
+        mb_init_codecs();
+        let strict_fn = mb_codecs_lookup_error(s("strict"));
+        assert!(!strict_fn.is_none());
+        let custom_name = s("my_custom_error");
+        mb_codecs_register_error(custom_name, strict_fn);
+        let retrieved = mb_codecs_lookup_error(custom_name);
+        assert_eq!(retrieved, strict_fn);
+    }
+
+    #[test]
+    fn test_codecs_lookup_builtin_info() {
+        let info = mb_codecs_lookup(s("utf-8"));
+        assert!(!info.is_none());
+    }
 }
+

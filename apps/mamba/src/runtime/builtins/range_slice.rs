@@ -166,3 +166,18 @@ pub fn mb_range_3(start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
     }
     iter::mb_range_iter(start, stop, step)
 }
+
+/// Canonical range equality comparison (CPython range_equal).
+pub fn range_eq(a: MbValue, b: MbValue) -> Option<bool> {
+    iter::ranges_value_eq(a, b)
+}
+
+/// range.index(value) method logic.
+pub fn range_index(handle: MbValue, value: MbValue) -> Option<MbValue> {
+    iter::range_index(handle, value)
+}
+
+/// range.count(value) method logic.
+pub fn range_count(handle: MbValue, value: MbValue) -> Option<MbValue> {
+    iter::range_count(handle, value)
+}

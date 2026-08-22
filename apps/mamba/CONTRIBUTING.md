@@ -45,6 +45,38 @@ cargo build --release -p mamba
   suite at `tests/harness/go_suite/` (`tools/suite_bench.py`).
 - Fixture authoring: `tests/harness/cpython/conventions/FIXTURE-LAYOUT.md`.
 
+## Test architecture (four planes)
+
+| Plane | Form | Verifies | A red means | Speed |
+|-------|------|----------|-------------|-------|
+| A. Runtime primitive | Rust calls `mb_*` APIs directly | internal invariants Python cannot see: refcount pairing, GC, dict resize vs iteration, exception-chain assembly, iterator state machines | a runtime-function bug | µs, parallel |
+| B. Compilation semantics | minimal Python snippet → `jit_capture` + `assert_output` | one construct per test through the full pipeline (typecheck → HIR → MIR → codegen → run) | a pipeline bug | ms, serialized by `JIT_LOCK` |
+| C. Type-checker surface | fixture source + directive-aware helper | `# mamba-strict-type:` walls: expected static reject → assert type error; expected runtime TypeError → assert exception type | a checker coverage gap | ms |
+| D. E2E gate | fixture files + external harness vs **real CPython 3.12 oracle** | semantic divergence; the only plane with an oracle | product divergence | slow; mandatory pre-release |
+
+Rules that keep the planes honest:
+
+- **Verification power is mandatory.** Any in-process harness must check the
+  pending Python exception after execution and panic with the traceback
+  (driver's `run` path is the reference pattern). Tests that discard harness
+  output (`let _ = jit_capture(...)`), swallow panics (`catch_unwind` in a
+  harness), or run with no assertion verify nothing and count toward no
+  coverage statistic.
+- **Snapshot lock, not `include_str!`.** Planes B/C embed fixture source as a
+  generation-time copy (the lock). Never `include_str!` from `tests/` — a lock
+  that silently inherits upstream edits is not a lock, and it inverts the
+  dependency direction. Drift is caught by a linter comparing embedded source
+  against machine-readable provenance; re-sync is an explicit, reviewed act.
+- **Regression rule.** Every bug fix lands with one minimal test in the plane
+  where the bug lived. Unit coverage grows through regressions, not upfront
+  enumeration.
+- **Environment-dependent fixtures stay in D.** surface/real_world/security/
+  3rd-party fixtures are meaningless in-process.
+- **Plane D is authoritative.** No unit-plane result substitutes for the
+  oracle gate; release judgment reads D only. Weakening a harness to turn
+  tests green (swallowed panics, discarded output, loosened assertions) is a
+  violation — audit harness files by diff, every time.
+
 ## Verification rules (before closing any issue)
 
 | Rule | Trap it prevents |

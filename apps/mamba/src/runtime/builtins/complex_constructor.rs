@@ -83,30 +83,97 @@ fn parse_complex_str(input: &str) -> Option<(f64, f64)> {
     }
 }
 
+fn extract_complex_component(val: MbValue, is_imag: bool) -> Result<(f64, f64), ()> {
+    let unwrapped = numeric_subclass_unary_operand(val, if is_imag { "__float__" } else { "__complex__" }).unwrap_or(val);
+    if let Some(i) = unwrapped.as_int() {
+        return Ok((i as f64, 0.0));
+    }
+    if let Some(f) = unwrapped.as_float() {
+        return Ok((f, 0.0));
+    }
+    if let Some(b) = unwrapped.as_bool() {
+        return Ok((b as i64 as f64, 0.0));
+    }
+    if let Some(ptr) = unwrapped.as_ptr() {
+        unsafe {
+            if let ObjData::Complex(re, im) = (*ptr).data {
+                return Ok((re, im));
+            }
+            if let ObjData::BigInt(_) = (*ptr).data {
+                match super::super::bigint_ops::int_as_f64_checked(unwrapped) {
+                    Ok(f) => return Ok((f, 0.0)),
+                    Err(msg) => {
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(super::super::rc::MbObject::new_str("OverflowError".to_string())),
+                            MbValue::from_ptr(super::super::rc::MbObject::new_str(msg)),
+                        );
+                        return Err(());
+                    }
+                }
+            }
+        }
+    }
+    if !is_imag {
+        if let Some(method) = super::super::class::try_get_dunder(val, "__complex__") {
+            let res = super::super::class::mb_call_method1(method, val);
+            if super::super::exception::current_exception_type().is_some() {
+                return Err(());
+            }
+            if let Some(ptr) = res.as_ptr() {
+                unsafe {
+                    if let ObjData::Complex(re, im) = (*ptr).data {
+                        return Ok((re, im));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(method) = super::super::class::try_get_dunder(val, "__float__") {
+        let res = super::super::class::mb_call_method1(method, val);
+        if super::super::exception::current_exception_type().is_some() {
+            return Err(());
+        }
+        if let Some(f) = res.as_float() {
+            return Ok((f, 0.0));
+        }
+        if let Some(i) = res.as_int() {
+            return Ok((i as f64, 0.0));
+        }
+    }
+    if let Some(method) = super::super::class::try_get_dunder(val, "__index__") {
+        let res = super::super::class::mb_call_method1(method, val);
+        if super::super::exception::current_exception_type().is_some() {
+            return Err(());
+        }
+        if let Some(i) = res.as_int_pyint() {
+            return Ok((i as f64, 0.0));
+        }
+    }
+    let type_name = super::value_type_name(val);
+    let msg = if is_imag {
+        format!("complex() second argument must be a number, not '{type_name}'")
+    } else {
+        format!("complex() first argument must be a string or a number, not '{type_name}'")
+    };
+    super::raise_type_error(msg);
+    Err(())
+}
+
 /// complex(real, imag) — create a complex number (R3 CPython 3.12 conformance).
 /// Accepts numeric `real`/`imag`, an existing `Complex` for `real`, or a
 /// string literal for `real` (CPython single-argument form).
 pub fn mb_complex(real: MbValue, imag: MbValue) -> MbValue {
-    // complex(P(7)) / complex(F(2.5)) - unwrap int/float-SUBCLASS instances
-    // to their raw numeric payload up front so the real/imag extraction below
-    // (which only recognizes plain int/float/bool) sees the underlying value
-    // instead of silently defaulting to 0.0. Uses the #1030 unwrap-helper
-    // family; user `__complex__` overrides aren't dispatched at all yet (a
-    // separate, out-of-scope dunder-protocol gap), so this only affects
-    // unoverridden numeric subclasses. (#1042)
-    let real = numeric_subclass_unary_operand(real, "__complex__").unwrap_or(real);
-    let imag = numeric_subclass_unary_operand(imag, "__complex__").unwrap_or(imag);
-    // String form: `complex("1+2j")`. CPython rejects passing a second
-    // argument with a string; we silently ignore `imag` when `real` is
-    // a string for now (close enough for #1256 long-tail coverage).
-    // Also: complex passthrough `complex(complex(1,2))` should equal arg.
-    if let Some(ptr) = real.as_ptr() {
+    let real_unwrapped = numeric_subclass_unary_operand(real, "__complex__").unwrap_or(real);
+    if let Some(ptr) = real_unwrapped.as_ptr() {
         unsafe {
             if let ObjData::Str(ref s) = (*ptr).data {
+                if !imag.is_none() {
+                    super::raise_type_error("complex() can't take second arg if first is a string".to_string());
+                    return MbValue::none();
+                }
                 if let Some((re, im)) = parse_complex_str(s) {
                     return MbValue::from_ptr(MbObject::new_complex(re, im));
                 }
-                // CPython: an unparseable string raises ValueError, not a silent None.
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(format!(
@@ -122,43 +189,29 @@ pub fn mb_complex(real: MbValue, imag: MbValue) -> MbValue {
             }
         }
     }
-    let real_parts = real.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Complex(re, im) = (*ptr).data {
-            Some((re, im))
-        } else {
-            None
+    if !imag.is_none() {
+        let imag_unwrapped = numeric_subclass_unary_operand(imag, "__complex__").unwrap_or(imag);
+        if let Some(ptr) = imag_unwrapped.as_ptr() {
+            unsafe {
+                if matches!(&(*ptr).data, ObjData::Str(_)) {
+                    super::raise_type_error("complex() second arg can't be string".to_string());
+                    return MbValue::none();
+                }
+            }
         }
-    });
-    let imag_parts = imag.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Complex(re, im) = (*ptr).data {
-            Some((re, im))
-        } else {
-            None
-        }
-    });
-    let (re0, im0) = if let Some((re, im)) = real_parts {
-        (re, im)
-    } else if let Some(f) = real.as_float() {
-        (f, 0.0)
-    } else if let Some(i) = real.as_int() {
-        (i as f64, 0.0)
-    } else if let Some(b) = real.as_bool() {
-        (b as i64 as f64, 0.0)
-    } else {
-        (0.0, 0.0)
+    }
+
+    let (re0, im0) = match extract_complex_component(real, false) {
+        Ok(pair) => pair,
+        Err(()) => return MbValue::none(),
     };
     let (re1, im1) = if imag.is_none() {
         (0.0, 0.0)
-    } else if let Some((re, im)) = imag_parts {
-        (re, im)
-    } else if let Some(f) = imag.as_float() {
-        (f, 0.0)
-    } else if let Some(i) = imag.as_int() {
-        (i as f64, 0.0)
-    } else if let Some(b) = imag.as_bool() {
-        (b as i64 as f64, 0.0)
     } else {
-        (0.0, 0.0)
+        match extract_complex_component(imag, true) {
+            Ok(pair) => pair,
+            Err(()) => return MbValue::none(),
+        }
     };
     MbValue::from_ptr(MbObject::new_complex(re0 - im1, im0 + re1))
 }

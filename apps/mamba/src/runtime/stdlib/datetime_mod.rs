@@ -487,7 +487,6 @@ fn td_args_first(args: MbValue) -> MbValue {
                     .read()
                     .unwrap()
                     .first()
-                    .copied()
                     .unwrap_or_else(MbValue::none);
             }
         }
@@ -1568,7 +1567,7 @@ unsafe extern "C" fn dt_method_isoformat(self_: MbValue, args_list: MbValue) -> 
         if let ObjData::List(ref lock) = (*ptr).data {
             if let Ok(g) = lock.read() {
                 if let Some(first) = g.first() {
-                    if let Some(sep_str) = extract_str(*first) {
+                    if let Some(sep_str) = extract_str(first) {
                         sep = sep_str;
                     }
                 }
@@ -1606,7 +1605,7 @@ unsafe extern "C" fn time_method_isoformat(self_: MbValue, args_list: MbValue) -
         if let ObjData::List(ref lock) = (*ptr).data {
             if let Ok(g) = lock.read() {
                 if let Some(first) = g.first() {
-                    timespec = extract_str(*first);
+                    timespec = extract_str(first);
                 }
             }
         }
@@ -2072,7 +2071,7 @@ pub fn mb_datetime_new(args: MbValue) -> MbValue {
             Some(v) => {
                 if let Some(n) = v.as_int() {
                     Ok(n)
-                } else if is_dict(*v) {
+                } else if is_dict(v) {
                     // Keyword arguments arrive as a trailing dict in mamba's
                     // current call lowering. Ignore unsupported kwargs here
                     // instead of treating that dict as a bad positional field.
@@ -2122,18 +2121,17 @@ pub fn mb_datetime_new(args: MbValue) -> MbValue {
     };
     let mut tzinfo = items
         .get(7)
-        .copied()
         .filter(|v| !v.is_none() && !is_dict(*v))
         .unwrap_or_else(MbValue::none);
-    for v in &items {
-        if is_dict(*v) {
-            if let Some(f) = kwarg_get(*v, "fold").and_then(|x| x.as_int()) {
+    for v in items.iter() {
+        if is_dict(v) {
+            if let Some(f) = kwarg_get(v, "fold").and_then(|x| x.as_int()) {
                 fold = f;
             }
-            if let Some(m) = kwarg_get(*v, "microsecond").and_then(|x| x.as_int()) {
+            if let Some(m) = kwarg_get(v, "microsecond").and_then(|x| x.as_int()) {
                 micro = m;
             }
-            if let Some(tz) = kwarg_get(*v, "tzinfo") {
+            if let Some(tz) = kwarg_get(v, "tzinfo") {
                 if !tz.is_none() {
                     tzinfo = tz;
                 }
@@ -2204,7 +2202,7 @@ pub fn mb_timedelta_new(args: MbValue) -> MbValue {
     let items = match args.as_ptr() {
         Some(ptr) => unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().iter().copied().collect::<Vec<_>>()
+                lock.read().unwrap().to_vec()
             } else {
                 return MbValue::none();
             }

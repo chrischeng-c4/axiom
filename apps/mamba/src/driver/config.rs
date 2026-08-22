@@ -9,6 +9,7 @@ pub struct CompilerConfig {
     pub opt_level: OptLevel,
     /// Optional project-mode configuration loaded from `mamba.toml`.
     pub project_config: Option<MambaConfig>,
+    pub optimize: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +27,7 @@ pub enum EmitMode {
     Mir,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OptLevel {
     O0,
     O1,
@@ -41,6 +42,7 @@ impl Default for CompilerConfig {
             emit: None,
             opt_level: OptLevel::O0,
             project_config: None,
+            optimize: true,
         }
     }
 }

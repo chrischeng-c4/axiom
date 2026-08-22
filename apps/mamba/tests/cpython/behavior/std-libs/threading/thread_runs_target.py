@@ -17,7 +17,7 @@
 """threading.Thread: a Thread runs its target function and the side effect is visible after join()"""
 import threading
 
-_result = []
+_result: list[int] = []
 
 def _worker():
     _result.append(42)

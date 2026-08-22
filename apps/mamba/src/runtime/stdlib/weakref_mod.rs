@@ -314,22 +314,16 @@ fn class_ref_target_name(wref: MbValue) -> Option<String> {
 }
 
 fn class_ref_has_live_global(target: MbValue, target_name: &str) -> bool {
-    super::super::closure::snapshot_global_id_namespace()
-        .values()
-        .copied()
-        .any(|value| {
-            if value.to_bits() == target.to_bits() {
-                return true;
-            }
-            super::super::class::resolve_class_name(value).as_deref() == Some(target_name)
-        })
+    super::super::closure::global_id_namespace_any(|value| {
+        if value.to_bits() == target.to_bits() {
+            return true;
+        }
+        super::super::class::resolve_class_name(value).as_deref() == Some(target_name)
+    })
 }
 
 fn value_has_live_global(target: MbValue) -> bool {
-    super::super::closure::snapshot_global_id_namespace()
-        .values()
-        .copied()
-        .any(|value| value.to_bits() == target.to_bits())
+    super::super::closure::global_id_namespace_any(|value| value.to_bits() == target.to_bits())
 }
 
 pub(crate) fn expire_unbound_class_refs() {
@@ -735,6 +729,7 @@ unsafe extern "C" fn dispatch_ref(args_ptr: *const MbValue, nargs: usize) -> MbV
 }
 
 unsafe extern "C" fn dispatch_proxy(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_weakref_proxy(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -1328,6 +1323,7 @@ fn reject_non_weakreferenceable(obj: MbValue) -> bool {
     false
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in weakref_mod.rs is hand-written pending codegen support">
 pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
     if reject_non_weakreferenceable(obj) {
         return MbValue::none();
@@ -1360,8 +1356,14 @@ pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
         );
     }
     // `__callback__` is the public CPython attribute (None when no callback);
-    // `_callback` kept as a legacy alias.
+    // `_callback` kept as a legacy alias. Both keys store the same MbValue, so
+    // the second slot needs its own retain -- release_contained_values (rc.rs)
+    // walks every field independently on teardown and would otherwise release
+    // callback one time too many.
     fields.insert("__callback__".to_string(), callback);
+    unsafe {
+        super::super::rc::retain_if_ptr(callback);
+    }
     fields.insert("_callback".to_string(), callback);
     fields.insert(
         "__class__".to_string(),
@@ -1381,6 +1383,7 @@ pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
     registry_push(obj, wref);
     wref
 }
+// </HANDWRITE>
 
 /// weakref.deref(wref) -> referent or None (stub).
 ///
@@ -1392,6 +1395,7 @@ pub fn mb_weakref_deref(wref: MbValue) -> MbValue {
     reference_target(wref)
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in weakref_mod.rs is hand-written pending codegen support">
 /// weakref.proxy(obj, callback=None) -> proxy wrapper for referents whose
 /// observable contract needs proxy identity/dead-target checks; otherwise keep
 /// the legacy live-object alias carve-out.
@@ -1432,7 +1436,13 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
             "_global_tracked".to_string(),
             MbValue::from_bool(value_has_live_global(obj)),
         );
+        // Same two-key alias as mb_weakref_ref above: retain once more so the
+        // extra map slot has its own owning unit (rc.rs::release_contained_values
+        // releases every field independently on teardown).
         fields.insert("__callback__".to_string(), callback);
+        unsafe {
+            super::super::rc::retain_if_ptr(callback);
+        }
         fields.insert("_callback".to_string(), callback);
         fields.insert(
             "__class__".to_string(),
@@ -1462,6 +1472,7 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
     }
     obj
 }
+// </HANDWRITE>
 
 /// CPython-style repr for a `weakref.ref` (ReferenceType) instance:
 ///   `<weakref at 0xADDR; to 'CLASS' at 0xADDR>`
@@ -1536,15 +1547,8 @@ fn referent_type_name(target: MbValue) -> String {
     "object".to_string()
 }
 
-fn weakref_entry_is_publicly_live(
-    wref: MbValue,
-    globals: &std::collections::HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
-) -> bool {
-    if !globals
-        .values()
-        .copied()
-        .any(|value| value.to_bits() == wref.to_bits())
-    {
+fn weakref_entry_is_publicly_live(wref: MbValue) -> bool {
+    if !super::super::closure::global_id_namespace_any(|value| value.to_bits() == wref.to_bits()) {
         return false;
     }
     let Some(ptr) = wref.as_ptr() else {
@@ -1572,7 +1576,6 @@ fn weakref_entry_is_publicly_live(
 
 fn live_registry_items(obj: MbValue) -> Vec<MbValue> {
     let key = referent_key(obj);
-    let globals = super::super::closure::snapshot_global_id_namespace();
     WEAKREF_REGISTRY.with(|r| {
         r.borrow()
             .get(&key)
@@ -1580,7 +1583,7 @@ fn live_registry_items(obj: MbValue) -> Vec<MbValue> {
                 items
                     .iter()
                     .copied()
-                    .filter(|wref| weakref_entry_is_publicly_live(*wref, &globals))
+                    .filter(|wref| weakref_entry_is_publicly_live(*wref))
                     .collect()
             })
             .unwrap_or_default()
@@ -1854,6 +1857,7 @@ fn register_weakref_classes() {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in weakref_mod.rs is hand-written pending codegen support">
 /// Register the weakref module.
 pub fn register() {
     register_weakref_classes();
@@ -1950,6 +1954,7 @@ pub fn register() {
     super::register_module("_weakref", c_api_attrs);
     super::register_module("weakref", attrs);
 }
+// </HANDWRITE>
 // HANDWRITE-END
 
 #[cfg(test)]

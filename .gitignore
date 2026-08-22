@@ -22,6 +22,23 @@
 # Tool-local runtime state such as GH device ids; process-local, never source.
 .local/
 
+# Per-run scratch left by dispatched agent workers and auditors
+# (ORIGINAL_REQUEST.md / BRIEFING.md / progress.md per run). Session state,
+# never source. Allow-list rather than deny-list: only agents/ and skills/ are
+# source here, and new scratch families keep appearing (worker_*, auditor_*, …),
+# so an exclusion list would silently go stale.
+.agents/*
+!.agents/agents/
+!.agents/skills/
+# Agents also drop the same scratch under a project dir when dispatched with a
+# project cwd; nothing under a nested .agents/ has ever been source.
+projects/*/.agents/
+
+# Alternate cargo target dirs used by dispatched dev agents so a subagent build
+# never clobbers the shared target/. Build output, never source — and large
+# enough (tens of GB) that an unguarded `git add -A` is a real hazard.
+.mamba-dev-target*/
+
 # keep's default data dir (WAL + snapshots) — written under the cwd when keep runs
 # without KEEP_DATA_DIR set (e.g. from the repo root in an ad-hoc run). Runtime
 # store, never source. e2e scripts point KEEP_DATA_DIR at /tmp; this catches strays.

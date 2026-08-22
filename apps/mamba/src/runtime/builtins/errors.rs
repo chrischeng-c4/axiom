@@ -35,7 +35,7 @@ pub(crate) fn value_type_name(val: MbValue) -> String {
                 ObjData::List(_) => "list",
                 ObjData::Dict(_) => "dict",
                 ObjData::Tuple(_) => "tuple",
-                ObjData::Instance { class_name, .. } if class_name == "__instance_dict_proxy__" => {
+                ObjData::Instance { class_name, .. } if class_name == "__instance_dict_proxy__" || class_name == "function.__dict__" => {
                     "dict"
                 }
                 ObjData::Set(_) => "set",

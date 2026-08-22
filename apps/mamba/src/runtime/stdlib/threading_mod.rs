@@ -50,8 +50,9 @@ use crate::runtime::rc::MbRwLock as RwLock;
 use rustc_hash::FxHashMap;
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, OnceLock};
+
 use std::thread::JoinHandle;
 
 // -- Variadic dispatchers --
@@ -86,6 +87,22 @@ macro_rules! disp_binary {
             )
         }
     };
+}
+
+macro_rules! disp_variadic {
+    ($disp:ident, $fn:path) => {
+        unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
+            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            $fn(a)
+        }
+    };
+}
+
+unsafe extern "C" fn dispatch_register_atexit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    super::atexit_mod::mb_atexit_register(a)
 }
 
 // Constructors / classes — Thread has a variadic dispatcher because the
@@ -165,7 +182,7 @@ unsafe extern "C" fn d_thread(args_ptr: *const MbValue, nargs: usize) -> MbValue
 disp_nullary!(d_lock, mb_threading_lock);
 disp_nullary!(d_rlock, mb_threading_rlock);
 disp_nullary!(d_event, mb_threading_event);
-disp_nullary!(d_condition, mb_threading_condition);
+disp_variadic!(d_condition, d_condition_impl);
 disp_unary!(d_semaphore, mb_threading_semaphore);
 disp_unary!(d_bounded_semaphore, mb_threading_bounded_semaphore);
 disp_unary!(d_barrier, mb_threading_barrier);
@@ -213,6 +230,11 @@ pub fn register() {
         ("Thread", d_thread as usize),
         ("Lock", d_lock as usize),
         ("RLock", d_rlock as usize),
+        ("_PyRLock", d_rlock as usize),
+        ("_CRLock", d_rlock as usize),
+        ("_register_atexit", dispatch_register_atexit as usize),
+        ("_main_thread", d_main_thread as usize),
+        ("_shutdown", d_setprofile as usize),
         ("Event", d_event as usize),
         ("Condition", d_condition as usize),
         ("Semaphore", d_semaphore as usize),
@@ -290,11 +312,11 @@ pub fn register() {
     // Exception sentinels — modeled as Instance with __name__ / __module__.
     attrs.insert(
         "BrokenBarrierError".to_string(),
-        make_exception_sentinel("BrokenBarrierError"),
+        make_exception_class("BrokenBarrierError"),
     );
     attrs.insert(
         "ThreadError".to_string(),
-        make_exception_sentinel("ThreadError"),
+        make_exception_class("ThreadError"),
     );
     // ExceptHookArgs — namedtuple-like sentinel.
     attrs.insert(
@@ -309,6 +331,60 @@ pub fn register() {
     attrs.insert("functools".to_string(), MbValue::none());
 
     super::register_module("threading", attrs);
+
+    // Patch `time.sleep` so concurrent worker threads release ACTIVE_EXEC_GUARD (THREAD_EXEC_MUTEX) while sleeping (#3231).
+    {
+        let addr = dispatch_threading_sleep as *const () as usize;
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+        let sleep_val = MbValue::from_func(addr);
+        let time_mod = super::super::module::mb_import(MbValue::from_ptr(MbObject::new_str("time".to_string())));
+        let key = MbValue::from_ptr(MbObject::new_str("sleep".to_string()));
+        super::super::class::mb_setattr(time_mod, key, sleep_val);
+    }
+}
+
+unsafe extern "C" fn dispatch_threading_sleep(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let secs = a.get(0).copied().unwrap_or_else(MbValue::none);
+    with_exec_guard_released(|| super::time_mod::mb_time_sleep(secs))
+}
+
+fn make_exception_class(class_name: &str) -> MbValue {
+    let mut f = FxHashMap::default();
+    let slot_sentinel = || MbValue::from_ptr(MbObject::new_str(String::new()));
+    f.insert("__cause__".to_string(), slot_sentinel());
+    f.insert("__context__".to_string(), slot_sentinel());
+    f.insert(
+        "__suppress_context__".to_string(),
+        MbValue::from_bool(false),
+    );
+    f.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+    );
+    f.insert(
+        "__module__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("threading".to_string())),
+    );
+    super::super::class::mb_class_register(
+        class_name,
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "type".to_string(),
+            fields: RwLock::new(f),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
 }
 
 fn make_exception_sentinel(name: &str) -> MbValue {
@@ -369,9 +445,68 @@ fn raise_runtime_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn raise_type_error_msg(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 // -- Thread-local state --
 
+pub static THREAD_EXEC_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub struct ThreadExecGuard {
+    _guard: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+impl ThreadExecGuard {
+    pub fn acquire() -> Self {
+        Self {
+            _guard: Some(THREAD_EXEC_MUTEX.lock().unwrap_or_else(|e| e.into_inner())),
+        }
+    }
+
+    pub fn release(&mut self) {
+        self._guard.take();
+    }
+
+    pub fn reacquire(&mut self) {
+        if self._guard.is_none() {
+            self._guard = Some(THREAD_EXEC_MUTEX.lock().unwrap_or_else(|e| e.into_inner()));
+        }
+    }
+}
+
+/// Run a blocking closure with `ACTIVE_EXEC_GUARD` (the GIL) released,
+/// reacquiring it after the closure completes.
+fn with_exec_guard_released<T>(f: impl FnOnce() -> T) -> T {
+    ACTIVE_EXEC_GUARD.with(|g| {
+        if let Some(ref mut guard) = *g.borrow_mut() {
+            guard.release();
+        }
+    });
+    let res = f();
+    ACTIVE_EXEC_GUARD.with(|g| {
+        if let Some(ref mut guard) = *g.borrow_mut() {
+            guard.reacquire();
+        }
+    });
+    res
+}
+
 thread_local! {
+    pub static ACTIVE_EXEC_GUARD: std::cell::RefCell<Option<ThreadExecGuard>> =
+        const { std::cell::RefCell::new(None) };
     static THREAD_NAME: Cell<Option<String>> = const { Cell::new(None) };
     static PROFILE_FN: Cell<MbValue> = Cell::new(MbValue::none());
     static TRACE_FN: Cell<MbValue> = Cell::new(MbValue::none());
@@ -410,13 +545,12 @@ static THREAD_HANDLES: OnceLock<
     Mutex<
         HashMap<
             u64,
-            JoinHandle<(
-                HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
+            JoinHandle<
                 HashMap<
                     super::super::closure::ScopedSymbolKey,
-                    super::super::closure::ActiveCellSnapshot,
+                    MbValue,
                 >,
-            )>,
+            >,
         >,
     >,
 > = OnceLock::new();
@@ -424,13 +558,12 @@ static THREAD_HANDLES: OnceLock<
 fn thread_handles() -> &'static Mutex<
     HashMap<
         u64,
-        JoinHandle<(
-            HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
+        JoinHandle<
             HashMap<
                 super::super::closure::ScopedSymbolKey,
-                super::super::closure::ActiveCellSnapshot,
+                MbValue,
             >,
-        )>,
+        >,
     >,
 > {
     THREAD_HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -742,34 +875,48 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                 if !target.is_none() || call_run_override {
                     snapshot_excepthook_for_thread(thread);
                     let locals_snapshot = snapshot_locals();
-                    let globals_snapshot = super::super::closure::snapshot_global_id_namespace();
                     let active_cells_snapshot = super::super::closure::snapshot_active_cells();
                     let class_snapshot = super::super::class::snapshot_thread_class_state();
                     super::super::rc::retain_if_ptr(thread);
                     super::super::rc::retain_if_ptr(target);
                     super::super::rc::retain_if_ptr(args);
                     super::super::rc::retain_if_ptr(kwargs);
+                    let spawn_gate = Arc::new((Mutex::new(false), Condvar::new()));
+                    let spawn_gate_worker = Arc::clone(&spawn_gate);
                     let handle = std::thread::spawn(move || {
+                        {
+                            let (lock, cvar) = &*spawn_gate_worker;
+                            let mut ready = lock.lock().unwrap();
+                            *ready = true;
+                            cvar.notify_all();
+                        }
                         clear_locals(&locals_snapshot);
-                        let worker_globals = run_thread_target(
+                        let worker_cells = run_thread_target(
                             thread,
                             ident,
                             target,
                             args,
                             kwargs,
                             call_run_override,
-                            globals_snapshot,
                             active_cells_snapshot,
                             class_snapshot,
                         );
                         restore_locals(locals_snapshot);
                         release_thread_target_values(thread, target, args, kwargs);
-                        worker_globals
+                        super::super::module::preserve_module_jit_backends();
+                        worker_cells
                     });
                     thread_handles()
                         .lock()
                         .unwrap()
                         .insert(thread.to_bits(), handle);
+                    {
+                        let (lock, cvar) = &*spawn_gate;
+                        let mut ready = lock.lock().unwrap();
+                        while !*ready {
+                            ready = cvar.wait(ready).unwrap();
+                        }
+                    }
                 }
             } else if let ObjData::Dict(ref lock) = (*ptr).data {
                 let (target, args, kwargs, ident) = {
@@ -833,8 +980,8 @@ pub fn mb_threading_thread_join(thread: MbValue) -> MbValue {
                 }
                 let handle = thread_handles().lock().unwrap().remove(&thread.to_bits());
                 if let Some(handle) = handle {
-                    if let Ok((worker_globals, worker_cells)) = handle.join() {
-                        super::super::closure::merge_global_id_namespace(&worker_globals);
+                    let join_res = with_exec_guard_released(|| handle.join());
+                    if let Ok(worker_cells) = join_res {
                         super::super::closure::merge_active_cells(&worker_cells);
                     }
                 }
@@ -849,6 +996,74 @@ pub fn mb_threading_thread_join(thread: MbValue) -> MbValue {
         }
     }
     MbValue::none()
+}
+
+fn is_daemon(t: MbValue) -> bool {
+    t.as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("daemon")
+                    .map(|v| super::super::builtins::mb_bool(*v).as_bool().unwrap_or(false))
+                    .unwrap_or(false)
+            } else if let ObjData::Dict(ref lock) = (*p).data {
+                lock.read()
+                    .unwrap()
+                    .get("daemon")
+                    .map(|v| super::super::builtins::mb_bool(*v).as_bool().unwrap_or(false))
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false)
+}
+
+fn thread_ident(t: MbValue) -> i64 {
+    t.as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("ident")
+                    .and_then(|v| v.as_int())
+                    .unwrap_or(i64::MAX)
+            } else if let ObjData::Dict(ref lock) = (*p).data {
+                lock.read()
+                    .unwrap()
+                    .get("ident")
+                    .and_then(|v| v.as_int())
+                    .unwrap_or(i64::MAX)
+            } else {
+                i64::MAX
+            }
+        })
+        .unwrap_or(i64::MAX)
+}
+
+/// Join all live non-daemon threads before process exit (#3231).
+pub fn join_non_daemon_threads() {
+    loop {
+        let candidate = {
+            let map = thread_handles().lock().unwrap();
+            let mut keys: Vec<u64> = map
+                .keys()
+                .copied()
+                .filter(|&bits| !is_daemon(MbValue::from_bits(bits)))
+                .collect();
+            keys.sort_by_key(|&bits| thread_ident(MbValue::from_bits(bits)));
+            keys.first().copied()
+        };
+        match candidate {
+            Some(bits) => {
+                mb_threading_thread_join(MbValue::from_bits(bits));
+            }
+            None => break,
+        }
+    }
 }
 
 /// Thread.is_alive() bound dispatcher — reads the `alive` field.
@@ -881,60 +1096,203 @@ pub fn mb_threading_lock() -> MbValue {
 /// could both believe they held the same lock — the compound `counter[0] +=
 /// 1` critical section then raced for real under genuinely parallel
 /// `Thread.start()` workers).
-static LOCK_STATES: OnceLock<Mutex<HashMap<usize, Arc<(Mutex<bool>, Condvar)>>>> = OnceLock::new();
+struct LockInner {
+    count: usize,
+    owner: Option<i64>,
+}
 
-fn lock_state_for(ptr: usize) -> Arc<(Mutex<bool>, Condvar)> {
+struct LockState {
+    mutex: Mutex<LockInner>,
+    condvar: Condvar,
+}
+
+static LOCK_STATES: OnceLock<Mutex<HashMap<usize, Arc<LockState>>>> = OnceLock::new();
+
+fn lock_state_for(ptr: usize) -> Arc<LockState> {
     LOCK_STATES
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .unwrap()
         .entry(ptr)
-        .or_insert_with(|| Arc::new((Mutex::new(false), Condvar::new())))
+        .or_insert_with(|| {
+            Arc::new(LockState {
+                mutex: Mutex::new(LockInner {
+                    count: 0,
+                    owner: None,
+                }),
+                condvar: Condvar::new(),
+            })
+        })
         .clone()
 }
 
-pub fn mb_threading_lock_acquire(lock: MbValue) -> MbValue {
+fn update_lock_instance_fields(lock: MbValue, locked: bool, count: usize) {
     if let Some(ptr) = lock.as_ptr() {
-        let state = lock_state_for(ptr as usize);
-        let (mutex, condvar) = &*state;
-        let mut held = mutex.lock().unwrap();
-        while *held {
-            held = condvar.wait(held).unwrap();
-        }
-        *held = true;
-        drop(held);
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut f = fields.write().unwrap();
-                f.insert("locked".into(), MbValue::from_bool(true));
+                f.insert("locked".into(), MbValue::from_bool(locked));
+                f.insert("count".into(), MbValue::from_int(count as i64));
             }
         }
     }
-    MbValue::from_bool(true)
+}
+
+pub fn mb_threading_lock_acquire(lock: MbValue) -> MbValue {
+    mb_threading_lock_acquire_with_args(lock, None, None)
+}
+
+pub fn mb_threading_lock_acquire_with_args(
+    lock: MbValue,
+    blocking: Option<MbValue>,
+    timeout: Option<MbValue>,
+) -> MbValue {
+    let is_blocking = blocking.map(|b| b.as_bool().unwrap_or(true)).unwrap_or(true);
+    let timeout_sec = timeout.and_then(|t| {
+        if t.is_none() {
+            None
+        } else {
+            t.as_float().or_else(|| t.as_int().map(|i| i as f64))
+        }
+    });
+    let has_timeout = timeout_sec.map(|s| s >= 0.0).unwrap_or(false);
+
+    if !is_blocking && has_timeout {
+        return raise_value_error("can't specify timeout for non-blocking acquire");
+    }
+
+    let ptr = match lock.as_ptr() {
+        Some(p) => p,
+        None => return MbValue::from_bool(true),
+    };
+
+    let is_rlock = unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            class_name == "RLock"
+        } else {
+            false
+        }
+    };
+
+    let current_thread = CURRENT_IDENT.with(|c| c.get());
+    let state = lock_state_for(ptr as usize);
+
+    if !is_blocking {
+        let mut inner = state.mutex.lock().unwrap();
+        if is_rlock && inner.count > 0 && inner.owner == Some(current_thread) {
+            inner.count += 1;
+            let count = inner.count;
+            drop(inner);
+            update_lock_instance_fields(lock, true, count);
+            return MbValue::from_bool(true);
+        } else if inner.count == 0 {
+            inner.count = 1;
+            inner.owner = Some(current_thread);
+            let count = inner.count;
+            drop(inner);
+            update_lock_instance_fields(lock, true, count);
+            return MbValue::from_bool(true);
+        } else {
+            return MbValue::from_bool(false);
+        }
+    }
+
+    let (acquired, final_count) = with_exec_guard_released(|| {
+        let mut inner = state.mutex.lock().unwrap();
+
+        if is_rlock && inner.count > 0 && inner.owner == Some(current_thread) {
+            inner.count += 1;
+            return (true, inner.count);
+        }
+
+        match timeout_sec {
+            None => {
+                while inner.count > 0 {
+                    inner = state.condvar.wait(inner).unwrap();
+                }
+                inner.count = 1;
+                inner.owner = Some(current_thread);
+                (true, 1)
+            }
+            Some(sec) => {
+                if sec <= 0.0 {
+                    if inner.count == 0 {
+                        inner.count = 1;
+                        inner.owner = Some(current_thread);
+                        (true, 1)
+                    } else {
+                        (false, inner.count)
+                    }
+                } else {
+                    let dur = std::time::Duration::from_secs_f64(sec);
+                    let deadline = std::time::Instant::now() + dur;
+                    while inner.count > 0 {
+                        let now = std::time::Instant::now();
+                        if now >= deadline {
+                            break;
+                        }
+                        let remaining = deadline - now;
+                        let (g, _) = state.condvar.wait_timeout(inner, remaining).unwrap();
+                        inner = g;
+                    }
+                    if inner.count == 0 {
+                        inner.count = 1;
+                        inner.owner = Some(current_thread);
+                        (true, 1)
+                    } else {
+                        (false, inner.count)
+                    }
+                }
+            }
+        }
+    });
+
+    if acquired {
+        update_lock_instance_fields(lock, true, final_count);
+        MbValue::from_bool(true)
+    } else {
+        MbValue::from_bool(false)
+    }
 }
 
 pub fn mb_threading_lock_release(lock: MbValue) -> MbValue {
-    if let Some(ptr) = lock.as_ptr() {
-        let state = lock_state_for(ptr as usize);
-        let (mutex, condvar) = &*state;
-        // CPython raises RuntimeError when releasing a lock that is not held.
-        // The real Mutex-backed `held` flag (not the `"locked"` field mirror)
-        // is the source of truth so this check stays race-free under
-        // concurrent acquire/release.
-        let mut held = mutex.lock().unwrap();
-        if !*held {
-            return raise_runtime_error("release unlocked lock");
+    let ptr = match lock.as_ptr() {
+        Some(p) => p,
+        None => return MbValue::none(),
+    };
+
+    let is_rlock = unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            class_name == "RLock"
+        } else {
+            false
         }
-        *held = false;
-        drop(held);
-        condvar.notify_one();
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let mut f = fields.write().unwrap();
-                f.insert("locked".into(), MbValue::from_bool(false));
-            }
-        }
+    };
+
+    let current_thread = CURRENT_IDENT.with(|c| c.get());
+    let state = lock_state_for(ptr as usize);
+    let mut inner = state.mutex.lock().unwrap();
+
+    if inner.count == 0 {
+        return raise_runtime_error("release unlocked lock");
     }
+
+    if is_rlock && inner.owner != Some(current_thread) {
+        return raise_runtime_error("cannot release un-acquired lock");
+    }
+
+    inner.count -= 1;
+    let new_count = inner.count;
+
+    if new_count == 0 {
+        inner.owner = None;
+        drop(inner);
+        state.condvar.notify_one();
+    } else {
+        drop(inner);
+    }
+
+    update_lock_instance_fields(lock, new_count > 0, new_count);
     MbValue::none()
 }
 
@@ -950,7 +1308,7 @@ pub fn mb_threading_lock_release(lock: MbValue) -> MbValue {
 /// Lock.__enter__(self) -> bool — acquires (no-op stub) and returns True, as
 /// CPython's `Lock.__enter__` returns the result of `acquire(True)`.
 extern "C" fn lock_cm_enter(self_v: MbValue) -> MbValue {
-    mb_threading_lock_acquire(self_v)
+    mb_threading_lock_acquire_with_args(self_v, None, None)
 }
 
 /// Lock.__exit__(self, exc_type, exc_value, tb) -> bool — releases and returns
@@ -975,12 +1333,57 @@ pub fn mb_threading_event() -> MbValue {
     make_instance("Event", f)
 }
 
+struct GlobalEvent {
+    mutex: Mutex<bool>,
+    condvar: Condvar,
+}
+
+static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
+static EVENTS: LazyLock<Mutex<HashMap<u64, Arc<GlobalEvent>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn get_or_create_event(event: MbValue) -> Option<(u64, Arc<GlobalEvent>)> {
+    let ptr = event.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let (existing_id, is_set_init) = {
+                let f = fields.read().unwrap();
+                let is_set = f.get("is_set").and_then(|v| v.as_bool()).unwrap_or(false);
+                let id = f.get("event_id").and_then(|v| v.as_int()).map(|i| i as u64);
+                (id, is_set)
+            };
+            let id = match existing_id {
+                Some(id) => id,
+                None => {
+                    let new_id = NEXT_EVENT_ID.fetch_add(1, Ordering::Relaxed);
+                    fields.write().unwrap().insert("event_id".into(), MbValue::from_int(new_id as i64));
+                    new_id
+                }
+            };
+            let mut map = EVENTS.lock().unwrap();
+            let entry = map.entry(id).or_insert_with(|| {
+                Arc::new(GlobalEvent {
+                    mutex: Mutex::new(is_set_init),
+                    condvar: Condvar::new(),
+                })
+            });
+            return Some((id, entry.clone()));
+        }
+    }
+    None
+}
+
 pub fn mb_threading_event_set(event: MbValue) -> MbValue {
-    if let Some(ptr) = event.as_ptr() {
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let mut f = fields.write().unwrap();
-                f.insert("is_set".into(), MbValue::from_bool(true));
+    if let Some((_, global_event)) = get_or_create_event(event) {
+        let mut set_guard = global_event.mutex.lock().unwrap();
+        *set_guard = true;
+        drop(set_guard);
+        global_event.condvar.notify_all();
+        if let Some(ptr) = event.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields.write().unwrap().insert("is_set".into(), MbValue::from_bool(true));
+                }
             }
         }
     }
@@ -988,11 +1391,14 @@ pub fn mb_threading_event_set(event: MbValue) -> MbValue {
 }
 
 pub fn mb_threading_event_clear(event: MbValue) -> MbValue {
-    if let Some(ptr) = event.as_ptr() {
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let mut f = fields.write().unwrap();
-                f.insert("is_set".into(), MbValue::from_bool(false));
+    if let Some((_, global_event)) = get_or_create_event(event) {
+        let mut set_guard = global_event.mutex.lock().unwrap();
+        *set_guard = false;
+        if let Some(ptr) = event.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields.write().unwrap().insert("is_set".into(), MbValue::from_bool(false));
+                }
             }
         }
     }
@@ -1000,26 +1406,420 @@ pub fn mb_threading_event_clear(event: MbValue) -> MbValue {
 }
 
 pub fn mb_threading_event_is_set(event: MbValue) -> MbValue {
-    if let Some(ptr) = event.as_ptr() {
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let f = fields.read().unwrap();
-                return f
-                    .get("is_set")
-                    .copied()
-                    .unwrap_or(MbValue::from_bool(false));
-            }
-        }
+    if let Some((_, global_event)) = get_or_create_event(event) {
+        let set_guard = global_event.mutex.lock().unwrap();
+        return MbValue::from_bool(*set_guard);
     }
     MbValue::from_bool(false)
 }
 
-/// threading.Condition(lock=None) -> Instance stub
-pub fn mb_threading_condition() -> MbValue {
+pub fn mb_threading_event_wait(event: MbValue, timeout: Option<MbValue>) -> MbValue {
+    let (_, global_event) = match get_or_create_event(event) {
+        Some(e) => e,
+        None => return MbValue::from_bool(false),
+    };
+
+    let timeout_sec = timeout.and_then(|t| {
+        if t.is_none() {
+            None
+        } else {
+            t.as_float().or_else(|| t.as_int().map(|i| i as f64))
+        }
+    });
+
+    let res = with_exec_guard_released(|| {
+        let mut set_guard = global_event.mutex.lock().unwrap();
+        if *set_guard {
+            return true;
+        }
+        match timeout_sec {
+            None => {
+                while !*set_guard {
+                    set_guard = global_event.condvar.wait(set_guard).unwrap();
+                }
+                *set_guard
+            }
+            Some(sec) => {
+                if sec <= 0.0 {
+                    return *set_guard;
+                }
+                let dur = std::time::Duration::from_secs_f64(sec);
+                let deadline = std::time::Instant::now() + dur;
+                while !*set_guard {
+                    let now = std::time::Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    let remaining = deadline - now;
+                    let (g, _) = global_event.condvar.wait_timeout(set_guard, remaining).unwrap();
+                    set_guard = g;
+                }
+                *set_guard
+            }
+        }
+    });
+    MbValue::from_bool(res)
+}
+
+fn is_lock_like(v: MbValue) -> bool {
+    if v.is_none() {
+        return true;
+    }
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "Lock" || class_name == "RLock" {
+                    return true;
+                }
+            }
+        }
+    }
+    let acq = MbValue::from_ptr(MbObject::new_str("acquire".to_string()));
+    let rel = MbValue::from_ptr(MbObject::new_str("release".to_string()));
+    super::super::class::mb_hasattr(v, acq).as_bool() == Some(true)
+        && super::super::class::mb_hasattr(v, rel).as_bool() == Some(true)
+}
+
+fn d_condition_impl(args: &[MbValue]) -> MbValue {
+    let mut lock = None;
+    for &a in args {
+        let is_d = a
+            .as_ptr()
+            .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if is_d {
+            let sentinel = MbValue::from_bits(u64::MAX);
+            let v = super::super::dict_ops::mb_dict_get(
+                a,
+                MbValue::from_ptr(MbObject::new_str("lock".to_string())),
+                sentinel,
+            );
+            if v.to_bits() != sentinel.to_bits() {
+                lock = Some(v);
+            }
+        } else if lock.is_none() {
+            lock = Some(a);
+        }
+    }
+    if let Some(l) = lock {
+        if !is_lock_like(l) {
+            return raise_type_error_msg("lock must be a Lock or RLock object or None");
+        }
+    }
+    mb_threading_condition(lock)
+}
+
+struct GlobalCondition {
+    mutex: Mutex<u64>,
+    condvar: Condvar,
+}
+
+static NEXT_CONDITION_ID: AtomicU64 = AtomicU64::new(1);
+static CONDITIONS: LazyLock<Mutex<HashMap<u64, Arc<GlobalCondition>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn get_or_create_condition(cond: MbValue) -> Option<(u64, Arc<GlobalCondition>)> {
+    let ptr = cond.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let existing_id = {
+                let f = fields.read().unwrap();
+                f.get("condition_id").and_then(|v| v.as_int()).map(|i| i as u64)
+            };
+            let id = match existing_id {
+                Some(id) => id,
+                None => {
+                    let new_id = NEXT_CONDITION_ID.fetch_add(1, Ordering::Relaxed);
+                    fields.write().unwrap().insert("condition_id".into(), MbValue::from_int(new_id as i64));
+                    new_id
+                }
+            };
+            let mut map = CONDITIONS.lock().unwrap();
+            let entry = map.entry(id).or_insert_with(|| {
+                Arc::new(GlobalCondition {
+                    mutex: Mutex::new(0),
+                    condvar: Condvar::new(),
+                })
+            });
+            return Some((id, entry.clone()));
+        }
+    }
+    None
+}
+
+fn get_condition_lock(cond: MbValue) -> Option<MbValue> {
+    if let Some(ptr) = cond.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let f = fields.read().unwrap();
+                return f.get("lock").copied();
+            }
+        }
+    }
+    None
+}
+
+fn is_lock_held(lock: MbValue) -> bool {
+    if let Some(ptr) = lock.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let f = fields.read().unwrap();
+                if let Some(locked) = f.get("locked").and_then(|v| v.as_bool()) {
+                    return locked;
+                }
+            }
+        }
+        let state = lock_state_for(ptr as usize);
+        return state.mutex.lock().unwrap().count > 0;
+    }
+    false
+}
+
+fn acquire_lock_obj(lock: MbValue) -> MbValue {
+    if let Some(ptr) = lock.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "Lock" || class_name == "RLock" {
+                    return mb_threading_lock_acquire_with_args(lock, None, None);
+                }
+            }
+        }
+    }
+    let acq_name = MbValue::from_ptr(MbObject::new_str("acquire".to_string()));
+    let empty_args = MbValue::from_ptr(MbObject::new_list_borrowed(vec![]));
+    let res = super::super::class::mb_call_method(lock, acq_name, empty_args);
+    unsafe {
+        super::super::rc::release_if_ptr(acq_name);
+        super::super::rc::release_if_ptr(empty_args);
+    }
+    res
+}
+
+fn release_lock_obj(lock: MbValue) -> MbValue {
+    if let Some(ptr) = lock.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "Lock" || class_name == "RLock" {
+                    return mb_threading_lock_release(lock);
+                }
+            }
+        }
+    }
+    let rel_name = MbValue::from_ptr(MbObject::new_str("release".to_string()));
+    let empty_args = MbValue::from_ptr(MbObject::new_list_borrowed(vec![]));
+    let res = super::super::class::mb_call_method(lock, rel_name, empty_args);
+    unsafe {
+        super::super::rc::release_if_ptr(rel_name);
+        super::super::rc::release_if_ptr(empty_args);
+    }
+    res
+}
+
+/// threading.Condition(lock=None) -> Instance
+pub fn mb_threading_condition(lock: Option<MbValue>) -> MbValue {
+    let lock_obj = match lock {
+        Some(l) if !l.is_none() => l,
+        _ => mb_threading_rlock(),
+    };
     let mut f = FxHashMap::default();
+    f.insert("lock".into(), lock_obj);
     f.insert("locked".into(), MbValue::from_bool(false));
     f.insert("waiters".into(), MbValue::from_int(0));
     make_instance("Condition", f)
+}
+
+pub fn mb_threading_condition_acquire(cond: MbValue) -> MbValue {
+    if let Some(lock) = get_condition_lock(cond) {
+        acquire_lock_obj(lock)
+    } else {
+        MbValue::from_bool(false)
+    }
+}
+
+pub fn mb_threading_condition_release(cond: MbValue) -> MbValue {
+    if let Some(lock) = get_condition_lock(cond) {
+        release_lock_obj(lock)
+    } else {
+        MbValue::none()
+    }
+}
+
+pub fn mb_threading_condition_wait(cond: MbValue, timeout: Option<MbValue>) -> MbValue {
+    let lock_obj = match get_condition_lock(cond) {
+        Some(l) => l,
+        None => return MbValue::from_bool(false),
+    };
+
+    if !is_lock_held(lock_obj) {
+        return raise_runtime_error("cannot wait on un-acquired lock");
+    }
+
+    let (_, global_cond) = match get_or_create_condition(cond) {
+        Some(c) => c,
+        None => return MbValue::from_bool(false),
+    };
+
+    let my_gen = *global_cond.mutex.lock().unwrap();
+
+    release_lock_obj(lock_obj);
+
+    let timeout_sec = timeout.and_then(|t| {
+        if t.is_none() {
+            None
+        } else {
+            t.as_float().or_else(|| t.as_int().map(|i| i as f64))
+        }
+    });
+
+    let woken = with_exec_guard_released(|| {
+        let mut gen_guard = global_cond.mutex.lock().unwrap();
+        match timeout_sec {
+            None => {
+                while *gen_guard == my_gen {
+                    gen_guard = global_cond.condvar.wait(gen_guard).unwrap();
+                }
+                true
+            }
+            Some(sec) => {
+                if sec <= 0.0 {
+                    *gen_guard > my_gen
+                } else {
+                    let dur = std::time::Duration::from_secs_f64(sec);
+                    let deadline = std::time::Instant::now() + dur;
+                    while *gen_guard == my_gen {
+                        let now = std::time::Instant::now();
+                        if now >= deadline {
+                            break;
+                        }
+                        let remaining = deadline - now;
+                        let (g, _) = global_cond.condvar.wait_timeout(gen_guard, remaining).unwrap();
+                        gen_guard = g;
+                    }
+                    *gen_guard > my_gen
+                }
+            }
+        }
+    });
+
+    acquire_lock_obj(lock_obj);
+
+    MbValue::from_bool(woken)
+}
+
+pub fn mb_threading_condition_notify(cond: MbValue, n_val: Option<MbValue>) -> MbValue {
+    let lock_obj = match get_condition_lock(cond) {
+        Some(l) => l,
+        None => return MbValue::none(),
+    };
+
+    if !is_lock_held(lock_obj) {
+        return raise_runtime_error("cannot notify on un-acquired lock");
+    }
+
+    let (_, global_cond) = match get_or_create_condition(cond) {
+        Some(c) => c,
+        None => return MbValue::none(),
+    };
+
+    let n = n_val.and_then(|v| v.as_int()).unwrap_or(1).max(1) as u64;
+    {
+        let mut gen_guard = global_cond.mutex.lock().unwrap();
+        *gen_guard = gen_guard.wrapping_add(n);
+    }
+    global_cond.condvar.notify_all();
+
+    MbValue::none()
+}
+
+pub fn mb_threading_condition_notify_all(cond: MbValue) -> MbValue {
+    mb_threading_condition_notify(cond, None)
+}
+
+pub fn mb_threading_condition_wait_for(
+    cond: MbValue,
+    predicate: MbValue,
+    timeout: Option<MbValue>,
+) -> MbValue {
+    let timeout_sec = timeout.and_then(|t| {
+        if t.is_none() {
+            None
+        } else {
+            t.as_float().or_else(|| t.as_int().map(|i| i as f64))
+        }
+    });
+
+    let deadline = timeout_sec.map(|sec| std::time::Instant::now() + std::time::Duration::from_secs_f64(sec.max(0.0)));
+
+    let mut res = super::super::class::mb_call0(predicate);
+    while !res.as_bool().unwrap_or(false) {
+        let waittime = match deadline {
+            Some(dl) => {
+                let now = std::time::Instant::now();
+                if now >= dl {
+                    break;
+                }
+                Some(MbValue::from_float((dl - now).as_secs_f64()))
+            }
+            None => None,
+        };
+
+        mb_threading_condition_wait(cond, waittime);
+        res = super::super::class::mb_call0(predicate);
+    }
+    res
+}
+
+struct GlobalSemaphore {
+    mutex: Mutex<i64>,
+    condvar: Condvar,
+    bound: Option<i64>,
+}
+
+static NEXT_SEMAPHORE_ID: AtomicU64 = AtomicU64::new(1);
+static SEMAPHORES: LazyLock<Mutex<HashMap<u64, Arc<GlobalSemaphore>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn get_or_create_semaphore(sem: MbValue) -> Option<(u64, Arc<GlobalSemaphore>)> {
+    let ptr = sem.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let (existing_id, initial_val, bound_val) = {
+                let f = fields.read().unwrap();
+                let initial = f.get("value").and_then(|v| v.as_int()).unwrap_or(1);
+                let bound = f.get("bound").and_then(|v| v.as_int());
+                let id = f.get("semaphore_id").and_then(|v| v.as_int()).map(|i| i as u64);
+                (id, initial, bound)
+            };
+            let id = match existing_id {
+                Some(id) => id,
+                None => {
+                    let new_id = NEXT_SEMAPHORE_ID.fetch_add(1, Ordering::Relaxed);
+                    fields.write().unwrap().insert("semaphore_id".into(), MbValue::from_int(new_id as i64));
+                    new_id
+                }
+            };
+            let mut map = SEMAPHORES.lock().unwrap();
+            let entry = map.entry(id).or_insert_with(|| {
+                Arc::new(GlobalSemaphore {
+                    mutex: Mutex::new(initial_val),
+                    condvar: Condvar::new(),
+                    bound: bound_val,
+                })
+            });
+            return Some((id, entry.clone()));
+        }
+    }
+    None
+}
+
+fn update_semaphore_instance_value(sem: MbValue, val: i64) {
+    if let Some(ptr) = sem.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert("value".into(), MbValue::from_int(val));
+            }
+        }
+    }
 }
 
 /// threading.Semaphore(value=1) -> Instance stub
@@ -1041,69 +1841,291 @@ pub fn mb_threading_bounded_semaphore(value: MbValue) -> MbValue {
     make_instance("BoundedSemaphore", f)
 }
 
-/// threading.Barrier(parties) -> Instance stub
+pub fn mb_threading_semaphore_acquire(
+    sem: MbValue,
+    blocking: Option<MbValue>,
+    timeout: Option<MbValue>,
+) -> MbValue {
+    let is_blocking = blocking.map(|b| b.as_bool().unwrap_or(true)).unwrap_or(true);
+    let timeout_sec = timeout.and_then(|t| {
+        if t.is_none() {
+            None
+        } else {
+            t.as_float().or_else(|| t.as_int().map(|i| i as f64))
+        }
+    });
+    let has_timeout = timeout_sec.map(|s| s >= 0.0).unwrap_or(false);
+
+    if !is_blocking && has_timeout {
+        return raise_value_error("can't specify timeout for non-blocking acquire");
+    }
+
+    let (_, global_sem) = match get_or_create_semaphore(sem) {
+        Some(s) => s,
+        None => return MbValue::from_bool(false),
+    };
+
+    if !is_blocking {
+        let mut val_guard = global_sem.mutex.lock().unwrap();
+        if *val_guard > 0 {
+            *val_guard -= 1;
+            let new_val = *val_guard;
+            drop(val_guard);
+            update_semaphore_instance_value(sem, new_val);
+            return MbValue::from_bool(true);
+        } else {
+            return MbValue::from_bool(false);
+        }
+    }
+
+    let (acquired, new_val) = with_exec_guard_released(|| {
+        let mut val_guard = global_sem.mutex.lock().unwrap();
+        match timeout_sec {
+            None => {
+                while *val_guard == 0 {
+                    val_guard = global_sem.condvar.wait(val_guard).unwrap();
+                }
+                *val_guard -= 1;
+                (true, *val_guard)
+            }
+            Some(sec) => {
+                if sec <= 0.0 {
+                    if *val_guard > 0 {
+                        *val_guard -= 1;
+                        (true, *val_guard)
+                    } else {
+                        (false, *val_guard)
+                    }
+                } else {
+                    let dur = std::time::Duration::from_secs_f64(sec);
+                    let deadline = std::time::Instant::now() + dur;
+                    while *val_guard == 0 {
+                        let now = std::time::Instant::now();
+                        if now >= deadline {
+                            break;
+                        }
+                        let remaining = deadline - now;
+                        let (g, _) = global_sem.condvar.wait_timeout(val_guard, remaining).unwrap();
+                        val_guard = g;
+                    }
+                    if *val_guard > 0 {
+                        *val_guard -= 1;
+                        (true, *val_guard)
+                    } else {
+                        (false, *val_guard)
+                    }
+                }
+            }
+        }
+    });
+
+    if acquired {
+        update_semaphore_instance_value(sem, new_val);
+        MbValue::from_bool(true)
+    } else {
+        MbValue::from_bool(false)
+    }
+}
+
+pub fn mb_threading_semaphore_release(sem: MbValue, n_val: Option<MbValue>) -> MbValue {
+    let n = n_val.and_then(|v| v.as_int()).unwrap_or(1);
+    if n < 1 {
+        return raise_value_error("n must be >= 1");
+    }
+
+    let (_, global_sem) = match get_or_create_semaphore(sem) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
+
+    let mut val_guard = global_sem.mutex.lock().unwrap();
+    if let Some(b) = global_sem.bound {
+        if *val_guard + n > b {
+            return raise_value_error("Semaphore released too many times");
+        }
+    }
+
+    *val_guard += n;
+    let new_val = *val_guard;
+    drop(val_guard);
+
+    global_sem.condvar.notify_all();
+    update_semaphore_instance_value(sem, new_val);
+    MbValue::none()
+}
+
+struct BarrierState {
+    parties: usize,
+    count: usize,
+    generation: usize,
+    reset_generation: usize,
+    broken: bool,
+    aborted: bool,
+}
+
+struct GlobalBarrier {
+    mutex: Mutex<BarrierState>,
+    condvar: Condvar,
+}
+
+static NEXT_BARRIER_ID: AtomicU64 = AtomicU64::new(1);
+static BARRIERS: LazyLock<Mutex<HashMap<u64, Arc<GlobalBarrier>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn get_or_create_barrier(barrier: MbValue) -> Option<(u64, Arc<GlobalBarrier>)> {
+    let ptr = barrier.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let (existing_id, parties) = {
+                let f = fields.read().unwrap();
+                let parties = f.get("parties").and_then(|v| v.as_int()).unwrap_or(1).max(1) as usize;
+                let id = f.get("barrier_id").and_then(|v| v.as_int()).map(|i| i as u64);
+                (id, parties)
+            };
+            let id = match existing_id {
+                Some(id) => id,
+                None => {
+                    let new_id = NEXT_BARRIER_ID.fetch_add(1, Ordering::Relaxed);
+                    fields.write().unwrap().insert("barrier_id".into(), MbValue::from_int(new_id as i64));
+                    new_id
+                }
+            };
+            let mut map = BARRIERS.lock().unwrap();
+            let entry = map.entry(id).or_insert_with(|| {
+                Arc::new(GlobalBarrier {
+                    mutex: Mutex::new(BarrierState {
+                        parties,
+                        count: 0,
+                        generation: 0,
+                        reset_generation: 0,
+                        broken: false,
+                        aborted: false,
+                    }),
+                    condvar: Condvar::new(),
+                })
+            });
+            return Some((id, entry.clone()));
+        }
+    }
+    None
+}
+
+fn update_barrier_instance_fields(barrier: MbValue, n_waiting: usize, broken: bool) {
+    if let Some(ptr) = barrier.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut f = fields.write().unwrap();
+                f.insert("n_waiting".into(), MbValue::from_int(n_waiting as i64));
+                f.insert("broken".into(), MbValue::from_bool(broken));
+            }
+        }
+    }
+}
+
+/// threading.Barrier(parties) -> Instance
 pub fn mb_threading_barrier(parties: MbValue) -> MbValue {
-    let p = parties.as_int().unwrap_or(1);
+    let p = parties.as_int().unwrap_or(1).max(1) as usize;
+    let id = NEXT_BARRIER_ID.fetch_add(1, Ordering::Relaxed);
+    let global_barrier = Arc::new(GlobalBarrier {
+        mutex: Mutex::new(BarrierState {
+            parties: p,
+            count: 0,
+            generation: 0,
+            reset_generation: 0,
+            broken: false,
+            aborted: false,
+        }),
+        condvar: Condvar::new(),
+    });
+    BARRIERS.lock().unwrap().insert(id, global_barrier);
+
     let mut f = FxHashMap::default();
-    f.insert("parties".into(), MbValue::from_int(p));
+    f.insert("parties".into(), MbValue::from_int(p as i64));
     f.insert("n_waiting".into(), MbValue::from_int(0));
     f.insert("broken".into(), MbValue::from_bool(false));
+    f.insert("barrier_id".into(), MbValue::from_int(id as i64));
     make_instance("Barrier", f)
 }
 
-/// threading.Barrier.wait() -> int (the caller's arrival index).
-///
-/// A real rendezvous is impossible in the single-thread stub model (no other
-/// thread is ever blocked at the barrier), so this cannot truly synchronize. It
-/// returns the CPython-shaped arrival index 0..parties-1 by rotating an internal
-/// `n_waiting` counter, and never raises — enough to satisfy `b.wait()` call
-/// sites without an AttributeError.
-pub fn mb_threading_barrier_wait(barrier: MbValue) -> MbValue {
-    if let Some(ptr) = barrier.as_ptr() {
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let mut f = fields.write().unwrap();
-                let parties = f
-                    .get("parties")
-                    .and_then(|v| v.as_int())
-                    .unwrap_or(1)
-                    .max(1);
-                let n_waiting = f.get("n_waiting").and_then(|v| v.as_int()).unwrap_or(0);
-                let index = n_waiting % parties;
-                // Advance and wrap so successive callers cycle 0..parties-1,
-                // mirroring CPython's distinct arrival indices per cohort.
-                f.insert("n_waiting".into(), MbValue::from_int((index + 1) % parties));
-                return MbValue::from_int(index);
-            }
-        }
-    }
-    MbValue::from_int(0)
+fn raise_broken_barrier() -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("BrokenBarrierError".to_string())),
+        MbValue::from_ptr(MbObject::new_str("Barrier broken".to_string())),
+    );
+    MbValue::none()
 }
 
-/// threading.Barrier.reset() -> None — clears the waiting counter.
-pub fn mb_threading_barrier_reset(barrier: MbValue) -> MbValue {
-    if let Some(ptr) = barrier.as_ptr() {
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let mut f = fields.write().unwrap();
-                f.insert("n_waiting".into(), MbValue::from_int(0));
-                f.insert("broken".into(), MbValue::from_bool(false));
+/// threading.Barrier.wait() -> int (the caller's arrival index).
+pub fn mb_threading_barrier_wait(barrier: MbValue) -> MbValue {
+    let Some((_id, global_barrier)) = get_or_create_barrier(barrier) else {
+        return MbValue::from_int(0);
+    };
+
+    enum BarrierOutcome {
+        Arrived(i64),
+        Broken,
+    }
+
+    let (outcome, n_waiting, is_broken) = with_exec_guard_released(|| {
+        let mut state = global_barrier.mutex.lock().unwrap();
+
+        if state.broken {
+            return (BarrierOutcome::Broken, 0, true);
+        }
+
+        state.count += 1;
+        let parties = state.parties;
+
+        if state.count == parties {
+            state.count = 0;
+            state.generation = state.generation.wrapping_add(1);
+            global_barrier.condvar.notify_all();
+            (BarrierOutcome::Arrived(0), 0, false)
+        } else {
+            let index = parties - state.count;
+            let gen = state.generation;
+            while state.generation == gen && !state.broken {
+                state = global_barrier.condvar.wait(state).unwrap();
+            }
+            if state.broken || gen < state.reset_generation {
+                (BarrierOutcome::Broken, state.count, state.broken)
+            } else {
+                (BarrierOutcome::Arrived(index as i64), state.count, false)
             }
         }
+    });
+
+    update_barrier_instance_fields(barrier, n_waiting, is_broken);
+    match outcome {
+        BarrierOutcome::Arrived(idx) => MbValue::from_int(idx),
+        BarrierOutcome::Broken => raise_broken_barrier(),
     }
+}
+
+/// threading.Barrier.reset() -> None — clears waiting threads and resets barrier.
+pub fn mb_threading_barrier_reset(barrier: MbValue) -> MbValue {
+    if let Some((_id, global_barrier)) = get_or_create_barrier(barrier) {
+        let mut state = global_barrier.mutex.lock().unwrap();
+        state.broken = false;
+        state.aborted = false;
+        state.count = 0;
+        state.generation = state.generation.wrapping_add(1);
+        state.reset_generation = state.generation;
+        global_barrier.condvar.notify_all();
+    }
+    update_barrier_instance_fields(barrier, 0, false);
     MbValue::none()
 }
 
 /// threading.Barrier.abort() -> None — marks the barrier broken.
 pub fn mb_threading_barrier_abort(barrier: MbValue) -> MbValue {
-    if let Some(ptr) = barrier.as_ptr() {
-        unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let mut f = fields.write().unwrap();
-                f.insert("broken".into(), MbValue::from_bool(true));
-            }
-        }
+    if let Some((_id, global_barrier)) = get_or_create_barrier(barrier) {
+        let mut state = global_barrier.mutex.lock().unwrap();
+        state.broken = true;
+        state.aborted = true;
+        global_barrier.condvar.notify_all();
     }
+    update_barrier_instance_fields(barrier, 0, true);
     MbValue::none()
 }
 
@@ -1192,20 +2214,20 @@ fn run_thread_target(
     args: MbValue,
     kwargs: MbValue,
     call_run_override: bool,
-    globals_snapshot: HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
     active_cells_snapshot: HashMap<
         super::super::closure::ScopedSymbolKey,
-        super::super::closure::ActiveCellSnapshot,
+        MbValue,
     >,
     class_snapshot: super::super::class::ThreadClassState,
-) -> (
-    HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
-    HashMap<super::super::closure::ScopedSymbolKey, super::super::closure::ActiveCellSnapshot>,
-) {
+) -> HashMap<
+    super::super::closure::ScopedSymbolKey,
+    MbValue,
+> {
     ensure_worker_stdlib_registered();
-    let previous_globals = super::super::closure::replace_global_id_namespace(globals_snapshot);
+    let exec_guard = ThreadExecGuard::acquire();
+    ACTIVE_EXEC_GUARD.with(|g| *g.borrow_mut() = Some(exec_guard));
     let previous_cells = super::super::closure::replace_active_cells(active_cells_snapshot);
-    let previous_classes = super::super::class::replace_thread_class_state(class_snapshot);
+    let _previous_classes = super::super::class::replace_thread_class_state(class_snapshot);
     let prev_ident = CURRENT_IDENT.with(|c| c.get());
     let prev_obj = CURRENT_THREAD_OBJ.with(|c| c.get());
     CURRENT_IDENT.with(|c| c.set(ident));
@@ -1223,10 +2245,9 @@ fn run_thread_target(
     deliver_to_excepthook(thread);
     CURRENT_THREAD_OBJ.with(|c| c.set(prev_obj));
     CURRENT_IDENT.with(|c| c.set(prev_ident));
-    super::super::class::replace_thread_class_state(previous_classes);
-    let worker_globals = super::super::closure::replace_global_id_namespace(previous_globals);
-    let worker_cells = super::super::closure::replace_active_cells(previous_cells);
-    (worker_globals, worker_cells)
+    let res = super::super::closure::replace_active_cells(previous_cells);
+    ACTIVE_EXEC_GUARD.with(|g| g.borrow_mut().take());
+    res
 }
 
 fn thread_run_override_needed(thread: MbValue) -> bool {
@@ -1637,7 +2658,7 @@ mod tests {
             instance_field(lock, "locked").unwrap().as_bool(),
             Some(false)
         );
-        let acq = mb_threading_lock_acquire(lock);
+        let acq = mb_threading_lock_acquire_with_args(lock, None, None);
         assert_eq!(acq.as_bool(), Some(true));
         assert_eq!(
             instance_field(lock, "locked").unwrap().as_bool(),
@@ -1652,7 +2673,7 @@ mod tests {
 
     #[test]
     fn test_lock_acquire_null_noop() {
-        let r = mb_threading_lock_acquire(MbValue::none());
+        let r = mb_threading_lock_acquire_with_args(MbValue::none(), None, None);
         assert_eq!(r.as_bool(), Some(true));
     }
 
@@ -1706,7 +2727,7 @@ mod tests {
 
     #[test]
     fn test_condition_shape() {
-        let c = mb_threading_condition();
+        let c = mb_threading_condition(None);
         assert_eq!(instance_class(c).as_deref(), Some("Condition"));
         assert_eq!(instance_field(c, "locked").unwrap().as_bool(), Some(false));
         assert_eq!(instance_field(c, "waiters").unwrap().as_int(), Some(0));
@@ -1750,11 +2771,15 @@ mod tests {
     #[test]
     fn test_barrier_wait_returns_rotating_index() {
         let b = mb_threading_barrier(MbValue::from_int(3));
-        // Arrival indices cycle 0..parties-1 across successive callers.
-        assert_eq!(mb_threading_barrier_wait(b).as_int(), Some(0));
-        assert_eq!(mb_threading_barrier_wait(b).as_int(), Some(1));
-        assert_eq!(mb_threading_barrier_wait(b).as_int(), Some(2));
-        assert_eq!(mb_threading_barrier_wait(b).as_int(), Some(0));
+        let b1 = b;
+        let b2 = b;
+        let b3 = b;
+        let h1 = std::thread::spawn(move || mb_threading_barrier_wait(b1).as_int().unwrap());
+        let h2 = std::thread::spawn(move || mb_threading_barrier_wait(b2).as_int().unwrap());
+        let h3 = std::thread::spawn(move || mb_threading_barrier_wait(b3).as_int().unwrap());
+        let mut indices = vec![h1.join().unwrap(), h2.join().unwrap(), h3.join().unwrap()];
+        indices.sort();
+        assert_eq!(indices, vec![0, 1, 2]);
     }
 
     #[test]
@@ -1765,10 +2790,13 @@ mod tests {
     #[test]
     fn test_barrier_reset_clears_waiting() {
         let b = mb_threading_barrier(MbValue::from_int(2));
-        let _ = mb_threading_barrier_wait(b); // n_waiting -> 1
+        let b_clone = b;
+        let h = std::thread::spawn(move || mb_threading_barrier_wait(b_clone));
+        std::thread::sleep(std::time::Duration::from_millis(50));
         mb_threading_barrier_reset(b);
+        let _ = h.join();
         assert_eq!(instance_field(b, "n_waiting").unwrap().as_int(), Some(0));
-        assert_eq!(mb_threading_barrier_wait(b).as_int(), Some(0));
+        assert_eq!(instance_field(b, "broken").unwrap().as_bool(), Some(false));
     }
 
     #[test]
@@ -2380,6 +3408,20 @@ mod tests {
     fn test_make_exception_sentinel_shape() {
         let e = make_exception_sentinel("BrokenBarrierError");
         assert_eq!(instance_class(e).as_deref(), Some("BrokenBarrierError"));
+        assert_eq!(
+            get_str(instance_field(e, "__name__").unwrap()),
+            Some("BrokenBarrierError".to_string())
+        );
+        assert_eq!(
+            get_str(instance_field(e, "__module__").unwrap()),
+            Some("threading".to_string())
+        );
+    }
+
+    #[test]
+    fn test_make_exception_class_shape() {
+        let e = make_exception_class("BrokenBarrierError");
+        assert_eq!(instance_class(e).as_deref(), Some("type"));
         assert_eq!(
             get_str(instance_field(e, "__name__").unwrap()),
             Some("BrokenBarrierError".to_string())

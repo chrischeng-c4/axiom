@@ -452,7 +452,7 @@ pub fn mb_platform_parse_os_release(lines: MbValue) -> MbValue {
                     .read()
                     .unwrap()
                     .iter()
-                    .filter_map(|v| as_str_arg(*v))
+                    .filter_map(|v| as_str_arg(v))
                     .collect(),
                 ObjData::Tuple(items) => items.iter().filter_map(|v| as_str_arg(*v)).collect(),
                 _ => Vec::new(),
