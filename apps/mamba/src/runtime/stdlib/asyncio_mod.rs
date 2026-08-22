@@ -679,9 +679,8 @@ struct ThreadCallSpec {
     is_boxed_ret: bool,
     module_name: String,
     args: Vec<MbValue>,
-    globals: HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
     active_cells:
-        HashMap<super::super::closure::ScopedSymbolKey, super::super::closure::ActiveCellSnapshot>,
+        HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
 }
 
 fn extract_str_value(value: MbValue) -> Option<String> {
@@ -795,7 +794,6 @@ fn prepare_to_thread_call(func: MbValue, pos: &[MbValue], kw: MbValue) -> Option
         is_boxed_ret: super::super::module::is_boxed_return_func(raw_addr as u64),
         module_name: callable_module_name(func),
         args,
-        globals: super::super::closure::snapshot_global_id_namespace(),
         active_cells: super::super::closure::snapshot_active_cells(),
     })
 }
@@ -873,8 +871,11 @@ fn dispatch_thread_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: b
             _ => MbValue::none(),
         }
     };
+    let is_bool_ret = super::super::module::is_bool_return_func(raw_addr as u64);
     if is_boxed_ret {
         raw_result
+    } else if is_bool_ret {
+        super::super::builtins::mb_box_bool(raw_result.to_bits() as i64)
     } else {
         super::super::builtins::mb_box_int(raw_result.to_bits() as i64)
     }
@@ -891,13 +892,47 @@ fn store_future_exception(future: MbValue, exc: MbValue) {
     set_field(future, "_exception", exc);
     set_field(future, "_state", new_str("FINISHED"));
 }
+fn process_worker_outcome(future: MbValue, outcome: Result<MbValue, String>) {
+    match outcome {
+        Ok(result) => {
+            if super::super::exception::current_exception_type().is_some() {
+                let exc = super::super::exception::mb_get_exception();
+                store_future_exception(future, exc);
+                super::super::exception::mb_clear_exception();
+                unsafe {
+                    super::super::rc::release_if_ptr(exc);
+                }
+            } else {
+                store_future_result(future, result);
+                unsafe {
+                    super::super::rc::release_if_ptr(result);
+                }
+            }
+        }
+        Err(panic_msg) => {
+            let exc = super::super::exception::mb_runtime_error(&panic_msg);
+            store_future_exception(future, exc);
+            unsafe {
+                super::super::rc::release_if_ptr(exc);
+            }
+        }
+    }
+}
 
 fn spawn_to_thread_worker(future: MbValue, spec: ThreadCallSpec) {
     unsafe {
         super::super::rc::retain_if_ptr(future);
     }
     std::thread::spawn(move || {
-        super::super::closure::push_active_module_name(spec.module_name.clone());
+        let ThreadCallSpec {
+            raw_addr,
+            is_native,
+            is_boxed_ret,
+            module_name,
+            args,
+            active_cells,
+        } = spec;
+        super::super::closure::push_active_module_name(module_name);
         struct ModuleGuard;
         impl Drop for ModuleGuard {
             fn drop(&mut self) {
@@ -905,34 +940,29 @@ fn spawn_to_thread_worker(future: MbValue, spec: ThreadCallSpec) {
             }
         }
         let _module_guard = ModuleGuard;
-        let previous_globals = super::super::closure::replace_global_id_namespace(spec.globals);
-        let previous_cells = super::super::closure::replace_active_cells(spec.active_cells);
-        let result = if spec.is_native {
-            let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
-                unsafe { std::mem::transmute(spec.raw_addr) };
-            unsafe { f(spec.args.as_ptr(), spec.args.len()) }
-        } else {
-            dispatch_thread_jit_frame(spec.raw_addr, &spec.args, spec.is_boxed_ret)
+        let previous_cells = super::super::closure::replace_active_cells(active_cells);
+
+        let panic_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if is_native {
+                let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                    unsafe { std::mem::transmute(raw_addr) };
+                unsafe { f(args.as_ptr(), args.len()) }
+            } else {
+                dispatch_thread_jit_frame(raw_addr, &args, is_boxed_ret)
+            }
+        }));
+        let outcome = match panic_res {
+            Ok(val) => Ok(val),
+            Err(_) => Err("to_thread worker panicked".to_string()),
         };
-        if super::super::exception::current_exception_type().is_some() {
-            let exc = super::super::exception::mb_get_exception();
-            store_future_exception(future, exc);
-            super::super::exception::mb_clear_exception();
-            unsafe {
-                super::super::rc::release_if_ptr(exc);
-            }
-        } else {
-            store_future_result(future, result);
-            unsafe {
-                super::super::rc::release_if_ptr(result);
-            }
-        }
-        release_owned_values(&spec.args);
+        process_worker_outcome(future, outcome);
+
+        release_owned_values(&args);
         let _ = super::super::closure::replace_active_cells(previous_cells);
-        let _ = super::super::closure::replace_global_id_namespace(previous_globals);
         unsafe {
             super::super::rc::release_if_ptr(future);
         }
+        super::super::module::preserve_module_jit_backends();
     });
 }
 
@@ -1730,7 +1760,7 @@ fn queue_items(queue: MbValue) -> MbValue {
 fn method_arg0(args: MbValue) -> Option<MbValue> {
     args.as_ptr().and_then(|p| unsafe {
         if let ObjData::List(ref lk) = (*p).data {
-            lk.read().unwrap().first().copied()
+            lk.read().unwrap().first()
         } else {
             None
         }
@@ -2037,6 +2067,7 @@ mod tests {
         crate::runtime::async_rt::cleanup_all_async();
     }
 
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#1841" reason="unit-test section in asyncio_mod.rs is hand-written pending codegen support">
     #[test]
     fn test_to_thread_parallelizes_direct_function_pointer_calls() {
         // #1845: see test_task_cancel_marks_cancelled_and_await_raises.
@@ -2092,4 +2123,64 @@ mod tests {
 
         crate::runtime::async_rt::cleanup_all_async();
     }
+
+    #[test]
+    fn test_spawn_to_thread_worker_panic_publishes_finished_exception() {
+        let _async_guard = crate::runtime::async_rt::ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::runtime::async_rt::cleanup_all_async();
+        exception::mb_clear_exception();
+
+        let get_future_state = |f: MbValue| -> Option<String> {
+            f.as_ptr().and_then(|ptr| unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    let map = fields.read().unwrap();
+                    map.get("_state").and_then(|v| v.as_ptr()).map(|p| {
+                        if let ObjData::Str(ref s) = (*p).data {
+                            s.clone()
+                        } else {
+                            String::new()
+                        }
+                    })
+                } else {
+                    None
+                }
+            })
+        };
+
+        // Control 1: Ordinary Success
+        let f_ok = make_future();
+        process_worker_outcome(f_ok, Ok(MbValue::from_int(42)));
+        assert_eq!(get_future_state(f_ok).as_deref(), Some("FINISHED"));
+
+        // Control 2: Existing Python Exception
+        let f_exc = make_future();
+        exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("worker exception".to_string())),
+        );
+        process_worker_outcome(f_exc, Ok(MbValue::none()));
+        assert_eq!(get_future_state(f_exc).as_deref(), Some("FINISHED"));
+
+        // Worker Panic Outcome
+        let f_panic = make_future();
+        process_worker_outcome(f_panic, Err("to_thread worker panicked".to_string()));
+        assert_eq!(get_future_state(f_panic).as_deref(), Some("FINISHED"));
+
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*f_panic.as_ptr().unwrap()).data {
+                let map = fields.read().unwrap();
+                let exc = map.get("_exception").copied().unwrap_or_else(MbValue::none);
+                assert!(
+                    exc.as_ptr().is_some(),
+                    "worker panic must populate _exception on future"
+                );
+            }
+        }
+
+        crate::runtime::async_rt::cleanup_all_async();
+        exception::mb_clear_exception();
+    }
+    // </HANDWRITE>
 }

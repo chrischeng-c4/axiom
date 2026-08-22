@@ -322,7 +322,6 @@ fn first_arg(args: MbValue) -> MbValue {
                 .read()
                 .unwrap()
                 .first()
-                .copied()
                 .unwrap_or_else(MbValue::none);
         }
     }
@@ -620,7 +619,7 @@ unsafe extern "C" fn dispatch_update_wrapper(args_ptr: *const MbValue, nargs: us
                                     .read()
                                     .unwrap()
                                     .iter()
-                                    .filter_map(|v| extract_str(*v))
+                                    .filter_map(|v| extract_str(v))
                                     .collect(),
                                 _ => Vec::new(),
                             };
@@ -958,6 +957,8 @@ fn reduce_getitem_sequence(iterable: MbValue) -> Option<Vec<MbValue>> {
 fn finish_callable_result(func: MbValue, raw: MbValue, is_boxed_ret: bool) -> MbValue {
     let result = if is_boxed_ret {
         raw
+    } else if super::super::module::is_bool_return_val(func) {
+        super::super::builtins::mb_box_bool(raw.to_bits() as i64)
     } else {
         super::super::builtins::mb_box_int(raw.to_bits() as i64)
     };
@@ -1820,6 +1821,9 @@ fn cmp_to_key_compare(a: MbValue, b: MbValue) -> Option<i64> {
         }
     })?;
     let pair = MbValue::from_ptr(MbObject::new_list(vec![lhs, rhs]));
+    if super::super::exception::current_exception_is("StopIteration") {
+        super::super::exception::mb_clear_exception();
+    }
     let result = super::super::builtins::mb_call_spread(cmp, pair);
     Some(cmp_result_to_sign(result))
 }
