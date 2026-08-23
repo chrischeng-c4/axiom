@@ -451,7 +451,7 @@ carries `--no-chrome`, `--strict-mcp-config`, an empty `--mcp-config`, and
 
 The child is the production `.claude/agents/dispatch-operator.md`, loaded from
 the fixture and never replaced through `--agents`. Its frozen frontmatter binds
-Haiku at medium reasoning.
+Sonnet at low reasoning.
 
 The controller binds the operator through the session transcript. A round is
 the `Task` tool call in the parent record plus the sidechain records whose
@@ -491,7 +491,7 @@ Three transport risks stay open, and each one fails closed rather than passing:
    which does not resolve inside the fixture. The prompt therefore directs the
    operator to read `.claude/skills/agy-dispatch/SKILL.md` in three `sed -n`
    chunks. A skill-resolution regression would not be observable here.
-3. The reasoning effort level does not appear in the transcript. Haiku-medium
+3. The reasoning effort level does not appear in the transcript. Sonnet-low
    for the operator and Sonnet-low for the parent rest on the frozen agent file
    and the CLI flags, and are reported `not_applicable`.
 

@@ -102,7 +102,7 @@ Repository operating policy. It does not override a host's own approval gate
 for sending data outside the machine.
 
 When a bounded task can use an external worker, prefer one fresh
-`dispatch-operator` subagent. Its model is Haiku at medium reasoning. Create it
+`dispatch-operator` subagent. Its model is Sonnet at low reasoning. Create it
 only after the user authorizes the exact headless AGY payload. Make it directly
 inherit that user turn. Do not reuse an older operator. Do not forward
 authorization through a controller message.
