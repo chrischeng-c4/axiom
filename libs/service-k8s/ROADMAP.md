@@ -25,7 +25,7 @@ Stable IDs here let current limits point to one destination.
   child watches, low-frequency repair, per-entry API failure isolation, status
   projection, ordered concurrency, and leader failover. Lumen adapter tests
   prove parity for current child objects and protected reshard fields.
-- Tracking: Not assigned.
+- Tracking: [#3796](https://github.com/chrischeng-c4/axiom/issues/3796) (`lumen@0.4.33`).
 
 ### Declarative access RBAC convergence
 
@@ -44,7 +44,7 @@ Stable IDs here let current limits point to one destination.
   per-object failure isolation, status projection, wildcard refusal, and no
   Secret rendering. App adapter tests prove their resource mapping and policy
   semantics without adding them to the shared library.
-- Tracking: Not assigned.
+- Tracking: [#3798](https://github.com/chrischeng-c4/axiom/issues/3798) (`lumen@0.4.35`).
 
 ### Public trust-bundle convergence
 
@@ -62,7 +62,7 @@ Stable IDs here let current limits point to one destination.
   root overlap, stale owned-object prune, foreign-object retention, per-object
   failure isolation, status facts, public-data-only validation, and leader
   failover.
-- Tracking: Not assigned.
+- Tracking: [#3800](https://github.com/chrischeng-c4/axiom/issues/3800) (`lumen@0.4.37`).
 
 ### Failure-domain placement primitives
 
@@ -78,7 +78,7 @@ Stable IDs here let current limits point to one destination.
   required and preferred zone spread, selectors, tolerations, deterministic
   labels, allowed node sharing by different groups, malformed-input refusal,
   and no cloud-specific field in the shared contract.
-- Tracking: Not assigned.
+- Tracking: [#3801](https://github.com/chrischeng-c4/axiom/issues/3801) (`lumen@0.4.38`).
 
 ### Controlled StatefulSet member rollout
 
@@ -96,7 +96,7 @@ Stable IDs here let current limits point to one destination.
   interrupted reconcile recovery, no second member while the first is blocked,
   and explicit separation between voluntary-eviction policy and workload
   rollout.
-- Tracking: Not assigned.
+- Tracking: [#3802](https://github.com/chrischeng-c4/axiom/issues/3802) (`lumen@0.4.39`).
 
 ## Later outcomes
 

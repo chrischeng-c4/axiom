@@ -23,7 +23,7 @@ destination without copying tracker state.
   before commit, after commit, before apply, and after apply. Acknowledged
   values survive restart, rejected values do not appear, and in-memory startup
   and status identify the mode as ephemeral.
-- Tracking: Not assigned.
+- Tracking: [#3805](https://github.com/chrischeng-c4/axiom/issues/3805) (`lumen@0.4.43`).
 
 ### Idempotent write replay
 
@@ -37,7 +37,7 @@ destination without copying tracker state.
   prove default and caller-supplied keys, exact response replay, `409` for a
   different payload, restart and multi-process retention, expiry after the
   stated window, redaction, and no second mutation under concurrent retry.
-- Tracking: Not assigned.
+- Tracking: [#3805](https://github.com/chrischeng-c4/axiom/issues/3805) (`lumen@0.4.43`).
 
 ### Item-atomic batch writes
 
@@ -50,7 +50,7 @@ destination without copying tracker state.
   failures between the fields of an item. They prove no partial item becomes
   visible, accepted siblings remain committed, response order is stable, and a
   safe retry uses the idempotency contract.
-- Tracking: Not assigned.
+- Tracking: [#3806](https://github.com/chrischeng-c4/axiom/issues/3806) (`lumen@0.4.44`).
 
 ### Versioned deletes and tombstones
 
@@ -63,7 +63,7 @@ destination without copying tracker state.
 - Completion evidence: Ordered and out-of-order tests cover document and field
   deletes, equal and older versions, restart, compaction, replication, rebuild,
   and retention. No accepted old write resurrects a deleted value.
-- Tracking: Not assigned.
+- Tracking: [#3806](https://github.com/chrischeng-c4/axiom/issues/3806) (`lumen@0.4.44`).
 
 ### Shadow rebuild generations
 
@@ -80,7 +80,7 @@ destination without copying tracker state.
   status, explicit seal, stale ETag refusal, activation, rollback, retention
   expiry, and cancellation back to active-only writes without acknowledged
   data loss.
-- Tracking: Not assigned.
+- Tracking: [#3809](https://github.com/chrischeng-c4/axiom/issues/3809) (`lumen@0.4.47`).
 
 ### Strict search schema types
 
@@ -98,7 +98,7 @@ destination without copying tracker state.
   rejection of overflow. Migration tests prove an existing field needs a
   shadow rebuild to become facetable while a new field with no history can be
   added online.
-- Tracking: Not assigned.
+- Tracking: [#3809](https://github.com/chrischeng-c4/axiom/issues/3809) (`lumen@0.4.47`).
 
 ### Unified search contract
 
@@ -117,7 +117,7 @@ destination without copying tracker state.
   tie-breaks, page size 1,000, offset 10,000, live and PIT cursors, `400`
   mismatch, `409` stale generation, `410` expiry, tagged totals, and collapse
   totals, missing values, representative order, and field eligibility.
-- Tracking: Not assigned.
+- Tracking: [#3810](https://github.com/chrischeng-c4/axiom/issues/3810) (`lumen@0.4.48`).
 
 ### Exact search facets metrics
 
@@ -136,7 +136,7 @@ destination without copying tracker state.
   deterministic compensated float sums marked approximate, decimal-string
   counts, `facets` and `metrics` maps, alias grammar, snake-case fields, and
   explicit `kind` discriminators.
-- Tracking: Not assigned.
+- Tracking: [#3811](https://github.com/chrischeng-c4/axiom/issues/3811) (`lumen@0.4.49`).
 
 ### Facet resource governance
 
@@ -160,7 +160,7 @@ destination without copying tracker state.
   p95 and peak memory and rejects latency regression above 20% or memory above
   10%. It also reports write throughput and segment bytes for review above 30%
   and 50% change.
-- Tracking: Not assigned.
+- Tracking: [#3811](https://github.com/chrischeng-c4/axiom/issues/3811) (`lumen@0.4.49`).
 
 ### Distributed facet convergence
 
@@ -175,7 +175,7 @@ destination without copying tracker state.
   metrics, missing and unbucketed counts, and truncation with a single-shard
   oracle. Fault tests cover leader movement, retry, timeout, shard failure,
   cancellation, resource cleanup, and no partial response.
-- Tracking: Not assigned.
+- Tracking: [#3812](https://github.com/chrischeng-c4/axiom/issues/3812) (`lumen@0.4.50`).
 
 ### Generated-client search v2 parity
 
@@ -192,7 +192,7 @@ destination without copying tracker state.
   Rust does not fall back to JSON values or strings for the new unions and
   enums. No language can silently skip because a toolchain or dependency is
   absent.
-- Tracking: Not assigned.
+- Tracking: [#3812](https://github.com/chrischeng-c4/axiom/issues/3812) (`lumen@0.4.50`).
 
 ### Search v0-5 migration
 
@@ -210,7 +210,7 @@ destination without copying tracker state.
   numeric and set schema rebuild requirements, ambiguous request refusal, no
   network or runtime write, stable reports, and round-trip validation against
   the 0.5 schema.
-- Tracking: Not assigned.
+- Tracking: [#3813](https://github.com/chrischeng-c4/axiom/issues/3813) (`lumen@0.4.51`).
 
 ### Search capability activation
 
@@ -227,7 +227,7 @@ destination without copying tracker state.
   restart, member replacement, and refusal of mixed-version search fields.
   `/version` reports each dimension without claiming a capability active before
   convergence.
-- Tracking: Not assigned.
+- Tracking: [#3814](https://github.com/chrischeng-c4/axiom/issues/3814) (`lumen@0.5.0`).
 
 ### Runtime configuration parity
 
@@ -246,7 +246,7 @@ destination without copying tracker state.
   Secret values do not enter status, and a stable effective-config hash rolls
   pods only when restart-required inputs change. Referenced Secret and
   ConfigMap resource versions affect that hash. TLS file rotation stays hot.
-- Tracking: Not assigned.
+- Tracking: [#3795](https://github.com/chrischeng-c4/axiom/issues/3795) (`lumen@0.4.32`).
 
 ### Managed runtime KSA access
 
@@ -273,7 +273,7 @@ destination without copying tracker state.
   per-object failure. Condition tests prove `AccessPolicyReady=False` blocks
   `Ready=True`, while a converged deny-all policy reports
   `AccessPolicyReady=True`.
-- Tracking: Not assigned.
+- Tracking: [#3798](https://github.com/chrischeng-c4/axiom/issues/3798) (`lumen@0.4.35`).
 
 ### Projected KSA client auth
 
@@ -297,7 +297,7 @@ destination without copying tracker state.
   files, server rejection of expired, wrong-audience, and malformed tokens, no
   anonymous fallback after `401`, and no credential in arguments, environment,
   status, Events, logs, or error text.
-- Tracking: Not assigned.
+- Tracking: [#3799](https://github.com/chrischeng-c4/axiom/issues/3799) (`lumen@0.4.36`).
 
 ### Managed auth unification
 
@@ -317,7 +317,7 @@ destination without copying tracker state.
   Route tests prove the exact anonymous set and protect `/debug/cluster`.
   Migration tests prove old resources receive an actionable message without
   leaking a token or silently widening access.
-- Tracking: Not assigned.
+- Tracking: [#3798](https://github.com/chrischeng-c4/axiom/issues/3798) (`lumen@0.4.35`).
 
 ### Protocol contract completeness
 
@@ -335,7 +335,7 @@ destination without copying tracker state.
   media type is absent from OpenAPI. Snapshot tests prove the committed
   document is byte-identical to live generation, and stream-reindex tests prove
   its declared framing matches the runtime.
-- Tracking: Not assigned.
+- Tracking: [#3807](https://github.com/chrischeng-c4/axiom/issues/3807) (`lumen@0.4.45`).
 
 ### Generated-client protocol parity
 
@@ -356,7 +356,7 @@ destination without copying tracker state.
   generated dependency metadata. Tests cover success, malformed stream data,
   early disconnect, error redaction, and POST fallback without buffering the
   whole stream.
-- Tracking: Not assigned.
+- Tracking: [#3807](https://github.com/chrischeng-c4/axiom/issues/3807) (`lumen@0.4.45`).
 
 ### Strict generated-client gates
 
@@ -371,7 +371,7 @@ destination without copying tracker state.
   prerequisite and proves the required gate fails. The normal gate records all
   three executed languages and passes create, index, QUERY with POST fallback,
   search, stats, delete, and collection-drop behavior for each generated client.
-- Tracking: Not assigned.
+- Tracking: [#3807](https://github.com/chrischeng-c4/axiom/issues/3807) (`lumen@0.4.45`).
 
 ### Generated-client request resilience
 
@@ -390,7 +390,7 @@ destination without copying tracker state.
   cancellation propagation, read retry, unkeyed write refusal, keyed write
   replay, ambiguous mutation failure, token rotation during a request, typed
   redacted errors, and a strict three-language gate with no silent skip.
-- Tracking: Not assigned.
+- Tracking: [#3808](https://github.com/chrischeng-c4/axiom/issues/3808) (`lumen@0.4.46`).
 
 ### Generated-client source-integration helpers
 
@@ -408,7 +408,7 @@ destination without copying tracker state.
   ID handling, callback failure and cancellation, preservation of score and
   cursor metadata, no source credential in generated state, and no hidden
   per-record fetch.
-- Tracking: Not assigned.
+- Tracking: [#3808](https://github.com/chrischeng-c4/axiom/issues/3808) (`lumen@0.4.46`).
 
 ### Versioned client workload template
 
@@ -429,7 +429,7 @@ destination without copying tracker state.
   optional egress policy, no created namespace, KSA, or token Secret, and no
   token value in rendered YAML, environment, arguments, logs, Events, or
   status.
-- Tracking: Not assigned.
+- Tracking: [#3799](https://github.com/chrischeng-c4/axiom/issues/3799) (`lumen@0.4.36`).
 
 ### Fleet production convergence
 
@@ -449,7 +449,7 @@ destination without copying tracker state.
   failure isolation, ready and degraded counts, desired and observed generation
   reporting, retained-orphan warnings, and recovery after a failed dependency
   returns.
-- Tracking: Not assigned.
+- Tracking: [#3796](https://github.com/chrischeng-c4/axiom/issues/3796) (`lumen@0.4.33`).
 
 ### Fleet safe rollout
 
@@ -465,7 +465,7 @@ destination without copying tracker state.
 - Completion evidence: Reconcile tests prove one-at-a-time default rollout,
   explicit concurrency, manual pause, generation gating, Ready gating, stop on
   degradation, leader failover, and automatic continuation after recovery.
-- Tracking: Not assigned.
+- Tracking: [#3797](https://github.com/chrischeng-c4/axiom/issues/3797) (`lumen@0.4.34`).
 
 ### GKE regional production profile
 
@@ -486,7 +486,7 @@ destination without copying tracker state.
   KSA auth, WIF-backed operator duties, certificate and CA rotation, backup and
   restore, node drain, Pod loss, zone loss, interrupted rollout, recovery, and
   deterministic teardown without using a GCE machine type in the core CRD.
-- Tracking: Not assigned.
+- Tracking: [#3803](https://github.com/chrischeng-c4/axiom/issues/3803) (`lumen@0.4.41`).
 
 ### Per-shard failure-domain placement
 
@@ -504,7 +504,7 @@ destination without copying tracker state.
   three-zone voter placement, allowed node sharing across different shards and
   runtimes, correct unschedulable status when domains are insufficient, and
   continued quorum through one Pod, node, or zone loss.
-- Tracking: Not assigned.
+- Tracking: [#3801](https://github.com/chrischeng-c4/axiom/issues/3801) (`lumen@0.4.38`).
 
 ### Quorum-safe runtime rollout
 
@@ -522,7 +522,7 @@ destination without copying tracker state.
   member loss, recovery and continuation, leader movement, voluntary drain
   within PDB limits, direct StatefulSet update safety, interrupted operator
   recovery, and no second unavailable voter.
-- Tracking: Not assigned.
+- Tracking: [#3802](https://github.com/chrischeng-c4/axiom/issues/3802) (`lumen@0.4.39`).
 
 ### Kubernetes-native placement
 
@@ -542,7 +542,7 @@ destination without copying tracker state.
   storage requests reach each Pod and PVC, placement intent maps to standard
   scheduling fields, and a GKE profile selects a custom ComputeClass without
   placing a GCE machine type in the core API.
-- Tracking: Not assigned.
+- Tracking: [#3801](https://github.com/chrischeng-c4/axiom/issues/3801) (`lumen@0.4.38`).
 
 ### Managed runtime certificates
 
@@ -561,7 +561,7 @@ destination without copying tracker state.
   issuer outage and recovery, hot reload without unsafe member fan-out,
   ownership and adoption refusal, redaction, compatibility with pre-created
   Secrets, and no private key outside the owned Secret volume.
-- Tracking: Not assigned.
+- Tracking: [#3800](https://github.com/chrischeng-c4/axiom/issues/3800) (`lumen@0.4.37`).
 
 ### Managed client trust
 
@@ -580,7 +580,7 @@ destination without copying tracker state.
   adoption refusal, stale-object prune, retained foreign objects, per-object
   failure recovery, `ClientTrustReady` gating, public-only data, and no change
   to client Deployments.
-- Tracking: Not assigned.
+- Tracking: [#3800](https://github.com/chrischeng-c4/axiom/issues/3800) (`lumen@0.4.37`).
 
 ### Managed data retention
 
@@ -595,7 +595,7 @@ destination without copying tracker state.
   PVCs, explicit data Delete removes only exact instance PVCs, unrelated PVCs
   remain, failed cleanup retains the finalizer and publishes a condition, and
   retry succeeds without broad deletion.
-- Tracking: Not assigned.
+- Tracking: [#3093](https://github.com/chrischeng-c4/axiom/issues/3093) (`lumen@0.4.40`).
 
 ## Later outcomes
 
@@ -638,7 +638,7 @@ destination without copying tracker state.
   stop on a failed transition.
 - Completion evidence: A multi-node failure test proves scale-out, scale-in,
   leader movement, restart recovery, and no acknowledged-write loss.
-- Tracking: Not assigned.
+- Tracking: [#3815](https://github.com/chrischeng-c4/axiom/issues/3815) (`lumen@0.5.1`).
 
 ### High-availability shard expansion
 
@@ -649,7 +649,7 @@ destination without copying tracker state.
   routing ownership changes.
 - Completion evidence: A replicated-cluster test proves split, restart,
   retry, and rollback behavior while reads and writes continue.
-- Tracking: Not assigned.
+- Tracking: [#3816](https://github.com/chrischeng-c4/axiom/issues/3816) (`lumen@0.5.2`).
 
 ### Protocol compatibility policy
 
@@ -665,7 +665,7 @@ destination without copying tracker state.
   breaking changes. Versioned integration tests prove the supported overlap
   window, and release fixtures prove every accepted breaking change carries the
   required version and migration note.
-- Tracking: Not assigned.
+- Tracking: [#3814](https://github.com/chrischeng-c4/axiom/issues/3814) (`lumen@0.5.0`).
 
 ## Non-goals
 

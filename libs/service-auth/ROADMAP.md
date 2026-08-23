@@ -32,7 +32,7 @@ Stable IDs here let current limits point to one destination.
   prove expired, wrong-audience, and malformed credentials remain TokenReview
   decisions. Generated TypeScript, Python, and Rust clients consume the same
   portable cases through their owning library tests.
-- Tracking: Not assigned.
+- Tracking: [#3799](https://github.com/chrischeng-c4/axiom/issues/3799) (`lumen@0.4.36`).
 
 ## Later outcomes
 
