@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-roundtrip-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-cloud-storage-roundtrip-smoke

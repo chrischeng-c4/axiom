@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The state model — vat's reason to exist.
 //!
@@ -24,7 +23,6 @@ use crate::gpu::GpuInfo;
 use crate::spec::EnvSpec;
 
 /// Lifecycle status of a vat.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum Status {
@@ -46,7 +44,6 @@ pub enum Status {
 }
 
 /// Persisted record of the most recent run.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunRecord {
     /// The program and its arguments, as invoked.
@@ -61,7 +58,6 @@ pub struct RunRecord {
 }
 
 /// Persisted, on-disk record of a vat. Stored as `meta.json`.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VatMeta {
     pub id: String,
@@ -85,7 +81,6 @@ pub struct VatMeta {
 }
 
 /// vat.toml config reference captured for one runner invocation.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigRef {
     pub path: String,
@@ -93,7 +88,6 @@ pub struct ConfigRef {
 }
 
 /// Captured state of a local Kubernetes cluster backing a `cluster` service.
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterRunRecord {
     /// Backend that provisioned the cluster: "kind", "k3d", or "minikube".
@@ -110,7 +104,6 @@ pub struct ClusterRunRecord {
 }
 
 /// Captured service state for one run-scoped dependency process.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceRunRecord {
     pub id: String,
@@ -165,7 +158,6 @@ pub struct ServiceRunRecord {
 }
 
 /// Captured runner process state.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerRunRecord {
     pub id: String,
@@ -187,7 +179,6 @@ pub struct RunnerRunRecord {
 }
 
 /// Route visible in a scenario topology report.
-/// @spec apps/vat/tech-design/logic/production-like-integration-scenarios.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteRecord {
     pub host: String,
@@ -196,7 +187,6 @@ pub struct RouteRecord {
 }
 
 /// Captured scenario topology for a production-like integration run.
-/// @spec apps/vat/tech-design/logic/production-like-integration-scenarios.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioRunRecord {
     pub id: String,
@@ -210,7 +200,6 @@ pub struct ScenarioRunRecord {
 }
 
 /// Process status used inside test-run evidence.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProcessStatus {
@@ -224,7 +213,6 @@ pub enum ProcessStatus {
 }
 
 /// Artifact captured from a runner workspace.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactRecord {
     pub path: String,
@@ -233,7 +221,6 @@ pub struct ArtifactRecord {
 }
 
 /// Opaque upstream plan file attached to a run.
-/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEvidence {
     pub source_path: String,
@@ -242,7 +229,6 @@ pub struct PlanEvidence {
 }
 
 /// Topology selected for one configured run.
-/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopologyEvidence {
     pub runners: Vec<String>,
@@ -252,7 +238,6 @@ pub struct TopologyEvidence {
 }
 
 /// Complete evidence bundle for one vat.toml runner invocation.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestRunEvidence {
     pub config: ConfigRef,
@@ -281,7 +266,6 @@ pub struct TestRunEvidence {
 
 /// Filesystem changes vs. the base manifest. Full lists; the projection
 /// samples them for compactness.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChangeSet {
     pub added: Vec<String>,
@@ -289,7 +273,6 @@ pub struct ChangeSet {
     pub deleted: Vec<String>,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 impl ChangeSet {
     pub fn total(&self) -> usize {
         self.added.len() + self.modified.len() + self.deleted.len()
@@ -327,7 +310,6 @@ impl ChangeSet {
 }
 
 /// Bounded change view embedded in [`VatState`].
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeSummary {
     pub added: usize,
@@ -342,7 +324,6 @@ pub struct ChangeSummary {
 }
 
 /// Workspace footprint.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceInfo {
     pub rootfs: String,
@@ -352,7 +333,6 @@ pub struct WorkspaceInfo {
 
 /// The full, agent-legible projection of a vat. This is what `vat state`
 /// prints and what an agent should read to understand the environment.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VatState {
     pub id: String,
@@ -377,7 +357,6 @@ pub struct VatState {
     pub events_tail: Vec<Event>,
 }
 // CODEGEN-END
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#schema
 // CODEGEN-BEGIN
 // Real schema additions have been applied: RunnerRunRecord.pid field added above.
 // CODEGEN-END

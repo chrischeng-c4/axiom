@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-engine-rs.md#source
 // CODEGEN-BEGIN
 //! Prompt template rendering engine
 
@@ -6,10 +5,8 @@ use super::template::{PromptContext, PromptTemplate};
 use regex::Regex;
 
 /// Prompt rendering engine
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-engine-rs.md#source
 pub struct PromptEngine;
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-engine-rs.md#source
 impl PromptEngine {
     /// Render a template with context
     pub fn render(template: &PromptTemplate, context: &PromptContext) -> Result<String, String> {

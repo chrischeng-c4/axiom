@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-examples-adaptive-benchmark-demo-rs.md#source
 // CODEGEN-BEGIN
 //! Example demonstrating adaptive benchmark sampling
 //!

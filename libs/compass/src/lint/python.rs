@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-python-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Python code checker
 
@@ -31,12 +30,10 @@ struct ImportInfo {
 }
 
 /// Python checker
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-python-rs.md#source
 pub struct PythonChecker {
     builtins: HashSet<&'static str>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-python-rs.md#source
 impl PythonChecker {
     pub fn new() -> Self {
         Self {
@@ -1117,14 +1114,12 @@ impl PythonChecker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-python-rs.md#source
 impl Default for PythonChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-python-rs.md#source
 impl super::Checker for PythonChecker {
     fn language(&self) -> Language {
         Language::Python

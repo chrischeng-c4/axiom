@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-output-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Output formatters for analysis results.
 //!

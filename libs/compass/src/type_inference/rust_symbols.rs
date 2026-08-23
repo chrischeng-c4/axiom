@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Rust symbol collection from AST
 //!
@@ -16,7 +15,6 @@ use super::ty::TypeVarId;
 
 /// Collected symbols from a Rust file
 #[derive(Debug, Clone, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md#source
 pub struct RustSymbols {
     /// Struct definitions
     pub structs: Vec<StructDef>,
@@ -36,7 +34,6 @@ pub struct RustSymbols {
 
 /// Rust function definition
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md#source
 pub struct RustFunction {
     /// Function name
     pub name: String,
@@ -62,7 +59,6 @@ pub struct RustFunction {
 
 /// Rust constant definition
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md#source
 pub struct RustConstant {
     /// Constant name
     pub name: String,
@@ -76,7 +72,6 @@ pub struct RustConstant {
 
 /// Rust type alias
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md#source
 pub struct RustTypeAlias {
     /// Alias name
     pub name: String,
@@ -95,7 +90,6 @@ pub struct RustTypeAlias {
 // ============================================================================
 
 /// Collects Rust symbols from AST
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md#source
 pub struct RustSymbolCollector {
     /// Collected symbols
     symbols: RustSymbols,
@@ -105,7 +99,6 @@ pub struct RustSymbolCollector {
     type_var_counter: usize,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md#source
 impl RustSymbolCollector {
     /// Create a new symbol collector
     pub fn new() -> Self {
@@ -912,7 +905,6 @@ impl RustSymbolCollector {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md#source
 impl Default for RustSymbolCollector {
     fn default() -> Self {
         Self::new()

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-local-k8s-phase-0-prove-k3s-on-apple-container-machine.md#vat-local-k8s-phase0-real-host
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-local-k8s-phase0-real-host

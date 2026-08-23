@@ -1,5 +1,42 @@
-// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#rust-source-unit
 // CODEGEN-BEGIN
+//! S3 sink and object fetch, bridging a sync trait to an async SDK.
+//!
+//! `BackupSink` is sync and the AWS SDK is async, so every `put`, `prune` and
+//! `get_object` goes through `block_on_in_thread`: spawn an OS thread, build a
+//! fresh current-thread tokio runtime inside it, block there, join. That is what
+//! makes these methods safe to call from inside another runtime instead of
+//! panicking, and the cost is explicit -- one thread, one runtime and one freshly
+//! built `Client` per call, with nothing pooled or reused between them. A panic in
+//! the worker comes back as an error, not as an unwind into the caller.
+//!
+//! **The key spelling here is not the local sink's.** This module writes
+//! `[prefix/]backup-<unix_seconds>.json`, where `backup-` is a literal and
+//! `prefix` is the destination prefix; `LocalFsSink` writes
+//! `<prefix>-<unix_seconds>.json`. So one policy produces different object names
+//! depending on which sink runs it, and both are second-resolution -- two puts in
+//! the same second overwrite each other silently.
+//!
+//! Pruning is safe by construction in a way the local sink's is not. It lists the
+//! prefix, and `parse_backup_key` accepts a key only if it is exactly
+//! `[prefix/]backup-<digits>.json`; everything else is skipped untouched. The age
+//! it compares is the timestamp **encoded in the key**, never the object's
+//! `LastModified`, so re-uploading an object does not make it young again and a
+//! foreign object under the same prefix is never deleted. A delete that fails
+//! aborts the whole call, and the count of what was already deleted is lost.
+//!
+//! Two configuration rules that are easy to trip over:
+//!
+//! - `credentials_secret` is refused outright with an actionable message. The
+//!   schema accepts the field because other adapters may honour it; this one
+//!   requires ambient AWS credentials (IRSA / instance role) instead.
+//! - Region resolution is three-way: an explicit `region` wins; otherwise a set
+//!   `endpoint` forces `us-east-1`, because the SDK demands *some* region even
+//!   for a custom endpoint; otherwise the SDK's own chain resolves it. Setting an
+//!   endpoint also turns on path-style addressing, which is what MinIO-style
+//!   stores need.
+//!
+//! The integration test here is env-gated on `SERVICE_BACKUP_S3_TEST_BUCKET` and
+//! passes vacuously when that is unset.
 use std::future::Future;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,7 +51,6 @@ const OBJECT_NAME_PREFIX: &str = "backup-";
 const OBJECT_NAME_SUFFIX: &str = ".json";
 
 #[derive(Clone)]
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#source
 pub(crate) struct S3Sink {
     bucket: String,
     prefix: String,
@@ -22,7 +58,6 @@ pub(crate) struct S3Sink {
     endpoint: Option<String>,
 }
 
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#source
 impl S3Sink {
     pub(crate) fn from_destination(destination: &BackupDestination) -> Result<Self> {
         let BackupDestination::S3 {
@@ -63,7 +98,6 @@ impl S3Sink {
     }
 }
 
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#source
 impl BackupSink for S3Sink {
     fn put(&self, timestamp: SystemTime, payload: &[u8]) -> Result<String> {
         let bucket = self.bucket.clone();
@@ -109,7 +143,6 @@ impl BackupSink for S3Sink {
     }
 }
 
-/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#source
 pub(crate) fn get_object(bucket: String, key: String) -> Result<Vec<u8>> {
     block_on_in_thread(async move {
         let client = build_client(None, None).await?;

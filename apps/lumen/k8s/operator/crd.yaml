@@ -35,7 +35,7 @@ spec:
         description: Auto-generated derived type for LumenSpec via `CustomResource`
         properties:
           spec:
-            description: '`lumen.dev/v1alpha1` `Lumen`. Namespaced: every child object the operator renders lands in this object''s namespace, so multiple independent lumen deployments can coexist by name. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source'
+            description: '`lumen.dev/v1alpha1` `Lumen`. Namespaced: every child object the operator renders lands in this object''s namespace, so multiple independent lumen deployments can coexist by name.'
             properties:
               admission:
                 description: Optional in-process request admission (bounded token-bucket rate limiting per endpoint class), mirroring the `LUMEN_ADMISSION_*` env grammar `libs/service-http::AdmissionConfig` already parses (see `bin/lumen.rs`'s `serve` wiring). Absent means admission stays disabled — the pre-existing default; no new semantics, only a declarative surface for the existing env-driven behavior.
@@ -79,6 +79,11 @@ spec:
                 - disabled
                 - required
                 type: string
+              bodyLimitBytes:
+                description: 'Data-plane request body size limit (bytes). Requests with `Content-Length` exceeding this are rejected with 413; streamed bodies are bounded mid-read. Defaults to 8 MiB. Unset means the server default (#2584). Accepted range: 1 MiB (1048576) to 64 MiB (67108864).'
+                type: integer
+                minimum: 0.0
+                nullable: true
               image:
                 description: Serving container image, e.g. `lumen:latest`. Required.
                 type: string
@@ -118,9 +123,14 @@ spec:
                 nullable: true
                 type: string
               placement:
-                default: {}
+                default:
+                  initialMachineType: e2-standard-2
                 description: Which nodes the serving pods may run on.
                 properties:
+                  initialMachineType:
+                    default: e2-standard-2
+                    description: Initial GCE machine type for the data plane (e.g. `e2-standard-2`). Defaults to `e2-standard-2`. Immutable create-time configuration.
+                    type: string
                   nodeSelector:
                     additionalProperties:
                       type: string
@@ -132,7 +142,7 @@ spec:
                       description: |-
                         One entry of [`PlacementSpec::tolerations`], mirroring the Kubernetes `v1.Toleration` fields.
 
-                        Declared here rather than reused from `k8s-openapi` because the CRD schema is derived with `schemars`, which `k8s-openapi`'s types do not implement. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+                        Declared here rather than reused from `k8s-openapi` because the CRD schema is derived with `schemars`, which `k8s-openapi`'s types do not implement.
                       properties:
                         effect:
                           description: '`NoSchedule`, `PreferNoSchedule`, or `NoExecute`. Unset tolerates every effect of the matching taint.'
@@ -160,7 +170,7 @@ spec:
                 type: object
               replicasPerShard:
                 default: 1
-                description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads (no HPA — raft needs a known membership).'
+                description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads (raft needs a known membership).'
                 type: integer
                 minimum: 0.0
               reshardPolicy:
@@ -170,7 +180,7 @@ spec:
                   workflow:
                     phase: Complete
                     convergenceRemediationRestartCount: 0
-                description: Operator-owned storage reshard policy. HPA never changes storage ownership; this policy only prepares/recommends explicit shard topology changes.
+                description: Operator-owned storage reshard policy. This policy only prepares/recommends explicit shard topology changes.
                 properties:
                   maxShardBytes:
                     type: integer
@@ -203,7 +213,6 @@ spec:
                     default:
                       phase: Complete
                       convergenceRemediationRestartCount: 0
-                    description: '@spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source'
                     properties:
                       convergedShardMapVersion:
                         description: '`shardMap.version` the reshard driver has confirmed every serving pod is `Ready` on (#1458 R1) — the persisted checkpoint `reshard_driver::advance_convergence` compares `spec.shardMap. version` against to decide whether the post-cutover write-pause fence must stay armed. `None` (or a value behind the current `shardMap.version`) means convergence for the current map is still pending or was never confirmed.'
@@ -232,7 +241,6 @@ spec:
                         nullable: true
                       phase:
                         default: Complete
-                        description: '@spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source'
                         enum:
                         - Complete
                         - PrepareSplit
@@ -256,41 +264,13 @@ spec:
                 type: string
               serving:
                 default:
-                  autoscaling:
-                    minReplicas: 3
-                    maxReplicas: 12
-                    targetCpuUtilization: 70
                   cpu: '1'
                   memory: 4Gi
                   graceSecs: 30
-                  raftStorage: 20Gi
+                  raftStorage: 10Gi
                   raftStorageClass: null
                 description: Stateless serving-fleet shape.
                 properties:
-                  autoscaling:
-                    default:
-                      minReplicas: 3
-                      maxReplicas: 12
-                      targetCpuUtilization: 70
-                    description: HPA bounds + CPU target.
-                    properties:
-                      maxReplicas:
-                        description: Ceiling.
-                        format: int32
-                        type: integer
-                      minReplicas:
-                        description: Floor (also the StatefulSet's apply-time replica count in HPA mode).
-                        format: int32
-                        type: integer
-                      targetCpuUtilization:
-                        description: Target average CPU utilization (%) — read QPS proxied by CPU.
-                        format: int32
-                        type: integer
-                    required:
-                    - maxReplicas
-                    - minReplicas
-                    - targetCpuUtilization
-                    type: object
                   backup:
                     description: Optional scheduled backup (#808). When set, the operator renders a `<name>-backup` CronJob (see [`super::render::backup_cron_job`]) that invokes `lumen backup` on this schedule against the running serving fleet's own already-existing `/admin/backup` endpoint — no new snapshot mechanism, only scheduling + transport. Absent means no CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`, `POST /admin/restore`) is still reachable for manual/scripted use either way (see `lumen llm --topic storage`).
                     nullable: true
@@ -343,7 +323,7 @@ spec:
                     description: Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
                     type: string
                   raftStorage:
-                    default: 20Gi
+                    default: 10Gi
                     description: Per-pod WAL/raft hard-state PVC size. Always applied — the serving StatefulSet's `raft` volumeClaimTemplate exists at every `replicasPerShard` value, not only when raft consensus (`> 1`) is active.
                     type: string
                   raftStorageClass:
@@ -364,7 +344,7 @@ spec:
                 type: string
               shardCount:
                 default: 1
-                description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. HPA never changes this value.
+                description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing.
                 type: integer
                 minimum: 0.0
               shardMap:
@@ -397,9 +377,39 @@ spec:
             - image
             type: object
           status:
-            description: Status subresource, written back by the reconcile loop. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+            description: Status subresource, written back by the reconcile loop.
             nullable: true
             properties:
+              capacity:
+                description: Data-plane capacity status.
+                nullable: true
+                properties:
+                  currentMachineType:
+                    default: ''
+                    description: Current active GCE machine type.
+                    type: string
+                  message:
+                    description: Human-readable capacity status message.
+                    nullable: true
+                    type: string
+                  oldMemberAuthoritative:
+                    default: false
+                    description: Whether the old healthy member remains authoritative during transition/block.
+                    type: boolean
+                  phase:
+                    default: ''
+                    description: Capacity lifecycle phase (`Stable` | `CapacityBlocked`).
+                    type: string
+                  targetMachineType:
+                    default: ''
+                    description: Target GCE machine type.
+                    type: string
+                  transitionGeneration:
+                    default: 0
+                    description: Transition generation count.
+                    type: integer
+                    minimum: 0.0
+                type: object
               conditions:
                 description: |-
                   Kubernetes-convention convergence conditions (#2601): `Ready`, `Progressing`, `ReshardInProgress`. This is the surface `kubectl wait --for=condition=Ready`, Argo CD health assessment, and Flux readiness gates read; `phase` and `reshard.blockingConditions` are unchanged and still populated, so nothing already consuming them breaks.
@@ -409,7 +419,7 @@ spec:
                   description: |-
                     One entry of a Kubernetes `status.conditions[]` array, in the shape every controller-aware tool already reads — `kubectl wait --for=condition=…`, Argo CD health assessment, Flux readiness gates.
 
-                    Hand-written rather than reused from `k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition` because that type does not derive `JsonSchema`, so it cannot be embedded in a CRD schema generated by `kube`'s derive. @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
+                    Hand-written rather than reused from `k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition` because that type does not derive `JsonSchema`, so it cannot be embedded in a CRD schema generated by `kube`'s derive.
                   properties:
                     lastTransitionTime:
                       description: RFC3339 instant the status last *changed* — not the last time it was observed. Carried across reconciles by [`project`].
@@ -441,7 +451,7 @@ spec:
                 type: array
               desiredReplicas:
                 default: 0
-                description: Desired serving replicas (HPA floor at apply, or the live count).
+                description: Desired serving replicas (apply-time count, or the live count).
                 format: int32
                 type: integer
               message:
@@ -565,7 +575,7 @@ spec:
         description: Auto-generated derived type for LumenFleetSpec via `CustomResource`
         properties:
           spec:
-            description: '`lumen.dev/v1alpha1` `LumenFleet`. Cluster-scoped — see the module docs. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source'
+            description: '`lumen.dev/v1alpha1` `LumenFleet`. Cluster-scoped — see the module docs.'
             properties:
               defaults:
                 description: 'The complete `Lumen` spec every instance starts from — the platform team''s knowledge: which image, which node pool, which StorageClass, which auth mode. Required and fully schema-validated, because a fleet that cannot produce one valid instance is not a fleet.'
@@ -612,6 +622,11 @@ spec:
                     - disabled
                     - required
                     type: string
+                  bodyLimitBytes:
+                    description: 'Data-plane request body size limit (bytes). Requests with `Content-Length` exceeding this are rejected with 413; streamed bodies are bounded mid-read. Defaults to 8 MiB. Unset means the server default (#2584). Accepted range: 1 MiB (1048576) to 64 MiB (67108864).'
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
                   image:
                     description: Serving container image, e.g. `lumen:latest`. Required.
                     type: string
@@ -651,9 +666,14 @@ spec:
                     nullable: true
                     type: string
                   placement:
-                    default: {}
+                    default:
+                      initialMachineType: e2-standard-2
                     description: Which nodes the serving pods may run on.
                     properties:
+                      initialMachineType:
+                        default: e2-standard-2
+                        description: Initial GCE machine type for the data plane (e.g. `e2-standard-2`). Defaults to `e2-standard-2`. Immutable create-time configuration.
+                        type: string
                       nodeSelector:
                         additionalProperties:
                           type: string
@@ -665,7 +685,7 @@ spec:
                           description: |-
                             One entry of [`PlacementSpec::tolerations`], mirroring the Kubernetes `v1.Toleration` fields.
 
-                            Declared here rather than reused from `k8s-openapi` because the CRD schema is derived with `schemars`, which `k8s-openapi`'s types do not implement. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+                            Declared here rather than reused from `k8s-openapi` because the CRD schema is derived with `schemars`, which `k8s-openapi`'s types do not implement.
                           properties:
                             effect:
                               description: '`NoSchedule`, `PreferNoSchedule`, or `NoExecute`. Unset tolerates every effect of the matching taint.'
@@ -693,7 +713,7 @@ spec:
                     type: object
                   replicasPerShard:
                     default: 1
-                    description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads (no HPA — raft needs a known membership).'
+                    description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads (raft needs a known membership).'
                     type: integer
                     minimum: 0.0
                   reshardPolicy:
@@ -703,7 +723,7 @@ spec:
                       workflow:
                         phase: Complete
                         convergenceRemediationRestartCount: 0
-                    description: Operator-owned storage reshard policy. HPA never changes storage ownership; this policy only prepares/recommends explicit shard topology changes.
+                    description: Operator-owned storage reshard policy. This policy only prepares/recommends explicit shard topology changes.
                     properties:
                       maxShardBytes:
                         type: integer
@@ -736,7 +756,6 @@ spec:
                         default:
                           phase: Complete
                           convergenceRemediationRestartCount: 0
-                        description: '@spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source'
                         properties:
                           convergedShardMapVersion:
                             description: '`shardMap.version` the reshard driver has confirmed every serving pod is `Ready` on (#1458 R1) — the persisted checkpoint `reshard_driver::advance_convergence` compares `spec.shardMap. version` against to decide whether the post-cutover write-pause fence must stay armed. `None` (or a value behind the current `shardMap.version`) means convergence for the current map is still pending or was never confirmed.'
@@ -765,7 +784,6 @@ spec:
                             nullable: true
                           phase:
                             default: Complete
-                            description: '@spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source'
                             enum:
                             - Complete
                             - PrepareSplit
@@ -789,41 +807,13 @@ spec:
                     type: string
                   serving:
                     default:
-                      autoscaling:
-                        minReplicas: 3
-                        maxReplicas: 12
-                        targetCpuUtilization: 70
                       cpu: '1'
                       memory: 4Gi
                       graceSecs: 30
-                      raftStorage: 20Gi
+                      raftStorage: 10Gi
                       raftStorageClass: null
                     description: Stateless serving-fleet shape.
                     properties:
-                      autoscaling:
-                        default:
-                          minReplicas: 3
-                          maxReplicas: 12
-                          targetCpuUtilization: 70
-                        description: HPA bounds + CPU target.
-                        properties:
-                          maxReplicas:
-                            description: Ceiling.
-                            format: int32
-                            type: integer
-                          minReplicas:
-                            description: Floor (also the StatefulSet's apply-time replica count in HPA mode).
-                            format: int32
-                            type: integer
-                          targetCpuUtilization:
-                            description: Target average CPU utilization (%) — read QPS proxied by CPU.
-                            format: int32
-                            type: integer
-                        required:
-                        - maxReplicas
-                        - minReplicas
-                        - targetCpuUtilization
-                        type: object
                       backup:
                         description: Optional scheduled backup (#808). When set, the operator renders a `<name>-backup` CronJob (see [`super::render::backup_cron_job`]) that invokes `lumen backup` on this schedule against the running serving fleet's own already-existing `/admin/backup` endpoint — no new snapshot mechanism, only scheduling + transport. Absent means no CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`, `POST /admin/restore`) is still reachable for manual/scripted use either way (see `lumen llm --topic storage`).
                         nullable: true
@@ -876,7 +866,7 @@ spec:
                         description: Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
                         type: string
                       raftStorage:
-                        default: 20Gi
+                        default: 10Gi
                         description: Per-pod WAL/raft hard-state PVC size. Always applied — the serving StatefulSet's `raft` volumeClaimTemplate exists at every `replicasPerShard` value, not only when raft consensus (`> 1`) is active.
                         type: string
                       raftStorageClass:
@@ -897,7 +887,7 @@ spec:
                     type: string
                   shardCount:
                     default: 1
-                    description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. HPA never changes this value.
+                    description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing.
                     type: integer
                     minimum: 0.0
                   shardMap:
@@ -932,7 +922,7 @@ spec:
               instances:
                 description: One entry per data-plane namespace.
                 items:
-                  description: One data plane the fleet declares. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
+                  description: One data plane the fleet declares.
                   properties:
                     name:
                       description: The `Lumen` object's name. Defaults to the fleet's own name, so `kubectl get lumen -A` reads as one fleet spread across namespaces.
@@ -963,7 +953,7 @@ spec:
             - defaults
             type: object
           status:
-            description: Status subresource for a fleet. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
+            description: Status subresource for a fleet.
             nullable: true
             properties:
               appliedInstances:
@@ -979,7 +969,7 @@ spec:
               entries:
                 description: Per-entry outcome, so one bad entry is diagnosable without reading operator logs.
                 items:
-                  description: One entry's outcome. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
+                  description: One entry's outcome.
                   properties:
                     message:
                       type: string

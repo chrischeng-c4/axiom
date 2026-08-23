@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! HTML code checker
 
@@ -10,10 +9,8 @@ use crate::syntax::{Language, ParsedFile};
 const DEPRECATED_TAGS: &[&str] = &["center", "font", "marquee"];
 
 /// HTML checker
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rs.md#source
 pub struct HtmlChecker;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rs.md#source
 impl HtmlChecker {
     pub fn new() -> Self {
         Self
@@ -258,14 +255,12 @@ impl HtmlChecker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rs.md#source
 impl Default for HtmlChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rs.md#source
 impl super::Checker for HtmlChecker {
     fn language(&self) -> Language {
         Language::Html

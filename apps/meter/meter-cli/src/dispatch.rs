@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 // CODEGEN-BEGIN
 //! Shared verb parse + dispatch for the `meter` agent-first CLI.
 //!
@@ -24,7 +23,6 @@ use meter::report::{persist, schema};
     about = "meter — local runtime resource measurement for agents (JSON on stdout by default)",
     disable_help_subcommand = true
 )]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct MeterCommand {
     #[command(subcommand)]
     pub verb: Verb,
@@ -36,7 +34,6 @@ pub struct MeterCommand {
 /// Output-format opt-ins shared by every verb. JSON-on-stdout is the default;
 /// these only switch the rendering, never the channel.
 #[derive(Args, Debug, Clone, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct OutputOpts {
     /// Render a human-readable summary to stderr in addition to the JSON report.
     #[arg(long, global = true)]
@@ -49,7 +46,6 @@ pub struct OutputOpts {
 /// The verb set. Every public verb does real work: `test`/`report`/`state`/
 /// `spec`/`llm`/`measure`/`profile`/`bench` plus the composite `run` sweep.
 #[derive(Subcommand, Debug)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub enum Verb {
     /// Delegate to cargo nextest/test and FORWARD the child exit code.
     Test {
@@ -77,7 +73,6 @@ pub enum Verb {
 
 /// `meter spec` flags.
 #[derive(Args, Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct SpecArgs {
     /// Emit the MeterReport JSON-Schema (this is the default).
     #[arg(long)]
@@ -89,7 +84,6 @@ pub struct SpecArgs {
 
 /// `meter llm` flags.
 #[derive(Args, Debug)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct LlmArgs {
     /// Topic: `guide` (markdown playbook) or `recipes` (machine recipes).
     #[arg(default_value = "guide")]
@@ -101,7 +95,6 @@ pub struct LlmArgs {
 
 /// `meter bench` flags.
 #[derive(Args, Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct BenchArgs {
     /// Crate path (or `Cargo.toml`) to benchmark via `cargo bench` (default `.`).
     #[arg(long, default_value = ".")]
@@ -120,7 +113,6 @@ pub struct BenchArgs {
 /// peak_rss_bytes). `--level sample` also folds platform sampler stacks into
 /// ranked `Hotspot` findings.
 #[derive(Args, Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct MeasureArgs {
     /// Executable path or command name to run directly.
     pub target: Option<String>,
@@ -166,7 +158,6 @@ pub struct MeasureArgs {
 /// serialized `PhaseBreakdown`; direct RS/TS/PY auto-instrumentation returns a
 /// clear unsupported message until the probe-injection pipeline is wired.
 #[derive(Args, Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct ProfileArgs {
     /// Source/runtime target to profile (RS/TS/PY); auto-instrumentation is not
     /// wired yet, so use `--phases` for shipped embedded data folding.
@@ -193,7 +184,6 @@ pub struct ProfileArgs {
 /// sub-finding (`ToolError > Regression > Findings > Clean`); a delegated test
 /// failure NEVER overrides a meter-native regression.
 #[derive(Args, Debug, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct RunArgs {
     /// The crate path the delegated/resource sub-verbs operate on.
     #[arg(long, default_value = ".")]
@@ -231,7 +221,6 @@ pub struct RunArgs {
 }
 
 /// Outcome of dispatching a verb.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct Dispatched {
     /// The report carrying the process exit code (and, for non-offline verbs,
     /// the document printed to stdout).
@@ -248,7 +237,6 @@ pub struct Dispatched {
 /// emit; offline verbs (`spec`, `llm`) print their own raw payload and set
 /// `stdout_written = true` so stdout stays exactly one JSON/markdown document.
 /// The returned report's `exit_code` is the process exit code the caller yields.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub fn dispatch(cmd: MeterCommand, out: &OutputOpts) -> Dispatched {
     let (report, stdout_written) = match cmd.verb {
         Verb::Test { args } => (run_test(args), false),
@@ -813,7 +801,6 @@ fn persist_quietly(report: &MeterReport) {
 
 /// Emit the report as the single stdout JSON document, plus an optional
 /// human-readable stderr summary.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub fn print_report(report: &MeterReport, out: &OutputOpts) {
     emit(report, out.compact);
     if out.human {

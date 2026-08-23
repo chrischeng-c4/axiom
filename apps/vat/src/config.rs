@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! vat.toml project contract for ephemeral local agent test runs.
 //!
@@ -14,11 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::spec::EgressPolicy;
 
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 pub const FILE_NAME: &str = "vat.toml";
 
 /// Parsed project-level vat contract.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VatConfig {
     pub version: u32,
@@ -51,7 +48,6 @@ pub struct VatConfig {
 
 /// Transparent service routing for a run: known hosts the proxy should send to a
 /// local emulator/mock instead of the real upstream.
-/// @spec apps/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#config
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NetworkConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -63,7 +59,6 @@ pub struct NetworkConfig {
 
 /// One host-routing rule: requests to `host` are served by `target` (a local base
 /// URL) instead of being forwarded upstream.
-/// @spec apps/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteConfig {
     pub host: String,
@@ -71,7 +66,6 @@ pub struct RouteConfig {
 }
 
 /// Workspace defaults for one test run.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     #[serde(default = "default_dot")]
@@ -82,7 +76,6 @@ pub struct WorkspaceConfig {
     pub keep: RetentionPolicy,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 impl Default for WorkspaceConfig {
     fn default() -> Self {
         WorkspaceConfig {
@@ -98,7 +91,6 @@ fn default_dot() -> PathBuf {
 }
 
 /// Evidence retention policy after runner completion.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionPolicy {
@@ -109,7 +101,6 @@ pub enum RetentionPolicy {
 }
 
 /// Setup command executed before services start.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupStep {
     pub id: String,
@@ -128,7 +119,6 @@ pub struct VolumeMount {
 }
 
 /// Run-scoped service required by a runner.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
     pub id: String,
@@ -164,7 +154,6 @@ pub struct ServiceConfig {
     /// the cluster before the runner, exports KUBECONFIG into the runner, and
     /// deletes it at teardown subject to the workspace `keep` policy. `auto`
     /// resolves to the first installed backend whose Docker daemon is reachable.
-    /// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster: Option<ClusterBackend>,
     /// Attach to a service already provisioned by the surrounding environment,
@@ -182,7 +171,6 @@ pub struct ServiceConfig {
     /// Path (relative to vat.toml) to an OpenAPI document. Required for the
     /// `openapi` preset, which serves spec-derived mock responses; rejected for
     /// every other backing.
-    /// @spec apps/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,7 +196,6 @@ pub struct ServiceConfig {
 }
 
 /// Endpoint for an externally managed service.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalServiceConfig {
     pub host: String,
@@ -224,8 +211,6 @@ pub struct ExternalServiceConfig {
 /// family — native
 /// when the gcloud component is installed, Docker otherwise — and `firebase` is
 /// the Firebase Emulator Suite bundle driven by a workspace `firebase.json`.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
-/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ServicePreset {
@@ -259,10 +244,8 @@ pub enum ServicePreset {
 }
 // </HANDWRITE>
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 impl ServicePreset {
     /// Whether this preset is a GCP/Firebase emulator (vs a datastore/broker).
-    /// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
     pub fn is_emulator(self) -> bool {
         matches!(
             self,
@@ -284,7 +267,6 @@ impl ServicePreset {
 
     /// Whether vat ships a built-in Rust emulator for this preset. Built-in
     /// presets run vat's own in-process server under `runtime = auto`.
-    /// @spec apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
     pub fn is_builtin(self) -> bool {
         matches!(
             self,
@@ -301,7 +283,6 @@ impl ServicePreset {
 
     /// Built-in presets that have *only* the built-in path (no gcloud/Docker
     /// equivalent), so `runtime` must stay `auto`.
-    /// @spec apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
     pub fn is_builtin_only(self) -> bool {
         matches!(
             self,
@@ -318,7 +299,6 @@ impl ServicePreset {
     /// The real GCP hostname this emulator preset stands in for, used to
     /// auto-derive a transparent host route (`real host -> local emulator`).
     /// `None` for presets that aren't a GCP service with a stable public host.
-    /// @spec apps/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#config
     pub fn preset_gcp_host(self) -> Option<&'static str> {
         match self {
             ServicePreset::CloudTasks => Some("cloudtasks.googleapis.com"),
@@ -335,7 +315,6 @@ impl ServicePreset {
 /// (Homebrew) so the host GPU and zero-friction model hold, and only reaches
 /// for Docker when the binary is absent — or when the preset has no native
 /// equivalent on this host.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceRuntime {
@@ -355,7 +334,6 @@ pub enum ServiceRuntime {
 /// default when the field is present) prefers the first installed of kind,
 /// then k3d, then minikube whose Docker daemon is reachable. All require Docker
 /// on Apple Silicon.
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum ClusterBackend {
@@ -371,7 +349,6 @@ pub enum ClusterBackend {
 }
 
 /// Port policy for a service. Presets default to `auto` to avoid conflicts.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PortSpec {
@@ -379,7 +356,6 @@ pub enum PortSpec {
     Fixed(u16),
 }
 
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 impl Default for PortSpec {
     fn default() -> Self {
         PortSpec::Auto("auto".to_string())
@@ -387,7 +363,6 @@ impl Default for PortSpec {
 }
 
 /// Why `vat run` selected a runner.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerSelectionReason {
     Explicit,
@@ -402,7 +377,6 @@ fn default_service_timeout() -> u64 {
 /// Named production-like integration scenario. A scenario promotes an app
 /// service plus its dependency set to a first-class runner target while reusing
 /// the existing service lifecycle.
-/// @spec apps/vat/tech-design/logic/production-like-integration-scenarios.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioConfig {
     pub id: String,
@@ -415,7 +389,6 @@ pub struct ScenarioConfig {
 }
 
 /// Scenario-scoped network safety mode.
-/// @spec apps/vat/tech-design/logic/production-like-integration-scenarios.md#schema
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ScenarioNetworkMode {
@@ -427,7 +400,6 @@ pub enum ScenarioNetworkMode {
 }
 
 /// Named runner an agent can invoke via `vat run <id>`.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerConfig {
     pub id: String,
@@ -441,7 +413,6 @@ pub struct RunnerConfig {
 }
 
 /// Load the nearest `vat.toml` from `start` or one of its ancestors.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 pub fn load_nearest(start: &Path) -> Result<VatConfig> {
     let mut dir = std::fs::canonicalize(start)
         .with_context(|| format!("resolve config search dir {}", start.display()))?;
@@ -457,7 +428,6 @@ pub fn load_nearest(start: &Path) -> Result<VatConfig> {
 }
 
 /// Load and validate one `vat.toml` file.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 pub fn load_file(path: &Path) -> Result<VatConfig> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
     let text = std::str::from_utf8(&bytes).context("vat.toml is not valid UTF-8")?;
@@ -477,7 +447,6 @@ pub fn load_file(path: &Path) -> Result<VatConfig> {
 }
 
 /// Validate ids, command arrays, and runner service references.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 pub fn validate(cfg: &VatConfig) -> Result<()> {
     let mut setup_ids = BTreeSet::new();
     for step in &cfg.setup {
@@ -676,7 +645,6 @@ fn validate_id(kind: &str, id: &str) -> Result<()> {
 
 /// An `external` service is owned by CI/local infrastructure. vat only attaches
 /// to the endpoint, so Docker/cluster/service-start knobs do not apply.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 fn validate_external_service(service: &ServiceConfig) -> Result<()> {
     let endpoint = service
         .external
@@ -706,7 +674,6 @@ fn validate_external_service(service: &ServiceConfig) -> Result<()> {
 
 /// An `image`-backed service runs a Docker container, so it needs a non-empty
 /// image reference and a container port to map onto the host.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 fn validate_image_service(service: &ServiceConfig) -> Result<()> {
     if service
         .image
@@ -728,7 +695,6 @@ fn validate_image_service(service: &ServiceConfig) -> Result<()> {
 
 /// A `cluster` service spins up an ephemeral local Kubernetes cluster, so it
 /// rejects the container/preset-only knobs and bounds the node count.
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
 fn validate_cluster_service(service: &ServiceConfig) -> Result<()> {
     if service.container_port.is_some() || !service.image_env.is_empty() || !service.seed.is_empty()
     {
@@ -750,7 +716,6 @@ fn validate_cluster_service(service: &ServiceConfig) -> Result<()> {
 
 /// The `openapi` preset serves spec-derived mock responses, so it requires a
 /// `spec` pointing at an OpenAPI document.
-/// @spec apps/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config
 fn validate_openapi_service(service: &ServiceConfig) -> Result<()> {
     if service
         .spec
@@ -770,7 +735,6 @@ fn validate_openapi_service(service: &ServiceConfig) -> Result<()> {
 /// The `firebase` preset is a bundle driven by the Firebase Emulator Suite, so
 /// it requires a `firebase.json` in the workspace to know which emulators and
 /// ports to start.
-/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
 fn validate_firebase_service(cfg: &VatConfig, service: &ServiceConfig) -> Result<()> {
     if !cfg.root.join("firebase.json").exists() {
         bail!(
@@ -788,7 +752,6 @@ fn validate_cmd(kind: &str, id: &str, cmd: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 impl VatConfig {
     pub fn select_runner(
         &self,
@@ -838,7 +801,6 @@ impl VatConfig {
     }
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 pub fn resolve_relative(root: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -847,7 +809,6 @@ pub fn resolve_relative(root: &Path, path: &Path) -> PathBuf {
     }
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 pub fn should_run_setup(rootfs: &Path, step: &SetupStep) -> bool {
     match step.when.as_deref() {
         Some(when) if when.starts_with("missing:") => {
@@ -1619,7 +1580,6 @@ network = "hermetic"
     }
 }
 // CODEGEN-END
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#schema
 // CODEGEN-BEGIN
 // Real schema additions have been applied: ServiceRuntime::MicroVm variant,
 // VolumeMount struct, ServiceConfig.volumes field, and validate() gate relaxation.

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `openapi-codegen` — generate a typed API client from an OpenAPI 3.0, 3.1,
 //! or 3.2 document, in TypeScript, Python, or Rust. Reusable polyglot codegen
@@ -41,7 +40,6 @@ pub use target::{
 
 /// Target language for the generated client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub enum Lang {
     /// TypeScript: types + a typed fetch/axios client + TanStack Query hooks.
     #[default]
@@ -65,7 +63,6 @@ impl Lang {
 
 /// HTTP runtime backend for the generated TypeScript client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub enum HttpClient {
     /// Native `fetch` (zero runtime dependency).
     #[default]
@@ -76,7 +73,6 @@ pub enum HttpClient {
 
 /// What the generator emits, selected by CLI flags.
 #[derive(Debug, Clone)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub struct GenOptions {
     /// Target language for the generated client.
     pub lang: Lang,
@@ -94,7 +90,6 @@ pub struct GenOptions {
 
 /// A single generated file, relative to the output directory.
 #[derive(Debug, Clone)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub struct GeneratedFile {
     pub rel_path: String,
     pub contents: String,
@@ -102,7 +97,6 @@ pub struct GeneratedFile {
 
 /// The full in-memory generation result (so tests can assert without I/O).
 #[derive(Debug, Clone)]
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub struct GeneratedOutput {
     pub files: Vec<GeneratedFile>,
     /// The explicitly selected profile used to render `files`.
@@ -220,7 +214,6 @@ impl Default for GeneratedOutput {
 
 /// Pure core: spec JSON text → generated files. No filesystem access. Dispatches
 /// to the per-language emitter selected by [`GenOptions::lang`].
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     match opts.target {
         Some(target) => generate_for_target(spec_json, opts, target),
@@ -266,7 +259,6 @@ pub fn generate_for_target(
 
 /// CLI entry: read spec, generate, write files. Returns a process exit code
 /// (0 ok, 1 generation/write error, 2 spec read error).
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub fn run(opts: &GenOptions) -> i32 {
     let spec_json = match std::fs::read_to_string(&opts.spec_path) {
         Ok(s) => s,

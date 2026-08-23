@@ -1,4 +1,3 @@
-<!-- SPEC-MANAGED: libs/compass/tech-design/semantic/compass-libs-compass.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # compass Agent Context
 

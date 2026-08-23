@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-extract-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Extract function / method / variable refactoring
 //!
@@ -20,10 +19,8 @@ use super::extract_helpers::{
 use super::{validate_identifier, FileContext, ProjectContext, RefactoringOp};
 
 /// Unified engine for all extract-* operations.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-extract-rs.md#source
 pub struct ExtractEngine;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-extract-rs.md#source
 impl RefactoringOp for ExtractEngine {
     fn apply(
         &self,

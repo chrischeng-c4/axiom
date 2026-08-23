@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-sqlx-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! sqlx code generator
 //!
@@ -10,10 +9,8 @@ use crate::spec::ir::{DataModelSpec, FieldDef, ModelDef, StringFormat};
 use crate::type_inference::Type;
 
 /// Sqlx code generator
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-sqlx-rs.md#source
 pub struct SqlxGenerator;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-sqlx-rs.md#source
 impl SqlxGenerator {
     pub fn new() -> Self {
         Self
@@ -262,14 +259,12 @@ impl SqlxGenerator {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-sqlx-rs.md#source
 impl Default for SqlxGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-sqlx-rs.md#source
 impl CodeGenerator for SqlxGenerator {
     fn name(&self) -> &str {
         "sqlx"

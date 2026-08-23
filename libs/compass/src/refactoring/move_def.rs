@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-move-def-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Move-definition refactoring
 //!
@@ -22,10 +21,8 @@ use super::{FileContext, ProjectContext, RefactoringOp};
 // ============================================================================
 
 /// Engine that moves a top-level definition between files.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-move-def-rs.md#source
 pub struct MoveDefEngine;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-move-def-rs.md#source
 impl RefactoringOp for MoveDefEngine {
     fn apply(
         &self,

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rules-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Extended HTML lint rules (HTML006 - HTML011)
 //!
@@ -10,7 +9,6 @@ use std::collections::HashMap;
 
 use super::html::HtmlChecker;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rules-rs.md#source
 impl HtmlChecker {
     /// HTML006: Missing `<meta charset>` in `<head>`
     ///

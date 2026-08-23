@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! # cclab-compass
 //!

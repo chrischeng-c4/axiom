@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Self-contained Raft consensus core (no external dependency).
 //!
@@ -28,12 +27,9 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 /// Stable node identity (in k8s, the StatefulSet ordinal).
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub type NodeId = u64;
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub type Term = u64;
 /// 1-based Raft log index; 0 means "before the first entry".
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub type Index = u64;
 
 /// Logical ticks before a voter starts an election (distinct per node so the
@@ -46,13 +42,22 @@ const ELECTION_MIN: u64 = 50;
 /// Ticks between leader heartbeats / replication pushes.
 const HEARTBEAT_TIMEOUT: u64 = 3;
 
+/// Discriminator distinguishing client commands from internal configuration entries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntryKind {
+    #[default]
+    Command,
+    Config,
+}
+
 /// One replicated command entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct RaftEntry {
     pub term: Term,
     pub index: Index,
     pub command: Vec<u8>,
+    #[serde(default)]
+    pub kind: EntryKind,
 }
 
 /// The durable hard state of a Raft node: what must survive a restart so the
@@ -60,7 +65,6 @@ pub struct RaftEntry {
 /// the compaction point + snapshot bytes so a restarted node can still serve
 /// lagging followers.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct PersistedState {
     pub term: Term,
     pub voted_for: Option<NodeId>,
@@ -77,10 +81,11 @@ pub struct PersistedState {
     pub snapshot_term: Term,
     #[serde(default)]
     pub snapshot: Vec<u8>,
+    #[serde(default)]
+    pub conf: Option<ConfState>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub enum Role {
     Follower,
     Candidate,
@@ -88,7 +93,6 @@ pub enum Role {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct VoteReq {
     pub term: Term,
     pub candidate: NodeId,
@@ -97,14 +101,12 @@ pub struct VoteReq {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct VoteResp {
     pub term: Term,
     pub granted: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct AppendReq {
     pub term: Term,
     pub leader: NodeId,
@@ -115,7 +117,6 @@ pub struct AppendReq {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct AppendResp {
     pub term: Term,
     pub success: bool,
@@ -126,7 +127,6 @@ pub struct AppendResp {
 /// Ship a state-machine snapshot to a follower whose needed entries have been
 /// compacted away. `data` is opaque (the consumer's serialized state machine).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct InstallSnapshotReq {
     pub term: Term,
     pub leader: NodeId,
@@ -136,15 +136,19 @@ pub struct InstallSnapshotReq {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct InstallSnapshotResp {
     pub term: Term,
     /// The snapshot index the follower now holds.
     pub snapshot_index: Index,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TimeoutNowReq {
+    pub term: Term,
+    pub leader: NodeId,
+}
+
 #[derive(Clone, Debug)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub enum RaftMsg {
     Vote(VoteReq),
     VoteResp(VoteResp),
@@ -152,11 +156,11 @@ pub enum RaftMsg {
     AppendResp(AppendResp),
     InstallSnapshot(InstallSnapshotReq),
     InstallSnapshotResp(InstallSnapshotResp),
+    TimeoutNow(TimeoutNowReq),
 }
 
 /// A message the driver must deliver to node `to`.
 #[derive(Clone, Debug)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct Outgoing {
     pub to: NodeId,
     pub msg: RaftMsg,
@@ -164,24 +168,175 @@ pub struct Outgoing {
 
 /// How a driver delivers a node's outgoing messages. The production driver
 /// implements this over h2c; tests use an in-process bus.
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub trait RaftTransport {
     fn deliver(&mut self, from: NodeId, out: Outgoing);
 }
 
+/// Why a leader refused a promotion request (#3570).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PromotionRefused {
+    NotLeader,
+    NotCaughtUp { matched: Index, target: Index },
+    TransitionInFlight,
+}
+
+/// Why a leader refused a leadership transfer request (#3571).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransferRefused {
+    NotLeader,
+    NotAVoter {
+        target: NodeId,
+    },
+    NotCaughtUp {
+        target: NodeId,
+        matched: Index,
+        last_index: Index,
+    },
+}
+
+/// Why a leader refused a demotion request (#3572).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DemotionRefused {
+    NotLeader,
+    IsTheLeader { target: NodeId },
+    TransitionInFlight,
+    NotAVoter { target: NodeId },
+    ToleranceWouldDrop { before: usize, after: usize },
+    WouldEmptyVoterSet { target: NodeId },
+}
+
+/// Why a leader refused a removal request (#3572).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RemovalRefused {
+    NotLeader,
+    TransitionInFlight,
+    NotAMember { target: NodeId },
+    IsTheLeader { target: NodeId },
+    ToleranceWouldDrop { before: usize, after: usize },
+    WouldEmptyVoterSet { target: NodeId },
+}
+
 /// Cluster membership for one Raft group.
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Membership {
     pub voters: Vec<NodeId>,
     pub learners: Vec<NodeId>,
+}
+
+/// Monotonically sequenced cluster membership.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfState {
+    pub membership: Membership,
+    #[serde(default)]
+    pub outgoing: Option<Vec<NodeId>>,
+    pub generation: u64,
+}
+
+impl ConfState {
+    pub fn encode(&self) -> Vec<u8> {
+        let outgoing_len = self.outgoing.as_ref().map(|o| o.len()).unwrap_or(0);
+        let mut buf = Vec::with_capacity(
+            24 + (self.membership.voters.len() + self.membership.learners.len() + outgoing_len) * 8
+                + 8,
+        );
+        buf.extend_from_slice(&self.generation.to_le_bytes());
+        buf.extend_from_slice(&(self.membership.voters.len() as u64).to_le_bytes());
+        for &v in &self.membership.voters {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        buf.extend_from_slice(&(self.membership.learners.len() as u64).to_le_bytes());
+        for &l in &self.membership.learners {
+            buf.extend_from_slice(&l.to_le_bytes());
+        }
+        match &self.outgoing {
+            Some(outgoing) => {
+                buf.extend_from_slice(&(outgoing.len() as u64).to_le_bytes());
+                for &v in outgoing {
+                    buf.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            None => {
+                buf.extend_from_slice(&0u64.to_le_bytes());
+            }
+        }
+        buf
+    }
+
+    pub fn decode_with_len(bytes: &[u8]) -> Option<(ConfState, usize)> {
+        if bytes.len() < 24 {
+            return None;
+        }
+        let mut offset = 0;
+        let generation = u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?);
+        offset += 8;
+        let voters_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?) as usize;
+        offset += 8;
+        if voters_len > (bytes.len() - offset - 8) / 8 {
+            return None;
+        }
+        let mut voters = Vec::with_capacity(voters_len);
+        for _ in 0..voters_len {
+            voters.push(u64::from_le_bytes(
+                bytes[offset..offset + 8].try_into().ok()?,
+            ));
+            offset += 8;
+        }
+        let learners_len = u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?) as usize;
+        offset += 8;
+        if learners_len > (bytes.len() - offset) / 8 {
+            return None;
+        }
+        let mut learners = Vec::with_capacity(learners_len);
+        for _ in 0..learners_len {
+            learners.push(u64::from_le_bytes(
+                bytes[offset..offset + 8].try_into().ok()?,
+            ));
+            offset += 8;
+        }
+        let outgoing = if offset == bytes.len() {
+            None
+        } else {
+            if bytes.len() - offset < 8 {
+                return None;
+            }
+            let outgoing_len =
+                u64::from_le_bytes(bytes[offset..offset + 8].try_into().ok()?) as usize;
+            offset += 8;
+            if outgoing_len == 0 {
+                None
+            } else {
+                if outgoing_len > (bytes.len() - offset) / 8 {
+                    return None;
+                }
+                let mut outgoing_voters = Vec::with_capacity(outgoing_len);
+                for _ in 0..outgoing_len {
+                    outgoing_voters.push(u64::from_le_bytes(
+                        bytes[offset..offset + 8].try_into().ok()?,
+                    ));
+                    offset += 8;
+                }
+                Some(outgoing_voters)
+            }
+        };
+        Some((
+            ConfState {
+                membership: Membership { voters, learners },
+                outgoing,
+                generation,
+            },
+            offset,
+        ))
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<ConfState> {
+        Self::decode_with_len(bytes).map(|(conf, _)| conf)
+    }
 }
 
 /// Derive membership for node ids `0..n`: voters are the largest **odd** prefix
 /// (`n` if odd else `n-1`), the trailing even node becomes a non-voting learner.
 /// So the voter count is always odd (1,1,3,3,5,5,…) → clean majorities, and
 /// every extra even node is a read-only learner. `n == 0` is treated as 1.
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub fn auto_membership(n: u64) -> Membership {
     let n = n.max(1);
     let voters = if n % 2 == 1 { n } else { n - 1 };
@@ -192,12 +347,11 @@ pub fn auto_membership(n: u64) -> Membership {
 }
 
 /// A single Raft-group participant.
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 pub struct RaftNode {
     id: NodeId,
-    voters: Vec<NodeId>,
     peers: Vec<NodeId>, // all other members (voters + learners)
     is_voter: bool,
+    conf_state: ConfState,
 
     role: Role,
     current_term: Term,
@@ -216,6 +370,7 @@ pub struct RaftNode {
     // leader-only, per peer
     next_index: HashMap<NodeId, Index>,
     match_index: HashMap<NodeId, Index>,
+    learner_read_targets: HashMap<NodeId, Index>,
 
     // election
     votes: HashSet<NodeId>,
@@ -225,10 +380,13 @@ pub struct RaftNode {
     /// Last known leader for this term (drives producer redirect-to-leader).
     leader_id: Option<NodeId>,
 
+    // leadership transfer
+    transfer_in_flight: Option<NodeId>,
+    transfer_elapsed: u64,
+
     outbox: Vec<Outgoing>,
 }
 
-/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-src-lib-rs.md#source
 impl RaftNode {
     /// Create a node `id` within `membership` (starts as Follower at term 0).
     pub fn new(id: NodeId, membership: &Membership) -> RaftNode {
@@ -240,11 +398,19 @@ impl RaftNode {
             .collect();
         members.sort_unstable();
         let peers = members.into_iter().filter(|m| *m != id).collect();
+        let mut learner_read_targets = HashMap::new();
+        for &l in &membership.learners {
+            learner_read_targets.insert(l, 0);
+        }
         RaftNode {
             id,
-            voters: membership.voters.clone(),
             peers,
             is_voter: membership.voters.contains(&id),
+            conf_state: ConfState {
+                membership: membership.clone(),
+                outgoing: None,
+                generation: 0,
+            },
             role: Role::Follower,
             current_term: 0,
             voted_for: None,
@@ -257,12 +423,15 @@ impl RaftNode {
             installed_snapshot: None,
             next_index: HashMap::new(),
             match_index: HashMap::new(),
+            learner_read_targets,
             votes: HashSet::new(),
             election_elapsed: 0,
             // distinct per node so one voter always times out first.
             election_timeout: ELECTION_MIN + id,
             heartbeat_elapsed: 0,
             leader_id: None,
+            transfer_in_flight: None,
+            transfer_elapsed: 0,
             outbox: Vec::new(),
         }
     }
@@ -272,7 +441,13 @@ impl RaftNode {
     /// restarts as a Follower at the snapshot point and is re-derived via
     /// replication. Committed entries re-apply idempotently downstream.
     pub fn from_persisted(id: NodeId, membership: &Membership, state: PersistedState) -> RaftNode {
-        let mut node = RaftNode::new(id, membership);
+        let conf = state.conf.unwrap_or_else(|| ConfState {
+            membership: membership.clone(),
+            outgoing: None,
+            generation: 0,
+        });
+        let mut node = RaftNode::new(id, &conf.membership);
+        node.conf_state = conf;
         node.current_term = state.term;
         node.voted_for = state.voted_for;
         node.log = state.log;
@@ -300,7 +475,261 @@ impl RaftNode {
             snapshot_index: self.snapshot_index,
             snapshot_term: self.snapshot_term,
             snapshot: self.snapshot.clone(),
+            conf: Some(self.conf_state.clone()),
         }
+    }
+
+    pub fn conf_state(&self) -> &ConfState {
+        &self.conf_state
+    }
+
+    /// Whether this node has a joint configuration in force.
+    pub fn is_joint(&self) -> bool {
+        self.conf_state.outgoing.is_some()
+    }
+
+    /// Return an eligible caught-up voter to receive leadership, or `None` if
+    /// this node is not the leader, is the only voter, or no other voter has
+    /// replicated this node's whole log (#3664).
+    pub fn handoff_candidate(&self) -> Option<NodeId> {
+        if self.role != Role::Leader {
+            return None;
+        }
+        let last_index = self.last_index();
+        self.conf_state
+            .membership
+            .voters
+            .iter()
+            .copied()
+            .filter(|&id| id != self.id)
+            .find(|&id| {
+                let matched = self.match_index.get(&id).copied().unwrap_or(0);
+                matched >= last_index
+            })
+    }
+
+    /// Transfer leadership to a named caught-up voter (#3571).
+    pub fn transfer_leadership(&mut self, target: NodeId) -> Result<(), TransferRefused> {
+        if self.role != Role::Leader {
+            return Err(TransferRefused::NotLeader);
+        }
+        if !self.conf_state.membership.voters.contains(&target) {
+            return Err(TransferRefused::NotAVoter { target });
+        }
+        let matched = if target == self.id {
+            self.last_index()
+        } else {
+            self.match_index.get(&target).copied().unwrap_or(0)
+        };
+        let last_index = self.last_index();
+        if matched < last_index {
+            return Err(TransferRefused::NotCaughtUp {
+                target,
+                matched,
+                last_index,
+            });
+        }
+        self.transfer_in_flight = Some(target);
+        self.transfer_elapsed = 0;
+        self.send(
+            target,
+            RaftMsg::TimeoutNow(TimeoutNowReq {
+                term: self.current_term,
+                leader: self.id,
+            }),
+        );
+        Ok(())
+    }
+
+    /// Promote a caught-up learner to voter through a joint configuration.
+    pub fn promote_learner(&mut self, peer: NodeId) -> Result<Index, PromotionRefused> {
+        if self.role != Role::Leader {
+            return Err(PromotionRefused::NotLeader);
+        }
+        if self.is_joint() || self.transfer_in_flight.is_some() {
+            return Err(PromotionRefused::TransitionInFlight);
+        }
+        if self
+            .log
+            .iter()
+            .any(|e| e.index > self.commit_index && e.kind == EntryKind::Config)
+        {
+            return Err(PromotionRefused::TransitionInFlight);
+        }
+        let matched = self.learner_matched(peer).unwrap_or(0);
+        let target = self.learner_read_target(peer).unwrap_or(0);
+        if matched < target {
+            return Err(PromotionRefused::NotCaughtUp { matched, target });
+        }
+        let mut new_voters = self.conf_state.membership.voters.clone();
+        if !new_voters.contains(&peer) {
+            new_voters.push(peer);
+            new_voters.sort_unstable();
+        }
+        let mut new_learners = self.conf_state.membership.learners.clone();
+        new_learners.retain(|l| *l != peer);
+
+        let outgoing = Some(self.conf_state.membership.voters.clone());
+        let conf = ConfState {
+            membership: Membership {
+                voters: new_voters,
+                learners: new_learners,
+            },
+            outgoing,
+            generation: self.conf_state.generation + 1,
+        };
+        let idx = self
+            .propose_config(conf)
+            // unreachable: propose_config returns None only when self.role != Role::Leader or self.transfer_in_flight.is_some(), which are excluded above by self.role != Role::Leader and self.is_joint() || self.transfer_in_flight.is_some().
+            .ok_or(PromotionRefused::TransitionInFlight)?;
+        Ok(idx)
+    }
+
+    /// Demote a voter to a learner through a joint configuration (#3572).
+    pub fn demote_voter(&mut self, peer: NodeId) -> Result<Index, DemotionRefused> {
+        if self.role != Role::Leader {
+            return Err(DemotionRefused::NotLeader);
+        }
+        if peer == self.id {
+            return Err(DemotionRefused::IsTheLeader { target: peer });
+        }
+        if self.is_joint() || self.transfer_in_flight.is_some() {
+            return Err(DemotionRefused::TransitionInFlight);
+        }
+        if self
+            .log
+            .iter()
+            .any(|e| e.index > self.commit_index && e.kind == EntryKind::Config)
+        {
+            return Err(DemotionRefused::TransitionInFlight);
+        }
+        if !self.conf_state.membership.voters.contains(&peer) {
+            return Err(DemotionRefused::NotAVoter { target: peer });
+        }
+        let mut new_voters = self.conf_state.membership.voters.clone();
+        new_voters.retain(|v| *v != peer);
+        if new_voters.is_empty() {
+            return Err(DemotionRefused::WouldEmptyVoterSet { target: peer });
+        }
+        let n = self.conf_state.membership.voters.len();
+        let before = n.saturating_sub(n / 2 + 1);
+        let after = (n - 1).saturating_sub((n - 1) / 2 + 1);
+        if after < before {
+            return Err(DemotionRefused::ToleranceWouldDrop { before, after });
+        }
+        let mut new_learners = self.conf_state.membership.learners.clone();
+        if !new_learners.contains(&peer) {
+            new_learners.push(peer);
+            new_learners.sort_unstable();
+        }
+
+        let outgoing = Some(self.conf_state.membership.voters.clone());
+        let conf = ConfState {
+            membership: Membership {
+                voters: new_voters,
+                learners: new_learners,
+            },
+            outgoing,
+            generation: self.conf_state.generation + 1,
+        };
+        let idx = self
+            .propose_config(conf)
+            // unreachable: propose_config returns None only when self.role != Role::Leader or self.transfer_in_flight.is_some(), which are excluded above by self.role != Role::Leader and self.is_joint() || self.transfer_in_flight.is_some().
+            .ok_or(DemotionRefused::TransitionInFlight)?;
+        Ok(idx)
+    }
+
+    /// Remove a member from the group through a joint configuration (#3572).
+    pub fn remove_member(&mut self, peer: NodeId) -> Result<Index, RemovalRefused> {
+        if self.role != Role::Leader {
+            return Err(RemovalRefused::NotLeader);
+        }
+        if peer == self.id {
+            return Err(RemovalRefused::IsTheLeader { target: peer });
+        }
+        if self.is_joint() || self.transfer_in_flight.is_some() {
+            return Err(RemovalRefused::TransitionInFlight);
+        }
+        if self
+            .log
+            .iter()
+            .any(|e| e.index > self.commit_index && e.kind == EntryKind::Config)
+        {
+            return Err(RemovalRefused::TransitionInFlight);
+        }
+        let is_voter = self.conf_state.membership.voters.contains(&peer);
+        let is_learner = self.conf_state.membership.learners.contains(&peer);
+        if !is_voter && !is_learner {
+            return Err(RemovalRefused::NotAMember { target: peer });
+        }
+        let mut new_voters = self.conf_state.membership.voters.clone();
+        new_voters.retain(|v| *v != peer);
+        if is_voter {
+            if new_voters.is_empty() {
+                return Err(RemovalRefused::WouldEmptyVoterSet { target: peer });
+            }
+            let n = self.conf_state.membership.voters.len();
+            let before = n.saturating_sub(n / 2 + 1);
+            let after = (n - 1).saturating_sub((n - 1) / 2 + 1);
+            if after < before {
+                return Err(RemovalRefused::ToleranceWouldDrop { before, after });
+            }
+        }
+        let mut new_learners = self.conf_state.membership.learners.clone();
+        new_learners.retain(|l| *l != peer);
+
+        let outgoing = Some(self.conf_state.membership.voters.clone());
+        let conf = ConfState {
+            membership: Membership {
+                voters: new_voters,
+                learners: new_learners,
+            },
+            outgoing,
+            generation: self.conf_state.generation + 1,
+        };
+        let idx = self
+            .propose_config(conf)
+            // unreachable: propose_config returns None only when self.role != Role::Leader or self.transfer_in_flight.is_some(), which are excluded above by self.role != Role::Leader and self.is_joint() || self.transfer_in_flight.is_some().
+            .ok_or(RemovalRefused::TransitionInFlight)?;
+        Ok(idx)
+    }
+
+    /// Adopt a superseding configuration state. Refuses configurations whose
+    /// generation does not strictly exceed the one in force.
+    pub fn adopt_conf(&mut self, conf: ConfState) -> bool {
+        if conf.generation <= self.conf_state.generation {
+            return false;
+        }
+        let mut members: Vec<NodeId> = conf
+            .membership
+            .voters
+            .iter()
+            .chain(conf.membership.learners.iter())
+            .chain(conf.outgoing.iter().flatten())
+            .copied()
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        self.peers = members.into_iter().filter(|m| *m != self.id).collect();
+        self.is_voter = conf.membership.voters.contains(&self.id)
+            || conf
+                .outgoing
+                .as_ref()
+                .map_or(false, |o| o.contains(&self.id));
+        self.conf_state = conf;
+        for l in &self.conf_state.membership.learners {
+            self.learner_read_targets
+                .entry(*l)
+                .or_insert(self.commit_index);
+        }
+        if self.role == Role::Leader {
+            let next = self.last_index() + 1;
+            for p in &self.peers {
+                self.next_index.entry(*p).or_insert(next);
+                self.match_index.entry(*p).or_insert(0);
+            }
+        }
+        true
     }
 
     pub fn id(&self) -> NodeId {
@@ -338,6 +767,42 @@ impl RaftNode {
         self.leader_id
     }
 
+    /// Highest index this leader has recorded as replicated to `peer`, or `None`
+    /// if this node is not the leader or `peer` is not an admitted learner.
+    pub fn learner_matched(&self, peer: NodeId) -> Option<Index> {
+        if self.role != Role::Leader || !self.conf_state.membership.learners.contains(&peer) {
+            return None;
+        }
+        self.match_index.get(&peer).copied().or(Some(0))
+    }
+
+    /// The index `peer` must replicate to before it is fit to serve reads, or
+    /// `None` if `peer` is not an admitted learner.
+    pub fn learner_read_target(&self, peer: NodeId) -> Option<Index> {
+        if !self.conf_state.membership.learners.contains(&peer) {
+            return None;
+        }
+        self.learner_read_targets.get(&peer).copied()
+    }
+
+    /// Whether an admitted learner has caught up to its recorded read target,
+    /// or `None` if this node is not the leader or `peer` is not an admitted learner.
+    pub fn learner_read_eligible(&self, peer: NodeId) -> Option<bool> {
+        let matched = self.learner_matched(peer)?;
+        let target = self.learner_read_target(peer)?;
+        Some(matched >= target)
+    }
+
+    /// Number of committed entries an admitted learner is behind, measured
+    /// against this leader's commit index when asked (the live freshness
+    /// question, as opposed to [`learner_read_eligible`](Self::learner_read_eligible)
+    /// which answers the admission question), or `None` if this node is not the
+    /// leader or `peer` is not an admitted learner.
+    pub fn learner_replication_gap(&self, peer: NodeId) -> Option<Index> {
+        let matched = self.learner_matched(peer)?;
+        Some(self.commit_index.saturating_sub(matched))
+    }
+
     fn last_term(&self) -> Term {
         self.log
             .last()
@@ -357,22 +822,30 @@ impl RaftNode {
         }
     }
 
-    fn majority(&self) -> usize {
-        self.voters.len() / 2 + 1
-    }
-
     /// Drain messages the driver must deliver.
     pub fn take_outgoing(&mut self) -> Vec<Outgoing> {
         std::mem::take(&mut self.outbox)
     }
 
     /// Newly committed entries (in index order); advances `last_applied`.
+    /// Configuration entries are adopted into force and withheld from the
+    /// consumer.
     pub fn take_committed(&mut self) -> Vec<RaftEntry> {
         let mut out = Vec::new();
         while self.last_applied < self.commit_index {
             let idx = self.last_applied + 1;
             let pos = (idx - self.snapshot_index - 1) as usize;
-            out.push(self.log[pos].clone());
+            let entry = &self.log[pos];
+            if entry.kind == EntryKind::Config {
+                if let Some(conf) = ConfState::decode(&entry.command) {
+                    self.adopt_conf(conf);
+                    if self.role == Role::Leader && self.is_joint() {
+                        self.check_leave_joint();
+                    }
+                }
+            } else {
+                out.push(entry.clone());
+            }
             self.last_applied = idx;
         }
         out
@@ -409,6 +882,13 @@ impl RaftNode {
         self.election_elapsed += 1;
         self.heartbeat_elapsed += 1;
         if self.role == Role::Leader {
+            if self.transfer_in_flight.is_some() {
+                self.transfer_elapsed += 1;
+                if self.transfer_elapsed >= self.election_timeout {
+                    self.transfer_in_flight = None;
+                    self.transfer_elapsed = 0;
+                }
+            }
             if self.heartbeat_elapsed >= HEARTBEAT_TIMEOUT {
                 self.heartbeat_elapsed = 0;
                 self.broadcast_append();
@@ -428,12 +908,13 @@ impl RaftNode {
         self.election_elapsed = 0;
         let (lli, llt) = (self.last_index(), self.last_term());
         let term = self.current_term;
-        let peers: Vec<NodeId> = self
-            .voters
-            .iter()
-            .copied()
-            .filter(|v| *v != self.id)
-            .collect();
+        let mut vote_targets = self.conf_state.membership.voters.clone();
+        if let Some(outgoing) = &self.conf_state.outgoing {
+            vote_targets.extend(outgoing);
+        }
+        vote_targets.sort_unstable();
+        vote_targets.dedup();
+        let peers: Vec<NodeId> = vote_targets.into_iter().filter(|v| *v != self.id).collect();
         for v in peers {
             self.send(
                 v,
@@ -453,12 +934,21 @@ impl RaftNode {
         if self.role != Role::Candidate {
             return;
         }
-        let granted = self
+        let incoming_granted = self
             .votes
             .iter()
-            .filter(|v| self.voters.contains(v))
+            .filter(|v| self.conf_state.membership.voters.contains(v))
             .count();
-        if granted >= self.majority() {
+        let incoming_maj = self.conf_state.membership.voters.len() / 2 + 1;
+        let outgoing_satisfied = match &self.conf_state.outgoing {
+            Some(outgoing) => {
+                let outgoing_granted = self.votes.iter().filter(|v| outgoing.contains(v)).count();
+                let outgoing_maj = outgoing.len() / 2 + 1;
+                outgoing_granted >= outgoing_maj
+            }
+            None => true,
+        };
+        if incoming_granted >= incoming_maj && outgoing_satisfied {
             self.become_leader();
         }
     }
@@ -474,7 +964,31 @@ impl RaftNode {
             self.match_index.insert(p, 0);
         }
         self.heartbeat_elapsed = 0;
+        self.transfer_in_flight = None;
+        self.transfer_elapsed = 0;
         self.broadcast_append();
+        if self.is_joint() {
+            self.check_leave_joint();
+        }
+    }
+
+    fn check_leave_joint(&mut self) {
+        if self.role != Role::Leader || !self.is_joint() {
+            return;
+        }
+        let has_pending = self.log.iter().any(|e| {
+            e.index > self.commit_index
+                && e.kind == EntryKind::Config
+                && e.term == self.current_term
+        });
+        if !has_pending {
+            let conf = ConfState {
+                membership: self.conf_state.membership.clone(),
+                outgoing: None,
+                generation: self.conf_state.generation + 1,
+            };
+            self.propose_config(conf);
+        }
     }
 
     fn step_down(&mut self, term: Term) {
@@ -484,6 +998,8 @@ impl RaftNode {
         }
         self.role = Role::Follower;
         self.election_elapsed = 0;
+        self.transfer_in_flight = None;
+        self.transfer_elapsed = 0;
     }
 
     fn broadcast_append(&mut self) {
@@ -538,7 +1054,7 @@ impl RaftNode {
     /// Append a command on the leader and replicate it. Returns its index, or
     /// `None` if this node is not the leader.
     pub fn propose(&mut self, command: Vec<u8>) -> Option<Index> {
-        if self.role != Role::Leader {
+        if self.role != Role::Leader || self.transfer_in_flight.is_some() {
             return None;
         }
         let index = self.last_index() + 1;
@@ -546,10 +1062,44 @@ impl RaftNode {
             term: self.current_term,
             index,
             command,
+            kind: EntryKind::Command,
         });
         self.broadcast_append();
         self.maybe_commit(); // sole voter commits immediately
         Some(index)
+    }
+
+    /// Append a configuration entry on the leader and replicate it. Returns its
+    /// index, or `None` if this node is not the leader.
+    pub fn propose_config(&mut self, conf: ConfState) -> Option<Index> {
+        if self.role != Role::Leader || self.transfer_in_flight.is_some() {
+            return None;
+        }
+        let index = self.last_index() + 1;
+        self.log.push(RaftEntry {
+            term: self.current_term,
+            index,
+            command: conf.encode(),
+            kind: EntryKind::Config,
+        });
+        self.broadcast_append();
+        self.maybe_commit();
+        Some(index)
+    }
+
+    /// Append a configuration entry adding a learner on the leader and replicate
+    /// it. Returns its index, or `None` if this node is not the leader.
+    pub fn add_learner(&mut self, peer: NodeId) -> Option<Index> {
+        if self.role != Role::Leader || self.transfer_in_flight.is_some() {
+            return None;
+        }
+        let mut conf = self.conf_state.clone();
+        conf.generation += 1;
+        if !conf.membership.learners.contains(&peer) {
+            conf.membership.learners.push(peer);
+            conf.membership.learners.sort_unstable();
+        }
+        self.propose_config(conf)
     }
 
     /// Feed an incoming message from `from`.
@@ -561,6 +1111,7 @@ impl RaftNode {
             RaftMsg::AppendResp(resp) => self.handle_append_resp(from, resp),
             RaftMsg::InstallSnapshot(req) => self.handle_install_snapshot(req),
             RaftMsg::InstallSnapshotResp(resp) => self.handle_install_snapshot_resp(from, resp),
+            RaftMsg::TimeoutNow(req) => self.handle_timeout_now(req),
         }
     }
 
@@ -770,33 +1321,75 @@ impl RaftNode {
     }
 
     /// Leader: advance `commit_index` to the highest index replicated to a
-    /// majority of **voters** whose entry is from the current term.
+    /// majority of **voters** (both incoming and outgoing sets if joint)
+    /// whose entry is from the current term.
     fn maybe_commit(&mut self) {
         if self.role != Role::Leader {
             return;
         }
         let last = self.last_index();
         let mut new_commit = self.commit_index;
+        let incoming_maj = self.conf_state.membership.voters.len() / 2 + 1;
+        let outgoing_maj = self
+            .conf_state
+            .outgoing
+            .as_ref()
+            .map(|out| out.len() / 2 + 1);
+
         for n in (self.commit_index + 1)..=last {
             if self.term_at(n) != self.current_term {
                 continue;
             }
-            let mut count = 0usize;
-            for v in &self.voters {
+            let mut incoming_count = 0usize;
+            for v in &self.conf_state.membership.voters {
                 let m = if *v == self.id {
                     last
                 } else {
                     *self.match_index.get(v).unwrap_or(&0)
                 };
                 if m >= n {
-                    count += 1;
+                    incoming_count += 1;
                 }
             }
-            if count >= self.majority() {
+            let incoming_ok = incoming_count >= incoming_maj;
+
+            let outgoing_ok = match &self.conf_state.outgoing {
+                Some(outgoing) => {
+                    let mut outgoing_count = 0usize;
+                    for v in outgoing {
+                        let m = if *v == self.id {
+                            last
+                        } else {
+                            *self.match_index.get(v).unwrap_or(&0)
+                        };
+                        if m >= n {
+                            outgoing_count += 1;
+                        }
+                    }
+                    outgoing_count >= outgoing_maj.unwrap()
+                }
+                None => true,
+            };
+
+            if incoming_ok && outgoing_ok {
                 new_commit = n;
             }
         }
         self.commit_index = new_commit;
+    }
+
+    fn handle_timeout_now(&mut self, req: TimeoutNowReq) {
+        if !self.is_voter {
+            return;
+        }
+        if req.term < self.current_term {
+            return;
+        }
+        if req.term > self.current_term {
+            self.current_term = req.term;
+            self.voted_for = None;
+        }
+        self.start_election();
     }
 }
 // CODEGEN-END

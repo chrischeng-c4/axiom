@@ -1,12 +1,19 @@
-// SPEC-MANAGED: apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md#dx-contract
 // HANDWRITE-BEGIN gap="missing-generator:dx-contract:lumen-runtime-renderer" tracker="1683" reason="The runtime renderer binds TD task decisions to Rust FieldType capabilities; AW has the dx-contract parser/skeleton but not yet this cross-source Rust emitter."
-// @spec apps/lumen/tech-design/semantic/lumen-src.md#schema
 //! Generated Developer & Agent Experience surface for Lumen.
 //!
 //! Runtime field operations come from [`FieldType::capabilities`]. Task
-//! navigation decisions are compiled from the TD's `dx-contract` section so
-//! runbook prose, typed inputs, and command templates cannot become a second
-//! hand-maintained CLI catalogue.
+//! navigation decisions are compiled from `src/dx-contract.yaml`, which this
+//! module `include_str!`s so the contract is in the binary rather than read at
+//! run time — runbook prose, typed inputs, and command templates cannot become
+//! a second hand-maintained CLI catalogue.
+//!
+//! The split is deliberate and it is an authority split, not a layout one. The
+//! yaml owns task classification, narrative, preconditions, typed inputs,
+//! templates and artifact selection; the Rust owns structural behaviour —
+//! [`FieldType`] and its capabilities, runtime validation, CLI registration.
+//! Neither may restate the other's half: a capability written into the yaml is
+//! a claim nothing checks, and a runbook step written into Rust is a catalogue
+//! that drifts from the one `lumen llm` serves.
 
 use cli_std::llm::v2::{Input, ProtocolDocument, Risk, Runbook, Step, Task, Topic};
 use serde::Deserialize;
@@ -14,9 +21,8 @@ use serde_json::{json, Value};
 
 use crate::types::FieldType;
 
-const DX_CONTRACT_REF: &str =
-    "apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md#dx-contract";
-const DX_CONTRACT_SOURCE: &str = include_str!("../tech-design/interfaces/dx/lumen-dx-contract.md");
+const DX_CONTRACT_REF: &str = "apps/lumen/src/dx-contract.yaml";
+const DX_CONTRACT_SOURCE: &str = include_str!("dx-contract.yaml");
 
 /// Field declarations and query operations emitted by `lumen spec --fields`.
 pub fn field_catalog() -> Value {
@@ -170,18 +176,7 @@ struct InputContract {
 }
 
 fn dx_contract() -> DxContract {
-    let source = DX_CONTRACT_SOURCE
-        .split_once("## DX Contract")
-        .expect("DX contract TD has a DX Contract section")
-        .1;
-    let yaml = source
-        .split_once("```yaml\n")
-        .expect("DX contract TD has YAML payload")
-        .1
-        .split_once("\n```")
-        .expect("DX contract TD closes YAML payload")
-        .0;
-    serde_yaml::from_str(yaml).expect("DX contract TD YAML is valid")
+    serde_yaml::from_str(DX_CONTRACT_SOURCE).expect("DX contract YAML is valid")
 }
 
 fn task_from_contract(contract: TaskContract) -> Topic {

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-headless-docker-command-shim.md#vat-docker-pull-json-real-host
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-docker-pull-json-real-host

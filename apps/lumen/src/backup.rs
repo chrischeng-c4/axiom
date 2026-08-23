@@ -15,7 +15,6 @@ pub use service_backup::{
 
 /// POST exact SnapshotV1 JSON bytes to `{base_url}/admin/restore` (Bearer
 /// `token` when set).
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md#logic
 pub async fn restore_snapshot_bytes(
     base_url: &str,
     token: Option<&str>,

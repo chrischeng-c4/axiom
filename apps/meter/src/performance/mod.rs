@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-performance-mod-rs.md#source
 // CODEGEN-BEGIN
 //! Performance testing and profiling infrastructure
 //!

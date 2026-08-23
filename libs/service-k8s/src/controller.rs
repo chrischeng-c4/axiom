@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-controller-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The generic reconcile loop. Watches a [`ManagedService`] CR cluster-wide; for
 //! each, server-side-applies the rendered child objects as the field manager
@@ -28,7 +27,6 @@ use crate::service::{self, ManagedService, ReadyFacts};
 /// objects (an operator bug, not a cluster condition).
 // <HANDWRITE gap="missing-generator:logic:async-anchor" tracker="#1855" reason="AW cannot currently scaffold a hand-written region around async fn reconcile, so the planning error seam is bounded manually under the blocker.">
 #[derive(thiserror::Error, Debug)]
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-controller-rs.md#source
 pub enum Error {
     #[error("kube api error: {0}")]
     Kube(#[from] kube::Error),
@@ -63,7 +61,6 @@ fn lease_namespace(manager: &str) -> String {
 /// Run the operator for `S` until the process is terminated. Every replica
 /// watches + reconciles, but only the Lease holder applies (HA-safe at
 /// `replicas > 1`).
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-controller-rs.md#source
 pub async fn run<S: ManagedService>() -> anyhow::Result<()> {
     let client = Client::try_default().await?;
     let election = Election::new(identity(S::MANAGER));

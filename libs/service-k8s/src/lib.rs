@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `service-k8s` — the ecosystem's shared Kubernetes operator scaffold.
 //!
@@ -18,6 +17,7 @@ pub mod certificate;
 pub mod controller;
 pub mod crd;
 pub mod lease;
+pub mod lifecycle;
 pub mod llm;
 pub mod metrics;
 pub mod render;
@@ -30,6 +30,7 @@ pub use certificate::{
 };
 pub use controller::{run, Error};
 pub use lease::Election;
+pub use lifecycle::{LifecyclePolicy, LifecyclePolicyError, ProbeTiming, TerminationBudget};
 pub use metrics::ControllerMetrics;
 pub use service::{
     ClusterSpec, Condition, ConditionFact, ConditionStatus, ManagedService, ReadinessTarget,

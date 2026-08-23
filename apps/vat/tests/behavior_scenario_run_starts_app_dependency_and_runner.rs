@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec scenario-run-starts-app-dependency-and-runner

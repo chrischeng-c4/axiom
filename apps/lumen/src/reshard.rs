@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Snapshot-level resharding primitives.
 //!
@@ -24,8 +23,16 @@ use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
 /// and [`crate::operator::reshard_driver`]'s oversize-wedge detection
 /// compares a batch's real wire size against this same number rather than a
 /// second, hand-copied literal.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub const ADMIN_ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Resolve the data-plane body limit from `LUMEN_BODY_LIMIT_BYTES`, falling
+/// back to [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] (8 MiB) when unset or invalid.
+pub fn body_limit_bytes_from_env() -> usize {
+    std::env::var("LUMEN_BODY_LIMIT_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(ADMIN_ROUTE_BODY_LIMIT_BYTES)
+}
 
 /// Upper bound on one batch's serialized `snapshot` payload (#1396 R4):
 /// [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] is the route's hard 413 cutoff, but
@@ -40,7 +47,6 @@ pub const ADMIN_ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_BATCH_BYTES: usize = ADMIN_ROUTE_BODY_LIMIT_BYTES / 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub struct BucketMove {
     pub bucket: u32,
     pub from_shard: u32,
@@ -64,7 +70,6 @@ pub struct BucketMove {
 /// chunked message: [`ReshardPruneChunk`] /
 /// [`snapshot_reshard_prune_chunks`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub struct ReshardBatch {
     pub from_map_version: u64,
     pub to_map_version: u64,
@@ -86,7 +91,6 @@ pub struct ReshardBatch {
 /// is pruned from the target rather than surviving only because an earlier,
 /// now-stale copy landed on the target from a prior additive pass.
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub struct ReshardBatchReplaceScope {
     pub bucket: u32,
     pub virtual_bucket_count: u32,
@@ -127,7 +131,6 @@ pub struct ReshardBatchReplaceScope {
 /// receiver's chunk-0 reset — must change together (e.g. to a per-pass
 /// nonce field on this struct).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub struct ReshardPruneChunk {
     pub to_map_version: u64,
     pub bucket: u32,
@@ -141,7 +144,6 @@ pub struct ReshardPruneChunk {
 /// Return the virtual buckets whose physical owner changes between two map
 /// versions. A shard split keeps the virtual bucket count stable and changes
 /// assignments in small increments.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn bucket_moves(
     from: &VirtualBucketShardMap,
     to: &VirtualBucketShardMap,
@@ -207,16 +209,19 @@ pub fn bucket_moves(
 /// source shard) has no authority to speak for. Applying such a batch is
 /// harmless idempotent no-op on a repeat pass (`Engine::apply_reshard_batch`
 /// already documents this).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn snapshot_reshard_batches(
     snapshot: &SnapshotV1,
     from: &VirtualBucketShardMap,
     to: &VirtualBucketShardMap,
     buckets: &BTreeSet<u32>,
     max_external_ids_per_batch: usize,
+    max_batch_bytes: usize,
 ) -> Result<Vec<ReshardBatch>> {
     if max_external_ids_per_batch == 0 {
         bail!("max_external_ids_per_batch must be > 0");
+    }
+    if max_batch_bytes == 0 {
+        bail!("max_batch_bytes must be > 0");
     }
 
     let moves = bucket_moves(from, to)?;
@@ -277,7 +282,7 @@ pub fn snapshot_reshard_batches(
 
         for chunk in pending.chunks(max_external_ids_per_batch) {
             let mut sub_batches = Vec::new();
-            byte_cap_chunk(snapshot, chunk, MAX_BATCH_BYTES, &mut sub_batches)?;
+            byte_cap_chunk(snapshot, chunk, max_batch_bytes, &mut sub_batches)?;
             for (external_ids, partial) in sub_batches {
                 batches.push(ReshardBatch {
                     from_map_version: from.version(),
@@ -355,7 +360,6 @@ pub fn snapshot_reshard_batches(
 /// `max_chunk_bytes` via [`chunk_ids_by_bytes`] — unlike [`ReshardBatch`],
 /// no *other* pair's chunk count or size is affected by how large one pair's
 /// population is.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn snapshot_reshard_prune_chunks(
     snapshot: &SnapshotV1,
     to: &VirtualBucketShardMap,
@@ -467,7 +471,6 @@ fn byte_cap_chunk(
 /// the wire-level primitive an operator can use between batches: fetch target
 /// snapshot, merge one moved-bucket batch, restore the merged snapshot, then
 /// checkpoint the batch as complete.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> {
     if base.version != delta.version {
         bail!(
@@ -506,7 +509,6 @@ pub fn merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<S
 /// exactly the "freshly created, zero documents" shape (schema + per-field
 /// index structure, no postings) that a real empty collection's own
 /// snapshot already has.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn snapshot_bucket_subset(
     snapshot: &SnapshotV1,
     virtual_bucket_count: u32,
@@ -929,7 +931,9 @@ mod tests {
         let from = VirtualBucketShardMap::new(1, vec![0, 0, 0, 0], 1).unwrap();
         let to = VirtualBucketShardMap::new(2, vec![0, 1, 0, 1], 2).unwrap();
         let all_buckets: BTreeSet<u32> = (0..4).collect();
-        let batches = snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 3).unwrap();
+        let batches =
+            snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 3, MAX_BATCH_BYTES)
+                .unwrap();
 
         assert!(!batches.is_empty());
         assert!(batches
@@ -1091,8 +1095,15 @@ mod tests {
         // A generous id-count cap so byte size, not id count, is what
         // forces the split.
         let all_buckets: BTreeSet<u32> = BTreeSet::from([0]);
-        let batches =
-            snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 10_000).unwrap();
+        let batches = snapshot_reshard_batches(
+            &snapshot,
+            &from,
+            &to,
+            &all_buckets,
+            10_000,
+            MAX_BATCH_BYTES,
+        )
+        .unwrap();
 
         assert!(
             batches.len() > 1,

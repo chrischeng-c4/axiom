@@ -75,7 +75,7 @@ spec:
         - name: lumen
           # Bumped by the release procedure alongside Cargo.toml/openapi.json;
           # grep target for the bump commit: `ghcr.io/chrischeng-c4/lumen:`.
-          image: ghcr.io/chrischeng-c4/lumen:0.4.25
+          image: ghcr.io/chrischeng-c4/lumen:0.4.26
           imagePullPolicy: IfNotPresent
           command: ["lumen", "serve"]
           ports:

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The sharded-HA render toolkit: a [`RenderCtx`] carrying the per-service
 //! identity (app/manager/GVK/name/ns/owner) plus helpers that emit the common
@@ -10,9 +9,20 @@
 //! Lifted + parameterized from lumen's `service_k8s::render` helpers. A service
 //! keeps its own service-specific rendering and calls these for the shared
 //! shapes.
+//!
+//! The layout is lopsided on purpose (#1849). Pod composition and the stateless
+//! Deployment shape live in [`common`] and [`deployment`], but the StatefulSet
+//! helpers and the ordinary children stayed at the root: their callers were
+//! already deployed against these paths, and moving them would have made a
+//! rendering refactor into a breaking change for every adopter at once. So a
+//! helper's depth here records when it arrived, not how shared it is — do not
+//! read the root as legacy, and do not "finish" the split without moving the
+//! callers in the same change.
 
 use serde_json::{json, Value};
 
+use crate::lifecycle::TerminationBudget;
+use crate::render::common::{apply_termination_budget, apply_termination_contract};
 use crate::stateful::{resource_request_or_default, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST};
 
 // The downward-API env keys a sharded-HA StatefulSet injects. These MUST match
@@ -27,18 +37,12 @@ pub const ENV_REPLICAS_PER_SHARD: &str = "REPLICAS_PER_SHARD";
 pub const ENV_VOTER_COUNT: &str = "VOTER_COUNT";
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#1849" reason="Expose semantic common and Deployment submodules while preserving the monolithic root compatibility surface for existing StatefulSet consumers in this first landing.">
-/// Workload-neutral Pod composition and ordinary Kubernetes child helpers.
 pub mod common;
-/// Stateless `apps/v1` Deployment composition.
 pub mod deployment;
-/// Cluster-scoped RBAC children — bindings that cannot carry an owner
-/// reference and must not accept a group subject (#2876).
-pub mod rbac;
-/// Audience-bound, short-lived ServiceAccount tokens mounted as a file (#2877).
 pub mod projected_token;
+pub mod rbac;
 
 /// Per-service render identity, threaded through the helpers.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct RenderCtx<'a> {
     pub app: &'a str,
     pub manager: &'a str,
@@ -50,7 +54,6 @@ pub struct RenderCtx<'a> {
 }
 // </HANDWRITE>
 
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 impl RenderCtx<'_> {
     /// Recommended labels common to every child object.
     pub fn labels(&self, component: &str) -> Value {
@@ -85,7 +88,6 @@ impl RenderCtx<'_> {
 
 /// The owner reference that ties a child to its CR (cascading GC). `uid` comes
 /// from the live CR's metadata.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn owner_ref(api_version: &str, kind: &str, name: &str, uid: &str) -> Value {
     json!({
         "apiVersion": api_version,
@@ -98,7 +100,6 @@ pub fn owner_ref(api_version: &str, kind: &str, name: &str, uid: &str) -> Value 
 }
 
 /// Guaranteed-QoS CPU/memory resources (`requests == limits`).
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn guaranteed_resources(cpu: &str, memory: &str) -> Value {
     json!({
         "requests": { "cpu": cpu, "memory": memory },
@@ -160,7 +161,6 @@ pub fn restricted_container_security_context() -> Value {
 }
 
 /// A rendered PVC template plus the container mount path it should back.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct WorkloadVolumeClaim<'a> {
     pub name: String,
     pub template: Value,
@@ -236,7 +236,6 @@ pub fn token_registry_volume(projection: &TokenRegistryProjection<'_>) -> Value 
 }
 
 /// A ServiceAccount for the workload pods.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn service_account(cx: &RenderCtx, component: &str) -> Value {
     json!({
         "apiVersion": "v1",
@@ -276,7 +275,6 @@ fn service(
 }
 
 /// A headless Service with caller-supplied ports.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn headless_service_with_ports(
     cx: &RenderCtx,
     name: &str,
@@ -287,7 +285,6 @@ pub fn headless_service_with_ports(
 }
 
 /// A headless Service (stable per-pod DNS for a StatefulSet's peers).
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn headless_service(cx: &RenderCtx, name: &str, component: &str, port: i32) -> Value {
     headless_service_with_ports(
         cx,
@@ -298,7 +295,6 @@ pub fn headless_service(cx: &RenderCtx, name: &str, component: &str, port: i32) 
 }
 
 /// A ClusterIP Service with caller-supplied ports.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn client_service_with_ports(
     cx: &RenderCtx,
     name: &str,
@@ -309,7 +305,6 @@ pub fn client_service_with_ports(
 }
 
 /// A ClusterIP client Service.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn client_service(cx: &RenderCtx, name: &str, component: &str, port: i32) -> Value {
     client_service_with_ports(
         cx,
@@ -320,7 +315,6 @@ pub fn client_service(cx: &RenderCtx, name: &str, component: &str, port: i32) ->
 }
 
 /// A PodDisruptionBudget.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn pdb(cx: &RenderCtx, name: &str, component: &str, max_unavailable: i32) -> Value {
     json!({
         "apiVersion": "policy/v1",
@@ -331,7 +325,6 @@ pub fn pdb(cx: &RenderCtx, name: &str, component: &str, max_unavailable: i32) ->
 }
 
 /// Parameters for [`horizontal_pod_autoscaler`].
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct HorizontalPodAutoscaler<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -346,7 +339,6 @@ pub struct HorizontalPodAutoscaler<'a> {
 }
 
 /// A HorizontalPodAutoscaler targeting a rendered service workload.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn horizontal_pod_autoscaler(p: HorizontalPodAutoscaler) -> Value {
     let HorizontalPodAutoscaler {
         cx,
@@ -382,7 +374,6 @@ pub fn horizontal_pod_autoscaler(p: HorizontalPodAutoscaler) -> Value {
 }
 
 /// Parameters for [`cron_job`].
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct CronJob<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -407,7 +398,6 @@ pub struct CronJob<'a> {
 ///
 /// Operators schedule and wire the runner; the service or runner still owns the
 /// actual domain bytes. This helper deliberately stays manifest-only.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn cron_job(p: CronJob) -> Value {
     let cx = p.cx;
     let mut container = json!({
@@ -488,7 +478,6 @@ fn ensure_named_template_metadata(mut template: Value, name: &str, labels: &Valu
 }
 
 /// Parameters for [`service_statefulset`].
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct ServiceStatefulSet<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -517,6 +506,7 @@ pub struct ServiceStatefulSet<'a> {
     pub readiness_probe: Option<Value>,
     pub liveness_probe: Option<Value>,
     pub startup_probe: Option<Value>,
+    pub lifecycle: Option<Value>,
     pub volumes: Vec<Value>,
     pub volume_mounts: Vec<Value>,
     /// Pod affinity/anti-affinity. Stateful data-plane callers should use
@@ -539,11 +529,43 @@ pub struct ServiceStatefulSet<'a> {
     pub volume_claim: Option<WorkloadVolumeClaim<'a>>,
 }
 
+impl ServiceStatefulSet<'_> {
+    /// Apply probes, preStop lifecycle hook, environment variables, and termination grace period derived from a validated [`TerminationBudget`].
+    pub fn with_termination_budget(mut self, budget: &TerminationBudget, probe_port: u16) -> Self {
+        apply_termination_budget(
+            budget,
+            probe_port,
+            &mut self.env,
+            &mut self.liveness_probe,
+            &mut self.readiness_probe,
+            &mut self.startup_probe,
+            &mut self.termination_grace_period_seconds,
+            &mut self.lifecycle,
+        );
+        self
+    }
+
+    /// Apply termination grace period, preStop lifecycle hook, and environment variables derived from a validated [`TerminationBudget`], without mutating probes.
+    pub fn with_termination_contract(
+        mut self,
+        budget: &TerminationBudget,
+        probe_port: u16,
+    ) -> Self {
+        apply_termination_contract(
+            budget,
+            probe_port,
+            &mut self.env,
+            &mut self.termination_grace_period_seconds,
+            &mut self.lifecycle,
+        );
+        self
+    }
+}
+
 /// A configurable, downward-API StatefulSet primitive for sharded service
 /// workloads. It preserves the exact raft-runtime env contract while letting a
 /// service supply its own probes, security hardening, storage path, extra
 /// volumes, and rollout details.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
     let ServiceStatefulSet {
         cx,
@@ -570,6 +592,7 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
         readiness_probe,
         liveness_probe,
         startup_probe,
+        lifecycle,
         volumes,
         volume_mounts,
         affinity,
@@ -614,6 +637,9 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
     }
     if let Some(startup_probe) = startup_probe {
         container["startupProbe"] = startup_probe;
+    }
+    if let Some(lifecycle) = lifecycle {
+        container["lifecycle"] = lifecycle;
     }
     if let Some(container_security_context) = container_security_context {
         container["securityContext"] = container_security_context;
@@ -700,7 +726,6 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
 }
 
 /// Parameters for [`sharded_statefulset`].
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct ShardedStatefulSet<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -730,7 +755,6 @@ pub struct ShardedStatefulSet<'a> {
 /// (`POD_NAME`/`POD_NAMESPACE`/`SHARD_COUNT`/`REPLICAS_PER_SHARD`/`VOTER_COUNT`)
 /// together with `<headless_env_key>`, which `raft_runtime::cluster::ClusterTopology::from_env`
 /// reads to derive node id / membership / peers.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
     let volume_claim = p.volume_claim.map(|template| {
         let name = template["metadata"]["name"]
@@ -774,6 +798,7 @@ pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
         readiness_probe: None,
         liveness_probe: None,
         startup_probe: None,
+        lifecycle: None,
         volumes: vec![],
         volume_mounts: vec![],
         affinity: Some(dedicated_node_affinity(p.cx.selector(p.component))),
@@ -1012,6 +1037,7 @@ mod tests {
             readiness_probe: None,
             liveness_probe: None,
             startup_probe: None,
+            lifecycle: None,
             volumes: vec![],
             volume_mounts: vec![],
             affinity: None,
@@ -1085,9 +1111,7 @@ mod tests {
             voter_count: 1,
             headless_env_key: "LUMEN_HEADLESS_SERVICE",
             service_account_name: Some("s"),
-            env: vec![
-                json!({ "name": "LUMEN_TOKEN_REGISTRY_FILE", "value": "/var/run/secrets/lumen/token-registry.json" }),
-            ],
+            env: vec![],
             env_from: vec![json!({ "configMapRef": { "name": "s-config" } })],
             resources: requested_resources("2", "4Gi"),
             pod_annotations: Some(json!({
@@ -1123,20 +1147,9 @@ mod tests {
                 "httpGet": { "path": "/healthz", "port": "http" },
                 "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
             })),
-            volumes: vec![
-                json!({ "name": "tmp", "emptyDir": {} }),
-                json!({
-                    "name": "token-registry",
-                    "secret": {
-                        "secretName": "lumen-token-registry",
-                        "items": [{ "key": "token-registry.json", "path": "token-registry.json" }],
-                    },
-                }),
-            ],
-            volume_mounts: vec![
-                json!({ "name": "tmp", "mountPath": "/tmp" }),
-                json!({ "name": "token-registry", "mountPath": "/var/run/secrets/lumen", "readOnly": true }),
-            ],
+            lifecycle: None,
+            volumes: vec![json!({ "name": "tmp", "emptyDir": {} })],
+            volume_mounts: vec![json!({ "name": "tmp", "mountPath": "/tmp" })],
             affinity: Some(dedicated_node_affinity(cx.selector("server"))),
             node_selector: None,
             tolerations: vec![],
@@ -1184,8 +1197,31 @@ mod tests {
         assert_eq!(container["envFrom"][0]["configMapRef"]["name"], "s-config");
         assert_eq!(container["readinessProbe"]["httpGet"]["path"], "/readyz");
         assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
-        assert_eq!(container["volumeMounts"].as_array().unwrap().len(), 3);
-        assert_eq!(container["volumeMounts"][2]["mountPath"], "/var/lib/lumen");
+        let env = container["env"].as_array().unwrap();
+        assert!(!env
+            .iter()
+            .any(|entry| entry["name"] == "LUMEN_TOKEN_REGISTRY_FILE"));
+        let volumes = pod["volumes"].as_array().unwrap();
+        assert_eq!(volumes.len(), 1);
+        assert_eq!(volumes[0]["name"], "tmp");
+        assert_eq!(volumes[0]["emptyDir"], json!({}));
+        assert!(!volumes
+            .iter()
+            .any(|volume| volume["name"] == "token-registry"));
+        assert!(!volumes
+            .iter()
+            .any(|volume| volume["secret"]["secretName"] == "lumen-token-registry"));
+        let mounts = container["volumeMounts"].as_array().unwrap();
+        assert_eq!(mounts.len(), 2);
+        assert_eq!(mounts[0]["name"], "tmp");
+        assert_eq!(mounts[0]["mountPath"], "/tmp");
+        assert_eq!(mounts[1]["name"], "raft");
+        assert_eq!(mounts[1]["mountPath"], "/var/lib/lumen");
+        assert_eq!(mounts[1]["readOnly"], false);
+        assert!(!mounts.iter().any(|mount| mount["name"] == "token-registry"));
+        assert!(!mounts
+            .iter()
+            .any(|mount| mount["mountPath"] == "/var/run/secrets/lumen"));
         assert_eq!(
             ss["spec"]["volumeClaimTemplates"][0]["metadata"]["name"],
             "raft"

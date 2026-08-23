@@ -1,5 +1,31 @@
-// SPEC-MANAGED: libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#rust-source-unit
 // CODEGEN-BEGIN
+//! Append log whose tail is allowed to be garbage.
+//!
+//! A frame is a 16-byte header -- `seq: u64 LE`, `len: u32 LE`, `crc32: u32 LE`
+//! -- followed by `len` payload bytes. **The CRC covers the payload only, never
+//! the header.** A corrupted header cannot announce itself as corrupt: it is
+//! read as some plausible `(seq, len)` pair and rejected only because `len` runs
+//! past EOF or because the payload it points at fails its CRC. That is the whole
+//! torn-tail rule -- the first frame failing any check ends the log, and every
+//! byte after it is discarded, unexamined.
+//!
+//! So reading is not read-only. [`FramedLogWriter::open`] scans for the last
+//! good frame end and `set_len`s the file down to it before appending, which
+//! means opening a torn log **truncates it**. Recovery happens on open, not on
+//! replay.
+//!
+//! Both sequence arguments are exclusive, in opposite-looking APIs:
+//! `read_frames(path, from_seq)` and `replay` keep `seq > from_seq`, and
+//! `truncate_through(through)` keeps `seq > through`. `replay` returns the
+//! highest seq it actually applied, so replaying a range with nothing in it
+//! returns `0` rather than the log's real maximum.
+//!
+//! `truncate_through` is a full rewrite -- read every frame, write the survivors
+//! to `<path>.compact.tmp`, fsync, rename, fsync the parent, re-open in append
+//! mode. It is not an in-place hole punch, and its cost is the whole log.
+//!
+//! The `EverySec` interval is fixed at one second in `open` and is not
+//! configurable by any public method.
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -13,14 +39,12 @@ const HEADER_LEN: usize = 16;
 
 /// One validated log frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 pub struct LogFrame {
     pub seq: u64,
     pub payload: Vec<u8>,
 }
 
 /// CRC-framed append log with clean torn-tail recovery.
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 pub struct FramedLogWriter {
     path: PathBuf,
     file: BufWriter<File>,
@@ -30,7 +54,6 @@ pub struct FramedLogWriter {
     dirty: bool,
 }
 
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 impl FramedLogWriter {
     pub fn open(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> {
         let path = path.into();
@@ -163,10 +186,8 @@ impl FramedLogWriter {
 }
 
 /// Reader for CRC-framed append logs.
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 pub struct FramedLogReader;
 
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-framed_log-rs.md#source
 impl FramedLogReader {
     pub fn replay(
         path: impl AsRef<Path>,

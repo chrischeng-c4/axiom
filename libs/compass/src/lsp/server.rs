@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lsp-server-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Argus LSP Server implementation
 
@@ -39,7 +38,6 @@ struct DocumentAnalysis {
 }
 
 /// Argus Language Server
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lsp-server-rs.md#source
 pub struct ArgusServer {
     client: Client,
     documents: Arc<RwLock<HashMap<Url, Document>>>,
@@ -51,7 +49,6 @@ pub struct ArgusServer {
     refactoring_engine: Arc<RwLock<RefactoringEngine>>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lsp-server-rs.md#source
 impl ArgusServer {
     /// Create a new Argus server
     pub fn new(client: Client) -> Self {
@@ -222,7 +219,6 @@ impl ArgusServer {
 }
 
 #[tower_lsp::async_trait]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lsp-server-rs.md#source
 impl LanguageServer for ArgusServer {
     async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
@@ -645,7 +641,6 @@ impl LanguageServer for ArgusServer {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lsp-server-rs.md#source
 impl ArgusServer {
     /// Complete attributes after a dot
     async fn complete_attribute(&self, prefix: &str) -> Vec<CompletionItem> {
@@ -1047,7 +1042,6 @@ impl ArgusServer {
 }
 
 /// Run the LSP server on stdio
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lsp-server-rs.md#source
 pub async fn run_server() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
@@ -1057,7 +1051,6 @@ pub async fn run_server() {
 }
 
 /// Run the LSP server on TCP (for debugging)
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lsp-server-rs.md#source
 pub async fn run_server_tcp(port: u16) -> std::io::Result<()> {
     use tokio::net::TcpListener;
 

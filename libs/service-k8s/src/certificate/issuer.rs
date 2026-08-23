@@ -3,7 +3,7 @@
 //!
 //! Two things live here. First, the [`Issuer`] trait: one method, one request,
 //! one response. Production is GCP CA Service; unit and kind verification use
-//! [`EphemeralIssuer`]. Neither is privileged — the state machine has never
+//! [`super::EphemeralIssuer`]. Neither is privileged — the state machine has never
 //! heard of either, which is R8.
 //!
 //! Second, the private key. It is generated here, in memory, and it leaves this

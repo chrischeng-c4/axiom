@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-build-script.md#text-source-unit
 # CODEGEN-BEGIN
 set -euo pipefail
 
@@ -78,7 +77,7 @@ export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
 project_build_prepare_release_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build --release -p lumen --bin lumen --features "otel operator raft-wal self-update issue delegated-auth"
+cargo build --release -p lumen --bin lumen --features release
 target/release/lumen spec --format openapi > apps/lumen/clients/openapi.json
 cargo test -p lumen --test spec_cli openapi_committed_snapshot_matches_live_generation -- --exact
 install_lumen release

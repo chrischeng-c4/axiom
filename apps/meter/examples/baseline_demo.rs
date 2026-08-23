@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-examples-baseline-demo-rs.md#source
 // CODEGEN-BEGIN
 use meter::baseline::{
     FileBaselineStore, PercentileType, RegressionDetector, RegressionThresholds,

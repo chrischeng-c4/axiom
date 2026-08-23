@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-gitlab-ci-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! GitLab CI lint checker (source-line analysis on YAML)
 
@@ -9,7 +8,6 @@ use crate::syntax::{Language, ParsedFile};
 use std::collections::HashSet;
 
 /// GitLab CI checker — line-based YAML analysis
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-gitlab-ci-rs.md#source
 pub struct GitlabCiChecker;
 
 /// Represents a parsed CI job extracted from YAML source
@@ -32,7 +30,6 @@ pub(super) struct CiJob {
     pub(super) variable_lines: Vec<(usize, String)>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-gitlab-ci-rs.md#source
 impl GitlabCiChecker {
     pub fn new() -> Self {
         Self
@@ -406,14 +403,12 @@ impl GitlabCiChecker {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-gitlab-ci-rs.md#source
 impl Default for GitlabCiChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-gitlab-ci-rs.md#source
 impl super::Checker for GitlabCiChecker {
     fn language(&self) -> Language {
         Language::Yaml

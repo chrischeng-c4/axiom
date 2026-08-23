@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_storage-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Self-contained integration test for the built-in Cloud Storage (GCS)
 //! emulator. Spawns `vat emulator cloud-storage` and exercises the JSON API via
@@ -35,7 +34,6 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_storage-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();

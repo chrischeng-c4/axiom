@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-view-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Cluster-introspection view model.
 //!
@@ -14,7 +13,6 @@ use serde::{Deserialize, Serialize};
 /// A raft group member's role, as observed by cluster introspection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-view-rs.md#source
 pub enum RaftRole {
     Leader,
     Follower,
@@ -24,7 +22,6 @@ pub enum RaftRole {
 
 /// One peer's address + role within a raft group.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-view-rs.md#source
 pub struct PeerAddr {
     pub pod_name: String,
     pub host: String,
@@ -35,7 +32,6 @@ pub struct PeerAddr {
 
 /// Live cluster snapshot — the wire shape of a cluster-introspection view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-view-rs.md#source
 pub struct ClusterStateView {
     pub pod_name: String,
     pub shard_index: u32,

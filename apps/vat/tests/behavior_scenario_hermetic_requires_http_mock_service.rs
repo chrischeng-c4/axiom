@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec scenario-hermetic-requires-http-mock-service

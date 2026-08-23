@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Language-neutral OpenAPI intermediate representation shared by every emitter:
 //! the document model ([`openapi`]), identifier naming ([`names`]), and the

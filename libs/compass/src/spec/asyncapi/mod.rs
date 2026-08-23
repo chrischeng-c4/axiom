@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-asyncapi-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! AsyncAPI specification parser
 //!

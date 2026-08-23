@@ -17,8 +17,8 @@ Usage
         --scope libs/service-auth \
         --issue 3368 \
         --design-input libs/service-auth/README.md \
-        --write libs/service-auth/external-contracts/tests/unit/test_runner_protocol.py:2 \
-        --gate "uv run pytest libs/service-auth"
+        --write libs/service-auth/src/runner_protocol.rs:2 \
+        --gate "cargo test -p service-auth"
 
 Five inputs describe the round -- the scope, the ticket, the design inputs, the
 write set, and the gate. Everything else is derived, and each flag stays
@@ -331,7 +331,7 @@ def main() -> int:
         "project_permissions.allow, so the profile authorizes its own gate "
         "without hand editing",
     )
-    ap.add_argument("--model", default="gemini-3.6-flash-high")
+    ap.add_argument("--model", default="gemini-3.7-flash-high")
     ap.add_argument("--timeout", default="45m")
     ap.add_argument(
         "--allow-shell",

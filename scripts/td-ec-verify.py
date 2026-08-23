@@ -8,6 +8,16 @@ than merely observed green.
 
     python3 scripts/td-ec-verify.py libs/peer-tls
     python3 scripts/td-ec-verify.py libs/peer-tls --mutations scripts/td-ec-mutations/peer-tls.toml
+    python3 scripts/td-ec-verify.py apps/lumen libs/service-k8s --skip-mutations
+
+More than one project root verifies each in turn and fails if *any* of them
+fails. That is one command rather than two because a round is gated on exactly
+one: `agy-dispatch`'s `lint` refuses a `## Gate` section naming a second
+command, and `prove` runs `task_contract.gate_command` alone. A round that
+lands a decision in a shared crate and the composition that consumes it is
+therefore only honestly gated when both projects are judged by the single
+command the round is proved against -- otherwise the crate half is authorized
+but never measured.
 
 Gates, in order. Any failure is fatal and exits 1.
 
@@ -16,15 +26,22 @@ Gates, in order. Any failure is fatal and exits 1.
     G3  case-inventory       pyproject.toml <-> src/      bijection, no orphans
     G4  runner-protocol      one JSON envelope, exit code matches status,
                              evidence written, per case
-    G5  check-floor          len(checks) >= MINIMUM_CHECKS, 0 failing
+    G5  check-floor          status == passed, len(checks) >= MINIMUM_CHECKS,
+                             0 failing -- and a known_failure case is red
     G5b declared-arity       MINIMUM_CHECKS == matrix entries == rows appended
     G6  answer-independence  every *_MATRIX expected value is a literal
     G7  self-report          no check whose "expected" is its own observation
     G8  distinct-checks      no two checks in a case share an observation
-    G9  mutation-suite       every seeded TD defect is caught by >=1 case
+    G9  mutation-suite       every seeded TD defect is caught by >=1 live case
 
 G9 is the only gate that measures discriminating power. G1-G8 are necessary,
 not sufficient: a suite can pass all eight and still be blind.
+
+A case declaring `[tool.aw.python-ec.cases.known_failure]` is in the EC-first
+window -- landed contract, unwritten design -- and is judged in the inverse:
+G5 requires it to be red and reports it as held, G9 excludes it from both the
+baseline and the detector set. Deleting the block is what promotes the case to
+live, and G5 fails the moment a declared-red case passes.
 """
 
 from __future__ import annotations
@@ -41,6 +58,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 PROTOCOL = "aw.python-artifact.v1"
+
+# Internal marker on the one G5b finding that a known_failure case is allowed
+# to carry. Stripped before anything is printed.
+NOT_ROW_SHAPED = "\x00not-row-shaped\x00"
 
 
 # --------------------------------------------------------------------------
@@ -106,6 +127,19 @@ class Project:
             evidence_dir=ec_dir / artifact["evidence_dir"],
             cases=data["tool"]["aw"]["python-ec"]["cases"],
         )
+
+
+def is_known_failure(case: dict) -> bool:
+    """True when the case declares itself red until the design it verifies lands.
+
+    The lifecycle is EC-first: the contract is written and landed before the
+    design that has to satisfy it. Between those two events the case is red on
+    purpose, and the only faithful reading of it is "held red", not "passing"
+    and not "failing the project". `known_failure` is that declaration, and it
+    is checked in both directions -- the case must stay red while it is
+    declared, and the declaration must be deleted the moment it goes green.
+    """
+    return isinstance(case.get("known_failure"), dict)
 
 
 # --------------------------------------------------------------------------
@@ -221,8 +255,13 @@ def run_case(project: Project, command: str) -> tuple[int, str, str]:
 
 
 def gate_execution(report: Report, project: Project) -> dict[str, dict]:
+    # Stale evidence has produced false readings, so it goes. Only the emitted
+    # JSON, though: rmtree on the directory also destroys whatever tracked
+    # documentation lives beside it, which is how this tree lost
+    # apps/lumen/external-contracts/evidence/README.md.
     if project.evidence_dir.is_dir():
-        shutil.rmtree(project.evidence_dir)  # stale evidence has produced false readings
+        for stale in project.evidence_dir.glob("*.json"):
+            stale.unlink()
 
     protocol_problems: list[str] = []
     floor_problems: list[str] = []
@@ -259,6 +298,28 @@ def gate_execution(report: Report, project: Project) -> dict[str, dict]:
         results[command] = result
         total_checks += len(checks)
 
+        # A case declaring `known_failure` is the EC-first state: the contract
+        # is landed and the design it verifies is not written yet, so it must
+        # be red. Asserting that it *is* red is what keeps the declaration
+        # honest -- a known_failure that passes is a stale block someone forgot
+        # to delete, and leaving it in place hides the case from this gate for
+        # good.
+        if is_known_failure(case):
+            if status == "passed":
+                floor_problems.append(
+                    f"{command}: declares known_failure but passed — delete the stale block"
+                )
+            continue
+
+        # Without this, a case that fails outright is indistinguishable from
+        # one that passes: it emits no rows, so `floor` reads 0, `0 < 0` is
+        # false, `failing` is empty, and the gate reports "0 checks, 0 failing"
+        # in green.
+        if status != "passed":
+            detail = result.get("detail") or (err.strip().splitlines() or ["no detail"])[-1]
+            floor_problems.append(f"{command}: status={status!r} — {detail}")
+            continue
+
         if len(checks) < floor:
             floor_problems.append(f"{command}: {len(checks)} checks < floor {floor}")
         if failing:
@@ -270,12 +331,11 @@ def gate_execution(report: Report, project: Project) -> dict[str, dict]:
         f"{len(project.cases)} cases through {project.entrypoint.name}",
         protocol_problems,
     )
-    report.add(
-        "check-floor",
-        not floor_problems,
-        f"{total_checks} checks, 0 failing" if not floor_problems else f"{total_checks} checks",
-        floor_problems,
-    )
+    pending = [c["command"] for c in project.cases if is_known_failure(c)]
+    summary = f"{total_checks} checks, 0 failing" if not floor_problems else f"{total_checks} checks"
+    if pending:
+        summary += f"; {len(pending)} known_failure held red ({', '.join(pending)})"
+    report.add("check-floor", not floor_problems, summary, floor_problems)
     return results
 
 
@@ -339,7 +399,10 @@ def audit_case_source(path: Path) -> tuple[list[str], list[str], list[str], list
         and isinstance(n.args[0], ast.Dict)
     )
     if floor is None or matrix_len is None:
-        arity.append(f"{name}: missing MINIMUM_CHECKS or *_MATRIX")
+        # Marked so the caller can waive *this* finding alone for a case that
+        # is not row-shaped at all, without waiving the disagreement check
+        # below for one that is.
+        arity.append(f"{NOT_ROW_SHAPED} {name}: missing MINIMUM_CHECKS or *_MATRIX")
     elif not (floor == matrix_len == appended):
         arity.append(
             f"{name}: MINIMUM_CHECKS={floor}, matrix entries={matrix_len}, "
@@ -428,14 +491,34 @@ def gate_static_audits(report: Report, project: Project) -> None:
     self_report: list[str] = []
     duplicate: list[str] = []
     arity: list[str] = []
+    # G6-G8 read every case: they audit what the source claims, which is
+    # meaningful whether or not the case runs green today.
+    #
+    # G5b is applied to a known_failure case too, with one waiver: a case that
+    # declares no MINIMUM_CHECKS and no matrix is not row-shaped at all, and
+    # demanding a row shape from a case that cannot reach its first row buys
+    # unexecuted ceremony -- rows no run exercises and no seeded defect can
+    # ever prove. A case that *is* row-shaped stays fully checked while held,
+    # so an authoring error in it surfaces now rather than at promotion.
+    waived: list[str] = []
     for case in project.cases:
         a, b, c, d = audit_case_source(project.ec_dir / case["test_path"])
         independence += a
         self_report += b
         duplicate += c
-        arity += d
+        for finding in d:
+            if finding.startswith(NOT_ROW_SHAPED):
+                if is_known_failure(case):
+                    waived.append(case["test_path"])
+                    continue
+                finding = finding[len(NOT_ROW_SHAPED) :].lstrip()
+            arity.append(finding)
 
-    report.add("declared-arity", not arity, "MINIMUM_CHECKS == matrix == rows appended", arity)
+    arity_detail = "MINIMUM_CHECKS == matrix == rows appended"
+    if waived:
+        held = sorted(set(waived))
+        arity_detail += f"; {len(held)} known_failure source(s) not row-shaped ({', '.join(held)})"
+    report.add("declared-arity", not arity, arity_detail, arity)
     report.add("answer-independence", not independence, "expected values are contract literals", independence)
     report.add("self-report", not self_report, "no row reports its own observation", self_report)
     report.add("distinct-checks", not duplicate, "every row observes something different", duplicate)
@@ -460,6 +543,21 @@ def gate_mutations(report: Report, project: Project, mutations_path: Path | None
     blind: list[str] = []
     caught = 0
 
+    # A known_failure case is red by declaration, which is the same vacuity the
+    # baseline guard below rejects: it exits nonzero for every seed while
+    # observing nothing. Excluding it keeps the measurement meaningful for the
+    # live cases instead of making one pending contract unmeasure the project.
+    held = [case["command"] for case in project.cases if is_known_failure(case)]
+    live = [case for case in project.cases if not is_known_failure(case)]
+    if not live:
+        report.add(
+            "mutation-suite",
+            False,
+            "every case declares known_failure — no live case can catch a seed",
+            [f"{command}: held red by declaration" for command in held],
+        )
+        return
+
     # run_case purges before every invocation; this only clears bytecode left
     # behind by whatever ran before this harness did.
     purge_bytecode(src_root)
@@ -470,7 +568,7 @@ def gate_mutations(report: Report, project: Project, mutations_path: Path | None
     # be wrong, which is worse than reporting none.
     red_at_rest = [
         case["command"]
-        for case in project.cases
+        for case in live
         if run_case(project, case["command"])[0] != 0
     ]
     if red_at_rest:
@@ -499,7 +597,7 @@ def gate_mutations(report: Report, project: Project, mutations_path: Path | None
         try:
             detectors = [
                 case["command"]
-                for case in project.cases
+                for case in live
                 if run_case(project, case["command"])[0] != 0
             ]
         finally:
@@ -509,12 +607,24 @@ def gate_mutations(report: Report, project: Project, mutations_path: Path | None
         else:
             blind.append(f"{mutation['id']}: BLIND — {mutation['intent']}")
 
-    report.add(
-        "mutation-suite",
-        not blind,
-        f"{caught}/{len(mutations)} seeded defects caught",
-        blind,
-    )
+    # Every case here ran against mutated source, and the last mutant's failed
+    # rows are still sitting in the project's evidence dir -- committed, they
+    # read as a red project. Re-running on the restored source both repairs
+    # that and re-checks the baseline after all the write/restore churn, which
+    # is where a restore that did not really restore would show up.
+    restored_red = [
+        case["command"] for case in live if run_case(project, case["command"])[0] != 0
+    ]
+    if restored_red:
+        blind = [
+            f"{command}: still red after restore — the suite's restore did not restore"
+            for command in restored_red
+        ] + blind
+
+    detail = f"{caught}/{len(mutations)} seeded defects caught by {len(live)} live case(s)"
+    if held:
+        detail += f"; {len(held)} excluded as known_failure ({', '.join(held)})"
+    report.add("mutation-suite", not blind, detail, blind)
 
 
 # --------------------------------------------------------------------------
@@ -522,29 +632,89 @@ def gate_mutations(report: Report, project: Project, mutations_path: Path | None
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("project", type=Path, help="project root, e.g. libs/peer-tls")
+    parser.add_argument(
+        "project",
+        type=Path,
+        nargs="+",
+        help="one or more project roots, e.g. libs/peer-tls apps/lumen",
+    )
     parser.add_argument("--mutations", type=Path, default=None)
     parser.add_argument("--skip-mutations", action="store_true")
+    parser.add_argument(
+        "--demand",
+        action="append",
+        default=[],
+        metavar="CASE_ID",
+        help=(
+            "judge this case live even though it declares known_failure. "
+            "The declaration keeps the branch honest while a design is being "
+            "written; this makes one named case the thing a run has to turn "
+            "green, so a round can be gated on it before the block is deleted."
+        ),
+    )
     args = parser.parse_args()
 
-    project = Project.load(args.project.resolve())
-    print(f"verifying {args.project} — TD {project.td_dir.name}, EC {project.ec_dir.name}\n")
+    roots = list(dict.fromkeys(args.project))
+    if args.mutations and len(roots) > 1:
+        raise SystemExit("--mutations names one spec and cannot address several "
+                         "projects; run the mutation suite one project at a time")
 
-    report = Report()
-    run_unittests(report, "td-unit-tests", project.td_dir / "tests")
-    run_unittests(report, "ec-unit-tests", project.ec_dir / "tests")
-    gate_inventory(report, project)
-    gate_execution(report, project)
-    gate_static_audits(report, project)
-    if not args.skip_mutations:
-        gate_mutations(report, project, args.mutations)
+    projects = [Project.load(root.resolve()) for root in roots]
 
-    failed = [g.gate_id for g in report.gates if not g.ok]
-    print()
-    if failed:
-        print(f"REJECTED — {len(failed)} gate(s) failed: {', '.join(failed)}")
+    # `--demand` is resolved against the union rather than per project, because
+    # the caller names a case, not a project. Resolving it per project would
+    # make every name unknown to every project but one, so the check has to see
+    # all of them before it can call a name unknown.
+    demanded = set(args.demand)
+    known = {key for project in projects for case in project.cases
+             for key in (case["id"], case["command"])}
+    unknown = demanded - known
+    if unknown:
+        raise SystemExit(f"--demand names no declared case: {', '.join(sorted(unknown))}")
+    for project in projects:
+        for case in project.cases:
+            if case["id"] in demanded or case["command"] in demanded:
+                case.pop("known_failure", None)
+
+    rejected = []
+    for root, project in zip(roots, projects):
+        print(f"verifying {root} — TD {project.td_dir.name}, EC {project.ec_dir.name}")
+        if demanded:
+            live = sorted(k for k in demanded
+                          if k in {c["id"] for c in project.cases}
+                          | {c["command"] for c in project.cases})
+            if live:
+                print(f"demanding {len(live)} held case(s) live: {', '.join(live)}")
+        print()
+
+        report = Report()
+        run_unittests(report, "td-unit-tests", project.td_dir / "tests")
+        run_unittests(report, "ec-unit-tests", project.ec_dir / "tests")
+        gate_inventory(report, project)
+        gate_execution(report, project)
+        gate_static_audits(report, project)
+        if not args.skip_mutations:
+            gate_mutations(report, project, args.mutations)
+
+        failed = [g.gate_id for g in report.gates if not g.ok]
+        print()
+        if failed:
+            print(f"REJECTED {root} — {len(failed)} gate(s) failed: {', '.join(failed)}")
+            rejected.append(root)
+        else:
+            print(f"ACCEPTED {root} — {len(report.gates)}/{len(report.gates)} gates green")
+        print()
+
+    # Every project is verified before the verdict, never short-circuited on the
+    # first failure. A round that lands in two projects has to see both results
+    # in one run, or the second is only ever read after the first is repaired --
+    # which is how a two-project round turns into two sequential single-project
+    # rounds without anyone deciding to.
+    if rejected:
+        print(f"REJECTED — {len(rejected)}/{len(roots)} project(s): "
+              f"{', '.join(str(r) for r in rejected)}")
         return 1
-    print(f"ACCEPTED — {len(report.gates)}/{len(report.gates)} gates green")
+    print(f"ACCEPTED — {len(roots)}/{len(roots)} project(s) green")
     return 0
 
 

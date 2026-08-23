@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `transport-h2c` — shared HTTP/2 cleartext (h2c) client helpers for the ecosystem.
 //!
@@ -58,7 +57,6 @@ pub use server::{
 ///
 /// See the crate docs for the rationale. Equivalent to
 /// [`recommended_h2c_connections_for`] with `parallelism = available cores`.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-lib-rs.md#source
 pub fn recommended_h2c_connections(concurrency: usize) -> usize {
     recommended_h2c_connections_for(concurrency, cpu_parallelism())
 }
@@ -67,7 +65,6 @@ pub fn recommended_h2c_connections(concurrency: usize) -> usize {
 /// deterministic sizing and testing.
 ///
 /// `connections = clamp(ceil(ln(concurrency)), 1, parallelism)`.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-lib-rs.md#source
 pub fn recommended_h2c_connections_for(concurrency: usize, parallelism: usize) -> usize {
     let cap = parallelism.max(1);
     if concurrency <= 2 {
@@ -78,7 +75,6 @@ pub fn recommended_h2c_connections_for(concurrency: usize, parallelism: usize) -
 }
 
 /// Available CPU parallelism (`std::thread::available_parallelism`), or 1.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-lib-rs.md#source
 pub fn cpu_parallelism() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
@@ -87,13 +83,11 @@ pub fn cpu_parallelism() -> usize {
 
 /// Build a single-connection h2c client — the drop-in replacement for
 /// `reqwest::Client::builder().http2_prior_knowledge().build()`.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-lib-rs.md#source
 pub fn h2c_client() -> reqwest::Result<reqwest::Client> {
     h2c_builder(None, None).build()
 }
 
 /// Like [`h2c_client`] with an optional per-request `timeout` and `user_agent`.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-lib-rs.md#source
 pub fn h2c_client_with(
     timeout: Option<Duration>,
     user_agent: Option<&str>,
@@ -128,13 +122,11 @@ fn h2c_builder(timeout: Option<Duration>, user_agent: Option<&str>) -> reqwest::
 /// # let _ = resp; Ok(()) }
 /// ```
 #[derive(Clone)]
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-lib-rs.md#source
 pub struct H2cPool {
     clients: Arc<Vec<reqwest::Client>>,
     next: Arc<AtomicUsize>,
 }
 
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-lib-rs.md#source
 impl H2cPool {
     /// Build a pool sized by [`recommended_h2c_connections`] for `concurrency`.
     pub fn for_concurrency(concurrency: usize) -> reqwest::Result<Self> {

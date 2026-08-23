@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! TypeScript emitter: read an OpenAPI 3.0/3.1/3.2 document and emit TS types,
 //! a typed fetch/axios client, and TanStack Query hooks.
@@ -24,7 +23,6 @@ use crate::{GenOptions, GeneratedFile, GeneratedOutput, TypeScriptTarget};
 use anyhow::{Context, Result};
 
 /// Pure TS generation: spec JSON text → in-memory files. No filesystem access.
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     generate_impl(spec_json, opts, None)
 }

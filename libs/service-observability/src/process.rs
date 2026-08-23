@@ -1,4 +1,23 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:shared-process-resource-sampling" tracker="#1777" reason="Portable, safe process RSS and CPU sampling is shared by service performance and soak evidence."
+//! Process RSS and CPU time for the same two platforms, without unsafe FFI.
+//!
+//! It shells out to `ps` instead of reading `/proc` or calling `libproc`, which
+//! is what makes one code path cover macOS and Linux with no `unsafe`. The price
+//! is stated plainly because callers hit all three: `ps` must be on `PATH`, every
+//! sample costs a fork, and a sandbox that forbids exec cannot sample at all.
+//!
+//! Two things about the numbers:
+//!
+//! - `rss_bytes` comes from `ps -o rss=`, which reports KiB, multiplied by 1024.
+//!   The resolution is therefore 1 KiB no matter how the value is printed.
+//! - `cpu_seconds` is **cumulative** process CPU time, not a rate. A caller that
+//!   wants utilisation must difference two samples and divide by the wall time
+//!   between them.
+//!
+//! `ps` prints CPU time in three shapes and all three are parsed: `MM:SS.ss`,
+//! `HH:MM:SS`, and `D-HH:MM:SS`. Anything else is an error rather than a silent
+//! zero, so a fourth shape from some other `ps` fails loudly instead of reporting
+//! an idle process.
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};

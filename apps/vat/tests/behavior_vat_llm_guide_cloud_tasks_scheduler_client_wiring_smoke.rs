@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md#vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke

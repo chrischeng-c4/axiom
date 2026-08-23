@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
 # CODEGEN-BEGIN
 # Keeps one reconciler alive through voluntary disruption (#2602). The operator
 # runs two replicas behind leader election, so a node drain must take them one

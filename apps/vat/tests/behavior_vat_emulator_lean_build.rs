@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-lean-build
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-emulator-lean-build

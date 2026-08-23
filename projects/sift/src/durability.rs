@@ -333,20 +333,23 @@ impl RaftStateMachine for SiftStateMachine {
         Ok(())
     }
 
-    fn snapshot(&self) -> Result<Vec<u8>> {
+    fn snapshot(&self, writer: &mut dyn std::io::Write) -> Result<()> {
         let control = self
             .control
             .lock()
             .expect("Sift control state lock poisoned");
-        serde_json::to_vec(&JournalSnapshot::from_state(
+        let bytes = serde_json::to_vec(&JournalSnapshot::from_state(
             self.journal.snapshot_events(),
             &control,
-        ))
-        .map_err(Into::into)
+        ))?;
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
-    fn restore(&self, snapshot: &[u8]) -> Result<()> {
-        let snapshot: JournalSnapshot = serde_json::from_slice(snapshot)?;
+    fn restore(&self, reader: &mut dyn std::io::Read) -> Result<()> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        let snapshot: JournalSnapshot = serde_json::from_slice(&bytes)?;
         self.journal.restore_snapshot(snapshot.events)?;
         let restored = SiftControlState {
             format_version: SIFT_COMMAND_FORMAT_VERSION,

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-examples-conn-sweep-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Reproducible evidence for the `ln(concurrency)` heuristic.
 //!

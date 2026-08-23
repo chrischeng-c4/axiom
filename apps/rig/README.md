@@ -50,98 +50,101 @@ rig run --dir tests/rig/scenarios [--vat] [--pins tests/rig/config/pins]
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 Nothing reads the tables below. The capability gate that validated their
 shape was deleted with the `aw` binary, so the shape is convention now and
 the commands named in each row are the only part that runs.
 
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Scenario Engine | axiom#5 | implemented | verified | smoke | ready | record contract + lint, step DSL (http/sample/assert/wait_until/measure_rss/exec/sleep), verdict bucketing, rig.report/1 |
-| Stateful Service Scenarios | axiom#1645 | implemented | verified | smoke | ready | shared warm-up/observe/fault/recover/verify/teardown runner; bounded phases, retained failure evidence, Lumen/Tape adapters |
-| Load Pins | axiom#5 | implemented | verified | smoke | ready | open-loop loadgen (coordinated-omission honest), floor/ratchet pins, per-host JSON baseline store |
-| Vat Wrapped Runs | axiom#5 | implemented | verified | smoke | ready | `--vat` shells `vat run`, parses JSONL checkpoints, lifts the inner report, removes the vat |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Scenario Engine | axiom#5 | record contract + lint, step DSL (http/sample/assert/wait_until/measure_rss/exec/sleep), verdict bucketing, rig.report/1 |
+| Stateful Service Scenarios | axiom#1645 | shared warm-up/observe/fault/recover/verify/teardown runner; bounded phases, retained failure evidence, Lumen/Tape adapters |
+| Load Pins | axiom#5 | open-loop loadgen (coordinated-omission honest), floor/ratchet pins, per-host JSON baseline store |
+| Vat Wrapped Runs | axiom#5 | `--vat` shells `vat run`, parses JSONL checkpoints, lifts the inner report, removes the vat |
 
 ### Scenario Engine
 
-ID: scenario-engine
-Type: DeveloperTool
-Surfaces: CLI: `rig test [--dir <d>] [--dimension <d>] [--case <id>]` + `rig run --scenario <f>` + `rig run --dir <d>` + `rig lint --dir <d>` + `rig report` - Scenario/case orchestration, deprecated flat scenario execution, record linting, and report reprojection entrypoints.
-EC Dimensions: behavior: `rig` - declarative scenario records, step DSL execution, assertions, verdict bucketing, and rig.report/1 output
-Root WI: axiom#5
-Status: verified
-Required Verification: smoke
-Promise:
-`rig run` discovers declarative scenario records, executes step DSL actions, buckets verdicts, and emits one deterministic `rig.report/1` JSON document.
-Gate Inventory:
-- `cargo test -p rig`; `target/debug/rig lint --dir apps/rig/tests/fixtures/scenarios`
+`rig run` discovers declarative scenario records, executes step DSL actions,
+buckets verdicts, and emits one deterministic `rig.report/1` JSON document.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Record contract check and JSON report | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
-| Scenario step DSL execution | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
+- Root WI: #axiom#5
+- Surfaces: CLI: `rig test [--dir <d>] [--dimension <d>] [--case <id>]` +
+  `rig run --scenario <f>` + `rig run --dir <d>` + `rig lint --dir <d>` +
+  `rig report` - Scenario/case orchestration, deprecated flat scenario
+  execution, record linting, and report reprojection entrypoints.
+- Gate — behavior: `rig` - declarative scenario records, step DSL execution,
+  assertions, verdict bucketing, and rig.report/1 output
+- Gate: `cargo test -p rig`
+- Gate: `target/debug/rig lint --dir apps/rig/tests/fixtures/scenarios`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Record contract check and JSON report | epic | axiom#5 | `cargo test -p rig` |
+| Scenario step DSL execution | epic | axiom#5 | `cargo test -p rig` |
 
 ### Stateful Service Scenarios
 
-ID: stateful-service-scenarios
-Type: DeveloperTool
-Surfaces: Library: `rig::engine::stateful::{run_stateful, StatefulScenario, StatefulActions}` - Fixed warm-up, observation, fault, recovery, verification, and teardown lifecycle for long-running stateful services.
-EC Dimensions: stability: `rig.stateful.v1` - bounded phase execution, independent teardown reserve, ordered evidence retention, failed-phase attribution, and deterministic report structure
-Root WI: axiom#1645
-Status: verified
-Required Verification: smoke
-Promise:
-Rig runs the same bounded stateful-service lifecycle for every consumer while each app supplies only its fault operation and domain-specific continuity assertions. A failed or timed-out phase retains all prior evidence and never suppresses teardown.
-Gate Inventory:
-- `cargo test -p rig --test stateful_service_harness`; `cargo test -p lumen --test rig_stateful_adapter`; `cargo test -p tape --test rig_stateful_adapter`
+Rig runs the same bounded stateful-service lifecycle for every consumer while
+each app supplies only its fault operation and domain-specific continuity
+assertions. A failed or timed-out phase retains all prior evidence and never
+suppresses teardown.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Reusable bounded stateful lifecycle and consumer adapters | epic | axiom#1645 | implemented | verified | smoke | `cargo test -p rig --test stateful_service_harness`; `cargo test -p lumen --test rig_stateful_adapter`; `cargo test -p tape --test rig_stateful_adapter` |
+- Root WI: #axiom#1645
+- Surfaces: Library:
+  `rig::engine::stateful::{run_stateful, StatefulScenario, StatefulActions}` -
+  Fixed warm-up, observation, fault, recovery, verification, and teardown
+  lifecycle for long-running stateful services.
+- Gate — stability: `rig.stateful.v1` - bounded phase execution, independent
+  teardown reserve, ordered evidence retention, failed-phase attribution, and
+  deterministic report structure
+- Gate: `cargo test -p rig --test stateful_service_harness`
+- Gate: `cargo test -p lumen --test rig_stateful_adapter`
+- Gate: `cargo test -p tape --test rig_stateful_adapter`
+- Evidence: `cargo test -p rig --test stateful_service_harness`;
+  `cargo test -p lumen --test rig_stateful_adapter`;
+  `cargo test -p tape --test rig_stateful_adapter`
 
 ### Load Pins
 
-ID: load-pins
-Type: DeveloperTool
-Surfaces: CLI: `rig test --pins <d>` + `rig test --update-baselines` + `rig run --pins <d>` + `rig run --update-baselines` - Open-loop load profile execution and baseline pin gate entrypoints.
-EC Dimensions: efficiency: `rig` - open-loop load profiles, p50/p99/error-rate observations, and floor/ratchet pins against host baselines
-Root WI: axiom#5
-Status: verified
-Required Verification: smoke
-Promise:
-`rig` runs open-loop load profiles and gates measured values against floor/ratchet pins in a host-scoped baseline store.
-Gate Inventory:
-- `cargo test -p rig`
+`rig` runs open-loop load profiles and gates measured values against
+floor/ratchet pins in a host-scoped baseline store.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Open-loop load generator | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
-| Floor and ratchet pin gates | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
+- Root WI: #axiom#5
+- Surfaces: CLI: `rig test --pins <d>` + `rig test --update-baselines` +
+  `rig run --pins <d>` + `rig run --update-baselines` - Open-loop load profile
+  execution and baseline pin gate entrypoints.
+- Gate — efficiency: `rig` - open-loop load profiles, p50/p99/error-rate
+  observations, and floor/ratchet pins against host baselines
+- Gate: `cargo test -p rig`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Open-loop load generator | epic | axiom#5 | `cargo test -p rig` |
+| Floor and ratchet pin gates | epic | axiom#5 | `cargo test -p rig` |
 
 ### Vat Wrapped Runs
 
-ID: vat-wrapped-runs
-Type: DeveloperTool
-Surfaces: CLI: `rig test --vat` + `rig run --vat` - Delegated scenario execution through vat-managed environments while preserving rig report folding.
-EC Dimensions: behavior: `rig + vat` - rig delegates environment setup to vat, consumes vat JSONL checkpoints, and lifts the inner rig report; stability: `rig + vat` - vat-managed services, readiness, timeout policy, cleanup, and retained report/error folding across scenario runs
-Root WI: axiom#5
-Status: verified
-Required Verification: smoke
-Promise:
-`rig --vat` delegates environment setup to `vat`, consumes JSONL checkpoints, and lifts the inner rig report without owning resource isolation.
-Gate Inventory:
-- `cargo test -p rig`
+`rig --vat` delegates environment setup to `vat`, consumes JSONL checkpoints,
+and lifts the inner rig report without owning resource isolation.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Vat delegated scenario execution | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
+- Root WI: #axiom#5
+- Surfaces: CLI: `rig test --vat` + `rig run --vat` - Delegated scenario
+  execution through vat-managed environments while preserving rig report
+  folding.
+- Gate — behavior: `rig + vat` - rig delegates environment setup to vat,
+  consumes vat JSONL checkpoints, and lifts the inner rig report
+- Gate — stability: `rig + vat` - vat-managed services, readiness, timeout
+  policy, cleanup, and retained report/error folding across scenario runs
+- Gate: `cargo test -p rig`
 
 Verified smoke (2026-06-10): lumen's resilience (partition/packet-loss via
 toxiproxy) + endurance (RSS plateau) + load (search p99 pin) scenarios run
 green locally and through `rig run --vat` with vat-managed services;
 `cargo test -p rig -p rig-cli` green.
-
+- Evidence: `cargo test -p rig`
 
 ## Known limits (v0)
 
@@ -167,7 +170,7 @@ green locally and through `rig run --vat` with vat-managed services;
 
 ## First consumer
 
-lumen: `apps/lumen/tests/rig/scenarios/` ports `scripts/chaos.sh`
+lumen: `apps/lumen/e2e/rig/cases/` ports `scripts/chaos.sh`
 (partition recovery, packet-loss p99) and `scripts/soak.sh` (two-window
 RSS plateau) to scenarios, plus one `load/search_qps` pin
 (`config/pins/search_p99.toml`).

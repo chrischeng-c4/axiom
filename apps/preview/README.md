@@ -15,28 +15,22 @@ target cluster's CRD/RBAC/GitOps policy is known.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 Nothing reads the tables below. The capability gate that validated their
 shape was deleted with the `aw` binary, so the shape is convention now and
 the commands named in each row are the only part that runs.
 
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| GKE UAT Preview Environment Rendering | - | implemented | verified | smoke | ready | `preview discover-base` normalizes a base Deployment/Service contract; `preview render` emits a base-workload clone plan plus optional fake-GCP data plan/Secret, namespace, service account, quota, limits, RBAC, deployment, service, route binding, MR comment, manifest inventory, and cleanup plan files for an MR-scoped UAT preview. |
-| Preview External Contracts | - | implemented | verified | smoke | ready | Always-on render/router-adapter/Kubernetes object/local apply and GitOps tests plus an opt-in kind/GKE-like lifecycle gate that applies, dry-runs, re-applies, loads route-binding ConfigMaps, rolls out, routes, and cleans a preview namespace. |
-| Kubernetes-Native Deployment | - | planned | planned | none | not_ready | future CRD/operator form for reconciling the same PreviewEnvironment model in GKE. |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| GKE UAT Preview Environment Rendering | - | `preview discover-base` normalizes a base Deployment/Service contract; `preview render` emits a base-workload clone plan plus optional fake-GCP data plan/Secret, namespace, service account, quota, limits, RBAC, deployment, service, route binding, MR comment, manifest inventory, and cleanup plan files for an MR-scoped UAT preview. |
+| Preview External Contracts | - | Always-on render/router-adapter/Kubernetes object/local apply and GitOps tests plus an opt-in kind/GKE-like lifecycle gate that applies, dry-runs, re-applies, loads route-binding ConfigMaps, rolls out, routes, and cleans a preview namespace. |
+| Kubernetes-Native Deployment | - | future CRD/operator form for reconciling the same PreviewEnvironment model in GKE. |
 
 ### GKE UAT Preview Environment Rendering
 
-ID: gke-uat-preview-environment-rendering
-Type: Devops
-Surfaces: CLI: `preview discover-base`, `preview render`, `preview data plan`, `preview data apply`, `preview data cleanup`, `preview apply`, `preview gitops render`, `preview router resolve`, `preview cleanup plan`, `preview cleanup apply`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
-EC Dimensions: behavior: render/discovery contract tests - base workload normalization, MR identity, namespace naming, GKE labels, route binding stability, MR comment text, and cleanup dry-run output.
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
 `preview` turns an MR id, commit SHA, image, and base namespace into a
 GKE-oriented UAT preview contract without requiring cluster-specific CRDs up
 front. When a base namespace is available locally, `preview discover-base`
@@ -48,64 +42,70 @@ with `preview gitops render`. When data flags are supplied, Preview also emits
 a local fake-GCP data lifecycle plan and a namespace-local Secret reference so
 teams can prove Cloud SQL/AlloyDB-style clone wiring before paying for real GCP
 resources.
-Gate Inventory:
-- `cargo test -p preview`
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Base workload discovery | change | #1108 | implemented | verified | smoke | `cargo test -p preview --test base_discovery_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
-| Local apply and GitOps execution | change | #1109 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
-| Guarded cleanup janitor | change | #1111 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract local_cleanup_janitor_plan_reports_guarded_actions`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
-| Local fake-GCP data lifecycle | change | - | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract local_data_plan_fake_provider_and_secret_rewrite_are_deterministic` |
-| MR-scoped namespace projection | epic | - | implemented | verified | smoke | `cargo test -p preview render_creates_gke_contract_files` |
-| Cookie/header route binding contract | epic | - | implemented | verified | smoke | `cargo test -p preview route_binding_uses_target_not_namespace_cookie` |
-| Cleanup dry-run planning | epic | - | implemented | verified | smoke | `cargo test -p preview cleanup_plan_marks_closed_mr_for_namespace_delete` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: CLI: `preview discover-base`, `preview render`,
+  `preview data plan`, `preview data apply`, `preview data cleanup`,
+  `preview apply`, `preview gitops render`, `preview router resolve`,
+  `preview cleanup plan`, `preview cleanup apply`, `preview comment`,
+  `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
+- Gate — behavior: render/discovery contract tests - base workload
+  normalization, MR identity, namespace naming, GKE labels, route binding
+  stability, MR comment text, and cleanup dry-run output.
+- Gate: `cargo test -p preview`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Base workload discovery | change | #1108 | `cargo test -p preview --test base_discovery_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| Local apply and GitOps execution | change | #1109 | `cargo test -p preview --test local_cicd_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| Guarded cleanup janitor | change | #1111 | `cargo test -p preview --test local_cicd_contract --test behavior_guarded_cleanup_janitor`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| Local fake-GCP data lifecycle | change | - | `cargo test -p preview --test local_cicd_contract --test behavior_local_fake_gcp_data_lifecycle` |
+| MR-scoped namespace projection | epic | - | `cargo test -p preview --test behavior_mr_scoped_namespace_projection` |
+| Cookie/header route binding contract | epic | - | `cargo test -p preview --test behavior_cookie_header_route_binding_contract` |
+| Cleanup dry-run planning | epic | - | `cargo test -p preview --test behavior_cleanup_dry_run_planning` |
 
 ### Preview External Contracts
 
-ID: preview-external-contracts
-Type: Devops
-Surfaces: Test gates: `cargo test -p preview`; opt-in kind gate: `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture`.
-EC Dimensions: behavior: render contract and router contract; stability: cleanup contract and Kubernetes object cross-reference checks; deployment: opt-in kind/GKE apply, rollout, port-forward, RBAC, quota, and cleanup smoke.
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
 Preview EC is layered so daily development does not require a real cluster, but
 the project still has a concrete path to cluster validation.
-Gate Inventory:
-- `cargo test -p preview`
-- `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture`
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Render contract EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test render_contract` |
-| Local apply/GitOps execution EC | change | #1109 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
-| Local router adapter | change | #1110 | implemented | verified | smoke | `cargo test -p preview --test router_contract`; `cargo test -p preview --test local_cicd_contract local_router_resolve_proves_base_preview_and_fail_closed`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
-| CI template lifecycle | change | #1112 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract ci_templates_document_required_variables_and_command_order`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
-| Router target EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test router_contract` |
-| Kubernetes object EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test k8s_object_contract` |
-| Kind/GKE lifecycle EC | epic | - | implemented | verified | smoke | `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Test gates: `cargo test -p preview`; opt-in kind gate:
+  `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture`.
+- Gate — behavior: render contract and router contract
+- Gate — stability: cleanup contract and Kubernetes object cross-reference
+  checks
+- Gate — deployment: opt-in kind/GKE apply, rollout, port-forward, RBAC, quota,
+  and cleanup smoke.
+- Gate: `cargo test -p preview`
+- Gate:
+  `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture`
+
+| Work Root | Kind | WI | Gate / Evidence |
+|---|---|---:|---|
+| Render contract EC | epic | - | `cargo test -p preview --test render_contract` |
+| Local apply/GitOps execution EC | change | #1109 | `cargo test -p preview --test local_cicd_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| Local router adapter | change | #1110 | `cargo test -p preview --test router_contract`; `cargo test -p preview --test local_cicd_contract --test behavior_local_router_adapter`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| CI template lifecycle | change | #1112 | `cargo test -p preview --test local_cicd_contract --test behavior_ci_template_lifecycle`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| Router target EC | epic | - | `cargo test -p preview --test router_contract` |
+| Kubernetes object EC | epic | - | `cargo test -p preview --test k8s_object_contract` |
+| Kind/GKE lifecycle EC | epic | - | `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 
 ### Kubernetes-Native Deployment
 
-ID: kubernetes-native-deployment
-Type: Devops
-Surfaces: K8s: future `PreviewEnvironment` CRD/operator; current bootstrap renders Kubernetes Namespace, ServiceAccount, ResourceQuota, LimitRange, Role, RoleBinding, Deployment, Service, and route-binding ConfigMap artifacts.
-EC Dimensions: behavior: pending operator/CRD gate - CRD schema, RBAC, controller reconcile, route binding watch, namespace lifecycle, and GKE dry-run.
-Root WI: -
-Status: confirmed
-Required Verification: smoke, conformance
-Promise:
 Preview can promote its CI-rendered `PreviewEnvironment` model into a
 Kubernetes-native controller when the target GKE cluster's CRD/RBAC/GitOps
 policy is known.
-Gate Inventory:
-- pending: apps/preview/tests/kind_lifecycle.rs
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| preview-environment-crd-and-controller | epic | - | planned | planned | none | pending operator/CRD implementation |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: K8s: future `PreviewEnvironment` CRD/operator; current bootstrap
+  renders Kubernetes Namespace, ServiceAccount, ResourceQuota, LimitRange,
+  Role, RoleBinding, Deployment, Service, and route-binding ConfigMap
+  artifacts.
+- Gate — behavior: pending operator/CRD gate - CRD schema, RBAC, controller
+  reconcile, route binding watch, namespace lifecycle, and GKE dry-run.
+- Source: `pending: apps/preview/tests/kind_lifecycle.rs`
+- Evidence: pending operator/CRD implementation
 
 ## Model
 

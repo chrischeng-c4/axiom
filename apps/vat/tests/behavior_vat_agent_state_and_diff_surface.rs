@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/external-contracts.md#vat-agent-state-and-diff-surface
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-agent-state-and-diff-surface

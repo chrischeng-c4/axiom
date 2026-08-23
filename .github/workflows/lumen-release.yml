@@ -99,9 +99,8 @@ jobs:
           shared-key: lumen-${{ matrix.target }}
 
       - name: Build lumen binary
-        # --bin lumen: only the serving binary (skip lumen-consumer / -bench /
-        # -openapi-dump; lumen-operator is feature-gated off by default anyway).
-        run: cargo build --release --locked -p lumen --bin lumen --features "otel operator raft-wal self-update issue delegated-auth" --target ${{ matrix.target }}
+        # --bin lumen: only the serving binary (skip lumen-bench).
+        run: cargo build --release --locked -p lumen --bin lumen --features release --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package

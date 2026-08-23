@@ -30,11 +30,20 @@ verification live in its `CONTRIBUTING.md`. There is no third META-doc —
 `<project>/CAPABILITIES.md` was deleted on 2026-08-17 and its content merged
 into the README.
 
-## `aw` is `plugins/aw`
+## `aw` is `.claude/aw` plus `.claude/skills/aw:*`
 
-`aw` is the phase scripts under `plugins/aw/scripts/` and the skills under
-`plugins/aw/skills/`. There is no CLI behind them — the protocol is their stdout
-and their exit codes.
+`aw` is the phase scripts under `.claude/aw/scripts/` and the eight skills under
+`.claude/skills/aw:*/`. There is no CLI behind them — the protocol is their
+stdout and their exit codes.
+
+It was a Claude Code plugin at `plugins/aw/` until 2026-08-21. That tree is
+deleted: the scripts moved to `.claude/aw/scripts/`, the verification suite to
+`.claude/aw/verification/`, and `plugins/aw/skills/`, `plugins/aw/.claude-plugin/plugin.json`
+and `.claude-plugin/marketplace.json` were removed outright, along with the
+`enabledPlugins` entry in `.claude/settings.json`. The eight skills in
+`.claude/skills/` were already the copy every session read, so nothing about
+what loads changed — what changed is that there is now one copy of each file
+instead of two, and `${CLAUDE_PLUGIN_ROOT}` resolves nowhere.
 
 Launch every one of them through `uv run --python 3.13 --no-project`. They read
 TOML, `tomllib` is 3.11+, and a bare `python3` is 3.9 on at least one machine
@@ -50,8 +59,20 @@ into the script that replaced it.
 
 ## Skills
 
-Eight entry points. Each is invoked by a human, and each hands off to a script
-that can refuse it.
+Nine entry points. Each is invoked by a human. Lifecycle skills hand off to a
+phase script that can refuse them; the project-document checker uses its own
+read-only validators and a clean-context reader.
+
+They load as project skills out of `.claude/skills/`, not as the `aw` plugin,
+and that copy is what a session actually reads. Each directory is named
+`aw:<skill>`, so the invocation keeps the namespace the plugin gave it and
+every `/aw:…` in this repository still resolves. The prefix has to be in the
+directory name because the loader keys off the path and ignores the frontmatter
+`name:` — measured with a probe whose two names disagreed, and the directory
+won. These eight are the only copy. A second set lived under
+`plugins/aw/skills/` with `${CLAUDE_PLUGIN_ROOT}` paths where these write
+`.claude/aw/scripts/`, nothing detected drift between them, and that pair was
+collapsed on 2026-08-21 by deleting the plugin.
 
 | Skill | Reach for it when | It does |
 |---|---|---|
@@ -63,6 +84,7 @@ that can refuse it.
 | `/aw:codex-code-review` | the `logic` phase printed it as the next command | the same, for the implementation and its colocated tests |
 | `/aw:prepare-goal` | a work item, or a bare intent, has to become a `/goal` the session's evaluator can actually decide | interviews you or reads the tracker through `epic.py`/`change.py`, then prints conditions for you to paste |
 | `/aw:meta-check` | before trusting a `CLAUDE.md`, `README.md` or `CONTRIBUTING.md`, and after editing one | `meta.py check` reports every doc fact whose owner is gone |
+| `/project-readme-check` | after creating or editing an app or library README, STATUS, ROADMAP, protocol, generated-client, indexing, querying, GKE, client-integration, or migration guide | validates the adopted product-document set and cross-file references, then asks a context-free reader to restate the current, future, and interface contract |
 
 The usual sequence is grill → reconcile (epics only) → `wi-tdd`; the two review
 skills are reached from the phase that prints them, not chosen, and
@@ -81,11 +103,21 @@ skills are reached from the phase that prints them, not chosen, and
   built-in that nothing here implements, and a goal exists only once the human
   pastes one of the printed lines — which starts a turn on the spot, and
   supersedes whatever goal was already running.
-- `meta-check` reads and never writes, and its baseline is **not** zero: 103
-  findings over 182 documents today, nearly all of them markers left behind by
-  the deleted CLI. So it is not yet wired into `run_all.py` as a ratchet — it
-  is a report you run over what you touched, and a rising count in a file you
-  edited is the signal.
+- `meta-check` reads and never writes. Its baseline was 103 findings over 182
+  documents, nearly all of them markers left behind by the deleted CLI. Those
+  are cleared, and so are the three rules added on 2026-08-20 — `M5` a gate
+  whose test-name filter cargo exits 0 on, `M6` a gate naming a package or
+  target that is not in the checkout, `M7` a self-graded `Status:`/`Maturity:`
+  field — which landed at 151, 5 and 526 findings and reached zero the same day
+  the 60 project READMEs carrying them were rewritten. It reports `=> CLEAN`
+  over 184 tracked META-docs and 64 project READMEs; the count was 185 until
+  `4a30ca3097` deleted `apps/lumen`'s retired trees.
+- All seven rules are ratcheted to zero by
+  `.claude/aw/verification/check_meta_clean.py`, which `run_all.py` runs with a
+  negative control. That is weaker than it sounds: nothing in this repository
+  calls `run_all.py` — no CI workflow, no git hook, no phase script — so the
+  ratchet is one a human runs, and a finding in a file you edited is still the
+  signal.
 
 ## Authority Order
 
@@ -147,7 +179,7 @@ measuring nothing.
 
 ### Work-item terminal states
 
-The closed work-item enum lives at `plugins/aw/scripts/workitem.py`:
+The closed work-item enum lives at `.claude/aw/scripts/workitem.py`:
 
 | Type | Terminal state |
 |---|---|
@@ -187,14 +219,20 @@ red first. A phase does not start until its predecessor has landed its commit.
   no longer exists. The `.rs` file is the authoring surface; editing the markdown
   a header names propagates nowhere.
 
-## Phase-1 boundaries
+## Test Layout
 
-- Externally observable product behavior belongs in the project-local Python
-  phase-1 project at `apps/<name>/e2e/`, where `pyproject.toml` is the inventory
-  and `src/cases/*.py` holds one black-box verifier per case.
-- Rules observable only inside the Rust implementation are colocated tests under
-  their semantic `src/**` owner, in a `tests.rs` wired in with
-  `#[cfg(test)] mod tests;`. They are authored by the `unit` phase, before the
-  implementation exists.
-- Never wrap a Python phase-1 case in an app-level Rust tree and never delegate
-  one to `cargo test`.
+Every `apps/<p>` and `libs/<p>` crate owes an `e2e/` tree. Externally
+observable behavior goes in `{apps,libs}/<p>/e2e/*.rs` — Rust, one file per
+case, run by `cargo test -p <crate>`. Declare each one: `autotests = false`
+plus a `[[test]]` stanza per file, so the `Cargo.toml` manifest is the
+inventory and nothing starts or stops running without showing up in a diff.
+Rules observable only inside the implementation stay as colocated unit tests
+under their semantic `src/**` owner (`cargo test -p <crate> --lib`).
+
+Write the `e2e/*.rs` case before the `src/**` change it judges.
+
+`tech-design/`, `external-contracts/`, and `tests/` are superseded: no authored
+source belongs in them. Never create one, never add a file to one, and migrate
+a surviving case into `e2e/` rather than editing it in place. Python spec
+models and `src/cases/*.py` verifiers are retired — never author a new one.
+Generated EC evidence under `external-contracts/` is output, not contract.

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `LumenFleet` (`lumen.dev/v1alpha1`) — one cluster-scoped object, owned by
 //! the platform team, that declares every data-plane namespace and the
@@ -98,7 +97,6 @@ const DRIVER_OWNED_PATHS: &[&[&str]] = &[
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub struct LumenFleetSpec {
     /// The complete `Lumen` spec every instance starts from — the platform
     /// team's knowledge: which image, which node pool, which StorageClass,
@@ -119,7 +117,6 @@ pub struct LumenFleetSpec {
 /// One data plane the fleet declares.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub struct FleetInstance {
     /// The namespace the `Lumen` is materialized into. The namespace must
     /// already exist: creating namespaces from a CR would make the operator's
@@ -151,7 +148,6 @@ pub struct FleetInstance {
 /// What happens to a materialized `Lumen` whose entry leaves the fleet.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub enum PrunePolicy {
     /// Leave it running and report it as orphaned. The default, because
     /// removing a line from a list is a plausible edit and deleting a search
@@ -166,7 +162,6 @@ pub enum PrunePolicy {
 /// Status subresource for a fleet.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub struct LumenFleetStatus {
     /// The `.metadata.generation` this status reflects.
     #[serde(default)]
@@ -189,7 +184,6 @@ pub struct LumenFleetStatus {
 /// One entry's outcome.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub struct FleetEntryStatus {
     pub namespace: String,
     pub name: String,
@@ -203,7 +197,6 @@ pub struct FleetEntryStatus {
 /// A `Lumen` the fleet wants to exist, or the reason one entry cannot produce
 /// one.
 #[derive(Clone, Debug, PartialEq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub struct PlannedInstance {
     pub namespace: String,
     pub name: String,
@@ -211,7 +204,6 @@ pub struct PlannedInstance {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub enum PlanOutcome {
     /// The merged spec, as JSON. Kept as JSON rather than a `LumenSpec` so the
     /// apply body is exactly what was validated, with no second round-trip
@@ -239,7 +231,6 @@ fn free_form_object(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
 /// Turn one fleet into the list of `Lumen` specs it declares, without touching
 /// a cluster. Every rejection is per-entry: one malformed override must not
 /// stop the other tenants from converging.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub fn plan(fleet: &LumenFleet) -> Vec<PlannedInstance> {
     let fleet_name = fleet.metadata.name.clone().unwrap_or_default();
     let defaults = serde_json::to_value(&fleet.spec.defaults).unwrap_or(Value::Null);
@@ -367,7 +358,6 @@ fn unknown_keys(input: &Value, round_trip: &Value, prefix: &str, out: &mut Vec<S
 
 /// The body of the one-time create: the whole merged spec, initial topology
 /// included.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub fn seed_object(fleet: &str, planned: &PlannedInstance, spec: &Value) -> Value {
     json!({
         "apiVersion": "lumen.dev/v1alpha1",
@@ -385,7 +375,6 @@ pub fn seed_object(fleet: &str, planned: &PlannedInstance, spec: &Value) -> Valu
 /// paths the reshard driver owns. Omitting them from the apply-set is what
 /// keeps the fleet from ever reverting a completed split — see the module
 /// docs.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub fn apply_object(fleet: &str, planned: &PlannedInstance, spec: &Value) -> Value {
     let mut spec = spec.clone();
     for path in DRIVER_OWNED_PATHS {
@@ -423,7 +412,6 @@ fn fleet_labels(fleet: &str) -> Value {
 /// have their own controller, and a 30s convergence pass is far below the
 /// latency anyone can perceive on a deploy. Leader-gated on its own Lease so a
 /// failover of the main controller does not stall it and vice versa.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub fn spawn_fleet_loop(client: kube::Client) {
     // Same identity/namespace resolution as every other independently
     // leader-gated loop in this operator.
@@ -633,7 +621,6 @@ fn entry(instance: &PlannedInstance, state: &str, message: &str) -> FleetEntrySt
 // </HANDWRITE>
 
 /// The `LumenFleet` CustomResourceDefinition as YAML.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-fleet-rs.md#source
 pub fn fleet_crd_yaml() -> String {
     use kube::CustomResourceExt;
     let mut crd = serde_json::to_value(LumenFleet::crd()).expect("CRD serializes to JSON");

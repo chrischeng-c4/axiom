@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen's operator wiring onto the shared `libs/service-k8s` controller.
 //!
@@ -64,6 +63,30 @@
 //! no-op, not an error). Without this migration cleanup, a stale HPA can keep
 //! mutating the data StatefulSet outside the shared membership-aware capacity
 //! contract.
+//!
+//! ## Contracts inherited from the retired EC shells
+//!
+//! These 2 sentences were the whole of the `// Contract:` comment in 2 AW-EC shells
+//! under `apps/lumen/e2e/`, each of which ran `cargo test -p lumen --features operator
+//! --lib prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard` in a subprocess
+//! and asserted the child's exit status. That test is this file's own.
+//!
+//! Until 2026-08-20 these shells could not be deleted. The project's only declared gate
+//! was `cargo test -p lumen`, and with `default = []` that command did not compile this
+//! module at all — `crate::operator` gates `pub mod reconcile;` on the `operator`
+//! feature — so each shell's `--lib` name filter matched no test, printed `0 passed`,
+//! and exited 0. That left the shells as the sole surviving record that these checks
+//! should run at all. `apps/lumen/CONTRIBUTING.md` declared `cargo test -p lumen
+//! --features "operator delegated-auth"` as a required second gate row that day, and
+//! that run executes this module's colocated tests directly. That made each shell a
+//! second, nested run of a check the gate already covers, so they were deleted the same
+//! day. The sentence is the only thing they held that nothing else did. Each line below
+//! is prefixed with the EC id its shell was filed under.
+//!
+//! - `lumen-claim-dynamic-stale-hpa-handoff` — The reconcile loop deletes a stale
+//!   operator-rendered HPA when fixed shard topology takes ownership.
+//! - `lumen-claim-k8s-topology-hpa-handoff` — The Kubernetes reconcile loop deletes
+//!   stale autoscaling state when fixed storage topology takes over.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -318,7 +341,6 @@ struct KubeHpaControl {
     client: Client,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 #[async_trait::async_trait]
 impl HpaControl for KubeHpaControl {
     async fn hpa_labels(
@@ -494,7 +516,6 @@ struct KubeAuthDelegatorControl {
     client: Client,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 #[async_trait::async_trait]
 impl AuthDelegatorControl for KubeAuthDelegatorControl {
     async fn apply_binding(&self, binding: &serde_json::Value) -> anyhow::Result<()> {
@@ -740,7 +761,6 @@ fn auth_delegation_error(context: &serde_json::Value) -> Option<String> {
 }
 
 /// lumen's contribution to the shared operator.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 impl ManagedService for Lumen {
     /// Server-side-apply field manager + leader-election Lease name.
     const MANAGER: &'static str = "lumen-operator";
@@ -766,7 +786,6 @@ impl ManagedService for Lumen {
     ) -> impl std::future::Future<Output = anyhow::Result<service_k8s::service::ReconcilePlan>> + Send
     {
         let validation = self.spec.validate();
-        let children = render::render(self);
         // #2876: the serving ServiceAccount's `system:auth-delegator` binding
         // is cluster-scoped, so it cannot be one of `children` — those are all
         // applied into the CR's namespace. This hook is where it goes: it is
@@ -792,6 +811,25 @@ impl ManagedService for Lumen {
                     serde_json::Value::String(error),
                 );
             }
+
+            // Fetch in-cluster capacity catalog from ConfigMap published by Terraform (catalog.tf)
+            let catalog = crate::operator::capacity::fetch_capacity_catalog(
+                &client,
+                crate::operator::capacity::DEFAULT_CATALOG_NAMESPACE,
+                crate::operator::capacity::DEFAULT_CATALOG_CONFIG_MAP_NAME,
+            )
+            .await
+            .map_err(|rejection| anyhow::anyhow!(rejection.message))?;
+
+            // Resolve direct GCE machine type from the discovered catalog
+            let profile = crate::operator::capacity::resolve_machine_type(
+                &lumen.spec.placement.initial_machine_type,
+                &catalog,
+            )
+            .map_err(|rejection| anyhow::anyhow!(rejection.message))?;
+
+            let children = render::render_with_profile(&lumen, &profile);
+
             Ok(service_k8s::service::ReconcilePlan {
                 children,
                 context: serde_json::Value::Object(context),
@@ -1213,7 +1251,6 @@ impl Lumen {
 /// binding sweep (#2876; independently leader-gated — see
 /// [`spawn_auth_delegator_sweep_loop`], which cleans up the one child no owner
 /// reference can reach).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     match Client::try_default().await {
         Ok(client) => {
@@ -1345,6 +1382,7 @@ mod tests {
             service_account_annotations: BTreeMap::new(),
             peer_tls_secret: None,
             serving_tls_secret: None,
+            body_limit_bytes: None,
         };
         let mut lumen = Lumen::new("search", spec);
         lumen.metadata.namespace = Some("acme".to_string());
@@ -1932,6 +1970,7 @@ mod tests {
             service_account_annotations: std::collections::BTreeMap::new(),
             peer_tls_secret: None,
             serving_tls_secret: None,
+            body_limit_bytes: None,
         }
     }
 

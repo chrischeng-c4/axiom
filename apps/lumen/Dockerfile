@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-runtime-image.md#runtime-image
 # CODEGEN-BEGIN
 # syntax=docker/dockerfile:1
 # From-source build for dev / CI. For production prefer `Dockerfile.release`,
@@ -25,7 +24,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release -p lumen --bin lumen --features "otel operator raft-wal jieba delegated-auth" \
+    cargo build --release -p lumen --bin lumen --features release \
  && cp target/release/lumen /usr/local/bin/
 
 # distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching

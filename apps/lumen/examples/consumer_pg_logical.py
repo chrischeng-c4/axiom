@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-examples.md#schema
 # HANDWRITE-BEGIN gap="missing-generator:multi-target-python-source-unit-ownership" tracker="#1634" reason="AW cannot yet partition this semantic Python example inventory into one exact source owner; preserve the verified example until #1634 lands canonical ownership."
 """Illustrative DIY ingestion recipe: Postgres logical replication -> lumen.
 

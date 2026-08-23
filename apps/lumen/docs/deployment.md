@@ -1,0 +1,353 @@
+# Deploy Lumen
+
+## Choose a mode
+
+| Mode | Use it for | Lifecycle owner |
+|---|---|---|
+| Standalone | Local work, tests, and small single-process use. | The caller starts and configures one process or container. |
+| Managed | Stateful Kubernetes operation. | The operator reconciles declared instances. |
+
+Fleet is the default Managed entry point. It is a management scope. It does not
+enable HA or autoscaling by itself.
+
+## Standalone quickstart
+
+### Binary
+
+```bash
+lumen serve
+```
+
+The default endpoint is `http://127.0.0.1:7373`. The default index is in memory.
+Add `--data-dir <path>` when the index must survive a process restart.
+
+### Container
+
+The current image starts `lumen serve`, whose default bind address is
+`127.0.0.1`. Set the container bind address explicitly when publishing a port.
+
+```bash
+docker run --rm -p 127.0.0.1:7373:7373 \
+  -e LUMEN_HOST=0.0.0.0 \
+  -e LUMEN_AUTH=off \
+  ghcr.io/chrischeng-c4/lumen:<version>
+```
+
+Use a named volume when local data must survive container replacement:
+
+```bash
+docker volume create lumen-data
+
+docker run --rm -p 127.0.0.1:7373:7373 \
+  -v lumen-data:/var/lib/lumen \
+  -e LUMEN_HOST=0.0.0.0 \
+  -e LUMEN_AUTH=off \
+  -e LUMEN_DATA_DIR=/var/lib/lumen/data \
+  ghcr.io/chrischeng-c4/lumen:<version>
+```
+
+The process listens on every container interface. The published host port still
+listens only on `127.0.0.1`.
+
+Check the process:
+
+```bash
+curl -fsS http://127.0.0.1:7373/healthz
+curl -fsS http://127.0.0.1:7373/readyz
+curl -fsS http://127.0.0.1:7373/openapi.json
+```
+
+Use [configuration](configuration.md) for precedence and restart behavior.
+
+## Managed prerequisites
+
+Managed mode uses an existing Kubernetes cluster. Prepare these inputs before
+creating an instance:
+
+- A cluster that can run the operator and StatefulSets.
+- Target namespaces for every Fleet entry. The operator does not create them.
+- The current legacy GCE capacity catalog at
+  `lumen-system/lumen-capacity-catalog`. Every current Managed reconcile reads
+  it.
+- A catalog entry compatible with each instance's
+  `placement.initialMachineType`.
+- A serving TLS Secret when `servingTlsSecret` is set.
+- A peer TLS Secret when `replicasPerShard` is greater than one.
+- Any StorageClass, ServiceAccount, monitoring CRDs, and backup destination
+  named by the spec.
+
+Managed request auth also needs client-side work. A client workload needs an
+audience-bound projected ServiceAccount token and code that adds it to each
+HTTP request. Attaching a ServiceAccount to a pod does not perform either step.
+
+TLS Secrets contain `tls.crt`, `tls.key`, and `ca.crt`. The current operator
+does not create a certificate or Secret from a Fleet declaration. The
+deployment platform owns that material today. The target operator will request
+and rotate separate serving and peer leaf certificates from a platform-owned
+issuer. It will publish public serving trust for allowed client namespaces.
+
+The checked-in operator bundle creates its own `lumen-system` namespace. A
+custom `--namespace` value changes the rendered control-plane namespace. It
+does not create target namespaces.
+
+See the [Terraform guide](../terraform/README.md) for the current GCP capacity
+and certificate substrate.
+
+### Production target
+
+GKE Standard Regional is the first Managed production target. Current
+acceptance uses zonal GKE Standard only. It does not prove regional HA. The
+future profile uses Kubernetes-native resources, StorageClass, selectors,
+tolerations, and topology intent. GKE-only ComputeClass and node lifecycle stay
+in the platform profile, not the core Lumen API. See the [GKE guide](gke.md).
+
+## Install the Managed control plane
+
+Use one released `lumen` binary to render matching CRDs and operator resources.
+
+```bash
+mkdir -p /tmp/lumen-install
+
+lumen k8s crd render --out /tmp/lumen-install
+lumen k8s operator render \
+  --namespace lumen-system \
+  --image ghcr.io/chrischeng-c4/lumen:<version> \
+  --out /tmp/lumen-install
+
+kubectl apply -f /tmp/lumen-install/crd.yaml
+kubectl apply -f /tmp/lumen-install/operator.yaml
+```
+
+Confirm the two operator replicas and the capacity catalog:
+
+```bash
+kubectl -n lumen-system rollout status deploy/lumen-operator
+kubectl -n lumen-system get pods -l app.kubernetes.io/name=lumen-operator
+kubectl -n lumen-system get configmap lumen-capacity-catalog
+```
+
+## Create a Managed Fleet
+
+Render a fill-in template:
+
+```bash
+lumen k8s fleet render \
+  --profile template \
+  --out /tmp/lumen-install
+```
+
+Edit `/tmp/lumen-install/lumenfleet.yaml`. One minimal shape is:
+
+```yaml
+apiVersion: lumen.dev/v1alpha1
+kind: LumenFleet
+metadata:
+  name: search
+spec:
+  prunePolicy: Retain
+  defaults:
+    image: ghcr.io/chrischeng-c4/lumen:<version>
+    auth: required
+    servingTlsSecret: search-serving-tls
+    serving:
+      cpu: "2"
+      memory: 8Gi
+      raftStorage: 50Gi
+      raftStorageClass: ssd
+    placement:
+      initialMachineType: e2-standard-2
+  instances:
+    - namespace: search-team-a
+      spec:
+        serving:
+          cpu: "4"
+    - namespace: search-team-b
+```
+
+`instances[].spec` is an RFC 7386 merge patch over `defaults`. It is not a
+typed runtime patch. A `null` value removes an inherited optional field.
+
+The planned `defaults.access` and `instances[].access` fields are not in the
+current CRD. Do not add them to a current Fleet manifest. See the
+[authentication guide](authentication.md#planned-whole-runtime-access) for the
+target contract.
+
+Apply the declaration:
+
+```bash
+kubectl apply -f /tmp/lumen-install/lumenfleet.yaml
+kubectl get lumenfleet search -o yaml
+kubectl get lumen -A -l lumen.dev/fleet=search
+```
+
+Current Fleet entry states such as `Created` and `Applied` confirm child
+materialization only. Check each child `Lumen` condition and StatefulSet before
+declaring the runtime ready:
+
+```bash
+kubectl get lumen -A -l lumen.dev/fleet=search
+kubectl -n search-team-a get lumen search -o yaml
+kubectl -n search-team-a wait \
+  --for=condition=Ready lumen/search \
+  --timeout=10m
+kubectl -n search-team-a rollout status statefulset/search
+```
+
+## Use a direct Lumen resource
+
+Direct `Lumen` is the advanced Managed entry point. Use it when one instance
+must be declared outside Fleet management.
+
+```bash
+lumen k8s instance render \
+  --profile staging \
+  --namespace search-team-a \
+  --name search \
+  --out /tmp/lumen-install
+
+kubectl apply -f /tmp/lumen-install/lumen.yaml
+```
+
+The same current namespace, legacy capacity catalog, certificate, storage, and
+identity prerequisites apply.
+
+## Direct kustomize compatibility
+
+The checked-in overlays are a Standalone runtime template. They run one
+Standalone Deployment inside Kubernetes.
+
+```bash
+kubectl apply -k apps/lumen/k8s/overlays/dev
+```
+
+This path is single-process and in-memory. The staging and prod overlay names
+select configuration examples. They do not turn the Deployment into Managed
+mode, HA, durable storage, or autoscaling. Use the operator for those
+StatefulSet controls.
+
+## Client access
+
+### Current access bundle
+
+When `auth: required`, a client uses a short-lived Kubernetes ServiceAccount
+token. The current Fleet does not render client access RBAC. Render the current
+manual bundle with:
+
+```bash
+lumen k8s access render \
+  --namespace search-team-a \
+  --client-sa app-client \
+  --issuer alice@example.com \
+  --grant docs=read \
+  --out /tmp/lumen-install
+
+kubectl apply -f /tmp/lumen-install/access.yaml
+```
+
+This command renders five objects. They include the named client
+ServiceAccount, the grant that lets the issuer request its token, and the
+current per-collection Role and RoleBinding that Lumen checks.
+
+The issuer can then use the existing developer flow:
+
+```bash
+lumen connect \
+  --namespace search-team-a \
+  --cr search \
+  --client-sa app-client \
+  --ca-file /path/to/search-serving-ca.crt \
+  -- lumen query collections list
+```
+
+`lumen connect` uses kubeconfig identity for TokenRequest. It keeps the token
+inside the process and adds it through a loopback proxy. Kubernetes RBAC
+decides whether that issuer may mint the token.
+
+An application workload must currently project a token for audience
+`lumen.axiom.dev`, read the rotated file, and set the Authorization header
+itself. Generated clients do not do this automatically. Never place a bearer
+token in a Fleet, environment variable, process argument, status, Event, or
+log.
+
+### Planned Fleet access
+
+The planned Managed contract declares exact allowed client ServiceAccounts in
+`Lumen.spec.access`, `LumenFleet.spec.defaults.access`, or the replacing
+`instances[].access` list. The operator then converges whole-runtime Roles and
+RoleBindings. This contract and `AccessPolicyReady` are not implemented.
+
+Fleet will not create a client ServiceAccount, namespace, Deployment, token
+Secret, or TokenRequest issuer grant. The application or platform must still
+project the standard token into the client workload. See
+[authentication](authentication.md) for the full current and planned flow. The
+[client integration guide](client-integration.md) owns the future explicit
+connection profiles and versioned workload template.
+
+## Upgrade order
+
+Apply Managed changes in this order:
+
+1. CRDs.
+2. Operator image and RBAC.
+3. Fleet or direct `Lumen` declarations.
+4. Current manual client-access resources when their contract changed.
+
+The API currently serves `lumen.dev/v1alpha1`. Additive fields can remain in
+that version. No conversion webhook exists. Do not downgrade the CRD after
+stored resources use newer fields.
+
+The new Fleet rollout policy is not implemented yet. Current Fleet convergence
+can apply every entry in one pass. Plan a controlled operator and Fleet change
+until [safe rollout](../ROADMAP.md#fleet-safe-rollout) lands.
+
+Fleet rollout will order changes between runtimes. A separate
+[quorum-safe runtime rollout](../ROADMAP.md#quorum-safe-runtime-rollout) must
+control members within one runtime. A PDB protects voluntary eviction. It does
+not stop a StatefulSet rolling update.
+
+The planned typed access API and 0.5.0 Managed auth requirements are also not
+implemented. Follow the [migration contract](authentication.md#migration-contract)
+before changing current external RBAC.
+
+The planned 0.5 search contract adds a separate Managed activation boundary.
+Installing a new binary will not be enough. Every serving member must report
+the required binary capability. The operator must then finalize
+`compatibilityVersion` before `search_facets_v1` becomes active. A
+mixed-version runtime will reject activation. It will not route new requests
+around an older member.
+
+Current `/version` and the current operator do not implement this capability
+model. See [Managed activation](migration-0.5-search.md#managed-activation)
+before planning the 0.5 upgrade.
+
+## Smoke checks
+
+Run these checks for each changed instance:
+
+```bash
+kubectl -n lumen-system get lease lumen-operator
+kubectl get lumenfleet -o wide
+kubectl get lumen -A
+kubectl -n <namespace> get statefulset,pod,service,pvc
+kubectl -n <namespace> get lumen <name> -o yaml
+kubectl -n <namespace> port-forward service/<name> 7373:7373
+```
+
+In another shell:
+
+```bash
+curl -fsS http://127.0.0.1:7373/healthz
+curl -fsS http://127.0.0.1:7373/readyz
+curl -fsS http://127.0.0.1:7373/version
+```
+
+If serving TLS is enabled, use the matching CA and Service DNS name. A normal
+localhost request cannot verify a certificate issued only for cluster Service
+names.
+
+Use the [operator runbook](runbooks/operator-control-plane.md) for Fleet,
+capacity, child-status, leadership, and reconcile diagnostics.
+
+The future GKE Standard Regional gate also covers node drain, Pod loss, zone
+loss, rollout interruption, recovery, certificate rotation, client trust,
+backup, and restore. Do not use the current zonal result as that evidence.

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Rust public export scanner for Python-oriented code generation.
 //!
@@ -16,7 +15,6 @@ use tree_sitter::{Node, Parser};
 
 /// Scanned Rust exports from a crate
 #[derive(Debug, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustExports {
     /// Public structs
     pub structs: Vec<RustStruct>,
@@ -26,7 +24,6 @@ pub struct RustExports {
     pub functions: Vec<RustFunction>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 impl RustExports {
     /// Merge another RustExports into this one
     pub fn merge(&mut self, other: RustExports) {
@@ -43,7 +40,6 @@ impl RustExports {
 
 /// Kind of struct (determines wrapper strategy)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub enum StructKind {
     /// Data struct: all fields simple types, no methods.
     Data,
@@ -55,7 +51,6 @@ pub enum StructKind {
 
 /// Public struct with its fields and methods
 #[derive(Debug)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustStruct {
     pub name: String,
     pub kind: StructKind,
@@ -71,7 +66,6 @@ pub struct RustStruct {
 
 /// Struct field
 #[derive(Debug)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustField {
     pub name: String,
     pub ty: String,
@@ -81,7 +75,6 @@ pub struct RustField {
 
 /// Struct method (from impl block)
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustMethod {
     pub name: String,
     pub params: Vec<RustParam>,
@@ -95,7 +88,6 @@ pub struct RustMethod {
 
 /// Function parameter
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustParam {
     pub name: String,
     pub ty: String,
@@ -105,7 +97,6 @@ pub struct RustParam {
 
 /// Public enum
 #[derive(Debug)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustEnum {
     pub name: String,
     pub variants: Vec<RustEnumVariant>,
@@ -116,7 +107,6 @@ pub struct RustEnum {
 
 /// Enum variant
 #[derive(Debug)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustEnumVariant {
     pub name: String,
     /// None for unit variants, Some for tuple/struct variants
@@ -126,7 +116,6 @@ pub struct RustEnumVariant {
 
 /// Public function
 #[derive(Debug)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustFunction {
     pub name: String,
     pub params: Vec<RustParam>,
@@ -136,12 +125,10 @@ pub struct RustFunction {
 }
 
 /// Scanner for Rust public exports
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 pub struct RustScanner {
     parser: Parser,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 impl RustScanner {
     /// Create a new scanner
     pub fn new() -> Result<Self> {
@@ -687,7 +674,6 @@ impl RustScanner {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md#source
 impl Default for RustScanner {
     fn default() -> Self {
         Self::new().expect("Failed to create RustScanner")

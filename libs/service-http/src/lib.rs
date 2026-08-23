@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `service-http` — shared HTTP-service scaffolding for the ecosystem's
 //! k8s-native services.

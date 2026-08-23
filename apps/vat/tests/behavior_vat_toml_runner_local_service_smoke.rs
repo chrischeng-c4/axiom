@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#vat-toml-runner-local-service-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-toml-runner-local-service-smoke

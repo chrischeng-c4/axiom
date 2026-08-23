@@ -1,9 +1,7 @@
-// SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-server-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Server-side h2c transport (behind the `server` feature): serve one accepted
 //! stream as **HTTP/1.1 or HTTP/2 cleartext (h2c, prior-knowledge)** via
 //! hyper-util's auto builder.
-//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
 //! `axum::serve` speaks HTTP/1 only; this is the ecosystem's drop-in replacement
 //! so a service actually accepts h2c (the in-cluster default) alongside HTTP/1.1
@@ -226,7 +224,6 @@ impl Default for ConnectionOptions {
 /// Serve one accepted stream as HTTP/1.1 or h2c and dispatch every request
 /// through the axum `app`. Listener admission, shutdown, and task supervision
 /// belong to `server-http`/`server-tcp`.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-server-rs.md#source
 pub async fn serve_connection(stream: TcpStream, app: axum::Router) -> Result<(), ConnectionError> {
     serve_io(stream, app).await
 }

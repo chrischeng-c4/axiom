@@ -113,10 +113,15 @@ metadata:
   annotations:
     iam.gke.io/gcp-service-account: ${BACKUP_GSA_EMAIL}
 EOF
-    instance_resources="identity.yaml"
   else
-    instance_resources=""
+cat > "$MANIFEST_DIR/lumen/instance/identity.yaml" <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lumen
+EOF
   fi
+  instance_resources="identity.yaml"
 
 cat > "$MANIFEST_DIR/lumen/instance/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1

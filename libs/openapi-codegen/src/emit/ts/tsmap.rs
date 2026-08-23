@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-tsmap-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Maps an OpenAPI [`Schema`] to a TypeScript type expression.
 //!
@@ -15,7 +14,6 @@ pub use crate::ir::typemap::TypeMap;
 
 /// TypeScript type expression for a schema (or `$ref`), including nullability.
 ///
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-tsmap-rs.md#source
 pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap) -> String {
     match node {
         RefOr::Ref(r) => match tm.resolve_ref(&r.reference) {
@@ -108,7 +106,6 @@ fn array_expr(schema: &Schema, tm: &TypeMap) -> String {
 }
 
 /// Inline object literal type: `{ a: T; b?: U; [key: string]: V }`.
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-tsmap-rs.md#source
 pub fn object_expr(schema: &Schema, tm: &TypeMap) -> String {
     let mut parts: Vec<String> = Vec::new();
     for (key, prop) in &schema.properties {

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Tokenizers for `text` fields.
 //!
@@ -8,8 +7,21 @@
 //!
 //! - `whitespace_lower` — lowercase + Unicode whitespace split. Default.
 //!   Adequate for English; Chinese falls through as one big token.
-//! - `jieba` — Chinese word segmentation. Feature-gated; falls back to
-//!   `whitespace_lower` when the `jieba` feature is off.
+//! - `jieba` — Chinese word segmentation when the `jieba` feature is on.
+//!   With the feature **off** it is not whitespace splitting: the fallback is a
+//!   CJK-bigram tokenizer. Input is cut into maximal runs of CJK characters
+//!   (Han, Hiragana, Katakana, Hangul syllables — a char-range test, no
+//!   segmenter) versus everything else. A CJK run of N chars emits N-1
+//!   overlapping bigrams (`北京大學` → `北京`, `京大`, `大學`), matching Lucene
+//!   `CJKBigramFilter`; a lone CJK char emits itself as a unigram rather than
+//!   being dropped. Non-CJK runs go through `whitespace_lower` unchanged, so
+//!   `lumen 搜尋引擎` keeps its `lumen` token. Scan order is preserved.
+//!
+//!   **Documents indexed under the pre-#1975 fallback need a reindex.** That
+//!   fallback emitted the whole string as one token, so old postings carry
+//!   whole-value terms that no bigram query will ever match. This is a
+//!   degraded-mode caveat, not migration machinery — nothing detects or
+//!   rewrites those postings.
 //! - `ngram` — character N-grams (default 2..3). Useful for substring
 //!   search on identifier-like fields.
 //!
@@ -25,7 +37,6 @@ pub const DEFAULT_NGRAM_MIN: usize = 2;
 pub const DEFAULT_NGRAM_MAX: usize = 3;
 
 /// Tokenize `text` with the chosen `analyzer`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#source
 pub fn tokenize(text: &str, analyzer: Analyzer) -> Vec<String> {
     match analyzer {
         Analyzer::WhitespaceLower => {
@@ -38,12 +49,10 @@ pub fn tokenize(text: &str, analyzer: Analyzer) -> Vec<String> {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#source
 pub(crate) fn for_whitespace_lower(text: &str, mut emit: impl FnMut(String)) -> u32 {
     for_whitespace_lower_cow(text, |tok| emit(tok.into_owned()))
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#source
 pub(crate) fn for_whitespace_lower_cow<'a>(
     mut text: &'a str,
     mut emit: impl FnMut(Cow<'a, str>),

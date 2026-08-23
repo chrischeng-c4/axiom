@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-emulator-pubsub-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Built-in Google Pub/Sub emulator — a tonic gRPC server implementing the
 //! google.pubsub.v1 Publisher/Subscriber subset over in-memory state. The
@@ -6,7 +5,6 @@
 //! local tests of the common path: topic/subscription admin, Publish, Pull,
 //! StreamingPull, and Acknowledge.
 //!
-//! @spec apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::pin::Pin;
@@ -88,7 +86,6 @@ fn ack(state: &Arc<Mutex<State>>, sub: &str, ack_ids: &[String]) {
 }
 
 #[tonic::async_trait]
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-pubsub-rs.md#source
 impl Publisher for PubsubEmulator {
     async fn create_topic(
         &self,
@@ -196,7 +193,6 @@ impl Publisher for PubsubEmulator {
 }
 
 #[tonic::async_trait]
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-pubsub-rs.md#source
 impl Subscriber for PubsubEmulator {
     type StreamingPullStream =
         Pin<Box<dyn Stream<Item = Result<pb::StreamingPullResponse, Status>> + Send + 'static>>;
@@ -355,7 +351,6 @@ impl Subscriber for PubsubEmulator {
 }
 
 /// Serve the Pub/Sub emulator until the process is killed.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-pubsub-rs.md#source
 pub async fn serve(host_port: &str) -> Result<()> {
     let addr = host_port
         .parse()

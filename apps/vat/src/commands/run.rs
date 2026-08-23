@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat run` — direct command mode plus vat.toml runner mode.
 //!
@@ -49,8 +48,6 @@ use crate::state::{
 use crate::{id, store};
 
 /// Inputs for `vat run`, already parsed by the CLI layer.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#cli
 pub struct Args {
     pub target: Target,
     /// Clone from this host directory (default: current directory).
@@ -73,7 +70,6 @@ pub struct Args {
     pub(crate) compose_handoff: Option<crate::commands::compose::ComposeHandoff>,
 }
 
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#cli
 pub enum Target {
     Direct {
         program: String,
@@ -88,8 +84,6 @@ pub enum Target {
     },
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 fn gpu_satisfied(_gpu: GpuRequest, isolation: Isolation, info: &gpu::GpuInfo) -> bool {
     // GPU is only accessible in None and Seatbelt isolation modes.
     // MicroVm categorically cannot reach the host GPU.
@@ -218,8 +212,6 @@ impl RunCancellation {
     }
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 pub fn exec(args: Args) -> Result<ExitCode> {
     let cancellation = RunCancellation::new()?;
     let Args {
@@ -1851,7 +1843,6 @@ struct RunnerProc {
 /// applying the `[network].egress` policy), while the process backend is a
 /// passthrough (returns the command verbatim). Services are spawned RAW (not via
 /// this) so they keep the network needed to serve/forward.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
 pub(crate) fn sandbox_wrap(
     backend: &dyn sandbox::Sandbox,
     rootfs: &Path,
@@ -2257,7 +2248,6 @@ fn prepare_service(
 /// (a one-shot, minutes-long operation) and kept alive by a trivial child so it
 /// slots into the existing service start/stop machinery; the runner reaches it
 /// through the exported `KUBECONFIG`.
-/// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#logic
 fn prepare_cluster_service(
     vat: &store::Vat,
     service: &ServiceConfig,
@@ -2675,7 +2665,6 @@ enum ResolvedRuntime {
 /// native binary and falls back to Docker; `native`/`docker`/`microvm` force
 /// their named path. On `auto` with neither available, emit a structured error
 /// and bail. An explicit MicroVM path never falls back to Docker.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 fn resolve_preset_runtime(
     service: &ServiceConfig,
     preset: ServicePreset,
@@ -2814,7 +2803,6 @@ fn reject_microvm_preset_volumes(service: &ServiceConfig, preset: ServicePreset)
 /// Run a preset service from its official Docker image instead of the native
 /// binary. The exported connection env is identical to the native path — only
 /// the process behind the mapped host port differs.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 fn prepare_preset_docker_service(
     vat: &store::Vat,
     service: &ServiceConfig,
@@ -2929,7 +2917,6 @@ fn prepare_preset_microvm_service(
 /// the first configured emulator (or the hub) for readiness. Native-only: there
 /// is no reliable official Docker image, so a missing firebase-tools is a
 /// structured unavailable error, not a silent Docker attempt.
-/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
 fn prepare_firebase_service(
     vat: &store::Vat,
     cfg: &VatConfig,
@@ -3030,7 +3017,6 @@ fn prepare_firebase_service(
 }
 
 /// The client-SDK host env var for a Firebase emulator, when one exists.
-/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
 fn firebase_emulator_host_var(emulator: &str) -> Option<&'static str> {
     match emulator {
         "firestore" => Some("FIRESTORE_EMULATOR_HOST"),
@@ -3043,7 +3029,6 @@ fn firebase_emulator_host_var(emulator: &str) -> Option<&'static str> {
 }
 
 /// The `vat emulator` kind name and the host env var for a built-in preset.
-/// @spec apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
 fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) {
     match preset {
         ServicePreset::Pubsub => ("pubsub", "PUBSUB_EMULATOR_HOST"),
@@ -3069,7 +3054,6 @@ fn builtin_emulator_export_value(preset: ServicePreset, host_port: &str) -> Stri
 /// Prepare a built-in emulator service: vat spawns *itself* (`vat emulator
 /// <kind> --host-port`) as the service process — a pure Rust in-process server
 /// with no external tooling. The runner reaches it via the exported host var.
-/// @spec apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic
 /// The explicit `[network].routes` from vat.toml as `(host, target)` pairs. These
 /// seed the http-mock proxy's routing table at spawn (the targets are literal
 /// local base URLs); preset-derived routes are added by
@@ -3245,7 +3229,6 @@ fn prepare_builtin_service(
 /// outbound HTTP/S is intercepted), NO_PROXY (so the runner's other loopback
 /// emulators stay direct), and CA-trust vars for every common runtime (so the
 /// HTTPS MITM is trusted) — plus the admin host.
-/// @spec apps/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#config
 fn http_mock_env(host_port: &str, ca_path: &str) -> BTreeMap<String, String> {
     let proxy = format!("http://{host_port}");
     let mut env = BTreeMap::new();
@@ -3276,7 +3259,6 @@ fn http_mock_env(host_port: &str, ca_path: &str) -> BTreeMap<String, String> {
 /// Run a Docker-only custom service (e.g. AlloyDB) declared with `image`.
 /// `export` values are templates: `{host}`/`{port}` are substituted with the
 /// mapped host endpoint. `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 fn prepare_image_service(
     vat: &store::Vat,
     service: &ServiceConfig,
@@ -3372,7 +3354,6 @@ fn prepare_microvm_service(
 /// Build a foreground `docker run` argv. `--rm` makes the container ephemeral;
 /// `--name` is deterministic so teardown can force-remove it; the port is bound
 /// to loopback only. Container env is emitted in sorted order (deterministic).
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 fn docker_run_command(
     name: &str,
     image: &str,
@@ -3537,7 +3518,6 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
 /// The emulator-start command appended after the image for GCP emulators on the
 /// cloud-cli image. Empty for images that start their server via their own
 /// entrypoint (datastore/broker official images, Spanner's dedicated image).
-/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
 fn preset_docker_command(preset: ServicePreset, container_port: u16) -> Vec<String> {
     let emulator = |name: &str, extra: &[&str]| {
         let mut cmd = vec![
@@ -3634,7 +3614,6 @@ fn docker_daemon_up() -> bool {
 
 /// Gate a Docker-backed service on a reachable daemon, emitting the structured
 /// `docker_unavailable` error (never a panic) when it is not.
-/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 fn ensure_docker_available(service: &ServiceConfig) -> Result<()> {
     if which("docker").is_none() {
         emit_jsonl(serde_json::json!({
@@ -4094,7 +4073,6 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
 
 /// The gcloud component an emulator preset needs locally installed for the
 /// native path. `None` for non-gcloud presets (datastore/broker, firebase).
-/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
 fn gcloud_component(preset: ServicePreset) -> Option<&'static str> {
     match preset {
         ServicePreset::Firestore => Some("cloud-firestore-emulator"),
@@ -4130,7 +4108,6 @@ fn installed_gcloud_components() -> Vec<String> {
 
 /// Pure native-availability decision: all binaries present, and (for emulator
 /// presets) the required gcloud component locally installed.
-/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
 fn native_available(has_binaries: bool, component: Option<&str>, installed: &[String]) -> bool {
     has_binaries
         && match component {
@@ -4143,7 +4120,6 @@ fn native_available(has_binaries: bool, component: Option<&str>, installed: &[St
 /// this checks the gcloud component, not just the binary, so `runtime = auto`
 /// falls back to Docker when the component is missing rather than choosing
 /// native and failing to start.
-/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
 fn preset_native_available(preset: ServicePreset) -> bool {
     let has_binaries = required_binaries(preset)
         .iter()

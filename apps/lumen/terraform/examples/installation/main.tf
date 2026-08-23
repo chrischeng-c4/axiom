@@ -29,17 +29,12 @@ module "pki" {
   }
 }
 
-# The capacity authority (#3066) is configured by this root today -- its inputs
-# are declared and validated in variables.tf and republished in outputs.tf -- and
-# the module block that consumes them lands with #3066 itself, which is item
-# 02/11 of epic #2934 and is not a blocker of this one. Deliberately not stubbed:
-# a placeholder that plans nothing would make `terraform apply` here report
-# success for capacity that does not exist, which is worse than an absent module.
-#
-#   module "capacity" {
-#     source            = "../../modules/lumen-capacity"
-#     project_id        = var.project_id
-#     region            = var.region
-#     cluster_name      = data.google_container_cluster.lumen.name
-#     capacity_profiles = var.capacity_profiles
-#   }
+data "google_client_config" "default" {}
+
+module "capacity" {
+  source            = "../../modules/lumen-capacity"
+  project_id        = var.project_id
+  region            = var.region
+  cluster_name      = data.google_container_cluster.lumen.name
+  capacity_profiles = var.capacity_profiles
+}

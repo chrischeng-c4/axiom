@@ -99,7 +99,7 @@ jobs:
       # that pins this image by digest would crash-loop every auth-mode
       # instance. lumen-release.yml already builds with it; this leg lagged.
       - name: Build lumen binary
-        run: cargo build --release --locked -p lumen --bin lumen --features "otel operator raft-wal self-update issue delegated-auth" --target ${{ matrix.target }}
+        run: cargo build --release --locked -p lumen --bin lumen --features release --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:

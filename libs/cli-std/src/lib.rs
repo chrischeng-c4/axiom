@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `cli-std` — the standard agent-facing CLI commands every axiom tool
 //! ships, per the convention in `CONTRIBUTING.md` ("every CLI ships `llm`,
@@ -27,6 +26,13 @@
 //! port-forward lifecycle + token-registry Secret resolution every
 //! k8s-native service CLI's `<cli> connect` wants (extracted from `lumen
 //! connect`, #1321/#1376 — see `CONTRIBUTING.md` § "Deploy artifacts").
+//!
+//! **Courier proxy mode** (#1320). With `$AXIOM_COURIER_URL` set, [`issue`]'s
+//! four verbs route through courier's `/v1/issues/...` endpoints instead of
+//! calling `api.github.com` directly, authenticating with
+//! `$AXIOM_COURIER_TOKEN` — a courier-issued client credential, not a personal
+//! GitHub token. Unset or blank means unconfigured, and unconfigured is not a
+//! degraded mode: the direct-GitHub path runs unchanged.
 
 pub mod artifact;
 pub mod chainable;
@@ -58,7 +64,6 @@ pub mod upgrade;
 /// assert_eq!(TOOL.asset_name(), "lumen-aarch64-apple-darwin.tar.gz");
 /// ```
 #[derive(Clone, Copy, Debug)]
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 pub struct ToolInfo {
     /// Short tool name — also the release-tag prefix (`<project>@X.Y.Z`), the
     /// asset stem (`<project>-<target>.tar.gz`) and the inner binary name.
@@ -75,7 +80,6 @@ pub struct ToolInfo {
     pub built_at: &'static str,
 }
 
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 impl ToolInfo {
     /// Default tracker label for this tool's issue surface.
     pub fn issue_label(&self) -> String {
@@ -109,7 +113,6 @@ impl ToolInfo {
 /// is available. This makes the standard CLI ops "just work" for anyone already
 /// authenticated via `gh`, which does not export a `GITHUB_TOKEN` env var.
 #[cfg(feature = "online")]
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 pub(crate) fn resolve_github_token() -> Option<String> {
     resolve_github_token_from(|var| std::env::var(var).ok(), gh_auth_token)
 }
@@ -196,7 +199,6 @@ pub(crate) async fn download_text(client: &reqwest::Client, url: &str) -> anyhow
 /// Prompt on an interactive terminal; non-interactive sessions return `true`
 /// (callers gate on `--yes` first).
 #[cfg(feature = "online")]
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 pub(crate) fn confirm(prompt: &str) -> anyhow::Result<bool> {
     use anyhow::Context;
     use std::io::{IsTerminal, Write};
@@ -216,7 +218,6 @@ pub(crate) fn confirm(prompt: &str) -> anyhow::Result<bool> {
 /// dir ⇒ same filesystem), make it executable, then `rename` over self. A
 /// permission failure leaves the existing binary intact.
 #[cfg(feature = "online")]
-/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 pub(crate) fn install_over_self(bin: &[u8], tmp_label: &str) -> anyhow::Result<()> {
     use anyhow::{anyhow, Context};
     let exe = std::env::current_exe().context("locate current executable")?;
@@ -302,7 +303,6 @@ mod token_tests {
 }
 // CODEGEN-END
 
-// SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
 // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic Mermaid-flowchart-to-Rust generator only synthesizes one brand-new function per diagram with todo!() bodies; it cannot target insertions into existing named functions, so resolve_courier_url()/resolve_courier_token() are hand-written to mirror resolve_github_token()'s env-resolution pattern exactly."
 /// Resolve the courier proxy URL from `$AXIOM_COURIER_URL`. Returns `None`
 /// when unset or blank (mirrors `resolve_github_token()`'s blank-counts-as-
@@ -310,7 +310,6 @@ mod token_tests {
 /// route through courier's `/v1/issues/...` endpoints instead of calling
 /// `api.github.com` directly.
 #[cfg(feature = "online")]
-/// @spec libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
 pub(crate) fn resolve_courier_url() -> Option<String> {
     resolve_courier_url_from(|var| std::env::var(var).ok())
 }
@@ -330,7 +329,6 @@ fn resolve_courier_url_from(env: impl Fn(&str) -> Option<String>) -> Option<Stri
 /// <token>` to courier -- this is the courier-issued client credential, not
 /// a personal GitHub token.
 #[cfg(feature = "online")]
-/// @spec libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
 pub(crate) fn resolve_courier_token() -> Option<String> {
     resolve_courier_token_from(|var| std::env::var(var).ok())
 }

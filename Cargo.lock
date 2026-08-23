@@ -7949,7 +7949,7 @@ dependencies = [
 
 [[package]]
 name = "lumen"
-version = "0.4.25"
+version = "0.4.26"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -11468,6 +11468,8 @@ dependencies = [
  "rustls 0.23.40",
  "serde",
  "serde_json",
+ "server-lifecycle",
+ "sha2 0.10.9",
  "storage-durable",
  "tempfile",
  "tokio",
@@ -13315,6 +13317,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "rustix 0.38.44",
  "serde",
  "serde_json",
  "server-lifecycle",

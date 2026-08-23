@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-search-index-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Inverted search index for symbol-level code search.
 //!
@@ -19,7 +18,6 @@ use crate::semantic::{Symbol, SymbolKind};
 
 /// Serializable position within a file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-index-rs.md#source
 pub struct IndexPosition {
     pub start_line: u32,
     pub start_col: u32,
@@ -29,7 +27,6 @@ pub struct IndexPosition {
 
 /// Kind of symbol stored in the index (mirrors `SymbolKind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-index-rs.md#source
 pub enum IndexSymbolKind {
     Variable,
     Function,
@@ -58,7 +55,6 @@ pub enum IndexSymbolKind {
     Template,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-index-rs.md#source
 impl From<SymbolKind> for IndexSymbolKind {
     fn from(kind: SymbolKind) -> Self {
         match kind {
@@ -93,7 +89,6 @@ impl From<SymbolKind> for IndexSymbolKind {
 
 /// A single symbol entry in the search index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-index-rs.md#source
 pub struct SymbolEntry {
     /// File containing the symbol.
     pub file: PathBuf,
@@ -125,7 +120,6 @@ struct PersistedIndex {
 
 /// Inverted index from symbol names / types to locations.
 #[derive(Debug, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-index-rs.md#source
 pub struct SearchIndex {
     /// name -> entries (case-sensitive)
     name_index: HashMap<String, Vec<SymbolEntry>>,
@@ -135,7 +129,6 @@ pub struct SearchIndex {
     doc_index: HashMap<String, Vec<SymbolEntry>>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-search-index-rs.md#source
 impl SearchIndex {
     pub fn new() -> Self {
         Self::default()

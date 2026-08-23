@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-typescript-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! TypeScript/JavaScript symbol extraction visitor methods
 //!
@@ -19,7 +18,6 @@ fn name_loc(node: &tree_sitter::Node<'_>, file: &ParsedFile) -> (String, Range) 
     (name, loc)
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-typescript-rs.md#source
 impl SymbolTableBuilder {
     pub(crate) fn visit_typescript_node(
         &mut self,

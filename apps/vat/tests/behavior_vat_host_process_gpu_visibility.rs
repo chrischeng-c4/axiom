@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/external-contracts.md#vat-host-process-gpu-visibility
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-host-process-gpu-visibility

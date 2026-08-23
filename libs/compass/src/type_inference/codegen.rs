@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Code generation (Sprint 3 - Track 2)
 //!
@@ -18,7 +17,6 @@ use super::deep_inference::TypeContext;
 
 /// A request for code generation.
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 pub struct CodeGenRequest {
     /// Type of generation
     pub kind: CodeGenKind,
@@ -32,7 +30,6 @@ pub struct CodeGenRequest {
 
 /// Type of code generation.
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 pub enum CodeGenKind {
     /// Generate docstring
     Docstring { style: DocstringStyle },
@@ -52,7 +49,6 @@ pub enum CodeGenKind {
 
 /// Docstring style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 pub enum DocstringStyle {
     /// Google style
     Google,
@@ -66,7 +62,6 @@ pub enum DocstringStyle {
 
 /// Test framework.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 pub enum TestFramework {
     /// pytest
     Pytest,
@@ -78,7 +73,6 @@ pub enum TestFramework {
 
 /// Options for code generation.
 #[derive(Debug, Clone, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 pub struct CodeGenOptions {
     /// Include type annotations
     pub include_types: bool,
@@ -96,7 +90,6 @@ pub struct CodeGenOptions {
 
 /// Result of code generation.
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 pub struct CodeGenResult {
     /// Generated code
     pub code: String,
@@ -108,7 +101,6 @@ pub struct CodeGenResult {
     pub imports: Vec<String>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 impl CodeGenResult {
     /// Create a new result.
     pub fn new(code: impl Into<String>, target_file: PathBuf) -> Self {
@@ -138,7 +130,6 @@ impl CodeGenResult {
 // ============================================================================
 
 /// Code generator with type awareness.
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 pub struct CodeGenerator {
     /// Type context for type information
     type_context: TypeContext,
@@ -146,7 +137,6 @@ pub struct CodeGenerator {
     default_options: CodeGenOptions,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 impl CodeGenerator {
     /// Create a new code generator.
     pub fn new() -> Self {
@@ -708,7 +698,6 @@ def {symbol}(*args: Any, **kwargs: Any) -> Any: ...
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-codegen-rs.md#source
 impl Default for CodeGenerator {
     fn default() -> Self {
         Self::new()

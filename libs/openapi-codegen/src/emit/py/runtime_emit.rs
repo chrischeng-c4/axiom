@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-runtime-emit-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Emit the generated Python HTTP/2 runtime.
 
@@ -2075,7 +2074,6 @@ class AsyncH2CStream:
             raise self._error
 "####;
 
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-runtime-emit-rs.md#source
 pub fn emit(target: Option<PythonTarget>) -> String {
     let mut out = String::from(HEADER);
     match target {

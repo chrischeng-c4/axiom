@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 // CODEGEN-BEGIN
 //! Test runner - discovery, execution, and scheduling
 
@@ -10,7 +9,6 @@ use tokio::task::JoinHandle;
 
 /// Test type categorization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub enum TestType {
     /// Standard unit test
     #[default]
@@ -21,7 +19,6 @@ pub enum TestType {
     Security,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl std::fmt::Display for TestType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -34,7 +31,6 @@ impl std::fmt::Display for TestType {
 
 /// Test execution status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub enum TestStatus {
     /// Test passed
     Passed,
@@ -46,7 +42,6 @@ pub enum TestStatus {
     Error,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl std::fmt::Display for TestStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -60,7 +55,6 @@ impl std::fmt::Display for TestStatus {
 
 /// Programming language for multi-language test support
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub enum Language {
     /// Python (default)
     #[default]
@@ -71,7 +65,6 @@ pub enum Language {
     TypeScript,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl std::fmt::Display for Language {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -84,7 +77,6 @@ impl std::fmt::Display for Language {
 
 /// Metadata for a test function
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct TestMeta {
     /// Test function name
     pub name: String,
@@ -106,7 +98,6 @@ pub struct TestMeta {
     pub line_number: Option<u32>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl TestMeta {
     /// Create new test metadata
     pub fn new(name: impl Into<String>) -> Self {
@@ -183,7 +174,6 @@ impl TestMeta {
 
 /// Profile metrics for performance tests
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct ProfileMetrics {
     /// Number of iterations run
     pub iterations: u32,
@@ -197,7 +187,6 @@ pub struct ProfileMetrics {
 
 /// Test result after execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct TestResult {
     /// Test metadata
     pub meta: TestMeta,
@@ -215,7 +204,6 @@ pub struct TestResult {
     pub started_at: String,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl TestResult {
     /// Create a passed test result
     pub fn passed(meta: TestMeta, duration_ms: u64) -> Self {
@@ -294,7 +282,6 @@ impl TestResult {
 
 /// Test runner configuration
 #[derive(Debug, Clone)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct RunnerConfig {
     /// Filter by test type
     pub test_type: Option<TestType>,
@@ -312,7 +299,6 @@ pub struct RunnerConfig {
     pub max_workers: usize,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl Default for RunnerConfig {
     fn default() -> Self {
         Self {
@@ -329,14 +315,12 @@ impl Default for RunnerConfig {
 
 /// Test runner - orchestrates test discovery and execution
 #[derive(Debug)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct TestRunner {
     config: RunnerConfig,
     results: Vec<TestResult>,
     start_time: Option<Instant>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl TestRunner {
     /// Create a new test runner
     pub fn new(config: RunnerConfig) -> Self {
@@ -428,7 +412,6 @@ impl TestRunner {
 
 /// Summary of test results
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct TestSummary {
     /// Total tests
     pub total: usize,
@@ -444,7 +427,6 @@ pub struct TestSummary {
     pub total_duration_ms: u64,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl TestSummary {
     /// Check if all tests passed
     pub fn all_passed(&self) -> bool {
@@ -473,7 +455,6 @@ impl TestSummary {
 ///
 /// This function spawns concurrent tasks to process test results with a semaphore
 /// limiting max concurrency.
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub async fn run_tests_parallel(results: Vec<TestResult>, config: RunnerConfig) -> Vec<TestResult> {
     if !config.parallel || results.is_empty() {
         // Sequential execution

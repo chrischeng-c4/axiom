@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#vat-seatbelt-egress-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-seatbelt-egress-smoke

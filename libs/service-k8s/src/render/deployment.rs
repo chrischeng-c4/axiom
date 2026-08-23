@@ -1,5 +1,21 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:54e8bce5" tracker="#1849" reason="Own ServiceDeployment and service_deployment with replicas and caller-supplied rollout fields while emitting no stateful or sticky-session contract."
-//! Stateless Deployment workload rendering.
+//! Stateless `apps/v1` Deployment workload rendering.
+//!
+//! Half of this module's contract is what it does not emit (#1849).
+//! [`service_deployment`] renders an ordinary `apps/v1` Deployment and carries no
+//! stateful or sticky-session surface: no `serviceName`, no
+//! `volumeClaimTemplates`, no `podManagementPolicy`, no `SHARD_COUNT` /
+//! `REPLICAS_PER_SHARD` / `VOTER_COUNT` environment, and no `sessionAffinity`.
+//! A caller that needs any of those wants the StatefulSet helpers in [`super`];
+//! adding one field here would hand identity-bearing behaviour to every stateless
+//! adopter at once, which is the opposite of why this shape was split out.
+//!
+//! That exclusion is enforced, not merely intended:
+//! `deployment_has_no_stateful_or_sticky_session_contract` in this file serializes
+//! the rendered object and asserts each of those names is absent, and
+//! `ordinary_children_are_cluster_ip_and_non_sticky` in [`super::common`] does the
+//! same for the companion Service. Extending the field set means extending that
+//! list, so a new stateful field cannot arrive quietly.
 
 use serde_json::{json, Value};
 

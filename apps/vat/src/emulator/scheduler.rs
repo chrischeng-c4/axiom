@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-emulator-scheduler-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Built-in Cloud Scheduler emulator — an axum REST server for the Cloud
 //! Scheduler v1 API over in-memory state, plus a background cron ticker. Cloud
@@ -8,7 +7,6 @@
 //! immediately on `jobs/{j}:run`; `:pause` / `:resume` toggle the schedule.
 //! `pubsubTarget` is a logged no-op in v1 (httpTarget is the local-test path).
 //!
-//! @spec apps/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#logic
 
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
@@ -39,7 +37,6 @@ struct AppState {
 }
 
 /// Serve the Cloud Scheduler emulator until the process is killed.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-scheduler-rs.md#source
 pub async fn serve(host_port: &str) -> Result<()> {
     let state = AppState {
         inner: Arc::new(Mutex::new(HashMap::new())),
@@ -437,7 +434,6 @@ fn job_json_to_proto(j: &Value) -> pb::Job {
 }
 
 #[tonic::async_trait]
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-scheduler-rs.md#source
 impl pb::cloud_scheduler_server::CloudScheduler for SchedulerGrpc {
     async fn create_job(
         &self,

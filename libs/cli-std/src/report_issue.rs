@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-report-issue-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Deprecated compatibility alias of [`crate::issue`].
 //!

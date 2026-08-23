@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Bundled typeshed stubs for standard library modules
 //!
@@ -16,7 +15,6 @@ use super::ty::Type;
 
 /// Configuration for typeshed integration
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub struct TypeshedConfig {
     /// Custom path to a local typeshed copy (takes precedence over downloads)
     pub typeshed_path: Option<PathBuf>,
@@ -32,7 +30,6 @@ pub struct TypeshedConfig {
     pub typeshed_commit: Option<String>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 impl Default for TypeshedConfig {
     fn default() -> Self {
         let cache_dir = dirs_cache_dir().unwrap_or_else(|| PathBuf::from(".cclab_lens-cache"));
@@ -76,7 +73,6 @@ struct CacheEntry {
 /// Handles local storage and HTTP fetching of typeshed stubs.
 /// Downloads run in background threads to avoid blocking LSP/analysis.
 #[derive(Debug)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub struct TypeshedCache {
     config: TypeshedConfig,
     /// Cache metadata (module -> entry)
@@ -87,7 +83,6 @@ pub struct TypeshedCache {
     completed: Mutex<Vec<String>>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 impl TypeshedCache {
     /// Create a new typeshed cache with the given configuration
     pub fn new(config: TypeshedConfig) -> Self {
@@ -315,7 +310,6 @@ fn module_to_typeshed_path(module: &str) -> String {
 }
 
 /// Create os module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_os_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("os");
 
@@ -395,7 +389,6 @@ pub fn create_os_stub() -> ModuleInfo {
 }
 
 /// Create os.path module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_os_path_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("os.path");
 
@@ -480,7 +473,6 @@ pub fn create_os_path_stub() -> ModuleInfo {
 }
 
 /// Create sys module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_sys_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("sys");
 
@@ -536,7 +528,6 @@ pub fn create_sys_stub() -> ModuleInfo {
 }
 
 /// Create io module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_io_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("io");
 
@@ -631,7 +622,6 @@ pub fn create_io_stub() -> ModuleInfo {
 }
 
 /// Create re module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_re_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("re");
 
@@ -732,7 +722,6 @@ pub fn create_re_stub() -> ModuleInfo {
 }
 
 /// Create json module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_json_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("json");
 
@@ -779,7 +768,6 @@ pub fn create_json_stub() -> ModuleInfo {
 }
 
 /// Create pathlib module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_pathlib_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("pathlib");
 
@@ -829,7 +817,6 @@ pub fn create_pathlib_stub() -> ModuleInfo {
 }
 
 /// Create functools module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_functools_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("functools");
 
@@ -868,7 +855,6 @@ pub fn create_functools_stub() -> ModuleInfo {
 }
 
 /// Create itertools module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_itertools_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("itertools");
 
@@ -954,7 +940,6 @@ pub fn create_itertools_stub() -> ModuleInfo {
 }
 
 /// Create datetime module stub
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-typeshed-rs.md#source
 pub fn create_datetime_stub() -> ModuleInfo {
     let mut info = ModuleInfo::new("datetime");
 

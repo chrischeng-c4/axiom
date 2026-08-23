@@ -1,5 +1,24 @@
-// SPEC-MANAGED: libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-snapshot_store-rs.md#rust-source-unit
 // CODEGEN-BEGIN
+//! Snapshot files whose ordering lives in their names.
+//!
+//! A snapshot is `{prefix}-{seq}.{extension}`, and `seq` parsed out of the file
+//! stem is the **only** ordering this module trusts -- never mtime, never the
+//! order `read_dir` hands entries back. That is why saving 1, 3, 2 still makes 3
+//! the latest.
+//!
+//! Two silent behaviours follow from that, both intentional:
+//!
+//! - A file that matches the extension but whose stem does not parse as
+//!   `{prefix}-{u64}` is skipped, not reported. A foreign file in the snapshot
+//!   directory is invisible rather than fatal.
+//! - [`SnapshotFileStore::prune`] drops the **lowest** sequences, keeping the
+//!   newest `keep`, and returns how many files actually went away -- a
+//!   `remove_file` that fails is swallowed, so the count is an observation, not
+//!   the number selected.
+//!
+//! `save` goes through [`atomic_write`], so no reader ever
+//! sees a half-written snapshot; it also inherits that function's one-writer-per-
+//! path precondition.
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -8,7 +27,6 @@ use crate::{atomic_write, FsyncPolicy};
 
 /// One sequence-named snapshot file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-snapshot_store-rs.md#source
 pub struct SnapshotFile {
     pub seq: u64,
     pub path: PathBuf,
@@ -16,7 +34,6 @@ pub struct SnapshotFile {
 
 /// Local sequence-named snapshot store.
 #[derive(Debug, Clone)]
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-snapshot_store-rs.md#source
 pub struct SnapshotFileStore {
     root: PathBuf,
     prefix: String,
@@ -24,7 +41,6 @@ pub struct SnapshotFileStore {
     policy: FsyncPolicy,
 }
 
-/// @spec libs/storage-durable/tech-design/semantic/source/libs-storage-durable-src-snapshot_store-rs.md#source
 impl SnapshotFileStore {
     pub fn new(
         root: impl Into<PathBuf>,

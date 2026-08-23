@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-cassette-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! On-disk record/replay cassettes for the HTTP mock proxy.
 //!
@@ -8,7 +7,6 @@
 //! offline and deterministically. Bodies are base64 (always) so non-UTF8 payloads
 //! round-trip.
 //!
-//! @spec apps/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic
 
 use std::path::PathBuf;
 
@@ -18,7 +16,6 @@ use serde::{Deserialize, Serialize};
 
 /// A recorded response.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-cassette-rs.md#source
 pub struct Recording {
     pub status: u16,
     pub headers: Vec<(String, String)>,
@@ -26,7 +23,6 @@ pub struct Recording {
     pub body_b64: String,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-cassette-rs.md#source
 impl Recording {
     pub fn new(status: u16, headers: Vec<(String, String)>, body: &[u8]) -> Self {
         Self {
@@ -44,12 +40,10 @@ impl Recording {
 }
 
 /// A directory of cassettes that persists across runs.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-cassette-rs.md#source
 pub struct Cassettes {
     dir: PathBuf,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-cassette-rs.md#source
 impl Cassettes {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         let dir = dir.into();

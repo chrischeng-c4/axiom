@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Vector index backends for `FieldType::Vector`.
 //!
@@ -19,6 +18,7 @@
 //! matching the BM25 contract used by the text path.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 
 use anyhow::{anyhow, bail, Result};
@@ -33,7 +33,6 @@ use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
 /// Common backend contract — every concrete index implementation
 /// (HNSW, flat CPU brute force) goes through this trait so the storage
 /// layer doesn't care which one is in use.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub trait VectorIndex: Send + Sync {
     /// Insert (or overwrite) the vector associated with `external_id`.
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()>;
@@ -135,14 +134,12 @@ pub trait VectorIndex: Send + Sync {
 /// L2-normalize embeddings before insertion, which bounds the input
 /// range tightly.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub struct ScalarCodebook {
     pub min: f32,
     pub max: f32,
     pub dim: usize,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl ScalarCodebook {
     /// Empty codebook — the next `widen` call defines the range.
     pub fn empty(dim: usize) -> Self {
@@ -178,7 +175,6 @@ impl ScalarCodebook {
 
 /// Encode a vector to one byte per dimension using `cb`. Out-of-range
 /// values saturate at `0` / `255`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub fn encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> {
     let span = cb.range();
     vec.iter()
@@ -190,7 +186,6 @@ pub fn encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> {
 }
 
 /// Decode a u8-encoded vector back to f32 using `cb`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub fn decode_sq(bytes: &[u8], cb: &ScalarCodebook) -> Vec<f32> {
     let span = cb.range();
     bytes
@@ -274,7 +269,6 @@ struct VectorStore {
     codebook: Option<ScalarCodebook>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl VectorStore {
     fn new(spec: VectorSpec) -> Self {
         let codebook = match spec.quantize {
@@ -361,9 +355,9 @@ impl VectorStore {
 /// Because `hnsw_rs::Hnsw` is parameterised by a concrete distance
 /// type, we keep three internal variants in `HnswInner` and dispatch
 /// on the field's metric at construction time.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub struct HnswCpuIndex {
     inner: RwLock<HnswCpuInner>,
+    exact_scan_fallbacks: AtomicU64,
 }
 
 struct HnswCpuInner {
@@ -422,7 +416,6 @@ fn hnsw_search_ef() -> usize {
         .unwrap_or(HNSW_SEARCH_EF_DEFAULT)
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl HnswBackend {
     fn new(metric: VectorMetric, max_elements: usize) -> Self {
         match metric {
@@ -473,7 +466,6 @@ impl HnswBackend {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl HnswCpuIndex {
     /// Construct a fresh, empty CPU HNSW index for the given spec.
     pub fn new(spec: VectorSpec) -> Self {
@@ -486,6 +478,7 @@ impl HnswCpuIndex {
                 hnsw: HnswBackend::new(spec.metric, HNSW_DEFAULT_MAX_ELEMENTS),
                 ef_search: hnsw_search_ef(),
             }),
+            exact_scan_fallbacks: AtomicU64::new(0),
         }
     }
 
@@ -524,9 +517,13 @@ impl HnswCpuIndex {
             inner.ef_search = ef.max(1);
         }
     }
+
+    /// Returns the monotonic count of queries that fell through to the exact store scan.
+    pub fn exact_scan_fallbacks(&self) -> u64 {
+        self.exact_scan_fallbacks.load(Ordering::Relaxed)
+    }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl VectorIndex for HnswCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
         let mut inner = self
@@ -563,6 +560,24 @@ impl VectorIndex for HnswCpuIndex {
             inner.id_to_eid.remove(&old_id);
         }
         inner.id_to_eid.insert(id, external_id.to_string());
+
+        let live_len = inner.store.len();
+        if inner.next_id >= 2 * live_len && live_len > 0 {
+            let fresh_hnsw = HnswBackend::new(inner.store.spec.metric, HNSW_DEFAULT_MAX_ELEMENTS);
+            inner.eid_to_id.clear();
+            inner.id_to_eid.clear();
+            inner.next_id = 0;
+            let mut live_vecs: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
+            live_vecs.sort_by(|a, b| a.0.cmp(&b.0));
+            for (eid, v) in live_vecs {
+                let new_id = inner.next_id;
+                inner.next_id += 1;
+                fresh_hnsw.insert(&v, new_id);
+                inner.eid_to_id.insert(eid.clone(), new_id);
+                inner.id_to_eid.insert(new_id, eid);
+            }
+            inner.hnsw = fresh_hnsw;
+        }
         Ok(())
     }
 
@@ -599,20 +614,24 @@ impl VectorIndex for HnswCpuIndex {
         if n == 0 || k == 0 {
             return Ok(Vec::new());
         }
-        // hnsw_rs exposes no mid-traversal filter hook, so we over-fetch
-        // a candidate pool and keep only allowed (and non-orphaned) ids,
-        // doubling the pool until we have `k` allowed hits or have
-        // scanned the whole index. The base over-fetch (`k*4 + k`) also
-        // absorbs stale ids left by replaces. For an unfiltered query
-        // the first pass already yields `k`, so the widening loop never
-        // iterates — the hot path is unchanged.
-        let mut pool = (k * 4 + k).min(n);
+        // hnsw_rs exposes no mid-traversal filter hook and does not support node
+        // removal. When a query cannot be answered conclusively from the graph
+        // (due to filter selectivity or orphan interference), the candidate pool
+        // widens up to the total graph capacity (`inner.next_id`). When enough
+        // allowed candidates are found without orphan interference, the traversal
+        // answers directly; otherwise it falls back to an exact scan over the store.
+        let graph_len = inner.next_id;
+        let mut pool = (k * 4 + k).min(graph_len);
         let ef = inner.ef_search;
         loop {
             let raw = inner.hnsw.search(query, pool, ef);
-            let mut out = Vec::with_capacity(k);
-            for (id, dist) in raw {
-                let Some(eid) = inner.id_to_eid.get(&id) else {
+            let mut out: Vec<(String, f32)> = Vec::with_capacity(k);
+            let mut has_unresolved_orphan = false;
+            for (id, dist) in &raw {
+                let Some(eid) = inner.id_to_eid.get(id) else {
+                    if out.len() < k {
+                        has_unresolved_orphan = true;
+                    }
                     continue; // orphaned by a replace
                 };
                 if !allow(eid) {
@@ -623,13 +642,37 @@ impl VectorIndex for HnswCpuIndex {
                     break;
                 }
             }
-            // Enough allowed hits, or the pool already covers the whole
-            // index (a wider search cannot surface more) → done.
-            if out.len() == k || pool >= n {
+
+            if out.len() == k && !has_unresolved_orphan {
                 return Ok(out);
             }
-            pool = (pool * 2).min(n);
+
+            if pool >= graph_len {
+                break;
+            }
+            pool = (pool * 2).min(graph_len);
         }
+
+        // When the candidate pool covers the graph or orphans prevent a conclusive
+        // approximate answer, fall back to an exact filtered scan over the live store
+        // rather than returning a short or degraded result.
+        self.exact_scan_fallbacks.fetch_add(1, Ordering::Relaxed);
+        let metric = inner.store.spec.metric;
+        let mut cand: Vec<(String, f32)> = inner
+            .store
+            .iter_decoded()
+            .filter(|(eid, _)| allow(eid))
+            .map(|(eid, v)| (eid, -distance(metric, query, &v)))
+            .collect();
+        let want = k.min(cand.len());
+        if want > 0 && want < cand.len() {
+            cand.select_nth_unstable_by(want - 1, |a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            cand.truncate(want);
+        }
+        cand.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(cand)
     }
 
     fn len(&self) -> usize {
@@ -646,7 +689,6 @@ impl VectorIndex for HnswCpuIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl std::fmt::Debug for HnswCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HnswCpuIndex")
@@ -665,7 +707,6 @@ impl std::fmt::Debug for HnswCpuIndex {
 /// moderate N this beats both an approximate index's build cost and a
 /// single-threaded exact scan (e.g. pgvector's `seqscan`), while giving 100%
 /// recall. The flat buffer is cached and rebuilt lazily after a mutation.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub struct FlatCpuIndex {
     inner: Mutex<FlatInner>,
 }
@@ -708,7 +749,6 @@ struct FlatVecs {
     eid_to_row: HashMap<String, u32>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl FlatVecs {
     /// Row `i`'s `dim`-long vector slice. BASE rows (`i < n_base`) come off the
     /// segment mmap (zero-copy); TAIL rows come from the in-RAM `data` buffer at
@@ -734,7 +774,6 @@ impl FlatVecs {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl FlatCpuIndex {
     pub fn new(spec: VectorSpec) -> Self {
         Self {
@@ -942,7 +981,6 @@ impl FlatCpuIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl VectorIndex for FlatCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
         let mut inner = self
@@ -1168,7 +1206,6 @@ impl VectorIndex for FlatCpuIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl std::fmt::Debug for FlatCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FlatCpuIndex")
@@ -1184,7 +1221,6 @@ impl std::fmt::Debug for FlatCpuIndex {
 /// Construct the backend implied by `spec.backend`. This version ships
 /// CPU backends only (HNSW + flat brute-force); GPU-native vector search
 /// is a future chapter.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub fn open_backend(spec: VectorSpec) -> Box<dyn VectorIndex> {
     match spec.backend {
         crate::types::VectorBackend::HnswCpu => Box::new(HnswCpuIndex::new(spec)),

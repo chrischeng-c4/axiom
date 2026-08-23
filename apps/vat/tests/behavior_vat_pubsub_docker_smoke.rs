@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-pubsub-docker-smoke
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-pubsub-docker-smoke

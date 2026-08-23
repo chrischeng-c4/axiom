@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-headless-docker-command-shim.md#vat-docker-images-json-fake
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-docker-images-json-fake

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Copy-on-write workspace + filesystem diffing.
 //!
@@ -23,7 +22,6 @@ use walkdir::WalkDir;
 use crate::state::ChangeSet;
 
 /// Per-file stat used for cheap change detection.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileStat {
     pub size: u64,
@@ -32,11 +30,9 @@ pub struct FileStat {
 }
 
 /// Map of rootfs-relative path → stat. Sorted for stable diffs and output.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 pub type Manifest = BTreeMap<String, FileStat>;
 
 /// Copy-on-write clone of `src` into `dst`. `dst` must not already exist.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 pub fn clone_tree(src: &Path, dst: &Path) -> Result<()> {
     if dst.exists() {
         bail!("clone target already exists: {}", dst.display());
@@ -174,7 +170,6 @@ fn has_ignored_workspace_component(path: &Path) -> bool {
 /// Walk `root` and record a stat manifest of every regular file. Symlinks are
 /// not followed (we record the link's own stat); directories are implied by
 /// their files.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 pub fn manifest_of(root: &Path) -> Result<Manifest> {
     let mut m = Manifest::new();
     for entry in WalkDir::new(root)
@@ -218,7 +213,6 @@ pub fn manifest_of(root: &Path) -> Result<Manifest> {
 }
 
 /// Diff a current manifest against the captured baseline.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 pub fn diff(base: &Manifest, now: &Manifest) -> ChangeSet {
     let mut cs = ChangeSet::default();
     for (path, stat) in now {
@@ -237,7 +231,6 @@ pub fn diff(base: &Manifest, now: &Manifest) -> ChangeSet {
 }
 
 /// Persist a manifest as pretty JSON.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 pub fn save_manifest(path: &Path, m: &Manifest) -> Result<()> {
     let json = serde_json::to_vec_pretty(m).context("serialize manifest")?;
     std::fs::write(path, json).with_context(|| format!("write {}", path.display()))?;
@@ -245,7 +238,6 @@ pub fn save_manifest(path: &Path, m: &Manifest) -> Result<()> {
 }
 
 /// Load a previously saved manifest.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 pub fn load_manifest(path: &Path) -> Result<Manifest> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_slice(&bytes).context("parse manifest")

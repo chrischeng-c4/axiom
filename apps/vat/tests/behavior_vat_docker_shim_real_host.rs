@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-headless-docker-command-shim.md#vat-docker-shim-real-host
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec vat-docker-shim-real-host

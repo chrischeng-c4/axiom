@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]), plus a reconcile loop ([`reconcile`])
 //! that renders ([`render`]) and applies the serving data-plane.
@@ -13,6 +12,8 @@
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 
+#[cfg(feature = "operator")]
+pub mod capacity;
 #[cfg(feature = "operator")]
 pub mod certificate;
 #[cfg(feature = "operator")]
@@ -64,14 +65,12 @@ const FORBIDDEN_CEL_OPERATOR: &str = "!= null";
 /// One document rather than two files because the two are not independently
 /// installable: a fleet whose `Lumen` CRD is absent applies cleanly and then
 /// fails every instance, which is a worse failure than not installing.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#source
 #[cfg(feature = "operator")]
 pub fn crd_yaml() -> String {
     format!("{}---\n{}", lumen_crd_yaml(), fleet::fleet_crd_yaml())
 }
 
 /// The `Lumen` CustomResourceDefinition as YAML, for `kubectl apply`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#source
 #[cfg(feature = "operator")]
 pub fn lumen_crd_yaml() -> String {
     use kube::CustomResourceExt;

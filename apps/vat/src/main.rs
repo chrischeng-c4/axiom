@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-main-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 use std::process::ExitCode;
 

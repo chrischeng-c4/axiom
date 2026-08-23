@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Autonomous reshard phase driver (#1319 R2 executor; #1381).
 //!
@@ -231,7 +230,6 @@ const WRITE_FENCE_TTL_SECS: u64 = 120;
 /// (#1443 R1/AC1), exposed so integration tests can fall back to the real
 /// default from a `fence_ttl_secs: Option<u64>`-style override field without
 /// needing [`WRITE_FENCE_TTL_SECS`] itself to be `pub`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub fn default_write_fence_ttl_secs() -> u64 {
     WRITE_FENCE_TTL_SECS
 }
@@ -261,14 +259,12 @@ const OVERSIZE_RECHECK_TICKS: u32 = 15;
 /// to skip re-arming the write-pause fence on a tick already known to fail
 /// identically (see [`advance_catching_up`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub struct OversizedDocumentBlock {
     pub collection: String,
     pub external_id: String,
     pub bytes: usize,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 impl std::fmt::Display for OversizedDocumentBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -285,7 +281,6 @@ impl std::fmt::Display for OversizedDocumentBlock {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 impl std::error::Error for OversizedDocumentBlock {}
 
 /// `"<namespace>/<name>" -> (owning CR's metadata.uid, block, ticks skipped
@@ -355,7 +350,6 @@ pub(crate) fn clear_oversize_block(namespace: &str, name: &str) {
 /// every live `Lumen` CR cluster-wide, so this needs no extra k8s API call.
 /// Bounds the cache's growth across an unbounded number of past
 /// delete-and-recreate cycles on the same `namespace/name`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub(crate) fn prune_oversize_cache(live_uids: &BTreeSet<String>) {
     oversize_block_cache()
         .lock()
@@ -396,7 +390,6 @@ fn should_skip_for_oversize(
 /// recreated CR under the same `namespace/name`) is treated as no entry, so
 /// the recreated CR's status is clean immediately rather than waiting for
 /// [`prune_oversize_cache`]'s next poll.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub fn oversize_block_condition(
     namespace: &str,
     name: &str,
@@ -445,7 +438,6 @@ pub(crate) const CONVERGENCE_STALL_SECS: u64 =
 /// — so integration tests can back-date `workflow.convergenceWaitStartedAt`
 /// past the real budget (simulating an extended wait without sleeping)
 /// without needing the constant itself to be `pub`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub fn convergence_stall_budget_secs() -> u64 {
     CONVERGENCE_STALL_SECS
 }
@@ -538,7 +530,6 @@ pub(crate) fn prune_convergence_stall_cache(live_uids: &BTreeSet<String>) {
 /// [`advance_convergence`]'s own bounded-remediation gate uses the exact
 /// same computation. `None` (convergence not pending, or no wait recorded
 /// yet) is never stalled.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub fn convergence_stall_condition(wait_started_at: Option<u64>) -> bool {
     wait_started_at
         .is_some_and(|started| now_epoch_secs().saturating_sub(started) > CONVERGENCE_STALL_SECS)
@@ -548,7 +539,6 @@ pub fn convergence_stall_condition(wait_started_at: Option<u64>) -> bool {
 /// state machine is testable without a real k8s API server. [`KubeClusterControl`]
 /// is the production implementation; tests supply an in-memory fake.
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub trait ClusterControl: Send + Sync {
     /// JSON-merge-patch this `Lumen`'s `.spec` (see `Patch::Merge` semantics:
     /// nested objects merge recursively, a `null` leaf deletes that key,
@@ -662,7 +652,6 @@ pub trait ClusterControl: Send + Sync {
 }
 
 /// Production [`ClusterControl`]: real `kube::Client` calls.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub struct KubeClusterControl {
     client: Client,
     /// Where this process finds its own audience-bound ServiceAccount token
@@ -673,7 +662,6 @@ pub struct KubeClusterControl {
     token_file: ProjectedTokenFile,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 impl KubeClusterControl {
     pub fn new(client: Client) -> Self {
         Self {
@@ -686,7 +674,6 @@ impl KubeClusterControl {
     /// deliberately not an environment variable, because an env var is a
     /// production-reachable way to redirect a control-plane credential at a
     /// file an attacker chose.
-    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
     pub fn with_token_file(mut self, token_file: ProjectedTokenFile) -> Self {
         self.token_file = token_file;
         self
@@ -704,7 +691,6 @@ fn statefulset_api_resource() -> ApiResource {
 }
 
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 impl ClusterControl for KubeClusterControl {
     async fn patch_spec(
         &self,
@@ -848,7 +834,6 @@ impl ClusterControl for KubeClusterControl {
 /// failed step reports [`DriveOutcome::Blocked`] and leaves the CR spec
 /// exactly as it was, so the next tick retries from the same persisted phase.
 #[derive(Debug, Clone, PartialEq)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub enum DriveOutcome {
     /// Nothing to do this tick (`Complete` with no crossed threshold, an
     /// unsupported topology, or a `maxShards` ceiling reached).
@@ -885,7 +870,6 @@ pub enum DriveOutcome {
 /// **new** split this tick. `false` whenever `maxShardBytes` is unset —
 /// recommendation-only mode never auto-splits, regardless of any other
 /// field, including a stale/manually-forced `status.reshard`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub fn should_start_split(lumen: &Lumen) -> bool {
     if lumen.spec.reshard_policy.max_shard_bytes.is_none() {
         return false;
@@ -948,7 +932,6 @@ pub fn should_start_split(lumen: &Lumen) -> bool {
 /// the `Complete`-phase cutover commits `shardMap`. This driver only ever
 /// grows a map by exactly one shard per split (R1), so the pre-split count
 /// is always `targetShardCount - 1`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub fn current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> {
     let sm = &lumen.spec.shard_map;
     let physical = match lumen.spec.reshard_policy.workflow.target_shard_count {
@@ -963,7 +946,6 @@ pub fn current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> {
 }
 
 /// The target map for growing `current` by exactly one shard (R1).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub fn compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> {
     current.split_one_shard(current.version() + 1)
 }
@@ -1332,7 +1314,6 @@ async fn checkpoint_shard(
 /// unconditional phase-boundary re-arm (immediately before this call) only
 /// covers the moment this loop starts, not however long the loop itself
 /// takes.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 async fn checkpoint_shards(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -1403,7 +1384,6 @@ const FENCE_REARM_FRACTION: u32 = 4;
 /// which every caller already surfaces as [`DriveOutcome::Blocked`] before
 /// eviction ever runs (R3's "a failed re-arm still aborts to `Blocked`
 /// before eviction").
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 async fn maybe_rearm_fence(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -1439,7 +1419,6 @@ async fn maybe_rearm_fence(
 /// non-test caller of both — AC3. Idempotent: re-running against unchanged
 /// data re-applies the same batches, which `POST /admin/reshard:apply`
 /// already treats as a no-op (#1380).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub async fn run_migration_pass(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -1517,12 +1496,19 @@ async fn run_migration_pass_impl(
             &buckets,
         )
         .await?;
+        let max_batch_bytes = lumen
+            .spec
+            .body_limit_bytes
+            .map(|b| b as usize)
+            .unwrap_or(crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES)
+            / 2;
         let batches = snapshot_reshard_batches(
             &snapshot,
             &current,
             &target,
             &buckets,
             MAX_EXTERNAL_IDS_PER_BATCH,
+            max_batch_bytes,
         )?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
@@ -1584,7 +1570,7 @@ async fn run_migration_pass_impl(
                 &target,
                 &buckets,
                 &collection_ids,
-                crate::reshard::MAX_BATCH_BYTES,
+                max_batch_bytes,
             )?;
             for chunk in &prune_chunks {
                 let Some(&to_shard) = to_shard_by_bucket.get(&chunk.bucket) else {
@@ -1628,7 +1614,6 @@ async fn run_migration_pass_impl(
 /// otherwise outlive the fence TTL mid-eviction with no re-arm to catch it
 /// — the caller's unconditional phase-boundary re-arm immediately before
 /// this call only covers the moment the loop starts.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 async fn evict_old_shards(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -2390,7 +2375,6 @@ async fn advance_convergence(
 /// workflow.phase` and performs at most one state transition's worth of
 /// work. Safe to call every [`DRIVER_POLL_INTERVAL`] forever — a `Complete`
 /// CR with nothing to do returns [`DriveOutcome::NoOp`] immediately.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub async fn drive_tick(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -2437,7 +2421,6 @@ pub async fn drive_tick(
 /// either loop's leader may or may not be this replica, and both are safe to
 /// run concurrently since every driver action is an idempotent-or-checkpointed
 /// spec patch / additive data-plane call.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#source
 pub fn spawn_reshard_driver_loop(client: Client) {
     // Mirrors `libs/service-k8s::controller`'s own `identity`/`lease_namespace`
     // helpers (private to that crate, so duplicated here) so both
@@ -2538,6 +2521,7 @@ mod tests {
             service_account_annotations: BTreeMap::new(),
             peer_tls_secret: None,
             serving_tls_secret: None,
+            body_limit_bytes: None,
         }
     }
 

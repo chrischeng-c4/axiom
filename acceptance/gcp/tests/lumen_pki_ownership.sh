@@ -73,6 +73,7 @@ expect_types "the PKI module" "$PKI_MODULE" \
 # The installation root composes; it declares no resources of its own beyond
 # reading the cluster it was pointed at.
 expect_types "the installation root" "$INSTALL_ROOT" \
+  "data google_client_config" \
   "data google_container_cluster"
 
 # --- no actuator, anywhere ---------------------------------------------------

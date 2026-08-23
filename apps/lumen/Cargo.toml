@@ -2,11 +2,15 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.25"
+version = "0.4.26"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "lumen — standalone search and duplicate-detection index. Generic Collection / Field primitive, HTTP/2, sharded Raft."
+# Every test target is declared below. Autodiscovery is off so the manifest is
+# the inventory: a file that nobody declared does not quietly start running,
+# and a declaration whose file is gone fails instead of being ignored.
+autotests = false
 
 [lib]
 name = "lumen"
@@ -174,6 +178,15 @@ delegated-auth = ["service-auth/k8s", "dep:reqwest"]
 # OTLP domain metrics plus service-http's shared trace exporter. Runtime export
 # remains dormant unless LUMEN_OTLP_ENDPOINT is set.
 otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "service-http/otlp"]
+# Canonical feature set compiled for published binaries and release containers.
+release = [
+    "otel",
+    "operator",
+    "raft-wal",
+    "self-update",
+    "issue",
+    "delegated-auth",
+]
 
 [dev-dependencies]
 axum-test = "17"
@@ -190,12 +203,12 @@ tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"
 # DEV-ONLY on purpose: the serving binary speaks REST/OpenAPI and ships no Rust
 # client SDK, so it never links an HTTP client → no openssl → clean cross-compile.
 reqwest = { workspace = true }
-# Native pg driver for the competitive perf gate (tests/perf_gate.rs). Postgres
+# Native pg driver for the competitive perf gate (e2e/perf_gate.rs). Postgres
 # is driven over its own wire protocol so the lumen-vs-pg end-to-end comparison
 # is honest.
 tokio-postgres = "0.7"
 toml = "0.8"
-# Stage 2 Phase 2i scale proof (tests/disk_scale_proof.rs). `memory-stats` reads
+# Stage 2 Phase 2i scale proof (e2e/disk_scale_proof.rs). `memory-stats` reads
 # cross-platform PHYSICAL resident set size (macOS task_info, Linux /proc/self/statm)
 # so the disk-engine's bounded-RSS claim is measured, not asserted. `libc` exposes
 # getrusage(RUSAGE_SELF) for ru_majflt/ru_minflt — the demand-paging (major page
@@ -227,3 +240,334 @@ harness = false
 [[bench]]
 name = "bench_duplicates"
 harness = false
+
+[[test]]
+name = "access_log_subject"
+path = "e2e/access_log_subject.rs"
+
+[[test]]
+name = "access_render_cli"
+path = "e2e/access_render_cli.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "admission_e2e"
+path = "e2e/admission_e2e.rs"
+
+[[test]]
+name = "api_e2e"
+path = "e2e/api_e2e.rs"
+
+[[test]]
+name = "auth_e2e"
+path = "e2e/auth_e2e.rs"
+
+[[test]]
+name = "authz_matrix_e2e"
+path = "e2e/authz_matrix_e2e.rs"
+
+[[test]]
+name = "backup_restore_e2e"
+path = "e2e/backup_restore_e2e.rs"
+
+[[test]]
+name = "behavior_lumen_claim_cli_connect_query_workflow"
+path = "e2e/behavior_lumen_claim_cli_connect_query_workflow.rs"
+
+[[test]]
+name = "behavior_lumen_claim_developer_interactive_tooling"
+path = "e2e/behavior_lumen_claim_developer_interactive_tooling.rs"
+
+[[test]]
+name = "behavior_lumen_claim_k8s_kustomize_base"
+path = "e2e/behavior_lumen_claim_k8s_kustomize_base.rs"
+
+[[test]]
+name = "behavior_lumen_claim_long_running_kustomize_base"
+path = "e2e/behavior_lumen_claim_long_running_kustomize_base.rs"
+
+[[test]]
+name = "behavior_lumen_claim_observability_servicemonitor_rule"
+path = "e2e/behavior_lumen_claim_observability_servicemonitor_rule.rs"
+
+[[test]]
+name = "benchmark_lumen_competitor_performance_competitive"
+path = "e2e/benchmark_lumen_competitor_performance_competitive.rs"
+
+[[test]]
+name = "body_limit_configurable"
+path = "e2e/body_limit_configurable.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "capability_shared_ownership"
+path = "e2e/capability_shared_ownership.rs"
+
+[[test]]
+name = "capability_stateful_workload_linkage"
+path = "e2e/capability_stateful_workload_linkage.rs"
+
+[[test]]
+name = "capacity_catalog_client"
+path = "e2e/capacity_catalog_client.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "capacity_catalog_contract"
+path = "e2e/capacity_catalog_contract.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "capacity_retire_hpa"
+path = "e2e/capacity_retire_hpa.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "cli_client_ksa_token"
+path = "e2e/cli_client_ksa_token.rs"
+required-features = ["delegated-auth", "backup"]
+
+[[test]]
+name = "cli_convention"
+path = "e2e/cli_convention.rs"
+
+[[test]]
+name = "cli_credential_paths_retired"
+path = "e2e/cli_credential_paths_retired.rs"
+
+[[test]]
+name = "collapse_nested"
+path = "e2e/collapse_nested.rs"
+
+[[test]]
+name = "control_plane_identity_e2e"
+path = "e2e/control_plane_identity_e2e.rs"
+
+[[test]]
+name = "coverage_gaps_e2e"
+path = "e2e/coverage_gaps_e2e.rs"
+
+[[test]]
+name = "coverage_pass_e2e"
+path = "e2e/coverage_pass_e2e.rs"
+
+[[test]]
+name = "design_trees_stay_retired"
+path = "e2e/design_trees_stay_retired.rs"
+
+[[test]]
+name = "disk_format_bench"
+path = "e2e/disk_format_bench.rs"
+
+[[test]]
+name = "disk_scale_proof"
+path = "e2e/disk_scale_proof.rs"
+
+[[test]]
+name = "drop_drain_e2e"
+path = "e2e/drop_drain_e2e.rs"
+
+[[test]]
+name = "drop_field_e2e"
+path = "e2e/drop_field_e2e.rs"
+
+[[test]]
+name = "efficiency_lumen_claim_competitor_performance_external_comparison"
+path = "e2e/efficiency_lumen_claim_competitor_performance_external_comparison.rs"
+
+[[test]]
+name = "efficiency_lumen_claim_elastic_disk_tier"
+path = "e2e/efficiency_lumen_claim_elastic_disk_tier.rs"
+
+[[test]]
+name = "feature_gated_targets_are_registered"
+path = "e2e/feature_gated_targets_are_registered.rs"
+
+[[test]]
+name = "generated_clients_crud_e2e"
+path = "e2e/generated_clients_crud_e2e.rs"
+
+[[test]]
+name = "hash_hamming"
+path = "e2e/hash_hamming.rs"
+
+[[test]]
+name = "hnsw_ef_recall"
+path = "e2e/hnsw_ef_recall.rs"
+
+[[test]]
+name = "http_body_limit_e2e"
+path = "e2e/http_body_limit_e2e.rs"
+
+[[test]]
+name = "hybrid_rrf"
+path = "e2e/hybrid_rrf.rs"
+
+[[test]]
+name = "jieba_bigram_fallback_e2e"
+path = "e2e/jieba_bigram_fallback_e2e.rs"
+
+[[test]]
+name = "llm_command_template_flags_are_live"
+path = "e2e/llm_command_template_flags_are_live.rs"
+
+[[test]]
+name = "lumen_bench_cli"
+path = "e2e/lumen_bench_cli.rs"
+
+[[test]]
+name = "nats_cluster_e2e"
+path = "e2e/nats_cluster_e2e.rs"
+
+[[test]]
+name = "operator_backup_kubernetes_wiring"
+path = "e2e/operator_backup_kubernetes_wiring.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "operator_rbac_coverage"
+path = "e2e/operator_rbac_coverage.rs"
+
+[[test]]
+name = "operator_render"
+path = "e2e/operator_render.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "operator_retired_credential_projection"
+path = "e2e/operator_retired_credential_projection.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "perf_gate"
+path = "e2e/perf_gate.rs"
+
+[[test]]
+name = "perf_gate_vs_db"
+path = "e2e/perf_gate_vs_db.rs"
+
+[[test]]
+name = "planner_diff"
+path = "e2e/planner_diff.rs"
+
+[[test]]
+name = "prefix_query"
+path = "e2e/prefix_query.rs"
+
+[[test]]
+name = "properties"
+path = "e2e/properties.rs"
+
+[[test]]
+name = "protocol_transport_e2e"
+path = "e2e/protocol_transport_e2e.rs"
+
+[[test]]
+name = "reindex_stream_e2e"
+path = "e2e/reindex_stream_e2e.rs"
+
+[[test]]
+name = "release_feature_set"
+path = "e2e/release_feature_set.rs"
+
+[[test]]
+name = "reshard_admin_e2e"
+path = "e2e/reshard_admin_e2e.rs"
+
+[[test]]
+name = "reshard_driver_e2e"
+path = "e2e/reshard_driver_e2e.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "retired_credential_surface"
+path = "e2e/retired_credential_surface.rs"
+
+[[test]]
+name = "rig_stateful_adapter"
+path = "e2e/rig_stateful_adapter.rs"
+
+[[test]]
+name = "routed_shard_e2e"
+path = "e2e/routed_shard_e2e.rs"
+required-features = ["operator"]
+
+[[test]]
+name = "search_all_e2e"
+path = "e2e/search_all_e2e.rs"
+
+[[test]]
+name = "serving_tls_rotation"
+path = "e2e/serving_tls_rotation.rs"
+
+[[test]]
+name = "shared_stateful_foundations"
+path = "e2e/shared_stateful_foundations.rs"
+
+[[test]]
+name = "spec_cli"
+path = "e2e/spec_cli.rs"
+
+[[test]]
+name = "spec_gen_e2e"
+path = "e2e/spec_gen_e2e.rs"
+
+[[test]]
+name = "spec_route_parity"
+path = "e2e/spec_route_parity.rs"
+
+[[test]]
+name = "stability_lumen_claim_dynamic_multi_shard_replica_kind"
+path = "e2e/stability_lumen_claim_dynamic_multi_shard_replica_kind.rs"
+
+[[test]]
+name = "stability_lumen_claim_k8s_stateless_kind"
+path = "e2e/stability_lumen_claim_k8s_stateless_kind.rs"
+
+[[test]]
+name = "stability_lumen_claim_long_running_stateless_kind"
+path = "e2e/stability_lumen_claim_long_running_stateless_kind.rs"
+
+[[test]]
+name = "stability_lumen_long_running_stability_latency_drift"
+path = "e2e/stability_lumen_long_running_stability_latency_drift.rs"
+
+[[test]]
+name = "stability_lumen_long_running_stability_overload_backpressure"
+path = "e2e/stability_lumen_long_running_stability_overload_backpressure.rs"
+
+[[test]]
+name = "stability_lumen_long_running_stability_query_resilience"
+path = "e2e/stability_lumen_long_running_stability_query_resilience.rs"
+
+[[test]]
+name = "stability_lumen_long_running_stability_resilience_survival"
+path = "e2e/stability_lumen_long_running_stability_resilience_survival.rs"
+
+[[test]]
+name = "stability_lumen_long_running_stability_resource_leak"
+path = "e2e/stability_lumen_long_running_stability_resource_leak.rs"
+
+[[test]]
+name = "stats_metadata_e2e"
+path = "e2e/stats_metadata_e2e.rs"
+
+[[test]]
+name = "structured_stdout_traceparent"
+path = "e2e/structured_stdout_traceparent.rs"
+
+[[test]]
+name = "vector_e2e"
+path = "e2e/vector_e2e.rs"
+
+[[test]]
+name = "vector_filtered_recall_after_replace"
+path = "e2e/vector_filtered_recall_after_replace.rs"
+
+[[test]]
+name = "wal_nats_e2e"
+path = "e2e/wal_nats_e2e.rs"
+
+[[test]]
+name = "write_qps"
+path = "e2e/write_qps.rs"

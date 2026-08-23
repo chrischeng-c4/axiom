@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `raft-runtime` — the ecosystem's shared raft driver.
 //!
@@ -16,12 +15,14 @@ mod applied_index_store;
 pub mod cluster;
 mod config;
 mod fenced_assignment;
+pub mod group;
 mod host;
 pub mod llm;
 mod outcome_window;
 mod peer_transport;
 mod proposal_cache;
 mod read_consistency;
+mod registry;
 mod state_machine;
 mod store;
 mod view;
@@ -35,21 +36,31 @@ pub use config::{HostConfig, SnapshotPolicy};
 pub use fenced_assignment::{
     ActiveAssignment, AssignmentEpoch, AssignmentError, FenceToken, FencedAssignment,
 };
-pub use host::RaftHost;
+pub use group::{GroupId, LEGACY_GROUP_ID};
+pub use host::{
+    AdmissionRefused, ChunkSink, HostShutdownReport, LeadershipHandoff, MembershipPhase,
+    PhaseRecord, PhaseStatus, ProposalOutcome, RaftHost, RaftStatus, ShutdownCaller, ShutdownPhase,
+    StorageFailed, SNAPSHOT_CHUNK_SIZE,
+};
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
 pub use peer_transport::PeerTransport;
 pub use proposal_cache::{ProposalCache, DEFAULT_PROPOSAL_CACHE_CAPACITY};
 pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER};
+pub use registry::{GroupRegistry, RaftRegistry, RegistryError};
 pub use state_machine::{Command, RaftStateMachine};
 pub use store::{FsyncPolicy, RaftStore};
 pub use view::{ClusterStateView, PeerAddr, RaftRole};
 
 // Re-export the raft_core surface a host consumer needs (membership, ids).
-pub use raft_core::{auto_membership, Index, Membership, NodeId, Term};
+pub use raft_core::{
+    auto_membership, DemotionRefused, Index, Membership, NodeId, PromotionRefused, RemovalRefused,
+    Term, TransferRefused,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -74,11 +85,15 @@ mod tests {
             self.applied.store(index, Ordering::Release);
             Ok(())
         }
-        fn snapshot(&self) -> anyhow::Result<Vec<u8>> {
-            Ok(serde_json::to_vec(&*self.log.lock().unwrap())?)
+        fn snapshot(&self, writer: &mut dyn Write) -> anyhow::Result<()> {
+            let bytes = serde_json::to_vec(&*self.log.lock().unwrap())?;
+            writer.write_all(&bytes)?;
+            Ok(())
         }
-        fn restore(&self, snapshot: &[u8]) -> anyhow::Result<()> {
-            let log: Vec<(Index, u64)> = serde_json::from_slice(snapshot)?;
+        fn restore(&self, reader: &mut dyn Read) -> anyhow::Result<()> {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes)?;
+            let log: Vec<(Index, u64)> = serde_json::from_slice(&bytes)?;
             let last = log.last().map(|(i, _)| *i).unwrap_or(0);
             *self.log.lock().unwrap() = log;
             self.applied.store(last, Ordering::Release);

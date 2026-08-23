@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Local append-only log (Stage 2 Phase 2f-3) — the binary's "AOF".
 //!
@@ -80,7 +79,6 @@ fn decode_payload(bytes: &[u8]) -> Result<WalRecord> {
 /// Append-only writer keyed by applied seq. Frames are appended in seq order;
 /// `open` first truncates any torn tail left by a crash mid-append, so the file
 /// always starts in a clean, fully-decodable state.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 pub struct AofWriter {
     inner: FramedLogWriter,
     /// #2516: test-only ENOSPC fault injection, armed via
@@ -92,7 +90,6 @@ pub struct AofWriter {
     inject_storage_full: std::sync::atomic::AtomicBool,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 impl AofWriter {
     /// Open `path` for appending with the default [`FsyncPolicy::EverySec`],
     /// first truncating any torn tail.
@@ -176,10 +173,8 @@ impl AofWriter {
 
 /// Replay frames from an AOF, applying each `(seq, WalRecord)` with `seq >
 /// from_seq` to a caller closure in order, stopping cleanly at a torn tail.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 pub struct AofReader;
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 impl AofReader {
     /// Iterate every frame in `path` in order, SKIP frames with `seq <=
     /// from_seq` (already covered by the RDB baseline), and call `apply(seq,
@@ -211,7 +206,6 @@ impl AofReader {
 /// via [`crate::storage::Engine::apply_raft_entry`], returning the max seq
 /// replayed. This is step 2 of cold start (RDB → **AOF** → broker); the engine is
 /// already seeded to `from_seq` by the segment checkpoint.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 pub fn replay_aof_into(
     engine: &std::sync::Arc<crate::storage::Engine>,
     path: impl AsRef<Path>,

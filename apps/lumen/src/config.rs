@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Runtime config — sourced from env so it can be wired through the K8s
 //! ConfigMap without any rebuild.
@@ -23,7 +22,6 @@ use anyhow::{Context, Result};
 use crate::routing::{VirtualBucketShardMap, DEFAULT_VIRTUAL_BUCKET_COUNT};
 
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 pub struct ClusterConfig {
     pub shard_count: u32,
     pub replicas_per_shard: u32,
@@ -31,7 +29,6 @@ pub struct ClusterConfig {
     pub pod_name: String,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 impl From<raft_runtime::cluster::ClusterDims> for ClusterConfig {
     fn from(d: raft_runtime::cluster::ClusterDims) -> Self {
         Self {
@@ -43,7 +40,6 @@ impl From<raft_runtime::cluster::ClusterDims> for ClusterConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 impl From<ClusterConfig> for raft_runtime::cluster::ClusterDims {
     fn from(c: ClusterConfig) -> Self {
         Self {
@@ -55,7 +51,6 @@ impl From<ClusterConfig> for raft_runtime::cluster::ClusterDims {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 impl ClusterConfig {
     pub fn from_env() -> Result<Self> {
         Ok(raft_runtime::cluster::ClusterDims::from_env()?.into())
@@ -100,7 +95,6 @@ impl ClusterConfig {
 /// shard_count` / `ServeArgs::shard_count`), not re-read from env here, so
 /// this stays usable without the full raft `ClusterConfig` (e.g. the
 /// non-raft `--search-shard-segment-dirs` read-shard-fan-in path).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 pub fn shard_map_from_env(shard_count: u32) -> Result<VirtualBucketShardMap> {
     let version = match std::env::var("SHARD_MAP_VERSION") {
         Ok(raw) => raw
@@ -149,7 +143,6 @@ pub fn shard_map_from_env(shard_count: u32) -> Result<VirtualBucketShardMap> {
 /// clap's old `default_value_t = 1` straight into `shard_map_from_env`,
 /// so `a,b,c` with `SHARD_COUNT` unset silently built a 1-shard map and
 /// searched only dir `a` on routed queries).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 pub fn fan_in_shard_count(explicit: Option<u32>, loaded_dirs: usize) -> u32 {
     explicit.unwrap_or(loaded_dirs as u32)
 }
@@ -166,7 +159,6 @@ pub fn fan_in_shard_count(explicit: Option<u32>, loaded_dirs: usize) -> u32 {
 /// has in hand — naming the `SHARD_COUNT` env var too would suggest the
 /// operator-managed routed topology's activation knob, which this code path
 /// never reaches (see `routed_shard_count_from_env`).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 pub fn check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize) -> Result<()> {
     let declared = map.physical_shard_count() as usize;
     if declared != loaded_dirs {
@@ -193,7 +185,6 @@ pub fn check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize)
 /// ordinal`; this mirrors `raft_runtime::cluster::ClusterDims::pod_ordinal`/
 /// `shard_index`'s exact math (same `rsplit_once('-')` + `% shard_count`)
 /// so the two derivations can't drift apart.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 pub fn routed_pod_topology(shard_count: u32) -> Result<(String, u32)> {
     if shard_count == 0 {
         anyhow::bail!("shard_count must be > 0");
@@ -228,7 +219,6 @@ pub fn routed_pod_topology(shard_count: u32) -> Result<(String, u32)> {
 /// (`routed_pod_topology`'s `ordinal % shard_count` math assumes exactly
 /// one pod per shard), so activating routing there would silently mis-map
 /// pods to shards instead of failing fast.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 pub fn routed_shard_count_from_env() -> Result<Option<u32>> {
     let replicas_per_shard: u32 = match std::env::var("REPLICAS_PER_SHARD") {
         Ok(raw) => raw
@@ -262,7 +252,6 @@ pub fn routed_shard_count_from_env() -> Result<Option<u32>> {
 /// is unit-testable without starting a real server — `SHARD_COUNT` isn't set
 /// the same way on today's fan-in CLI path, but this makes the two paths
 /// structurally mutually exclusive instead of relying on that coincidence.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#source
 pub fn routed_activation_shard_count(search_shard_segment_dirs_empty: bool) -> Result<Option<u32>> {
     if !search_shard_segment_dirs_empty {
         return Ok(None);

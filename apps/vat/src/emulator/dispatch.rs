@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-emulator-dispatch-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Shared outbound dispatcher for the Cloud Tasks / Cloud Scheduler emulators.
 //!
@@ -8,7 +7,6 @@
 //! the `Authorization: Bearer` header (the same kind of fake token the Firebase
 //! Auth emulator mints; receivers in emulator/test mode do not verify it).
 //!
-//! @spec apps/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#logic
 
 use std::collections::BTreeMap;
 
@@ -19,7 +17,6 @@ const SECRET: &[u8] = b"vat-cloud-emulator-oidc";
 
 /// A target to deliver to: an HTTP request, optionally carrying a minted OIDC
 /// token for the given service account / audience.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-dispatch-rs.md#source
 pub struct Target {
     pub uri: String,
     pub method: String,
@@ -28,7 +25,6 @@ pub struct Target {
     pub oidc: Option<Oidc>,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-dispatch-rs.md#source
 pub struct Oidc {
     pub service_account_email: String,
     pub audience: String,
@@ -66,7 +62,6 @@ fn mint_oidc(oidc: &Oidc) -> String {
 }
 
 /// The result of a dispatch: the response status and body text.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-dispatch-rs.md#source
 pub struct DispatchResult {
     pub code: u16,
     pub body: String,
@@ -74,7 +69,6 @@ pub struct DispatchResult {
 
 /// Deliver `target` over HTTP and collect the response status + body. Errors if
 /// the request could not be made.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-dispatch-rs.md#source
 pub async fn dispatch_collect(
     client: &reqwest::Client,
     target: &Target,
@@ -96,7 +90,6 @@ pub async fn dispatch_collect(
 
 /// Deliver `target` over HTTP. Returns the response status code, or an error if
 /// the request could not be made.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-emulator-dispatch-rs.md#source
 pub async fn dispatch_http(client: &reqwest::Client, target: &Target) -> anyhow::Result<u16> {
     Ok(dispatch_collect(client, target).await?.code)
 }

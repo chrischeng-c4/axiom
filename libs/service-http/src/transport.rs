@@ -1,7 +1,5 @@
-// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! HTTP transport: the h2c serve loop + the standard request-tracing layer.
-//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
 //! [`serve`] composes [`server_http::serve_h2c`] (HTTP/1.1 + HTTP/2 cleartext on one port —
 //! the in-cluster default `axum::serve` can't do) rather than re-implementing
@@ -19,7 +17,6 @@ use tower_http::trace::{DefaultMakeSpan, MakeSpan, OnRequest, TraceLayer};
 /// Request span maker that preserves standard request fields and, in an
 /// OTLP-enabled build, attaches a valid propagated W3C parent context.
 #[derive(Debug, Clone, Copy)]
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub struct PropagatingMakeSpan;
 
 impl<B> MakeSpan<B> for PropagatingMakeSpan {
@@ -47,7 +44,6 @@ impl<B> MakeSpan<B> for PropagatingMakeSpan {
 /// In-flight connections
 /// get a bounded grace period after `shutdown` resolves before the process
 /// exits.
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub async fn serve(
     listener: TcpListener,
     app: axum::Router,
@@ -79,7 +75,6 @@ pub async fn serve_with_lifecycle(
 ///
 /// ALPN comes from the `ServerConfig` the source yields, so the caller decides
 /// whether the port offers `h2` alone or `h2` and `http/1.1`.
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub async fn serve_tls(
     listener: TcpListener,
     app: axum::Router,
@@ -399,7 +394,6 @@ impl<B> tower_http::trace::OnResponse<B> for AccessLogOnResponse {
 /// Returns the concrete `TraceLayer` so callers `.layer()` it directly. For a
 /// different classifier/make-span, build `TraceLayer::new_for_http()` inline
 /// instead.
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub fn trace_layer() -> TraceLayer<
     SharedClassifier<ServerErrorsAsFailures>,
     CorrelatingMakeSpan,

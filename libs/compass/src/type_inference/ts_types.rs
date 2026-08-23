@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! TypeScript-specific type definitions
 //!
@@ -10,7 +9,6 @@ use super::ty::{Type, TypeVarId, Variance};
 
 /// TypeScript interface definition
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsInterface {
     /// Interface name
     pub name: String,
@@ -28,7 +26,6 @@ pub struct TsInterface {
     pub extends: Vec<String>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 impl TsInterface {
     pub fn new(name: String) -> Self {
         Self {
@@ -60,7 +57,6 @@ impl TsInterface {
 
 /// TypeScript type parameter
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsTypeParam {
     /// Parameter name (e.g., "T", "K")
     pub name: String,
@@ -70,7 +66,6 @@ pub struct TsTypeParam {
     pub default: Option<Type>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 impl TsTypeParam {
     pub fn new(name: String) -> Self {
         Self {
@@ -93,7 +88,6 @@ impl TsTypeParam {
 
 /// TypeScript type alias
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsTypeAlias {
     /// Alias name
     pub name: String,
@@ -105,7 +99,6 @@ pub struct TsTypeAlias {
 
 /// TypeScript class definition
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsClass {
     /// Class name
     pub name: String,
@@ -127,7 +120,6 @@ pub struct TsClass {
     pub implements: Vec<String>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 impl TsClass {
     pub fn new(name: String) -> Self {
         Self {
@@ -146,7 +138,6 @@ impl TsClass {
 
 /// TypeScript property with modifiers
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsProperty {
     /// Property type
     pub ty: Type,
@@ -158,7 +149,6 @@ pub struct TsProperty {
     pub visibility: Visibility,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 impl TsProperty {
     pub fn new(ty: Type) -> Self {
         Self {
@@ -172,7 +162,6 @@ impl TsProperty {
 
 /// TypeScript visibility modifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub enum Visibility {
     #[default]
     Public,
@@ -182,7 +171,6 @@ pub enum Visibility {
 
 /// TypeScript enum definition
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsEnum {
     /// Enum name
     pub name: String,
@@ -194,7 +182,6 @@ pub struct TsEnum {
 
 /// TypeScript enum value
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub enum TsEnumValue {
     Number(i64),
     String(String),
@@ -202,7 +189,6 @@ pub enum TsEnumValue {
 
 /// TypeScript mapped type: { [K in Keys]: ValueType }
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsMappedType {
     /// Key variable name
     pub key_var: String,
@@ -218,7 +204,6 @@ pub struct TsMappedType {
 
 /// Modifier for mapped types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub enum MappedTypeModifier {
     /// Add the modifier
     Add,
@@ -230,7 +215,6 @@ pub enum MappedTypeModifier {
 
 /// TypeScript conditional type: T extends U ? X : Y
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsConditionalType {
     /// Check type (T)
     pub check_type: Box<Type>,
@@ -242,7 +226,6 @@ pub struct TsConditionalType {
     pub false_type: Box<Type>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 impl TsConditionalType {
     /// Evaluate the conditional type with concrete substitutions
     pub fn evaluate(&self, subs: &HashMap<TypeVarId, Type>) -> Type {
@@ -260,7 +243,6 @@ impl TsConditionalType {
 
 /// TypeScript template literal type: `prefix${T}suffix`
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsTemplateLiteralType {
     /// Parts of the template
     pub parts: Vec<TemplatePart>,
@@ -268,7 +250,6 @@ pub struct TsTemplateLiteralType {
 
 /// Part of a template literal type
 #[derive(Debug, Clone, PartialEq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub enum TemplatePart {
     /// Literal string segment
     Literal(String),
@@ -276,7 +257,6 @@ pub enum TemplatePart {
     Placeholder(Type),
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 impl TsTemplateLiteralType {
     /// Create a simple template with prefix and suffix
     pub fn new(prefix: &str, inner: Type, suffix: &str) -> Self {
@@ -321,7 +301,6 @@ impl TsTemplateLiteralType {
 }
 
 /// Check if a type is assignable to another type (structural compatibility)
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub fn is_assignable_to(source: &Type, target: &Type) -> bool {
     match (source, target) {
         // Any accepts anything
@@ -466,7 +445,6 @@ fn check_protocol_conformance(ty: &Type, members: &[(String, Type)]) -> bool {
 
 /// TypeScript type context for inference
 #[derive(Debug, Clone, Default)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 pub struct TsTypeContext {
     /// Interface definitions
     pub interfaces: HashMap<String, TsInterface>,
@@ -482,7 +460,6 @@ pub struct TsTypeContext {
     pub type_params: HashMap<String, TsTypeParam>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ts-types-rs.md#source
 impl TsTypeContext {
     pub fn new() -> Self {
         Self::default()

@@ -12,25 +12,30 @@ fallback behavior, and JSON-shaped log records emitted by the native methods.
 
 ## Capabilities
 
+A promise with no gate under it is not claimed.
+
 ### Capability Index
 
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| Mamba Structured Logging Binding | - | implemented | passing | conformance | not_ready | exposes `cclab.log` logger creation plus info/error/debug/warning native methods |
+| Capability | Root WI | Notes |
+|---|---:|---|
+| Mamba Structured Logging Binding | - | exposes `cclab.log` logger creation plus info/error/debug/warning native methods |
 
 ### Mamba Structured Logging Binding
 
-ID: mamba-structured-logging-binding
-Type: DeveloperTool
-Surfaces: Mamba module: `cclab.log`; Native ABI: `mb_log_get_logger`, `mb_log_info`, `mb_log_error`, `mb_log_debug`, `mb_log_warning`; Rust module registrar: `LogMambaModule`
-EC Dimensions: behavior: `cargo test -p cclab-log-mamba`
-Root WI: -
-Status: confirmed
-Required Verification: conformance
-Promise:
-Cclab Log Mamba exposes `cclab-log` structured logging to Mamba scripts through the `cclab.log` native module, including logger creation and info/error/debug/warning methods that accept Mamba string values and emit JSON-structured log records.
-Gate Inventory: `cargo test -p cclab-log-mamba`; crates/cclab-log-mamba/src/lib.rs; crates/cclab-log-mamba/src/methods.rs; crates/cclab-log-mamba/tests/methods_test.rs
+Cclab Log Mamba exposes `cclab-log` structured logging to Mamba scripts through
+the `cclab.log` native module, including logger creation and
+info/error/debug/warning methods that accept Mamba string values and emit
+JSON-structured log records.
 
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Mamba structured logging ABI contract | epic | - | implemented | passing | conformance | `cargo test -p cclab-log-mamba`; crates/cclab-log-mamba/src/lib.rs; crates/cclab-log-mamba/src/methods.rs; crates/cclab-log-mamba/tests/methods_test.rs |
+- Root WI: none; this capability predates the tracker.
+- Surfaces: Mamba module: `cclab.log`; Native ABI: `mb_log_get_logger`,
+  `mb_log_info`, `mb_log_error`, `mb_log_debug`, `mb_log_warning`; Rust module
+  registrar: `LogMambaModule`
+- Gate — behavior: `cargo test -p cclab-log-mamba`
+- Gate: `cargo test -p cclab-log-mamba`
+- Source: `crates/cclab-log-mamba/src/lib.rs`,
+  `crates/cclab-log-mamba/src/methods.rs`,
+  `crates/cclab-log-mamba/tests/methods_test.rs`
+- Evidence: `cargo test -p cclab-log-mamba`; crates/cclab-log-mamba/src/lib.rs;
+  crates/cclab-log-mamba/src/methods.rs;
+  crates/cclab-log-mamba/tests/methods_test.rs

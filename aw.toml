@@ -346,7 +346,6 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "lumen"
 path = "apps/lumen"
-td_path = "apps/lumen/tech-design"
 cap_path = "apps/lumen/README.md"
 label = "app:lumen"
 # EC tool bindings (contract before implementation). `aw health --verify-ec`
@@ -358,7 +357,7 @@ label = "app:lumen"
 #                        resilience scenarios and p99 budgets.
 # behavior (功能) and security (安全) stay cargo gates per the EC-gatekeeper map.
 ec.efficiency = { tool = "meter", meter = "apps/lumen", command = "cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter" }
-ec.stability = { tool = "rig", dir = "apps/lumen/tests/rig/cases/resilience", command = "cd apps/lumen && ../../target/debug/vat run rig-resilience" }
+ec.stability = { tool = "rig", dir = "apps/lumen/e2e/rig/cases/resilience", command = "cd apps/lumen && ../../target/debug/vat run rig-resilience" }
 
 [[projects.workspaces]]
 name = "lumen"

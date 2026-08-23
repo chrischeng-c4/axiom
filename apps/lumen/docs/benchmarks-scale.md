@@ -2,7 +2,7 @@
 
 This page tracks lumen's scale posture across row count, read/search latency,
 paced qps, write qps, and disk footprint. The authoritative regression contract
-lives in `apps/lumen/tests/perf-baseline.json`; this document is the human
+lives in `apps/lumen/e2e/perf-baseline.json`; this document is the human
 handoff for what the current numbers mean.
 
 > **Status (2026-06-08 calibration):** the retained competitive calibration was

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-src-gpu-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! GPU visibility — the reason vat exists for ML agents.
 //!
@@ -36,7 +35,6 @@ use serde::{Deserialize, Serialize};
 
 /// What GPU acceleration a vat can reach. This is host truth: on macOS every
 /// vat shares it because every vat is a host process.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-gpu-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuInfo {
     /// `"apple"`, `"none"`, or another vendor on non-macOS hosts.
@@ -54,7 +52,6 @@ pub struct GpuInfo {
 
 /// Detect host GPU visibility. Cheap and side-effect free; safe to call per
 /// `vat state`.
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-gpu-rs.md#source
 pub fn detect() -> GpuInfo {
     #[cfg(target_os = "macos")]
     {

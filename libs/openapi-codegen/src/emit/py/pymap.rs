@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Maps an OpenAPI [`Schema`] to a Python type expression (pydantic-flavored).
 
@@ -7,7 +6,6 @@ use crate::ir::typemap::TypeMap;
 use crate::PythonTarget;
 
 /// Python type expression for a schema (or `$ref`) in `target` syntax.
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
 pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     match node {
         RefOr::Ref(r) => tm
@@ -25,7 +23,6 @@ pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap, target: Option<PythonTarget
 }
 
 /// Wrap in a target-valid nullable type unless it already is (or is `Any`/`None`).
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
 pub fn optional(ty: &str, target: Option<PythonTarget>) -> String {
     if ty == "Any"
         || ty == "None"
@@ -111,7 +108,6 @@ fn array_expr(schema: &Schema, tm: &TypeMap, target: Option<PythonTarget>) -> St
 
 /// Inline object → a typed mapping (pydantic can't synthesize a nested model
 /// inline; `additionalProperties` drives the value type, else `Any`).
-/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
 pub fn object_expr(schema: &Schema, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     match &schema.additional_properties {
         Some(AdditionalProperties::Schema(s)) => {

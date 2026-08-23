@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-report-mod-rs.md#source
 // CODEGEN-BEGIN
 //! Agent-first report layer — the center of the `meter` agent surface.
 //!

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-multilang-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Multi-language refactoring support
 //!
@@ -15,14 +14,12 @@ use super::refactoring::{
 
 /// Language for refactoring operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-multilang-rs.md#source
 pub enum RefactorLanguage {
     Python,
     TypeScript,
     Rust,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-multilang-rs.md#source
 impl RefactorLanguage {
     /// Detect language from file extension
     pub fn from_path(path: &PathBuf) -> Option<Self> {
@@ -111,10 +108,8 @@ impl RefactorLanguage {
 }
 
 /// Multi-language refactoring engine
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-multilang-rs.md#source
 pub struct MultiLangRefactorer;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-multilang-rs.md#source
 impl MultiLangRefactorer {
     pub fn new() -> Self {
         Self
@@ -847,7 +842,6 @@ impl MultiLangRefactorer {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-multilang-rs.md#source
 impl Default for MultiLangRefactorer {
     fn default() -> Self {
         Self::new()

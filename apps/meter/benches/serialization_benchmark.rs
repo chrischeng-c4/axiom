@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-benches-serialization-benchmark-rs.md#source
 // CODEGEN-BEGIN
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use meter::baseline::BaselineSnapshot;

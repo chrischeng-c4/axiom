@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Semantic Model - Owned, serializable type information independent of AST
 //!
@@ -17,10 +16,8 @@ use super::ty::Type;
 
 /// Unique identifier for a symbol within the semantic model
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub struct SymbolId(pub u64);
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 impl SymbolId {
     /// Create a new symbol ID
     pub fn new(id: u64) -> Self {
@@ -30,10 +27,8 @@ impl SymbolId {
 
 /// Unique identifier for a scope within the semantic model
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub struct ScopeId(pub u64);
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 impl ScopeId {
     /// Create a new scope ID
     pub fn new(id: u64) -> Self {
@@ -43,7 +38,6 @@ impl ScopeId {
 
 /// Kind of symbol in the semantic model
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub enum SemanticSymbolKind {
     Variable,
     Function,
@@ -57,7 +51,6 @@ pub enum SemanticSymbolKind {
     Property,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 impl SemanticSymbolKind {
     /// Get a display name for the symbol kind
     pub fn display_name(&self) -> &'static str {
@@ -78,7 +71,6 @@ impl SemanticSymbolKind {
 
 /// Symbol data stored in the semantic model
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub struct SymbolData {
     /// Symbol name
     pub name: String,
@@ -100,7 +92,6 @@ pub struct SymbolData {
 
 /// Owned type information that can be serialized
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub enum TypeInfo {
     /// Unknown type (not yet inferred)
     Unknown,
@@ -147,7 +138,6 @@ pub enum TypeInfo {
     Error,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 impl TypeInfo {
     /// Convert from the type checker's Type to owned TypeInfo
     pub fn from_type(ty: &Type) -> Self {
@@ -265,7 +255,6 @@ impl TypeInfo {
 
 /// Parameter information for callable types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub struct ParamInfo {
     /// Parameter name
     pub name: String,
@@ -279,7 +268,6 @@ pub struct ParamInfo {
     pub is_keyword: bool,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 impl ParamInfo {
     /// Convert from the type checker's Param to owned ParamInfo
     pub fn from_param(param: &super::ty::Param) -> Self {
@@ -295,7 +283,6 @@ impl ParamInfo {
 
 /// Literal value information
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub enum LiteralInfo {
     Int(i64),
     Float(String), // Store as string to preserve exact representation
@@ -304,7 +291,6 @@ pub enum LiteralInfo {
     None,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 impl LiteralInfo {
     /// Convert from the type checker's LiteralValue
     pub fn from_literal(lit: &super::ty::LiteralValue) -> Self {
@@ -331,7 +317,6 @@ impl LiteralInfo {
 
 /// Reference to a symbol (usage site)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub struct SymbolReference {
     /// The symbol being referenced
     pub symbol_id: SymbolId,
@@ -343,7 +328,6 @@ pub struct SymbolReference {
 
 /// Scope information
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub struct ScopeInfo {
     /// Scope ID
     pub id: ScopeId,
@@ -357,7 +341,6 @@ pub struct ScopeInfo {
 
 /// An interval in the source code that maps to type/symbol information
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub struct TypedRange {
     /// Range in the source code
     pub range: Range,
@@ -372,7 +355,6 @@ pub struct TypedRange {
 /// Stores resolved types, symbols, and references independent of the AST.
 /// This can be serialized and cached for fast retrieval.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 pub struct SemanticModel {
     /// All symbols indexed by their ID
     pub symbols: HashMap<SymbolId, SymbolData>,
@@ -390,7 +372,6 @@ pub struct SemanticModel {
     next_scope_id: u64,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-model-rs.md#source
 impl SemanticModel {
     /// Create a new empty semantic model
     pub fn new() -> Self {

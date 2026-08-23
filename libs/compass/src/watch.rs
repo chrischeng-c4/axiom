@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-watch-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Watch mode for automatic re-analysis
 //!
@@ -17,7 +16,6 @@ const DEFAULT_DEBOUNCE_MS: u64 = 300;
 
 /// Events from the watch system
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-watch-rs.md#source
 pub enum WatchEvent {
     /// Files changed and need re-analysis
     FilesChanged(Vec<PathBuf>),
@@ -31,7 +29,6 @@ pub enum WatchEvent {
 
 /// Configuration for the file watcher
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-watch-rs.md#source
 pub struct WatchConfig {
     /// Root directory to watch
     pub root: PathBuf,
@@ -43,7 +40,6 @@ pub struct WatchConfig {
     pub exclude_patterns: Vec<String>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-watch-rs.md#source
 impl Default for WatchConfig {
     fn default() -> Self {
         Self {
@@ -68,7 +64,6 @@ impl Default for WatchConfig {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-watch-rs.md#source
 impl WatchConfig {
     /// Create a new watch config for the given root directory
     pub fn new(root: PathBuf) -> Self {
@@ -113,7 +108,6 @@ impl WatchConfig {
 }
 
 /// File system watcher with debouncing
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-watch-rs.md#source
 pub struct FileWatcher {
     /// Configuration
     config: WatchConfig,
@@ -137,7 +131,6 @@ struct PendingChanges {
     last_change: Option<Instant>,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-watch-rs.md#source
 impl PendingChanges {
     fn new() -> Self {
         Self {
@@ -165,7 +158,6 @@ impl PendingChanges {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-watch-rs.md#source
 impl FileWatcher {
     /// Create a new file watcher with the given configuration
     pub fn new(config: WatchConfig) -> Result<Self, String> {

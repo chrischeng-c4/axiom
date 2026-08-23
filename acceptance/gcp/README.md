@@ -103,7 +103,7 @@ acceptance/gcp/scripts/run.sh
 ```
 
 `ACCEPTANCE_APPS` selects the mode and its value set is closed: `lumen sift`
-(the default) or `tape`. The earlier `LUMEN_ONLY=1` mode no longer exists —
+(the default), `lumen auth`, or `tape`. The earlier `LUMEN_ONLY=1` mode no longer exists —
 it was removed when the harness gained Tape mode, and this section documented
 it for several commits afterwards. Passing it today does nothing at all; the
 run proceeds in full `lumen sift` mode, which is not what the caller asked

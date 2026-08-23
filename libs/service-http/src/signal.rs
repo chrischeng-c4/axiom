@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-signal-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Service-shell re-exports for protocol-neutral graceful shutdown.
 //!

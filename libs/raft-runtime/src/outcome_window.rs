@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-outcome-window-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `OutcomeWindow<T>` — a bounded index→outcome retention map.
 //!
@@ -31,7 +30,6 @@ pub const DEFAULT_CAPACITY: u64 = 8192;
 /// external "applied" cursor a caller tracks alongside this window should
 /// only move forward *after* both calls, so a reader never observes an
 /// applied index whose outcome isn't in the window yet.
-/// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-outcome-window-rs.md#source
 pub struct OutcomeWindow<T> {
     capacity: u64,
     entries: BTreeMap<u64, T>,

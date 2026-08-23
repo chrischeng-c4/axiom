@@ -1,4 +1,3 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-gc-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat gc` — report and prune retained vat workspaces.
 

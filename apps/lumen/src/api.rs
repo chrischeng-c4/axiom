@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! HTTP/2 API surface.
 //!
@@ -92,7 +91,6 @@ impl MetricsProvider for ServingMetrics {
 const AUTHORIZATION_CONCURRENCY: usize = 16;
 
 #[derive(Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub auth: Arc<AuthConfig>,
@@ -128,7 +126,6 @@ pub struct AppState {
     pub routed: Option<Arc<dyn RoutedBackend>>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub trait SearchBackend: Send + Sync {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse>;
 }
@@ -153,7 +150,6 @@ pub trait SearchBackend: Send + Sync {
 /// combination the operator now renders unconditionally at
 /// `replicasPerShard <= 1` (#1387), which is the same topology the reshard
 /// driver is scoped to (see `reshard_driver`'s "Scope rail" doc).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[async_trait]
 pub trait CheckpointSink: Send + Sync {
     /// Persist current engine state durably and return only once the write
@@ -169,7 +165,6 @@ pub trait CheckpointSink: Send + Sync {
 /// durable store — see the trait doc.
 struct NoopCheckpoint;
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[async_trait]
 impl CheckpointSink for NoopCheckpoint {
     async fn checkpoint_now(&self) -> Result<bool> {
@@ -202,7 +197,6 @@ impl CheckpointSink for NoopCheckpoint {
 /// every tick it needs one, so a healthy, slow-but-progressing driver never
 /// races its own TTL; see `reshard_driver::WRITE_FENCE_TTL`.
 #[derive(Clone, Default)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub struct WriteFence {
     state: Arc<Mutex<Option<FenceState>>>,
 }
@@ -213,7 +207,6 @@ struct FenceState {
     deadline: Instant,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl WriteFence {
     /// Arm the fence over `buckets` (computed against `virtual_bucket_count`)
     /// until `ttl` from now, replacing any prior armed state. Returns `false`
@@ -266,7 +259,6 @@ impl WriteFence {
 }
 
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub trait WriteBackend: Send + Sync {
     async fn create_collection(
         &self,
@@ -306,7 +298,6 @@ pub trait WriteBackend: Send + Sync {
 /// the `operator` feature) checks the `x-lumen-forwarded` one-hop guard
 /// first and, when forwarding, carries the caller's `Authorization` bearer
 /// and `x-read-consistency` through unchanged (R3).
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[async_trait]
 pub trait RoutedBackend: Send + Sync {
     /// #2496: collection lifecycle has no single owning shard — every
@@ -372,7 +363,6 @@ struct LocalEngineSearch {
     engine: Arc<Engine>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl SearchBackend for LocalEngineSearch {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> {
         self.engine.search(collection_id, req)
@@ -384,7 +374,6 @@ struct LocalWriteBackend {
     writer: Arc<dyn WriteSink>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl LocalWriteBackend {
     fn unexpected(outcome: ApplyOutcome) -> anyhow::Error {
         anyhow::anyhow!("unexpected apply outcome: {outcome:?}")
@@ -392,7 +381,6 @@ impl LocalWriteBackend {
 }
 
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl WriteBackend for LocalWriteBackend {
     async fn create_collection(
         &self,
@@ -484,7 +472,6 @@ impl WriteBackend for LocalWriteBackend {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl AppState {
     /// Build state with an explicit write log. Spawns the apply loop.
     pub fn with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self {
@@ -709,12 +696,10 @@ impl AppState {
     modifiers(&SecurityAddon),
     security(("bearerAuth" = []))
 )]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub struct ApiDoc;
 
 struct SecurityAddon;
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl Modify for SecurityAddon {
     fn modify(&self, openapi: &mut openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -745,14 +730,12 @@ impl Modify for SecurityAddon {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl ReadinessHook for Engine {
     fn is_draining(&self) -> bool {
         Engine::is_draining(self)
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl MetricsProvider for Engine {
     fn render_metrics(&self) -> String {
         self.metrics().render()
@@ -762,7 +745,6 @@ impl MetricsProvider for Engine {
 /// Middleware that records the authenticated subject to the request span.
 /// This is used by the access log to include subject information in per-request logs.
 /// Called after auth_middleware, so AuthContext is already in the extensions.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 async fn record_subject_to_span(req: Request, next: Next) -> axum::response::Response {
     // Record subject to the current span for inclusion in access logs.
     // If AuthContext exists in extensions, use its subject; otherwise use "anonymous".
@@ -775,7 +757,6 @@ async fn record_subject_to_span(req: Request, next: Next) -> axum::response::Res
     next.run(req).await
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub fn router(state: AppState) -> Router {
     router_with_admission(state, None)
 }
@@ -784,7 +765,6 @@ pub fn router(state: AppState) -> Router {
 /// the route-class mapping and policy values; `service-http` owns enforcement.
 /// The established [`router`] entry point passes `None`, so admission remains
 /// disabled unless a serving adapter explicitly supplies policies.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub fn router_with_admission(
     state: AppState,
     admission: Option<service_http::AdmissionController>,
@@ -863,16 +843,16 @@ pub fn router_with_admission(
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
         // guard); 8MiB is the broker payload budget. Enforces the cap at the HTTP
         // layer with a structured 413 envelope and streams/chunked bodies bounded
-        // mid-read, replacing the prior axum::extract::DefaultBodyLimit which only
-        // caught Content-Length headers. Shared with
-        // `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2) so the
-        // reshard driver's oversize-batch detection can never drift from the
+        // mid-read, disabling axum's extractor-side default so this layer governs.
+        // Shared with `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2)
+        // so the reshard driver's oversize-batch detection can never drift from the
         // limit actually enforced here. Probe routes (/healthz, /readyz, /metrics,
         // /version, /docs) are unaffected as they are merged separately and stay
         // unbounded.
         .layer(service_http::body_limit_layer(
-            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
-        ));
+            crate::reshard::body_limit_bytes_from_env(),
+        ))
+        .layer(axum::extract::DefaultBodyLimit::disable());
     let data_plane = match admission {
         Some(controller) => data_plane.route_layer(from_fn_with_state(
             service_http::AdmissionMiddleware::new(controller, |request| {
@@ -2678,7 +2658,6 @@ async fn reshard_fence(
 // OpenAPI
 // ---------------------------------------------------------------------------
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
     doc.info.version = env!("CARGO_PKG_VERSION").to_string();
@@ -2750,10 +2729,8 @@ fn inject_query_twins(doc: &mut utoipa::openapi::OpenApi) {
 /// classification arms. (`crate::types::ApiError` stays a distinct local
 /// struct of the same `{error, message}` shape purely for OpenAPI schema
 /// identity — see its doc comment.)
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub struct ApiErr(service_http::ApiErr);
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl ApiErr {
     fn new(status: StatusCode, kind: &'static str, message: impl Into<String>) -> Self {
         Self(service_http::ApiErr::new(status, kind, message))
@@ -2770,39 +2747,33 @@ impl ApiErr {
 /// centralized here rather than duplicated in the `operator`-gated module;
 /// R2 requires this to surface as a clear, distinctly-kinded retryable
 /// error, never a silent local answer.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[derive(Debug)]
 pub struct ShardForwardUnavailable(pub String);
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl std::fmt::Display for ShardForwardUnavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl std::error::Error for ShardForwardUnavailable {}
 
 /// The owning shard was reached and answered, but with a non-2xx status
 /// (e.g. a forwarded write hit `404`/`422`). Re-emitted locally with the
 /// same status so a forwarded error is as legible as a local one; `message`
 /// carries the remote's own `{error, message}` envelope verbatim.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[derive(Debug)]
 pub struct ShardForwardRemoteError {
     pub status: u16,
     pub message: String,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl std::fmt::Display for ShardForwardRemoteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "shard forward error ({}): {}", self.status, self.message)
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl std::error::Error for ShardForwardRemoteError {}
 
 /// A forwarded request declared a shard-map version that disagrees with
@@ -2812,14 +2783,12 @@ impl std::error::Error for ShardForwardRemoteError {}
 /// one-hop guard force a local answer that may be wrong on either side of
 /// the split, the receiver rejects with this distinct, retryable error so
 /// the caller (or its own retry policy) waits for the rollout to converge.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[derive(Debug)]
 pub struct ShardMapVersionMismatch {
     pub sender_version: u64,
     pub local_version: u64,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl std::fmt::Display for ShardMapVersionMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -2830,7 +2799,6 @@ impl std::fmt::Display for ShardMapVersionMismatch {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl std::error::Error for ShardMapVersionMismatch {}
 
 /// A forwarded request's one-hop marker (`x-lumen-forwarded`) claimed this
@@ -2840,7 +2808,6 @@ impl std::error::Error for ShardMapVersionMismatch {}
 /// bucket that pod doesn't actually own — so it is now validated on
 /// receipt rather than trusted blindly; a spoofed or genuinely misrouted
 /// forward is rejected, never honored.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[derive(Debug)]
 pub struct ShardForwardMisrouted {
     pub bucket: u32,
@@ -2848,7 +2815,6 @@ pub struct ShardForwardMisrouted {
     pub local_shard: u32,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl std::fmt::Display for ShardForwardMisrouted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -2860,10 +2826,8 @@ impl std::fmt::Display for ShardForwardMisrouted {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl std::error::Error for ShardForwardMisrouted {}
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
         // #1486 R2: a write waiter released without a genuine apply outcome
@@ -2978,14 +2942,12 @@ impl From<anyhow::Error> for ApiErr {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl IntoResponse for ApiErr {
     fn into_response(self) -> axum::response::Response {
         self.0.into_response()
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 impl From<crate::auth::AuthErr> for ApiErr {
     fn from(e: crate::auth::AuthErr) -> Self {
         // A denial and an unanswered SubjectAccessReview reach the wire as

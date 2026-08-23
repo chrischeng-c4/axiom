@@ -46,7 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agy_dispatch  # noqa: E402
 
-# The same grammar `plugins/aw/scripts/change.py` validates -- it used to be
+# The same grammar `.claude/aw/scripts/change.py` validates -- it used to be
 # `apps/agentic-workflow/src/issues/ghan.rs`, which is deleted, and the plugin
 # is now the only copy. Duplicated rather than imported because that script is
 # a facade with its own repo resolution and this is controller tooling; the

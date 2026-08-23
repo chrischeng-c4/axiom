@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Rust type inference engine
 //!
@@ -32,7 +31,6 @@ pub use super::rust_traits::{MethodResolution, TraitResolver};
 
 /// Context for Rust type inference
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#source
 pub struct RustTypeContext {
     /// Current scope's type bindings
     pub type_bindings: HashMap<String, RustType>,
@@ -52,7 +50,6 @@ pub struct RustTypeContext {
     lifetime_counter: usize,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#source
 impl RustTypeContext {
     /// Create a new empty context
     pub fn new() -> Self {
@@ -121,7 +118,6 @@ impl RustTypeContext {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#source
 impl Default for RustTypeContext {
     fn default() -> Self {
         Self::new()
@@ -133,7 +129,6 @@ impl Default for RustTypeContext {
 // ============================================================================
 
 /// Rust type inference engine
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#source
 pub struct RustTypeInferencer {
     /// Type context
     context: RustTypeContext,
@@ -150,7 +145,6 @@ pub struct RustTypeInferencer {
 
 /// Type inference error
 #[derive(Debug, Clone)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#source
 pub struct RustTypeError {
     /// Error message
     pub message: String,
@@ -162,7 +156,6 @@ pub struct RustTypeError {
 
 /// Kind of type error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#source
 pub enum RustTypeErrorKind {
     /// Type mismatch
     TypeMismatch,
@@ -178,7 +171,6 @@ pub enum RustTypeErrorKind {
     AmbiguousType,
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#source
 impl RustTypeInferencer {
     /// Create a new type inferencer
     pub fn new() -> Self {
@@ -1414,7 +1406,6 @@ impl RustTypeInferencer {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-infer-rs.md#source
 impl Default for RustTypeInferencer {
     fn default() -> Self {
         Self::new()

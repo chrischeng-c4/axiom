@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 // CODEGEN-BEGIN
 //! Agent test case definitions and expected outputs
 
@@ -7,7 +6,6 @@ use std::collections::HashMap;
 
 /// An agent test case with input, expected outputs, and constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 pub struct AgentTestCase {
     /// Unique test case identifier
     pub id: String,
@@ -51,7 +49,6 @@ pub struct AgentTestCase {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 impl Default for AgentTestCase {
     fn default() -> Self {
         Self {
@@ -70,7 +67,6 @@ impl Default for AgentTestCase {
     }
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 impl AgentTestCase {
     /// Create a new test case with id, name, and input
     pub fn new(id: impl Into<String>, name: impl Into<String>, input: impl Into<String>) -> Self {
@@ -127,7 +123,6 @@ impl AgentTestCase {
 
 /// Expected tool call specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 pub struct ExpectedToolCall {
     /// Tool name (e.g., "calculate", "search_web")
     pub name: String,
@@ -141,7 +136,6 @@ pub struct ExpectedToolCall {
     pub optional: bool,
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 impl ExpectedToolCall {
     /// Create a new expected tool call
     pub fn new(name: impl Into<String>) -> Self {
@@ -167,7 +161,6 @@ impl ExpectedToolCall {
 
 /// Quality criterion for LLM-as-judge evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 pub struct QualityCriterion {
     /// Criterion name (e.g., "relevance", "clarity", "accuracy")
     pub name: String,
@@ -184,7 +177,6 @@ fn default_weight() -> f64 {
     1.0
 }
 
-/// @spec apps/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 impl QualityCriterion {
     /// Create a new quality criterion
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {

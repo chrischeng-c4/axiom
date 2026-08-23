@@ -1,5 +1,34 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:d8834b62" tracker="1868" reason="Define ServiceLogEventV1, stable schema constants, correlation validation, sensitive-key exclusion, bounded attributes, and the tracing-subscriber JSONL formatter."
 //! Versioned collector-compatible structured stdout.
+//!
+//! Every line carries [`SERVICE_LOG_SCHEMA_V1`] (`axiom.service.log.v1`) as its
+//! `schema` field, so a collector keys off that constant rather than off the shape
+//! it happens to observe. Changing a field's meaning therefore means a new
+//! constant, not an edited one.
+//!
+//! Three attribute policies are decided here, and each one chooses between
+//! dropping and truncating:
+//!
+//! * **Bounds truncate.** An oversized key or value is cut to
+//!   [`MAX_ATTRIBUTE_KEY_BYTES`] / [`MAX_ATTRIBUTE_VALUE_BYTES`] on a UTF-8
+//!   boundary rather than rejected, so one long field cannot cost the line. Past
+//!   [`MAX_ATTRIBUTES`] the remainder is dropped instead, and because the input is
+//!   a `BTreeMap` the survivors are the alphabetically first — deterministic, so a
+//!   caller near the limit loses the same attributes on every line rather than a
+//!   different arbitrary subset each time.
+//! * **Reserved keys are dropped, not renamed.** A caller attribute colliding with
+//!   a schema field (`severity`, `trace_id`, `request_id`, …) is discarded, so
+//!   nothing a caller passes can overwrite or forge the framing the collector
+//!   trusts.
+//! * **Sensitive keys are dropped, not masked.** `authorization`,
+//!   `proxy_authorization`, `cookie`, `set_cookie`, `baggage` and `tracestate` are
+//!   matched case-insensitively with `-` normalized to `_`, and also as a `.`, `/`
+//!   or `_` suffix so a namespaced `http.request.authorization` is caught too.
+//!   `baggage` and `tracestate` are in that list because they are propagation
+//!   headers that carry caller-supplied payload, not just correlation ids — they
+//!   are treated as credential-bearing rather than as trace metadata. Because the
+//!   key is removed rather than replaced with a placeholder, a test asserts absence
+//!   rather than asserting a mask, and no downstream index ever sees the field name.
 
 use std::collections::BTreeMap;
 use std::fmt;

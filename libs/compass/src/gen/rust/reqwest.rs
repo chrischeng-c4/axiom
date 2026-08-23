@@ -1,4 +1,3 @@
-// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-reqwest-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! reqwest HTTP client generator
 //!
@@ -9,10 +8,8 @@ use crate::gen::traits::{CodeGenerator, GenContext, GenResult, GeneratedCode, La
 use crate::spec::ir::{DataModelSpec, EndpointDef, HttpMethod, RestApiSpec};
 
 /// Reqwest (HTTP client) code generator
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-reqwest-rs.md#source
 pub struct ReqwestGenerator;
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-reqwest-rs.md#source
 impl ReqwestGenerator {
     pub fn new() -> Self {
         Self
@@ -289,14 +286,12 @@ impl ReqwestGenerator {
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-reqwest-rs.md#source
 impl Default for ReqwestGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-reqwest-rs.md#source
 impl CodeGenerator for ReqwestGenerator {
     fn name(&self) -> &str {
         "reqwest"

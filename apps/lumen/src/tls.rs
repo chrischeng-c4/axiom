@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! mTLS configuration for the peer (`:8082`) transport.
 //!
@@ -33,7 +32,6 @@ use anyhow::Result;
 const ENV_PREFIX: &str = "LUMEN_PEER";
 
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 pub struct PeerTlsConfig {
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -41,7 +39,6 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     fn from(cfg: peer_tls::PeerTlsConfig) -> Self {
         Self {
@@ -53,7 +50,6 @@ impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
@@ -65,7 +61,6 @@ impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
@@ -142,7 +137,6 @@ const SERVING_TLS_ENV: &str = "LUMEN_TLS";
 ///   answer to. Optional; when absent the leaf is accepted for whatever names
 ///   it carries.
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 pub struct ServingTlsConfig {
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -153,7 +147,6 @@ pub struct ServingTlsConfig {
     pub dns_names: Vec<String>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl ServingTlsConfig {
     /// Load from env. `Ok(None)` means the deployment asked for h2c — the
     /// local/kind posture, and the only way to get cleartext on this port.

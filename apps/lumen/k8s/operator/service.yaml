@@ -1,4 +1,3 @@
-# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
 # CODEGEN-BEGIN
 # The operator's own scrape target (#2621).
 #

@@ -1,4 +1,3 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The `Lumen` custom resource (`lumen.dev/v1alpha1`).
 //!
@@ -8,8 +7,8 @@
 //! as a StatefulSet with a durable per-pod `raft` PVC backing the WAL —
 //! `replicasPerShard` only gates raft consensus, never persistence. The
 //! reconcile loop in [`super::reconcile`] turns this spec into StatefulSet,
-//! Service, ConfigMap, HPA (single-member regime only), PDB, and
-//! ServiceAccount objects, garbage-collected via owner references.
+//! Service, ConfigMap, PDB, and ServiceAccount objects, garbage-collected
+//! via owner references.
 
 use std::collections::BTreeMap;
 
@@ -39,7 +38,6 @@ use serde::{Deserialize, Serialize};
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct LumenSpec {
     /// Serving container image, e.g. `lumen:latest`. Required.
     pub image: String,
@@ -50,7 +48,7 @@ pub struct LumenSpec {
 
     /// Physical storage shard count. Data ownership is resolved through the
     /// versioned virtual-bucket map, not permanent `hash % shardCount`
-    /// routing. HPA never changes this value.
+    /// routing.
     #[serde(default = "default_shard_count")]
     pub shard_count: u32,
 
@@ -62,9 +60,9 @@ pub struct LumenSpec {
 
     /// Raft replicas per shard. `1` (default) = a single-member serving
     /// StatefulSet with no raft consensus (still durable — the same
-    /// PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds
-    /// raft-HA: a fixed peer set whose pods inject the downward-API env
-    /// `raft_runtime::cluster` reads (no HPA — raft needs a known membership).
+    /// PVC-backed `raft` volume). `> 1` adds raft-HA: a fixed peer set whose
+    /// pods inject the downward-API env `raft_runtime::cluster` reads (raft
+    /// needs a known membership).
     #[serde(default = "default_replicas_per_shard")]
     pub replicas_per_shard: u32,
 
@@ -156,9 +154,8 @@ pub struct LumenSpec {
     #[serde(default)]
     pub placement: PlacementSpec,
 
-    /// Operator-owned storage reshard policy. HPA never changes storage
-    /// ownership; this policy only prepares/recommends explicit shard topology
-    /// changes.
+    /// Operator-owned storage reshard policy. This policy only
+    /// prepares/recommends explicit shard topology changes.
     #[serde(default)]
     pub reshard_policy: ReshardPolicy,
 
@@ -190,7 +187,19 @@ pub struct LumenSpec {
     /// declarative surface for the existing env-driven behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
+
+    /// Data-plane request body size limit (bytes). Requests with
+    /// `Content-Length` exceeding this are rejected with 413; streamed bodies
+    /// are bounded mid-read. Defaults to 8 MiB. Unset means the server
+    /// default (#2584). Accepted range: 1 MiB (1048576) to 64 MiB (67108864).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_limit_bytes: Option<u64>,
 }
+
+/// Minimum accepted request body limit: 1 MiB (1048576 bytes).
+pub const MIN_BODY_LIMIT_BYTES: u64 = 1024 * 1024;
+/// Maximum accepted request body limit: 64 MiB (67108864 bytes).
+pub const MAX_BODY_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Declarative form of the `LUMEN_ADMISSION_*` env grammar. Every field is
 /// optional and independently maps to one env var; a field left unset never
@@ -198,7 +207,6 @@ pub struct LumenSpec {
 /// "capacity absent = class unbounded" semantics exactly).
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct AdmissionSpec {
     /// Token-bucket capacity for read-class requests
     /// (`LUMEN_ADMISSION_READ_CAPACITY`). Unset leaves reads unbounded.
@@ -240,10 +248,14 @@ pub struct AdmissionSpec {
 /// until this existed there was no way to ask for one: the StatefulSet is
 /// operator-rendered, so a manual `kubectl patch` is reverted on the next
 /// reconcile.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct PlacementSpec {
+    /// Initial GCE machine type for the data plane (e.g. `e2-standard-2`).
+    /// Defaults to `e2-standard-2`. Immutable create-time configuration.
+    #[serde(default = "default_initial_machine_type")]
+    pub initial_machine_type: String,
+
     /// `spec.template.spec.nodeSelector` for the serving pods, e.g.
     /// `{ "cloud.google.com/gke-nodepool": "lumen-ssd" }`. Empty means the
     /// scheduler picks from every node, as before.
@@ -259,6 +271,16 @@ pub struct PlacementSpec {
     pub tolerations: Vec<Toleration>,
 }
 
+impl Default for PlacementSpec {
+    fn default() -> Self {
+        Self {
+            initial_machine_type: default_initial_machine_type(),
+            node_selector: BTreeMap::new(),
+            tolerations: Vec::new(),
+        }
+    }
+}
+
 /// One entry of [`PlacementSpec::tolerations`], mirroring the Kubernetes
 /// `v1.Toleration` fields.
 ///
@@ -266,7 +288,6 @@ pub struct PlacementSpec {
 /// is derived with `schemars`, which `k8s-openapi`'s types do not implement.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct Toleration {
     /// The taint key this tolerates. Empty with `operator: Exists` tolerates
     /// every taint.
@@ -295,7 +316,6 @@ pub struct Toleration {
 /// Versioned virtual-bucket map control-plane metadata.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct ShardMapSpec {
     #[serde(default)]
     pub version: u64,
@@ -309,7 +329,6 @@ pub struct ShardMapSpec {
     pub assignments: Vec<u32>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl Default for ShardMapSpec {
     fn default() -> Self {
         Self {
@@ -323,7 +342,6 @@ impl Default for ShardMapSpec {
 /// Storage-pressure policy for rare, operator-owned shard split workflows.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct ReshardPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_shard_bytes: Option<u64>,
@@ -341,7 +359,6 @@ pub struct ReshardPolicy {
     pub workflow: ReshardWorkflowSpec,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl Default for ReshardPolicy {
     fn default() -> Self {
         Self {
@@ -358,7 +375,6 @@ impl Default for ReshardPolicy {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct ReshardWorkflowSpec {
     #[serde(default)]
     pub phase: ReshardPhase,
@@ -424,7 +440,6 @@ pub struct ReshardWorkflowSpec {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub enum ReshardPhase {
     #[default]
     Complete,
@@ -433,7 +448,6 @@ pub enum ReshardPhase {
     CatchingUp,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl ReshardPhase {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -457,7 +471,6 @@ impl ReshardPhase {
 /// Log output format.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub enum LogFormat {
     /// Structured one-line-per-event JSON (prod/staging).
     Json,
@@ -466,7 +479,6 @@ pub enum LogFormat {
     Pretty,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl LogFormat {
     /// The `LUMEN_LOG_FORMAT` value the serving binary expects.
     pub fn as_env(self) -> &'static str {
@@ -480,7 +492,6 @@ impl LogFormat {
 /// Whether the client API requires a bearer token.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub enum AuthMode {
     /// Open API (dev / trusted network) — an explicit opt-out, never the
     /// default (#2678, R4). Serialized as `disabled` — NOT `off`, which YAML
@@ -497,7 +508,6 @@ pub enum AuthMode {
     Required,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl AuthMode {
     /// The `LUMEN_AUTH` value the serving binary expects.
     pub fn as_env(self) -> &'static str {
@@ -508,14 +518,10 @@ impl AuthMode {
     }
 }
 
-/// Stateless serving-fleet shape: autoscaling bounds + per-pod resources.
+/// Stateless serving-fleet shape: per-pod resources.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct ServingSpec {
-    /// HPA bounds + CPU target.
-    #[serde(default)]
-    pub autoscaling: Autoscaling,
     /// Per-pod CPU, applied as request==limit (Guaranteed QoS). e.g. `"2"`.
     #[serde(default = "default_serving_cpu")]
     pub cpu: String,
@@ -561,11 +567,9 @@ pub struct ServingSpec {
     pub bootstrap: Option<ServingBootstrapSpec>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl Default for ServingSpec {
     fn default() -> Self {
         Self {
-            autoscaling: Autoscaling::default(),
             cpu: default_serving_cpu(),
             memory: default_serving_memory(),
             grace_secs: default_grace_secs(),
@@ -579,7 +583,6 @@ impl Default for ServingSpec {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct ServingBootstrapSpec {
     /// SnapshotV1 JSON seed URI. Use an exact `file://` path or
     /// `s3://bucket/key` object, not a backup prefix. Note (#2514): the
@@ -602,7 +605,6 @@ pub struct ServingBootstrapSpec {
 /// admin-token Secret reference used by its runner CronJob.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct ServingBackupSpec {
     /// Shared flat `schedule`, `destination`, and `retentionSecs` contract.
     #[serde(flatten)]
@@ -614,7 +616,6 @@ pub struct ServingBackupSpec {
     pub admin_token_secret: Option<String>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl std::ops::Deref for ServingBackupSpec {
     type Target = service_backup::ScheduledBackupPolicy;
 
@@ -623,34 +624,9 @@ impl std::ops::Deref for ServingBackupSpec {
     }
 }
 
-/// HPA bounds for the serving fleet.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
-pub struct Autoscaling {
-    /// Floor (also the StatefulSet's apply-time replica count in HPA mode).
-    pub min_replicas: i32,
-    /// Ceiling.
-    pub max_replicas: i32,
-    /// Target average CPU utilization (%) — read QPS proxied by CPU.
-    pub target_cpu_utilization: i32,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
-impl Default for Autoscaling {
-    fn default() -> Self {
-        Self {
-            min_replicas: 3,
-            max_replicas: 12,
-            target_cpu_utilization: 70,
-        }
-    }
-}
-
 /// Status subresource, written back by the reconcile loop.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct LumenStatus {
     /// `Pending | Reconciling | Ready | Degraded`.
     #[serde(default)]
@@ -661,7 +637,7 @@ pub struct LumenStatus {
     /// Ready serving replicas (from the StatefulSet status).
     #[serde(default)]
     pub serving_ready_replicas: i32,
-    /// Desired serving replicas (HPA floor at apply, or the live count).
+    /// Desired serving replicas (apply-time count, or the live count).
     #[serde(default)]
     pub desired_replicas: i32,
     /// Effective shard count.
@@ -671,6 +647,9 @@ pub struct LumenStatus {
     /// can distinguish "complete" from "unknown policy".
     #[serde(default)]
     pub reshard: LumenReshardStatus,
+    /// Data-plane capacity status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<LumenCapacityStatus>,
     /// Last human-readable reconcile message.
     #[serde(default)]
     pub message: String,
@@ -686,9 +665,32 @@ pub struct LumenStatus {
     pub conditions: Vec<service_k8s::Condition>,
 }
 
+/// Data-plane capacity status.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct LumenCapacityStatus {
+    /// Current active GCE machine type.
+    #[serde(default)]
+    pub current_machine_type: String,
+    /// Target GCE machine type.
+    #[serde(default)]
+    pub target_machine_type: String,
+    /// Transition generation count.
+    #[serde(default)]
+    pub transition_generation: u64,
+    /// Capacity lifecycle phase (`Stable` | `CapacityBlocked`).
+    #[serde(default)]
+    pub phase: String,
+    /// Whether the old healthy member remains authoritative during transition/block.
+    #[serde(default)]
+    pub old_member_authoritative: bool,
+    /// Human-readable capacity status message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct LumenReshardStatus {
     #[serde(default)]
     pub phase: String,
@@ -745,7 +747,6 @@ pub struct LumenReshardStatus {
     pub convergence_remediation_restarted_at: Option<u64>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl LumenSpec {
     /// Cross-field invariants the structural schema cannot express (#2678 R7,
     /// #2764).
@@ -759,6 +760,20 @@ impl LumenSpec {
     /// composes — a rule added here holds for both, and a rule added anywhere
     /// else would not.
     pub fn validate(&self) -> Result<(), String> {
+        if !super::capacity::is_valid_direct_gce_machine_type(&self.placement.initial_machine_type)
+        {
+            return Err(format!(
+                "initialMachineType ({}) is not an allowed direct GCE machine type; service-tier names are forbidden",
+                self.placement.initial_machine_type
+            ));
+        }
+        if let Some(limit) = self.body_limit_bytes {
+            if limit < MIN_BODY_LIMIT_BYTES || limit > MAX_BODY_LIMIT_BYTES {
+                return Err(format!(
+                    "bodyLimitBytes ({limit}) must be between {MIN_BODY_LIMIT_BYTES} (1 MiB) and {MAX_BODY_LIMIT_BYTES} (64 MiB) inclusive"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -786,8 +801,7 @@ impl LumenSpec {
             // local copies behind one Service — confirmed empirically on a
             // kind cluster (a write via one pod is invisible on the others;
             // a load-balanced Service returns divergent results for the
-            // same read). Clamp to exactly 1 regardless of the CR's
-            // `serving.autoscaling` bounds; CPU-driven scaling requires
+            // same read). Clamp to exactly 1; multi-replica scaling requires
             // opting into `replicasPerShard > 1` (raft-HA).
             1
         }
@@ -877,7 +891,6 @@ impl LumenSpec {
     /// should_start_split`] / `drive_tick`) that reads the
     /// `blockingConditions` this function writes and acts on them
     /// independently.
-    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
     pub fn reshard_status_with_usage(
         &self,
         shard_usage_bytes: &BTreeMap<u32, u64>,
@@ -982,6 +995,100 @@ fn default_grace_secs() -> u64 {
     30
 }
 fn default_raft_storage() -> String {
-    "20Gi".into()
+    "10Gi".into()
+}
+fn default_initial_machine_type() -> String {
+    "e2-standard-2".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_spec() -> LumenSpec {
+        LumenSpec {
+            image: "lumen:latest".into(),
+            image_pull_policy: None,
+            placement: PlacementSpec::default(),
+            shard_count: 1,
+            shard_map: ShardMapSpec::default(),
+            replicas_per_shard: 1,
+            voter_count: 1,
+            log_format: LogFormat::Pretty,
+            log_level: None,
+            auth: AuthMode::Off,
+            serving: ServingSpec::default(),
+            reshard_policy: ReshardPolicy::default(),
+            observability: false,
+            network_policy: false,
+            admission: None,
+            service_account_name: None,
+            service_account_annotations: BTreeMap::new(),
+            peer_tls_secret: None,
+            serving_tls_secret: None,
+            body_limit_bytes: None,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_valid_direct_gce_machine_type() {
+        let mut spec = test_spec();
+        assert!(spec.validate().is_ok());
+
+        spec.placement.initial_machine_type = "n2-standard-4".into();
+        assert!(spec.validate().is_ok());
+
+        spec.placement.initial_machine_type = "c2-standard-8".into();
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_service_tier_machine_types() {
+        let mut spec = test_spec();
+        for invalid in ["lumen-premium", "bronze", "small", "tier-1", "large"] {
+            spec.placement.initial_machine_type = invalid.into();
+            let err = spec.validate().expect_err("expected error");
+            assert!(
+                err.contains("initialMachineType"),
+                "error message should name initialMachineType: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_omitted_or_in_range_body_limit() {
+        let mut spec = test_spec();
+        assert!(spec.validate().is_ok());
+
+        spec.body_limit_bytes = Some(MIN_BODY_LIMIT_BYTES);
+        assert!(spec.validate().is_ok());
+
+        spec.body_limit_bytes = Some(8 * 1024 * 1024);
+        assert!(spec.validate().is_ok());
+
+        spec.body_limit_bytes = Some(MAX_BODY_LIMIT_BYTES);
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_body_limit() {
+        let mut spec = test_spec();
+        for invalid in [0, 512, MIN_BODY_LIMIT_BYTES - 1, MAX_BODY_LIMIT_BYTES + 1] {
+            spec.body_limit_bytes = Some(invalid);
+            let err = spec.validate().expect_err("expected error");
+            assert!(
+                err.contains("bodyLimitBytes"),
+                "error message should name bodyLimitBytes: {err}"
+            );
+            assert!(
+                err.contains(&MIN_BODY_LIMIT_BYTES.to_string()),
+                "error message should name lower bound: {err}"
+            );
+            assert!(
+                err.contains(&MAX_BODY_LIMIT_BYTES.to_string()),
+                "error message should name upper bound: {err}"
+            );
+        }
+    }
 }
 // CODEGEN-END

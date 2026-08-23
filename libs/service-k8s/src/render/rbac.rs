@@ -1,7 +1,7 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:rbac-children" tracker="#2876,#2889" reason="Own the RBAC child shapes whose failure modes are structural — a cluster-scoped binding that must carry no owner reference and no group subject, and a namespaced Role whose every rule has to name the objects it covers — independent of any one service's policy for when they are required."
 //! RBAC child objects: the cluster-scoped binding a control plane needs for
 //! itself, and the namespaced Role/RoleBinding pair a service renders to hand
-//! one caller a bounded grant.
+//! one caller a bounded grant (#2876, #2889).
 //!
 //! ## Cluster-scoped ([`ClusterRoleBinding`])
 //!
