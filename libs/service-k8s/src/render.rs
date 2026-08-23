@@ -1111,9 +1111,7 @@ mod tests {
             voter_count: 1,
             headless_env_key: "LUMEN_HEADLESS_SERVICE",
             service_account_name: Some("s"),
-            env: vec![
-                json!({ "name": "LUMEN_TOKEN_REGISTRY_FILE", "value": "/var/run/secrets/lumen/token-registry.json" }),
-            ],
+            env: vec![],
             env_from: vec![json!({ "configMapRef": { "name": "s-config" } })],
             resources: requested_resources("2", "4Gi"),
             pod_annotations: Some(json!({
@@ -1150,20 +1148,8 @@ mod tests {
                 "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
             })),
             lifecycle: None,
-            volumes: vec![
-                json!({ "name": "tmp", "emptyDir": {} }),
-                json!({
-                    "name": "token-registry",
-                    "secret": {
-                        "secretName": "lumen-token-registry",
-                        "items": [{ "key": "token-registry.json", "path": "token-registry.json" }],
-                    },
-                }),
-            ],
-            volume_mounts: vec![
-                json!({ "name": "tmp", "mountPath": "/tmp" }),
-                json!({ "name": "token-registry", "mountPath": "/var/run/secrets/lumen", "readOnly": true }),
-            ],
+            volumes: vec![json!({ "name": "tmp", "emptyDir": {} })],
+            volume_mounts: vec![json!({ "name": "tmp", "mountPath": "/tmp" })],
             affinity: Some(dedicated_node_affinity(cx.selector("server"))),
             node_selector: None,
             tolerations: vec![],
@@ -1211,8 +1197,31 @@ mod tests {
         assert_eq!(container["envFrom"][0]["configMapRef"]["name"], "s-config");
         assert_eq!(container["readinessProbe"]["httpGet"]["path"], "/readyz");
         assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
-        assert_eq!(container["volumeMounts"].as_array().unwrap().len(), 3);
-        assert_eq!(container["volumeMounts"][2]["mountPath"], "/var/lib/lumen");
+        let env = container["env"].as_array().unwrap();
+        assert!(!env
+            .iter()
+            .any(|entry| entry["name"] == "LUMEN_TOKEN_REGISTRY_FILE"));
+        let volumes = pod["volumes"].as_array().unwrap();
+        assert_eq!(volumes.len(), 1);
+        assert_eq!(volumes[0]["name"], "tmp");
+        assert_eq!(volumes[0]["emptyDir"], json!({}));
+        assert!(!volumes
+            .iter()
+            .any(|volume| volume["name"] == "token-registry"));
+        assert!(!volumes
+            .iter()
+            .any(|volume| volume["secret"]["secretName"] == "lumen-token-registry"));
+        let mounts = container["volumeMounts"].as_array().unwrap();
+        assert_eq!(mounts.len(), 2);
+        assert_eq!(mounts[0]["name"], "tmp");
+        assert_eq!(mounts[0]["mountPath"], "/tmp");
+        assert_eq!(mounts[1]["name"], "raft");
+        assert_eq!(mounts[1]["mountPath"], "/var/lib/lumen");
+        assert_eq!(mounts[1]["readOnly"], false);
+        assert!(!mounts.iter().any(|mount| mount["name"] == "token-registry"));
+        assert!(!mounts
+            .iter()
+            .any(|mount| mount["mountPath"] == "/var/run/secrets/lumen"));
         assert_eq!(
             ss["spec"]["volumeClaimTemplates"][0]["metadata"]["name"],
             "raft"
