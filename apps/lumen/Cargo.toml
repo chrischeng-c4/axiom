@@ -178,6 +178,15 @@ delegated-auth = ["service-auth/k8s", "dep:reqwest"]
 # OTLP domain metrics plus service-http's shared trace exporter. Runtime export
 # remains dormant unless LUMEN_OTLP_ENDPOINT is set.
 otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "service-http/otlp"]
+# Canonical feature set compiled for published binaries and release containers.
+release = [
+    "otel",
+    "operator",
+    "raft-wal",
+    "self-update",
+    "issue",
+    "delegated-auth",
+]
 
 [dev-dependencies]
 axum-test = "17"
@@ -447,6 +456,10 @@ path = "e2e/protocol_transport_e2e.rs"
 [[test]]
 name = "reindex_stream_e2e"
 path = "e2e/reindex_stream_e2e.rs"
+
+[[test]]
+name = "release_feature_set"
+path = "e2e/release_feature_set.rs"
 
 [[test]]
 name = "reshard_admin_e2e"
