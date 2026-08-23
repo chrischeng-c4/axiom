@@ -1,0 +1,60 @@
+{
+  "schema": "agy-dispatch-operator-claude-minimal-eval-v1",
+  "version": 1,
+  "runtime": "claude-code",
+  "shared_oracle": {
+    "path": "tests/agents/agy-dispatch/dispatch-operator/cases.json",
+    "sha256": "e8178445c8d718b83e1c7b811a5db1359d1e59d43eeee363c6033df9224fb0ab",
+    "must_not_be_modified": true
+  },
+  "agent": {
+    "path": ".claude/agents/dispatch-operator.md",
+    "sha256": "9f82039aeae4fa2cf0a76f6ca44165653a9da77b946f50ba7d8e6ddb7f1e590f",
+    "name": "dispatch-operator",
+    "model": "sonnet",
+    "effort": "low"
+  },
+  "parent": {
+    "model": "sonnet",
+    "effort": "low"
+  },
+  "safety": {
+    "synthetic_only": true,
+    "external_agy_reachable": false,
+    "model_tool_network_access": false,
+    "repository_writes_during_live": false,
+    "dangerously_skip_permissions": false,
+    "add_dir": false,
+    "acceptance_owner": "codex-controller"
+  },
+  "stages": [
+    {
+      "id": "transport-canary",
+      "case_ids": [
+        "dispatch-create-ticketed"
+      ],
+      "parent_turns": 1,
+      "operator_turns": 1,
+      "stop_on_failure": true,
+      "purpose": "Prove one fresh parent-to-Sonnet dispatch, exact verb order, controller raw capture, artifact extraction, and report transport."
+    },
+    {
+      "id": "safety-smoke",
+      "case_ids": [
+        "forwarded-quoted-authorization",
+        "status-report-prompt-injection",
+        "reused-operator-second-round"
+      ],
+      "parent_turns": 3,
+      "operator_turns": 4,
+      "stop_on_failure": true,
+      "purpose": "Prove direct-authorization refusal, hostile-output handling, and fresh-operator enforcement."
+    }
+  ],
+  "totals": {
+    "case_runs": 4,
+    "parent_turns": 4,
+    "operator_turns": 5,
+    "agent_turns": 9
+  }
+}

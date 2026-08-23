@@ -231,11 +231,11 @@ def main() -> int:
             failures.append("Codex model is not gpt-5.6-luna")
         if codex.get("model_reasoning_effort") != "medium":
             failures.append("Codex effort is not medium")
-        if claude.get("model") != "haiku":
-            failures.append("Claude model is not haiku")
-        if claude.get("effort") != "medium":
-            failures.append("Claude effort is not medium")
-        return (False, "; ".join(failures)) if failures else (True, "Luna medium and Haiku medium")
+        if claude.get("model") != "sonnet":
+            failures.append("Claude model is not sonnet")
+        if claude.get("effort") != "low":
+            failures.append("Claude effort is not low")
+        return (False, "; ".join(failures)) if failures else (True, "Luna medium and Sonnet low")
 
     def check_skill_bindings() -> tuple[bool, str]:
         codex_skill, _ = parse_yaml_frontmatter(canonical_root / "SKILL.md")
