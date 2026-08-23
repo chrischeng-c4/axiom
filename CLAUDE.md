@@ -101,16 +101,30 @@ skills are reached from the phase that prints them, not chosen, and
 Repository operating policy. It does not override a host's own approval gate
 for sending data outside the machine.
 
-`.claude/skills/agy-dispatch/` delegates one frozen, bounded task to an external
-worker from a clean isolated worktree. Send only task-required repository
-material, never secrets.
+When a bounded task can use an external worker, prefer one fresh
+`dispatch-operator` subagent. Its model is Haiku at medium reasoning. Create it
+only after the user authorizes the exact headless AGY payload. Make it directly
+inherit that user turn. Do not reuse an older operator. Do not forward
+authorization through a controller message.
 
-The controller keeps the issue contract, the design, the oracle, the independent
-review, the tests, git integration, tracker mutation, and acceptance. A worker
-does not commit, push, approve itself, comment on an issue, or close one.
-Ticketed work reuses one worker conversation for that issue and its bounded
-corrections; unticketed work is one-shot and cannot resume. Do not run workers
-with overlapping write ownership in parallel.
+The controller freezes the profile, task key, action, snapshot mode, and all
+input digests before dispatch. The snapshot mode is `create`, `reuse`, or
+`refresh`. The operator only checks those inputs and runs the exact matching
+`doctor` / `snapshot` / `dispatch` / `resume` / status sequence. It must return
+`HANDOFF_INCOMPLETE` if the authorization or frozen handoff is incomplete.
+
+The operator never authors the contract, oracle, injection, or prompt. It does
+not verify or accept the result. It does not create or change a permission or
+worktree. It does not run Git, tracker, publication, or cleanup actions.
+
+The controller owns the profile, task contract, oracle, injection, prompt,
+worktree creation, independent verification, semantic acceptance, Git, tracker
+changes, publication, and cleanup. Follow `.claude/skills/agy-dispatch/` as the
+source of truth for the AGY model, Project, permission, snapshot, command, and
+write rules. Run every adapter verb from the repository root as
+`python3 scripts/agy_dispatch.py ...`. Do not use an installed, skill-local, or
+legacy dispatcher copy. Send only task-required repository material. Never send
+secrets. Do not run workers with overlapping write ownership in parallel.
 
 The `$copilot-dispatch` this paragraph named until 2026-08-17 has never existed
 in this checkout, so the policy covers `agy-dispatch` and whatever is added

@@ -318,12 +318,10 @@ Block 1 exists because an agent that re-derives what you already measured will
 sometimes derive it wrong, and you will not notice. It is the one thing both
 independently-designed dispatch briefs in this ecosystem put first and lint.
 
-**Consumer.** The change-point list *is* the write contract a dispatch round is
-built from: `.claude/skills/agy-dispatch/scripts/from_wi.py:533` projects each
-path straight into `make_profile.py --write`, and `oracle_findings` refuses a
-round whose brief and profile disagree about that set. The section as a whole
-feeds `leg.change_digest`, so an edit to it invalidates any review verdict
-recorded against the old bytes.
+**Consumer.** This is policy only. The controller owns the mapping from the
+change-point list to the frozen dispatch profile's `allowed_repo_writes`. It
+must copy those paths exactly and refuse a mismatch before launch. No current
+repository script builds or enforces this write contract.
 
 **Refused when** a file path appears without a line or symbol; the current state
 is described with "should"/"probably"/"appears to"; there are zero premises; or

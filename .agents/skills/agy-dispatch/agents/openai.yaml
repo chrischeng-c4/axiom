@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGY Dispatch"
+  short_description: "Dispatch ticketed or one-shot AGY work safely."
+  default_prompt: "Dispatch one ticketed or one-shot task to AGY with gemini-3.7-flash-high from a nested in-Project task worktree under one persistent Project; freeze the command/write/cwd contract and independently verify every command, write, and report."
