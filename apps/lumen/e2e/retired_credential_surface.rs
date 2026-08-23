@@ -16,17 +16,12 @@
 //!
 //! A surviving mention is only acceptable when it is *about* the removal: a
 //! negative assertion whose deletion would delete the proof, or a migration
-//! note describing behaviour that is gone. Those are listed below, each with
-//! the reason it survives and the exact number of lines it may occupy.
+//! note describing behaviour that is gone.
 //!
-//! The line count is the part that matters. A bare path exclusion turns a file
-//! into a blind spot — the very first place a re-grown credential path would
-//! land, because the gate already agreed not to look there. Pinning the count
-//! means a file that is allowed two retirement notes cannot quietly acquire a
-//! third line that hands someone a credential recipe. Changing a count is a
-//! deliberate edit that shows up in review; that is the whole point. A stale
-//! entry — one that matches nothing — fails too, so the list shrinks as the
-//! notes age out. An empty list is the goal.
+//! Two exact multisets hold the reviewed production and evidence sites. A row
+//! contains its repository path, matched symbols, and full line after
+//! whitespace normalization. An extra, missing, moved, changed, or duplicate
+//! row fails. This makes every change to the surviving evidence visible.
 //!
 //! # Scope
 //!
@@ -36,9 +31,8 @@
 //!   its registry types. Those symbols are legitimately alive.
 //! - `libs/cli-std` — `apps/beam` still consumes the credential helpers. lumen
 //!   stopped calling them; nothing was removed.
-//! - `libs/service-k8s` — one test fixture uses a retired variable name as
-//!   example env, not product wiring. It also belongs to a paused session's
-//!   modified set and must not be touched from this chain (#2880).
+//! - `libs/service-k8s` — shared render helpers serve other apps and are
+//!   checked by that library's own tests. This app gate does not own them.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -73,85 +67,172 @@ fn retired_symbols() -> Vec<Symbol> {
     ]
 }
 
-/// A file that may keep a bounded number of retirement mentions, and why.
-struct Allowance {
-    /// Repository-relative path. A trailing `/` makes it a directory prefix.
-    path: &'static str,
-    /// Number of *lines* — not matches — the site may contain. A line naming
-    /// two retired symbols is one line.
-    lines: usize,
-    reason: &'static str,
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct Row {
+    path: String,
+    symbols: Vec<String>,
+    line: String,
 }
 
-const ALLOWANCES: &[Allowance] = &[
-    Allowance {
-        path: "apps/lumen/src/operator/mod.rs",
-        lines: 2,
-        reason: "Negative assertions: the rendered operator manifest is checked for the absence \
-                 of the retired field and of the CSI projection it drove. Deleting these deletes \
-                 the proof.",
-    },
-    Allowance {
-        path: "apps/lumen/src/operator/fleet.rs",
-        lines: 2,
-        reason: "Negative assertions. The fleet is the one path that takes free-form spec JSON, \
-                 so a platform team's stale defaults would otherwise be merged in and dropped \
-                 without a word. This test feeds each retired field in and requires a rejection.",
-    },
-    Allowance {
-        path: "apps/lumen/src/spec.rs",
-        lines: 2,
-        reason: "Migration note in the shipped specification: the fields are named so a reader \
-                 with an old CR learns their apply will be rejected by strict decoding rather \
-                 than silently ignored. Naming them is the service the note performs.",
-    },
-    Allowance {
-        path: "apps/lumen/src/bin/lumen.rs",
-        lines: 1,
-        reason: "A comment pointing at the shared cli-std helpers, which still exist and still \
-                 have their own tests there because another app consumes them. It records that \
-                 lumen no longer calls them, and names the gate that keeps it that way.",
-    },
-    Allowance {
-        path: "apps/lumen/docs/deployment-handoff.md",
-        lines: 2,
-        reason: "Migration note for operators holding a CR written against the old schema.",
-    },
-    Allowance {
-        path: "apps/lumen/examples/lumen-cr.yaml",
-        lines: 2,
-        reason: "Migration note in the example CR, where someone copying an old manifest will \
-                 actually read it.",
-    },
-    Allowance {
-        path: "apps/lumen/e2e/cli_convention.rs",
-        lines: 3,
-        reason: "Negative assertions on the CLI's help surface for the snapshot verbs.",
-    },
-    Allowance {
-        path: "apps/lumen/e2e/cli_credential_paths_retired.rs",
-        lines: 2,
-        reason: "#2873's gate. It names the retired header recipe in prose to record what the \
-                 committed OpenAPI snapshot used to publish, and forbids it in code.",
-    },
-    Allowance {
-        path: "apps/lumen/e2e/operator_render.rs",
-        lines: 9,
-        reason: "Negative assertions across the rendered StatefulSet, its env, and the checked-in \
-                 CRD YAML.",
-    },
-    Allowance {
-        path: "apps/lumen/e2e/operator_retired_credential_projection.rs",
-        lines: 14,
-        reason: "#2870's gate — the file whose entire purpose is proving the projection is gone. \
-                 It necessarily names every symbol it forbids.",
-    },
-    Allowance {
-        path: "apps/lumen/e2e/spec_cli.rs",
-        lines: 5,
-        reason: "Negative assertions on the generated specification and its committed snapshot.",
-    },
-];
+#[derive(Clone)]
+struct Inventory {
+    production: Vec<Row>,
+    evidence: Vec<Row>,
+}
+
+// Symbol markers use their retired_symbols() indexes. The source therefore
+// contains no literal retired symbol and cannot match itself.
+const EXPECTED_ROWS: &str = r#"
+P|apps/lumen/src/bin/lumen.rs|5|// shared module (`select_token`, `cr_@5@`, `secret_data_bytes`)
+P|apps/lumen/src/operator/fleet.rs|4|json!({ "@4@": "lumen-tokens" }),
+P|apps/lumen/src/operator/fleet.rs|6|json!({ "@6@": ["https://lumen.example.com"] }),
+P|apps/lumen/src/operator/mod.rs|4,6|for retired in ["@6@", "identities", "@4@"] {
+P|apps/lumen/src/operator/mod.rs|4,8|assert!(!yaml.contains("@8@"), "{yaml}");
+P|apps/lumen/src/spec.rs|4|The CRD configures **no** credential source. `spec.@4@`,
+P|apps/lumen/src/spec.rs|6|`spec.identities` and `spec.@6@` are gone (#2872): a Lumen CR
+E|apps/lumen/e2e/cli_convention.rs|4|"@4@",
+E|apps/lumen/e2e/cli_convention.rs|4,8|"@8@",
+E|apps/lumen/e2e/cli_convention.rs|6|"@6@",
+E|apps/lumen/e2e/cli_credential_paths_retired.rs|0|/// telling readers to send `Authorization: Bearer <@0@>` for as long as
+E|apps/lumen/e2e/cli_credential_paths_retired.rs|5|needle(&["resolve_cr_@5@", "("]),
+E|apps/lumen/e2e/operator_render.rs|1|assert!(!names.contains(&"@1@".to_string()));
+E|apps/lumen/e2e/operator_render.rs|1|"@1@",
+E|apps/lumen/e2e/operator_render.rs|2|"@2@",
+E|apps/lumen/e2e/operator_render.rs|4|// #2870: the CRD no longer teaches the retired registry. `@4@` and
+E|apps/lumen/e2e/operator_render.rs|1|"@1@",
+E|apps/lumen/e2e/operator_render.rs|2|"@2@",
+E|apps/lumen/e2e/operator_render.rs|6|/// checked for came from `spec.@6@`, and both are gone. The
+E|apps/lumen/e2e/operator_render.rs|3|"@3@",
+E|apps/lumen/e2e/operator_render.rs|1|"@1@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|6|"@6@": ["https://lumen.acme.internal"],
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|4|json!({ "auth": auth, "@4@": "lumen-tokens" }),
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|4|"@4@": "lumen-tokens",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|6|"@6@": ["https://lumen.acme.internal"],
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|4,8|"@8@": "lumen-tokens-spc",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|2|"@2@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|1|"@1@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|3|"@3@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|1|"@1@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|2|"@2@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|3|"@3@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|4|"@4@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|4,8|"@8@",
+E|apps/lumen/e2e/operator_retired_credential_projection.rs|6|"@6@",
+E|apps/lumen/e2e/spec_cli.rs|4|"@4@",
+E|apps/lumen/e2e/spec_cli.rs|1|"@1@",
+E|apps/lumen/e2e/spec_cli.rs|3|!storage.contains("@3@"),
+E|apps/lumen/e2e/spec_cli.rs|1|for retired in ["Authorization: Bearer", "@1@"] {
+E|apps/lumen/e2e/spec_cli.rs|1|!q.contains("@1@"),
+E|apps/lumen/examples/lumen-cr.yaml|4|# SubjectAccessReview. A CR that still set `@4@`, `identities` or
+E|apps/lumen/examples/lumen-cr.yaml|6|# `@6@` is rejected by the API server, not silently ignored.
+"#;
+
+fn expected_inventory() -> Inventory {
+    let symbols = retired_symbols();
+    let mut inventory = Inventory {
+        production: Vec::new(),
+        evidence: Vec::new(),
+    };
+
+    for source in EXPECTED_ROWS.lines().filter(|line| !line.is_empty()) {
+        let mut columns = source.splitn(4, '|');
+        let category = columns.next().expect("expected row category");
+        let path = columns.next().expect("expected row path");
+        let indexes = columns.next().expect("expected row symbol indexes");
+        let mut line = columns
+            .next()
+            .expect("expected normalized line")
+            .to_string();
+        let mut matched = Vec::new();
+        for raw_index in indexes.split(',') {
+            let index: usize = raw_index.parse().expect("valid expected symbol index");
+            let symbol = symbols.get(index).expect("known expected symbol index");
+            line = line.replace(&format!("@{index}@"), &symbol.text);
+            matched.push(symbol.text.clone());
+        }
+        assert!(!line.contains('@'), "unresolved symbol marker in {path}");
+        let row = Row {
+            path: path.to_string(),
+            symbols: matched,
+            line,
+        };
+        match category {
+            "P" => inventory.production.push(row),
+            "E" => inventory.evidence.push(row),
+            other => panic!("unknown expected row category {other}"),
+        }
+    }
+
+    assert_eq!(inventory.production.len(), 7, "production inventory");
+    assert_eq!(inventory.evidence.len(), 35, "evidence inventory");
+    assert!(
+        inventory
+            .production
+            .iter()
+            .all(|row| row.path.starts_with("apps/lumen/src/")),
+        "production inventory path"
+    );
+    assert!(
+        inventory
+            .evidence
+            .iter()
+            .all(|row| !row.path.starts_with("apps/lumen/src/")),
+        "evidence inventory path"
+    );
+    inventory
+}
+
+fn counts(rows: &[Row]) -> BTreeMap<Row, usize> {
+    let mut counts = BTreeMap::new();
+    for row in rows {
+        *counts.entry(row.clone()).or_default() += 1;
+    }
+    counts
+}
+
+fn compare_category(name: &str, actual: &[Row], expected: &[Row], errors: &mut Vec<String>) {
+    let actual = counts(actual);
+    let expected = counts(expected);
+    for (row, actual_count) in &actual {
+        let expected_count = expected.get(row).copied().unwrap_or(0);
+        if *actual_count > expected_count {
+            errors.push(format!(
+                "extra {name} row x{}: {} | [{}] | {}",
+                actual_count - expected_count,
+                row.path,
+                row.symbols.join(", "),
+                row.line
+            ));
+        }
+    }
+    for (row, expected_count) in &expected {
+        let actual_count = actual.get(row).copied().unwrap_or(0);
+        if *expected_count > actual_count {
+            errors.push(format!(
+                "missing {name} row x{}: {} | [{}] | {}",
+                expected_count - actual_count,
+                row.path,
+                row.symbols.join(", "),
+                row.line
+            ));
+        }
+    }
+}
+
+fn verify_inventory(actual: &[Row], expected: &Inventory) -> Result<(), String> {
+    let (production, evidence): (Vec<_>, Vec<_>) = actual
+        .iter()
+        .cloned()
+        .partition(|row| row.path.starts_with("apps/lumen/src/"));
+    let mut errors = Vec::new();
+    compare_category("production", &production, &expected.production, &mut errors);
+    compare_category("evidence", &evidence, &expected.evidence, &mut errors);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
 
 // ---------------------------------------------------------------------------
 
@@ -264,17 +345,9 @@ fn is_text(path: &Path) -> bool {
     )
 }
 
-/// One line that names at least one retired symbol.
-struct Hit {
-    path: String,
-    line_no: usize,
-    line: String,
-    symbols: Vec<String>,
-}
-
-fn scan(root: &Path) -> Vec<Hit> {
+fn scan(root: &Path) -> Vec<Row> {
     let symbols = retired_symbols();
-    let mut hits = Vec::new();
+    let mut rows = Vec::new();
     for file in swept_files(root) {
         let Ok(text) = fs::read_to_string(&file) else {
             continue;
@@ -284,33 +357,22 @@ fn scan(root: &Path) -> Vec<Hit> {
             .unwrap_or(&file)
             .to_string_lossy()
             .replace('\\', "/");
-        for (idx, line) in text.lines().enumerate() {
+        for line in text.lines() {
             let found: Vec<String> = symbols
                 .iter()
                 .filter(|s| s.found_in(line))
                 .map(|s| s.text.clone())
                 .collect();
             if !found.is_empty() {
-                hits.push(Hit {
+                rows.push(Row {
                     path: rel.clone(),
-                    line_no: idx + 1,
-                    line: line.trim().chars().take(160).collect(),
                     symbols: found,
+                    line: line.split_whitespace().collect::<Vec<_>>().join(" "),
                 });
             }
         }
     }
-    hits
-}
-
-fn allowance_for(path: &str) -> Option<&'static Allowance> {
-    ALLOWANCES.iter().find(|a| {
-        if let Some(prefix) = a.path.strip_suffix('/') {
-            path.starts_with(prefix)
-        } else {
-            path == a.path
-        }
-    })
+    rows
 }
 
 // ---------------------------------------------------------------------------
@@ -363,67 +425,57 @@ fn the_short_env_var_does_not_match_inside_the_long_one() {
     );
 }
 
-/// AC3 + AC4: nothing survives that is not a named, reasoned, bounded
-/// exclusion — and every exclusion still describes something real.
+/// AC3 + AC4: every surviving production and evidence row is exact.
 #[test]
 fn no_retired_credential_symbol_survives_unaccounted() {
     let root = repo_root();
-    let hits = scan(&root);
-
-    let mut per_path: BTreeMap<String, Vec<&Hit>> = BTreeMap::new();
-    for hit in &hits {
-        per_path.entry(hit.path.clone()).or_default().push(hit);
+    let rows = scan(&root);
+    let expected = expected_inventory();
+    if let Err(error) = verify_inventory(&rows, &expected) {
+        panic!("the retired credential inventory does not match the tree:\n{error}");
     }
+}
 
-    let mut unaccounted = Vec::new();
-    let mut counted: BTreeMap<&'static str, usize> = BTreeMap::new();
-    for (path, path_hits) in &per_path {
-        match allowance_for(path) {
-            Some(allowance) => *counted.entry(allowance.path).or_default() += path_hits.len(),
-            None => {
-                for hit in path_hits {
-                    unaccounted.push(format!(
-                        "  {}:{} [{}]\n      {}",
-                        hit.path,
-                        hit.line_no,
-                        hit.symbols.join(", "),
-                        hit.line
-                    ));
-                }
-            }
-        }
-    }
+#[test]
+fn exact_inventory_rejects_required_mutations() {
+    let baseline = scan(&repo_root());
+    let expected = expected_inventory();
+    assert!(verify_inventory(&baseline, &expected).is_ok());
 
+    let mut eighth_production = baseline.clone();
+    let mut extra = expected.production[0].clone();
+    extra.path = "apps/lumen/src/extra.rs".to_string();
+    eighth_production.push(extra);
+    assert_ne!(eighth_production, baseline, "production fixture changed");
     assert!(
-        unaccounted.is_empty(),
-        "the retired credential model survives at {} site(s) with no stated reason.\n\
-         Delete the site, or add it to ALLOWANCES with the reason it is about the removal \
-         rather than a live instruction:\n{}",
-        unaccounted.len(),
-        unaccounted.join("\n")
+        verify_inventory(&eighth_production, &expected).is_err(),
+        "an eighth production row must fail"
     );
 
-    let mut budget_errors = Vec::new();
-    for allowance in ALLOWANCES {
-        let actual = counted.get(allowance.path).copied().unwrap_or(0);
-        if actual == 0 {
-            budget_errors.push(format!(
-                "  {} is excluded but names nothing any more — delete the entry.\n      (was: {})",
-                allowance.path, allowance.reason
-            ));
-        } else if actual != allowance.lines {
-            budget_errors.push(format!(
-                "  {} is allowed {} line(s) but has {}.\n      reason on file: {}",
-                allowance.path, allowance.lines, actual, allowance.reason
-            ));
-        }
-    }
-
+    let mut moved_evidence = baseline.clone();
+    let evidence = moved_evidence
+        .iter_mut()
+        .find(|row| !row.path.starts_with("apps/lumen/src/"))
+        .expect("live evidence row");
+    evidence.path = "apps/lumen/e2e/moved_surface.rs".to_string();
+    assert_ne!(moved_evidence, baseline, "evidence fixture changed");
     assert!(
-        budget_errors.is_empty(),
-        "the exclusion list no longer matches the tree. Every entry must name something real \
-         and pin how much of it there is:\n{}",
-        budget_errors.join("\n")
+        verify_inventory(&moved_evidence, &expected).is_err(),
+        "moving evidence to a new path must fail"
+    );
+
+    let mut stale_expected = expected.clone();
+    let mut stale = stale_expected.evidence[0].clone();
+    stale.path = "apps/lumen/e2e/stale_surface.rs".to_string();
+    stale_expected.evidence.push(stale);
+    assert_ne!(
+        stale_expected.evidence.len(),
+        expected.evidence.len(),
+        "stale expected fixture changed"
+    );
+    assert!(
+        verify_inventory(&baseline, &stale_expected).is_err(),
+        "an expected row with no live counterpart must fail"
     );
 }
 
