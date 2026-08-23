@@ -34,6 +34,7 @@ FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=builder /usr/local/bin/lumen /usr/local/bin/lumen
 # 7373 = client API. WAL storage is embedded locally or Lumen-owned raft state.
 EXPOSE 7373
+ENV LUMEN_HOST=0.0.0.0
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]
 # CODEGEN-END

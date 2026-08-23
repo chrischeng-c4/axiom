@@ -23,12 +23,12 @@ Add `--data-dir <path>` when the index must survive a process restart.
 
 ### Container
 
-The current image starts `lumen serve`, whose default bind address is
-`127.0.0.1`. Set the container bind address explicitly when publishing a port.
+Shipped container images set `LUMEN_HOST=0.0.0.0` by default so published
+ports are reachable from the host without extra environment variables. The bare
+binary continues to default to `127.0.0.1`.
 
 ```bash
 docker run --rm -p 127.0.0.1:7373:7373 \
-  -e LUMEN_HOST=0.0.0.0 \
   -e LUMEN_AUTH=off \
   ghcr.io/chrischeng-c4/lumen:<version>
 ```
@@ -40,14 +40,13 @@ docker volume create lumen-data
 
 docker run --rm -p 127.0.0.1:7373:7373 \
   -v lumen-data:/var/lib/lumen \
-  -e LUMEN_HOST=0.0.0.0 \
   -e LUMEN_AUTH=off \
   -e LUMEN_DATA_DIR=/var/lib/lumen/data \
   ghcr.io/chrischeng-c4/lumen:<version>
 ```
 
-The process listens on every container interface. The published host port still
-listens only on `127.0.0.1`.
+The container process listens on every container interface by default. The
+published host port still listens only on `127.0.0.1`.
 
 Check the process:
 

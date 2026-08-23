@@ -95,11 +95,12 @@ docs-only change does not claim that product gates ran.
 | default features and refusal paths | `cargo test -p lumen` |
 | operator and delegated-auth e2e targets | `cargo test -p lumen --features "operator delegated-auth"` |
 | release feature set | `cargo test -p lumen --locked --features release --test release_feature_set` |
+| standalone container bind smoke | `bash apps/lumen/scripts/standalone-container-smoke.sh bind` |
 
-All three rows are required for a full Lumen behavior claim. None is a superset
+All four rows are required for a full Lumen behavior claim. None is a superset
 of the others. Do not replace the second or third row with `--all-features`;
 enabling `jieba` changes the behavior that the fallback test is meant to check.
 
-Run narrower named tests during development. Run all three rows before claiming
+Run narrower named tests during development. Run all four rows before claiming
 that an app behavior change is complete. Use the exact capability gates in the
 README when the claim is narrower or requires a live-cluster script.

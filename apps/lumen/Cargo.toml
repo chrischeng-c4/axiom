@@ -549,6 +549,10 @@ name = "stability_lumen_long_running_stability_resource_leak"
 path = "e2e/stability_lumen_long_running_stability_resource_leak.rs"
 
 [[test]]
+name = "standalone_container_contract"
+path = "e2e/standalone_container_contract.rs"
+
+[[test]]
 name = "stats_metadata_e2e"
 path = "e2e/stats_metadata_e2e.rs"
 
