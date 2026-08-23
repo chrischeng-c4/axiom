@@ -15,17 +15,152 @@ use std::collections::BTreeSet;
 
 const AW_TOML: &str = include_str!("../aw.toml");
 const README: &str = include_str!("../README.md");
-/// The canonical capability contract. #2887 moved it out of README into
-/// `CAPABILITIES.md`; the three-META-doc decision moved it back, into README's
-/// own `## Capabilities` section. The shape #2887 gave it — stable IDs, claim
-/// bullets, per-capability verification — is unchanged, so this gate reads the
-/// same text from the file that now holds it.
-const CAPABILITIES: &str = README;
 const CARGO_TOML: &str = include_str!("../Cargo.toml");
 const CLI: &str = include_str!("../src/bin/lumen.rs");
 const API: &str = include_str!("../src/api.rs");
 const AUTH: &str = include_str!("../src/auth.rs");
 const OPERATOR_RENDER: &str = include_str!("../src/operator/render.rs");
+
+const CAPABILITY_CONTRACT: &[(&str, &str)] = &[
+    ("Indexing", "indexing"),
+    ("Querying", "querying"),
+    (
+        "Kubernetes-native deployment",
+        "kubernetes-native-deployment",
+    ),
+    (
+        "Managed Fleet materialization",
+        "managed-fleet-materialization",
+    ),
+    ("Security and access", "security-hardening"),
+    ("Scaling and availability", "scaling-availability"),
+    ("Durability and recovery", "durability-recovery"),
+    ("Operations and observability", "operations-observability"),
+    (
+        "API, CLI, and agent integration",
+        "api-cli-agent-integration",
+    ),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapabilityContractError {
+    MissingCapabilitiesSection,
+    MissingSupportingDocumentsBoundary,
+    Preamble,
+    H3Headings,
+    CapabilityIndexRows,
+    StableId(&'static str),
+}
+
+fn normalize_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn capability_body(readme: &str) -> Result<&str, CapabilityContractError> {
+    let (_, after_heading) = readme
+        .split_once("## Capabilities\n")
+        .ok_or(CapabilityContractError::MissingCapabilitiesSection)?;
+    let next_h2 = after_heading
+        .find("\n## ")
+        .ok_or(CapabilityContractError::MissingSupportingDocumentsBoundary)?;
+    let (body, boundary) = after_heading.split_at(next_h2);
+    if !boundary.starts_with("\n## Supporting documents") {
+        return Err(CapabilityContractError::MissingSupportingDocumentsBoundary);
+    }
+    Ok(body)
+}
+
+fn capability_sections(body: &str) -> Vec<(String, String)> {
+    let mut sections = Vec::<(String, String)>::new();
+    for line in body.lines() {
+        if let Some(title) = line.strip_prefix("### ") {
+            sections.push((title.to_string(), String::new()));
+        } else if let Some((_, prose)) = sections.last_mut() {
+            prose.push_str(line);
+            prose.push('\n');
+        }
+    }
+    sections
+}
+
+fn validate_capability_contract(readme: &str) -> Result<(), CapabilityContractError> {
+    let body = capability_body(readme)?;
+    let sections = capability_sections(body);
+
+    let expected_headings: Vec<&str> = std::iter::once("Capability index")
+        .chain(CAPABILITY_CONTRACT.iter().map(|(heading, _)| *heading))
+        .collect();
+    let actual_headings: Vec<&str> = sections
+        .iter()
+        .map(|(heading, _)| heading.as_str())
+        .collect();
+    if actual_headings != expected_headings {
+        return Err(CapabilityContractError::H3Headings);
+    }
+
+    let preamble = body.split("### ").next().unwrap_or_default();
+    if !normalize_whitespace(preamble).contains(
+        "Every entry below is a Lumen product capability. The list has no primary and secondary classes.",
+    ) {
+        return Err(CapabilityContractError::Preamble);
+    }
+
+    let actual_index_rows: Vec<(String, String)> = sections[0]
+        .1
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if !line.starts_with('|') || line.starts_with("|---") {
+                return None;
+            }
+            let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+            if cells.len() < 2 || cells[0] == "Capability" {
+                return None;
+            }
+            Some((cells[0].to_string(), cells[1].to_string()))
+        })
+        .collect();
+    let expected_index_rows: Vec<(String, String)> = CAPABILITY_CONTRACT
+        .iter()
+        .map(|(heading, id)| (heading.to_string(), format!("`{id}`")))
+        .collect();
+    if actual_index_rows != expected_index_rows {
+        return Err(CapabilityContractError::CapabilityIndexRows);
+    }
+
+    for (offset, (_, id)) in CAPABILITY_CONTRACT.iter().enumerate() {
+        let marker = format!("- ID: `{id}`");
+        let count = sections[offset + 1]
+            .1
+            .lines()
+            .filter(|line| *line == marker)
+            .count();
+        if count != 1 {
+            return Err(CapabilityContractError::StableId(id));
+        }
+    }
+
+    Ok(())
+}
+
+fn normalized_capability_section(readme: &str, title: &str) -> String {
+    let body = capability_body(readme).expect("README must carry the capability contract");
+    let sections = capability_sections(body);
+    let (_, prose) = sections
+        .iter()
+        .find(|(heading, _)| heading == title)
+        .unwrap_or_else(|| panic!("README capability section is missing {title}"));
+    normalize_whitespace(prose)
+}
+
+fn remove_once(input: &str, needle: &str) -> String {
+    assert_eq!(
+        input.matches(needle).count(),
+        1,
+        "negative fixture must replace exactly one occurrence of {needle:?}"
+    );
+    input.replacen(needle, "", 1)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Owner {
@@ -63,66 +198,51 @@ fn trait_profile_requires_shared_service_baselines() {
         );
     }
 
-    // Each trait's baseline still has to land somewhere nameable. Under the
-    // two-root contract that place is a capability heading plus its stable ID
-    // — the ID is what claims and gates reference, so a heading renamed
-    // without its ID is a doc edit, and an ID that disappears is a broken
-    // contract.
-    for (heading, id) in [
-        ("#### Indexing", "`indexing`"),
-        ("#### Querying", "`querying`"),
-        (
-            "#### Kubernetes-Native Deployment",
-            "`kubernetes-native-deployment`",
-        ),
-        ("#### Security & Access", "`security-hardening`"),
-        ("#### Scaling & Availability", "`scaling-availability`"),
-        ("#### Durability & Recovery", "`durability-recovery`"),
-        (
-            "#### Operations & Observability",
-            "`operations-observability`",
-        ),
-        (
-            "#### API, CLI & Agent Integration",
-            "`api-cli-agent-integration`",
-        ),
-    ] {
-        assert!(
-            CAPABILITIES.contains(heading),
-            "trait-derived baseline is missing {heading}"
-        );
-        assert!(
-            CAPABILITIES.contains(&format!("ID: {id}")),
-            "{heading} must keep its stable capability ID {id}"
-        );
-        assert!(
-            CAPABILITIES.contains(&format!("| {id} |")),
-            "{heading} must stay listed in the Capability Index as {id}"
-        );
+    if let Err(error) = validate_capability_contract(README) {
+        panic!("README capability contract is invalid: {error:?}");
     }
+}
 
-    // The two roots are the whole taxonomy; a third root would put a capability
-    // somewhere neither `aw capability` nor a reader looks.
-    for root in ["### Core Features", "### Non-Core Features"] {
-        assert!(
-            CAPABILITIES.contains(root),
-            "capability root {root} is missing"
-        );
-    }
+#[test]
+fn capability_contract_rejects_missing_heading_id_and_index_row() {
+    assert_eq!(validate_capability_contract(README), Ok(()));
 
-    // This used to require README to point at `CAPABILITIES.md` rather than
-    // restate it. With the contract back in README the risk inverts: not that
-    // the pointer is missing, but that a second copy appears — a re-created
-    // `CAPABILITIES.md`, or an index pasted in beside the real one. Either
-    // gives a reader two contracts and no way to tell which one binds.
+    let missing_heading = remove_once(README, "### Managed Fleet materialization\n");
     assert_eq!(
-        README.matches("### Capability Index").count(),
-        1,
-        "the capability index must appear exactly once"
+        validate_capability_contract(&missing_heading),
+        Err(CapabilityContractError::H3Headings)
     );
-    assert!(
-        !README.contains("CAPABILITIES.md"),
-        "the contract lives in this file; a pointer at a separate one means there are two"
+
+    let missing_id = remove_once(README, "- ID: `managed-fleet-materialization`\n");
+    assert_eq!(
+        validate_capability_contract(&missing_id),
+        Err(CapabilityContractError::StableId(
+            "managed-fleet-materialization"
+        ))
+    );
+
+    let index_row = README
+        .lines()
+        .find(|line| {
+            line.starts_with("| Managed Fleet materialization | `managed-fleet-materialization` |")
+        })
+        .expect("README must carry the Managed Fleet capability index row");
+    let missing_index_row = remove_once(README, &format!("{index_row}\n"));
+    assert_eq!(
+        validate_capability_contract(&missing_index_row),
+        Err(CapabilityContractError::CapabilityIndexRows)
+    );
+
+    let boundary_marker = "\n### Security and access\n";
+    assert_eq!(README.matches(boundary_marker).count(), 1);
+    let unexpected_h2 = README.replacen(
+        boundary_marker,
+        "\n## Unexpected boundary\n\n### Security and access\n",
+        1,
+    );
+    assert_eq!(
+        validate_capability_contract(&unexpected_h2),
+        Err(CapabilityContractError::MissingSupportingDocumentsBoundary)
     );
 }
 
@@ -247,18 +367,36 @@ fn shared_and_domain_ownership_are_total_and_disjoint() {
     );
 
     // The domain half of the table has to be visible in the contract, not just
-    // in this array: search planning and shard/CRD policy are the two places a
-    // reviewer would otherwise be tempted to push into a shared library.
-    assert!(CAPABILITIES.contains("#### Querying"));
-    assert!(CAPABILITIES.contains("#### Scaling & Availability"));
-    assert!(
-        CAPABILITIES.contains("Lumen owns its CRD\npolicy and app wiring"),
-        "the Kubernetes capability must state that CRD policy stays app-owned"
-    );
-    assert!(
-        CAPABILITIES.contains("Lumen owns domain policy and wiring"),
-        "the security capability must state that only mechanics move to shared libraries"
-    );
+    // in this array. Check the app source inside each relevant capability so
+    // unrelated prose cannot satisfy the ownership boundary.
+    for (title, app_claim) in [
+        (
+            "Indexing",
+            "- [`apps/lumen`](./) defines field behavior, analyzers, mutation rules, segment formats, and the derived-index lifecycle.",
+        ),
+        (
+            "Querying",
+            "- [`apps/lumen`](./) defines query validation, planning, scoring, filtering, grouping, sorting, pagination, and read-consistency behavior.",
+        ),
+        (
+            "Kubernetes-native deployment",
+            "- [`apps/lumen`](./) defines the CRD, defaults, topology policy, conditions, and Lumen resource composition.",
+        ),
+        (
+            "Scaling and availability",
+            "- [`apps/lumen`](./) defines virtual-bucket routing, shard ownership, reshard phases, write fences, checkpoints, and scatter/gather behavior.",
+        ),
+        (
+            "Security and access",
+            "- [`apps/lumen`](./) defines the security posture, Lumen permission mapping, anonymous route set, identity separation, and integration policy.",
+        ),
+    ] {
+        let section = normalized_capability_section(README, title);
+        assert!(
+            section.contains(app_claim),
+            "{title} must keep its app-owned policy source: {app_claim}"
+        );
+    }
 }
 
 // HANDWRITE-END
