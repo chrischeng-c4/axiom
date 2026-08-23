@@ -79,16 +79,29 @@ those rules — they are deliberately not repeated here.
 ### Prefer AGY for bounded delegation
 
 When a bounded task can use an external worker, prefer one fresh
-`GPT-5.6 Luna` subagent at medium reasoning with `$agy-dispatch`. Create that
-subagent after the user authorizes the exact headless AGY payload. Make it
-directly inherit that user turn. Do not reuse an older subagent or forward the
+`dispatch-operator` subagent. Its model is `GPT-5.6 Luna` at medium reasoning.
+Create it only after the user authorizes the exact headless AGY payload. Make it
+directly inherit that user turn. Do not reuse an older operator. Do not forward
 authorization through a controller message.
 
-The subagent only translates the frozen request and runs the AGY adapter. The
-controller owns the contract, oracle, worktree, independent verification,
-acceptance, Git, tracker changes, publication, and cleanup. Follow
-`$agy-dispatch` as the source of truth for model, Project, worktree, permission,
-snapshot, command, and write rules.
+The controller freezes the profile, task key, action, snapshot mode, and all
+input digests before dispatch. The snapshot mode is `create`, `reuse`, or
+`refresh`. The operator only checks those inputs and runs the exact matching
+`doctor` / `snapshot` / `dispatch` / `resume` / status sequence. It must return
+`HANDOFF_INCOMPLETE` if the authorization or frozen handoff is incomplete.
+
+The operator never authors the contract, oracle, injection, or prompt. It does
+not verify or accept the result. It does not create or change a permission or
+worktree. It does not run Git, tracker, publication, or cleanup actions.
+
+The controller owns the profile, task contract, oracle, injection, prompt,
+worktree creation, independent verification, semantic acceptance, Git, tracker
+changes, publication, and cleanup. Follow the repo-local
+`.agents/skills/agy-dispatch/SKILL.md` as the source of truth for the AGY model,
+Project, permission, snapshot, command, and write rules. Run every adapter verb
+from the repository root as
+`python3 scripts/agy_dispatch.py ...`. Do not use an installed, skill-local, or
+legacy dispatcher copy.
 
 One thing that will otherwise waste your time: `aw` names the plugin at
 `plugins/aw` and nothing else. The Rust application that used to carry the name

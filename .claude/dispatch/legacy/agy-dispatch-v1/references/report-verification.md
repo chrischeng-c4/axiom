@@ -8,38 +8,26 @@ dispatch result. Confirm the stored rendered-prompt digest and oracle digest
 before evaluating the report.
 
 `status: EMPTY` remains a failed delivery even if the raw run log visibly
-contains a report. Run `verify`; only
-`DELIVERY_FAILED_ISOLATION_VERIFIED` proves that the snapshot, permission
-state, repository, sibling worktrees, protected artifacts, and every recorded
-authoritative `steps`-table shell request remained within the envelope. Exact
-lifecycle replicas are tolerated but cannot introduce a new command/Cwd. That result may resume a ticketed
-conversation with a compact-output budget. A missing conversation/audit trail
-or any envelope drift is VOID and never resumes. For one-shot work, record the
-failed run and retry under a new run id instead. Require the normalized
+contains a report. After snapshot and permission-state verification, resume a
+ticketed conversation with a compact-output budget. For one-shot work, record
+the failed run and retry under a new run id instead. Require the normalized
 `*.report.md` artifact before semantic acceptance.
 
 For a derived set, independently enumerate the full candidate surface before looking at AGY's shortlist. Recompute both admissions and exclusions from the candidate surface. A selector cannot demonstrate an omitted suite; the oracle hard floor can.
 
 For every accepted number, record the independent command or method, fields recomputed, known impurities, and the verdict. Close a ticket only after posting that verdict; record a one-shot verdict in the controller log.
 
-For denied runs, inspect `doctor.task_command_checks` and the AGY log. Record
-the effective decision, matched rule, and source: `task_contract`, `global`,
-`project`, `project-unobserved`, `default`, AGY terminal sandbox, or
-`controller_host`. If it is not needed, tighten the prompt. If it is common
-across repositories, change the Global baseline through the official
-`/permissions` Global scope; use Project scope only for a repository-specific
-exception. Refresh `project_policy_observation`, rerun `doctor`, and take a
-fresh snapshot. No task receives a temporary permission, registry/cache patch,
-UI automation, or bypass-permissions flag. Resume only ticketed work.
+For denied runs, inspect the log for the command that was refused. If it is not
+needed, tighten the prompt and resume the existing ticketed conversation, or
+retry one-shot work under a new run id. If it is a reusable project capability,
+add the narrow Project-scope rule once, update the profile's exact
+`project_permissions`, rerun `doctor`, and take a fresh snapshot. Resume only
+ticketed work. Never mutate permissions only for one task and never use a
+bypass-permissions flag.
 
 For revision waves, compare the resulting diff with the injected delta
 contract. Use `path_change_budgets` to catch formatting explosions, but do not
-mistake a line budget for semantic verification. For a generated lockfile,
-budget the expected source-digest replacement explicitly. `max_deleted: 0` is
-usually incompatible with an updated digest; use a small allowance such as 4
-for a narrow source-only replacement, and at least 12 when the official EC/IR
-generator will regenerate aggregate plus source digests. Otherwise a valid
-generator result becomes a low-signal VOID.
+mistake a line budget for semantic verification.
 
 Compare a revised report with every previously accepted section. The latest
 normalized report must be independently complete; it cannot rely on a prior
