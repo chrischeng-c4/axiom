@@ -59,8 +59,9 @@ into the script that replaced it.
 
 ## Skills
 
-Eight entry points. Each is invoked by a human, and each hands off to a script
-that can refuse it.
+Nine entry points. Each is invoked by a human. Lifecycle skills hand off to a
+phase script that can refuse them; the project-document checker uses its own
+read-only validators and a clean-context reader.
 
 They load as project skills out of `.claude/skills/`, not as the `aw` plugin,
 and that copy is what a session actually reads. Each directory is named
@@ -83,6 +84,7 @@ collapsed on 2026-08-21 by deleting the plugin.
 | `/aw:codex-code-review` | the `logic` phase printed it as the next command | the same, for the implementation and its colocated tests |
 | `/aw:prepare-goal` | a work item, or a bare intent, has to become a `/goal` the session's evaluator can actually decide | interviews you or reads the tracker through `epic.py`/`change.py`, then prints conditions for you to paste |
 | `/aw:meta-check` | before trusting a `CLAUDE.md`, `README.md` or `CONTRIBUTING.md`, and after editing one | `meta.py check` reports every doc fact whose owner is gone |
+| `/project-readme-check` | after creating or editing an app or library README, STATUS, ROADMAP, protocol, generated-client, indexing, querying, GKE, client-integration, or migration guide | validates the adopted product-document set and cross-file references, then asks a context-free reader to restate the current, future, and interface contract |
 
 The usual sequence is grill → reconcile (epics only) → `wi-tdd`; the two review
 skills are reached from the phase that prints them, not chosen, and

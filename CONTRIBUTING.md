@@ -1552,8 +1552,12 @@ Meta docs split by *layer*, not by topic. A fact belongs to exactly one layer.
 There used to be a machine-readable source for the matrix below — `meta_docs.rs`
 drove placement and section validation, and `aw meta init` / `sync` / `check`
 were the sole writer and checker. Both are deleted. The matrix is hand-maintained
-now, and there is no `check` to run, so a doc that stops matching its row stays
-wrong until a human notices.
+now, and there is no single checker for every row. Project product-document rows
+are the exception: `scripts/meta/readme_contract.py` validates a README, and
+`scripts/meta/project_docs_contract.py` validates an adopted README, STATUS,
+and ROADMAP set plus its adopted protocol, generated-client, indexing,
+querying, GKE, client-integration, and linked migration guides.
+Other rows still depend on their named reader or a human review.
 
 | Layer | Doc | Fact owner | Required headings | Inherits |
 |---|---|---|---|---|
@@ -1561,7 +1565,16 @@ wrong until a human notices.
 | repo | `/CLAUDE.md` | the work-item lifecycle, per-phase write roots, and the rules that refuse against them | none | `.claude/rules/**/*.md`, loaded alongside it |
 | repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
 | repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
-| project | `<project>/README.md` | project identity, product promises, work roots, and the gate that verifies each | `## Brief`<br>`## Capabilities` | repo README + CONTRIBUTING |
+| project | `<project>/README.md` | project identity, primary user workflow, functional surface, product promises, capability sources, and the gate that verifies each | `## Brief`<br>`## Primary workflow`<br>`## Contract discovery`<br>`## Capabilities`<br>`## Supporting documents` | repo README + CONTRIBUTING |
+| adopted project set | `<project>/STATUS.md` | current source support, material limits, and the executable gate for each supported surface | `## Scope`<br>`## State definitions`<br>`## Support matrix`<br>`## Evidence policy` | project README |
+| adopted project set | `<project>/ROADMAP.md` | future outcomes, completion boundaries, and explicit non-goals | `## Purpose`<br>`## Near-term outcomes`<br>`## Later outcomes`<br>`## Non-goals` | project README + STATUS |
+| optional interface guide | `<project>/docs/protocol.md` | map protocol facts to their canonical source and discovery surface without copying the full wire contract | `## Purpose`<br>`## Contract map`<br>`## Use the protocol`<br>`## Current boundaries`<br>`## Supporting documents` | project README + STATUS + ROADMAP |
+| optional generated-client guide | `<project>/clients/README.md` | committed and generated artifact model, generation workflow, language differences, connection inputs, and current client limits | `## Contract`<br>`## Generate`<br>`## Language matrix`<br>`## Connect`<br>`## Current boundaries`<br>`## Verification`<br>`## Supporting documents` | project README + STATUS + ROADMAP |
+| optional indexing guide | `<project>/docs/indexing.md` | source-data ownership, schema, write, durability, rebuild, and activation contracts, with current and target behavior kept separate | `## Purpose`<br>`## Contract map`<br>`## Data ownership`<br>`## Schema contract`<br>`## Write contract`<br>`## Durability`<br>`## Rebuild and activation`<br>`## Current boundaries`<br>`## Supporting documents` | project README + STATUS + ROADMAP |
+| optional querying guide | `<project>/docs/querying.md` | selection, scoring, result controls, facets, limits, failures, and compatibility without copying the live wire schema | `## Purpose`<br>`## Data ownership`<br>`## Contract map`<br>`## Search model`<br>`## Result controls`<br>`## Facets and metrics`<br>`## Limits and failures`<br>`## Compatibility and migration`<br>`## Current boundaries`<br>`## Supporting documents` | project README + STATUS + ROADMAP |
+| optional GKE guide | `<project>/docs/gke.md` | current and target GKE support tiers, runtime topology, Kubernetes-native boundaries, placement, storage, disruption, identity, networking, and acceptance | `## Purpose`<br>`## Contract map`<br>`## Support tiers`<br>`## Runtime size and topology`<br>`## Kubernetes-native contract`<br>`## GKE Standard Regional profile`<br>`## Storage, placement, and disruption`<br>`## Identity and networking`<br>`## Verification`<br>`## Current boundaries`<br>`## Supporting documents` | project README + STATUS + ROADMAP |
+| optional client-integration guide | `<project>/docs/client-integration.md` | generated-client, workload-template, source integration, and caller responsibility boundaries | `## Purpose`<br>`## Contract map`<br>`## Responsibility boundary`<br>`## Connection profiles`<br>`## Generated client behavior`<br>`## Kubernetes workload template`<br>`## Source integration`<br>`## Failure handling`<br>`## Verification`<br>`## Current boundaries`<br>`## Supporting documents` | project README + STATUS + ROADMAP + generated-client guide when adopted |
+| optional migration guide | `<project>/docs/migration-*.md` linked by the README | one versioned compatibility window, caller actions, activation rules, offline tools, and verification | `## Purpose`<br>`## Compatibility window`<br>`## Schema migration`<br>`## Request migration`<br>`## Response migration`<br>`## Managed activation`<br>`## Migration tools`<br>`## Verification`<br>`## Supporting documents` | project README + STATUS + ROADMAP + indexing/querying guides when adopted |
 | project | `<project>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules | `## Brief`<br>`## Authoritative Inputs`<br>`## Local Workflow`<br>`## Verification` | repo CONTRIBUTING |
 
 The two root rows changed shape when the CLI went away, and the change is not
@@ -1606,35 +1619,141 @@ this project promising?", "where is the source of truth?", "what am I allowed
 to edit?", and "how do I prove the change?" without making the agent read a
 full design book.
 
-`apps/<name>/README.md` / `projects/<name>/README.md` is the product contract
-as well as the front door. Its `## Capabilities` section is hierarchical: a
-top-level capability may be a product area, a narrower one a feature or
-surface, and the smallest useful one a single API endpoint, CLI command, event,
-background job, or documented behavior — if it can be implemented and verified
-independently. Do not flatten agent-addressable endpoint/command promises into
-prose under a larger heading when a future work item, phase-1 case, or test
-gate will need to refer to them directly.
+`apps/<name>/README.md`, `libs/<name>/README.md`, and a surviving
+`projects/<name>/README.md` are the product contract as well as the front door.
+They lead with the task a user came to perform. Architecture and ownership do
+not come before the product purpose, the primary workflow, or the main public
+operations.
 
-The required shape is:
+The fixed shape is:
 
 - `# <project>`
-- `## Brief` — one to three sentences: what this project is, and what it is
-  deliberately not.
-- `## Capabilities` — an intro line stating that a promise with no gate under
-  it is not claimed, then `###`/`####` capability headings. Each carries its
-  promise as prose and a bullet list naming the root WI, the verbatim gate
-  command, and the source paths. A capability whose gate is not yet written
-  says so in place of naming one.
+- `## Brief` — what this project does, what the caller supplies, what the
+  project returns, and the important product boundary.
+- `## Primary workflow` — the ordered path through the main user task, with the
+  smallest useful examples.
+- one or more project-specific functional `##` sections — for example, an
+  index service describes how to build an index and which query methods it
+  supports; a library describes its public API and composition points.
+- `## Contract discovery` — the maintained commands, generated contracts, or
+  runtime endpoints that own details too large for the front door.
+- `## Capabilities` — the flat product-capability index and its source-backed
+  verification details.
+- `## Supporting documents` — links to getting-started, architecture,
+  deployment, operations, runbooks, and the project CONTRIBUTING file when
+  those documents exist.
 
-Large capabilities should own nested capability headings; small leaf
-capabilities are one heading with one gate. The sizing rule is independent
-verification: if an agent can build, test, or close it separately, it is
-allowed to be a capability. Private implementation details stay out unless they
-are user-visible, release-blocking, or needed as named evidence.
+Every capability is an equal product promise. Do not classify capability rows
+as Core/Non-Core, primary/secondary, or ready/not-ready. Work-item state and
+self-graded status fields belong outside the durable product contract.
 
-Nothing validates this shape. A `## Capabilities` section listing a gate
-command that no suite runs, or omitting the "not claimed" line and then listing
-gateless promises, is a defect a reader has to catch.
+`## Capabilities` starts with one `### Capability index` table using these
+columns: `Capability | ID | User promise | Sources`. Each index row maps to one
+flat `### <Capability>` section in the same order. The detail carries:
+
+- `ID` — a stable lower-kebab-case identifier;
+- `Promise` — observable behavior stated from the user's point of view;
+- `Sources` — one bullet per direct source, including that source's material
+  contribution;
+- `Gate` — one or more verbatim consumer verification commands.
+
+Sources use three forms. `apps/<name>` supplies app-specific behavior and
+composition. `libs/<name>` supplies a reusable mechanism.
+`external:<name>` supplies an outside runtime, authority, or provisioned
+contract. A capability can name several sources, and a source can support
+several capabilities. The source list is not an ownership class.
+
+The deterministic validator is
+`scripts/meta/readme_contract.py`. The matching Claude and Codex skill is
+`project-readme-check`; it adds a clean-context reader after the script passes.
+The script checks format, links, source paths, and resolvable gate names. It
+does not execute the gates or decide whether their behavior proves the promise.
+
+A project can adopt `STATUS.md` and `ROADMAP.md` together. Until it does, its
+README remains valid under the README-only contract. After adoption,
+`## Supporting documents` must link both companion files and all three files
+form one product-document set.
+
+`STATUS.md` reports current source support. Its fixed shape is:
+
+- `# <project> status`
+- `## Scope` — what source or release the statements describe, and what they
+  do not prove.
+- `## State definitions` — one table defining `Supported`, `Limited`, and
+  `Not supported`.
+- `## Support matrix` — one flat table with `Surface | ID | State | Supported
+  scope | Limits | Evidence`.
+- `## Evidence policy` — where execution records live and when a row changes.
+
+Every support ID is stable lower-kebab-case. `Supported` and `Limited` rows
+name a resolvable executable gate. A `Limited` row also links its boundary to a
+ROADMAP outcome or non-goal. A `Not supported` row links its evidence cell to
+one of those same destinations and never claims a current gate. This document
+names required gates. It does not claim they ran in the current session.
+
+`ROADMAP.md` reports future outcomes. Its fixed shape is:
+
+- `# <project> roadmap`
+- `## Purpose` — the document boundary and the tracker relationship.
+- `## Near-term outcomes`
+- `## Later outcomes`
+- `## Non-goals`
+
+Each outcome is one flat H3 section. Its fields are `ID`, `Outcome`,
+`Boundary`, `Completion evidence`, and `Tracking`. Each non-goal has `ID` and
+`Reason`. The ID must match the H3 Markdown anchor so STATUS links stay stable.
+Use `Tracking: Not assigned.` until a real tracker link exists. The issue
+tracker owns work state, assignees, schedules, and delivery history. Do not copy
+those fields or completion percentages into ROADMAP.
+
+A project can also adopt conventional supporting guides. They are optional.
+When a conventional protocol, client, indexing, querying, GKE, or
+client-integration file exists, the project README must link it from
+`## Supporting documents`. A versioned `docs/migration-*.md` guide is adopted
+only when the README links it. The full-set checker includes the exact bytes of
+every adopted guide.
+
+`docs/protocol.md` is a protocol index. Its `## Contract map` begins with
+`Fact | Canonical source | Discovery`. It points each fact class at the
+machine-readable or runtime-generated source that owns it. It must not become a
+second hand-maintained copy of a route inventory, schema, query grammar, or
+retry table.
+
+`clients/README.md` is the project generated-client guide. Its
+`## Language matrix` begins with
+`Language | Generated form | Transport | Auth input | Current limits`. It says
+which artifacts are committed, generated, or published. It also states the
+real toolchain, connection, authentication, and language-specific limits.
+
+`docs/indexing.md` owns durable indexing semantics. Its `## Contract map`
+begins with `Fact | Canonical source | Discovery`. It distinguishes the live
+schema, write, durability, and rebuild contract from future outcomes.
+
+`docs/querying.md` owns query semantics that are too detailed for the README.
+Its `## Contract map` uses the same columns. It separates current requests from
+future scoring, result, facet, metric, limit, and failure behavior.
+
+`docs/gke.md` owns one project's GKE support tiers and its boundary between a
+portable Kubernetes contract and a provider-specific installation profile. It
+keeps current acceptance evidence separate from a future production profile.
+
+`docs/client-integration.md` owns the split between service behavior, generated
+client behavior, Kubernetes workload changes, and caller-owned source work. It
+uses the same `Fact | Canonical source | Discovery` contract map and keeps a
+planned template or client behavior out of the current support claim.
+
+A linked `docs/migration-*.md` is a versioned caller guide. Its compatibility
+table begins with `Surface | 0.4.x | 0.5.0 | Required action`. It must state
+both sides of each change, the caller action, Managed activation, available
+migration tools, and verification. Historical migration notes that are not
+linked from the README remain outside the adopted product-document set.
+
+The full-set validator is `scripts/meta/project_docs_contract.py`. It applies
+the README validator, checks both companion formats, resolves gates and
+anchors, validates adopted supporting guides, and rejects deterministic
+cross-document conflicts. The same `project-readme-check` skill then gives only
+the exact adopted files to one clean-context reader. That reader checks meaning
+and contradictions that a script cannot decide.
 
 `apps/<name>/CONTRIBUTING.md` / `projects/<name>/CONTRIBUTING.md` is the local
 operating guide. It does not restate root authoring rules and does not carry
@@ -1678,10 +1797,10 @@ Three rules govern every cell above:
 
 What still enforces any of this, and what does not:
 
-- **Enforced.** `.claude/aw/verification/check_plugin.py` asserts the skills on
-  disk are exactly the registered set, so a skill directory nobody registered
-  fails rather than loading unnoticed. This is the only check in this chapter
-  with an exit code behind it.
+- **Enforced.** `.claude/aw/verification/check_plugin.py` asserts the lifecycle
+  skills on disk are exactly the registered set. The repository-neutral
+  project-document scripts enforce the README-only and adopted document-set
+  rows above. No one script enforces every row in this chapter.
 - **Policy, unenforced.** The root carries only the doc files this contract
   names; a stray root doc is a defect, not a new home.
 - **Policy, unenforced.** `apps/**/{CLAUDE,AGENTS}.md` and

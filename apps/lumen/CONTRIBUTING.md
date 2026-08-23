@@ -1,61 +1,104 @@
-# Contributing to lumen
+# Lumen Contributing
 
 ## Brief
 
-How to change `apps/lumen`. What it promises and the work roots it owns live in
-[README.md](README.md); repository-wide authoring and verification rules live
-in the root [CONTRIBUTING.md](../../CONTRIBUTING.md).
+Use this guide to change `apps/lumen`. The [README](README.md) owns product
+promises. The root [CONTRIBUTING.md](../../CONTRIBUTING.md) owns repository-wide
+authoring rules.
 
-Changes here are authored one phase at a time, red first: `e2e` writes
-`apps/lumen/e2e/`, then `unit` and `logic` write `apps/lumen/src/`.
-`/aw:wi-tdd` drives the ladder, and every phase refuses a dirty path outside
-its own write root.
+## Authoritative Inputs
+
+Read these sources in order for the part you change:
+
+1. [README.md](README.md) for product purpose, public workflow, capabilities,
+   sources, and gates.
+2. [STATUS.md](STATUS.md) for current support and limits.
+3. [ROADMAP.md](ROADMAP.md) for future outcomes and non-goals.
+4. [Architecture](ARCHITECTURE.md) for source-of-truth, caller, data-plane,
+   control-plane, and shared-library boundaries.
+5. [Indexing](docs/indexing.md) for schema, write, durability, rebuild, and
+   activation semantics.
+6. [Querying](docs/querying.md) for selection, scoring, result, facet, metric,
+   limit, and hydration semantics.
+7. [0.5 search migration](docs/migration-0.5-search.md) for the versioned
+   compatibility window and caller actions.
+8. [Protocol](docs/protocol.md) for the canonical HTTP and runtime-behavior
+   source map.
+9. [Generated clients](clients/README.md) for the artifact model, language
+   matrix, connection inputs, and current client limits.
+10. [GKE](docs/gke.md) for support tiers, topology, Kubernetes-native
+    placement, the Standard Regional profile, and its acceptance contract.
+11. [Client integration](docs/client-integration.md) for connection profiles,
+    workload projection, request mechanics, and source hydration helpers.
+12. `apps/lumen/src/` and `apps/lumen/e2e/` for behavior and executable
+   contracts.
+13. `apps/lumen/src/operator/crd.rs` and
+   `apps/lumen/src/operator/fleet.rs` for the generated Kubernetes API.
+14. [Deployment](docs/deployment.md), [configuration](docs/configuration.md), and
+   [authentication](docs/authentication.md) for maintained operating context.
+
+Generated `apps/lumen/k8s/operator/crd.yaml` follows the Rust CRD types. Do not
+edit generated schema as a substitute for changing its source.
+
+## Local Workflow
+
+Application behavior follows the repository phase ladder. Write the failing
+black-box case in `apps/lumen/e2e/` before changing `apps/lumen/src/`. Use the
+current `/aw:wi-tdd` route when the work is tied to a change item.
+
+Keep Lumen-specific search, schema, shard, and health policy in `apps/lumen`.
+Put reusable Kubernetes mechanisms in `libs/service-k8s` after their shared
+contract is defined. Do not move Lumen's protected reshard fields into a
+generic Fleet policy.
+
+Keep the Lumen audience, token path, anonymous routes, typed access API, and
+SubjectAccessReview resource mapping in this app. Put token and review
+mechanisms in `libs/service-auth`, generic request-time client providers in
+`libs/openapi-codegen`, and Kubernetes object mechanics in
+`libs/service-k8s`. Never place a bearer token in a CRD, argument, environment
+variable, status, Event, or log.
+
+When a Rust CRD type changes, regenerate the checked-in schema:
+
+```bash
+cargo run -p lumen --features operator --bin lumen -- \
+  k8s crd render --out apps/lumen/k8s/operator
+```
+
+When README, STATUS, ROADMAP, protocol, generated-client, indexing, querying,
+GKE, client-integration, or migration documentation changes, update the adopted
+product-document set when its claims or links overlap. Keep current behavior
+separate from target behavior. Run the checker from `apps/lumen`, not from a
+nested supporting-doc directory. Then use `$project-readme-check` after the
+deterministic command passes.
 
 ## Verification
 
+### Product documents
+
+```bash
+python3 scripts/meta/test_readme_contract.py
+python3 scripts/meta/test_project_docs_contract.py
+python3 scripts/meta/project_docs_contract.py check apps/lumen --format json
+```
+
+The first two commands test the validators. The third checks the three core
+documents plus every adopted protocol, generated-client, indexing, querying,
+GKE, client-integration, and linked migration guide. After it passes,
+`$project-readme-check` runs one clean-context reader over those exact files. A
+docs-only change does not claim that product gates ran.
+
+### Product behavior
+
 | Gate | Command |
 |---|---|
-| unit + colocated tests | `cargo test -p lumen` |
-| feature-gated e2e targets | `cargo test -p lumen --features "operator delegated-auth"` |
+| default features and refusal paths | `cargo test -p lumen` |
+| operator and delegated-auth e2e targets | `cargo test -p lumen --features "operator delegated-auth"` |
 
-Both rows are required, and neither run is a superset of the other.
+Both rows are required for a full Lumen behavior claim. Neither is a superset
+of the other. Do not replace the second row with `--all-features`; enabling
+`jieba` changes the behavior that the fallback test is meant to check.
 
-`default = []`, and no `[[test]]` stanza in `Cargo.toml` declares
-`required-features`. So the first command does not skip the 11 targets whose
-files open with `#![cfg(feature = …)]` — it compiles each of them into an empty
-binary that prints `test result: ok. 0 passed` and exits 0. Ten of the eleven
-are gated on `operator`; `e2e/cli_client_ksa_token.rs:29` is gated on
-`all(unix, feature = "delegated-auth", feature = "backup")`, and `operator`
-pulls in `backup` but never `delegated-auth`. `"operator delegated-auth"` is
-the smallest feature string that compiles all eleven, and
-`e2e/feature_gated_targets_are_registered.rs` is the list it has to satisfy.
-
-The second row does not replace the first, because a feature that is on
-compiles away the code that runs when it is off. `e2e/auth_e2e.rs:278` is
-`#[cfg(not(feature = "delegated-auth"))]` with a live twin at `:285`, and
-`src/bin/lumen.rs` carries 15 `#[cfg(not(feature = …))]` refusal stubs. Nothing
-in the featured run can refuse a regression in any of them.
-
-`--all-features` is not the second row, even though it does compile all eleven.
-It also turns on `jieba`, and `e2e/jieba_bigram_fallback_e2e.rs` was written to
-prove that CJK matching still works with `jieba` compiled out. That file states
-the requirement in its `//!` but carries no `cfg` to enforce it, so
-`--all-features` makes it fail for the same reason it exists.
-
-Measured on the S8 tree (parent `db414b17db`), both with `--no-fail-fast`, 82
-test binaries each: row 1 is `629 passed; 4 failed; 28 ignored` and row 2 is
-`929 passed; 4 failed; 28 ignored`, over the same three red targets —
-`capability_shared_ownership`, `retired_credential_surface` and `spec_gen_e2e`
-— failing with byte-identical messages, so the second row introduces no new
-failure. Of its `+300` executed tests, 177 are the eleven binaries that were
-empty under row 1.
-
-Row 1 can show a fourth red target that is not a regression.
-`e2e/auth_e2e.rs:182` gives a spawned `lumen serve` 20 seconds to refuse and
-exit, and panics at `:210` if it has not. When that deadline expires the panic
-prints the child's own stderr — which is the correct refusal — so the message
-says the server "kept running" while quoting the proof that it did not. Row 1
-read `627 passed; 6 failed; 43 ignored` over 4 red targets at `d1f407f6cf`,
-whose tree differs from `db414b17db` only in three `.md` files; that run shared
-the machine and the workspace `target/` with a second session. On an isolated
-`CARGO_TARGET_DIR` the target finishes in ~1.1 s, three runs of three.
+Run narrower named tests during development. Run both full rows before claiming
+that an app behavior change is complete. Use the exact capability gates in the
+README when the claim is narrower or requires a live-cluster script.

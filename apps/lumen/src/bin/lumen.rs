@@ -785,6 +785,8 @@ enum LlmTopic {
     ModelSchema,
     /// Select a supported search, filter, range, sort, kNN, or duplicate query.
     SelectQuery,
+    /// Separate current query support from the documented 0.5 search target.
+    Querying,
     /// Connect a source database, CDC stream, or outbox to Lumen.
     IntegrateSourceDb,
     /// Inspect the request-authentication contract: the Kubernetes
@@ -813,6 +815,7 @@ impl LlmTopic {
             Self::LocalSearch => "local-search",
             Self::ModelSchema => "model-schema",
             Self::SelectQuery => "select-query",
+            Self::Querying => "querying",
             Self::IntegrateSourceDb => "integrate-source-db",
             Self::Authenticate => "authenticate",
             Self::ConnectKubernetes => "connect-kubernetes",

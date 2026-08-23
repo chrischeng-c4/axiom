@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Docs Check"
+  short_description: "Validate a product-document set and reader clarity"
+  default_prompt: "Use $project-readme-check to validate a project's core and adopted supporting documents."

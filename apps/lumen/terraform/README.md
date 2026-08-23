@@ -1,32 +1,79 @@
 # Lumen installation Terraform
 
-Terraform for the long-lived GCP substrate a production Lumen installation
-needs. Today that is one thing: the private trust domain Lumen's serving TLS
-and Raft peer mTLS are issued from.
+Terraform for the long-lived GCP substrate used by current Managed Lumen
+installations. It has two independent modules.
 
+```text
+modules/lumen-pki/       private trust and certificate-request authority
+modules/lumen-capacity/  shared GKE node pools and the in-cluster catalog
+examples/installation/   one root that composes both against an existing cluster
 ```
-modules/lumen-pki/       the PKI substrate module (reusable, composable)
-examples/installation/   a root that composes it against an existing cluster
-```
 
-## What this owns, and what it deliberately does not
+The current operator always reads
+`lumen-system/lumen-capacity-catalog` before it renders a Managed instance.
+This makes the capacity module a current Managed prerequisite. A plain
+Kubernetes-native placement contract is a future outcome in
+[Kubernetes-native placement](../ROADMAP.md#kubernetes-native-placement). The
+catalog is a compatibility substrate. It is not the long-term public API.
 
-The module owns a private CA hierarchy and the narrow authority to request
-certificates from it. It does **not** own the GCP project, the VPC, the GKE
-cluster, a DNS zone, or any node pool. An installation root that could create a
-cluster is an installation root that can destroy one, so those are inputs to be
-pointed at, never resources to be managed here.
+## Ownership boundary
 
-It also does not own certificates. No leaf, no private key, and no bearer
-credential is a Terraform-managed value — the in-cluster certificate controller
-authenticates to CA Service directly and fetches its own material. The
-practical consequence is the one that matters day to day:
+The PKI module owns a private CA hierarchy and the narrow authority to request
+certificates from it. The capacity module owns shared GKE node pools and the
+ConfigMap that publishes their supported machine types, selectors, limits, and
+lifecycle state.
+
+In the target GKE profile, the platform owns custom ComputeClasses, node
+auto-provisioning, StorageClasses, and the issuer. New Lumen manifests select
+those platform objects through standard Kubernetes fields. This Terraform
+module does not make a GCE machine type part of the portable Lumen contract.
+
+Neither module owns the GCP project, VPC, GKE cluster, DNS zone, target Lumen
+namespaces, Lumen custom resources, certificates, private keys, bearer tokens,
+or application data. These values are inputs or runtime objects.
+
+No leaf certificate, private key, or bearer credential is a Terraform-managed
+value. The in-cluster certificate controller authenticates to CA Service and
+fetches its own material. The practical consequence is:
 
 > Re-running `terraform apply` reconciles PKI *configuration*. It is never how a
 > certificate gets renewed, and nothing here has to run when a Pod is replaced.
 
 The one-line test for anything proposed for this tree is whether it would have
 to run again when a certificate expires. If yes, it belongs in the controller.
+
+The planned Lumen operator will own that leaf lifecycle. It will request and
+rotate separate serving and peer certificates, write runtime Secrets, and
+publish public serving trust. Terraform will continue to own only issuer and
+permission substrate.
+
+## Current capacity catalog
+
+This section describes legacy compatibility that the current operator still
+requires. It does not define the future Kubernetes-native placement API.
+
+`modules/lumen-capacity` creates one shared GKE node pool per declared direct
+GCE machine type. It publishes one ConfigMap through the Kubernetes provider.
+
+Default identity:
+
+| Field | Value |
+|---|---|
+| Namespace | `lumen-system` |
+| ConfigMap | `lumen-capacity-catalog` |
+| Data key | `catalog.json` |
+| Selector key | `lumen.axiom.dev/capacity-profile` |
+
+Each `capacity_profiles` entry needs a direct machine type and explicit
+`max_nodes`. A Managed `Lumen` also selects a direct machine type through
+`spec.placement.initialMachineType`. The operator rejects a missing, malformed,
+draining, full, or incompatible catalog. It has no current fallback to plain
+`nodeSelector` and `tolerations` alone.
+
+The module can retain a draining profile and requires an explicit retirement
+acknowledgement before it removes a pool recorded as in use. Terraform owns the
+catalog. Operators should repair its input and reapply instead of hand-editing
+the ConfigMap.
 
 ## The trust boundary
 
@@ -79,7 +126,7 @@ by default rather than accepted by omission.
 A wildcard there would hand every workload in the namespace the right to mint a
 Lumen-trusted identity.
 
-## Two modes
+## PKI modes
 
 `ca_pool_mode = "create"` provisions a protected self-signed root plus an
 in-region subordinate issuer. `ca_pool_mode = "existing"` references a pool an
@@ -95,14 +142,13 @@ the CAs. Nothing else does.
 ## Composing it
 
 `examples/installation/` is the root: it configures the provider, reads the
-existing cluster, and instantiates the PKI module. It also carries the capacity
-inputs for the machine-pool module (#3066) so both authorities are configured by
-one apply, while staying separately testable — certificate rotation and node
-resizing should never need each other's review.
+existing cluster, and instantiates both modules. The modules share cluster
+identity inputs, but neither reads an output from the other. A capacity edit
+does not plan a PKI change. A PKI edit does not plan a node-pool change.
 
-The capacity `module` block is present as a commented seam with its own
-rationale, not a stub. A placeholder that plans nothing would make
-`terraform apply` report success for capacity that does not exist.
+At least one active capacity profile must match every Managed instance's
+machine type. An empty catalog can be valid Terraform output, but it cannot
+place the current default `e2-standard-2` Lumen instance.
 
 ## Running the gate
 
