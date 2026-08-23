@@ -26,12 +26,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release -p lumen --bin lumen --features release \
  && cp target/release/lumen /usr/local/bin/
+RUN mkdir -p -m 0750 /out/lumen-data && touch /out/lumen-data/.lumen-volume-seed
 
 # distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching
 # the k8s securityContext). No openssl, no shell, no init shim — a single tokio
 # binary handles SIGTERM (graceful drain) and spawns no children.
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=builder /usr/local/bin/lumen /usr/local/bin/lumen
+COPY --from=builder --chown=65532:65532 /out/lumen-data/ /var/lib/lumen/data/
 # 7373 = client API. WAL storage is embedded locally or Lumen-owned raft state.
 EXPOSE 7373
 ENV LUMEN_HOST=0.0.0.0

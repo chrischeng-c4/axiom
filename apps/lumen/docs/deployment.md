@@ -25,7 +25,9 @@ Add `--data-dir <path>` when the index must survive a process restart.
 
 Shipped container images set `LUMEN_HOST=0.0.0.0` by default so published
 ports are reachable from the host without extra environment variables. The bare
-binary continues to default to `127.0.0.1`.
+binary continues to default to `127.0.0.1`. Omitting both the volume mount and
+data directory uses the explicit in-memory, ephemeral path where state is lost
+on container replacement:
 
 ```bash
 docker run --rm -p 127.0.0.1:7373:7373 \
@@ -33,15 +35,35 @@ docker run --rm -p 127.0.0.1:7373:7373 \
   ghcr.io/chrischeng-c4/lumen:<version>
 ```
 
-Use a named volume when local data must survive container replacement:
+Use a named volume mounted directly at `/var/lib/lumen/data` when local data must
+survive container replacement:
 
 ```bash
 docker volume create lumen-data
 
-docker run --rm -p 127.0.0.1:7373:7373 \
-  -v lumen-data:/var/lib/lumen \
+docker run -d --name lumen -p 127.0.0.1:7373:7373 \
+  --mount type=volume,src=lumen-data,dst=/var/lib/lumen/data \
   -e LUMEN_AUTH=off \
+  -e LUMEN_WAL=embedded \
   -e LUMEN_DATA_DIR=/var/lib/lumen/data \
+  -e LUMEN_PERSISTENCE=segment \
+  -e LUMEN_GRACE_SECS=1 \
+  ghcr.io/chrischeng-c4/lumen:<version>
+```
+
+Stop the container cleanly before replacing it with the same named volume:
+
+```bash
+docker stop --time=10 lumen
+docker rm lumen
+
+docker run -d --name lumen -p 127.0.0.1:7373:7373 \
+  --mount type=volume,src=lumen-data,dst=/var/lib/lumen/data \
+  -e LUMEN_AUTH=off \
+  -e LUMEN_WAL=embedded \
+  -e LUMEN_DATA_DIR=/var/lib/lumen/data \
+  -e LUMEN_PERSISTENCE=segment \
+  -e LUMEN_GRACE_SECS=1 \
   ghcr.io/chrischeng-c4/lumen:<version>
 ```
 

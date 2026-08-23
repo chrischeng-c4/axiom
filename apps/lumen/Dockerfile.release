@@ -32,6 +32,7 @@ RUN set -eux; \
     echo "$(cat /tmp/lumen.sha256)  /tmp/lumen.tgz" | sha256sum -c -; \
     tar -xzf /tmp/lumen.tgz -C /tmp --strip-components=1 "lumen-${t}/lumen"; \
     /tmp/lumen --version
+RUN mkdir -p -m 0750 /out/lumen-data && touch /out/lumen-data/.lumen-volume-seed
 
 # ---- stage 2: distroless static runtime — only the binary + CA certs, nonroot
 # static-debian12 ships no glibc/libgcc at all; the fetched binary is a fully
@@ -42,6 +43,7 @@ RUN set -eux; \
 # drain) and spawns no children, so no tini/init shim is required.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=fetch /tmp/lumen /usr/local/bin/lumen
+COPY --from=fetch --chown=65532:65532 /out/lumen-data/ /var/lib/lumen/data/
 # 7373 = client API. WAL storage is embedded locally or Lumen-owned raft state.
 EXPOSE 7373
 ENV LUMEN_HOST=0.0.0.0

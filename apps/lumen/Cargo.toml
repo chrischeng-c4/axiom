@@ -364,6 +364,10 @@ name = "disk_scale_proof"
 path = "e2e/disk_scale_proof.rs"
 
 [[test]]
+name = "docker_named_volume"
+path = "e2e/docker_named_volume.rs"
+
+[[test]]
 name = "drop_drain_e2e"
 path = "e2e/drop_drain_e2e.rs"
 
