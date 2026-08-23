@@ -248,6 +248,7 @@ path = "e2e/access_log_subject.rs"
 [[test]]
 name = "access_render_cli"
 path = "e2e/access_render_cli.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "admission_e2e"
@@ -296,6 +297,7 @@ path = "e2e/benchmark_lumen_competitor_performance_competitive.rs"
 [[test]]
 name = "body_limit_configurable"
 path = "e2e/body_limit_configurable.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "capability_shared_ownership"
@@ -308,18 +310,22 @@ path = "e2e/capability_stateful_workload_linkage.rs"
 [[test]]
 name = "capacity_catalog_client"
 path = "e2e/capacity_catalog_client.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "capacity_catalog_contract"
 path = "e2e/capacity_catalog_contract.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "capacity_retire_hpa"
 path = "e2e/capacity_retire_hpa.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "cli_client_ksa_token"
 path = "e2e/cli_client_ksa_token.rs"
+required-features = ["delegated-auth", "backup"]
 
 [[test]]
 name = "cli_convention"
@@ -416,6 +422,7 @@ path = "e2e/nats_cluster_e2e.rs"
 [[test]]
 name = "operator_backup_kubernetes_wiring"
 path = "e2e/operator_backup_kubernetes_wiring.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "operator_rbac_coverage"
@@ -424,10 +431,12 @@ path = "e2e/operator_rbac_coverage.rs"
 [[test]]
 name = "operator_render"
 path = "e2e/operator_render.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "operator_retired_credential_projection"
 path = "e2e/operator_retired_credential_projection.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "perf_gate"
@@ -468,6 +477,7 @@ path = "e2e/reshard_admin_e2e.rs"
 [[test]]
 name = "reshard_driver_e2e"
 path = "e2e/reshard_driver_e2e.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "retired_credential_surface"
@@ -480,6 +490,7 @@ path = "e2e/rig_stateful_adapter.rs"
 [[test]]
 name = "routed_shard_e2e"
 path = "e2e/routed_shard_e2e.rs"
+required-features = ["operator"]
 
 [[test]]
 name = "search_all_e2e"

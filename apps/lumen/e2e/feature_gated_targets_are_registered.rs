@@ -5,60 +5,90 @@
 //! the registry and repository tree disagree in either direction or if an e2e
 //! test file is missing its declaration in `Cargo.toml`.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use toml::Value;
 
 struct GatedTarget {
     path: &'static str,
     gate: &'static str,
+    required_features: &'static [&'static str],
+}
+
+impl GatedTarget {
+    fn cargo_name(&self) -> &str {
+        Path::new(self.path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .expect("file stem")
+    }
+
+    fn cargo_path(&self) -> &str {
+        self.path.strip_prefix("apps/lumen/").unwrap_or(self.path)
+    }
 }
 
 const REGISTRY: &[GatedTarget] = &[
     GatedTarget {
         path: "apps/lumen/e2e/access_render_cli.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/cli_client_ksa_token.rs",
         gate: r#"#![cfg(all(unix, feature = "delegated-auth", feature = "backup"))]"#,
+        required_features: &["delegated-auth", "backup"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/operator_backup_kubernetes_wiring.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/operator_render.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/operator_retired_credential_projection.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/reshard_driver_e2e.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/routed_shard_e2e.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/capacity_catalog_contract.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/capacity_retire_hpa.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/body_limit_configurable.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
     GatedTarget {
         path: "apps/lumen/e2e/capacity_catalog_client.rs",
         gate: r#"#![cfg(feature = "operator")]"#,
+        required_features: &["operator"],
     },
 ];
+
+const MAINTAINED_CMD: &str = r#"`cargo test -p lumen --features "operator delegated-auth"`"#;
+const DIRECT_FEATURES: &[&str] = &["operator", "delegated-auth"];
 
 fn repo_root() -> PathBuf {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -88,6 +118,111 @@ fn count_test_rows(content: &str) -> usize {
             trimmed.starts_with("#[test]") || trimmed.starts_with("#[tokio::test]")
         })
         .count()
+}
+
+fn validate_manifest_and_gate(cargo_str: &str, contributing_str: &str) -> Result<(), String> {
+    let manifest: Value =
+        toml::from_str(cargo_str).map_err(|e| format!("invalid Cargo.toml: {e}"))?;
+
+    let tests = manifest
+        .get("test")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing [[test]] in Cargo.toml".to_string())?;
+
+    let mut seen_names = HashSet::new();
+    let mut seen_paths = HashSet::new();
+    for t in tests {
+        let name = t
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or("test missing name")?;
+        let path = t
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or("test missing path")?;
+        if !seen_names.insert(name) {
+            return Err(format!("duplicate test name in Cargo.toml: {name}"));
+        }
+        if !seen_paths.insert(path) {
+            return Err(format!("duplicate test path in Cargo.toml: {path}"));
+        }
+    }
+
+    for entry in REGISTRY {
+        let expected_name = entry.cargo_name();
+        let expected_path = entry.cargo_path();
+
+        let matching = tests.iter().find(|t| {
+            t.get("name").and_then(Value::as_str) == Some(expected_name)
+                && t.get("path").and_then(Value::as_str) == Some(expected_path)
+        });
+
+        let target = matching
+            .ok_or_else(|| format!("missing [[test]] for registered target {}", entry.path))?;
+
+        let mut actual_features: Vec<&str> = target
+            .get("required-features")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("target {} missing required-features", expected_name))?
+            .iter()
+            .map(|v| v.as_str().ok_or("non-string feature"))
+            .collect::<Result<_, _>>()?;
+        actual_features.sort_unstable();
+
+        let mut expected_features = entry.required_features.to_vec();
+        expected_features.sort_unstable();
+
+        if actual_features != expected_features {
+            return Err(format!(
+                "target {} required-features mismatch: got {:?}, expected {:?}",
+                expected_name, actual_features, expected_features
+            ));
+        }
+    }
+
+    let cmd_count = contributing_str.matches(MAINTAINED_CMD).count();
+    if cmd_count != 1 {
+        return Err(format!(
+            "expected exactly 1 occurrence of {MAINTAINED_CMD} in CONTRIBUTING.md, found {cmd_count}"
+        ));
+    }
+
+    let features_table = manifest
+        .get("features")
+        .and_then(Value::as_table)
+        .ok_or_else(|| "missing [features] in Cargo.toml".to_string())?;
+
+    let mut active = HashSet::new();
+    let mut to_visit: Vec<&str> = DIRECT_FEATURES.to_vec();
+
+    while let Some(feat) = to_visit.pop() {
+        let deps = features_table
+            .get(feat)
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("feature '{feat}' missing or not an array in [features]"))?;
+        active.insert(feat);
+        for dep in deps {
+            if let Some(dep_name) = dep.as_str() {
+                if features_table.contains_key(dep_name) && active.insert(dep_name) {
+                    to_visit.push(dep_name);
+                }
+            }
+        }
+    }
+
+    for entry in REGISTRY {
+        for &req in entry.required_features {
+            if !active.contains(req) {
+                return Err(format!(
+                    "target {} required feature '{req}' not satisfied by active features {:?}",
+                    entry.cargo_name(),
+                    active
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[test]
@@ -209,4 +344,81 @@ fn all_e2e_test_files_are_declared_in_cargo_toml() {
         "e2e source files missing [[test]] declaration in Cargo.toml: {:?}",
         undeclared
     );
+}
+
+#[test]
+fn manifest_and_gate_validation_passes_on_repo() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cargo_toml = fs::read_to_string(manifest_dir.join("Cargo.toml")).expect("read Cargo.toml");
+    let contributing =
+        fs::read_to_string(manifest_dir.join("CONTRIBUTING.md")).expect("read CONTRIBUTING.md");
+    validate_manifest_and_gate(&cargo_toml, &contributing)
+        .expect("repository manifest and contributing gate must validate");
+}
+
+#[test]
+fn negative_fixtures_reject_invalid_manifest_or_gate() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cargo_toml = fs::read_to_string(manifest_dir.join("Cargo.toml")).expect("read Cargo.toml");
+    let contributing =
+        fs::read_to_string(manifest_dir.join("CONTRIBUTING.md")).expect("read CONTRIBUTING.md");
+
+    enum MutationTarget {
+        Cargo,
+        Contributing,
+    }
+
+    let cases: &[(&str, MutationTarget, &str, &str)] = &[
+        (
+            "removed registered cargo target stanza",
+            MutationTarget::Cargo,
+            "[[test]]\nname = \"access_render_cli\"\npath = \"e2e/access_render_cli.rs\"\nrequired-features = [\"operator\"]\n",
+            "",
+        ),
+        (
+            "removed target required feature",
+            MutationTarget::Cargo,
+            "name = \"access_render_cli\"\npath = \"e2e/access_render_cli.rs\"\nrequired-features = [\"operator\"]",
+            "name = \"access_render_cli\"\npath = \"e2e/access_render_cli.rs\"",
+        ),
+        (
+            "maintained command without operator",
+            MutationTarget::Contributing,
+            r#"`cargo test -p lumen --features "operator delegated-auth"`"#,
+            r#"`cargo test -p lumen --features "delegated-auth"`"#,
+        ),
+        (
+            "maintained command without delegated-auth",
+            MutationTarget::Contributing,
+            r#"`cargo test -p lumen --features "operator delegated-auth"`"#,
+            r#"`cargo test -p lumen --features "operator"`"#,
+        ),
+    ];
+
+    for (name, target, from, to) in cases {
+        let (mut_cargo, mut_contributing) = match target {
+            MutationTarget::Cargo => {
+                let mutated = cargo_toml.replacen(from, to, 1);
+                assert_ne!(
+                    &mutated, &cargo_toml,
+                    "negative fixture '{name}' failed to mutate Cargo.toml"
+                );
+                (mutated, contributing.clone())
+            }
+            MutationTarget::Contributing => {
+                let mutated = contributing.replacen(from, to, 1);
+                assert_ne!(
+                    &mutated, &contributing,
+                    "negative fixture '{name}' failed to mutate CONTRIBUTING.md"
+                );
+                (cargo_toml.clone(), mutated)
+            }
+        };
+
+        let result = validate_manifest_and_gate(&mut_cargo, &mut_contributing);
+        assert!(
+            result.is_err(),
+            "negative fixture '{name}' was expected to fail validation, but passed"
+        );
+    }
 }
