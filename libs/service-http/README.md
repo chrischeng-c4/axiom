@@ -2,140 +2,142 @@
 
 ## Brief
 
-`service-http` provides shared HTTP-service policy: standard probe routes,
-request-context propagation, lifecycle readiness/signal adapters, and the JSON
-error envelope. Protocol-neutral logging, optional OTLP export, metric-provider
-semantics, and lifecycle counters belong to `service-observability`; listener
-admission and drain state belong to `server-http` and `server-lifecycle`.
+`service-http` provides reusable HTTP service policy. It supplies standard
+operational routes, a JSON error envelope, request limits, admission responses,
+request trace context, `Server-Timing`, and lifecycle adapters.
 
-## Production lifecycle composition
+The crate does not own a listener or an application's domain routes. It
+composes `server-http`, `server-lifecycle`, and `service-observability` where
+their mechanisms are needed.
 
-Create one `LifecycleController`, pass it to `lifecycle_probe_routes` (or the
-canonical JSON variant), and serve through `serve_with_lifecycle`. Use a
-cloneable `LifecycleShutdownTrigger` with `run_signal_bridge` or
-`shutdown_on_signal` so probes, admission, and the absolute deadline share one
-generation. `standard_probe_routes`, `ReadinessHook`, `serve`, and
-`shutdown_with_drain` are source-compatible legacy migration adapters only.
+## Primary workflow
+
+1. Create the service router and its domain routes in the app.
+2. Mount the standard operational routes.
+3. Add the body-limit, admission, trace, and timing layers that the service
+   needs.
+4. Map domain failures into `ApiErr` and `ErrorEnvelope`.
+5. Serve the router through the lifecycle adapter and a caller-owned lifecycle.
+
+## Compose HTTP policy
+
+The public mechanisms are separate. A service can adopt only the parts it
+needs.
+
+| Mechanism | Current behavior |
+|---|---|
+| Standard routes | Mounts `GET /healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs`. |
+| Error envelope | Renders `{"error","message"}` JSON with a caller-selected status. |
+| Body limit | Rejects an oversized or overrun request body with a structured `413`. |
+| Admission | Applies caller-defined token buckets and returns a structured `429` with `Retry-After`. |
+| Request trace | Accepts a valid W3C `traceparent` or creates local trace and span IDs for the request span. |
+| Server timing | Adds total request duration and exposes opt-in named phases through `ServerTimingExt`. |
+| Lifecycle adapters | Connects probe readiness, signals, listener serving, and one shutdown report to a shared lifecycle. |
+
+The admission caller owns route classification, policy values, and the opaque
+key. The service owns domain error meaning. The service also decides when it is
+safe to disclose named timing phases.
+
+## Use lifecycle composition
+
+Create one `LifecycleController`. Pass it to `lifecycle_probe_routes` and
+`serve_with_lifecycle`. Use `LifecycleShutdownTrigger` with
+`run_signal_bridge` or `shutdown_on_signal` so readiness, admission, drain, and
+the shutdown deadline observe the same lifecycle generation.
+
+`standard_probe_routes`, `ReadinessHook`, `serve`, and `shutdown_with_drain`
+remain compatibility adapters. New production composition should use the
+lifecycle-aware forms.
+
+## Contract discovery
+
+| Need | Source of truth |
+|---|---|
+| Public Rust API | `cargo doc -p service-http --no-deps` |
+| Standard operational routes | `libs/service-http/src/probes.rs` |
+| Error and request protection | `libs/service-http/src/error.rs`, `body_limit.rs`, and `admission.rs` |
+| Request trace and access logging | `libs/service-http/src/transport.rs` |
+| Server timing | `libs/service-http/src/server_timing.rs` |
+| Lifecycle adapters | `libs/service-http/src/transport.rs` and `signal.rs` |
+| Executable behavior | `cargo test -p service-http` |
 
 ## Capabilities
 
-A promise with no gate under it is not claimed.
+Every entry below is an equal library capability. Each source states its direct
+contribution.
 
-Each section names the gate that verifies it. A capability with no gate line is
-not claimed.
+### Capability index
 
-### Shared HTTP Service Scaffold
+| Capability | ID | User promise | Sources |
+|---|---|---|---|
+| Standard operational routes | `standard-operational-routes` | Mount the common health, readiness, metrics, OpenAPI, and docs routes on an app router. | `libs/service-http`, `libs/service-observability` |
+| Structured HTTP errors | `structured-http-errors` | Render generic HTTP failures through one `{error,message}` JSON envelope. | `libs/service-http` |
+| Request protection | `request-protection` | Enforce a streaming body limit and caller-defined admission buckets with standard rejection responses. | `libs/service-http` |
+| Request observability | `request-observability` | Correlate inbound request traces and disclose bounded server timing. | `libs/service-http`, `libs/service-observability` |
+| Lifecycle HTTP adapters | `lifecycle-http-adapters` | Connect HTTP serving, probes, signals, and shutdown reporting to one lifecycle. | `libs/service-http`, `libs/server-http`, `libs/server-lifecycle` |
 
-HTTP services reuse common operational routes and policy adapters instead of
-hand-rolling them per service. This crate delegates listener serving to
-`server-http` and re-exports readiness/shutdown from `server-lifecycle`.
-Compatibility names for logging and metric providers delegate to
-`service-observability`; what stays here is the HTTP adapter that extracts
-valid W3C `traceparent`/`tracestate` headers into request spans.
+### Standard operational routes
 
-- Root WI: #1640
-- Gates: `cargo test -p service-http`;
-  `cargo test -p service-http --features otlp --test otlp_tracing`
-- Source: `libs/service-http/src/lib.rs`
+- ID: `standard-operational-routes`
+- Promise: Mount the common probe, metrics, OpenAPI, and interactive docs
+  routes from caller-supplied readiness, metrics, and API inputs.
+- Sources:
+  - [`libs/service-http`](./) provides the Axum route set and canonical JSON
+    variant.
+  - [`libs/service-observability`](../service-observability/) provides the
+    metric-provider contract re-exported by this crate.
+- Gate: `cargo test -p service-http`
 
+### Structured HTTP errors
 
-### Standard Endpoints (Probes Surface)
+- ID: `structured-http-errors`
+- Promise: Pair a caller-selected HTTP status with the shared
+  `{error,message}` response shape.
+- Sources:
+  - [`libs/service-http`](./) provides `ErrorEnvelope`, `ApiErr`, JSON rendering,
+    and the reusable OpenAPI schema type.
+- Gate: `cargo test -p service-http`
 
-`standard_probe_routes()` (`libs/service-http/src/probes.rs`) mounts the five
-always-on, auth-exempt, body-limit-exempt routes every k8s-native service
-ships on its one serve port:
+### Request protection
 
-- `GET /healthz` — liveness
-- `GET /readyz` — readiness; 503 once a service flips its `ReadinessHook` into
-  draining
-- `GET /metrics` — Prometheus text format via `MetricsProvider`
-- `GET /openapi.json` — the service's OpenAPI document
-- `GET /docs` — Swagger UI
+- ID: `request-protection`
+- Promise: Reject oversized request bodies with `413` and denied admission
+  attempts with `429` plus `Retry-After` without retaining a raw caller key.
+- Sources:
+  - [`libs/service-http`](./) provides the streaming body layer, admission
+    controller, redacted observation, and shared response envelopes.
+- Gate: `cargo test -p service-http`
 
-`standard_probe_routes_canonical_json` is the byte-identical-snapshot variant
-for services that need one canonical serialization shared across a CLI twin, an
-offline fixture, and the live route.
+### Request observability
 
+- ID: `request-observability`
+- Promise: Accept or create an inbound trace context, correlate the request
+  span, and attach a bounded `Server-Timing` response value.
+- Sources:
+  - [`libs/service-http`](./) provides W3C header parsing, request span fields,
+    access-log adapters, and server timing middleware.
+  - [`libs/service-observability`](../service-observability/) provides the
+    tracing and optional OTLP mechanisms used by the adapters.
+- Gate: `cargo test -p service-http`
+- Gate: `cargo test -p service-http --features otlp --test otlp_tracing`
 
-### Trace Context (Accept-or-Generate + Log Correlation + OTLP Upgrade)
+### Lifecycle HTTP adapters
 
-`trace_layer()` (`libs/service-http/src/transport.rs`) is the shared
-`tower-http` `TraceLayer` an adopting service composes instead of a
-hand-rolled span/correlation layer:
+- ID: `lifecycle-http-adapters`
+- Promise: Use one lifecycle for readiness probes, signal handling, listener
+  drain, and the terminal shutdown report.
+- Sources:
+  - [`libs/service-http`](./) provides the router and signal composition
+    adapters.
+  - [`libs/server-http`](../server-http/) owns the HTTP listener and its drain.
+  - [`libs/server-lifecycle`](../server-lifecycle/) owns lifecycle state and
+    terminal reporting.
+- Gate: `cargo test -p service-http`
 
-- **Accept** — a valid W3C version-00 `traceparent` header is parsed and its
-  `trace_id`/`parent_span_id` preserved; strictly invalid input (wrong version,
-  wrong length, non-hex, all-zero ids) is treated as absent rather than
-  rejected.
-- **Generate** — when no `traceparent` arrives, `request_trace_context` mints a
-  fresh local-root `trace_id` and `span_id`.
-- **Log correlation** — `CorrelatingMakeSpan` records `trace_id`, `span_id`,
-  and `parent_span_id` (when present) on every request span, and those fields
-  flow into the structured stdout every service emits, so cross-service log
-  correlation works with zero exporter configured.
-- **OTLP upgrade** — the `otlp` feature re-exports the same span context to
-  full OpenTelemetry export without changing the accept/generate contract.
+## Supporting documents
 
-This piece is inbound-only: it instruments the request a service receives. See
-[Outbound Propagation](#outbound-propagation-not-yet-claimed) for the separate,
-unimplemented service-to-service leg.
-
-
-### Server-Timing Response Attribution
-
-`server_timing_middleware` + `ServerTimingExt` + `ServerTimingDisclosure`
-(`libs/service-http/src/server_timing.rs`) put a W3C
-`Server-Timing: app;dur=<ms>` baseline on every response the middleware wraps,
-measured at the same request/response boundary `trace_layer` spans. Handlers
-may push named phase entries onto the per-request `ServerTimingExt` extension.
-
-Those entries render only on responses a handler explicitly marks
-`ServerTimingDisclosure::Full`. Every response defaults to `TotalOnly`, because
-this crate cannot see a request's auth outcome — it does not depend on
-`service-auth`, and no crate-neutral "authenticated" signal exists on either the
-request or the response. `Full` is the documented hook a service's own auth
-layer can use later to gate the phase breakdown on a successful auth context.
-
-**It is a separate opt-in layer from `trace_layer()`**: a service must add
-`.layer(axum::middleware::from_fn(server_timing_middleware))` explicitly to
-receive it. Per-service adoption status belongs in each consuming service's own
-README, not here.
-
-- Root WI: #2490
-- Gates: `cargo test -p service-http --test server_timing`
-- Source: `libs/service-http/src/server_timing.rs`
-
-
-### Admission Control
-
-`AdmissionController` + `admission_middleware`
-(`libs/service-http/src/admission.rs`) give a service opt-in, per-endpoint-class
-token buckets keyed on a caller-owned opaque key. Retained state is a SHA-256
-fingerprint only, never the raw key, and decision observers cannot represent a
-raw key. Denials render the shared `ErrorEnvelope` with HTTP 429 and
-`Retry-After`. An empty policy set is disabled — route classification and policy
-values stay the adopting service's decision.
-
-- Root WI: #1642
-- Gates: `cargo test -p service-http --lib`
-- Source: `libs/service-http/src/admission.rs`
-
-
-### Error Envelope
-
-`ErrorEnvelope { error, message }` (`libs/service-http/src/error.rs`) is the one
-`{"error", "message"}` JSON body every ecosystem service renders for error
-responses, paired with a `StatusCode` via `ApiErr`. Services classify their own
-domain errors into it (`From<DomainError>`); this crate owns only the generic
-envelope, builder, and `utoipa::ToSchema` shape.
-
-
-### Outbound Propagation (Not Yet Claimed)
-
-Surveyed 2026-07-24: this crate carries no outbound HTTP client at all — no
-`reqwest`/`hyper`-client dependency, and no code under `libs/service-http/src/`
-that reads or writes a `traceparent` header on a request this crate originates.
-Only the inbound accept/generate leg above is implemented.
-
-Do not claim outbound `traceparent` injection for this crate, or for any service
-that composes it, until an outbound propagation seam actually ships.
+| Document | Use it for |
+|---|---|
+| [STATUS.md](STATUS.md) | Current HTTP policy support and limits |
+| [ROADMAP.md](ROADMAP.md) | Future shared outcomes and non-goals |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Edit rules and required verification |

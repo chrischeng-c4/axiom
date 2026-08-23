@@ -59,6 +59,19 @@ llm_protocol:
       instruction: "Read the query-shape cookbook."
       command: "lumen spec --shapes"
       verification: ["Confirm the request body and field operations are both advertised."]
+    - id: querying
+      use_when: "separate the current query API from the documented 0.5 query, result, facet, and limit target"
+      requires: []
+      reads: ["lumen spec --fields", "lumen spec --shapes", "apps/lumen/docs/querying.md", "apps/lumen/STATUS.md"]
+      produces: ["current-versus-target query contract decision"]
+      risk: inspect
+      purpose: "Navigate the current query API and the documented 0.5 target without presenting future behavior as implemented."
+      preconditions: ["The installed lumen binary and the matching product documents are available."]
+      inputs: []
+      constraints: ["Current: lumen spec --fields, lumen spec --shapes, and STATUS describe what the installed runtime supports.", "Target: apps/lumen/docs/querying.md describes the 0.5 contract; facets, metrics, strict result controls, and capability activation are not current.", "The caller owns CDC, freshness, and source-record hydration; Lumen returns ordered external IDs and search metadata.", "Do not send 0.5 request fields to a current or mixed-version runtime."]
+      instruction: "Inspect the current query-shape cookbook before selecting a current behavior or a documented 0.5 target."
+      command: "lumen spec --shapes"
+      verification: ["Confirm each selected current behavior has a Supported or Limited STATUS row.", "For a target behavior, follow its ROADMAP outcome and the 0.5 migration guide instead of issuing it to the current runtime."]
     - id: integrate-source-db
       use_when: "connect Postgres, AlloyDB, CDC, or an outbox to Lumen"
       requires: ["An authoritative source system and an output directory."]

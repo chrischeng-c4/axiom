@@ -135,8 +135,170 @@ alert to expect next.
 
 ---
 
+## Managed Fleet materialization
+
+The Fleet loop runs under its own `lumen-fleet` Lease. It scans every
+`LumenFleet` every 30 seconds. Its status describes child-resource
+materialization. It does not describe child runtime readiness.
+
+```bash
+kubectl get lumenfleet
+kubectl get lumenfleet <fleet> -o yaml
+kubectl get lumen -A -l lumen.dev/fleet=<fleet>
+kubectl -n lumen-system get lease lumen-fleet -o yaml
+kubectl -n lumen-system logs deploy/lumen-operator | grep "fleet"
+```
+
+Read each entry state literally:
+
+| Entry state | Current meaning |
+|---|---|
+| `Created` | The child `Lumen` object was created in this pass. |
+| `Applied` | The child `Lumen` object accepted the steady-state apply. |
+| `Rejected` | The merged `LumenSpec` was invalid or named an unknown field. |
+| `NamespaceMissing` | The target namespace does not exist. Fleet will not create it. |
+| `NotAdopted` | A child with that name exists without this Fleet's ownership label. It was left untouched. |
+| `ApplyFailed` | The Kubernetes create, apply, or prune call failed. |
+| `Orphaned` | The child is no longer declared and `prunePolicy: Retain` kept it. |
+| `Pruned` | `prunePolicy: Delete` requested deletion of the child object. This is not proof that its PVCs were deleted. |
+
+An entry can say `Applied` while its child has `Ready=False`. Always continue
+to the child-status checks below.
+
+Some Kubernetes API errors can end one Fleet status pass before later entries
+are refreshed. If status is stale, check the operator log and the Fleet Lease.
+The next leader pass retries after 30 seconds.
+
+## Managed authentication
+
+Current Fleet materialization does not create client access RBAC. A Fleet entry
+can be `Applied` while every protected request is denied.
+
+First check the runtime's delegated-auth condition:
+
+```bash
+kubectl -n <namespace> get lumen <name> \
+  -o jsonpath='{.status.conditions[?(@.type=="AuthDelegationReady")]}'
+kubectl -n <namespace> get statefulset <name> \
+  -o jsonpath='{.spec.template.spec.serviceAccountName}'
+```
+
+`AuthDelegationReady=False` means the runtime identity cannot complete its
+TokenReview or SubjectAccessReview duty. Check the operator-owned
+auth-delegator binding and ask Kubernetes about the exact runtime identity:
+
+```bash
+kubectl get clusterrolebinding \
+  -l app.kubernetes.io/managed-by=lumen-operator
+kubectl auth can-i create tokenreviews.authentication.k8s.io \
+  --as=system:serviceaccount:<namespace>:<runtime-sa>
+kubectl auth can-i create subjectaccessreviews.authorization.k8s.io \
+  --as=system:serviceaccount:<namespace>:<runtime-sa>
+```
+
+If delegation is ready, inspect the current client bundle and the permission
+that Lumen asks about:
+
+```bash
+kubectl -n <namespace> get serviceaccount,role,rolebinding \
+  -l app.kubernetes.io/component=access
+kubectl auth can-i get lumencollections.lumen.axiom.dev/<collection> \
+  --namespace <namespace> \
+  --as=system:serviceaccount:<client-namespace>:<client-sa>
+```
+
+A client pod that names a ServiceAccount still needs a projected token for
+audience `lumen.axiom.dev`. Its HTTP client must add that token to the
+Authorization header. Current generated clients do not read or rotate the
+standard projected token automatically.
+
+Interpret request failures as follows:
+
+| Result | Current meaning |
+|---|---|
+| `401` | The Authorization header is missing, malformed, expired, for the wrong audience, or not a ServiceAccount identity. |
+| `403` | TokenReview accepted the ServiceAccount, but SubjectAccessReview denied the current per-collection or instance-admin resource. |
+| `503` from an auth decision | Kubernetes review transport or response validation failed. Lumen does not fall back to anonymous. |
+
+`AccessPolicyReady` does not exist yet. The planned whole-runtime
+`lumenruntimes/use` Role and RoleBinding are also not implemented. Do not use a
+missing future condition to diagnose current access. See
+[authentication](../authentication.md) for current resource mapping and the
+planned contract.
+
+When that target lands, one `use` grant will allow query, index,
+collection-management, and admin requests for the complete runtime. It will not
+be a fine-grained permission. `ClientTrustReady` and operator-published client
+CA ConfigMaps are also future conditions. Do not diagnose them as current
+objects.
+
+## Capacity catalog
+
+Every current Managed reconcile reads this ConfigMap:
+
+```bash
+kubectl -n lumen-system get configmap lumen-capacity-catalog
+kubectl -n lumen-system get configmap lumen-capacity-catalog \
+  -o jsonpath='{.data.catalog\.json}'
+```
+
+The `catalog.json` value must contain a compatible entry for the child's
+`spec.placement.initialMachineType`. Check the child and the catalog together:
+
+```bash
+kubectl -n <namespace> get lumen <name> \
+  -o jsonpath='{.spec.placement.initialMachineType}'
+kubectl -n lumen-system describe configmap lumen-capacity-catalog
+```
+
+A missing, malformed, draining, full, or incompatible catalog stops the child
+reconcile before workload apply. Current code does not provide a plain
+Kubernetes fallback. Reconcile the Terraform capacity module or restore the
+expected ConfigMap. Do not hand-edit a generated catalog while Terraform still
+owns it.
+
+This catalog is the current legacy placement path. Kubernetes-native placement
+and the GKE Standard Regional profile are not implemented. Do not treat the
+current zonal GKE acceptance result as regional HA evidence. See the
+[GKE guide](../gke.md) for the exact support tiers.
+
+## Child runtime status
+
+Fleet status is not the readiness source. Inspect each materialized child:
+
+```bash
+kubectl -n <namespace> get lumen <name> -o yaml
+kubectl -n <namespace> get statefulset,pod,service,pvc
+kubectl -n <namespace> describe lumen <name>
+kubectl -n <namespace> get events --sort-by=.lastTimestamp
+```
+
+Current child conditions include `Ready`, `Progressing`,
+`ReshardInProgress`, `AuthDelegationReady`, and `PeerIdentityReady`. A
+replicated instance also needs the named peer TLS Secret before its pods can
+start securely.
+
+The current operator consumes pre-created serving and peer Secrets. It does not
+request or rotate leaf certificates, and it does not publish a public CA
+ConfigMap for client workloads. Those duties are roadmap outcomes.
+
+`Ready=True` means the current control plane considers the data plane
+searchable. It is not a complete writable or capacity verdict. A pod in
+storage-full read-only mode can keep `/readyz` at 200. Check the metric when
+writes fail with `507 storage_full`:
+
+```bash
+kubectl -n <namespace> port-forward service/<name> 7373:7373
+curl -fsS http://127.0.0.1:7373/metrics | grep lumen_storage_degraded
+```
+
+---
+
 ## Related
 
 - `libs/service-k8s/src/controller.rs` — the reconcile loop, leader gate, and Event publication.
 - `libs/service-k8s/src/metrics.rs` — the metric definitions and the `/metrics` listener.
 - `apps/lumen/k8s/components/observability/` — the **instance** (data-plane) alerts, a separate concern from this runbook.
+- `apps/lumen/docs/deployment.md` — Standalone and Managed install flow.
+- `apps/lumen/docs/gke.md` — current GKE evidence and the regional production target.
+- `apps/lumen/docs/client-integration.md` — current and planned client workload responsibilities.

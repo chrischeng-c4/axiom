@@ -1,16 +1,25 @@
 ---
 name: meta-check
-description: Refuse a META-doc whose facts have rotted. Runs the validator over every tracked CLAUDE.md, README.md and CONTRIBUTING.md and reports orphaned generator markers, commands naming a CLI that was deleted, links whose targets are gone, project READMEs missing a required section, and capability gates that cannot refuse anything — a test-name filter cargo exits 0 on, a package or test target absent from the checkout, a self-graded status field nothing recomputes. Reads only; it never edits a document and never regenerates one.
+description: Audit tracked CLAUDE.md, README.md, and CONTRIBUTING.md files for stale generators, dead commands, broken links, unresolved gate names, and self-graded fields. Use project-readme-check instead for an app or library product-document set, including adopted protocol, client, indexing, querying, GKE, client-integration, and migration guides. Reads only; it never edits or regenerates a document.
 version: 0.1.0
 user-invocable: true
 ---
 
 # /aw:meta-check
 
-Three files carry everything this repository says about itself in prose:
+This is a repository-rot scan. It is not the project product-document format
+standard. Use `/project-readme-check` after creating or editing an app or
+library README, STATUS, ROADMAP, or an adopted supporting guide.
+Its repository-neutral scripts and clean-reader pass own that contract for
+both Claude and Codex.
+
+This scanner covers three existing document classes:
 `CLAUDE.md` is what an agent loads at launch, `README.md` is what a thing
-promises, and `CONTRIBUTING.md` is how to change it. Nothing read them until
-this. The verdict is the script's exit code, not your reading of its output.
+promises, and `CONTRIBUTING.md` is how to change it. Project STATUS, ROADMAP,
+protocol, generated-client, indexing, querying, GKE, client-integration, and
+linked migration documents are checked as one adopted set with the README by
+`/project-readme-check`. The verdict here is the script's exit code, not your
+reading of its output.
 
 ## What it refuses
 

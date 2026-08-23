@@ -1337,7 +1337,7 @@ fn dx_topics_teach_the_private_clusterip_tls_contract() {
 #[test]
 fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
     let protocol = dx::llm_protocol();
-    assert_eq!(protocol.topics().len(), 11);
+    assert_eq!(protocol.topics().len(), 12);
     for topic in protocol.topics() {
         let json = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Json).unwrap();
         let value: Value = serde_json::from_str(&json).expect("runbook JSON parses");
@@ -1374,6 +1374,7 @@ fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
         "local-search",
         "model-schema",
         "select-query",
+        "querying",
         "integrate-source-db",
         "authenticate",
         "connect-kubernetes",
@@ -1391,6 +1392,39 @@ fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
             "outline omits {required}"
         );
     }
+}
+
+#[test]
+fn dx_querying_topic_separates_current_and_target_contracts() {
+    let markdown = dx::render_llm("querying", cli_std::llm::Format::Md).unwrap();
+    for needle in [
+        "current query API",
+        "0.5 target",
+        "facets, metrics, strict result controls, and capability activation are not current",
+        "caller owns CDC, freshness, and source-record hydration",
+        "Do not send 0.5 request fields",
+    ] {
+        assert!(
+            markdown.contains(needle),
+            "querying topic missing `{needle}`:\n{markdown}"
+        );
+    }
+
+    let rendered = dx::render_llm("querying", cli_std::llm::Format::Json).unwrap();
+    let value: Value = serde_json::from_str(&rendered).expect("querying JSON parses");
+    assert_eq!(value["protocol"], "cclab.llm.v2");
+    assert_eq!(value["topic"], "querying");
+    assert_eq!(value["task"]["risk"], "inspect");
+    assert_eq!(
+        value["task"]["reads"],
+        json!([
+            "lumen spec --fields",
+            "lumen spec --shapes",
+            "apps/lumen/docs/querying.md",
+            "apps/lumen/STATUS.md"
+        ])
+    );
+    assert_eq!(value["markdown"], markdown);
 }
 
 /// #1480 R2: the reshard admin verbs section must cover all six
