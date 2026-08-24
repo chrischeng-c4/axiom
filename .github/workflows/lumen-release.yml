@@ -353,7 +353,8 @@ jobs:
     needs: [release-identity, draft-release, ghcr-image-and-attest]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # GitHub hides draft releases from tokens without push-level contents access.
+      contents: write
       packages: read
       attestations: read
     steps:
