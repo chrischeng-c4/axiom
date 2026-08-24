@@ -194,7 +194,6 @@ root_digest="${IMAGE#*@}"
 source_ref="refs/tags/${TAG}"
 expected_cert_id="https://github.com/${REPO}/.github/workflows/lumen-release.yml@${source_ref}"
 expected_issuer="https://token.actions.githubusercontent.com"
-expected_signer_workflow="${REPO}/.github/workflows/lumen-release.yml"
 
 case "$(uname -s):$(uname -m)" in
   Darwin:arm64|Darwin:aarch64)
@@ -260,7 +259,6 @@ verify_attestation() {
   result="$(gh attestation verify "oci://${subject}" \
     --bundle-from-oci \
     --repo "$REPO" \
-    --signer-workflow "$expected_signer_workflow" \
     --source-ref "$source_ref" \
     --source-digest "$COMMIT" \
     --cert-identity "$expected_cert_id" \
