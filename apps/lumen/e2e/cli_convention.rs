@@ -122,6 +122,34 @@ fn help_ships_standard_issue_group_not_report_issue() {
     );
 }
 
+#[test]
+fn llm_help_names_the_current_task_registry_and_library_composition() {
+    let help = run_lumen(&["llm", "--help"]);
+    for current in [
+        "agent-facing task topics",
+        "run-standalone",
+        "querying",
+        "verify-release",
+        "provider content stays owned by its library",
+    ] {
+        assert!(help.contains(current), "LLM help missing `{current}`:\n{help}");
+    }
+
+    for retired in ["workflow", "integration", "quickstart", "recipes"] {
+        let advertised_prefix = format!("- {retired}:");
+        let backticked_topic = format!("`{retired}`");
+        let topic_flag = format!("--topic {retired}");
+        assert!(
+            !help
+                .lines()
+                .any(|line| line.trim_start().starts_with(&advertised_prefix))
+                && !help.contains(&backticked_topic)
+                && !help.contains(&topic_flag),
+            "LLM help still advertises retired topic {retired}:\n{help}"
+        );
+    }
+}
+
 /// #1095: direct SnapshotV1 movement verbs are visible alongside `backup`.
 #[test]
 fn help_ships_snapshot_data_movement_verbs() {
