@@ -292,6 +292,13 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     for needle in ["kubectl kustomize", "changed != 1", "old_images != 1", "mutable Lumen image remains", "kubectl apply -f \"$tmp_pinned\"", "spec:\n  image: ${IMAGE_TAG}"] {
         require!(deploy.contains(needle), "KIND_PINNING", format!("operator pinning proof missing: {needle}"));
     }
+    let capacity_call = "\n  prepare_operator_capacity_fixture\n";
+    require!(deploy.matches(capacity_call).count() == 1 && deploy.find(capacity_call).zip(deploy.find("kubectl apply -f - <<EOF")).is_some_and(|(fixture, cr)| fixture < cr), "KIND_CAPACITY", "one active capacity-fixture call must precede the Lumen CR");
+    let capacity = shell_fn(&input.kind, "prepare_operator_capacity_fixture");
+    for needle in ["kubectl label nodes --all \"${selector_key}=${machine_type}\" --overwrite", "kubectl -n \"$OPERATOR_NS\" apply -f - <<EOF", "lumen.axiom.dev/capacity-profile", "name: lumen-capacity-catalog", "catalog.json: |", "\"machine_type\": \"${machine_type}\"", "\"selector\": \"${selector_key}=${machine_type}\"", "\"key\": \"${selector_key}\"", "\"value\": \"${machine_type}\"", "\"lifecycle_state\": \"ready\""] {
+        require!(capacity.contains(needle), "KIND_CAPACITY", format!("kind capacity fixture missing: {needle}"));
+    }
+    require!(input.kind.lines().any(|line| line == "BATCH_SIZE=1000") && input.kind.contains("MAX_INDEX_BATCH_SIZE=1000") && input.kind.contains("    --items-per-batch \"$BATCH_SIZE\" \\\n"), "KIND_INDEX_BATCH", "kind fixture generator must use the public HTTP index-batch cap");
     let normalize = shell_fn(&input.kind, "normalize_runtime_image_id");
     require!(normalize.matches("://").count() == 2 && normalize.contains("docker-pullable://ghcr\\.io/chrischeng-c4/lumen@") && normalize.contains("(containerd|cri-o|docker)://") && normalize.matches("elif [[").count() == 1, "KIND_RUNTIME_ID", "runtime imageID allowlist changed");
     let identity_fn = shell_fn(&input.kind, "assert_cluster_identity");
@@ -752,6 +759,13 @@ fn scoped_negative_mutations_fail_with_stable_findings() {
     let mut fixture = live(); fixture.docs = replace_nth(&fixture.docs, "--image \"$IMAGE\"", "--image ghcr.io/chrischeng-c4/lumen:latest", 0); expect(fixture, "DEPLOYMENT_DIGEST");
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$", "^ghcr\\.io/chrischeng-c4/lumen:.+$"); expect(fixture, "KIND_INPUTS");
     let mut fixture = live(); fixture.kind = replace_nth(&fixture.kind, "if [[ \"$IMAGE_MODE\" == \"prebuilt\" ]]; then\n", "if [[ \"$IMAGE_MODE\" == \"prebuilt\" ]]; then\n  docker login ghcr.io\n", 0); expect(fixture, "KIND_PREBUILT_LOCAL");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "deploy_via_operator", "  prepare_operator_capacity_fixture\n", ""); expect(fixture, "KIND_CAPACITY");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "deploy_via_operator", "  prepare_operator_capacity_fixture\n", "  : prepare_operator_capacity_fixture\n"); expect(fixture, "KIND_CAPACITY");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "prepare_operator_capacity_fixture", "  kubectl label nodes --all \"${selector_key}=${machine_type}\" --overwrite\n", ""); expect(fixture, "KIND_CAPACITY");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "prepare_operator_capacity_fixture", "  kubectl -n \"$OPERATOR_NS\" apply -f - <<EOF", "  cat <<EOF"); expect(fixture, "KIND_CAPACITY");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "prepare_operator_capacity_fixture", "\"value\": \"${machine_type}\"", "\"value\": \"wrong-machine\""); expect(fixture, "KIND_CAPACITY");
+    let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "BATCH_SIZE=1000\n", "BATCH_SIZE=10000\n"); expect(fixture, "KIND_INDEX_BATCH");
+    let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "    --items-per-batch \"$BATCH_SIZE\" \\\n", "    --items-per-batch 10000 \\\n"); expect(fixture, "KIND_INDEX_BATCH");
     for (from, to) in [
         ("  op_json=\"$(kubectl -n \"$OPERATOR_NS\" get deploy/lumen-operator -o json)\"", "  op_json=\"$(jq -nc --arg image \"$IMAGE_TAG\" '{spec:{replicas:1,template:{spec:{containers:[{name:\"operator\",image:$image}]}}}}')\""),
         ("  cr_img=\"$(kubectl -n \"$NAMESPACE\" get lumen/\"${LUMEN_CR_NAME}\" -o jsonpath='{.spec.image}')\"", "  cr_img=\"$IMAGE_TAG\""),

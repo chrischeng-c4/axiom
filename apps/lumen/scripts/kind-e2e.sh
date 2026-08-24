@@ -63,7 +63,7 @@ PORT_LOCAL="${LUMEN_PORT_LOCAL:-17373}"
 PORT_REMOTE=7373
 NODE_PORT="${LUMEN_NODE_PORT:-30737}"
 DOC_COUNT="${LUMEN_E2E_DOC_COUNT:-10000}"
-BATCH_SIZE=10000
+BATCH_SIZE=1000
 
 FIXTURE_FILE=""
 IMAGE_TAG="${LUMEN_E2E_IMAGE:-lumen:latest}"
@@ -172,6 +172,40 @@ build_and_load_image() {
   kind load docker-image "$IMAGE_TAG" --name "$CLUSTER_NAME"
 }
 
+# The current Managed contract requires a platform-owned capacity catalog.
+# A local kind cluster has no Terraform substrate, so install one exact test
+# entry and label its node before the operator sees the Lumen resource.
+prepare_operator_capacity_fixture() {
+  local selector_key="lumen.axiom.dev/capacity-profile"
+  local machine_type="e2-standard-2"
+  kubectl label nodes --all "${selector_key}=${machine_type}" --overwrite
+  kubectl -n "$OPERATOR_NS" apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lumen-capacity-catalog
+data:
+  catalog.json: |
+    {
+      "version": "1.0.0",
+      "entries": [
+        {
+          "machine_type": "${machine_type}",
+          "selector": "${selector_key}=${machine_type}",
+          "stable_selector": {
+            "key": "${selector_key}",
+            "value": "${machine_type}"
+          },
+          "max_nodes": 1,
+          "min_nodes": 1,
+          "lifecycle_state": "ready",
+          "pool_group": "lumen-data"
+        }
+      ]
+    }
+EOF
+}
+
 # Deploy lumen by the selected mode.
 deploy_lumen() {
   if [[ "$E2E_MODE" == "operator" ]]; then
@@ -242,6 +276,7 @@ deploy_via_operator() {
     kubectl apply -k "${LUMEN_DIR}/k8s/operator"
     kubectl -n "$OPERATOR_NS" set image deploy/lumen-operator operator="$IMAGE_TAG"
   fi
+  prepare_operator_capacity_fixture
   echo "   waiting for the Lumen CRD to be Established"
   kubectl wait --for=condition=established crd/lumens.lumen.dev --timeout=60s
   echo "   waiting for the operator Deployment to roll out"
@@ -262,7 +297,7 @@ spec:
   replicasPerShard: ${REPLICAS_PER_SHARD}
   voterCount: ${VOTER_COUNT}
   logFormat: pretty
-  # #2678: `auth` defaults to `required`, so this local-only rig opts out
+  # #2678: auth defaults to required, so this local-only rig opts out
   # explicitly rather than shipping a data plane that never goes Ready.
   auth: disabled
   serving:
@@ -534,7 +569,7 @@ step "4b. PUT /collections/users" api_put_collection
 
 FIXTURE_FILE="$(mktemp -t lumen-fixture.XXXXXX.json)"
 # Each doc emits 2 IndexItems (bio + email); split the request bodies so no
-# single POST exceeds the server's bulk-index cap (MAX_INDEX_ITEMS=10000).
+# single POST exceeds the public HTTP cap (MAX_INDEX_BATCH_SIZE=1000).
 step "4c. generate ${DOC_COUNT}-doc fixture (batched ≤${BATCH_SIZE} items/req)" \
   python3 "${SCRIPT_DIR}/load-fixture.py" \
     --count "$DOC_COUNT" \
