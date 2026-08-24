@@ -240,9 +240,10 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     }
     require!(verifier.contains("source_ref=\"refs/tags/${TAG}\"") && verifier.contains("expected_cert_id=\"https://github.com/${REPO}/.github/workflows/lumen-release.yml@${source_ref}\"") && !verifier.contains("identity-regexp"), "VERIFIER_IDENTITY", "verifier identity is not exact tag identity");
     let attest_fn = shell_fn(verifier, "verify_attestation");
-    for flag in ["gh attestation verify \"oci://${subject}\"", "--bundle-from-oci", "--repo \"$REPO\"", "--signer-workflow \"$expected_signer_workflow\"", "--source-ref \"$source_ref\"", "--source-digest \"$COMMIT\"", "--cert-identity \"$expected_cert_id\"", "--cert-oidc-issuer \"$expected_issuer\"", "--predicate-type \"$predicate\"", "--format json"] {
+    for flag in ["gh attestation verify \"oci://${subject}\"", "--bundle-from-oci", "--repo \"$REPO\"", "--source-ref \"$source_ref\"", "--source-digest \"$COMMIT\"", "--cert-identity \"$expected_cert_id\"", "--cert-oidc-issuer \"$expected_issuer\"", "--predicate-type \"$predicate\"", "--format json"] {
         require!(attest_fn.contains(flag), "VERIFIER_FLAGS", format!("attestation flag missing: {flag}"));
     }
+    require!(!attest_fn.contains("--signer-workflow") && !attest_fn.contains("--signer-repo"), "VERIFIER_FLAGS", "exact certificate identity must not be combined with a conflicting signer selector");
     for needle in ["type == \"array\" and length > 0", "subject | type == \"array\" and length > 0", "all(.verificationResult.statement.subject[];", ".digest.sha256 == $digest"] {
         require!(attest_fn.contains(needle), "VERIFIER_SUBJECT", format!("result enforcement missing: {needle}"));
     }
@@ -779,6 +780,7 @@ fn scoped_negative_mutations_fail_with_stable_findings() {
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "step \"4a2. assert cluster identity and /version\" assert_cluster_identity\nstep \"4b. PUT /collections/users\" api_put_collection", "step \"4b. PUT /collections/users\" api_put_collection\nstep \"4a2. assert cluster identity and /version\" assert_cluster_identity"); expect(fixture, "KIND_ORDER");
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "step \"6c. assert cluster identity and /version post-recovery\" assert_cluster_identity", "echo post-restart-identity-omitted"); expect(fixture, "KIND_POST_RESTART");
     let mut fixture = live(); fixture.verifier = replace_once(&fixture.verifier, "    --source-digest \"$COMMIT\" \\\n", ""); expect(fixture, "VERIFIER_FLAGS");
+    let mut fixture = live(); fixture.verifier = replace_once(&fixture.verifier, "    --repo \"$REPO\" \\\n", "    --repo \"$REPO\" \\\n    --signer-workflow \"$REPO/.github/workflows/lumen-release.yml\" \\\n"); expect(fixture, "VERIFIER_FLAGS");
     let mut fixture = live(); fixture.cargo = replace_once(&fixture.cargo, "name = \"release_artifacts\"", "name = \"release_artifacts_disabled\""); expect(fixture, "CARGO_REGISTRATION");
     let mut fixture = live(); fixture.verifier = replace_once(&fixture.verifier, "gh release download \"$TAG\"", "true # gh release download disabled"); expect(fixture, "PUBLIC_BINARY");
     let mut fixture = live(); fixture.verifier = function_replace(&fixture.verifier, "verify_downloaded_binary_assets", "    aarch64-unknown-linux-musl\n", ""); expect(fixture, "PUBLIC_BINARY");
