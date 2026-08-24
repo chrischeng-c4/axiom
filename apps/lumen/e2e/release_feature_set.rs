@@ -1,6 +1,6 @@
 //! Release feature set consistency test and gate verification.
 
-use std::path::Path;
+use std::{path::Path, process::Command};
 
 const EXPECTED_DIRECT_FEATURES: &[&str] = &[
     "delegated-auth",
@@ -139,6 +139,61 @@ fn validate_surface_invocation(content: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_release_image_pin_contract(content: &str) -> Result<(), String> {
+    let prepare = content
+        .find("project_build_prepare_release_version lumen")
+        .ok_or_else(|| "release version preparation is missing".to_string())?;
+    let sync = content
+        .find("sync_lumen_release_image_pins \"$PROJECT_BUILD_RELEASE_VERSION\"")
+        .ok_or_else(|| "release image pin synchronization is missing".to_string())?;
+    if sync <= prepare {
+        return Err("release image pins must be synchronized after version selection".to_string());
+    }
+
+    for path in [
+        "apps/lumen/k8s/base/deployment.yaml",
+        "apps/lumen/k8s/operator/deployment.yaml",
+    ] {
+        if content.matches(path).count() != 1 {
+            return Err(format!(
+                "release image synchronization must name {path} exactly once"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn release_image_pin_function(content: &str) -> Result<&str, String> {
+    let start = content
+        .find("sync_lumen_release_image_pins() {")
+        .ok_or_else(|| "release image pin function is missing".to_string())?;
+    let tail = &content[start..];
+    let end = tail
+        .find("\n}\n\nif [[ \"$MODE\"")
+        .ok_or_else(|| "release image pin function boundary is missing".to_string())?;
+    Ok(&tail[..end + 3])
+}
+
+fn run_release_image_pin_function(
+    function: &str,
+    version: &str,
+    first: &Path,
+    second: &Path,
+) -> std::process::Output {
+    let script = format!(
+        "set -euo pipefail\n{function}\nsync_lumen_release_image_pins \"$1\" \"$2\" \"$3\"\n"
+    );
+    Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .arg("release-image-pin-test")
+        .arg(version)
+        .arg(first)
+        .arg(second)
+        .output()
+        .expect("run release image pin function")
+}
+
 #[test]
 fn test_manifest_release_features() {
     let manifest_path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
@@ -204,6 +259,97 @@ fn test_build_surfaces_release_invocation() {
             "negative invocation case '{name}' must fail"
         );
     }
+}
+
+#[test]
+fn test_release_preparation_updates_all_checked_in_image_pins() {
+    let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let build_script =
+        std::fs::read_to_string(base_dir.join("build.sh")).expect("read apps/lumen/build.sh");
+    validate_release_image_pin_contract(&build_script)
+        .expect("release preparation must update every checked-in image pin");
+
+    for path in [
+        base_dir.join("k8s/base/deployment.yaml"),
+        base_dir.join("k8s/operator/deployment.yaml"),
+    ] {
+        let manifest = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        assert!(
+            manifest.contains(&format!(
+                "image: ghcr.io/chrischeng-c4/lumen:{}",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{} must pin the workspace Lumen version {}",
+            path.display(),
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+
+    let missing_base = build_script.replace("  apps/lumen/k8s/base/deployment.yaml \\\n", "");
+    assert!(validate_release_image_pin_contract(&missing_base).is_err());
+
+    let stale_version = build_script.replace(
+        "sync_lumen_release_image_pins \"$PROJECT_BUILD_RELEASE_VERSION\"",
+        "sync_lumen_release_image_pins \"$CURRENT_VERSION\"",
+    );
+    assert!(validate_release_image_pin_contract(&stale_version).is_err());
+
+    let before_selection = build_script.replacen(
+        "project_build_prepare_release_version lumen \"$CURRENT_VERSION\" \"${VERSION_FILES[@]}\"\nsync_lumen_release_image_pins",
+        "sync_lumen_release_image_pins",
+        1,
+    );
+    assert!(validate_release_image_pin_contract(&before_selection).is_err());
+
+    let function = release_image_pin_function(&build_script).expect("extract image pin function");
+    let temp = tempfile::tempdir().expect("create image pin fixture directory");
+    let standalone = temp.path().join("standalone.yaml");
+    let operator = temp.path().join("operator.yaml");
+    std::fs::write(
+        &standalone,
+        "image: ghcr.io/chrischeng-c4/lumen:0.4.26\nimage: ghcr.io/example/sidecar:9\n",
+    )
+    .expect("write standalone fixture");
+    std::fs::write(
+        &operator,
+        "  image: ghcr.io/chrischeng-c4/lumen:0.4.25\n",
+    )
+    .expect("write operator fixture");
+
+    let updated = run_release_image_pin_function(function, "0.4.27", &standalone, &operator);
+    assert!(
+        updated.status.success(),
+        "image pin function failed: {}",
+        String::from_utf8_lossy(&updated.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&standalone).expect("read updated standalone fixture"),
+        "image: ghcr.io/chrischeng-c4/lumen:0.4.27\nimage: ghcr.io/example/sidecar:9\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&operator).expect("read updated operator fixture"),
+        "  image: ghcr.io/chrischeng-c4/lumen:0.4.27\n"
+    );
+
+    let missing = temp.path().join("missing.yaml");
+    std::fs::write(&missing, "image: ghcr.io/example/sidecar:9\n")
+        .expect("write missing-pin fixture");
+    let missing_result = run_release_image_pin_function(function, "0.4.27", &missing, &operator);
+    assert!(!missing_result.status.success(), "zero Lumen pins must fail");
+
+    let duplicate = temp.path().join("duplicate.yaml");
+    std::fs::write(
+        &duplicate,
+        "image: ghcr.io/chrischeng-c4/lumen:0.4.25\nimage: ghcr.io/chrischeng-c4/lumen:0.4.26\n",
+    )
+    .expect("write duplicate-pin fixture");
+    let duplicate_result =
+        run_release_image_pin_function(function, "0.4.27", &duplicate, &operator);
+    assert!(
+        !duplicate_result.status.success(),
+        "duplicate Lumen pins must fail"
+    );
 }
 
 #[test]

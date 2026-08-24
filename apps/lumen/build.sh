@@ -59,6 +59,28 @@ install_lumen() {
   echo "Verify with: ~/.cargo/bin/lumen --version"
 }
 
+sync_lumen_release_image_pins() {
+  local version="$1"
+  shift
+
+  local manifest matches
+  for manifest in "$@"; do
+    matches="$(awk '/^[[:space:]]*image:[[:space:]]*ghcr\.io\/chrischeng-c4\/lumen:[^[:space:]]+$/ { count++ } END { print count + 0 }' "$manifest")"
+    if [[ "$matches" -ne 1 ]]; then
+      echo "error: expected exactly one Lumen GHCR image pin in ${manifest}; found ${matches}" >&2
+      return 1
+    fi
+
+    LUMEN_RELEASE_IMAGE_VERSION="$version" perl -0pi -e \
+      's#(^[[:space:]]*image:[[:space:]]*ghcr\.io/chrischeng-c4/lumen:)\S+$#$1$ENV{LUMEN_RELEASE_IMAGE_VERSION}#m' \
+      "$manifest"
+    if ! grep -Fq "image: ghcr.io/chrischeng-c4/lumen:${version}" "$manifest"; then
+      echo "error: failed to pin ${manifest} to Lumen ${version}" >&2
+      return 1
+    fi
+  done
+}
+
 if [[ "$MODE" == "debug" ]]; then
   VERSION_FILES=(apps/lumen/Cargo.toml)
   CURRENT_VERSION="$(project_build_read_version apps/lumen/Cargo.toml)"
@@ -75,6 +97,9 @@ VERSION_FILES=(apps/lumen/Cargo.toml)
 CURRENT_VERSION="$(project_build_read_version apps/lumen/Cargo.toml)"
 export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
 project_build_prepare_release_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
+sync_lumen_release_image_pins "$PROJECT_BUILD_RELEASE_VERSION" \
+  apps/lumen/k8s/base/deployment.yaml \
+  apps/lumen/k8s/operator/deployment.yaml
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
 cargo build --release -p lumen --bin lumen --features release

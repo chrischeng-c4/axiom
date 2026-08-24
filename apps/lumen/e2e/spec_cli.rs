@@ -1337,7 +1337,7 @@ fn dx_topics_teach_the_private_clusterip_tls_contract() {
 #[test]
 fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
     let protocol = dx::llm_protocol();
-    assert_eq!(protocol.topics().len(), 12);
+    assert_eq!(protocol.topics().len(), 14);
     for topic in protocol.topics() {
         let json = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Json).unwrap();
         let value: Value = serde_json::from_str(&json).expect("runbook JSON parses");
@@ -1371,6 +1371,7 @@ fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
         serde_json::from_str(&dx::render_llm("outline", cli_std::llm::Format::Json).unwrap())
             .unwrap();
     for required in [
+        "run-standalone",
         "local-search",
         "model-schema",
         "select-query",
@@ -1379,9 +1380,11 @@ fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
         "authenticate",
         "connect-kubernetes",
         "deploy-kubernetes",
+        "grant-access",
         "backup-restore",
         "generate-client",
         "diagnose",
+        "verify-release",
     ] {
         assert!(
             outline["tasks"]
@@ -1390,6 +1393,96 @@ fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
                 .iter()
                 .any(|task| task["id"] == required),
             "outline omits {required}"
+        );
+    }
+}
+
+#[test]
+fn dx_llm_composes_library_owned_provider_content() {
+    let outline = dx::render_llm("outline", cli_std::llm::Format::Json).unwrap();
+    assert!(
+        !outline.contains("\"providers\""),
+        "provider details must not change the outline envelope: {outline}"
+    );
+
+    let generated = dx::render_llm("generate-client", cli_std::llm::Format::Json).unwrap();
+    let value: Value = serde_json::from_str(&generated).expect("generated-client JSON parses");
+    assert!(value["task"]["reads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "apps/lumen/clients/codegen.toml"));
+    assert_eq!(value["providers"].as_array().unwrap().len(), 1);
+    assert_eq!(value["providers"][0]["id"], "openapi-codegen");
+    let provider = openapi_codegen::llm::topic();
+    assert_eq!(value["providers"][0]["summary"], provider.summary);
+    let library_body = provider.body;
+    assert_eq!(value["providers"][0]["markdown"], library_body);
+    let rendered_markdown = value["markdown"].as_str().unwrap();
+    assert!(rendered_markdown.contains(library_body));
+    assert!(
+        rendered_markdown.find("## Verification").unwrap()
+            < rendered_markdown.find(library_body).unwrap(),
+        "provider Markdown must follow the app-owned runbook"
+    );
+
+    let release = dx::render_llm("verify-release", cli_std::llm::Format::Json).unwrap();
+    let release_value: Value = serde_json::from_str(&release).expect("release JSON parses");
+    assert_eq!(release_value["task"]["risk"], "remote_write");
+    assert!(release_value["task"]["reads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "apps/lumen/e2e/release_artifacts.rs"));
+    assert!(release_value["task"]["reads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "apps/lumen/install.sh"));
+    assert_eq!(release_value["providers"].as_array().unwrap().len(), 1);
+    assert_eq!(release_value["providers"][0]["id"], "raft-runtime");
+    let raft_provider = raft_runtime::llm::topic();
+    assert_eq!(
+        release_value["providers"][0]["markdown"],
+        raft_provider.body
+    );
+    let release_markdown = release_value["markdown"].as_str().unwrap();
+    for needle in [
+        "Run kind before publication",
+        "Land each release to main exactly once",
+        "GHCR root and platform digests",
+        "downloaded host archive passes its checksum",
+        "scripts/raft-implementor-build.sh",
+    ] {
+        assert!(
+            release_markdown.contains(needle),
+            "release topic missing `{needle}`: {release_markdown}"
+        );
+    }
+
+    let local = dx::render_llm("run-standalone", cli_std::llm::Format::Json).unwrap();
+    let local_value: Value = serde_json::from_str(&local).expect("standalone JSON parses");
+    assert!(local_value.get("providers").is_none());
+    assert_eq!(
+        local_value["runbook"]["steps"][0]["command_template"],
+        "lumen serve --host 127.0.0.1 --data-dir {data_dir} --wal embedded --persistence segment"
+    );
+    for needle in [
+        "bare binary defaults to 127.0.0.1",
+        "in-memory ephemeral storage",
+        "container listens on 0.0.0.0",
+        "No mount and no data directory means replacement loses state",
+        "LUMEN_WAL=embedded",
+        "LUMEN_DATA_DIR=/var/lib/lumen/data",
+        "LUMEN_PERSISTENCE=segment",
+        "Stop the old container cleanly",
+        "declares no Docker VOLUME",
+        "Auth off is safe only behind a trusted local network boundary",
+        "not Managed, Fleet, or a production HA claim",
+    ] {
+        assert!(
+            local_value["markdown"].as_str().unwrap().contains(needle),
+            "standalone topic missing `{needle}`: {local}"
         );
     }
 }

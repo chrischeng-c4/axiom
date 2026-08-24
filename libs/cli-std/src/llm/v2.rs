@@ -4,7 +4,7 @@
 //! task selection and runbooks while preserving the `topic` and `markdown`
 //! JSON compatibility fields consumed by existing clients.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Result};
 use serde::Serialize;
@@ -42,11 +42,24 @@ pub fn json_schema() -> serde_json::Value {
                     "markdown": { "type": "string" },
                     "protocol": { "const": PROTOCOL },
                     "task": { "$ref": "#/$defs/task" },
-                    "runbook": { "$ref": "#/$defs/runbook" }
+                    "runbook": { "$ref": "#/$defs/runbook" },
+                    "providers": {
+                        "type": "array",
+                        "items": { "$ref": "#/$defs/provider" }
+                    }
                 }
             }
         ],
         "$defs": {
+            "provider": {
+                "type": "object",
+                "required": ["id", "summary", "markdown"],
+                "properties": {
+                    "id": { "type": "string", "minLength": 1 },
+                    "summary": { "type": "string" },
+                    "markdown": { "type": "string", "minLength": 1 }
+                }
+            },
             "task": {
                 "type": "object",
                 "required": ["id", "use_when", "requires", "reads", "produces", "risk", "topic", "contract_refs"],
@@ -146,10 +159,19 @@ pub struct Topic {
     pub runbook: Runbook,
 }
 
+/// Content owned by a shared library and composed into one app task topic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProviderContent {
+    pub id: String,
+    pub summary: String,
+    pub markdown: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProtocolDocument {
     project: String,
     topics: Vec<Topic>,
+    providers: BTreeMap<String, Vec<ProviderContent>>,
 }
 
 impl ProtocolDocument {
@@ -157,9 +179,38 @@ impl ProtocolDocument {
         let document = Self {
             project: project.into(),
             topics,
+            providers: BTreeMap::new(),
         };
         document.validate()?;
         Ok(document)
+    }
+
+    /// Compose a legacy shared-library topic into one typed app topic.
+    ///
+    /// Provider order follows call order. The provider remains library-owned;
+    /// this document only selects the task topic that includes it.
+    pub fn with_topic_provider(mut self, topic: &str, provider: &super::Topic) -> Result<Self> {
+        self.topic(topic)?;
+        if provider.id.trim().is_empty() {
+            bail!("LLM provider id cannot be empty");
+        }
+        if provider.body.trim().is_empty() {
+            bail!("LLM provider `{}` markdown cannot be empty", provider.id);
+        }
+
+        let providers = self.providers.entry(topic.to_string()).or_default();
+        if providers.iter().any(|entry| entry.id == provider.id) {
+            bail!(
+                "duplicate LLM provider `{}` for topic `{topic}`",
+                provider.id
+            );
+        }
+        providers.push(ProviderContent {
+            id: provider.id.to_string(),
+            summary: provider.summary.to_string(),
+            markdown: provider.body.to_string(),
+        });
+        Ok(self)
     }
 
     pub fn topics(&self) -> &[Topic] {
@@ -185,14 +236,20 @@ impl ProtocolDocument {
                     .map_err(Into::into)
                 } else {
                     let entry = self.topic(topic)?;
-                    serde_json::to_string_pretty(&serde_json::json!({
+                    let mut envelope = serde_json::json!({
                         "topic": topic,
                         "markdown": markdown,
                         "protocol": PROTOCOL,
                         "task": &entry.task,
                         "runbook": &entry.runbook,
-                    }))
-                    .map_err(Into::into)
+                    });
+                    if let Some(providers) = self.providers.get(topic) {
+                        envelope
+                            .as_object_mut()
+                            .expect("LLM detail envelope is an object")
+                            .insert("providers".into(), serde_json::json!(providers));
+                    }
+                    serde_json::to_string_pretty(&envelope).map_err(Into::into)
                 }
             }
         }
@@ -314,6 +371,17 @@ impl ProtocolDocument {
         }
         markdown_list(&mut out, "Verification", &runbook.verification);
         markdown_list(&mut out, "References", &runbook.references);
+        if let Some(providers) = self.providers.get(&entry.task.topic) {
+            out.push_str("\n## Shared providers\n");
+            for provider in providers {
+                out.push_str(&format!(
+                    "\n### `{}`\n\n{}\n\n{}\n",
+                    provider.id,
+                    provider.summary,
+                    provider.markdown.trim()
+                ));
+            }
+        }
         out
     }
 }
@@ -356,6 +424,17 @@ fn markdown_list(out: &mut String, heading: &str, values: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PROVIDER: crate::llm::Topic = crate::llm::Topic {
+        id: "openapi-codegen",
+        summary: "Shared generated-client rules.",
+        body: "# Shared generator\n\nThe library owns these bytes.",
+    };
+    const SECOND_PROVIDER: crate::llm::Topic = crate::llm::Topic {
+        id: "transport-policy",
+        summary: "Shared transport rules.",
+        body: "# Shared transport\n\nThe transport library owns these bytes.",
+    };
 
     fn sample() -> ProtocolDocument {
         ProtocolDocument::new(
@@ -415,6 +494,102 @@ mod tests {
             .unwrap()
             .iter()
             .any(|field| field == "verification"));
+        assert_eq!(
+            schema["oneOf"][1]["properties"]["providers"]["items"]["$ref"],
+            "#/$defs/provider"
+        );
+        assert!(!schema["oneOf"][1]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "providers"));
+    }
+
+    #[test]
+    fn provider_is_ordered_and_does_not_change_the_outline() {
+        let mut base = sample();
+        let mut other = base.topics[0].clone();
+        other.task.id = "other-task".into();
+        other.task.topic = "other".into();
+        base.topics.push(other);
+        let outline_before = base.render("outline", Format::Json).unwrap();
+        let outline_markdown_before = base.render("outline", Format::Md).unwrap();
+        let other_before = base.render("other", Format::Json).unwrap();
+        let other_markdown_before = base.render("other", Format::Md).unwrap();
+        let document = base
+            .with_topic_provider("search", &PROVIDER)
+            .unwrap()
+            .with_topic_provider("search", &SECOND_PROVIDER)
+            .unwrap();
+
+        assert_eq!(
+            document.render("outline", Format::Json).unwrap(),
+            outline_before,
+            "providers must not change the task manifest"
+        );
+        assert_eq!(
+            document.render("outline", Format::Md).unwrap(),
+            outline_markdown_before,
+            "providers must not change the outline Markdown"
+        );
+        assert_eq!(
+            document.render("other", Format::Json).unwrap(),
+            other_before,
+            "a provider must not change another topic's detail envelope"
+        );
+        assert_eq!(
+            document.render("other", Format::Md).unwrap(),
+            other_markdown_before,
+            "a provider must not change another topic's Markdown"
+        );
+        let detail: serde_json::Value =
+            serde_json::from_str(&document.render("search", Format::Json).unwrap()).unwrap();
+        assert_eq!(detail["providers"][0]["id"], "openapi-codegen");
+        assert_eq!(detail["providers"][1]["id"], "transport-policy");
+        assert_eq!(
+            detail["providers"][0]["markdown"],
+            "# Shared generator\n\nThe library owns these bytes."
+        );
+        let markdown = document.render("search", Format::Md).unwrap();
+        assert!(markdown.contains("## Shared providers"));
+        assert!(markdown.contains("The library owns these bytes."));
+        assert!(
+            markdown.find(PROVIDER.body).unwrap() < markdown.find(SECOND_PROVIDER.body).unwrap(),
+            "provider Markdown must follow registration order"
+        );
+    }
+
+    #[test]
+    fn provider_registration_rejects_unknown_empty_and_duplicate_inputs() {
+        assert!(sample().with_topic_provider("missing", &PROVIDER).is_err());
+
+        const EMPTY_ID: crate::llm::Topic = crate::llm::Topic {
+            id: " ",
+            summary: "invalid",
+            body: "body",
+        };
+        const EMPTY_BODY: crate::llm::Topic = crate::llm::Topic {
+            id: "empty-body",
+            summary: "invalid",
+            body: " \n",
+        };
+        assert!(sample().with_topic_provider("search", &EMPTY_ID).is_err());
+        assert!(sample().with_topic_provider("search", &EMPTY_BODY).is_err());
+        assert!(sample()
+            .with_topic_provider("search", &PROVIDER)
+            .unwrap()
+            .with_topic_provider("search", &PROVIDER)
+            .is_err());
+        let mut two_topics = sample();
+        let mut other = two_topics.topics[0].clone();
+        other.task.id = "other-task".into();
+        other.task.topic = "other".into();
+        two_topics.topics.push(other);
+        assert!(two_topics
+            .with_topic_provider("search", &PROVIDER)
+            .unwrap()
+            .with_topic_provider("other", &PROVIDER)
+            .is_ok());
     }
 
     #[test]

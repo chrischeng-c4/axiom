@@ -66,12 +66,12 @@ enum Command {
     /// `--shapes` for the query-shape cookbook; `--fields` for the field-type /
     /// analyzer catalog.
     Spec(SpecArgs),
-    /// Print agent-facing LLM topics — offline, no server. `outline` maps the
-    /// available topics; `workflow` covers mental model +
-    /// declare→ingest→search→hydrate; `integration` covers Postgres/AlloyDB
-    /// adapter boundaries; `quickstart` is copy-paste end-to-end; `recipes`
-    /// are task → ready-to-POST query bodies. Markdown by default; `--format
-    /// json` for a machine-readable form.
+    /// Print agent-facing task topics — offline, no server. `outline` maps the
+    /// available tasks. Topics that include planned behavior distinguish it
+    /// from current support. Tasks name canonical sources and runnable
+    /// verification steps. Shared provider content stays owned by its library
+    /// and is composed into Lumen.
+    /// Markdown is the default; use `--format json` for machine-readable output.
     Llm(LlmArgs),
     /// Print runtime image Dockerfiles. Image construction is owned here, not
     /// by `k8s`, because the same artifact feeds compose, kind, and real
@@ -779,6 +779,8 @@ struct SnapshotImportArgs {
 enum LlmTopic {
     /// Typed task map for agent context selection (default).
     Outline,
+    /// Start one local development or test runtime without Kubernetes.
+    RunStandalone,
     /// Inspect the offline search contract before issuing a request.
     LocalSearch,
     /// Declare or review a collection schema.
@@ -806,12 +808,16 @@ enum LlmTopic {
     GenerateClient,
     /// Inspect standard operational evidence from a running service.
     Diagnose,
+    /// Verify one release candidate through local, kind, and public artifact
+    /// evidence.
+    VerifyRelease,
 }
 
 impl LlmTopic {
     const fn id(self) -> &'static str {
         match self {
             Self::Outline => "outline",
+            Self::RunStandalone => "run-standalone",
             Self::LocalSearch => "local-search",
             Self::ModelSchema => "model-schema",
             Self::SelectQuery => "select-query",
@@ -824,6 +830,7 @@ impl LlmTopic {
             Self::BackupRestore => "backup-restore",
             Self::GenerateClient => "generate-client",
             Self::Diagnose => "diagnose",
+            Self::VerifyRelease => "verify-release",
         }
     }
 }

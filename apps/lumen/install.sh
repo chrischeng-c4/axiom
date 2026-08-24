@@ -120,22 +120,25 @@ say "downloading ${url}"
 auth_curl "${url}" -o "${tmpdir}/${asset}" \
   || die "download failed: ${url}"
 
-# Best-effort integrity check — if .sha256 is missing on a manual
-# release we don't refuse to install.
-if auth_curl "${sha_url}" -o "${tmpdir}/${asset}.sha256" 2>/dev/null; then
-  expected="$(cat "${tmpdir}/${asset}.sha256")"
-  if command -v shasum >/dev/null 2>&1; then
-    actual="$(shasum -a 256 "${tmpdir}/${asset}" | awk '{print $1}')"
-  elif command -v sha256sum >/dev/null 2>&1; then
-    actual="$(sha256sum "${tmpdir}/${asset}" | awk '{print $1}')"
-  else
-    actual=""
-  fi
-  if [ -n "${actual}" ] && [ "${actual}" != "${expected}" ]; then
-    die "sha256 mismatch (expected ${expected}, got ${actual})"
-  fi
-  say "sha256 verified"
+auth_curl "${sha_url}" -o "${tmpdir}/${asset}.sha256" \
+  || die "checksum download failed: ${sha_url}"
+expected="$(awk 'NR == 1 { print $1; exit }' "${tmpdir}/${asset}.sha256")"
+case "${expected}" in
+  ''|*[!0-9a-fA-F]*) die "invalid sha256 sidecar: ${asset}.sha256" ;;
+esac
+[ "${#expected}" -eq 64 ] || die "invalid sha256 sidecar: ${asset}.sha256"
+expected="$(printf '%s' "${expected}" | tr '[:upper:]' '[:lower:]')"
+if command -v shasum >/dev/null 2>&1; then
+  actual="$(shasum -a 256 "${tmpdir}/${asset}" | awk '{print $1}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+  actual="$(sha256sum "${tmpdir}/${asset}" | awk '{print $1}')"
+else
+  die "missing required checksum tool: shasum or sha256sum" 3
 fi
+if [ "${actual}" != "${expected}" ]; then
+  die "sha256 mismatch (expected ${expected}, got ${actual})"
+fi
+say "sha256 verified"
 
 # ---- extract + install -------------------------------------------------
 tar -C "${tmpdir}" -xzf "${tmpdir}/${asset}" \
@@ -144,6 +147,11 @@ tar -C "${tmpdir}" -xzf "${tmpdir}/${asset}" \
 bin="${tmpdir}/lumen-${target}/lumen"
 [ -f "${bin}" ] || die "binary not found in archive: ${bin}"
 chmod +x "${bin}"
+expected_version="lumen ${tag#lumen@}"
+actual_version="$("${bin}" --version 2>/dev/null)" \
+  || die "downloaded binary did not report a version"
+[ "${actual_version}" = "${expected_version}" ] \
+  || die "version mismatch (expected ${expected_version}, got ${actual_version})"
 
 mkdir -p "${INSTALL_DIR}"
 mv "${bin}" "${INSTALL_DIR}/lumen"
@@ -160,8 +168,5 @@ case ":${PATH}:" in
 esac
 
 # ---- show version ------------------------------------------------------
-if "${INSTALL_DIR}/lumen" --version >/dev/null 2>&1; then
-  ver="$("${INSTALL_DIR}/lumen" --version 2>/dev/null || echo unknown)"
-  say "ready: ${ver}"
-fi
+say "ready: ${actual_version}"
 # CODEGEN-END

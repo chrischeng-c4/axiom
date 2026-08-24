@@ -21,6 +21,9 @@
 #     --platform linux/amd64,linux/arm64 \
 #     -t ghcr.io/<owner>/lumen:sha-<git12> --push .
 
+FROM debian:bookworm-slim AS seed
+RUN mkdir -p -m 0750 /out/lumen-data && touch /out/lumen-data/.lumen-volume-seed
+
 # distroless static runtime — only the binary + CA certs, nonroot. Identical
 # to Dockerfile.release's runtime stage: static-debian12 ships no
 # glibc/libgcc, so this only works with the fully static musl binaries the
@@ -29,9 +32,11 @@
 # spawns no children, so no tini/init shim is required.
 FROM gcr.io/distroless/static-debian12:nonroot
 ARG TARGETARCH=amd64
+COPY --from=seed --chown=65532:65532 /out/lumen-data/ /var/lib/lumen/data/
 COPY dist/linux/${TARGETARCH}/lumen /usr/local/bin/lumen
 # 7373 = client API. WAL storage is embedded locally or Lumen-owned raft state.
 EXPOSE 7373
+ENV LUMEN_HOST=0.0.0.0
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]
 # HANDWRITE-END

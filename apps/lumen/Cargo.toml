@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.26"
+version = "0.4.27"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -364,6 +364,10 @@ name = "disk_scale_proof"
 path = "e2e/disk_scale_proof.rs"
 
 [[test]]
+name = "docker_named_volume"
+path = "e2e/docker_named_volume.rs"
+
+[[test]]
 name = "drop_drain_e2e"
 path = "e2e/drop_drain_e2e.rs"
 
@@ -467,6 +471,10 @@ name = "reindex_stream_e2e"
 path = "e2e/reindex_stream_e2e.rs"
 
 [[test]]
+name = "release_artifacts"
+path = "e2e/release_artifacts.rs"
+
+[[test]]
 name = "release_feature_set"
 path = "e2e/release_feature_set.rs"
 
@@ -547,6 +555,10 @@ path = "e2e/stability_lumen_long_running_stability_resilience_survival.rs"
 [[test]]
 name = "stability_lumen_long_running_stability_resource_leak"
 path = "e2e/stability_lumen_long_running_stability_resource_leak.rs"
+
+[[test]]
+name = "standalone_container_contract"
+path = "e2e/standalone_container_contract.rs"
 
 [[test]]
 name = "stats_metadata_e2e"

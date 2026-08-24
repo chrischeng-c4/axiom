@@ -100,6 +100,9 @@ path = "e2e/host_shutdown_deadline.rs"
 name = "shutdown_idempotency"
 path = "e2e/shutdown_idempotency.rs"
 
+[[test]]
+name = "implementor_build_coverage"
+path = "e2e/implementor_build_coverage.rs"
 
 [dependencies]
 raft-core = { path = "../raft-core" }
@@ -122,4 +125,5 @@ tokio-rustls = "0.26"
 
 [dev-dependencies]
 rcgen = "0.13"
+syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"
