@@ -134,10 +134,18 @@ Repository operating policy. It does not override a host's own approval gate
 for sending data outside the machine.
 
 When a bounded task can use an external worker, prefer one fresh
-`dispatch-operator` subagent. Its model is Sonnet at low reasoning. Create it
-only after the user authorizes the exact headless AGY payload. Make it directly
+`agy-operator` subagent. Its model is Sonnet at low reasoning. Create it only
+after the user authorizes the exact headless AGY payload. Make it directly
 inherit that user turn. Do not reuse an older operator. Do not forward
 authorization through a controller message.
+
+For more than one task in the same round, use `/dispatch-to-agy` instead of
+hand-driving each operator: it classifies every task `measure-only` or
+`bounded-write`, then fans out. Any number of `measure-only` tasks may run
+concurrently. `bounded-write` tasks may run concurrently only across distinct
+persistent AGY Projects — AGY has not proven per-conversation worktree
+confinement for two concurrent bounded writes in one Project, so those queue
+one at a time regardless of how disjoint their write ownership looks.
 
 The controller freezes the profile, task key, action, snapshot mode, and all
 input digests before dispatch. The snapshot mode is `create`, `reuse`, or

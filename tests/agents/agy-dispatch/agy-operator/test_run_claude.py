@@ -29,7 +29,7 @@ def _load(name: str, filename: str):
     return module
 
 
-launcher = _load("dispatch_operator_claude_eval", "run_claude.py")
+launcher = _load("agy_operator_claude_eval", "run_claude.py")
 runner = launcher.run
 
 
@@ -79,7 +79,7 @@ class ClaudeLauncherContractTest(unittest.TestCase):
     def test_runtime_layer_binds_the_claude_agent_and_skill(self) -> None:
         self.assertEqual(
             runner.PRODUCTION_AGENT,
-            launcher.REPO_ROOT / ".claude/agents/dispatch-operator.md",
+            launcher.REPO_ROOT / ".claude/agents/agy-operator.md",
         )
         self.assertEqual(
             runner.PRODUCTION_SKILL, launcher.REPO_ROOT / ".claude/skills/agy-dispatch"
@@ -122,7 +122,7 @@ class ClaudeLauncherContractTest(unittest.TestCase):
         contract = launcher.static_agent_contract()
         self.assertEqual(contract["model"], launcher.EXPECTED_AGENT_CONTRACT["model"])
         self.assertEqual(contract["effort"], launcher.EXPECTED_AGENT_CONTRACT["effort"])
-        self.assertEqual(contract["name"], "dispatch-operator")
+        self.assertEqual(contract["name"], "agy-operator")
 
 
 class SandboxProfileTest(unittest.TestCase):
@@ -392,7 +392,7 @@ class ParentAuditTest(unittest.TestCase):
                 "id": "toolu_2",
                 "name": "SendMessage",
                 "input": {
-                    "to": "dispatch-operator",
+                    "to": "agy-operator",
                     "message": launcher.expected_followup_message(),
                 },
                 "uuid": "u2",
@@ -403,7 +403,7 @@ class ParentAuditTest(unittest.TestCase):
             {
                 "id": "toolu_2",
                 "name": "SendMessage",
-                "input": {"to": "dispatch-operator", "message": "do the second round"},
+                "input": {"to": "agy-operator", "message": "do the second round"},
                 "uuid": "u2",
             }
         ]

@@ -1,6 +1,6 @@
-# Dispatch operator eval
+# Agy operator eval
 
-This suite tests the real Codex custom agent named `dispatch-operator`.
+This suite tests the real Codex custom agent named `agy-operator`.
 
 It does not call AGY. It creates a temporary Git repository. It installs a
 fake `scripts/agy_dispatch.py` in that repository. Every model-run command is
@@ -28,7 +28,7 @@ Its internal content blocks are transport-opaque because v2 may store them as
 encrypted, decrypted, or enriched blocks. The outer result and child rollout
 bind the exact report in both forms.
 The reuse canary adds one exact `followup_task` between its two wait phases.
-The dispatch operator child uses Luna at medium reasoning.
+The agy operator child uses Luna at medium reasoning.
 The child matrix uses Codex's production custom-exec transport. Each
 custom-exec block must contain one literal nested tool call and return its
 complete result as JSON. The grader parses that inner call and binds it to the
@@ -48,7 +48,7 @@ instruction body must stay equal to production.
 The runner checks these facts:
 
 - The parent's first raw rollout action is one exact `spawn_agent` call.
-- That call uses `agent_type="dispatch-operator"` and `fork_turns="1"`.
+- That call uses `agent_type="agy-operator"` and `fork_turns="1"`.
 - The raw spawn, parent thread, and child source metadata bind one parent to one
   child. The outer v2 event stream may omit its completed spawn event.
 - The one-round parent ends with a successful `wait_agent` result. The matching
@@ -241,7 +241,7 @@ not grant permission to contact real AGY.
 List the cases without a model call:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run.py --dry-run
+python3 tests/agents/agy-dispatch/agy-operator/run.py --dry-run
 ```
 
 Read the kernel-selected user temp root without a model call. Do not substitute
@@ -249,10 +249,10 @@ Read the kernel-selected user temp root without a model call. Do not substitute
 
 ```bash
 EVAL_TEMP_BASE="$(
-  python3 tests/agents/agy-dispatch/dispatch-operator/run.py \
+  python3 tests/agents/agy-dispatch/agy-operator/run.py \
     --fixed-temp-base
 )"
-EVAL_OUTPUT="${EVAL_TEMP_BASE}/dispatch-operator-codex-eval.json"
+EVAL_OUTPUT="${EVAL_TEMP_BASE}/agy-operator-codex-eval.json"
 test ! -e "${EVAL_OUTPUT}"
 ```
 
@@ -260,7 +260,7 @@ Print the exact live plan without a model call. Use the same case, repeat, and
 timeout options that the live command will use:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run.py \
+python3 tests/agents/agy-dispatch/agy-operator/run.py \
   --runtime codex \
   --live-plan \
   --case dispatch-create-ticketed \
@@ -277,20 +277,20 @@ output path.
 You can print only the source manifest with this no-model command:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run.py --source-manifest
+python3 tests/agents/agy-dispatch/agy-operator/run.py --source-manifest
 ```
 
 Run the local unit tests:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/test_run.py
+python3 tests/agents/agy-dispatch/agy-operator/test_run.py
 ```
 
 Run the no-model containment probe from a host context that can start macOS
 Seatbelt. A nested sandbox failure is a hard failure:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run.py \
+python3 tests/agents/agy-dispatch/agy-operator/run.py \
   --runtime codex \
   --containment-probe \
   --case dispatch-create-ticketed
@@ -299,7 +299,7 @@ python3 tests/agents/agy-dispatch/dispatch-operator/run.py \
 Run one live case:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run.py \
+python3 tests/agents/agy-dispatch/agy-operator/run.py \
   --runtime codex \
   --live \
   --expected-source-manifest-sha256 <SOURCE_MANIFEST_SHA256> \
@@ -317,7 +317,7 @@ Run the complete Codex matrix:
 First create its exact no-model plan:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run.py \
+python3 tests/agents/agy-dispatch/agy-operator/run.py \
   --runtime codex \
   --live-plan \
   --output "${EVAL_OUTPUT}"
@@ -326,7 +326,7 @@ python3 tests/agents/agy-dispatch/dispatch-operator/run.py \
 Then use the two exact digests from that plan:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run.py \
+python3 tests/agents/agy-dispatch/agy-operator/run.py \
   --runtime codex \
   --live \
   --expected-source-manifest-sha256 <SOURCE_MANIFEST_SHA256> \
@@ -357,7 +357,7 @@ fixtures and grader. Only the host launcher and model configuration may differ.
 Do not change an expected result to make one runtime pass.
 
 The Claude launcher is
-`tests/agents/agy-dispatch/dispatch-operator/run_claude.py`. It imports `run.py`
+`tests/agents/agy-dispatch/agy-operator/run_claude.py`. It imports `run.py`
 and reuses `prepare_fixture`, `grade_operator_report`, and every oracle in
 `cases.json` unchanged. It rebinds only the runtime layer that `prepare_fixture`
 copies into the fixture, so the fixture carries the Claude agent file and the
@@ -373,29 +373,29 @@ The stage list is `claude-minimal-eval.json`. Stage 1 is the transport canary
 Run the local unit tests:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/test_run_claude.py
+python3 tests/agents/agy-dispatch/agy-operator/test_run_claude.py
 ```
 
 List the cases without a model call:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run_claude.py --dry-run
+python3 tests/agents/agy-dispatch/agy-operator/run_claude.py --dry-run
 ```
 
 Print which shared invariant rows this transport proves, and which rows are
 Codex-only:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run_claude.py \
+python3 tests/agents/agy-dispatch/agy-operator/run_claude.py \
   --transport-invariants
 ```
 
 Print only the source manifest. The Claude manifest binds the same shared
-payloads plus `run_claude.py`, `.claude/agents/dispatch-operator.md`,
+payloads plus `run_claude.py`, `.claude/agents/agy-operator.md`,
 `.claude/skills/agy-dispatch/SKILL.md`, and `claude-minimal-eval.json`:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run_claude.py \
+python3 tests/agents/agy-dispatch/agy-operator/run_claude.py \
   --source-manifest
 ```
 
@@ -403,7 +403,7 @@ Run the no-model containment probe. It starts macOS Seatbelt and asserts all
 eighteen required checks:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run_claude.py \
+python3 tests/agents/agy-dispatch/agy-operator/run_claude.py \
   --containment-probe \
   --case dispatch-create-ticketed
 ```
@@ -412,12 +412,12 @@ Print the exact live plan without a model call:
 
 ```bash
 EVAL_TEMP_BASE="$(
-  python3 tests/agents/agy-dispatch/dispatch-operator/run_claude.py \
+  python3 tests/agents/agy-dispatch/agy-operator/run_claude.py \
     --fixed-temp-base
 )"
-EVAL_OUTPUT="${EVAL_TEMP_BASE}/dispatch-operator-claude-eval.json"
+EVAL_OUTPUT="${EVAL_TEMP_BASE}/agy-operator-claude-eval.json"
 test ! -e "${EVAL_OUTPUT}"
-python3 tests/agents/agy-dispatch/dispatch-operator/run_claude.py \
+python3 tests/agents/agy-dispatch/agy-operator/run_claude.py \
   --live-plan \
   --case dispatch-create-ticketed \
   --output "${EVAL_OUTPUT}"
@@ -426,7 +426,7 @@ python3 tests/agents/agy-dispatch/dispatch-operator/run_claude.py \
 Run one live case with both exact digests from that plan:
 
 ```bash
-python3 tests/agents/agy-dispatch/dispatch-operator/run_claude.py \
+python3 tests/agents/agy-dispatch/agy-operator/run_claude.py \
   --live \
   --expected-source-manifest-sha256 <SOURCE_MANIFEST_SHA256> \
   --expected-live-plan-sha256 <LIVE_PLAN_SHA256> \
@@ -449,7 +449,7 @@ carries `--no-chrome`, `--strict-mcp-config`, an empty `--mcp-config`, and
 `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`,
 `--add-dir`, or `--permission-prompt-tool`.
 
-The child is the production `.claude/agents/dispatch-operator.md`, loaded from
+The child is the production `.claude/agents/agy-operator.md`, loaded from
 the fixture and never replaced through `--agents`. Its frozen frontmatter binds
 Sonnet at low reasoning.
 

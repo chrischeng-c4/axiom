@@ -79,10 +79,19 @@ those rules — they are deliberately not repeated here.
 ### Prefer AGY for bounded delegation
 
 When a bounded task can use an external worker, prefer one fresh
-`dispatch-operator` subagent. Its model is `GPT-5.6 Luna` at medium reasoning.
+`agy-operator` subagent. Its model is `GPT-5.6 Luna` at medium reasoning.
 Create it only after the user authorizes the exact headless AGY payload. Make it
 directly inherit that user turn. Do not reuse an older operator. Do not forward
 authorization through a controller message.
+
+For more than one task in the same round: any number of `measure-only` tasks
+may run concurrently, and `bounded-write` tasks may run concurrently only
+across distinct persistent AGY Projects. AGY has not proven per-conversation
+worktree confinement for two concurrent bounded writes in one Project, so
+same-Project bounded-write tasks queue one at a time regardless of how
+disjoint their write ownership looks. The Claude-side controller has a
+`/dispatch-to-agy` skill that enforces this; a Codex-driven controller applies
+the same rule by hand.
 
 The controller freezes the profile, task key, action, snapshot mode, and all
 input digests before dispatch. The snapshot mode is `create`, `reuse`, or

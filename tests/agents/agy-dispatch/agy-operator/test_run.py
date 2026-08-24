@@ -14,18 +14,18 @@ from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("run.py")
-SPEC = importlib.util.spec_from_file_location("dispatch_operator_eval", SCRIPT)
+SPEC = importlib.util.spec_from_file_location("agy_operator_eval", SCRIPT)
 assert SPEC and SPEC.loader
 runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
 
 
-class DispatchOperatorEvalTest(unittest.TestCase):
+class AgyOperatorEvalTest(unittest.TestCase):
     def case(self, case_id: str) -> dict:
         return next(case for case in runner.load_cases() if case["id"] == case_id)
 
     def fixture(self, case_id: str) -> tuple[tempfile.TemporaryDirectory, Path, dict]:
-        temporary = tempfile.TemporaryDirectory(prefix="dispatch-operator-eval-test-")
+        temporary = tempfile.TemporaryDirectory(prefix="agy-operator-eval-test-")
         root = Path(temporary.name) / "repo"
         handoff = runner.prepare_fixture(self.case(case_id), root)
         return temporary, root, handoff
@@ -319,7 +319,7 @@ class DispatchOperatorEvalTest(unittest.TestCase):
                     target = target[component]
                 del target[missing_path[-1]]
                 with tempfile.TemporaryDirectory(
-                    prefix="dispatch-operator-invalid-cases-"
+                    prefix="agy-operator-invalid-cases-"
                 ) as raw:
                     cases_path = Path(raw) / "cases.json"
                     cases_path.write_text(
@@ -349,7 +349,7 @@ class DispatchOperatorEvalTest(unittest.TestCase):
                 document = json.loads(json.dumps(source))
                 mutate(document)
                 with tempfile.TemporaryDirectory(
-                    prefix="dispatch-operator-invalid-contract-"
+                    prefix="agy-operator-invalid-contract-"
                 ) as raw:
                     cases_path = Path(raw) / "cases.json"
                     cases_path.write_text(
@@ -2478,7 +2478,7 @@ class DispatchOperatorEvalTest(unittest.TestCase):
     def test_exec_policy_forbids_real_agy_git_and_controller_verbs(self) -> None:
         temporary, root, _ = self.fixture("dispatch-create-ticketed")
         try:
-            rules = root / ".codex/rules/dispatch-operator-eval.rules"
+            rules = root / ".codex/rules/agy-operator-eval.rules"
             commands = [
                 ["agy", "status"],
                 ["find", ".eval", "-maxdepth", "1"],
@@ -2547,7 +2547,7 @@ class DispatchOperatorEvalTest(unittest.TestCase):
             with self.subTest(case=case_id):
                 temporary, root, handoff = self.fixture(case_id)
                 try:
-                    rules = root / ".codex/rules/dispatch-operator-eval.rules"
+                    rules = root / ".codex/rules/agy-operator-eval.rules"
                     profile = handoff["profile"]["path"]
                     task_key = handoff["task_key"]
                     arguments = [denied_verb, profile]
@@ -3319,7 +3319,7 @@ class DispatchOperatorEvalTest(unittest.TestCase):
                                 "thread_spawn": {
                                     "parent_thread_id": parent_id,
                                     "agent_path": f"/root/{spawn['task_name']}",
-                                    "agent_role": "dispatch-operator",
+                                    "agent_role": "agy-operator",
                                 }
                             }
                         },
@@ -3399,7 +3399,7 @@ class DispatchOperatorEvalTest(unittest.TestCase):
                     "type": "agent_message",
                     "text": "HANDOFF_INCOMPLETE\nBLOCKER invalid pair",
                 },
-                "spawn": {"agent_type": "dispatch-operator", "fork_turns": "1"},
+                "spawn": {"agent_type": "agy-operator", "fork_turns": "1"},
             }
             process = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout=json.dumps(event) + "\n", stderr=""
@@ -3427,7 +3427,7 @@ class DispatchOperatorEvalTest(unittest.TestCase):
                         '{"kind":"blocker","text":"invalid pair"}'
                     ),
                 },
-                "spawn": {"agent_type": "dispatch-operator", "fork_turns": "1"},
+                "spawn": {"agent_type": "agy-operator", "fork_turns": "1"},
             }
             process = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout=json.dumps(event) + "\n", stderr=""

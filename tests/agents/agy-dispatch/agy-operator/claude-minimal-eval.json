@@ -1,16 +1,16 @@
 {
-  "schema": "agy-dispatch-operator-claude-minimal-eval-v1",
+  "schema": "agy-operator-claude-minimal-eval-v1",
   "version": 1,
   "runtime": "claude-code",
   "shared_oracle": {
-    "path": "tests/agents/agy-dispatch/dispatch-operator/cases.json",
-    "sha256": "e8178445c8d718b83e1c7b811a5db1359d1e59d43eeee363c6033df9224fb0ab",
+    "path": "tests/agents/agy-dispatch/agy-operator/cases.json",
+    "sha256": "057bf7dd00489bf83b6232016903ea3be3615797c05adbb5231b34c625fd93c2",
     "must_not_be_modified": true
   },
   "agent": {
-    "path": ".claude/agents/dispatch-operator.md",
-    "sha256": "9f82039aeae4fa2cf0a76f6ca44165653a9da77b946f50ba7d8e6ddb7f1e590f",
-    "name": "dispatch-operator",
+    "path": ".claude/agents/agy-operator.md",
+    "sha256": "a25704c6ddafdc42fc33960b258379aed29c93de242f1a6561b76fcd32de12fe",
+    "name": "agy-operator",
     "model": "sonnet",
     "effort": "low"
   },

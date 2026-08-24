@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local-only AGY adapter double for dispatch-operator model evals."""
+"""Local-only AGY adapter double for agy-operator model evals."""
 
 from __future__ import annotations
 

@@ -137,8 +137,8 @@ def main() -> int:
     canonical_root = repo_root / ".agents/skills/agy-dispatch"
     claude_root = repo_root / ".claude/skills/agy-dispatch"
     root_engine = repo_root / "scripts/agy_dispatch.py"
-    codex_agent = repo_root / ".codex/agents/dispatch-operator.toml"
-    claude_agent = repo_root / ".claude/agents/dispatch-operator.md"
+    codex_agent = repo_root / ".codex/agents/agy-operator.toml"
+    claude_agent = repo_root / ".claude/agents/agy-operator.md"
     legacy_root = repo_root / ".claude/dispatch/legacy/agy-dispatch-v1"
 
     def check_shared_files() -> tuple[bool, str]:

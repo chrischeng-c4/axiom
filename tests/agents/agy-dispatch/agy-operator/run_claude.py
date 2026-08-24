@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run synthetic, no-AGY behavior evals against the Claude dispatch operator.
+"""Run synthetic, no-AGY behavior evals against the Claude agy operator.
 
 This launcher reuses the shared runtime-neutral oracle in ``cases.json`` and the
 shared fixture, contract, and grader code in ``run.py``. It never edits either
@@ -46,7 +46,7 @@ import run  # noqa: E402  the shared fixture, contract, and grader code
 REPO_ROOT = run.REPO_ROOT
 CODEX_RUNNER_PATH = HERE / "run.py"
 MINIMAL_EVAL_PATH = HERE / "claude-minimal-eval.json"
-CLAUDE_AGENT = REPO_ROOT / ".claude/agents/dispatch-operator.md"
+CLAUDE_AGENT = REPO_ROOT / ".claude/agents/agy-operator.md"
 CLAUDE_SKILL = REPO_ROOT / ".claude/skills/agy-dispatch"
 REAL_USER_HOME = run.REAL_USER_HOME
 USER_CLAUDE_HOME = REAL_USER_HOME / ".claude"
@@ -59,7 +59,7 @@ USER_AUTH_CANDIDATES = (
 EXECUTED_RUNNER_BYTES: bytes | None = None
 
 EXPECTED_AGENT_CONTRACT = {
-    "name": "dispatch-operator",
+    "name": "agy-operator",
     "model": "sonnet",
     "effort": "low",
     "tools": "Read, Bash, Grep, Glob",
@@ -86,10 +86,10 @@ MAX_TRANSCRIPT_BYTES = 64_000_000
 MAX_TRANSCRIPT_FILES = 200
 MAX_CLAUDE_OUTPUT_BYTES = 64_000_000
 
-EVAL_CLAUDE_AGENTS = """# Synthetic dispatch-operator evaluation
+EVAL_CLAUDE_AGENTS = """# Synthetic agy-operator evaluation
 
 This repository holds only synthetic inputs and one local fake adapter.
-The controller parent must create exactly one fresh `dispatch-operator`
+The controller parent must create exactly one fresh `agy-operator`
 subagent with the `Task` tool. The operator may only inspect the frozen
 handoff, read the copied AGY skill, run the exact root adapter sequence, and
 report observations. The controller parent must not inspect a file and must not
@@ -99,7 +99,7 @@ No real AGY, network client, Git command, tracker command, file edit, semantic
 verification, acceptance, publication, or cleanup is allowed.
 """
 
-EVAL_CLAUDE_MEMORY = """# Synthetic dispatch-operator evaluation
+EVAL_CLAUDE_MEMORY = """# Synthetic agy-operator evaluation
 
 The repository operating contract for this evaluation is imported below and is
 the only instruction source besides the directly inherited user turn.
@@ -194,7 +194,7 @@ def claude_source_payload_paths() -> dict[str, Path]:
 def minimal_eval_document() -> dict[str, Any]:
     text = run.frozen_source_text("minimal_eval")
     document = run.strict_json_object(text)
-    if document.get("schema") != "agy-dispatch-operator-claude-minimal-eval-v1":
+    if document.get("schema") != "agy-operator-claude-minimal-eval-v1":
         raise SystemExit("unsupported claude-minimal-eval.json schema")
     if document.get("runtime") != "claude-code":
         raise SystemExit("claude-minimal-eval.json is not a claude-code plan")
@@ -233,7 +233,7 @@ AGENT_FRONTMATTER_PATTERN = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 def agent_frontmatter(source: str) -> dict[str, str]:
     match = AGENT_FRONTMATTER_PATTERN.match(source)
     if not match:
-        raise SystemExit("the Claude dispatch-operator agent has no frontmatter block")
+        raise SystemExit("the Claude agy-operator agent has no frontmatter block")
     fields: dict[str, str] = {}
     for line in match.group(1).splitlines():
         if not line or line.startswith((" ", "-", "#")):
@@ -257,7 +257,7 @@ def static_agent_contract() -> dict[str, str]:
     }
     if observed != EXPECTED_AGENT_CONTRACT:
         raise SystemExit(
-            f"dispatch-operator static contract is {observed!r}, "
+            f"agy-operator static contract is {observed!r}, "
             f"expected {EXPECTED_AGENT_CONTRACT!r}"
         )
     document = minimal_eval_document()
@@ -336,7 +336,7 @@ def copy_runtime_contract(root: Path) -> None:
     (root / "AGENTS.md").write_text(run.EVAL_AGENTS, encoding="utf-8")
     (root / "CLAUDE.md").write_text(EVAL_CLAUDE_MEMORY, encoding="utf-8")
 
-    agent_target = root / ".claude/agents/dispatch-operator.md"
+    agent_target = root / ".claude/agents/agy-operator.md"
     agent_target.parent.mkdir(parents=True, exist_ok=True)
     agent_target.write_bytes(run.frozen_source_bytes("production_agent"))
 
@@ -365,7 +365,7 @@ def write_repository_context_manifest(root: Path) -> Path:
     relative_files = [
         "AGENTS.md",
         "CLAUDE.md",
-        ".claude/agents/dispatch-operator.md",
+        ".claude/agents/agy-operator.md",
         ".claude/settings.json",
         ".claude/skills/agy-dispatch/SKILL.md",
         "bin/agy",
@@ -380,7 +380,7 @@ def write_repository_context_manifest(root: Path) -> Path:
     ]
     symlink = root / ".claude/skills/agy-dispatch/scripts/agy_dispatch.py"
     manifest = {
-        "schema": "agy-dispatch-operator-repository-context-v1",
+        "schema": "agy-operator-repository-context-v1",
         "files": entries,
         "symlinks": [
             {
@@ -887,7 +887,7 @@ def expected_task_arguments(case: dict[str, Any]) -> dict[str, str]:
     spawn = run.expected_spawn_arguments(case)
     return {
         "description": spawn["task_name"].replace("_", " "),
-        "subagent_type": "dispatch-operator",
+        "subagent_type": "agy-operator",
         "prompt": spawn["message"],
     }
 
@@ -914,7 +914,7 @@ Wait for the second child report. Return only that second report. The follow-up
 must use the exact text above without additions. Do not call `Task` a second
 time; a second `Task` call creates a different agent and fails this case.
 """
-    return f"""Synthetic dispatch-operator evaluation. No external AGY service is reachable.
+    return f"""Synthetic agy-operator evaluation. No external AGY service is reachable.
 
 {run.authorization_text(case, handoff)}
 
@@ -1240,7 +1240,7 @@ def transport_invariant_report() -> dict[str, Any]:
     if metadata:
         raise SystemExit(f"the shared invariants omitted the metadata rows {sorted(metadata)!r}")
     return {
-        "schema": "agy-dispatch-operator-claude-transport-invariants-v1",
+        "schema": "agy-operator-claude-transport-invariants-v1",
         "fixture_invariants_version": invariants["version"],
         "applied": sorted(
             set(invariants) - set(CODEX_ONLY_INVARIANTS) - INVARIANT_METADATA_KEYS
@@ -1806,7 +1806,7 @@ def build_live_plan(
         sum(int(run.fixture_options(case)["operator_rounds"]) for case in cases) * repeat
     )
     plan = {
-        "schema": "agy-dispatch-operator-live-plan-v1",
+        "schema": "agy-operator-live-plan-v1",
         "runtime": runtime,
         "source_manifest_sha256": source_digest,
         "claude_runtime": claude_runtime.report(),
@@ -1820,11 +1820,11 @@ def build_live_plan(
         "parent_agent": EXPECTED_PARENT_CONTRACT,
         "output_path": str(run.safe_output_path(output)),
         "child_agent": EXPECTED_AGENT_CONTRACT,
-        "destination": "Anthropic Claude Code parent turn and dispatch-operator subagent",
+        "destination": "Anthropic Claude Code parent turn and agy-operator subagent",
         "payload_classes": [
             "synthetic frozen handoff JSON built by this launcher",
             "shared runtime-neutral contract text from cases.json",
-            "the repository dispatch-operator agent and agy-dispatch skill text",
+            "the repository agy-operator agent and agy-dispatch skill text",
         ],
         "synthetic_only": True,
         "external_agy_reachable": False,
@@ -1851,7 +1851,7 @@ def build_eval_report(
     passed = sum(1 for result in results if result["passed"])
     every_run = bool(results)
     return {
-        "schema": "agy-dispatch-operator-eval-report-v2",
+        "schema": "agy-operator-eval-report-v2",
         "complete": complete,
         "runtime": runtime,
         "runtime_binary": claude_runtime.report(),

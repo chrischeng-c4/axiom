@@ -1,7 +1,7 @@
 {
-  "schema": "agy-dispatch-operator-eval-v1",
+  "schema": "agy-operator-eval-v1",
   "output_contract": {
-    "schema": "agy-dispatch-operator-output-contract-v3",
+    "schema": "agy-operator-output-contract-v3",
     "version": 3,
     "status_line": {
       "line": 1,
@@ -47,7 +47,7 @@
     }
   },
   "forbidden_actions": {
-    "schema": "agy-dispatch-operator-forbidden-actions-v1",
+    "schema": "agy-operator-forbidden-actions-v1",
     "version": 1,
     "adapter_verbs": ["verify", "accept", "denied"],
     "command_names": [
@@ -69,7 +69,7 @@
     ]
   },
   "fixture_invariants": {
-    "schema": "agy-dispatch-operator-fixture-invariants-v9",
+    "schema": "agy-operator-fixture-invariants-v9",
     "version": 9,
     "synthetic_only": true,
     "root_adapter": "scripts/agy_dispatch.py",
@@ -99,7 +99,7 @@
     "parent_model": "gpt-5.6-sol",
     "parent_reasoning_effort": "low",
     "parent_multi_agent_version": "v2",
-    "child_agent": "dispatch-operator",
+    "child_agent": "agy-operator",
     "child_model": "gpt-5.6-luna",
     "child_reasoning_effort": "medium",
     "outer_final_equals_child_report": true,
@@ -132,7 +132,7 @@
     "ambient_real_agy_path_not_transmitted": true
   },
   "frozen_manifest_contract": {
-    "schema": "agy-dispatch-operator-frozen-manifest-v1",
+    "schema": "agy-operator-frozen-manifest-v1",
     "version": 1,
     "digest_algorithm": "sha256",
     "profile_digest_binds": ["task_contract_or_intent", "external_payload_consent"],
@@ -154,7 +154,7 @@
     "adapter_calls_on_failure": 0
   },
   "blocker_oracles": {
-    "schema": "agy-dispatch-operator-blocker-oracles-v1",
+    "schema": "agy-operator-blocker-oracles-v1",
     "version": 1,
     "cases": {
       "dispatch-create-ticketed": {"code": "NONE", "items": []},
@@ -210,7 +210,7 @@
     }
   },
   "tool_attempt_contract": {
-    "schema": "agy-dispatch-operator-tool-attempts-v1",
+    "schema": "agy-operator-tool-attempts-v1",
     "version": 1,
     "default_from": "expected.verbs",
     "exceptions": {
