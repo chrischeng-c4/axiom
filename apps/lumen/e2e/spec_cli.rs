@@ -1337,7 +1337,7 @@ fn dx_topics_teach_the_private_clusterip_tls_contract() {
 #[test]
 fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
     let protocol = dx::llm_protocol();
-    assert_eq!(protocol.topics().len(), 13);
+    assert_eq!(protocol.topics().len(), 14);
     for topic in protocol.topics() {
         let json = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Json).unwrap();
         let value: Value = serde_json::from_str(&json).expect("runbook JSON parses");
@@ -1380,9 +1380,11 @@ fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
         "authenticate",
         "connect-kubernetes",
         "deploy-kubernetes",
+        "grant-access",
         "backup-restore",
         "generate-client",
         "diagnose",
+        "verify-release",
     ] {
         assert!(
             outline["tasks"]
@@ -1423,6 +1425,34 @@ fn dx_llm_composes_library_owned_provider_content() {
             < rendered_markdown.find(library_body).unwrap(),
         "provider Markdown must follow the app-owned runbook"
     );
+
+    let release = dx::render_llm("verify-release", cli_std::llm::Format::Json).unwrap();
+    let release_value: Value = serde_json::from_str(&release).expect("release JSON parses");
+    assert_eq!(release_value["task"]["risk"], "remote_write");
+    assert!(release_value["task"]["reads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "apps/lumen/e2e/release_artifacts.rs"));
+    assert_eq!(release_value["providers"].as_array().unwrap().len(), 1);
+    assert_eq!(release_value["providers"][0]["id"], "raft-runtime");
+    let raft_provider = raft_runtime::llm::topic();
+    assert_eq!(
+        release_value["providers"][0]["markdown"],
+        raft_provider.body
+    );
+    let release_markdown = release_value["markdown"].as_str().unwrap();
+    for needle in [
+        "Run kind before publication",
+        "Land each release to main exactly once",
+        "GHCR root and platform digests",
+        "scripts/raft-implementor-build.sh",
+    ] {
+        assert!(
+            release_markdown.contains(needle),
+            "release topic missing `{needle}`: {release_markdown}"
+        );
+    }
 
     let local = dx::render_llm("run-standalone", cli_std::llm::Format::Json).unwrap();
     let local_value: Value = serde_json::from_str(&local).expect("standalone JSON parses");

@@ -808,6 +808,9 @@ enum LlmTopic {
     GenerateClient,
     /// Inspect standard operational evidence from a running service.
     Diagnose,
+    /// Verify one release candidate through local, kind, and public artifact
+    /// evidence.
+    VerifyRelease,
 }
 
 impl LlmTopic {
@@ -827,6 +830,7 @@ impl LlmTopic {
             Self::BackupRestore => "backup-restore",
             Self::GenerateClient => "generate-client",
             Self::Diagnose => "diagnose",
+            Self::VerifyRelease => "verify-release",
         }
     }
 }

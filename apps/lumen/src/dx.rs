@@ -144,6 +144,7 @@ pub fn llm_protocol() -> ProtocolDocument {
 fn shared_provider(id: &str) -> anyhow::Result<&'static cli_std::llm::Topic> {
     match id {
         "openapi-codegen" => Ok(openapi_codegen::llm::topic()),
+        "raft-runtime" => Ok(raft_runtime::llm::topic()),
         other => anyhow::bail!("unknown LLM provider `{other}`"),
     }
 }

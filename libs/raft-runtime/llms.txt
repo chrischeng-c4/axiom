@@ -13,14 +13,16 @@
 
 - [e2e/](e2e): one file per externally observable case, run by `cargo test -p raft-runtime`.
   `Cargo.toml` is the inventory --- `autotests = false` plus one `[[test]]` stanza
-  per file (22 today), so nothing starts or stops running without showing up in a
-  diff.
+  per file, so nothing starts or stops running without showing up in a diff.
 - Rules observable only inside the implementation stay as colocated unit tests
   under their `src/**` owner: `cargo test -p raft-runtime --lib`.
 
 ## Commands
 
 - Test: `cargo test -p raft-runtime`.
+- Raft implementor migration gate: `scripts/raft-implementor-build.sh`. This
+  is slow from a cold build because it compiles every declared implementor
+  feature boundary.
 
 ## Root Artifacts
 
