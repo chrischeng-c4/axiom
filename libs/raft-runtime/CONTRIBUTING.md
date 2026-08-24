@@ -15,3 +15,4 @@ rather than driven through `e2e -> unit -> logic`.
 | Gate | Command |
 |---|---|
 | unit + colocated tests | `cargo test -p raft-runtime` |
+| implementor compile migration | `scripts/raft-implementor-build.sh` |

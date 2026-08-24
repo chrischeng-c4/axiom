@@ -11471,6 +11471,7 @@ dependencies = [
  "server-lifecycle",
  "sha2 0.10.9",
  "storage-durable",
+ "syn 2.0.117",
  "tempfile",
  "tokio",
  "tokio-rustls 0.26.4",
