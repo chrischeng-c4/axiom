@@ -150,7 +150,51 @@ impl CompilerSession {
             return Err(errors.into_iter().next().unwrap());
         }
 
+        for diag in &checker.diagnostics {
+            eprintln!("{}", render_type_diagnostic(diag, &self.source_map));
+        }
+
         Ok(())
+    }
+
+    /// Parse, typecheck, lower, and optimize Mamba source code.
+    pub fn compile_source(
+        &mut self,
+        source: &str,
+        display_name: &str,
+    ) -> crate::error::Result<(crate::mir::MirModule, TypeChecker, crate::hir::HirModule)> {
+        let file_id = self
+            .source_map
+            .add_file(display_name.to_string(), source.to_string());
+        let src = self.source_map.get_file(file_id).source.clone();
+        let mut module = parser::parse(&src, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+
+        let mut checker = TypeChecker::new();
+        checker.allow_runtime_unresolved_names = true;
+        let errors = filter_type_ignored(checker.check_module(&module), &src);
+        if !errors.is_empty() {
+            for err in &errors[1..] {
+                eprintln!("{}", diagnostic::render_error(err, &self.source_map));
+            }
+            return Err(errors.into_iter().next().unwrap());
+        }
+
+        let hir = lower::lower_module(&module, &checker)
+            .map_err(|errs| errs.into_iter().next().unwrap())?;
+        let mut mir_module = lower::lower_hir_to_mir_with_symbols_src(
+            &hir,
+            &checker.tcx,
+            &checker.symbols,
+            Some((display_name, src.as_str())),
+        );
+
+        if self.config.optimize {
+            let pass_opts = crate::mir::opt::PassOptions::from_env_or_config(self.config.opt_level);
+            crate::mir::opt::optimize_module_with_options(&mut mir_module, &checker.tcx, &pass_opts);
+        }
+
+        Ok((mir_module, checker, hir))
     }
 
     /// Full compilation pipeline: parse → typecheck → lower → codegen.
@@ -201,12 +245,17 @@ impl CompilerSession {
         }
 
         // Lower HIR → MIR (with builtin resolution)
-        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+        let mut mir_module = lower::lower_hir_to_mir_with_symbols_src(
             &hir,
             &checker.tcx,
             &checker.symbols,
             Some((path, source.as_str())),
         );
+
+        if self.config.optimize {
+            let pass_opts = crate::mir::opt::PassOptions::from_env_or_config(self.config.opt_level);
+            crate::mir::opt::optimize_module_with_options(&mut mir_module, &checker.tcx, &pass_opts);
+        }
 
         if let Some(EmitMode::Mir) = self.config.emit {
             println!("{mir_module:#?}");
@@ -267,7 +316,8 @@ impl CompilerSession {
             })
         };
 
-        crate::runtime::cleanup_all_runtime_state();
+        crate::runtime::stdlib::threading_mod::join_non_daemon_threads();
+        crate::runtime::cleanup_all_runtime_state_for_process_exit();
         pending_error.map_or(Ok(()), |message| Err(MambaError::Other(message)))
     }
 
@@ -314,12 +364,17 @@ impl CompilerSession {
 
         let hir = lower::lower_module(&module, &checker)
             .map_err(|errs| errs.into_iter().next().unwrap())?;
-        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+        let mut mir_module = lower::lower_hir_to_mir_with_symbols_src(
             &hir,
             &checker.tcx,
             &checker.symbols,
             Some((display_name, src.as_str())),
         );
+
+        if self.config.optimize {
+            let pass_opts = crate::mir::opt::PassOptions::from_env_or_config(self.config.opt_level);
+            crate::mir::opt::optimize_module_with_options(&mut mir_module, &checker.tcx, &pass_opts);
+        }
 
         let mut backend = CraneliftJitBackend::new_with_externals(&ext_syms)
             .map_err(|e| MambaError::codegen(e.to_string()))?;
@@ -431,12 +486,17 @@ impl CompilerSession {
         // Lower
         let hir = lower::lower_module(&module, &checker)
             .map_err(|errs| errs.into_iter().next().unwrap())?;
-        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+        let mut mir_module = lower::lower_hir_to_mir_with_symbols_src(
             &hir,
             &checker.tcx,
             &checker.symbols,
             Some((path, source.as_str())),
         );
+
+        if self.config.optimize {
+            let pass_opts = crate::mir::opt::PassOptions::from_env_or_config(self.config.opt_level);
+            crate::mir::opt::optimize_module_with_options(&mut mir_module, &checker.tcx, &pass_opts);
+        }
 
         // Collect external crate symbols when in project mode (R2).
         let ext_syms = register_external_modules(self.config.project_config.as_ref());
@@ -590,6 +650,32 @@ impl CompilerSession {
     /// Render an error with source context.
     pub fn render_error(&self, err: &MambaError) -> String {
         diagnostic::render_error(err, &self.source_map)
+    }
+
+    /// Render a type diagnostic with source context.
+    pub fn render_type_diagnostic(&self, diag: &crate::types::check::Diagnostic) -> String {
+        render_type_diagnostic(diag, &self.source_map)
+    }
+}
+
+pub fn render_type_diagnostic(
+    diag: &crate::types::check::Diagnostic,
+    source_map: &crate::source::SourceMap,
+) -> String {
+    let level_str = match diag.level {
+        crate::types::check::DiagLevel::Warning => "warning",
+        crate::types::check::DiagLevel::Error => "error",
+    };
+    if diag.span.file.0 != 0 || diag.span.start != 0 || diag.span.end != 0 {
+        let file = source_map.get_file(diag.span.file);
+        let (line, col) = file.line_col(diag.span.start);
+        let src_line = file.line_text(line);
+        format!(
+            "{level_str}: {}\n  --> {}:{line}:{col}\n   |\n{line:>3} | {src_line}\n   |",
+            diag.message, file.name
+        )
+    } else {
+        format!("{level_str}: {}", diag.message)
     }
 }
 
@@ -840,6 +926,7 @@ mod tests {
             emit: Some(EmitMode::Ast),
             opt_level: OptLevel::O2,
             project_config: None,
+            optimize: true,
         };
         let session = CompilerSession::new_from_project(dir.path(), base);
         // Non-project fields from the base config must be preserved.
@@ -1045,7 +1132,10 @@ print(Decorated)
         result.expect("repeated class definitions should run from source");
         assert_eq!(
             captured.lines().collect::<Vec<_>>(),
-            ["False", "True", "False", "1", "two", "C", "C", "True", "False", "True", "42"]
+            [
+                "False", "True", "False", "1", "two", "C", "C", "True", "False", "True",
+                "42"
+            ]
         );
     }
 
@@ -1111,14 +1201,7 @@ print(second)
         result.expect("each class statement execution should allocate a fresh identity");
         assert_eq!(
             captured.lines().collect::<Vec<_>>(),
-            [
-                "False",
-                "True",
-                "False",
-                "True",
-                "<C instance>",
-                "<C instance>"
-            ]
+            ["False", "True", "False", "True", "<C instance>", "<C instance>"]
         );
     }
 
@@ -1482,9 +1565,7 @@ class Value(metaclass=ValueMeta):
         crate::runtime::cleanup_all_runtime_state();
 
         assert!(
-            error
-                .to_string()
-                .contains("__class__ not set defining 'Value'"),
+            error.to_string().contains("__class__ not set defining 'Value'"),
             "unexpected error: {error}"
         );
     }
@@ -1567,9 +1648,7 @@ class Value(metaclass=ValueMeta):
         crate::runtime::cleanup_all_runtime_state();
 
         assert!(
-            error
-                .to_string()
-                .contains("__classcell__ must be a nonlocal cell"),
+            error.to_string().contains("__classcell__ must be a nonlocal cell"),
             "unexpected error: {error}"
         );
     }

@@ -1567,7 +1567,7 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue, kwargs: MbValue) -> MbValue
                     .read()
                     .unwrap()
                     .iter()
-                    .filter_map(|v| extract_str(*v))
+                    .filter_map(|v| extract_str(v))
                     .collect(),
                 ObjData::Tuple(ref items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
                 ObjData::Str(ref s) => s
@@ -1698,7 +1698,7 @@ pub(crate) fn namedtuple_factory_fields(factory: MbValue) -> Option<Vec<String>>
                 lock.read()
                     .unwrap()
                     .iter()
-                    .filter_map(|v| extract_str(*v))
+                    .filter_map(|v| extract_str(v))
                     .collect()
             } else {
                 vec![]
@@ -1817,7 +1817,7 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
                             lock.read()
                                 .unwrap()
                                 .iter()
-                                .filter_map(|v| extract_str(*v))
+                                .filter_map(|v| extract_str(v))
                                 .collect()
                         } else {
                             vec![]
@@ -1908,7 +1908,7 @@ fn namedtuple_instance_fields(inst: MbValue) -> Option<Vec<String>> {
                     lock.read()
                         .unwrap()
                         .iter()
-                        .filter_map(|v| extract_str(*v))
+                        .filter_map(|v| extract_str(v))
                         .collect(),
                 )
             } else {
@@ -2179,7 +2179,6 @@ fn cm_first_arg(args: MbValue) -> MbValue {
                     .read()
                     .unwrap()
                     .first()
-                    .copied()
                     .unwrap_or_else(MbValue::none);
             }
         }
@@ -2196,8 +2195,9 @@ fn cm_binop_operand(raw: MbValue) -> MbValue {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let guard = lock.read().unwrap();
-                if guard.len() == 1 && cm_is_mapping(guard[0]) {
-                    return guard[0];
+                let elem0 = guard.first().unwrap_or_else(MbValue::none);
+                if guard.len() == 1 && cm_is_mapping(elem0) {
+                    return elem0;
                 }
             }
         }
@@ -2229,8 +2229,8 @@ unsafe extern "C" fn cm_get(self_v: MbValue, args: MbValue) -> MbValue {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let g = lock.read().unwrap();
                 (
-                    g.first().copied().unwrap_or_else(MbValue::none),
-                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                    g.first().unwrap_or_else(MbValue::none),
+                    g.get(1).unwrap_or_else(MbValue::none),
                 )
             } else {
                 (args, MbValue::none())
@@ -2254,8 +2254,8 @@ unsafe extern "C" fn cm_setitem(self_v: MbValue, args: MbValue) -> MbValue {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let g = lock.read().unwrap();
                 (
-                    g.first().copied().unwrap_or_else(MbValue::none),
-                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                    g.first().unwrap_or_else(MbValue::none),
+                    g.get(1).unwrap_or_else(MbValue::none),
                 )
             } else {
                 return MbValue::none();
@@ -2486,8 +2486,8 @@ unsafe extern "C" fn cm_pop(self_v: MbValue, args: MbValue) -> MbValue {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let g = lock.read().unwrap();
                 (
-                    g.first().copied().unwrap_or_else(MbValue::none),
-                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                    g.first().unwrap_or_else(MbValue::none),
+                    g.get(1).unwrap_or_else(MbValue::none),
                     g.len() >= 2,
                 )
             } else {
@@ -2518,7 +2518,7 @@ unsafe extern "C" fn cm_popitem(self_v: MbValue, _args: MbValue) -> MbValue {
         let keys = super::super::dict_ops::mb_dict_keys(front);
         let last_key = keys.as_ptr().and_then(|kp| unsafe {
             if let ObjData::List(ref lock) = (*kp).data {
-                lock.read().unwrap().last().copied()
+                lock.read().unwrap().last()
             } else {
                 None
             }
@@ -2644,12 +2644,12 @@ mod tests {
                 let pairs = lock.read().unwrap();
                 assert_eq!(pairs.len(), 2);
                 // First should be "a" with count 3
-                let first = pairs[0].as_ptr().unwrap();
+                let first = pairs.get(0).unwrap().as_ptr().unwrap();
                 if let ObjData::List(ref lock2) = (*first).data {
                     let pair = lock2.read().unwrap();
-                    let key = extract_str(pair[0]).unwrap();
+                    let key = extract_str(pair.get(0).unwrap()).unwrap();
                     assert_eq!(key, "a");
-                    assert_eq!(pair[1].as_int(), Some(3));
+                    assert_eq!(pair.get(1).unwrap().as_int(), Some(3));
                 }
             } else {
                 panic!("expected List");
@@ -2886,8 +2886,8 @@ mod tests {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     let items = lock.read().unwrap();
                     assert_eq!(items.len(), 3);
-                    assert_eq!(items[2].as_int(), Some(3));
-                    assert_eq!(items[0].as_int(), Some(1));
+                    assert_eq!(items.get(2).unwrap().as_int(), Some(3));
+                    assert_eq!(items.get(0).unwrap().as_int(), Some(1));
                 } else {
                     panic!("expected List");
                 }
@@ -2928,9 +2928,9 @@ mod tests {
             if let Some(ptr) = dq.as_ptr() {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     let items = lock.read().unwrap();
-                    assert_eq!(items[0].as_int(), Some(3));
-                    assert_eq!(items[1].as_int(), Some(1));
-                    assert_eq!(items[2].as_int(), Some(2));
+                    assert_eq!(items.get(0).unwrap().as_int(), Some(3));
+                    assert_eq!(items.get(1).unwrap().as_int(), Some(1));
+                    assert_eq!(items.get(2).unwrap().as_int(), Some(2));
                 } else {
                     panic!("expected List");
                 }
@@ -2951,9 +2951,9 @@ mod tests {
             if let Some(ptr) = dq.as_ptr() {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     let items = lock.read().unwrap();
-                    assert_eq!(items[0].as_int(), Some(2));
-                    assert_eq!(items[1].as_int(), Some(3));
-                    assert_eq!(items[2].as_int(), Some(1));
+                    assert_eq!(items.get(0).unwrap().as_int(), Some(2));
+                    assert_eq!(items.get(1).unwrap().as_int(), Some(3));
+                    assert_eq!(items.get(2).unwrap().as_int(), Some(1));
                 } else {
                     panic!("expected List");
                 }
@@ -3082,8 +3082,8 @@ mod tests {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 3);
-                assert_eq!(items[0].as_int(), Some(1));
-                assert_eq!(items[2].as_int(), Some(3));
+                assert_eq!(items.get(0).unwrap().as_int(), Some(1));
+                assert_eq!(items.get(2).unwrap().as_int(), Some(3));
             } else {
                 panic!("expected List backing");
             }
@@ -3109,8 +3109,8 @@ mod tests {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 2);
-                assert_eq!(items[0].as_int(), Some(1));
-                assert_eq!(items[1].as_int(), Some(2));
+                assert_eq!(items.get(0).unwrap().as_int(), Some(1));
+                assert_eq!(items.get(1).unwrap().as_int(), Some(2));
             } else {
                 panic!("expected List backing");
             }

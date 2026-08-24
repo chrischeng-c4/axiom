@@ -56,7 +56,15 @@ impl<'a> Parser<'a> {
     pub fn parse_module(&mut self) -> crate::error::Result<Module> {
         let mut stmts = Vec::new();
         self.skip_newlines();
-        while self.peek_kind() != Some(TokenKind::Eof) && self.peek_kind().is_some() {
+        while !self.pending_stmts.is_empty()
+            || (self.peek_kind() != Some(TokenKind::Eof) && self.peek_kind().is_some())
+        {
+            if self.pending_stmts.is_empty() {
+                self.skip_newlines();
+                if self.peek_kind() == Some(TokenKind::Eof) || self.peek_kind().is_none() {
+                    break;
+                }
+            }
             stmts.push(self.parse_stmt()?);
             // Semicolons as statement separators between simple statements.
             while self.peek_kind() == Some(TokenKind::Semicolon) {
@@ -67,8 +75,8 @@ impl<'a> Parser<'a> {
                 }
                 // Trailing semicolon before newline/eof — stop
                 if self.peek_kind() == Some(TokenKind::Newline)
-                    || self.peek_kind() == Some(TokenKind::Eof)
-                    || self.peek_kind().is_none()
+                    || (self.pending_stmts.is_empty()
+                        && (self.peek_kind() == Some(TokenKind::Eof) || self.peek_kind().is_none()))
                 {
                     break;
                 }

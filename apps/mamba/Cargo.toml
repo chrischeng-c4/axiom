@@ -286,6 +286,17 @@ name = "perf_gate_report"
 path = "tests/harness/cpython/perf_gate_report.rs"
 test = false
 
+# cpython — perf-pin gate POLICY regression (#3070). Pins the rule that an
+# ungradable pin may not report `ok` when MAMBA_REQUIRE_CPYTHON_PERF_BASELINE
+# demands grading (#2011 clause 41). Pure decision logic — no measurement, no
+# baseline DB, no CPython — so unlike perf_pin/perf_gate_report it runs in the
+# default debug profile and is NOT `test = false`: a gate that cannot fail must
+# be caught by the ordinary `cargo test -p mamba` run.
+#   cargo test -p mamba --test perf_pin_gate_policy
+[[test]]
+name = "perf_pin_gate_policy"
+path = "tests/harness/cpython/perf_pin_gate_policy.rs"
+
 # mambalibs — mamba-only native library behavior
 [[test]]
 name = "mambalibs"
@@ -338,3 +349,8 @@ harness = false
 name = "cross_runtime_3p"
 path = "benches/3p/cross_runtime.rs"
 harness = false
+
+[[test]]
+name = "cpython_ported_integration"
+path = "tests/cpython_ported_integration.rs"
+

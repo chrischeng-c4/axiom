@@ -2573,7 +2573,7 @@ mod tests {
         let result = mb_re_findall(s("\\d+"), s("abc123def456"));
         unsafe {
             if let ObjData::List(ref lock) = (*result.as_ptr().unwrap()).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 assert_eq!(items.len(), 2);
                 assert_eq!(extract_str(items[0]).unwrap(), "123");
                 assert_eq!(extract_str(items[1]).unwrap(), "456");
@@ -2586,7 +2586,7 @@ mod tests {
         let result = mb_re_findall(s("(\\d+)-(\\w+)"), s("123-abc 456-def"));
         unsafe {
             if let ObjData::List(ref lock) = (*result.as_ptr().unwrap()).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 assert_eq!(items.len(), 2);
                 // Each item is a tuple
                 if let ObjData::Tuple(ref tuple) = (*items[0].as_ptr().unwrap()).data {
@@ -2697,7 +2697,7 @@ mod tests {
         let result = mb_re_split(s("[,;]"), s("a,b;c"));
         unsafe {
             if let ObjData::List(ref lock) = (*result.as_ptr().unwrap()).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 assert_eq!(items.len(), 3);
                 assert_eq!(extract_str(items[0]).unwrap(), "a");
                 assert_eq!(extract_str(items[1]).unwrap(), "b");
@@ -2943,7 +2943,7 @@ mod tests {
                 assert_eq!(f.get("_group_count").and_then(|v| v.as_int()), Some(2));
                 let names = f.get("_group_names").copied().unwrap();
                 if let ObjData::List(ref lk) = (*names.as_ptr().unwrap()).data {
-                    let items = lk.read().unwrap();
+                    let items = lk.read().unwrap().to_vec();
                     assert_eq!(items.len(), 2);
                     assert_eq!(extract_str(items[0]).unwrap(), "first");
                     assert_eq!(extract_str(items[1]).unwrap(), "last");
@@ -3044,7 +3044,7 @@ mod tests {
         let result = mb_re_findall(s(r"\d+"), s("a1b22c333"));
         unsafe {
             if let ObjData::List(ref lock) = (*result.as_ptr().unwrap()).data {
-                let items = lock.read().unwrap();
+                let items = lock.read().unwrap().to_vec();
                 assert_eq!(items.len(), 3);
                 assert_eq!(extract_str(items[0]).as_deref(), Some("1"));
                 assert_eq!(extract_str(items[2]).as_deref(), Some("333"));
@@ -3119,7 +3119,7 @@ mod tests {
             let items = lock.read().unwrap();
             assert_eq!(items.len(), 600);
             // Spot-check the first match: 4 groups, first group is "10.0.0.0".
-            let first = items[0];
+            let first = items.get(0).unwrap();
             let ObjData::Tuple(ref tup) = (*first.as_ptr().unwrap()).data else {
                 panic!("expected tuple per match");
             };
@@ -3178,7 +3178,7 @@ mod tests {
             let ObjData::List(ref lock) = (*ptr).data else {
                 panic!("list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(items.len(), 4);
             // alpha: no number → ("alpha", "")
             let ObjData::Tuple(ref t0) = (*items[0].as_ptr().unwrap()).data else {
@@ -3214,7 +3214,7 @@ mod tests {
             let ObjData::List(ref lock) = (*ptr).data else {
                 panic!("list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             // regex's \w on Unicode default matches letters + combining marks.
             // Expect at least 4 items: hello, 你好, café, world.
             assert!(items.len() >= 4, "got {} items", items.len());
@@ -3371,7 +3371,7 @@ mod tests {
             let ObjData::List(ref lock) = (*ptr).data else {
                 panic!("expected list result");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(items.len(), 3);
             assert_eq!(extract_str(items[0]).as_deref(), Some("a"));
             assert_eq!(extract_str(items[2]).as_deref(), Some("a"));

@@ -2,11 +2,17 @@ use crate::resolve::SymbolId;
 use crate::types::TypeId;
 
 mod escape_analysis;
+pub mod opt;
 
 pub use escape_analysis::{
     analyze_literal_escapes, analyze_typed_list_layouts, LiteralEscapeAnalysis,
     LiteralEscapeClassification, LiteralEscapeInfo, LiteralEscapeKind, TypedListElementKind,
     TypedListLayoutAnalysis, TypedListLayoutInfo,
+};
+pub use opt::{
+    optimize_body, optimize_body_with_options, optimize_mir_body, optimize_mir_body_with_options,
+    optimize_mir_module, optimize_mir_module_with_options, optimize_module,
+    optimize_module_with_options, PassOptions,
 };
 
 /// A virtual register in SSA form.
@@ -171,7 +177,7 @@ pub enum MirInst {
 }
 
 /// Block terminator.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Terminator {
     Return(Option<VReg>),
     Goto(BlockId),
@@ -233,7 +239,7 @@ impl MirUnaryOp {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MirConst {
     Int(i64),
     BigInt(String),

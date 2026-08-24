@@ -283,19 +283,30 @@ pub fn mb_star_args_to_tuple(val: MbValue) -> MbValue {
 /// tuple[index] → value
 pub fn mb_tuple_getitem(tup: MbValue, index: MbValue) -> MbValue {
     unsafe {
-        if let (Some(items), Some(idx)) = (as_tuple(tup), index.as_int()) {
-            let len = items.len() as i64;
-            let actual = if idx < 0 { idx + len } else { idx };
-            if actual >= 0 && actual < len {
-                let val = items[actual as usize];
-                super::rc::retain_if_ptr(val);
-                val
+        if let Some(items) = as_tuple(tup) {
+            if let Some(idx) = index.as_int().or_else(|| index.as_int_pyint()) {
+                let len = items.len() as i64;
+                let actual = if idx < 0 { idx + len } else { idx };
+                if actual >= 0 && actual < len {
+                    let val = items[actual as usize];
+                    super::rc::retain_if_ptr(val);
+                    val
+                } else {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(super::rc::MbObject::new_str("IndexError".to_string())),
+                        MbValue::from_ptr(super::rc::MbObject::new_str(
+                            "tuple index out of range".to_string(),
+                        )),
+                    );
+                    MbValue::none()
+                }
             } else {
                 super::exception::mb_raise(
-                    MbValue::from_ptr(super::rc::MbObject::new_str("IndexError".to_string())),
-                    MbValue::from_ptr(super::rc::MbObject::new_str(
-                        "tuple index out of range".to_string(),
-                    )),
+                    MbValue::from_ptr(super::rc::MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(super::rc::MbObject::new_str(format!(
+                        "tuple indices must be integers or slices, not {}",
+                        super::builtins::value_type_name(index)
+                    ))),
                 );
                 MbValue::none()
             }
@@ -329,7 +340,7 @@ pub fn mb_tuple_slice_full(tup: MbValue, start: MbValue, stop: MbValue, step: Mb
     unsafe {
         if let Some(items) = as_tuple(tup) {
             let len = items.len() as i64;
-            let st = step.as_int().unwrap_or(1);
+            let st = step.as_int_pyint().unwrap_or(1);
             if st == 0 {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -338,12 +349,12 @@ pub fn mb_tuple_slice_full(tup: MbValue, start: MbValue, stop: MbValue, step: Mb
                 return mb_tuple_new();
             }
             let (s, e) = if st > 0 {
-                let s = start.as_int().map(|i| clamp_index(i, len)).unwrap_or(0);
-                let e = stop.as_int().map(|i| clamp_index(i, len)).unwrap_or(len);
+                let s = start.as_int_pyint().map(|i| clamp_index(i, len, st)).unwrap_or(0);
+                let e = stop.as_int_pyint().map(|i| clamp_index(i, len, st)).unwrap_or(len);
                 (s, e)
             } else {
-                let s = start.as_int().map(|i| clamp_rev(i, len)).unwrap_or(len - 1);
-                let e = stop.as_int().map(|i| clamp_rev(i, len)).unwrap_or(-1);
+                let s = start.as_int_pyint().map(|i| clamp_index(i, len, st)).unwrap_or(len - 1);
+                let e = stop.as_int_pyint().map(|i| clamp_index(i, len, st)).unwrap_or(-1);
                 (s, e)
             };
             let mut result = Vec::new();
@@ -370,14 +381,46 @@ pub fn mb_tuple_slice_full(tup: MbValue, start: MbValue, stop: MbValue, step: Mb
     }
 }
 
-fn clamp_index(i: i64, len: i64) -> i64 {
+fn clamp_index(i: i64, len: i64, step: i64) -> i64 {
     let idx = if i < 0 { i + len } else { i };
-    idx.max(0).min(len)
+    if step < 0 {
+        if idx < -1 {
+            -1
+        } else if idx >= len {
+            len - 1
+        } else {
+            idx
+        }
+    } else {
+        idx.max(0).min(len)
+    }
 }
 
-fn clamp_rev(i: i64, len: i64) -> i64 {
-    let idx = if i < 0 { i + len } else { i };
-    idx.max(-1).min(len - 1)
+/// tuple[index] = value -> raises TypeError
+pub fn mb_tuple_setitem(tup: MbValue, _index: MbValue, _value: MbValue) {
+    super::builtins::raise_type_error(format!(
+        "'{}' object does not support item assignment",
+        super::builtins::value_type_name(tup)
+    ));
+}
+
+/// del tuple[index] -> raises TypeError
+pub fn mb_tuple_delitem(tup: MbValue, _index: MbValue) {
+    super::builtins::raise_type_error(format!(
+        "'{}' object doesn't support item deletion",
+        super::builtins::value_type_name(tup)
+    ));
+}
+
+/// tuple.append(item) -> raises AttributeError / TypeError
+pub fn mb_tuple_append(tup: MbValue, _item: MbValue) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "'{}' object has no attribute 'append'",
+            super::builtins::value_type_name(tup)
+        ))),
+    );
 }
 
 // ── Query Methods ──
@@ -608,7 +651,7 @@ pub fn dispatch_tuple_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             if let Some(ptr) = args.as_ptr() {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     let items = lock.read().unwrap();
-                    return items.get(i).copied().unwrap_or(MbValue::none());
+                    return items.get(i).unwrap_or(MbValue::none());
                 }
             }
             MbValue::none()
@@ -1048,13 +1091,53 @@ mod tests {
         assert_eq!(dispatch_tuple_method("count", t, args).as_int(), Some(2));
     }
 
-    // TODO: enable when tuple.index(value, start) is implemented
-    // #[test]
-    // fn test_py312_tuple_index_with_start() {
-    //     let t = mb_tuple_from(vec![
-    //         MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(1),
-    //     ]);
-    //     let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(1)]));
-    //     assert_eq!(dispatch_tuple_method("index", t, args).as_int(), Some(2));
-    // }
+    #[test]
+    fn test_py312_tuple_index_with_start() {
+        let _gc = GcGuard::new();
+        let t = mb_tuple_from(vec![
+            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(1),
+        ]);
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(1)]));
+        assert_eq!(dispatch_tuple_method("index", t, args).as_int(), Some(2));
+    }
+
+    #[test]
+    fn test_py312_tuple_negative_step_slicing() {
+        let _gc = GcGuard::new();
+        let t = mb_tuple_from(vec![
+            MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(4),
+        ]);
+        let s = mb_tuple_slice_full(t, MbValue::from_int(4), MbValue::from_int(-10), MbValue::from_int(-1));
+        assert_eq!(mb_tuple_len(s).as_int(), Some(5));
+        assert_eq!(mb_tuple_getitem(s, MbValue::from_int(0)).as_int(), Some(4));
+        assert_eq!(mb_tuple_getitem(s, MbValue::from_int(4)).as_int(), Some(0));
+    }
+
+    #[test]
+    fn test_py312_tuple_immutability_errors() {
+        let _gc = GcGuard::new();
+        let t = mb_tuple_from(vec![MbValue::from_int(1)]);
+        mb_tuple_setitem(t, MbValue::from_int(0), MbValue::from_int(2));
+        assert!(crate::runtime::exception::current_exception_type().is_some());
+        crate::runtime::exception::mb_clear_exception();
+
+        mb_tuple_delitem(t, MbValue::from_int(0));
+        assert!(crate::runtime::exception::current_exception_type().is_some());
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_py312_tuple_negative_step_upper_bound_clamping() {
+        let _gc = GcGuard::new();
+        let t = mb_tuple_from(vec![
+            MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(4),
+        ]);
+        let s = mb_tuple_slice_full(t, MbValue::from_int(100), MbValue::none(), MbValue::from_int(-2));
+        assert_eq!(mb_tuple_len(s).as_int(), Some(3));
+        assert_eq!(mb_tuple_getitem(s, MbValue::from_int(0)).as_int(), Some(4));
+        assert_eq!(mb_tuple_getitem(s, MbValue::from_int(1)).as_int(), Some(2));
+        assert_eq!(mb_tuple_getitem(s, MbValue::from_int(2)).as_int(), Some(0));
+    }
 }

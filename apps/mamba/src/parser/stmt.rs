@@ -658,11 +658,15 @@ impl<'a> Parser<'a> {
             // Handle `self` parameter
             if self.peek_kind() == Some(TokenKind::Self_) {
                 self.advance();
-                let ty = if self.peek_kind() == Some(TokenKind::Colon) {
+                let (ty, annotation) = if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance();
-                    self.parse_type_expr()?
+                    let t = self.parse_type_expr()?;
+                    (t.clone(), ParamAnnotation::Authored(t))
                 } else {
-                    Spanned::new(TypeExpr::Named("Self".to_string()), self.span_from(p_start))
+                    (
+                        Spanned::new(TypeExpr::Named("Self".to_string()), self.span_from(p_start)),
+                        ParamAnnotation::Omitted,
+                    )
                 };
                 let default = if self.peek_kind() == Some(TokenKind::Eq) {
                     self.advance();
@@ -673,6 +677,7 @@ impl<'a> Parser<'a> {
                 params.push(Param {
                     name: "self".to_string(),
                     ty,
+                    annotation,
                     default,
                     kind: ParamKind::Regular,
                     pos_only: false,
@@ -684,15 +689,20 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let (ns, ne) = self.expect_name()?;
                 let name = self.text_at(ns, ne).to_string();
-                let ty = if self.peek_kind() == Some(TokenKind::Colon) {
+                let (ty, annotation) = if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance();
-                    self.parse_type_expr()?
+                    let t = self.parse_type_expr()?;
+                    (t.clone(), ParamAnnotation::Authored(t))
                 } else {
-                    Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start))
+                    (
+                        Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start)),
+                        ParamAnnotation::Omitted,
+                    )
                 };
                 params.push(Param {
                     name,
                     ty,
+                    annotation,
                     default: None,
                     kind: ParamKind::DoubleStar,
                     pos_only: false,
@@ -732,16 +742,21 @@ impl<'a> Parser<'a> {
                 }
                 let (ns, ne) = self.expect_name()?;
                 let name = self.text_at(ns, ne).to_string();
-                let ty = if self.peek_kind() == Some(TokenKind::Colon) {
+                let (ty, annotation) = if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance();
-                    self.parse_type_expr()?
+                    let t = self.parse_type_expr()?;
+                    (t.clone(), ParamAnnotation::Authored(t))
                 } else {
-                    Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start))
+                    (
+                        Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start)),
+                        ParamAnnotation::Omitted,
+                    )
                 };
                 seen_star = true;
                 params.push(Param {
                     name,
                     ty,
+                    annotation,
                     default: None,
                     kind: ParamKind::Star,
                     pos_only: false,
@@ -751,11 +766,15 @@ impl<'a> Parser<'a> {
             } else if self.peek_kind().as_ref().map_or(false, Self::is_name_token) {
                 let (ns, ne) = self.expect_name()?;
                 let name = self.text_at(ns, ne).to_string();
-                let ty = if self.peek_kind() == Some(TokenKind::Colon) {
+                let (ty, annotation) = if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance();
-                    self.parse_type_expr()?
+                    let t = self.parse_type_expr()?;
+                    (t.clone(), ParamAnnotation::Authored(t))
                 } else {
-                    Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start))
+                    (
+                        Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start)),
+                        ParamAnnotation::Omitted,
+                    )
                 };
                 let default = if self.peek_kind() == Some(TokenKind::Eq) {
                     self.advance();
@@ -766,6 +785,7 @@ impl<'a> Parser<'a> {
                 params.push(Param {
                     name,
                     ty,
+                    annotation,
                     default,
                     kind: ParamKind::Regular,
                     pos_only: false,
@@ -1091,6 +1111,9 @@ impl<'a> Parser<'a> {
         {
             let stmt = self.parse_stmt()?;
             let mut stmts = vec![stmt];
+            while !self.pending_stmts.is_empty() {
+                stmts.push(self.parse_stmt()?);
+            }
             // Handle semicolons in single-line suite
             while self.peek_kind() == Some(TokenKind::Semicolon) {
                 self.advance();
@@ -1104,6 +1127,9 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 stmts.push(self.parse_stmt()?);
+                while !self.pending_stmts.is_empty() {
+                    stmts.push(self.parse_stmt()?);
+                }
             }
             return Ok(stmts);
         }
@@ -1794,6 +1820,115 @@ mod tests {
                 other => panic!("expected DictLit, got {other:?}"),
             },
             other => panic!("expected Assign, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_param_annotation_presence_regular() {
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(x):\n    pass\n") {
+            assert!(params[0].is_omitted());
+            assert!(!params[0].is_authored());
+        } else {
+            panic!("expected FnDef");
+        }
+
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(x: int):\n    pass\n") {
+            assert!(params[0].is_authored());
+            assert!(!params[0].is_omitted());
+        } else {
+            panic!("expected FnDef");
+        }
+
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(x: Any):\n    pass\n") {
+            assert!(params[0].is_authored());
+            assert!(!params[0].is_omitted());
+        } else {
+            panic!("expected FnDef");
+        }
+    }
+
+    #[test]
+    fn test_param_annotation_presence_pos_only() {
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(x, /):\n    pass\n") {
+            assert!(params[0].pos_only);
+            assert!(params[0].is_omitted());
+        } else {
+            panic!("expected FnDef");
+        }
+
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(x: int, /):\n    pass\n") {
+            assert!(params[0].pos_only);
+            assert!(params[0].is_authored());
+        } else {
+            panic!("expected FnDef");
+        }
+    }
+
+    #[test]
+    fn test_param_annotation_presence_kw_only() {
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(*, x):\n    pass\n") {
+            assert!(params[0].kw_only);
+            assert!(params[0].is_omitted());
+        } else {
+            panic!("expected FnDef");
+        }
+
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(*, x: int):\n    pass\n") {
+            assert!(params[0].kw_only);
+            assert!(params[0].is_authored());
+        } else {
+            panic!("expected FnDef");
+        }
+    }
+
+    #[test]
+    fn test_param_annotation_presence_star_args() {
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(*args):\n    pass\n") {
+            assert_eq!(params[0].kind, ParamKind::Star);
+            assert!(params[0].is_omitted());
+        } else {
+            panic!("expected FnDef");
+        }
+
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(*args: Any):\n    pass\n") {
+            assert_eq!(params[0].kind, ParamKind::Star);
+            assert!(params[0].is_authored());
+        } else {
+            panic!("expected FnDef");
+        }
+    }
+
+    #[test]
+    fn test_param_annotation_presence_double_star_kwargs() {
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(**kwargs):\n    pass\n") {
+            assert_eq!(params[0].kind, ParamKind::DoubleStar);
+            assert!(params[0].is_omitted());
+        } else {
+            panic!("expected FnDef");
+        }
+
+        if let Stmt::FnDef { params, .. } = parse_stmt("def f(**kwargs: Any):\n    pass\n") {
+            assert_eq!(params[0].kind, ParamKind::DoubleStar);
+            assert!(params[0].is_authored());
+        } else {
+            panic!("expected FnDef");
+        }
+    }
+
+    #[test]
+    fn test_param_annotation_presence_self_and_method() {
+        if let Stmt::FnDef { params, .. } = parse_stmt("def m(self):\n    pass\n") {
+            assert_eq!(params[0].name, "self");
+            assert!(params[0].is_omitted());
+        } else {
+            panic!("expected FnDef");
+        }
+
+        if let Stmt::FnDef { params, .. } = parse_stmt("def m(self: Self):\n    pass\n") {
+            assert_eq!(params[0].name, "self");
+            assert!(params[0].is_authored());
+        } else {
+            panic!("expected FnDef");
         }
     }
 }

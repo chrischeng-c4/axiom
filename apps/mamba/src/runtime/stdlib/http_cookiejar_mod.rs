@@ -114,7 +114,7 @@ fn items_of(val: MbValue) -> Vec<MbValue> {
     val.as_ptr()
         .map(|ptr| unsafe {
             match &(*ptr).data {
-                ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                ObjData::List(lock) => lock.read().unwrap().iter().collect(),
                 ObjData::Tuple(items) => items.iter().copied().collect(),
                 _ => vec![val],
             }
@@ -652,7 +652,7 @@ unsafe extern "C" fn m_jar_clear(self_v: MbValue, args: MbValue) -> MbValue {
     if let Some(ptr) = cookies.as_ptr() {
         if let ObjData::List(ref lock) = (*ptr).data {
             let mut guard = lock.write().unwrap();
-            for &old in guard.iter() {
+            for old in guard.to_vec() {
                 super::super::rc::release_if_ptr(old);
             }
             guard.clear();
@@ -676,7 +676,7 @@ unsafe extern "C" fn m_jar_clear_session_cookies(self_v: MbValue, _args: MbValue
     if let Some(ptr) = cookies.as_ptr() {
         if let ObjData::List(ref lock) = (*ptr).data {
             let mut guard = lock.write().unwrap();
-            for &old in guard.iter() {
+            for old in guard.to_vec() {
                 super::super::rc::release_if_ptr(old);
             }
             guard.clear();

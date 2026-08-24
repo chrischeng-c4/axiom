@@ -143,3 +143,24 @@ pub(crate) fn pep695_display_name(val: MbValue) -> Option<String> {
         }
     }
 }
+
+/// str_repr(val) — return string representation of str or delegate to mb_repr.
+/// Safe against surrogate pairs, non-BMP codepoints, and malformed inputs.
+pub fn mb_str_repr(val: MbValue) -> MbValue {
+    if let Some(codepoints) = super::super::string_ops::surrogate_codepoints(val) {
+        return MbValue::from_ptr(MbObject::new_str(
+            super::super::string_ops::repr_string_from_codepoints(&codepoints),
+        ));
+    }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                return MbValue::from_ptr(MbObject::new_str(
+                    super::super::string_ops::repr_string(s),
+                ));
+            }
+        }
+    }
+    super::super::builtins::mb_repr(val)
+}
+

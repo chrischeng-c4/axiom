@@ -1,7 +1,7 @@
 use super::stdlib_typespec::StrSpecId;
 use super::ty::{
-    AliasInstanceId, ExternalValue, ParamPack, Ty, TypeId, TypePack, TypeParamDefault, TypeVarId,
-    TypeVarKind,
+    AliasInstanceId, ExternalValue, LiteralValue, ParamPack, Ty, TypeId, TypePack,
+    TypeParamDefault, TypeVarId, TypeVarKind,
 };
 use crate::resolve::SymbolId;
 use std::collections::{HashMap, HashSet};
@@ -739,6 +739,18 @@ impl TypeContext {
 
     // --- Subtype checking ---
 
+    /// Return whether `id` is a non-empty Literal whose every member is a
+    /// string. This is the one canonical Literal-to-primitive predicate used
+    /// by both subtype and assignment compatibility.
+    pub(crate) fn is_nonempty_all_string_literal(&self, id: TypeId) -> bool {
+        match self.get(id) {
+            Ty::Literal(values) if !values.is_empty() => values
+                .iter()
+                .all(|value| matches!(value, LiteralValue::Str(_))),
+            _ => false,
+        }
+    }
+
     /// Check if `sub` is a subtype of `sup` (simplified).
     pub fn is_subtype(&self, sub: TypeId, sup: TypeId) -> bool {
         let mut visiting = HashSet::new();
@@ -796,6 +808,10 @@ impl TypeContext {
             return true;
         }
 
+        if sup == self.str() && self.is_nonempty_all_string_literal(sub) {
+            return true;
+        }
+
         if let (Ty::TypeObject(sub_instance), Ty::TypeObject(sup_instance)) = (sub_ty, sup_ty) {
             return self.is_subtype_inner(*sub_instance, *sup_instance, visiting);
         }
@@ -837,6 +853,7 @@ impl Default for TypeContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ty::LiteralValue;
 
     #[test]
     fn test_new_has_primitives() {
@@ -901,6 +918,37 @@ mod tests {
         let list_int = tcx.intern(Ty::List(int_ty));
         let list_str = tcx.intern(Ty::List(str_ty));
         assert_ne!(list_int, list_str);
+    }
+
+    #[test]
+    fn all_string_literal_is_a_str_subtype_but_other_literals_are_not() {
+        let mut tcx = TypeContext::new();
+        let all_string = tcx.intern(Ty::Literal(vec![
+            LiteralValue::Str("call".into()),
+            LiteralValue::Str("line".into()),
+        ]));
+        let empty = tcx.intern(Ty::Literal(Vec::new()));
+        let mixed = tcx.intern(Ty::Literal(vec![
+            LiteralValue::Str("call".into()),
+            LiteralValue::Int(1),
+        ]));
+        let integer = tcx.intern(Ty::Literal(vec![LiteralValue::Int(1)]));
+        let boolean = tcx.intern(Ty::Literal(vec![LiteralValue::Bool(true)]));
+
+        assert!(tcx.is_nonempty_all_string_literal(all_string));
+        assert!(!tcx.is_nonempty_all_string_literal(tcx.any()));
+        assert!(!tcx.is_nonempty_all_string_literal(empty));
+        assert!(!tcx.is_nonempty_all_string_literal(mixed));
+        assert!(!tcx.is_nonempty_all_string_literal(integer));
+        assert!(!tcx.is_nonempty_all_string_literal(boolean));
+
+        assert!(tcx.is_subtype(all_string, tcx.str()));
+        assert!(!tcx.is_subtype(tcx.str(), all_string));
+        assert!(!tcx.is_subtype(empty, tcx.str()));
+        assert!(!tcx.is_subtype(mixed, tcx.str()));
+        assert!(!tcx.is_subtype(integer, tcx.str()));
+        assert!(!tcx.is_subtype(boolean, tcx.str()));
+        assert!(!tcx.is_subtype(all_string, tcx.int()));
     }
 
     #[test]

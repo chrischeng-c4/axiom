@@ -598,7 +598,8 @@ pub fn register() {
         super::super::class::mb_class_register("BZ2Decompressor", vec![], methods);
     }
 
-    super::register_module("bz2", attrs);
+    super::register_module("bz2", attrs.clone());
+    super::register_module("_bz2", attrs);
 }
 
 /// Borrow the byte payload of `val` as `&[u8]` for the duration of `f`.

@@ -111,6 +111,9 @@ pub unsafe fn to_bigint(val: MbValue) -> Option<BigInt> {
     if let Some(i) = val.as_int() {
         return Some(BigInt::from(i));
     }
+    if let Some(b) = val.as_bool() {
+        return Some(BigInt::from(b as i64));
+    }
     extract_bigint(val)
 }
 
@@ -323,6 +326,23 @@ pub unsafe fn int_as_f64(val: MbValue) -> Option<f64> {
             f64::INFINITY
         }
     }))
+}
+
+/// Convert an integer MbValue to `f64`, returning an error if it overflows f64 range.
+pub unsafe fn int_as_f64_checked(val: MbValue) -> Result<f64, String> {
+    if let Some(i) = val.as_int() {
+        return Ok(i as f64);
+    }
+    if let Some(big) = extract_bigint(val) {
+        use num_traits::ToPrimitive;
+        if let Some(f) = big.to_f64() {
+            if f.is_finite() {
+                return Ok(f);
+            }
+        }
+        return Err("int too large to convert to float".to_string());
+    }
+    Err("invalid int".to_string())
 }
 
 /// Make an int MbValue from an i64 — inline when it fits, heap BigInt otherwise.

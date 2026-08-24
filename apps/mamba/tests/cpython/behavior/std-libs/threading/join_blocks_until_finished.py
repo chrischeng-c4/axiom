@@ -19,7 +19,7 @@ import threading
 
 import time
 
-_order = []
+_order: list[str] = []
 
 def _slow():
     time.sleep(0.01)

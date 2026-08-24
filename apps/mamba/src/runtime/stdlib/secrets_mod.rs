@@ -352,7 +352,7 @@ pub fn mb_secrets_choice(seq: MbValue) -> MbValue {
                 let mut b = [0u8; 8];
                 OsRng.fill_bytes(&mut b);
                 let idx = u64::from_le_bytes(b) as usize % items.len();
-                Some(items[idx])
+                items.get(idx)
             } else {
                 None
             }

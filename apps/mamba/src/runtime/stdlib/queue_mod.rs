@@ -260,6 +260,15 @@ pub fn register() {
     // / queue.Full instances to catch raised conditions.
     attrs.insert("Empty".to_string(), make_exception_class("queue.Empty"));
     attrs.insert("Full".to_string(), make_exception_class("queue.Full"));
+
+    let mut _queue_attrs = HashMap::new();
+    _queue_attrs.insert("SimpleQueue".to_string(), attrs.get("SimpleQueue").copied().unwrap_or_else(MbValue::none));
+    _queue_attrs.insert("Empty".to_string(), attrs.get("Empty").copied().unwrap_or_else(MbValue::none));
+    _queue_attrs.insert("Full".to_string(), attrs.get("Full").copied().unwrap_or_else(MbValue::none));
+    super::register_module("_queue", _queue_attrs);
+
+    let _queue_mod_val = super::super::module::mb_import(MbValue::from_ptr(super::super::rc::MbObject::new_str("_queue".to_string())));
+    attrs.insert("_queue".to_string(), _queue_mod_val);
     super::register_module("queue", attrs);
 
     // #2111: register retain/release hooks so per-iter rebinds drop

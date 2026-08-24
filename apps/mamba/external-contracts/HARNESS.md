@@ -21,7 +21,7 @@ verdicts come from. Source root: `tests/harness/cpython/`. Fixture spec: `tests/
 | Oracle cache | `runner.rs:oracle_cache_path` | Content-addressed: `target/cpython-oracle-cache/<2hex>/<sha256(pythonVersion + "\0v1\0" + fixture bytes)>`. Only successful oracle runs cached (INVALID stays live); write-then-rename for parallel safety; `MAMBA_ORACLE_CACHE=0` disables. Same scheme reimplemented in `sweep.py:oracle_cache_path` — shared cache, shared invalidation. |
 | Timeout/kill | `harness_common.rs:TimeoutPolicy`, `wait_with_timeout` | One env lookup (`MAMBA_CONFORMANCE_TIMEOUT_SECS`, default 30s); exponential backoff poll 1ms→cap; on timeout kill the whole process GROUP (children are `setpgid` group leaders via `runner.rs:apply_child_limits`). |
 | Child rlimits | `runner.rs:apply_child_limits` | RLIMIT_AS/DATA = 1 GiB (`MAMBA_CONFORMANCE_MEM_MB`), RLIMIT_CPU = 2× timeout, core dumps off — for BOTH mamba and the oracle. |
-| Oracle interpreter | `harness_common.rs:python3_bin` | Resolved ONCE: `MAMBA_ORACLE_PYTHON` → `tests/cpython/.cache/oracle-env/bin/python3` (uv-materialized, pinned 3p deps) → PATH `sys.executable`. Mirrored by `sweep.py:python3_bin`. |
+| Oracle interpreter | `harness_common.rs:python3_bin`; source-side fixture runners under `src/driver/tests/` | One policy everywhere: `MAMBA_ORACLE_PYTHON` → `tests/cpython/.cache/oracle-env/bin/python3` (uv-materialized, pinned 3p deps) → PATH `sys.executable`. A runner whose syntax floor exceeds the project minimum validates `(major, minor)` before executing the fixture, reports the resolved executable plus version, and fails closed when the floor is unmet. No runner may open-code `Command::new("python3")` or silently skip an unavailable/incompatible oracle. Mirrored by `sweep.py:python3_bin`. |
 | Perf pin | `perf_pin.rs:Pin` (TOML in `config/perf/pins/*.toml`) | `floor <= 1.0` and `mem_floor >= 1.0` enforced by `contract.rs:perf_pins_gate_speed_and_memory_against_cpython`; ≥100 pins must exist. |
 | Perf baseline | `perf_pin.rs:CpythonPerfBaseline` ← `tools/perf_baseline.py` (SQLite at `tests/cpython/.cache/perf/cpython_baseline.sqlite`) | `fixture_sha256` must match on load (hard assert = stale-baseline gate); cross-host mismatch warns only (#966). Absent baseline ⇒ live python3 measurement unless `MAMBA_REQUIRE_CPYTHON_PERF_BASELINE=1`. |
 | RSS floor | `perf_pin.rs:MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES` = 26 MB | Mem gate ratio = cpython_rss / max(mamba_rss − 26MB, 0) ≥ mem_floor (#1024 ship-profile fixed runtime floor). |
@@ -52,6 +52,12 @@ verdicts come from. Source root: `tests/harness/cpython/`. Fixture spec: `tests/
 - **xfail = skip, not expected-fail**: xfail fixtures are never executed (avoids infinite-loop hangs) so they rot silently; the only re-enable is deleting the directive.
 - **Oracle cache staleness by env**: the cache key is python-version + fixture bytes only — a fixture whose oracle output depends on installed packages/env serves stale bytes until the cache dir is cleared.
 - **pyenv shim cost**: PATH-resolved `python3` may be a bash shim (~470ms/exec vs ~25ms, ≈65% of a full run); resolve through `python3_bin()` once, never `Command::new("python3")` per spawn.
+- **Source-side oracle-policy forks**: Rust unit/pipeline tests under `src/**`
+  cannot assume that a bare `python3` is the same interpreter selected by the
+  external harness. They must implement the same preference order and validate
+  any feature-specific syntax floor before fixture execution. A host that only
+  offers Python 3.9 is an explicit diagnostic for a `match` fixture, not a
+  fixture `SyntaxError`, skip, or accidental pass on another developer's PATH.
 - **Mem-gate auto-pass**: if mamba workload RSS ≤ the 26MB fixed floor, adjusted ratio = ∞ and the mem gate passes vacuously — small pins prove nothing about memory.
 - **Build/sweep contention**: each sweep = up to 32 parallel mamba procs; a concurrent `cargo build --release` degrades from ~3.5min to 77–117min. Serialize: build alone, then sweep.
 - **Wrong-file verification trap**: when a canary flags fixture X, run EXACTLY the flagged path — `find -path` globs have matched different, out-of-scope files three separate times.

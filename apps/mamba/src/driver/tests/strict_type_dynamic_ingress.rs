@@ -24,6 +24,171 @@ fn line_count(output: &str, expected: &str) -> usize {
 }
 
 #[test]
+fn frozen_explicit_any_scalar_ingress_matches_cpython_oracle() {
+    let source =
+        include_str!("../../../tests/cpython/_regression/core/force_typed/explicit_any_twice.py");
+    let (result, output) = run(source);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
+    );
+    assert_eq!(output, "42\nabab\n", "unexpected explicit Any output");
+}
+
+#[test]
+fn omitted_required_regular_parameter_rejects_before_body() {
+    let source = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/implicit_required_regular_parameter.py"
+    );
+    let (result, output) = run(source);
+    let expected =
+        "cannot infer type for parameter `value`: parameter -> required -> source_annotation -> omitted";
+    let error = result.expect_err("omitted required parameter must be rejected before execution");
+    assert!(error.contains(expected), "unexpected error: {error}");
+    assert_eq!(
+        output, "",
+        "rejected source must not execute any body: {output:?}"
+    );
+}
+
+#[test]
+fn explicit_any_required_regular_parameter_matches_frozen_cpython_oracle() {
+    let source = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/explicit_any_required_regular_parameter.py"
+    );
+    let (result, output) = run(source);
+    assert!(
+        result.is_ok(),
+        "explicit Any fixture failed: {result:?}\n{output}"
+    );
+    assert_eq!(output, "BODY dynamic\nRETURN dynamic\n");
+}
+
+#[test]
+fn force_typed_required_parameter_fixture_pair_differs_only_by_explicit_any() {
+    let implicit = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/implicit_required_regular_parameter.py"
+    );
+    let explicit = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/explicit_any_required_regular_parameter.py"
+    );
+    assert_eq!(
+        explicit.matches(": Any").count(),
+        1,
+        "positive fixture must contain exactly one authored Any token"
+    );
+    let without_authored_any = explicit.replacen(": Any", "", 1);
+    assert_eq!(
+        without_authored_any.as_bytes(),
+        implicit.as_bytes(),
+        "removing the sole authored Any token must yield the negative fixture byte-for-byte"
+    );
+}
+
+#[test]
+fn compiled_explicit_any_and_fake_any_have_distinct_admission() {
+    let source = r#"
+from typing import Any
+
+def licensed(value: Any):
+    return value + value
+
+def fake(value: "Any"):
+    print("BAD_FAKE")
+    return value + value
+
+def pair(first: Any, second: int):
+    print("BAD_PAIR")
+    return first + second
+
+licensed_fn: Any = licensed
+fake_fn: Any = fake
+pair_fn: Any = pair
+print(licensed_fn("ab"))
+try:
+    fake_fn("ab")
+except TypeError:
+    print("REJECT_FAKE")
+try:
+    pair_fn("ab", "wrong")
+except TypeError as exc:
+    print("REJECT_B", str(exc))
+"#;
+    let (result, output) = run(source);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
+    );
+    assert_eq!(
+        output,
+        "abab\nREJECT_FAKE\nREJECT_B pair() argument 'second' expected int, got str\n",
+        "fake Any was admitted or Any waived B:\n{output}"
+    );
+    assert!(
+        !output.contains("BAD_PAIR"),
+        "concrete B body executed:\n{output}"
+    );
+}
+
+#[test]
+fn compiled_fake_variadic_any_rejects_before_bodies() {
+    let source = r#"
+from typing import Any
+
+def licensed_star(*args: Any):
+    print("LICENSED_STAR", len(args), args[0], args[1])
+    return len(args)
+
+def licensed_dstar(**kwargs: Any):
+    print("LICENSED_DSTAR", len(kwargs), kwargs["first"], kwargs["second"])
+    return len(kwargs)
+
+def fake_star(*args: "Any"):
+    print("BAD_STAR")
+    return len(args)
+
+def fake_dstar(**kwargs: "Any"):
+    print("BAD_DSTAR")
+    return len(kwargs)
+
+licensed_star_fn: Any = licensed_star
+licensed_dstar_fn: Any = licensed_dstar
+fake_star_fn: Any = fake_star
+fake_dstar_fn: Any = fake_dstar
+
+licensed_star_fn("first", 2)
+licensed_dstar_fn(first="first", second=2)
+
+try:
+    fake_star_fn("first", 2)
+except TypeError:
+    print("REJECT_STAR")
+
+try:
+    fake_dstar_fn(first="first", second=2)
+except TypeError:
+    print("REJECT_DSTAR")
+"#;
+    let (result, output) = run(source);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
+    );
+    assert_eq!(
+        output, "LICENSED_STAR 2 first 2\nLICENSED_DSTAR 2 first 2\nREJECT_STAR\nREJECT_DSTAR\n",
+        "unlicensed variadic Any was admitted:\n{output}"
+    );
+    assert!(
+        !output.contains("BAD_STAR"),
+        "*args body executed:\n{output}"
+    );
+    assert!(
+        !output.contains("BAD_DSTAR"),
+        "**kwargs body executed:\n{output}"
+    );
+}
+
+#[test]
 fn dynamic_routes_reject_before_body_and_keep_bound_kw_default() {
     let (result, output) = run(r#"
 from typing import Any

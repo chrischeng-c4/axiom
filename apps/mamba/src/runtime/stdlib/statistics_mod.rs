@@ -1038,7 +1038,7 @@ pub fn mb_statistics_reduce(seq: MbValue, initial: Option<MbValue>) -> MbValue {
                 ObjData::List(ref lock) => {
                     let g = lock.read().unwrap();
                     if let Some(last) = g.last() {
-                        return *last;
+                        return last;
                     }
                 }
                 ObjData::Tuple(items) => {
@@ -1063,7 +1063,9 @@ pub fn mb_statistics_itemgetter(key: MbValue, seq: MbValue) -> MbValue {
                     if let Some(i) = key.as_int() {
                         let idx = if i < 0 { g.len() as i64 + i } else { i };
                         if idx >= 0 && (idx as usize) < g.len() {
-                            return g[idx as usize];
+                            if let Some(val) = g.get(idx as usize) {
+                                return val;
+                            }
                         }
                     }
                 }
@@ -1632,7 +1634,7 @@ fn extract_floats(seq: MbValue) -> Vec<f64> {
                     .read()
                     .unwrap()
                     .iter()
-                    .filter_map(|v| as_f64(*v))
+                    .filter_map(|v| as_f64(v))
                     .collect(),
                 ObjData::Tuple(items) => items.iter().filter_map(|v| as_f64(*v)).collect(),
                 _ => Vec::new(),
@@ -1652,7 +1654,6 @@ fn extract_values(seq: MbValue) -> Vec<MbValue> {
                     .read()
                     .unwrap()
                     .iter()
-                    .copied()
                     .collect::<Vec<MbValue>>(),
                 ObjData::Tuple(items) => items.iter().copied().collect::<Vec<MbValue>>(),
                 ObjData::Str(ref s) => s
@@ -2362,8 +2363,8 @@ mod tests {
             if let ObjData::List(ref lock) = (*result.as_ptr().unwrap()).data {
                 let g = lock.read().unwrap();
                 assert_eq!(g.len(), 2);
-                assert_eq!(g[0].as_int(), Some(1));
-                assert_eq!(g[1].as_int(), Some(2));
+                assert_eq!(g.get(0).and_then(|v| v.as_int()), Some(1));
+                assert_eq!(g.get(1).and_then(|v| v.as_int()), Some(2));
             } else {
                 panic!("expected list");
             }
@@ -2508,9 +2509,9 @@ mod tests {
             if let ObjData::List(ref lock) = (*result.as_ptr().unwrap()).data {
                 let g = lock.read().unwrap();
                 assert_eq!(g.len(), 3);
-                assert!((g[0].as_float().unwrap() - 2.5).abs() < 1e-9);
-                assert!((g[1].as_float().unwrap() - 5.0).abs() < 1e-9);
-                assert!((g[2].as_float().unwrap() - 7.5).abs() < 1e-9);
+                assert!((g.get(0).unwrap().as_float().unwrap() - 2.5).abs() < 1e-9);
+                assert!((g.get(1).unwrap().as_float().unwrap() - 5.0).abs() < 1e-9);
+                assert!((g.get(2).unwrap().as_float().unwrap() - 7.5).abs() < 1e-9);
             } else {
                 panic!("expected list");
             }

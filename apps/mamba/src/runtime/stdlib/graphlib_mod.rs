@@ -914,7 +914,7 @@ mod tests {
                     ObjData::List(ref rw) => rw
                         .read()
                         .ok()
-                        .map(|g| g.iter().filter_map(|v| v.as_int()).collect()),
+                        .map(|g| g.to_vec().into_iter().filter_map(|v| v.as_int()).collect()),
                     ObjData::Tuple(ref items) => {
                         Some(items.iter().filter_map(|v| v.as_int()).collect())
                     }

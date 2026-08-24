@@ -541,7 +541,7 @@ unsafe extern "C" fn dispatch_commonprefix(args_ptr: *const MbValue, nargs: usiz
                         .read()
                         .unwrap()
                         .iter()
-                        .filter_map(|v| extract_str(*v))
+                        .filter_map(|v| extract_str(v))
                         .collect(),
                     ObjData::Tuple(items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
                     ObjData::Str(_) => vec![extract_str(args[0]).unwrap()],
@@ -567,7 +567,7 @@ unsafe extern "C" fn dispatch_commonpath(args_ptr: *const MbValue, nargs: usize)
                         .read()
                         .unwrap()
                         .iter()
-                        .filter_map(|v| extract_str(*v))
+                        .filter_map(|v| extract_str(v))
                         .collect(),
                     ObjData::Tuple(items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
                     ObjData::Str(_) => vec![extract_str(args[0]).unwrap()],

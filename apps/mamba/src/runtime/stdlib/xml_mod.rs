@@ -2445,7 +2445,7 @@ pub fn mb_xml_fromstringlist(strs: MbValue) -> MbValue {
                 let items = lock.read().unwrap();
                 items
                     .iter()
-                    .filter_map(|v| extract_str(*v))
+                    .filter_map(|v| extract_str(v))
                     .collect::<String>()
             } else {
                 String::new()

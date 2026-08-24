@@ -57,6 +57,10 @@ impl<T> Spanned<T> {
         Self { node, span }
     }
 
+    pub fn dummy(node: T) -> Self {
+        Self::new(node, Span::dummy())
+    }
+
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
         Spanned {
             node: f(self.node),

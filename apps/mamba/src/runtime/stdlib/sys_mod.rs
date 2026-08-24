@@ -138,13 +138,56 @@ unsafe extern "C" fn dispatch_setrecursionlimit(args_ptr: *const MbValue, nargs:
     mb_sys_setrecursionlimit(limit)
 }
 
+fn type_name_of(val: MbValue) -> String {
+    if val.is_none() {
+        return "NoneType".to_string();
+    }
+    if val.as_int_pyint().is_some() {
+        return "int".to_string();
+    }
+    if val.is_float() {
+        return "float".to_string();
+    }
+    if val.as_bool().is_some() {
+        return "bool".to_string();
+    }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            return match &(*ptr).data {
+                ObjData::Str(_) => "str",
+                ObjData::Bytes(_) => "bytes",
+                ObjData::ByteArray(_) => "bytearray",
+                ObjData::List(_) => "list",
+                ObjData::Tuple(_) => "tuple",
+                ObjData::Dict(_) => "dict",
+                ObjData::Instance { class_name, .. } => return class_name.clone(),
+                _ => "object",
+            }
+            .to_string();
+        }
+    }
+    "object".to_string()
+}
+
 unsafe extern "C" fn dispatch_setswitchinterval(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let interval = if nargs >= 1 {
-        *args_ptr
-    } else {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if nargs != 1 {
+        return raise_type_error_msg(&format!("setswitchinterval() takes exactly 1 argument ({nargs} given)"));
+    }
+    let val = a[0];
+    if let Some(f) = val.as_float().or_else(|| val.as_int_pyint().map(|i| i as f64)) {
+        if f < 0.0 {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("switch interval must be positive".to_string())),
+            );
+            return MbValue::none();
+        }
+        SWITCH_INTERVAL.with(|c| c.set(f));
         MbValue::none()
-    };
-    mb_sys_setswitchinterval(interval)
+    } else {
+        raise_type_error_msg(&format!("must be real number, not {}", type_name_of(val)))
+    }
 }
 
 // ── Surface stubs (auto-added) ──
@@ -286,7 +329,7 @@ fn ss_args_first(args: MbValue) -> MbValue {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 if let Ok(g) = lock.read() {
-                    return g.first().copied().unwrap_or_else(MbValue::none);
+                    return g.first().unwrap_or_else(MbValue::none);
                 }
             }
         }
@@ -469,10 +512,11 @@ unsafe extern "C" fn dispatch_getswitchinterval_flat(
 }
 
 unsafe extern "C" fn dispatch_intern_flat(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error_msg(&format!("intern() takes exactly one argument ({nargs} given)"));
+    }
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let Some(arg) = a.first().copied() else {
-        return raise_type_error_msg("intern() takes exactly one argument (0 given)");
-    };
+    let arg = a[0];
     let Some(ptr) = arg.as_ptr() else {
         return raise_type_error_msg("intern() argument must be str");
     };
@@ -889,7 +933,7 @@ fn stream_name(self_v: MbValue) -> Option<String> {
 fn first_list_arg(args: MbValue) -> Option<MbValue> {
     args.as_ptr().and_then(|p| unsafe {
         if let ObjData::List(ref lock) = (*p).data {
-            lock.read().unwrap().first().copied()
+            lock.read().unwrap().first()
         } else {
             None
         }
@@ -1108,9 +1152,16 @@ pub fn register() {
 
     // sys.stdin, sys.stdout, sys.stderr (stub stream objects)
     register_stream_class();
-    attrs.insert("stdin".into(), build_stream_stub("stdin"));
-    attrs.insert("stdout".into(), build_stream_stub("stdout"));
-    attrs.insert("stderr".into(), build_stream_stub("stderr"));
+    let stdin_val = build_stream_stub("stdin");
+    let stdout_val = build_stream_stub("stdout");
+    let stderr_val = build_stream_stub("stderr");
+    attrs.insert("stdin".into(), stdin_val);
+    attrs.insert("stdout".into(), stdout_val);
+    attrs.insert("stderr".into(), stderr_val);
+    attrs.insert("__stdin__".into(), stdin_val);
+    attrs.insert("__stdout__".into(), stdout_val);
+    attrs.insert("__stderr__".into(), stderr_val);
+    attrs.insert("pycache_prefix".into(), MbValue::none());
 
     // sys.modules (stub dict)
     let modules_dict = MbObject::new_dict();
@@ -1430,9 +1481,14 @@ pub fn register() {
         "set_coroutine_origin_tracking_depth",
         "set_int_max_str_digits",
         "setdlopenflags",
+        "_getframework",
+        "_clear_internal_caches",
+        "_current_frames",
+        "_current_exceptions",
     ] {
         attrs.insert(name.into(), MbValue::from_func(stub_fn_addr));
     }
+    attrs.insert("_xoptions".into(), MbValue::from_ptr(MbObject::new_dict()));
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut native = s.borrow_mut();
         native.insert(stub_fn_addr as u64);

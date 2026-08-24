@@ -1328,15 +1328,15 @@ fn build_frame_chain(top_locals: MbValue) -> MbValue {
         // No JIT-tracked call stack (e.g. called from a native/test context
         // outside compiled code) — fall back to the historical single
         // hollow-module-frame shape so non-JIT callers keep working.
-        entries.push(super::traceback_mod::TraceFrameSnapshot {
-            filename: "<unknown>".to_string(),
-            lineno: 1,
-            name: "<module>".to_string(),
-            locals: None,
-            local_trace_hook: None,
-        });
+        entries.push(super::traceback_mod::TraceFrameSnapshot::new(
+            "<unknown>".to_string(),
+            1,
+            "<module>".to_string(),
+            None,
+            None,
+        ));
     }
-    let globals = super::super::closure::build_globals_dict();
+    let globals = super::traceback_mod::get_or_sync_module_globals();
     let n = entries.len();
     let mut back = MbValue::none();
     let mut current = MbValue::none();
@@ -1347,7 +1347,9 @@ fn build_frame_chain(top_locals: MbValue) -> MbValue {
             "f_code",
             make_named_code_object(&entry.filename, &entry.name),
         );
-        let locals = if i + 1 == n {
+        let locals = if entry.name == "<module>" {
+            globals
+        } else if i + 1 == n {
             top_locals
         } else {
             entry
@@ -2916,6 +2918,7 @@ pub fn mb_inspect_signature(func: MbValue) -> MbValue {
                     annotation: None,
                     entry_abi: "boxed".to_string(),
                     contract: None,
+                    dynamic_boundary_license: None,
                 })
                 .collect();
             return signature_from_infos(&infos, None);
@@ -3009,7 +3012,7 @@ mod tests {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 1);
-                let function = inst_field(items[0], "function").and_then(extract_str);
+                let function = inst_field(items.get(0).unwrap(), "function").and_then(extract_str);
                 assert_eq!(function.as_deref(), Some("<module>"));
                 return;
             }
@@ -3061,7 +3064,7 @@ mod tests {
             let ObjData::List(ref lock) = (*stack_ptr).data else {
                 panic!("inspect.stack did not return a list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(items.len(), 3);
             assert_eq!(
                 inst_field(items[0], "function")
@@ -3084,7 +3087,7 @@ mod tests {
             let ObjData::List(ref lock) = (*outer_ptr).data else {
                 panic!("inspect.getouterframes did not return a list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(items.len(), baseline + 3);
             assert_eq!(
                 inst_field(items[2], "function")
@@ -3141,7 +3144,7 @@ mod tests {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 2);
                 // Each item should be a tuple of (name, value)
-                for item in items.iter() {
+                for item in items.to_vec() {
                     if let ObjData::Tuple(ref elems) = (*item.as_ptr().unwrap()).data {
                         assert_eq!(elems.len(), 2);
                     } else {

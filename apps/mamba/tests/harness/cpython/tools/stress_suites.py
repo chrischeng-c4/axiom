@@ -45,12 +45,10 @@ SUITE_FIXTURES = {
     "soak": (
         "_regression/core/stability/heap_churn_soak.py",
     ),
-    "concurrency": (
-        "concurrency/atomicity/list/append_no_lost_updates.py",
-        "concurrency/atomicity/dict/distinct_key_setitem_no_loss.py",
-        "concurrency/safety/lock/counter_under_lock_is_exact.py",
-        "concurrency/primitives/threading/barrier_rounds_complete_without_deadlock.py",
-    ),
+    # "concurrency" is discovered from the tree, not listed here -- see
+    # discover_concurrency_fixtures(). A hand-kept tuple silently drifts: it
+    # once ran 4 of the 18 fixtures on disk, leaving 8 red ones (including a p0
+    # crash gate) attached to no gate at all (#3107).
     "debug-assertions": (
         "_regression/core/compiler_resilience/debug_assertions_smoke_small.py",
         "_regression/core/compiler_resilience/deep_nesting.py",
@@ -164,6 +162,31 @@ def fixture_meta(rel: str) -> FixtureMeta:
     if not xfail:
         xfail = parse_comment_xfail(text)
     return FixtureMeta(rel=rel, xfail=xfail)
+
+
+CONCURRENCY_DIR = FIXTURES_DIR / "concurrency"
+
+
+def discover_concurrency_fixtures() -> tuple[list[str], list[str]]:
+    """Return (fixtures, unrecorded) for the concurrency facet.
+
+    The facet is defined by the tree, so adding a fixture file IS adding a
+    gate. A file counts as a fixture iff it carries a `[tool.mamba]` PEP 723
+    record -- the same signal `fixture_lint.py` keys on. Files without one are
+    returned separately rather than silently dropped: an unrecorded .py under
+    the fixture tree is either a fixture missing its record or a driver script
+    filed in the wrong place, and both should be visible (#3107).
+    """
+    fixtures: list[str] = []
+    unrecorded: list[str] = []
+    for path in sorted(CONCURRENCY_DIR.rglob("*.py")):
+        rel = path.relative_to(FIXTURES_DIR).as_posix()
+        try:
+            record = parse_tool_mamba(path.read_text(encoding="utf-8"))
+        except OSError:
+            record = {}
+        (fixtures if record else unrecorded).append(rel)
+    return fixtures, unrecorded
 
 
 def lossy(data: str | bytes) -> str:
@@ -375,15 +398,17 @@ def run_concurrency_suite(args: argparse.Namespace) -> dict[str, Any]:
                 "elapsed_s": elapsed_total(runs),
             }
         )
-    return suite_result(
-        "concurrency",
-        cases,
-        extra={
-            "repeat": args.repeat,
-            "mamba_bin": args.mamba_bin,
-            "python": args.python,
-        },
-    )
+    extra = {
+        "repeat": args.repeat,
+        "mamba_bin": args.mamba_bin,
+        "python": args.python,
+    }
+    # A .py under the fixture tree with no `[tool.mamba]` record runs in no
+    # gate. Surface it every run so it cannot sit there unnoticed (#3107).
+    unrecorded = discover_concurrency_fixtures()[1]
+    if unrecorded:
+        extra["unrecorded_files"] = unrecorded
+    return suite_result("concurrency", cases, extra=extra)
 
 
 def debug_fixture_list(args: argparse.Namespace) -> list[str]:
@@ -460,6 +485,8 @@ def print_human(result: dict[str, Any]) -> None:
     for case in result["cases"]:
         detail = case.get("detail", "")
         print(f"{case['status']:>6}  {case['fixture']}  {detail}")
+    for rel in result.get("unrecorded_files", []):
+        print(f"  WARN  {rel}  no [tool.mamba] record -- runs in no gate (#3107)")
     counts = result["counts"]
     print(
         "summary:"
@@ -527,8 +554,15 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
     args = parser.parse_args(argv)
     if hasattr(args, "default_suite"):
-        args.fixtures = args.fixtures or list(SUITE_FIXTURES[args.default_suite])
+        args.fixtures = args.fixtures or list(suite_fixtures(args.default_suite))
     return args
+
+
+def suite_fixtures(suite: str) -> list[str]:
+    """Default fixture set for a suite. `concurrency` comes from the tree."""
+    if suite == "concurrency":
+        return discover_concurrency_fixtures()[0]
+    return list(SUITE_FIXTURES[suite])
 
 
 def handle_probe(args: argparse.Namespace) -> int:
@@ -558,6 +592,10 @@ def main(argv: list[str] | None = None) -> int:
             name: list(fixtures)
             for name, fixtures in SUITE_FIXTURES.items()
         }
+        discovered, unrecorded = discover_concurrency_fixtures()
+        payload["concurrency"] = discovered
+        if unrecorded:
+            payload["concurrency-unrecorded"] = unrecorded
         payload["debug-assertions-full-crash-corpus-roots"] = [
             repo_rel(path) for path in FULL_DEBUG_CORPUS_DIRS
         ]

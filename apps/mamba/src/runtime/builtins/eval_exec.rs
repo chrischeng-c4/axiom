@@ -4333,7 +4333,7 @@ fn compile_ast_exec_import_from_module(
     fn list_items(value: MbValue) -> Option<Vec<MbValue>> {
         value.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::List(ref items) = (*ptr).data {
-                Some(items.read().unwrap().iter().copied().collect())
+                Some(items.read().unwrap().to_vec())
             } else {
                 None
             }

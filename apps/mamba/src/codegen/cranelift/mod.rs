@@ -53,6 +53,16 @@ fn collect_used_externs(module: &MirModule) -> HashSet<String> {
                     MirInst::MakeList { .. } => {
                         used.insert("mb_list_new".into());
                         used.insert("mb_list_append".into());
+                        used.insert("mb_int_list_new".into());
+                        used.insert("mb_int_list_new_untracked".into());
+                        used.insert("mb_int_list_new_with_capacity".into());
+                        used.insert("mb_int_list_new_with_capacity_untracked".into());
+                        used.insert("mb_int_list_append_raw".into());
+                        used.insert("mb_float_list_new".into());
+                        used.insert("mb_float_list_new_untracked".into());
+                        used.insert("mb_float_list_new_with_capacity".into());
+                        used.insert("mb_float_list_new_with_capacity_untracked".into());
+                        used.insert("mb_float_list_append_raw".into());
                     }
                     MirInst::MakeDict { .. } => {
                         used.insert("mb_dict_new".into());
@@ -231,6 +241,18 @@ fn compute_may_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
     through
 }
 
+/// A `del var` lowering (`lower_delete_lvalue`, `HirLValue::Var`) emits a
+/// `mb_del_var(vreg)` CallExtern that releases the VReg's own heap-value
+/// share immediately (see `mb_del_var` in `runtime/generator.rs`). Recognize
+/// these so `compute_must_assign` can stop treating a deleted VReg as still
+/// owning a releasable share.
+fn mir_del_var_target(inst: &MirInst) -> Option<VReg> {
+    match inst {
+        MirInst::CallExtern { name, args, .. } if name == "mb_del_var" => args.first().copied(),
+        _ => None,
+    }
+}
+
 /// Per-block "definitely assigned on all incoming paths" VReg set used to
 /// bound return-epilogue cleanup in large branchy bodies.
 ///
@@ -243,12 +265,23 @@ fn compute_may_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
 ///
 /// This is the standard forward must-analysis:
 ///
-///   `Through(b) = assigned_in(b) ∪ (⋂ Through(p) for p ∈ preds(b))`
+///   `Through(b) = (assigned_in(b) ∪ (⋂ Through(p) for p ∈ preds(b))) − killed_in(b)`
 ///
 /// Entry blocks start with an empty on-entry set. The result is conservative
 /// for cleanup: it may skip path-conditional locals, but it never tries to
 /// release a value that is absent on the current path, and it prevents large
 /// branch-only release sets from exploding SSA merge state at returns.
+///
+/// `killed_in(b)` is the set of VRegs a `del` statement (`mb_del_var`, see
+/// `mir_del_var_target`) already released somewhere in block `b`. Without
+/// this subtraction, a VReg is "definitely assigned" right up through the
+/// terminator that follows its `del` — `assigned_in`/`Through` only track
+/// SSA *definition* sites, never explicit early releases — so the return
+/// epilogue's release sweep (`emit_terminator` / `releasable_i64_vregs`)
+/// would release the same already-`del`'d share a second time. Each MIR
+/// VReg is defined exactly once, so once a VReg is `del`'d it can never be
+/// legitimately read again afterward; killing it for the rest of the
+/// function (both later in the same block and in every successor) is sound.
 fn compute_must_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
     let assigned_in: HashMap<u32, HashSet<VReg>> = body
         .blocks
@@ -257,6 +290,20 @@ fn compute_must_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
             let mut s = HashSet::new();
             for inst in &b.stmts {
                 if let Some(v) = mir_inst_dest(inst) {
+                    s.insert(v);
+                }
+            }
+            (b.id.0, s)
+        })
+        .collect();
+
+    let killed_in: HashMap<u32, HashSet<VReg>> = body
+        .blocks
+        .iter()
+        .map(|b| {
+            let mut s = HashSet::new();
+            for inst in &b.stmts {
+                if let Some(v) = mir_del_var_target(inst) {
                     s.insert(v);
                 }
             }
@@ -290,11 +337,14 @@ fn compute_must_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
         .blocks
         .iter()
         .map(|b| {
-            let init = if preds[&b.id.0].is_empty() {
+            let mut init = if preds[&b.id.0].is_empty() {
                 assigned_in.get(&b.id.0).cloned().unwrap_or_default()
             } else {
                 universe.clone()
             };
+            if let Some(k) = killed_in.get(&b.id.0) {
+                init.retain(|v| !k.contains(v));
+            }
             (b.id.0, init)
         })
         .collect();
@@ -318,6 +368,9 @@ fn compute_must_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
             };
             if let Some(a) = assigned_in.get(&b.id.0) {
                 on_entry.extend(a.iter().copied());
+            }
+            if let Some(k) = killed_in.get(&b.id.0) {
+                on_entry.retain(|v| !k.contains(v));
             }
             if through.get(&b.id.0) != Some(&on_entry) {
                 through.insert(b.id.0, on_entry);

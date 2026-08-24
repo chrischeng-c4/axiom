@@ -373,7 +373,7 @@ mod tests {
     // REQ: R1
     #[test]
     fn test_getpwuid_missing_raises_keyerror() {
-        let _ = mb_pwd_getpwuid(&[MbValue::from_int(i64::MAX - 1)]);
+        let _ = mb_pwd_getpwuid(&[MbValue::from_int(1i64 << 40)]);
         let exc_type = super::super::super::exception::current_exception_type();
         assert_eq!(exc_type.as_deref(), Some("KeyError"));
         super::super::super::exception::clear_current_exception();

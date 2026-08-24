@@ -390,7 +390,7 @@ fn extract_args(val: MbValue) -> Result<Vec<String>, ()> {
                 ObjData::List(ref lock) => {
                     let mut out = Vec::new();
                     for v in lock.read().unwrap().iter() {
-                        out.push(extract_arg_token(*v)?);
+                        out.push(extract_arg_token(v)?);
                     }
                     return Ok(out);
                 }
@@ -1243,7 +1243,11 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
     // mis-firing on those we only reject an explicit *string* bufsize, which
     // is never a legitimate value for any Popen keyword.
     if let Some(bufsize) = a.get(1) {
-        if extract_str(*bufsize).is_some() {
+        let is_dict = bufsize
+            .as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if !bufsize.is_none() && bufsize.as_int().is_none() && !is_dict {
             return raise("TypeError", "bufsize must be an integer");
         }
     }

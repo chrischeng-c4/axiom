@@ -157,4 +157,38 @@ mod tests {
         assert_eq!(mir_type_to_cl(&MirType::Ptr), cl_types::I64);
         assert_eq!(mir_type_to_cl(&MirType::Void), cl_types::I64);
     }
+
+    #[test]
+    fn test_marshal_arg_and_unmarshal_return_builder() {
+        use cranelift_codegen::ir::Function;
+        use cranelift_frontend::FunctionBuilderContext;
+
+        let mut func = Function::new();
+
+        let mut fn_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut func, &mut fn_ctx);
+
+        let entry_block = builder.create_block();
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+
+        let val_i64 = builder.ins().iconst(cl_types::I64, 42);
+
+        // Test marshal_arg narrowing i64 -> i32
+        let marshaled_i32 = marshal_arg(&mut builder, val_i64, cl_types::I64, &MirType::I32);
+        assert_eq!(builder.func.dfg.value_type(marshaled_i32), cl_types::I32);
+
+        // Test marshal_arg bool truncation i64 -> i8
+        let marshaled_i8 = marshal_arg(&mut builder, val_i64, cl_types::I64, &MirType::I8);
+        assert_eq!(builder.func.dfg.value_type(marshaled_i8), cl_types::I8);
+
+        // Test unmarshal_return i32 -> i64
+        let unmarshaled_i64 = unmarshal_return(&mut builder, marshaled_i32, &MirType::I32, cl_types::I64);
+        assert_eq!(builder.func.dfg.value_type(unmarshaled_i64), cl_types::I64);
+
+        // Test unmarshal_return i8 -> i64
+        let unmarshaled_i64_from_i8 = unmarshal_return(&mut builder, marshaled_i8, &MirType::I8, cl_types::I64);
+        assert_eq!(builder.func.dfg.value_type(unmarshaled_i64_from_i8), cl_types::I64);
+    }
 }
+

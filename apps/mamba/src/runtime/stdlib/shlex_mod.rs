@@ -290,7 +290,7 @@ mod tests {
     fn list_str_at(val: MbValue, idx: usize) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(idx).copied().and_then(get_str_val)
+                lock.read().unwrap().get(idx).and_then(get_str_val)
             } else {
                 None
             }

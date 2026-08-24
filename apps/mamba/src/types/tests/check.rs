@@ -1,9 +1,11 @@
 #![cfg(test)]
 
+use crate::error::MambaError;
 use crate::parser;
-use crate::source::span::FileId;
+use crate::parser::ast::{ParamAnnotation, ParamKind, SourceAnnotation, Stmt};
+use crate::source::span::{FileId, Span};
 use crate::types::ty::{ClassRole, Ty, TypeParamDefault, TypeVarKind};
-use crate::types::TypeChecker;
+use crate::types::{TypeChecker, TypeProvenance};
 
 fn check(src: &str) -> Vec<String> {
     let module = parser::parse(src, FileId(0)).expect("parse failed");
@@ -70,6 +72,193 @@ fn bare_instance_parameter_error_count(errors: &[String]) -> usize {
 }
 
 #[test]
+fn module_plain_required_omitted_parameter_emits_exact_implicit_unknown_type_error() {
+    const PATH: &str = "parameter -> required -> source_annotation -> omitted";
+    const MESSAGE: &str =
+        "cannot infer type for parameter `value`: parameter -> required -> source_annotation -> omitted";
+    let source = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/implicit_required_regular_parameter.py"
+    );
+    let module = parser::parse(source, FileId(3735)).expect("parse failed");
+    let Some(Stmt::FnDef {
+        decorators,
+        name,
+        type_params,
+        params,
+        return_ty,
+        ..
+    }) = module.stmts.iter().find_map(|stmt| match &stmt.node {
+        function @ Stmt::FnDef { name, .. } if name == "echo" => Some(function),
+        _ => None,
+    })
+    else {
+        panic!("echo function missing from parsed fixture")
+    };
+    assert!(decorators.is_empty());
+    assert_eq!(name, "echo");
+    assert!(type_params.is_empty());
+    assert!(return_ty.is_none());
+    assert_eq!(params.len(), 1);
+    let param = &params[0];
+    assert_eq!(param.name, "value");
+    assert_eq!(param.annotation, ParamAnnotation::Omitted);
+    assert_eq!(param.kind, ParamKind::Regular);
+    assert!(param.default.is_none());
+    assert!(!param.pos_only);
+    assert!(!param.kw_only);
+    assert_eq!(param.span.file, FileId(3735));
+    assert_eq!(
+        &source[param.span.start as usize..param.span.end as usize],
+        "value",
+        "parameter span must bind the source name exactly"
+    );
+
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    let declared = checker.get_declared_type(param.span);
+    assert_eq!(
+        (errors.len(), declared.is_some()),
+        (1, true),
+        "eligible omitted parameter must emit exactly one error and record its declaration; errors={errors:?}, declared={declared:?}"
+    );
+    let [MambaError::Type { span, message }] = errors.as_slice() else {
+        panic!("expected one Type error, got: {errors:?}")
+    };
+    assert_eq!(*span, param.span, "diagnostic must bind the parameter span");
+    assert_eq!(message, MESSAGE);
+
+    let declared = declared.expect("implicit declaration must be recorded at the parameter span");
+    assert_eq!(*declared.source(), SourceAnnotation::Omitted);
+    assert_eq!(declared.normalized(), None);
+    assert_eq!(
+        *declared.provenance(),
+        TypeProvenance::ImplicitUnknown {
+            inference_path: PATH.to_string(),
+        }
+    );
+}
+
+#[test]
+fn module_plain_required_explicit_any_preserves_authored_provenance() {
+    let source = include_str!(
+        "../../../tests/cpython/_regression/core/force_typed/explicit_any_required_regular_parameter.py"
+    );
+    let module = parser::parse(source, FileId(3735)).expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    assert!(
+        errors.is_empty(),
+        "authored Any must remain accepted: {errors:?}"
+    );
+    let Some(Stmt::FnDef { params, .. }) = module.stmts.iter().find_map(|stmt| match &stmt.node {
+        function @ Stmt::FnDef { name, .. } if name == "echo" => Some(function),
+        _ => None,
+    }) else {
+        panic!("echo function missing from parsed fixture")
+    };
+    let ParamAnnotation::Authored(annotation) = &params[0].annotation else {
+        panic!("positive fixture must carry authored Any syntax")
+    };
+    let declared = checker
+        .get_declared_type(annotation.span)
+        .expect("authored annotation declaration missing");
+    assert!(matches!(declared.source(), SourceAnnotation::Authored(_)));
+    assert_eq!(declared.normalized(), Some(checker.tcx.any()));
+    assert_eq!(*declared.provenance(), TypeProvenance::ExplicitAny);
+}
+
+#[test]
+fn module_plain_required_omitted_parameter_predicate_excludes_frozen_forms() {
+    const PATH: &str = "parameter -> required -> source_annotation -> omitted";
+
+    fn collect_controlled_omitted_params(
+        statements: &[crate::source::span::Spanned<Stmt>],
+        found: &mut Vec<(String, Span)>,
+    ) {
+        for statement in statements {
+            match &statement.node {
+                Stmt::FnDef {
+                    name, params, body, ..
+                }
+                | Stmt::AsyncFnDef {
+                    name, params, body, ..
+                } => {
+                    if name == "controlled" {
+                        found.extend(
+                            params
+                                .iter()
+                                .filter(|param| param.annotation == ParamAnnotation::Omitted)
+                                .map(|param| (param.name.clone(), param.span)),
+                        );
+                    }
+                    collect_controlled_omitted_params(body, found);
+                }
+                Stmt::ClassDef { body, .. } => {
+                    collect_controlled_omitted_params(body, found);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let controls = [
+        ("default", "def controlled(value = 0):\n    pass\n"),
+        ("positional-only", "def controlled(value, /):\n    pass\n"),
+        ("keyword-only", "def controlled(*, value):\n    pass\n"),
+        ("star", "def controlled(*value):\n    pass\n"),
+        ("double-star", "def controlled(**value):\n    pass\n"),
+        (
+            "method",
+            "class Example:\n    def controlled(self, value):\n        pass\n",
+        ),
+        (
+            "nested",
+            "def outer() -> None:\n    def controlled(value):\n        pass\n",
+        ),
+        ("async", "async def controlled(value):\n    pass\n"),
+        ("generator", "def controlled(value):\n    yield value\n"),
+        (
+            "decorated",
+            "from typing import Any\ndef identity(fn: Any) -> Any:\n    return fn\n@identity\ndef controlled(value):\n    pass\n",
+        ),
+        ("generic", "def controlled[T](value):\n    pass\n"),
+        (
+            "annotated-return",
+            "def controlled(value) -> None:\n    pass\n",
+        ),
+    ];
+
+    for (label, source) in controls {
+        let module = parser::parse(source, FileId(3735)).expect("control parse failed");
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(
+            errors.is_empty(),
+            "{label} must remain outside the omitted-required rule: {errors:?}"
+        );
+
+        let mut controlled_params = Vec::new();
+        collect_controlled_omitted_params(&module.stmts, &mut controlled_params);
+        assert!(
+            !controlled_params.is_empty(),
+            "{label} control must bind at least one actual omitted parameter span"
+        );
+        for (parameter, span) in controlled_params {
+            let forbidden = TypeProvenance::ImplicitUnknown {
+                inference_path: PATH.to_string(),
+            };
+            assert_ne!(
+                checker
+                    .get_declared_type(span)
+                    .map(|declared| declared.provenance()),
+                Some(&forbidden),
+                "{label} controlled parameter `{parameter}` at {span} acquired the forbidden provenance"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_valid_fibonacci() {
     let errors = check(
         "def fibonacci(n: int) -> int:\n\
@@ -109,6 +298,93 @@ fn test_function_str_arg_rejects_bytes_literal() {
     assert!(
         errors.is_empty(),
         "valid str literal and dynamic Any calls should remain accepted, got: {errors:?}"
+    );
+}
+
+#[test]
+fn all_string_literal_is_compatible_with_str_but_not_int() {
+    use crate::types::ty::LiteralValue;
+
+    let mut checker = TypeChecker::new();
+    let all_string = checker.tcx.intern(Ty::Literal(vec![
+        LiteralValue::Str("call".into()),
+        LiteralValue::Str("line".into()),
+    ]));
+    let empty = checker.tcx.intern(Ty::Literal(Vec::new()));
+    let mixed = checker.tcx.intern(Ty::Literal(vec![
+        LiteralValue::Str("call".into()),
+        LiteralValue::Int(1),
+    ]));
+    let integer = checker.tcx.intern(Ty::Literal(vec![LiteralValue::Int(1)]));
+    let boolean = checker
+        .tcx
+        .intern(Ty::Literal(vec![LiteralValue::Bool(true)]));
+
+    assert!(checker.types_compatible(checker.tcx.str(), all_string));
+    assert!(!checker.types_compatible(all_string, checker.tcx.str()));
+    assert!(!checker.types_compatible(checker.tcx.str(), empty));
+    assert!(!checker.types_compatible(checker.tcx.str(), mixed));
+    assert!(!checker.types_compatible(checker.tcx.str(), integer));
+    assert!(!checker.types_compatible(checker.tcx.str(), boolean));
+    assert!(!checker.types_compatible(checker.tcx.int(), all_string));
+}
+
+#[test]
+fn structured_trace_accepts_str_event_but_rejects_int_event_and_return() {
+    let positive = check_runtime(
+        "import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
+         def trace(frame: FrameType, event: str, arg: Any) -> None:\n\
+         \x20   return None\n\
+         sys.settrace(trace)\n",
+    );
+    assert!(
+        positive.is_empty(),
+        "str event callback must satisfy the structured trace contract: {positive:?}"
+    );
+
+    let event_int = check_runtime(
+        "import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
+         def trace(frame: FrameType, event: int, arg: Any) -> None:\n\
+         \x20   return None\n\
+         sys.settrace(trace)\n",
+    );
+    assert!(
+        event_int
+            .iter()
+            .any(|error| error.contains("parameter `function`")),
+        "int event callback must remain rejected: {event_int:?}"
+    );
+
+    let return_int = check_runtime(
+        "import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
+         def trace(frame: FrameType, event: str, arg: Any) -> int:\n\
+         \x20   return 1\n\
+         sys.settrace(trace)\n",
+    );
+    assert!(
+        return_int
+            .iter()
+            .any(|error| error.contains("parameter `function`")),
+        "int return callback must remain rejected: {return_int:?}"
+    );
+
+    let any_control = check_runtime(
+        "import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
+         def trace(frame: FrameType, event: Any, arg: Any) -> None:\n\
+         \x20   return None\n\
+         sys.settrace(trace)\n",
+    );
+    assert!(
+        any_control.is_empty(),
+        "Any control must remain accepted by the existing gradual policy: {any_control:?}"
     );
 }
 
@@ -4008,7 +4284,7 @@ fn test_stdlib_iter_wrong_bare_object_rejected() {
 #[test]
 fn test_stdlib_list_dunder_contracts_rejected() {
     let errors = check(
-        "obj = []\nobj.__add__(12345)\nobj.__ge__(12345)\nobj.__gt__(12345)\nobj.__le__(12345)\nobj.__lt__(12345)\n",
+        "obj: list[object] = []\nobj.__add__(12345)\nobj.__ge__(12345)\nobj.__gt__(12345)\nobj.__le__(12345)\nobj.__lt__(12345)\n",
     );
     let list_value_errors = errors
         .iter()
@@ -4020,7 +4296,7 @@ fn test_stdlib_list_dunder_contracts_rejected() {
     );
 
     let errors = check(
-        "class _W:\n    pass\nobj = []\nobj.__getitem__(_W())\nobj.__delitem__(_W())\nobj.__setitem__(_W(), None)\n",
+        "class _W:\n    pass\nobj: list[object] = []\nobj.__getitem__(_W())\nobj.__delitem__(_W())\nobj.__setitem__(_W(), None)\n",
     );
     let bare_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
@@ -4029,7 +4305,7 @@ fn test_stdlib_list_dunder_contracts_rejected() {
     );
 
     let errors = check(
-        "obj = []\nobj.__add__([])\nobj.__ge__([])\nobj.__gt__([])\nobj.__le__([])\nobj.__lt__([])\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\nobj.__delitem__(0)\nobj.__setitem__(0, None)\nobj.__setitem__(slice(0, 1), [])\n",
+        "obj: list[object] = []\nobj.__add__([])\nobj.__ge__([])\nobj.__gt__([])\nobj.__le__([])\nobj.__lt__([])\nobj.__getitem__(0)\nobj.__getitem__(slice(0, 1))\nobj.__delitem__(0)\nobj.__setitem__(0, None)\nobj.__setitem__(slice(0, 1), [])\n",
     );
     assert!(
         errors.is_empty(),
@@ -4227,7 +4503,7 @@ fn test_stdlib_map_new_callable_rejected() {
     );
 
     let errors = check(
-        "from builtins import map\ndef identity(x):\n    return x\nmap.__new__(map, identity, [1])\n",
+        "from builtins import map\ndef identity(x: int) -> int:\n    return x\nmap.__new__(map, identity, [1])\n",
     );
     assert!(
         errors.is_empty(),
@@ -4293,7 +4569,7 @@ fn test_stdlib_property_descriptor_contracts_rejected() {
     );
 
     let errors = check(
-        "from builtins import property\nclass _Owner:\n    def marker(self):\n        return None\ndef f(self=None):\n    return None\ndef s(self, value):\n    pass\ndef d(self):\n    pass\nobj = property(f)\nobj.__get__(None, None)\nobj.__get__(None, _Owner)\nobj.getter(f)\nobj.setter(s)\nobj.deleter(d)\nproperty(f, s, d, \"doc\")\nvalue: Any = f\nobj.getter(value)\nproperty(value)\n",
+        "from builtins import property\nfrom typing import Any\nclass _Owner:\n    def marker(self):\n        return None\ndef f(self=None):\n    return None\ndef s(self: object, value: object) -> None:\n    pass\ndef d(self: object) -> None:\n    pass\nobj = property(f)\nobj.__get__(None, None)\nobj.__get__(None, _Owner)\nobj.getter(f)\nobj.setter(s)\nobj.deleter(d)\nproperty(f, s, d, \"doc\")\nvalue: Any = f\nobj.getter(value)\nproperty(value)\n",
     );
     assert!(
         errors.is_empty(),
@@ -4936,7 +5212,7 @@ fn test_stdlib_exception_group_typed_method_rejects_bare_instance() {
     );
 
     let errors = check(
-        "from builtins import ExceptionGroup\nobj = ExceptionGroup(\"msg\", [ValueError(\"x\")])\ndef matcher(exc):\n    return True\nobj.split(matcher)\n",
+        "from builtins import ExceptionGroup\nobj = ExceptionGroup(\"msg\", [ValueError(\"x\")])\ndef matcher(exc: BaseException) -> bool:\n    return True\nobj.split(matcher)\n",
     );
     assert!(
         errors.is_empty(),
@@ -4958,7 +5234,7 @@ fn test_direct_builtin_typed_argument_rejected_unless_shadowed() {
         "direct builtin anext(_W(), None) should reject a bare instance, got: {errors:?}"
     );
 
-    let errors = check("class _W:\n    pass\ndef aiter(value):\n    return value\naiter(_W())\n");
+    let errors = check("class _W:\n    pass\ndef aiter(value: _W) -> _W:\n    return value\naiter(_W())\n");
     assert!(
         errors.is_empty(),
         "user-shadowed aiter must not use the stdlib signature, got: {errors:?}"
@@ -4991,7 +5267,7 @@ fn generated_builtin_binder_owns_positional_only_calls() {
         );
     }
 
-    let errors = check("def chr(i):\n    return i\nchr(i=65)\n");
+    let errors = check("def chr(i: int) -> int:\n    return i\nchr(i=65)\n");
     assert!(
         errors.is_empty(),
         "a user-shadowed builtin name must retain ordinary keyword binding: {errors:?}"
@@ -5444,7 +5720,7 @@ fn test_stdlib_filter_wrong_bare_function_rejected() {
     );
 
     let errors =
-        check("from builtins import filter\ndef pred(value):\n    return True\nfilter(pred, [])\n");
+        check("from builtins import filter\ndef pred(value: object) -> bool:\n    return True\nfilter(pred, [])\n");
     assert!(
         errors.is_empty(),
         "filter(callable, iterable) must stay clean, got: {errors:?}"
@@ -5535,7 +5811,7 @@ fn test_stdlib_unknown_and_protocol_contracts_are_distinct() {
 #[test]
 fn test_stdlib_skip_when_arg_not_concrete_scalar() {
     // Argument is a variable of unknown type -> skip (Any actual).
-    let errors = check("from os import strerror\ndef f(v):\n    return strerror(v)\n");
+    let errors = check("from os import strerror\nfrom typing import Any\ndef f(v: Any) -> str:\n    return strerror(v)\n");
     assert!(
         errors.is_empty(),
         "strerror(unknown-var) must be skipped, got: {errors:?}"
@@ -5552,7 +5828,7 @@ fn test_stdlib_skip_when_arg_not_concrete_scalar() {
 fn test_stdlib_non_stdlib_call_untouched() {
     // A user fn that happens to share a stdlib name is not in import_origins,
     // so the hook never touches it.
-    let errors = check("def strerror(x):\n    return x\nstrerror(\"x\")\n");
+    let errors = check("def strerror(x: str) -> str:\n    return x\nstrerror(\"x\")\n");
     assert!(
         errors.is_empty(),
         "user strerror must be untouched, got: {errors:?}"
@@ -5561,62 +5837,70 @@ fn test_stdlib_non_stdlib_call_untouched() {
 
 #[test]
 fn test_stdlib_provenance_is_keyed_by_binding_identity() {
-    let errors = check(
-        "from os import strerror\n\
-         def local(strerror):\n\
-         \x20   strerror(\"ok\")\n\
-         strerror(\"ok\")\n",
-    );
+    let check_raw = |source: &str, file| {
+        let module = parser::parse(source, file).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        checker.check_module(&module)
+    };
+
+    let source = "from typing import Callable\n\
+from os import strerror\n\
+def local(strerror: Callable[[str], str]) -> None:\n\
+\x20\x20\x20\x20strerror(\"ok\")\n\
+strerror(\"ok\")\n";
+    assert_eq!(source.len(), 137);
+    let errors = check_raw(source, FileId(37681));
+    let [MambaError::Type { span, message }] = errors.as_slice() else {
+        panic!("expected one Type error, got: {errors:?}")
+    };
+    assert_eq!(*span, Span::new(FileId(37681), 131, 135));
+    assert_eq!(&source[span.start as usize..span.end as usize], "\"ok\"");
     assert_eq!(
-        errors
-            .iter()
-            .filter(|error| error.contains("argument type mismatch"))
-            .count(),
-        1,
-        "a parameter shadow must not inherit import provenance: {errors:?}"
+        message,
+        "argument type mismatch: expected `int`, got `str` for parameter `code`"
     );
 
-    let errors = check(
-        "from os import strerror\n\
-         strerror = lambda value: value\n\
-         strerror(\"ok\")\n",
-    );
-    assert!(
-        errors.is_empty(),
-        "a direct assignment must clear import provenance: {errors:?}"
+    let source = "from os import strerror\n\
+strerror = lambda value: value\n\
+strerror(\"ok\")\n";
+    assert_eq!(source.len(), 70);
+    let errors = check_raw(source, FileId(37682));
+    assert!(errors.is_empty(), "expected no diagnostics, got: {errors:?}");
+
+    let source = "from html.parser import HTMLParser\n\
+class LocalHandler:\n\
+\x20\x20\x20\x20def handle_entityref(self, name: int) -> None:\n\
+\x20\x20\x20\x20\x20\x20\x20\x20pass\n\
+obj = object.__new__(HTMLParser)\n\
+def local(obj: LocalHandler) -> None:\n\
+\x20\x20\x20\x20obj.handle_entityref(12345)\n\
+obj.handle_entityref(12345)\n";
+    assert_eq!(source.len(), 250);
+    let errors = check_raw(source, FileId(37683));
+    let [MambaError::Type { span, message }] = errors.as_slice() else {
+        panic!("expected one Type error, got: {errors:?}")
+    };
+    assert_eq!(*span, Span::new(FileId(37683), 243, 248));
+    assert_eq!(&source[span.start as usize..span.end as usize], "12345");
+    assert_eq!(
+        message,
+        "argument type mismatch: expected `str`, got `int` for parameter `name`"
     );
 
-    let errors = check(
-        "from html.parser import HTMLParser\n\
-         obj = object.__new__(HTMLParser)\n\
-         def local(obj):\n\
-         \x20   obj.handle_entityref(12345)\n\
-         obj.handle_entityref(12345)\n",
-    );
-    assert_eq!(
-        errors
-            .iter()
-            .filter(|error| error.contains("argument type mismatch"))
-            .count(),
-        1,
-        "a parameter shadow must not inherit instance provenance: {errors:?}"
-    );
-
-    let errors = check(
-        "import queue\n\
-         Alias = queue.Queue\n\
-         def local(Alias):\n\
-         \x20   inside: int = Alias()\n\
-         outside: int = Alias()\n",
-    );
-    assert_eq!(
-        errors
-            .iter()
-            .filter(|error| error.contains("type mismatch"))
-            .count(),
-        1,
-        "a parameter shadow must not inherit native class-reference provenance: {errors:?}"
-    );
+    let source = "from typing import Any\n\
+import queue\n\
+Alias = queue.Queue\n\
+def local(Alias: Any) -> None:\n\
+\x20\x20\x20\x20inside: int = Alias()\n\
+outside: int = Alias()\n";
+    assert_eq!(source.len(), 136);
+    let errors = check_raw(source, FileId(37684));
+    let [MambaError::Type { span, message }] = errors.as_slice() else {
+        panic!("expected one Type error, got: {errors:?}")
+    };
+    assert_eq!(*span, Span::new(FileId(37684), 128, 135));
+    assert_eq!(&source[span.start as usize..span.end as usize], "Alias()");
+    assert_eq!(message, "type mismatch: expected `int`, got `queue.Queue`");
 }
 
 #[test]
@@ -6212,12 +6496,16 @@ fn typeshed_imported_aliases_and_nested_classes_enforce_canonical_types() {
          from importlib.metadata import DistributionFinder\n\
          from ssl import SSLSocket\n\
          from wsgiref.handlers import BaseHandler\n\
+         from wsgiref.types import StartResponse, WSGIEnvironment\n\
          from wsgiref.util import setup_testing_defaults\n\
          PathFinder.find_distributions(DistributionFinder.Context())\n\
          socket = object.__new__(SSLSocket)\n\
          socket.connect((\"localhost\", 443))\n\
          setup_testing_defaults({})\n\
-         def app(environ, start_response):\n\
+         def app(\n\
+         \x20   environ: WSGIEnvironment,\n\
+         \x20   start_response: StartResponse,\n\
+         ) -> list[bytes]:\n\
          \x20   return []\n\
          handler = object.__new__(BaseHandler)\n\
          handler.run(app)\n",
@@ -6391,9 +6679,11 @@ fn typeshed_productive_recursive_aliases_enforce_representative_calls() {
     let valid = check(
         "import marshal\n\
          import sys\n\
+         from types import FrameType\n\
+         from typing import Any\n\
          from xml.etree.ElementTree import Element\n\
          from xmlrpc.client import Marshaller, dumps as xmlrpc_dumps\n\
-         def trace(frame, event, arg):\n\
+         def trace(frame: FrameType, event: str, arg: Any) -> None:\n\
          \x20   return None\n\
          marshal.dumps((1, 'nested'))\n\
          sys.settrace(trace)\n\
@@ -6747,7 +7037,8 @@ fn typeshed_structured_literal_overloads_match_exact_ast_values() {
 
     let gradual = check(
         "import time\n\
-         def inspect_clock(name):\n\
+         from typing import Any\n\
+         def inspect_clock(name: Any) -> None:\n\
          \x20   time.get_clock_info(name)\n",
     );
     assert!(

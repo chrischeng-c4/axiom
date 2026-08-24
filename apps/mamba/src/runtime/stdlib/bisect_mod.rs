@@ -544,7 +544,6 @@ fn seq_get(a: MbValue, idx: usize) -> MbValue {
                         .read()
                         .unwrap()
                         .get(idx)
-                        .copied()
                         .unwrap_or_else(MbValue::none)
                 }
                 ObjData::Tuple(ref items) => {
@@ -710,8 +709,8 @@ where
     if let Some(ptr) = a.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let guard = lock.read().unwrap();
-                return f(guard.as_slice());
+                let items = lock.read().unwrap().to_vec();
+                return f(&items);
             } else if let ObjData::Tuple(ref items) = (*ptr).data {
                 return f(items.as_slice());
             }

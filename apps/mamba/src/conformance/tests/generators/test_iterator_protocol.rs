@@ -171,7 +171,7 @@ fn test_stopiteration_with_value_ends_iteration_cleanly() {
         self.done = True
         return 42
 
-collected = []
+collected: list[int] = []
 for v in Once():
     collected.append(v)
 print(collected)

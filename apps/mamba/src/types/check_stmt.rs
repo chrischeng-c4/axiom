@@ -234,7 +234,7 @@ impl TypeChecker {
                 let import_origin = self.stdlib_import_origin(value);
                 let instance_origin = self.stdlib_instance_class(value);
                 let class_ref_origin = self.native_ctor_class_call(value);
-                let declared_ty = self.resolve_type_expr(ty);
+                let declared_ty = self.resolve_authored_annotation(ty);
                 let value_ty = self.check_expr(value);
                 let value_ty = self.refine_class_object_actual(declared_ty, value_ty, value);
                 if !self.types_compatible(declared_ty, value_ty) {
@@ -285,12 +285,23 @@ impl TypeChecker {
                 // inferred type of val.
                 if let Expr::Ident(name) = &target.node {
                     let current_scope = self.symbols.current_scope_idx();
-                    if self.symbols.lookup_in_scope(current_scope, name).is_none()
+                    let binding_scope = self.current_binding_scope();
+                    if self
+                        .symbols
+                        .lookup_in_scope(current_scope, name)
+                        .is_none()
                         || self.is_unshadowed_builtin(name)
                     {
                         let value_ty = self.check_expr(value);
+                        let selected_ty = self.check_n3_list_binding_inference(
+                            name,
+                            target.span,
+                            value,
+                            value_ty,
+                            binding_scope,
+                        );
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
-                        self.set_sym_type(sym.0, value_ty);
+                        self.set_sym_type(sym.0, selected_ty);
                         self.set_builtin_class_alias(sym, builtin_class_alias);
                         self.set_binding_origins(
                             sym,
@@ -402,8 +413,22 @@ impl TypeChecker {
                             class_ref_origin,
                         );
                         self.set_builtin_class_alias(symbol, builtin_class_alias);
-                        if self.inferred_local_placeholders.remove(&symbol) {
+                        if self.global_symbol_module_map.contains_key(&symbol)
+                            || matches!(self.tcx.get(target_ty), Ty::None)
+                        {
                             self.set_sym_type(symbol.0, value_ty);
+                            return;
+                        }
+                        if self.inferred_local_placeholders.remove(&symbol) {
+                            let binding_scope = self.current_binding_scope();
+                            let selected_ty = self.check_n3_list_binding_inference(
+                                name,
+                                target.span,
+                                value,
+                                value_ty,
+                                binding_scope,
+                            );
+                            self.set_sym_type(symbol.0, selected_ty);
                             return;
                         }
                     }
@@ -428,8 +453,14 @@ impl TypeChecker {
                     // still error — those respect the object's type contract.
                     if let Expr::Ident(name) = &target.node {
                         if let Some(sym) = self.symbols.lookup(name) {
-                            let any_ty = self.tcx.any();
-                            self.set_sym_type(sym.0, any_ty);
+                            let new_ty = if matches!(self.tcx.get(target_ty), Ty::None | Ty::Error)
+                                || self.global_symbol_module_map.contains_key(&sym)
+                            {
+                                value_ty
+                            } else {
+                                self.tcx.any()
+                            };
+                            self.set_sym_type(sym.0, new_ty);
                             return;
                         }
                     }
@@ -469,6 +500,8 @@ impl TypeChecker {
                 let declaration_symbol = self
                     .declaration_symbol(stmt)
                     .expect("function declarations must be preregistered");
+                let is_decorated = !decorators.is_empty();
+                let is_async = matches!(&stmt.node, Stmt::AsyncFnDef { .. });
                 self.check_fn_body(
                     declaration_symbol,
                     name,
@@ -477,6 +510,8 @@ impl TypeChecker {
                     return_ty.as_ref(),
                     body,
                     overload_decorated,
+                    is_decorated,
+                    is_async,
                 );
                 self.unregister_type_params(type_params);
             }
@@ -553,7 +588,7 @@ impl TypeChecker {
                 // handled separately in `check_expr` and stays scoped.
                 let ty = var_ty
                     .as_ref()
-                    .map(|t| self.resolve_type_expr(t))
+                    .map(|t| self.resolve_authored_annotation(t))
                     .unwrap_or_else(|| self.infer_iter_element(iter));
                 if targets.len() > 1 {
                     // Tuple-destructuring targets: `for a, b in [(17, 5)]`
@@ -905,22 +940,24 @@ impl TypeChecker {
                 let current = self.symbols.current_scope_idx();
                 for name in names {
                     let id = if self.function_scope_stack.contains(&current) {
-                        if let Some(existing) = self.symbols.lookup_in_scope(current, name) {
+                        let module_id = self
+                            .symbols
+                            .lookup_in_scope(0, name)
+                            .unwrap_or_else(|| {
+                                self.symbols.define_in_scope(
+                                    0,
+                                    name.clone(),
+                                    SymbolKind::Variable,
+                                )
+                            });
+                        let proxy = if let Some(existing) = self.symbols.lookup_in_scope(current, name) {
                             existing
                         } else {
-                            let module_id = self.symbols.lookup_in_scope(0, name);
-                            let module_ty = module_id
-                                .map(|symbol| self.get_sym_type(symbol.0))
-                                .unwrap_or_else(|| self.tcx.any());
-                            let import_origin = module_id
-                                .and_then(|symbol| self.import_origins.get(&symbol).cloned());
-                            let instance_origin = module_id
-                                .and_then(|symbol| self.instance_origins.get(&symbol).cloned());
-                            let class_ref_origin = module_id
-                                .and_then(|symbol| self.class_ref_origins.get(&symbol).copied());
-                            let builtin_alias = module_id.and_then(|symbol| {
-                                self.builtin_class_aliases.get(&symbol).copied()
-                            });
+                            let module_ty = self.get_sym_type(module_id.0);
+                            let import_origin = self.import_origins.get(&module_id).cloned();
+                            let instance_origin = self.instance_origins.get(&module_id).cloned();
+                            let class_ref_origin = self.class_ref_origins.get(&module_id).copied();
+                            let builtin_alias = self.builtin_class_aliases.get(&module_id).copied();
                             let proxy = self.symbols.define(name.clone(), SymbolKind::Variable);
                             self.set_sym_type(proxy.0, module_ty);
                             self.set_builtin_class_alias(proxy, builtin_alias);
@@ -931,12 +968,19 @@ impl TypeChecker {
                                 class_ref_origin,
                             );
                             proxy
-                        }
+                        };
+                        self.global_symbol_module_map.insert(proxy, module_id);
+                        proxy
                     } else {
-                        let module_id =
-                            self.symbols.lookup_in_scope(0, name).unwrap_or_else(|| {
-                                self.symbols
-                                    .define_in_scope(0, name.clone(), SymbolKind::Variable)
+                        let module_id = self
+                            .symbols
+                            .lookup_in_scope(0, name)
+                            .unwrap_or_else(|| {
+                                self.symbols.define_in_scope(
+                                    0,
+                                    name.clone(),
+                                    SymbolKind::Variable,
+                                )
                             });
                         self.symbols
                             .bind_symbol_in_scope(current, name.clone(), module_id);
@@ -1035,7 +1079,8 @@ impl TypeChecker {
                         .symbols
                         .lookup_in_scope(self.symbols.current_scope_idx(), alias)
                         .map(|symbol| self.get_sym_type(symbol.0));
-                    let imported_ty = self.stdlib_module_import_type(&dotted, &dotted, previous);
+                    let imported_ty =
+                        self.stdlib_module_import_type(&dotted, &dotted, previous);
                     let sym = self.symbols.define(alias.clone(), SymbolKind::Variable);
                     self.set_sym_type(sym.0, imported_ty);
                     self.set_binding_origins(sym, None, None, None);
@@ -1048,7 +1093,8 @@ impl TypeChecker {
                             .symbols
                             .lookup_in_scope(self.symbols.current_scope_idx(), root)
                             .map(|symbol| self.get_sym_type(symbol.0));
-                        let imported_ty = self.stdlib_module_import_type(root, &dotted, previous);
+                        let imported_ty =
+                            self.stdlib_module_import_type(root, &dotted, previous);
                         let sym = self.symbols.define(root.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, imported_ty);
                         self.set_binding_origins(sym, None, None, None);
@@ -1058,7 +1104,7 @@ impl TypeChecker {
                 }
             }
             Stmt::BareAnnotation { name, ty } => {
-                let declared_ty = self.resolve_type_expr(ty);
+                let declared_ty = self.resolve_authored_annotation(ty);
                 let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                 self.set_sym_type(sym.0, declared_ty);
                 self.set_binding_origins(sym, None, None, None);
@@ -1075,7 +1121,26 @@ impl TypeChecker {
         return_ty: Option<&Spanned<TypeExpr>>,
         body: &[Spanned<Stmt>],
         overload_decorated: bool,
+        is_decorated: bool,
+        is_async: bool,
     ) {
+        let is_method = self
+            .class_scope_stack
+            .contains(&self.symbols.current_scope_idx());
+        let is_generator = body_has_yield(body);
+        let is_module_level = self.function_scope_stack.is_empty() && !is_method;
+        let is_n3_r1_eligible = is_module_level
+            && !is_async
+            && !is_decorated
+            && !is_generator
+            && return_ty.is_none();
+        let is_required_omitted_parameter_eligible = is_module_level
+            && !is_async
+            && !is_decorated
+            && !is_generator
+            && generic_params.is_empty()
+            && return_ty.is_none();
+
         // A parameter default value must satisfy the parameter's annotation
         // (`def f(c: int = "3")` is a type error). Mirrors the var-decl
         // `x: int = "3"` check. Defaults are evaluated in the *enclosing*
@@ -1090,6 +1155,9 @@ impl TypeChecker {
             if let Some(default) = &param.default {
                 let declared_ty = self.resolve_param_type_expr(param);
                 let default_ty = self.check_expr(default);
+                if !is_method && !is_decorated && !is_generator {
+                    self.check_n3_param_default_inference(param, default, default_ty);
+                }
                 if !generic_params.is_empty() {
                     let (subst, conflicts) =
                         infer_type_args(generic_params, &[declared_ty], &[default_ty], &self.tcx);
@@ -1112,6 +1180,11 @@ impl TypeChecker {
                 }
             }
         }
+        if is_required_omitted_parameter_eligible {
+            for param in params {
+                self.check_required_omitted_parameter(param);
+            }
+        }
         // Defaults are evaluated before the def binds its name, but recursive
         // references in the body must see the canonical preregistered signature.
         self.symbols.bind_symbol_in_scope(
@@ -1127,7 +1200,7 @@ impl TypeChecker {
             .map(|param| self.resolve_param_type_expr(param))
             .collect();
         let body_return_ty = return_ty
-            .map(|ty| self.resolve_type_expr(ty))
+            .map(|ty| self.resolve_authored_annotation(ty))
             .unwrap_or_else(|| self.tcx.any());
         if let Some(canonical) = self
             .function_declaration_types
@@ -1145,6 +1218,7 @@ impl TypeChecker {
         self.symbols.push_scope_with_parent(lexical_parent);
         self.function_scope_stack
             .push(self.symbols.current_scope_idx());
+        self.fn_decl_stack.push(name.to_string());
         for (param, ty) in params.iter().zip(body_param_types) {
             let sym = self
                 .symbols
@@ -1189,10 +1263,16 @@ impl TypeChecker {
         let prev_ret = self.current_return_ty.replace(ret_ty);
         self.check_stmt_seq(body);
         self.current_return_ty = prev_ret;
+        if is_n3_r1_eligible && body.len() == 1 {
+            if let Stmt::Return(Some(ret_expr)) = &body[0].node {
+                self.check_n3_return_inference(declaration_symbol, name, ret_expr);
+            }
+        }
         for symbol in inferred_local_placeholders {
             self.inferred_local_placeholders.remove(&symbol);
             self.builtin_class_aliases.remove(&symbol);
         }
+        self.fn_decl_stack.pop();
         self.function_scope_stack.pop();
         self.symbols.pop_scope();
         // Reassert the declaration at its execution point. A prior assignment
@@ -1447,7 +1527,7 @@ impl TypeChecker {
         let mut fields = Vec::new();
         for stmt in body {
             if let Stmt::VarDecl { name, ty, .. } = &stmt.node {
-                let ty_id = self.resolve_type_expr(ty);
+                let ty_id = self.resolve_authored_annotation(ty);
                 fields.push((name.clone(), ty_id));
             }
         }
@@ -1620,4 +1700,137 @@ impl TypeChecker {
             _ => self.tcx.any(),
         }
     }
+}
+
+fn body_has_yield(stmts: &[Spanned<Stmt>]) -> bool {
+    stmts.iter().any(|stmt| stmt_has_yield(&stmt.node))
+}
+
+fn stmt_has_yield(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::FnDef { .. } | Stmt::AsyncFnDef { .. } | Stmt::ClassDef { .. } => false,
+        Stmt::VarDecl { value, .. } => expr_has_yield(&value.node),
+        Stmt::Assign { target, value } => expr_has_yield(&target.node) || expr_has_yield(&value.node),
+        Stmt::AugAssign { target, value, .. } => expr_has_yield(&target.node) || expr_has_yield(&value.node),
+        Stmt::BareAnnotation { .. } => false,
+        Stmt::Return(opt_expr) => opt_expr.as_ref().map_or(false, |e| expr_has_yield(&e.node)),
+        Stmt::ExprStmt(expr) => expr_has_yield(&expr.node),
+        Stmt::If { condition, body, elif_clauses, else_body } => {
+            expr_has_yield(&condition.node)
+                || body_has_yield(body)
+                || elif_clauses.iter().any(|(c, b)| expr_has_yield(&c.node) || body_has_yield(b))
+                || else_body.as_ref().map_or(false, |b| body_has_yield(b))
+        }
+        Stmt::While { condition, body, else_body } => {
+            expr_has_yield(&condition.node)
+                || body_has_yield(body)
+                || else_body.as_ref().map_or(false, |b| body_has_yield(b))
+        }
+        Stmt::For { iter, body, else_body, .. } | Stmt::AsyncFor { iter, body, else_body, .. } => {
+            expr_has_yield(&iter.node)
+                || body_has_yield(body)
+                || else_body.as_ref().map_or(false, |b| body_has_yield(b))
+        }
+        Stmt::Match { expr, arms } => {
+            expr_has_yield(&expr.node)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().map_or(false, |g| expr_has_yield(&g.node))
+                        || body_has_yield(&arm.body)
+                })
+        }
+        Stmt::Try { body, handlers, else_body, finally_body } => {
+            body_has_yield(body)
+                || handlers.iter().any(|h| body_has_yield(&h.body))
+                || else_body.as_ref().map_or(false, |b| body_has_yield(b))
+                || finally_body.as_ref().map_or(false, |b| body_has_yield(b))
+        }
+        Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
+            items.iter().any(|item| expr_has_yield(&item.context.node)) || body_has_yield(body)
+        }
+        Stmt::Assert { test, msg } => {
+            expr_has_yield(&test.node) || msg.as_ref().map_or(false, |m| expr_has_yield(&m.node))
+        }
+        Stmt::Del(target) => expr_has_yield(&target.node),
+        Stmt::Raise { value, from } => {
+            value.as_ref().map_or(false, |v| expr_has_yield(&v.node))
+                || from.as_ref().map_or(false, |f| expr_has_yield(&f.node))
+        }
+        Stmt::TypeAlias { value, .. } => expr_has_yield(&value.node),
+        Stmt::EnumDef { .. }
+        | Stmt::Pass
+        | Stmt::Break
+        | Stmt::Continue
+        | Stmt::Import { .. }
+        | Stmt::Global(_)
+        | Stmt::Nonlocal(_) => false,
+    }
+}
+
+fn expr_has_yield(expr: &Expr) -> bool {
+    match expr {
+        Expr::Yield(_) | Expr::YieldFrom(_) => true,
+        Expr::Lambda { .. } => false,
+        Expr::UnaryOp { operand, .. } => expr_has_yield(&operand.node),
+        Expr::BinOp { lhs, rhs, .. } => expr_has_yield(&lhs.node) || expr_has_yield(&rhs.node),
+        Expr::Call { func, args } => {
+            expr_has_yield(&func.node)
+                || args.iter().any(|arg| match arg {
+                    CallArg::Positional(e) | CallArg::StarArg(e) | CallArg::DoubleStarArg(e) => {
+                        expr_has_yield(&e.node)
+                    }
+                    CallArg::Keyword { value, .. } => expr_has_yield(&value.node),
+                })
+        }
+        Expr::Attr { object, .. } => expr_has_yield(&object.node),
+        Expr::Index { object, index } => {
+            expr_has_yield(&object.node) || expr_has_yield(&index.node)
+        }
+        Expr::Slice { start, stop, step } => {
+            start.as_ref().map_or(false, |s| expr_has_yield(&s.node))
+                || stop.as_ref().map_or(false, |s| expr_has_yield(&s.node))
+                || step.as_ref().map_or(false, |s| expr_has_yield(&s.node))
+        }
+        Expr::ListLit(elems)
+        | Expr::SetLit(elems)
+        | Expr::TupleLit(elems)
+        | Expr::UnpackTarget(elems) => elems.iter().any(|e| expr_has_yield(&e.node)),
+        Expr::DictLit(entries) => entries.iter().any(|(k, v)| {
+            k.as_ref().map_or(false, |k| expr_has_yield(&k.node)) || expr_has_yield(&v.node)
+        }),
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            expr_has_yield(&body.node)
+                || expr_has_yield(&condition.node)
+                || expr_has_yield(&else_body.node)
+        }
+        Expr::ListComp { element, generators } | Expr::SetComp { element, generators } => {
+            expr_has_yield(&element.node) || comp_generators_have_yield(generators)
+        }
+        Expr::DictComp { key, value, generators } => {
+            expr_has_yield(&key.node)
+                || expr_has_yield(&value.node)
+                || comp_generators_have_yield(generators)
+        }
+        Expr::GeneratorExpr { element, generators } => {
+            expr_has_yield(&element.node) || comp_generators_have_yield(generators)
+        }
+        Expr::FString(parts) => parts.iter().any(|part| match part {
+            FStringPart::Expr(e, _) => expr_has_yield(&e.node),
+            FStringPart::Literal(_) => false,
+        }),
+        Expr::Await(operand) | Expr::Starred(operand) => expr_has_yield(&operand.node),
+        Expr::Walrus { value, .. } => expr_has_yield(&value.node),
+        Expr::ChainedCompare { operands, .. } => operands.iter().any(|e| expr_has_yield(&e.node)),
+        _ => false,
+    }
+}
+
+fn comp_generators_have_yield(generators: &[Comprehension]) -> bool {
+    generators.iter().any(|g| {
+        expr_has_yield(&g.iter.node)
+            || g.conditions.iter().any(|i| expr_has_yield(&i.node))
+    })
 }

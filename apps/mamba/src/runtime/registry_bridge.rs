@@ -108,7 +108,7 @@ fn list_get(list: registry::MbValue, idx: usize) -> Option<registry::MbValue> {
     unsafe {
         if let ObjData::List(ref lock) = (*ptr).data {
             let guard = lock.read().unwrap();
-            let v = *guard.get(idx)?;
+            let v = guard.get(idx)?;
             super::rc::retain_if_ptr(v);
             return Some(to_registry(v));
         }

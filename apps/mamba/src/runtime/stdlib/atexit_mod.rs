@@ -80,7 +80,13 @@ fn split_kwargs(args: &[MbValue]) -> (Vec<MbValue>, Option<MbValue>) {
     if let Some(last) = args.last() {
         let is_dict = last
             .as_ptr()
-            .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+            .map(|ptr| unsafe {
+                match &(*ptr).data {
+                    ObjData::Dict(_) => true,
+                    ObjData::Instance { class_name, .. } => class_name == "__kwargs__",
+                    _ => false,
+                }
+            })
             .unwrap_or(false);
         if is_dict {
             return (args[..args.len() - 1].to_vec(), Some(*last));
@@ -176,49 +182,14 @@ pub fn mb_atexit_unregister(args: &[MbValue]) -> MbValue {
 /// captured keyword arguments faithfully and presents `*args` as a tuple
 /// (matching CPython) rather than the list `mb_call_spread` would build.
 fn call_handler(h: &Handler) {
-    if let Some(addr) = super::super::builtins::resolve_callable_pub(h.func) {
-        let is_native = super::super::module::is_native_func(addr as u64);
-        let has_star = super::super::module::is_variadic_func(addr as u64);
-        let has_kwargs = super::super::module::is_kwargs_func(addr as u64);
-        if !is_native && (has_star || has_kwargs) {
-            let kwargs_dict = h
-                .kwargs
-                .unwrap_or_else(|| MbValue::from_ptr(super::super::rc::MbObject::new_dict()));
-            unsafe {
-                match (has_star, has_kwargs) {
-                    (true, true) => {
-                        let args_tuple =
-                            MbValue::from_ptr(super::super::rc::MbObject::new_tuple(h.pos.clone()));
-                        let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                            std::mem::transmute(addr);
-                        f(args_tuple, kwargs_dict);
-                    }
-                    (true, false) => {
-                        let args_tuple =
-                            MbValue::from_ptr(super::super::rc::MbObject::new_tuple(h.pos.clone()));
-                        let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr);
-                        f(args_tuple);
-                    }
-                    (false, true) => {
-                        let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr);
-                        f(kwargs_dict);
-                    }
-                    (false, false) => unreachable!(),
-                }
-            }
-            return;
-        }
-    }
-
-    // Non-variadic / native callees: spread the positional arguments (with any
-    // captured kwargs dict appended) through the general call path.
-    let mut items = h.pos.clone();
+    let args_list = MbValue::from_ptr(super::super::rc::MbObject::new_list(h.pos.clone()));
     if let Some(kw) = h.kwargs {
-        items.push(kw);
+        super::super::builtins::mb_call_spread_kwargs(h.func, args_list, kw);
+    } else {
+        super::super::builtins::mb_call_spread(h.func, args_list);
     }
-    let args_list = MbValue::from_ptr(super::super::rc::MbObject::new_list(items));
-    super::super::builtins::mb_call_spread(h.func, args_list);
 }
+
 
 /// atexit._run_exitfuncs()
 /// Runs all registered exit handlers in LIFO order, draining the queue. A
