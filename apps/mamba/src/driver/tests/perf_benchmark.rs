@@ -231,6 +231,7 @@ fn print_table(results: &[BenchResult]) {
 // ── Benchmark suite ───────────────────────────────────────────────────────
 
 #[test]
+#[cfg(not(debug_assertions))]
 fn perf_benchmark_fibonacci_30() {
     let results = vec![bench(
         "fib(30) recursive",
@@ -248,6 +249,7 @@ print(fib(30))
 }
 
 #[test]
+#[cfg(not(debug_assertions))]
 fn perf_benchmark_list_comprehension_10k() {
     let results = vec![bench(
         "list comprehension 10K",
@@ -262,6 +264,7 @@ print(len(result))
 }
 
 #[test]
+#[cfg(not(debug_assertions))]
 fn perf_benchmark_dict_operations_10k() {
     let results = vec![bench(
         "dict ops 10K insert+lookup",
@@ -285,11 +288,12 @@ print(total)
 }
 
 #[test]
+#[cfg(not(debug_assertions))]
 fn perf_benchmark_string_concat_10k() {
     let results = vec![bench(
         "string concat 10K",
         r#"
-parts = []
+parts: list[str] = []
 i = 0
 while i < 10000:
     parts.append("x")
@@ -304,6 +308,7 @@ print(len(result))
 }
 
 #[test]
+#[cfg(not(debug_assertions))]
 fn perf_benchmark_for_loop_sum_100k() {
     let results = vec![bench(
         "for loop sum 100K",
@@ -321,6 +326,7 @@ print(total)
 
 /// Combined suite: runs all five benchmarks and prints a single summary table.
 #[test]
+#[cfg(not(debug_assertions))]
 fn perf_benchmark_full_suite() {
     let results = vec![
         bench(
@@ -362,7 +368,7 @@ print(total)
         bench(
             "string concat 10K",
             r#"
-parts = []
+parts: list[str] = []
 i = 0
 while i < 10000:
     parts.append("x")

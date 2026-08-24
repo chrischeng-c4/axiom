@@ -62,20 +62,17 @@ pub fn mb_bool(val: MbValue) -> MbValue {
                     let bool_method = super::super::class::lookup_method(class_name, "__bool__");
                     if !bool_method.is_none() {
                         let result = super::super::class::mb_call_method1(bool_method, val);
-                        if super::super::exception::mb_has_exception().as_bool() == Some(true) {
-                            return MbValue::from_bool(false);
+                        if super::super::exception::has_current_exception() {
+                            return MbValue::none();
                         }
                         if let Some(bv) = result.as_bool() {
                             return MbValue::from_bool(bv);
-                        }
-                        if let Some(iv) = result.as_int() {
-                            return MbValue::from_bool(iv != 0);
                         }
                         raise_type_error(format!(
                             "__bool__ should return bool, returned {}",
                             value_type_name(result)
                         ));
-                        return MbValue::from_bool(false);
+                        return MbValue::none();
                     } else if super::super::class::class_bool_is_blocked(class_name) {
                         // `__bool__ = None` disables truth-testing; calling the
                         // None slot raises, even when __len__ exists.

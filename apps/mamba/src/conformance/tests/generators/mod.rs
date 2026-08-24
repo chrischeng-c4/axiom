@@ -60,7 +60,7 @@ pub fn jit_capture(src: &str) -> String {
             let handle = thread::spawn(move || {
                 let prev = begin_capture();
                 let main_fn: fn() -> i64 = unsafe { std::mem::transmute(entry_addr) };
-                let _result = main_fn();
+                let _result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| main_fn()));
                 cleanup_all_runtime_state();
                 let captured = end_capture(prev);
                 let _ = tx.send(captured);

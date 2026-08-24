@@ -982,7 +982,7 @@ fn parse_params(p: Option<MbValue>) -> SqParams {
             match &(*ptr).data {
                 ObjData::List(l) => {
                     return SqParams::Positional(
-                        l.read().unwrap().iter().map(|v| mb_to_rvalue(*v)).collect(),
+                        l.read().unwrap().iter().map(|v| mb_to_rvalue(v)).collect(),
                     )
                 }
                 ObjData::Tuple(t) => {

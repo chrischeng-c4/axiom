@@ -18,7 +18,7 @@ Neighbors (cross-referenced, not restated): resolver assigns `SymbolId` (`../nam
 |---|---|---|
 | `Span{file,start,end}` | `source/span.rs:9` | **byte** offsets (not char/col); `merge` = min-start/max-end; `line_col` via cached `line_starts` (`source/mod.rs:27`) |
 | `Token{kind,start,end}` / `TokenKind` | `lexer/token.rs:737` | logos-derived; hard keywords are `#[token]` variants; INDENT/DEDENT/Eof are zero-width synthetic (`indent.rs:73,98`) |
-| `Parser` state | `parser/mod.rs:16` | `pending_stmts` LIFO-drained before any new token (chained `a=b=c=e`); `stmt_expr_toplevel` = bare-walrus arm; `in_class_body` = walrus-in-class-body reject |
+| `Parser` state | `parser/mod.rs:16` | `pending_stmts` is part of the current statement-list aggregate: module, block, and single-line-suite loops drain it before accepting EOF/DEDENT or consuming another token; `stmt_expr_toplevel` = bare-walrus arm; `in_class_body` = walrus-in-class-body reject |
 | `Param{kind,pos_only,kw_only}` | `parser/ast.rs:242` | `ParamKind∈{Regular,Star,DoubleStar}` only; `pos_only`/`kw_only` are **introspection metadata**, call binding unaffected (`ast.rs:248,252`) |
 | `HirParamSig.kind:u8` | `hir/mod.rs:48` | CPython `inspect.Parameter` ordinal 0..4 (POSITIONAL_ONLY..VAR_KEYWORD); lowering derives it from `pos_only`/`kw_only`/`ParamKind` |
 | `HirModule` | `hir/mod.rs:8` | every name is `SymbolId`, every type `TypeId`; synthetic lowerer locals use `SymbolId≥1_000_000` (codegen invariant, `../codegen`) |
@@ -29,7 +29,7 @@ Neighbors (cross-referenced, not restated): resolver assigns `SymbolId` (`../nam
 1. `parser::parse(src,file_id)` (`parser/mod.rs:360`) = `lexer::lex` → `Parser::new` → `parse_module` → `mangle_private_names`.
 2. `lexer::lex` (`mod.rs:11`): `lex_raw` (logos; **unknown chars silently skipped**, `mod.rs:28`) → `IndentProcessor::process` (indent_stack, `paren_depth` suppresses newlines inside `()[]{}`, comments dropped, trailing DEDENTs+Eof).
 3. `Parser::new`: if logos dropped non-ASCII idents (`tokens_need_unicode_ident_repair`), rebuild via `prepare_parser_tokens`→`repair_unicode_ident_tokens` (gap-fill Ident tokens + merge runs, `mod.rs:239-349`).
-4. `parse_module` (`mod.rs:56`): loop `parse_stmt`; `;` separates simple stmts (`is_compound_start`→reject after `;`).
+4. `parse_module` (`mod.rs:56`): loop `parse_stmt` while either source tokens or synthesized `pending_stmts` remain; `;` separates simple stmts (`is_compound_start`→reject after `;`). A chained assignment with `N` targets materializes one RHS temp assignment plus `N` target assignments, so EOF cannot terminate the aggregate until all `N+1` statements are emitted.
 5. `parse_ident_stmt` sets `stmt_expr_toplevel=true` (`stmt.rs:379`) → `parse_expr` (`expr.rs:85`) captures-and-clears it, so only the statement top — not parenthesized/nested — treats `:=` as the bare-walrus SyntaxError (`expr.rs:121`).
 6. `parse_expr_bp` (`expr.rs:144`): Pratt loop over `infix_bp`; postfix call/attr/index chained; comparison runs fold into `Expr::ChainedCompare` (`expr.rs:206`).
 7. `parse_params` (`stmt.rs:641`): `seen_star` (bare `*` or `*args`) → later Regular params `kw_only=true`; `/` retro-sets `pos_only=true` on preceding Regular params, else "at least one argument must precede /" (`stmt.rs:701`).
@@ -42,7 +42,7 @@ Neighbors (cross-referenced, not restated): resolver assigns `SymbolId` (`../nam
 - **Solo `/`** and `/` after only `*`/`**` are SyntaxErrors (`stmt.rs:698-706`); `pos_only`/`kw_only` markers are introspection-only here — positional-only/keyword-only *enforcement* is runtime binding (`../calling-convention/` — todo).
 - **Private-name mangling** `__x`→`_Class__x` inside class bodies, dunders `__x__` exempt; runs post-parse over the whole module (`parser/mangle.rs`) before checker/lowering observe the tree.
 - **Soft keywords** `match`/`case`/`type`/`enum` + builtin type names `int/float/bool/str/list/dict/tuple` are usable as identifiers (`Parser::is_name_token`, `mod.rs:172`).
-- **Chained comparison** `a<b<c` becomes one `ChainedCompare` (short-circuit preserved downstream); chained assignment desugars to per-target `Assign`s via `pending_stmts`.
+- **Chained comparison** `a<b<c` becomes one `ChainedCompare` (short-circuit preserved downstream). Chained assignment `a=b=rhs` evaluates `rhs` once into a synthetic `__chained_N__` temp, then assigns that shared value to targets in source order; `N` targets therefore produce `N+1` internal `Assign`s through `pending_stmts`.
 - Contract deviations: indentation is **byte width from last newline** (`indent.rs:90`) — tabs count as 1, no tabstop=8, no `TabError`; unknown source bytes are dropped rather than raising SyntaxError.
 
 ## Known hazards
@@ -56,6 +56,7 @@ Neighbors (cross-referenced, not restated): resolver assigns `SymbolId` (`../nam
 - `expect` compares `std::mem::discriminant` only (`parser/mod.rs:117`) — token payloads (e.g. `Int(v)`) are not matched; fine for keywords, a trap if a check needs the value.
 - Fail-fast single error — the user sees at most one syntax diagnostic per compile; there is no error recovery.
 - ASTs built by non-`parse` entrypoints (exec/compile) must call `mangle_private_names` explicitly or dunder mangling silently won't run (`parser/mod.rs:372`).
+- Any statement-list loop that tests EOF/DEDENT before `pending_stmts` can truncate synthesized statements at a boundary. Treat source-token exhaustion and pending-statement exhaustion as separate conditions; single-line suites additionally drain each source statement's queue before testing for a semicolon, because simple-statement parsers may already have consumed their newline (regression proof: #2798).
 
 ## Extension points
 

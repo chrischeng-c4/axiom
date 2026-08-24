@@ -347,12 +347,13 @@ pub fn mb_heapq_heapify_max(lst: MbValue) -> MbValue {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
-                let n = items.len();
+                let items_slice = items.ensure_generic();
+                let n = items_slice.len();
                 if n > 1 {
                     let mut i = n / 2;
                     while i > 0 {
                         i -= 1;
-                        sift_up_max(&mut items, i);
+                        sift_up_max(items_slice, i);
                     }
                 }
             }
@@ -375,9 +376,10 @@ pub fn mb_heapq_heappop_max(heap: MbValue) -> MbValue {
                 if items.is_empty() {
                     return last;
                 }
-                let returnitem = items[0];
-                items[0] = last;
-                sift_up_max(&mut items, 0);
+                let items_slice = items.ensure_generic();
+                let returnitem = items_slice[0];
+                items_slice[0] = last;
+                sift_up_max(items_slice, 0);
                 return returnitem;
             }
         }
@@ -395,9 +397,10 @@ pub fn mb_heapq_heapreplace_max(heap: MbValue, item: MbValue) -> MbValue {
                     drop(items);
                     return raise_index_error("index out of range");
                 }
-                let returnitem = items[0];
-                items[0] = item;
-                sift_up_max(&mut items, 0);
+                let items_slice = items.ensure_generic();
+                let returnitem = items_slice[0];
+                items_slice[0] = item;
+                sift_up_max(items_slice, 0);
                 return returnitem;
             }
         }
@@ -413,7 +416,7 @@ pub fn mb_heapq_heappush(heap: MbValue, item: MbValue) -> MbValue {
                 let mut items = lock.write().unwrap();
                 items.push(item);
                 let pos = items.len() - 1;
-                sift_down(&mut items, 0, pos);
+                sift_down(items.ensure_generic(), 0, pos);
             }
         }
     }
@@ -435,9 +438,10 @@ pub fn mb_heapq_heappop(heap: MbValue) -> MbValue {
                 if items.is_empty() {
                     return last;
                 }
-                let returnitem = items[0];
-                items[0] = last;
-                sift_up(&mut items, 0);
+                let items_slice = items.ensure_generic();
+                let returnitem = items_slice[0];
+                items_slice[0] = last;
+                sift_up(items_slice, 0);
                 return returnitem;
             }
         }
@@ -455,10 +459,11 @@ pub fn mb_heapq_heappushpop(heap: MbValue, item: MbValue) -> MbValue {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
-                if !items.is_empty() && lt(items[0], item) {
-                    let result = items[0];
-                    items[0] = item;
-                    sift_up(&mut items, 0);
+                if !items.is_empty() && lt(items.get(0).unwrap(), item) {
+                    let items_slice = items.ensure_generic();
+                    let result = items_slice[0];
+                    items_slice[0] = item;
+                    sift_up(items_slice, 0);
                     return result;
                 }
                 return item;
@@ -483,9 +488,10 @@ pub fn mb_heapq_heapreplace(heap: MbValue, item: MbValue) -> MbValue {
                     drop(items);
                     return raise_index_error("index out of range");
                 }
-                let returnitem = items[0];
-                items[0] = item;
-                sift_up(&mut items, 0);
+                let items_slice = items.ensure_generic();
+                let returnitem = items_slice[0];
+                items_slice[0] = item;
+                sift_up(items_slice, 0);
                 return returnitem;
             }
         }
@@ -502,12 +508,13 @@ pub fn mb_heapq_heapify(lst: MbValue) -> MbValue {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
-                let n = items.len();
+                let items_slice = items.ensure_generic();
+                let n = items_slice.len();
                 if n > 1 {
                     let mut i = n / 2;
                     while i > 0 {
                         i -= 1;
-                        sift_up(&mut items, i);
+                        sift_up(items_slice, i);
                     }
                 }
             }
@@ -579,7 +586,8 @@ mod tests {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     lock.read()
                         .unwrap()
-                        .iter()
+                        .to_vec()
+                        .into_iter()
                         .filter_map(|v| v.as_int())
                         .collect()
                 } else {

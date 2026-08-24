@@ -32,7 +32,7 @@ fn ascii_repr(val: MbValue) -> String {
                 }
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
-                    let parts: Vec<String> = items.iter().map(|v| ascii_repr(*v)).collect();
+                    let parts: Vec<String> = items.to_vec().into_iter().map(|v| ascii_repr(v)).collect();
                     format!("[{}]", parts.join(", "))
                 }
                 ObjData::Tuple(items) => {

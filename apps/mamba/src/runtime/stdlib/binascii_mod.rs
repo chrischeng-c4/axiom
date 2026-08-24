@@ -431,6 +431,24 @@ unsafe extern "C" fn dispatch_b2a_base64(args_ptr: *const MbValue, nargs: usize)
         return raise_type_error("a bytes-like object is required, not 'str'");
     };
     let extra = &args[1..];
+    for v in extra {
+        let is_kwdict = v
+            .as_ptr()
+            .map(|p| matches!(&(*p).data, ObjData::Dict(_)))
+            .unwrap_or(false);
+        if !is_kwdict {
+            return raise_type_error("b2a_base64() takes at most 1 positional argument");
+        }
+    }
+    if has_non_str_kwarg_key(extra) {
+        return raise_type_error("keywords must be strings");
+    }
+    if let Some(name) = has_unexpected_kwarg(extra, &["newline"]) {
+        return raise_type_error(&format!(
+            "b2a_base64() got an unexpected keyword argument '{}'",
+            name
+        ));
+    }
     let mut newline = true;
     if let Some(v) = kwarg(extra, "newline") {
         newline = truthy(v);
@@ -448,6 +466,24 @@ unsafe extern "C" fn dispatch_a2b_base64(args_ptr: *const MbValue, nargs: usize)
         Err(e) => return e,
     };
     let extra = &args[1..];
+    for v in extra {
+        let is_kwdict = v
+            .as_ptr()
+            .map(|p| matches!(&(*p).data, ObjData::Dict(_)))
+            .unwrap_or(false);
+        if !is_kwdict {
+            return raise_type_error("a2b_base64() takes at most 1 positional argument");
+        }
+    }
+    if has_non_str_kwarg_key(extra) {
+        return raise_type_error("keywords must be strings");
+    }
+    if let Some(name) = has_unexpected_kwarg(extra, &["strict_mode"]) {
+        return raise_type_error(&format!(
+            "a2b_base64() got an unexpected keyword argument '{}'",
+            name
+        ));
+    }
     let mut strict = false;
     if let Some(v) = kwarg(extra, "strict_mode") {
         strict = truthy(v);
@@ -945,6 +981,16 @@ pub fn register() {
 
     // Exception classes. `binascii.Error` is a ValueError subclass; both are
     // matched by the exception machinery via name (see exception.rs).
+    super::super::class::mb_class_register(
+        "binascii.Error",
+        vec!["ValueError".to_string()],
+        HashMap::new(),
+    );
+    super::super::class::mb_class_register(
+        "binascii.Incomplete",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
     attrs.insert(
         "Error".into(),
         MbValue::from_ptr(MbObject::new_str("binascii.Error".to_string())),

@@ -2,7 +2,7 @@ use super::super::rc::ObjData;
 use super::super::value::MbValue;
 use super::{
     is_decimal_handle_value, is_fraction_handle_value, mb_bool, mb_len, mb_values_identical,
-    raise_type_error, validate_len_result,
+    raise_type_error, validate_len_result, value_type_name,
 };
 
 /// Check if a value is None. Returns bool MbValue.
@@ -141,12 +141,17 @@ pub fn mb_is_truthy(val: MbValue) -> i64 {
                     let bool_method = super::super::class::lookup_method(class_name, "__bool__");
                     if !bool_method.is_none() {
                         let result = super::super::class::mb_call_method1(bool_method, val);
+                        if super::super::exception::has_current_exception() {
+                            return 0;
+                        }
                         if let Some(bv) = result.as_bool() {
                             return if bv { 1 } else { 0 };
                         }
-                        if let Some(iv) = result.as_int() {
-                            return if iv != 0 { 1 } else { 0 };
-                        }
+                        raise_type_error(format!(
+                            "__bool__ should return bool, returned {}",
+                            value_type_name(result)
+                        ));
+                        return 0;
                     } else if super::super::class::class_bool_is_blocked(class_name) {
                         // `__bool__ = None` disables truth-testing entirely.
                         raise_type_error("'NoneType' object is not callable".to_string());

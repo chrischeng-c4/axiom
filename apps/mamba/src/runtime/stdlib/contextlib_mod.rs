@@ -47,7 +47,7 @@ fn items_of(val: MbValue) -> Vec<MbValue> {
     val.as_ptr()
         .map(|ptr| unsafe {
             match &(*ptr).data {
-                ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                ObjData::List(lock) => lock.read().unwrap().to_vec(),
                 ObjData::Tuple(items) => items.iter().copied().collect(),
                 _ => vec![val],
             }

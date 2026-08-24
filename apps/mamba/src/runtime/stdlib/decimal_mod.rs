@@ -35,8 +35,6 @@
 //!   and `1/3` matches CPython's 28-digit quotient.
 //!
 //! - Cross-type comparison (int / float / Fraction) is exact rational
-//!   comparison over BigInt — `Decimal('0.1') != 0.1` holds because the
-//!   binary float is expanded to its exact fraction, not round-tripped
 //!   through shortest-repr parsing.
 //!
 //! - Known carve-outs: exponents outside rust_decimal's 0..=28 scale
@@ -48,6 +46,16 @@ use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+
+fn extract_str(val: MbValue) -> Option<String> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
 
 // HANDWRITE-BEGIN
 
@@ -3138,6 +3146,20 @@ unsafe extern "C" fn dispatch_decimal_localcontext(
                                 );
                                 return MbValue::none();
                             }
+                        }
+                    }
+                    if let Some(v) = super::super::dict_ops::dict_get_exact_str(&guard, "rounding") {
+                        let s = extract_str(v);
+                        let valid = s.as_deref().and_then(rounding_from_str).is_some();
+                        if !valid {
+                            drop(guard);
+                            super::super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "valid rounding modes are [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN, ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN, ROUND_05UP]".to_string(),
+                                )),
+                            );
+                            return MbValue::none();
                         }
                     }
                 }

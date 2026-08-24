@@ -251,6 +251,18 @@ pub fn mb_unbox_bool_if_boxed(val: MbValue) -> i64 {
 /// Unbox a NaN-boxed float if it is one; otherwise reinterpret the
 /// bits as a raw f64. See `mb_unbox_int_if_boxed` for context.
 pub fn mb_unbox_float_if_boxed(val: MbValue) -> f64 {
-    val.as_float()
-        .unwrap_or_else(|| f64::from_bits(val.to_bits()))
+    if let Some(f) = val.as_float() {
+        f
+    } else if let Some(i) = val.as_int() {
+        i as f64
+    } else if let Some(b) = val.as_bool() {
+        if b {
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        f64::from_bits(val.to_bits())
+    }
 }
+

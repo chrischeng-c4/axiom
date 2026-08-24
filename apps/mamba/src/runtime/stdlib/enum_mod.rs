@@ -44,8 +44,9 @@ pub(crate) const AUTO_SENTINEL: i64 = (1_i64 << 47) - 1;
 /// `enum.IntEnum`). Int/str mixin members are stored as their raw value,
 /// matching CPython's member-IS-its-data-type semantics (`Codes.ok == 1`,
 /// `isinstance(Codes.ok, int)`).
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 enum MixinKind {
+    #[default]
     None,
     Int,
     Str,
@@ -69,13 +70,22 @@ fn resolve_member_value(v: MbValue, counter: &mut i64) -> MbValue {
 
 /// One list/tuple item from the functional `names` argument: either a bare
 /// name string (auto-numbered from the counter) or a `(name, value)` pair.
-fn push_item_spec(specs: &mut Vec<(String, MbValue)>, item: MbValue, counter: &mut i64) {
+/// One list/tuple item from the functional `names` argument: either a bare
+/// name string (auto-numbered from the counter) or a `(name, value)` pair.
+fn push_item_spec(specs: &mut Vec<(String, MbValue)>, item: MbValue, counter: &mut i64, is_flag: bool) {
     let Some(ptr) = item.as_ptr() else { return };
     unsafe {
         match &(*ptr).data {
             ObjData::Str(name) => {
                 let val = *counter;
-                *counter += 1;
+                if is_flag {
+                    if *counter == 0 {
+                        *counter = 1;
+                    }
+                    *counter <<= 1;
+                } else {
+                    *counter += 1;
+                }
                 specs.push((name.clone(), MbValue::from_int(val)));
             }
             ObjData::Tuple(pair) if pair.len() == 2 => {
@@ -104,7 +114,7 @@ fn push_item_spec(specs: &mut Vec<(String, MbValue)>, item: MbValue, counter: &m
 ///   - space/comma-separated name string `"a b c"` / `"a,b,c"` (values from `start`)
 ///   - list/tuple of name strings (values from `start`)
 ///   - list/tuple of `(name, value)` pairs (explicit values)
-fn parse_member_specs(members: MbValue, start: i64) -> Vec<(String, MbValue)> {
+fn parse_member_specs(members: MbValue, start: i64, is_flag: bool) -> Vec<(String, MbValue)> {
     let mut specs = Vec::new();
     let mut counter = start;
     let Some(ptr) = members.as_ptr() else {
@@ -121,19 +131,27 @@ fn parse_member_specs(members: MbValue, start: i64) -> Vec<(String, MbValue)> {
             }
             ObjData::Str(s) => {
                 for name in s.replace(',', " ").split_whitespace() {
-                    specs.push((name.to_string(), MbValue::from_int(counter)));
-                    counter += 1;
+                    let val = counter;
+                    if is_flag {
+                        if counter == 0 {
+                            counter = 1;
+                        }
+                        counter <<= 1;
+                    } else {
+                        counter += 1;
+                    }
+                    specs.push((name.to_string(), MbValue::from_int(val)));
                 }
             }
             ObjData::List(lock) => {
                 let items = lock.read().unwrap().to_vec();
                 for item in items {
-                    push_item_spec(&mut specs, item, &mut counter);
+                    push_item_spec(&mut specs, item, &mut counter, is_flag);
                 }
             }
             ObjData::Tuple(items) => {
                 for item in items {
-                    push_item_spec(&mut specs, *item, &mut counter);
+                    push_item_spec(&mut specs, *item, &mut counter, is_flag);
                 }
             }
             _ => {}
@@ -142,15 +160,25 @@ fn parse_member_specs(members: MbValue, start: i64) -> Vec<(String, MbValue)> {
     specs
 }
 
+#[derive(Default)]
+struct FunctionalOptions {
+    mixin: MixinKind,
+    start: i64,
+    is_flag: bool,
+    module: Option<String>,
+    qualname: Option<String>,
+    boundary: Option<MbValue>,
+}
+
 /// Build a functional-API enum class object from parsed inputs.
-fn enum_create_with_opts(name: MbValue, members: MbValue, mixin: MixinKind, start: i64) -> MbValue {
+fn enum_create_with_opts(name: MbValue, members: MbValue, opts: FunctionalOptions) -> MbValue {
     let enum_name = extract_str(name).unwrap_or_else(|| "Enum".to_string());
     let mut enum_fields = FxHashMap::default();
     let mut members_list = Vec::new();
     let mut canonical_members = Vec::new();
     let mut canonical_by_value: Vec<(MbValue, MbValue)> = Vec::new();
 
-    for (member_name, actual_val) in parse_member_specs(members, start) {
+    for (member_name, actual_val) in parse_member_specs(members, opts.start, opts.is_flag) {
         if member_name.is_empty() {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -175,7 +203,7 @@ fn enum_create_with_opts(name: MbValue, members: MbValue, mixin: MixinKind, star
             members_list.push(member);
             member
         } else {
-            let member = match mixin {
+            let member = match opts.mixin {
                 MixinKind::Int | MixinKind::Str => {
                     // Data-type mixin: the member IS its raw value.
                     unsafe {
@@ -235,6 +263,19 @@ fn enum_create_with_opts(name: MbValue, members: MbValue, mixin: MixinKind, star
         "__name__".to_string(),
         MbValue::from_ptr(MbObject::new_str(enum_name.clone())),
     );
+    let mod_name = opts.module.unwrap_or_else(|| "enum".to_string());
+    enum_fields.insert(
+        "__module__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(mod_name)),
+    );
+    let qual_name = opts.qualname.unwrap_or_else(|| enum_name.clone());
+    enum_fields.insert(
+        "__qualname__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(qual_name)),
+    );
+    if let Some(b) = opts.boundary {
+        enum_fields.insert("_boundary_".to_string(), b);
+    }
 
     // The returned enum *class* object uses the fixed, immutable runtime class
     // `ENUM_CLASS_OBJ` (registered with empty `__slots__` in `register`) so that
@@ -263,7 +304,7 @@ fn enum_values_equal(a: MbValue, b: MbValue) -> bool {
 /// Create an enum class from name and members (dict/str/list/tuple forms).
 /// enum.Enum("Color", {"RED": 1, "GREEN": 2, "BLUE": 3})
 pub fn mb_enum_create(name: MbValue, members: MbValue) -> MbValue {
-    enum_create_with_opts(name, members, MixinKind::None, 1)
+    enum_create_with_opts(name, members, FunctionalOptions { start: 1, ..Default::default() })
 }
 
 /// Fixed runtime class name for functional-API enum *class* objects, registered
@@ -277,22 +318,24 @@ pub fn mb_enum_auto() -> MbValue {
 
 /// Parse the trailing kwargs dict appended by the lowerer for
 /// `enum.Enum(name, names, type=int, start=5)`-style calls.
-/// Returns `(mixin, start)`; unknown keys (`module`, `qualname`, `boundary`)
-/// are ignored. `None` when the value is not a dict.
-fn parse_functional_kwargs(d: MbValue) -> Option<(MixinKind, i64)> {
+fn parse_functional_kwargs(d: MbValue) -> Option<FunctionalOptions> {
     let ptr = d.as_ptr()?;
     unsafe {
         let ObjData::Dict(ref lock) = (*ptr).data else {
             return None;
         };
         let map = lock.read().unwrap();
-        let mut mixin = MixinKind::None;
-        let mut start = 1i64;
+        let mut opts = FunctionalOptions {
+            mixin: MixinKind::None,
+            start: 1,
+            is_flag: false,
+            module: None,
+            qualname: None,
+            boundary: None,
+        };
         for (k, v) in map.iter() {
             match k.to_string().as_str() {
                 "type" => {
-                    // `type=int` arrives as a type object (Instance of class
-                    // "type" with __name__) or a bare type-name string.
                     let tn = if let Some(vp) = v.as_ptr() {
                         match &(*vp).data {
                             ObjData::Str(s) => Some(s.clone()),
@@ -307,23 +350,30 @@ fn parse_functional_kwargs(d: MbValue) -> Option<(MixinKind, i64)> {
                     } else {
                         None
                     };
-                    mixin = match tn.as_deref() {
+                    opts.mixin = match tn.as_deref() {
                         Some("int") => MixinKind::Int,
                         Some("str") => MixinKind::Str,
-                        // Other data types (float, custom): no raw-value
-                        // model yet — fall back to instance members.
                         _ => MixinKind::None,
                     };
                 }
                 "start" => {
                     if let Some(iv) = v.as_int() {
-                        start = iv;
+                        opts.start = iv;
                     }
+                }
+                "module" => {
+                    opts.module = extract_str(*v);
+                }
+                "qualname" => {
+                    opts.qualname = extract_str(*v);
+                }
+                "boundary" => {
+                    opts.boundary = Some(*v);
                 }
                 _ => {}
             }
         }
-        Some((mixin, start))
+        Some(opts)
     }
 }
 
@@ -331,41 +381,61 @@ fn parse_functional_kwargs(d: MbValue) -> Option<(MixinKind, i64)> {
 /// through the native `(args_ptr, nargs)` ABI. `args[0]` = class name,
 /// `args[1]` = names; a trailing dict at `args[2..]` is the kwargs bundle
 /// the lowerer appends for keyword calls (`type=`, `start=`).
-fn enum_create_from_args(a: &[MbValue], default_mixin: MixinKind) -> MbValue {
+fn enum_create_from_args(a: &[MbValue], default_mixin: MixinKind, is_flag: bool) -> MbValue {
     let name = a.first().copied().unwrap_or_else(MbValue::none);
     let members = a.get(1).copied().unwrap_or_else(MbValue::none);
-    let mut mixin = default_mixin;
-    let mut start = 1i64;
+    let mut opts = FunctionalOptions {
+        mixin: default_mixin,
+        start: 1,
+        is_flag,
+        module: None,
+        qualname: None,
+        boundary: None,
+    };
     if a.len() >= 3 {
-        if let Some((kw_mixin, kw_start)) = parse_functional_kwargs(a[a.len() - 1]) {
-            if mixin == MixinKind::None {
-                mixin = kw_mixin;
+        if let Some(parsed) = parse_functional_kwargs(a[a.len() - 1]) {
+            if opts.mixin == MixinKind::None {
+                opts.mixin = parsed.mixin;
             }
-            start = kw_start;
+            opts.start = parsed.start;
+            opts.module = parsed.module;
+            opts.qualname = parsed.qualname;
+            opts.boundary = parsed.boundary;
         }
     }
-    enum_create_with_opts(name, members, mixin, start)
+    enum_create_with_opts(name, members, opts)
 }
 
 // ── Native (args_ptr, nargs) dispatch shims ──────────────────────────────
-//
-// Every address registered in `NATIVE_FUNC_ADDRS` is called through the
-// `extern "C" fn(*const MbValue, usize) -> MbValue` convention by the dynamic
-// dispatch paths (mb_call0 / mb_call1_val / mb_call_spread). The plain Rust
-// fns above must therefore NEVER be registered directly — they would receive
-// `args_ptr` as their first MbValue parameter. These shims adapt the ABI.
 
 /// `enum.Enum(name, names, **kwargs)` — functional constructor.
 unsafe extern "C" fn dispatch_enum_create(args: *const MbValue, n: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args, n) };
-    enum_create_from_args(a, MixinKind::None)
+    enum_create_from_args(a, MixinKind::None, false)
 }
 
-/// `enum.IntEnum(name, names)` — functional constructor with int data type:
-/// members are raw ints (`Codes.ok == 1`, `isinstance(Codes.ok, int)`).
+/// `enum.IntEnum(name, names)` — functional constructor with int data type.
 unsafe extern "C" fn dispatch_intenum_create(args: *const MbValue, n: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args, n) };
-    enum_create_from_args(a, MixinKind::Int)
+    enum_create_from_args(a, MixinKind::Int, false)
+}
+
+/// `enum.StrEnum(name, names)` — functional constructor with str data type.
+unsafe extern "C" fn dispatch_strenum_create(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    enum_create_from_args(a, MixinKind::Str, false)
+}
+
+/// `enum.Flag(name, names)` — functional constructor for flag.
+unsafe extern "C" fn dispatch_flag_create(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    enum_create_from_args(a, MixinKind::None, true)
+}
+
+/// `enum.IntFlag(name, names)` — functional constructor for int flag.
+unsafe extern "C" fn dispatch_intflag_create(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    enum_create_from_args(a, MixinKind::Int, true)
 }
 
 pub fn is_intenum_constructor(value: MbValue) -> bool {
@@ -456,8 +526,11 @@ fn enum_convert_from_args(a: &[MbValue], mixin: MixinKind) -> MbValue {
     enum_create_with_opts(
         class_name,
         MbValue::from_ptr(MbObject::new_list(member_pairs)),
-        mixin,
-        1,
+        FunctionalOptions {
+            mixin,
+            start: 1,
+            ..Default::default()
+        },
     )
 }
 
@@ -846,7 +919,7 @@ pub fn mb_enum_unique(enum_class: MbValue) -> MbValue {
                     let list = lock.read().unwrap();
                     let mut seen: Vec<i64> = Vec::with_capacity(list.len());
                     for m in list.iter() {
-                        let v = mb_enum_member_value(*m);
+                        let v = mb_enum_member_value(m);
                         if let Some(iv) = v.as_int() {
                             if seen.contains(&iv) {
                                 return MbValue::none();
@@ -953,23 +1026,12 @@ pub fn register() {
     // `class C(enum.IntEnum):` base resolution — which is syntactic, by leaf
     // name — is unaffected).
     for cn in str_classes {
-        if cn == "IntEnum" {
+        if matches!(cn, "Enum" | "IntEnum" | "StrEnum" | "Flag" | "IntFlag" | "EnumType" | "EnumMeta") {
             continue;
         }
         attrs.insert(cn.to_string(), new_str(cn));
     }
 
-    // `Enum` / `IntEnum` are native functional constructors: calling
-    // `enum.Enum(name, members)` builds a real, immutable enum *class object*
-    // (members, `__members__`, `.value`/`.name`); `enum.IntEnum(...)` builds
-    // one whose members are raw ints (int data-type mixin). This keeps
-    // `callable(enum.Enum)` True and makes the functional API honest, while
-    // member reassignment on the result raises AttributeError (via the
-    // slotted `ENUM_CLASS_OBJ`).
-    //
-    // The class-body form `class Color(Enum): RED = 1` still needs the
-    // metaclass / class-definition transform in class.rs (Lane-B) and is
-    // unaffected by this module.
     attrs.insert(
         "Enum".to_string(),
         callable_func(dispatch_enum_create as *const () as usize),
@@ -977,6 +1039,26 @@ pub fn register() {
     attrs.insert(
         "IntEnum".to_string(),
         callable_func(dispatch_intenum_create as *const () as usize),
+    );
+    attrs.insert(
+        "StrEnum".to_string(),
+        callable_func(dispatch_strenum_create as *const () as usize),
+    );
+    attrs.insert(
+        "Flag".to_string(),
+        callable_func(dispatch_flag_create as *const () as usize),
+    );
+    attrs.insert(
+        "IntFlag".to_string(),
+        callable_func(dispatch_intflag_create as *const () as usize),
+    );
+    attrs.insert(
+        "EnumType".to_string(),
+        callable_func(dispatch_enum_create as *const () as usize),
+    );
+    attrs.insert(
+        "EnumMeta".to_string(),
+        callable_func(dispatch_enum_create as *const () as usize),
     );
 
     // ── Functions / decorators (callable) ────────────────────────────────

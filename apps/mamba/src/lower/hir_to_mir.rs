@@ -7,7 +7,7 @@ use crate::hir::*;
 use crate::mir::*;
 use crate::resolve::{SymbolId, SymbolTable, VariableClass};
 use crate::source::span::Span;
-use crate::types::{Ty, TypeContext, TypeId};
+use crate::types::{DynamicBoundaryLicense, Ty, TypeContext, TypeId};
 use std::collections::{HashMap, HashSet};
 
 /// Decorator kind applied to a class method. Used during class registration
@@ -490,6 +490,7 @@ fn collect_global_decl_syms(stmts: &[HirStmt], out: &mut HashSet<u32>) {
     }
 }
 
+#[allow(dead_code)]
 fn collect_local_targets_into(stmts: &[HirStmt], global_decls: &HashSet<u32>, out: &mut HashSet<u32>) {
     for stmt in stmts {
         match stmt {
@@ -551,6 +552,7 @@ fn collect_local_targets_into(stmts: &[HirStmt], global_decls: &HashSet<u32>, ou
     }
 }
 
+#[allow(dead_code)]
 fn collect_var_expr_syms(stmts: &[HirStmt], locals_and_params: &HashSet<u32>, out: &mut HashSet<u32>) {
     fn walk_expr(expr: &HirExpr, locals_and_params: &HashSet<u32>, out: &mut HashSet<u32>) {
         match expr {
@@ -646,6 +648,7 @@ fn collect_var_expr_syms(stmts: &[HirStmt], locals_and_params: &HashSet<u32>, ou
     walk_stmts(stmts, locals_and_params, out);
 }
 
+#[allow(dead_code)]
 fn collect_func_global_refs(func: &HirFunction, out: &mut HashSet<u32>) {
     let mut explicit_globals = HashSet::new();
     collect_global_decl_syms(&func.body, &mut explicit_globals);
@@ -658,19 +661,18 @@ fn collect_func_global_refs(func: &HirFunction, out: &mut HashSet<u32>) {
 fn collect_function_global_decl_syms(
     functions: &[HirFunction],
     classes: &[HirClass],
-    _symbols: Option<&SymbolTable>,
-    _sym_names: &HashMap<SymbolId, String>,
+    _top_level: &[HirStmt],
 ) -> HashSet<u32> {
-    let mut raw_syms = HashSet::new();
+    let mut out = HashSet::new();
     for func in functions {
-        collect_func_global_refs(func, &mut raw_syms);
+        collect_global_decl_syms(&func.body, &mut out);
     }
     for cls in classes {
         for method in &cls.methods {
-            collect_func_global_refs(method, &mut raw_syms);
+            collect_global_decl_syms(&method.body, &mut out);
         }
     }
-    raw_syms
+    out
 }
 
 fn collect_func_def_placeholder_syms(stmts: &[HirStmt], out: &mut HashSet<u32>) {
@@ -814,8 +816,7 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
     lowerer.module_reload_global_syms = collect_function_global_decl_syms(
         &hir.functions,
         &hir.classes,
-        lowerer.symbol_table,
-        &hir.sym_names,
+        &hir.top_level,
     );
     lowerer.module_has_closures = !hir.functions.is_empty();
     // Populate user_func_param_types so MirInst::Call sites can selectively box
@@ -1066,8 +1067,7 @@ fn prepare_hir_to_mir_with_symbols_src<'a>(
     lowerer.module_reload_global_syms = collect_function_global_decl_syms(
         &hir.functions,
         &hir.classes,
-        lowerer.symbol_table,
-        &hir.sym_names,
+        &hir.top_level,
     );
     lowerer.module_has_closures = !hir.functions.is_empty();
     collect_func_def_placeholder_syms(&hir.top_level, &mut lowerer.placeholder_func_syms);
@@ -2271,11 +2271,22 @@ impl<'a> HirToMir<'a> {
                 Some(contract) => self.emit_str_const(contract),
                 None => self.emit_none(),
             };
+            let license_vreg = match p.dynamic_boundary_license {
+                Some(DynamicBoundaryLicense::ExplicitAny) => self.emit_str_const("explicit-any"),
+                None => self.emit_none(),
+            };
             let tup_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tup_vreg,
                 elements: vec![
-                    name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg, abi_vreg, contract_vreg,
+                    name_vreg,
+                    kind_vreg,
+                    hd_vreg,
+                    def_vreg,
+                    anno_vreg,
+                    abi_vreg,
+                    contract_vreg,
+                    license_vreg,
                 ],
                 ty: any_ty,
             });
@@ -2344,6 +2355,7 @@ impl<'a> HirToMir<'a> {
             let anno_vreg = self.emit_none();
             let abi_vreg = self.emit_str_const("boxed");
             let contract_vreg = self.emit_none();
+            let license_vreg = self.emit_none();
             let tuple_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tuple_vreg,
@@ -2355,6 +2367,7 @@ impl<'a> HirToMir<'a> {
                     anno_vreg,
                     abi_vreg,
                     contract_vreg,
+                    license_vreg,
                 ],
                 ty: any_ty,
             });
@@ -3930,12 +3943,19 @@ impl<'a> HirToMir<'a> {
         (body, new_globals, has_echo)
     }
 
+    /// The module-level symbol carrying this symbol's name, or the symbol
+    /// itself when there is none.
+    ///
+    /// Goes through `symbol_name` rather than indexing the symbol table: a
+    /// symbol the lowerer minted itself (>= 1_000_000, e.g. a comprehension's
+    /// own binding) is not in the table at all, and `get_symbol` panics on it
+    /// with `index out of bounds` instead of returning `None`.
     fn resolve_global_sym(&self, sym: SymbolId) -> SymbolId {
+        let Some(name) = self.symbol_name(sym) else {
+            return sym;
+        };
         self.symbol_table
-            .and_then(|st| {
-                let name = &st.get_symbol(sym).name;
-                st.lookup(name)
-            })
+            .and_then(|st| st.lookup(&name))
             .unwrap_or(sym)
     }
 
@@ -9272,7 +9292,10 @@ impl<'a> HirToMir<'a> {
                             ty: *ty,
                         });
                         self.emit_exception_propagate();
-                        self.sym_to_vreg.insert(*sym, dest);
+                        // Do NOT cache in `sym_to_vreg`: a write later in the
+                        // same function stores to the global namespace, and a
+                        // cached vreg would keep serving the pre-write value
+                        // (`global c; c += 1; return c` returned the old `c`).
                         return dest;
                     }
                     let dest = self.fresh_vreg();
@@ -9281,7 +9304,6 @@ impl<'a> HirToMir<'a> {
                         name: *sym,
                         ty: *ty,
                     });
-                    self.sym_to_vreg.insert(*sym, dest);
                     return dest;
                 }
                 if let Some(&vreg) = self.sym_to_vreg.get(sym) {
@@ -9310,6 +9332,32 @@ impl<'a> HirToMir<'a> {
                             ty: *ty,
                         });
                         return dest;
+                    }
+                    // A walrus inside a nested function binds its target in
+                    // the ENCLOSING scope (PEP 572), and that thunk emits the
+                    // write as a `StoreGlobal` from its own MIR function —
+                    // `next((seen := i) for i in xs)` is the common case. The
+                    // module body's cached vreg for `seen` is stale from that
+                    // point on, so a concretely-typed read (`assert seen == 7`)
+                    // keeps serving the pre-thunk value while an Any-typed one
+                    // (`print(seen == 7)`) reads global storage and disagrees.
+                    // Reload whenever this module compiles a nested function at
+                    // all. Module-scope loop bodies are excluded: they suppress
+                    // the per-iteration `StoreGlobal` mirroring, so there the
+                    // cached vreg is the live side and global storage the stale
+                    // one.
+                    if self.in_module_scope
+                        && self.module_has_closures
+                        && !self.module_scope_sync_suppressed
+                        && self.global_synced_syms.contains(&sym.0)
+                    {
+                        let raw = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadGlobal {
+                            dest: raw,
+                            name: *sym,
+                            ty: *ty,
+                        });
+                        return self.unbox_if_boxed(raw, *ty);
                     }
                     return vreg;
                 }
@@ -12172,7 +12220,7 @@ impl<'a> HirToMir<'a> {
                         args: vec![closure_vreg, names_list],
                         ty: self.tcx.none(),
                     });
-                    // FUNC_PARAMS: seven fields; lambda declarations have no
+                    // FUNC_PARAMS: eight fields; lambda declarations have no
                     // scalar source contract and enter boxed.
                     // per param — defaults reuse the already-evaluated outer
                     // vregs (positionally trailing, Python rule).
@@ -12212,12 +12260,14 @@ impl<'a> HirToMir<'a> {
                         let anno_vreg = self.emit_none();
                         let abi_vreg = self.emit_str_const("boxed");
                         let contract_vreg = self.emit_none();
+                        let license_vreg = self.emit_none();
                         let tup = self.fresh_vreg();
                         self.current_stmts.push(MirInst::MakeTuple {
                             dest: tup,
                             elements: vec![
                                 pn_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg, abi_vreg,
                                 contract_vreg,
+                                license_vreg,
                             ],
                             ty: any_ty,
                         });
@@ -12604,15 +12654,24 @@ impl<'a> HirToMir<'a> {
                     let boxed = self.box_operand(val_vreg, value.ty());
                     self.emit_capture_cell_set(*target, boxed);
                 } else if self.declared_global_syms.contains(&target.0) {
+                    let global_sym = self.resolve_global_sym(*target);
                     let boxed = self.box_operand(val_vreg, value.ty());
                     self.current_stmts.push(MirInst::StoreGlobal {
-                        name: *target,
+                        name: global_sym,
                         value: boxed,
                     });
-                } else if self.in_module_scope {
+                } else if self.in_module_scope || target.0 < 1_000_000 {
+                    // Store under the MODULE's symbol for this name, not the
+                    // one the enclosing scope handed us. A generator-expression
+                    // thunk lowers `(seen := i)` with its own symbol for `seen`,
+                    // so writing under that symbol leaves the module body's
+                    // `seen` — a different symbol, same name — holding its
+                    // pre-thunk value. This is the same normalization the
+                    // plain-assignment `global`/Global paths already apply.
+                    let global_sym = self.resolve_global_sym(*target);
                     let boxed = self.box_operand(val_vreg, value.ty());
                     self.current_stmts.push(MirInst::StoreGlobal {
-                        name: *target,
+                        name: global_sym,
                         value: boxed,
                     });
                 }

@@ -229,7 +229,7 @@ fn extract_strict_list(value: MbValue) -> Option<Vec<MbValue>> {
     let ptr = value.as_ptr()?;
     unsafe {
         match &(*ptr).data {
-            ObjData::List(lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::List(lock) => Some(lock.read().unwrap().iter().collect()),
             _ => None,
         }
     }
@@ -240,7 +240,7 @@ fn extract_seq_items(value: MbValue) -> Option<Vec<MbValue>> {
     let ptr = value.as_ptr()?;
     unsafe {
         match &(*ptr).data {
-            ObjData::List(lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::List(lock) => Some(lock.read().unwrap().iter().collect()),
             ObjData::Tuple(items) => Some(items.clone()),
             _ => None,
         }

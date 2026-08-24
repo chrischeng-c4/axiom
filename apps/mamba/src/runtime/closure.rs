@@ -1,5 +1,6 @@
 use super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::value::MbValue;
+use crate::types::DynamicBoundaryLicense;
 use rustc_hash::FxHashMap;
 /// Closure and nested function support for the Mamba runtime (#289).
 ///
@@ -751,11 +752,15 @@ pub struct MbParamInfo {
     /// Resolved scalar contract; unlike annotation, this is authoritative for
     /// runtime rejection and is absent for Any/generic/container/forward refs.
     pub contract: Option<String>,
+    /// Closed dynamic-boundary license carried from authored source
+    /// provenance. Only the exact `explicit-any` tag is accepted.
+    pub dynamic_boundary_license: Option<DynamicBoundaryLicense>,
 }
 
 /// Register a function's declared parameters. `params` is a list of
-/// seven-field (name, kind, has_default, default, annotation, entry_abi,
-/// contract) tuples. Five/six-field tuples remain accepted for old modules.
+/// eight-field (name, kind, has_default, default, annotation, entry_abi,
+/// contract, dynamic-boundary-license) tuples. Five/six/seven-field tuples
+/// remain accepted for old modules and are conservatively unlicensed.
 /// lower_top_level priming loop in hir_to_mir.rs.
 pub fn mb_func_set_params(func: MbValue, params: MbValue) {
     let mut infos: Vec<MbParamInfo> = Vec::new();
@@ -781,6 +786,13 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
                         .and_then(|value| extract_str(*value))
                         .unwrap_or_else(|| "boxed".to_string());
                     let contract = elems.get(6).and_then(|value| extract_str(*value));
+                    let dynamic_boundary_license = elems
+                        .get(7)
+                        .and_then(|value| extract_str(*value))
+                        .and_then(|value| match value.as_str() {
+                            "explicit-any" => Some(DynamicBoundaryLicense::ExplicitAny),
+                            _ => None,
+                        });
                     infos.push(MbParamInfo {
                         name,
                         kind,
@@ -789,6 +801,7 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
                         annotation,
                         entry_abi,
                         contract,
+                        dynamic_boundary_license,
                     });
                 }
             }
@@ -1749,13 +1762,26 @@ fn lookup_named_runtime_global(name: &str) -> Option<MbValue> {
     if let Some(value) = {
         let g_ids = state.global_ids.read().unwrap();
         let sym_info = state.module_sym_info.read().unwrap();
-        g_ids.iter().find_map(|(key, value)| {
-            if key.module != current_module {
-                return None;
-            }
-            let (symbol_name, _) = sym_info.get(&key.symbol)?;
-            (symbol_name == name).then_some(*value)
-        })
+        // `global_ids` is a HashMap, so `find_map` returns whichever matching
+        // entry this process's randomly seeded hash order happens to reach
+        // first. Two symbols in one module CAN carry the same name — a walrus
+        // inside a generator-expression thunk (`next((seen := i) for i in xs)`)
+        // gets its own synthetic symbol for the `seen` the module body also
+        // binds — and choosing between them by hash order makes one program
+        // print 0 in one process and 7 in the next. Take the lowest symbol id:
+        // the module's own binding is the non-synthetic one, and every process
+        // now makes the same choice.
+        g_ids
+            .iter()
+            .filter_map(|(key, value)| {
+                if key.module != current_module {
+                    return None;
+                }
+                let (symbol_name, _) = sym_info.get(&key.symbol)?;
+                (symbol_name == name).then_some((key.symbol, *value))
+            })
+            .min_by_key(|(symbol, _)| *symbol)
+            .map(|(_, value)| value)
     } {
         return Some(value);
     }
@@ -2093,6 +2119,8 @@ pub fn build_globals_dict() -> MbValue {
         };
         let key = MbValue::from_ptr(super::rc::MbObject::new_str(name.clone()));
         dict_ops::mb_dict_setitem(dict, key, boxed);
+        // to_dict_key copies the Str content out; the dict never retains
+        // this key pointer, so release our fabricated key here or it leaks.
         unsafe {
             super::rc::release_if_ptr(key);
         }

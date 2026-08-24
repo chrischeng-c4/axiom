@@ -1391,7 +1391,7 @@ mod tests {
         deprecated_impl(s("uu"), None, Some(tuple2(3, 13)));
         unsafe {
             if let ObjData::List(ref lock) = (*list.as_ptr().unwrap()).data {
-                let recorded = lock.read().unwrap();
+                let recorded = lock.read().unwrap().to_vec();
                 assert_eq!(recorded.len(), 1);
                 let wm = recorded[0];
                 let msg = get_field(wm, "message");

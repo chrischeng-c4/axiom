@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = "apps/mamba/tech-design"
-generated_at = "2026-07-20T05:30:46.945423+00:00"
-digest = "sha256:13616b5dc2a357c01ee73f77b2bffd781168bb6ab9fec579c296985a51f70015"
-source_digest = "sha256:13616b5dc2a357c01ee73f77b2bffd781168bb6ab9fec579c296985a51f70015"
-ir_digest = "sha256:8949ca9cd01bf87920989600b9210fb80b43fe9a28c0b6ba5095c9a8cc539569"
+generated_at = "2026-07-27T18:31:38.635745+00:00"
+digest = "sha256:9a4fe48c97ac215d3734d1bdb8b713ae41f6d03251f893c8ba831fb086dea691"
+source_digest = "sha256:9a4fe48c97ac215d3734d1bdb8b713ae41f6d03251f893c8ba831fb086dea691"
+ir_digest = "sha256:c9739e718aef0ce2453851b7055ecc786bec6d2a0c39e005d039a5f090fc609a"
 
 [[files]]
 path = "README.md"
@@ -86,6 +86,12 @@ ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8
 section_count = 0
 
 [[files]]
+path = "interfaces/rest/mamba-weakref-mod-callback-double-store-without-retain-double-fr.md"
+digest = "sha256:99d8b17d44b53ff4764914c953749f43ad353e2ea22b52a067d1b8fd752fd39d"
+ir_digest = "sha256:9a1edce266d1e9e6f5f9aea52e76bc8a3c7f7ae38d83decbcc2f3534ea147fce"
+section_count = 3
+
+[[files]]
 path = "iterators/ARCHITECTURE.md"
 digest = "sha256:aefe316e3233d6aa906ff89252f12615b996bef739621c077dee3f03a1ed331f"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
@@ -93,8 +99,8 @@ section_count = 0
 
 [[files]]
 path = "logic/asyncio-to-thread-dispatch-gather-mb-await-drops-second-parallel.md"
-digest = "sha256:75cf573755495d47767395f95dd02554421162c30e4d6d7fcbb8e6f32708eb26"
-ir_digest = "sha256:6de8790f7436ea59f63b5bbb8f8f58f89c9dc05b01a7b38c6a6de0a01d12ade5"
+digest = "sha256:03aa7a2c03bfa500cb6a25d2d4f88629e1d9b709041b50ffd6c25605319e2561"
+ir_digest = "sha256:d32989ae65abab7d0b1ef00915161a3ff1e3feea011c3d7cda58340a94508079"
 section_count = 3
 
 [[files]]
@@ -102,6 +108,12 @@ path = "logic/bool-keys-don-t-unify-with-int-numeric-keys-in-dict-set-true-1-f.m
 digest = "sha256:a3c842d031aa0555f17fb1f9956f4d69c437d93ba4d6bbdf1be9d05767db76e9"
 ir_digest = "sha256:faea15d8641b34cea30e2acade12160f0f575d877cdac65211a5afaf79c105de"
 section_count = 0
+
+[[files]]
+path = "logic/to-dict-key-leaks-str-variant-keys-on-build-globals-dict-path-le.md"
+digest = "sha256:87a486f18da18db94f921f89a60de4c29ee65fdfcdaffc532b8cf86abbaa47bd"
+ir_digest = "sha256:af5bd19bd0382ae0e2daa8eaa3a633b2047d4bd3c0729eefa3b55e78a42e076b"
+section_count = 3
 
 [[files]]
 path = "memory/ARCHITECTURE.md"
@@ -186,3 +198,9 @@ path = "type-system/walls-and-widening.md"
 digest = "sha256:e6a8ca650bdb245db5237a7cbe35858fba0c01e7227ae0c15cb2f13ee43e7128"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
 section_count = 0
+
+[[files]]
+path = "validate/conformance-suite-total-failed-count-is-non-deterministic-across.md"
+digest = "sha256:c4bf72ff88be1f6f3cac507c3403f9dc58440facec1073cef66c2c0d67fbd18f"
+ir_digest = "sha256:218c79c06c8feb36dbdc1ca859fb6ba00799322caae9e26883796b373522b9f6"
+section_count = 3

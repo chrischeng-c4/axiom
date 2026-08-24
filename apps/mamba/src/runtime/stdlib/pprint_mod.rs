@@ -856,7 +856,7 @@ fn safe_repr(val: MbValue, cfg: &Config, context: &mut HashSet<usize>, level: us
                     };
                 }
                 ObjData::List(ref lock) => {
-                    let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                    let items: Vec<MbValue> = lock.read().unwrap().iter().collect();
                     if items.is_empty() {
                         return SafeRepr {
                             text: "[]".to_string(),
@@ -1219,7 +1219,7 @@ fn format_obj(
             unsafe {
                 match &(*ptr).data {
                     ObjData::List(ref lock) => {
-                        let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                        let items: Vec<MbValue> = lock.read().unwrap().iter().collect();
                         if !items.is_empty() {
                             out.push('[');
                             context.insert(id);

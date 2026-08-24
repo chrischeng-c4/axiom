@@ -54,7 +54,7 @@ pub fn mb_type(val: MbValue) -> MbValue {
                 ObjData::List(_) => "list",
                 ObjData::Dict(_) => "dict",
                 ObjData::Tuple(_) => "tuple",
-                ObjData::Instance { class_name, .. } if class_name == "__instance_dict_proxy__" => {
+                ObjData::Instance { class_name, .. } if class_name == "__instance_dict_proxy__" || class_name == "function.__dict__" => {
                     return make_type_object("dict");
                 }
                 ObjData::Instance { class_name, fields } if class_name == "type" => {

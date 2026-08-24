@@ -1867,7 +1867,7 @@ fn recv_css_list(recv: MbValue, name: &str, default: &[&str; 7]) -> Vec<String> 
                     .read()
                     .unwrap()
                     .iter()
-                    .filter_map(|x| extract_str_val(*x))
+                    .filter_map(|x| extract_str_val(x))
                     .collect();
                 if items.len() == 7 {
                     return items;
@@ -2602,7 +2602,7 @@ mod tests {
     fn list_str_at(val: MbValue, idx: usize) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(idx).copied().and_then(|v| {
+                lock.read().unwrap().get(idx).and_then(|v| {
                     v.as_ptr().and_then(|p| {
                         if let ObjData::Str(ref s) = (*p).data {
                             Some(s.clone())
@@ -2623,7 +2623,6 @@ mod tests {
                 lock.read()
                     .unwrap()
                     .get(idx)
-                    .copied()
                     .and_then(|v| v.as_int())
             } else {
                 None
@@ -2815,7 +2814,7 @@ mod tests {
             .as_ptr()
             .map(|ptr| unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    lock.read().unwrap()[0]
+                    lock.read().unwrap().get(0).unwrap_or_else(MbValue::none)
                 } else {
                     MbValue::none()
                 }

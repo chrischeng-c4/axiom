@@ -307,10 +307,12 @@ unsafe fn visit_contained(obj: *mut MbObject, mut visitor: impl FnMut(*mut MbObj
     use super::rc::ObjData;
     match &(*obj).data {
         ObjData::List(lock) => {
-            let items = lock.read().unwrap();
-            for item in items.iter() {
-                if let Some(ptr) = item.as_ptr() {
-                    visitor(ptr);
+            let buf = lock.read().unwrap();
+            if let super::rc::MbListBuffer::Generic(ref items) = *buf {
+                for item in items.iter() {
+                    if let Some(ptr) = item.as_ptr() {
+                        visitor(ptr);
+                    }
                 }
             }
         }
@@ -471,10 +473,43 @@ mod tests {
             let mut gc = gc.borrow_mut();
             gc.tracked.clear();
             gc.alloc_count = 0;
+            gc.collections = 0;
             gc.collecting = false;
             gc.roots.clear();
-            gc.enabled = false; // suppress auto-collect; manual collect() ignores this flag
         });
+    }
+
+    /// RAII guard to snapshot and restore thread-local GC enabled configuration.
+    struct GcStateGuard {
+        prev_enabled: bool,
+    }
+
+    impl GcStateGuard {
+        fn new() -> Self {
+            Self {
+                prev_enabled: gc_is_enabled(),
+            }
+        }
+
+        fn set(enabled: bool) -> Self {
+            let guard = Self::new();
+            if enabled {
+                gc_enable();
+            } else {
+                gc_disable();
+            }
+            guard
+        }
+    }
+
+    impl Drop for GcStateGuard {
+        fn drop(&mut self) {
+            if self.prev_enabled {
+                gc_enable();
+            } else {
+                gc_disable();
+            }
+        }
     }
 
     /// Simulate JIT releasing its local reference: rc=1 → rc=0 so trial deletion
@@ -1116,5 +1151,89 @@ mod tests {
         GC.with(|gc| {
             assert_eq!(gc.borrow().alloc_count, 0);
         });
+    }
+
+    #[test]
+    fn test_gc_enable_disable_state() {
+        let _guard = GcStateGuard::set(true);
+        reset_gc_for_test();
+        assert!(gc_is_enabled());
+
+        gc_disable();
+        assert!(!gc_is_enabled());
+
+        gc_enable();
+        assert!(gc_is_enabled());
+    }
+
+    #[test]
+    fn test_gc_threshold_and_stats() {
+        reset_gc_for_test();
+        gc_set_threshold(500);
+
+        let (collections, _objs, threshold) = gc_get_stats();
+        assert_eq!(threshold, 500);
+
+        let initial_collections = collections;
+        collect();
+        let (new_collections, _, _) = gc_get_stats();
+        assert_eq!(new_collections, initial_collections + 1);
+    }
+
+    #[test]
+    fn test_gc_guard_restores_on_unwind() {
+        let _outer_guard = GcStateGuard::new();
+
+        gc_enable();
+        assert!(gc_is_enabled());
+        let result = std::panic::catch_unwind(|| {
+            let _guard = GcStateGuard::set(false);
+            assert!(!gc_is_enabled());
+            panic!("forced unwind canary");
+        });
+        assert!(result.is_err());
+        assert!(gc_is_enabled());
+
+        gc_disable();
+        assert!(!gc_is_enabled());
+        let result = std::panic::catch_unwind(|| {
+            let _guard = GcStateGuard::set(true);
+            assert!(gc_is_enabled());
+            panic!("forced unwind canary");
+        });
+        assert!(result.is_err());
+        assert!(!gc_is_enabled());
+    }
+
+    #[test]
+    fn test_gc_thread_local_isolation_barrier() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let barrier1 = Arc::new(Barrier::new(2));
+        let barrier2 = Arc::new(Barrier::new(2));
+
+        let b1_t1 = Arc::clone(&barrier1);
+        let b2_t1 = Arc::clone(&barrier2);
+        let handle1 = thread::spawn(move || {
+            let _guard = GcStateGuard::set(true);
+            assert!(gc_is_enabled());
+            b1_t1.wait();
+            assert!(gc_is_enabled());
+            b2_t1.wait();
+        });
+
+        let b1_t2 = Arc::clone(&barrier1);
+        let b2_t2 = Arc::clone(&barrier2);
+        let handle2 = thread::spawn(move || {
+            let _guard = GcStateGuard::set(false);
+            assert!(!gc_is_enabled());
+            b1_t2.wait();
+            assert!(!gc_is_enabled());
+            b2_t2.wait();
+        });
+
+        handle1.join().unwrap();
+        handle2.join().unwrap();
     }
 }

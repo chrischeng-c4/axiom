@@ -3496,7 +3496,7 @@ impl TypeChecker {
                     let path = format!("{prefix} -> list_literal -> element");
                     let decl = DeclaredType::from_implicit_unknown(&path);
                     self.record_declared_type(target_span, decl);
-                    self.warn_any(
+                    self.error(
                         target_span,
                         format!("cannot infer type for {scope_desc} `{name}`: {path}"),
                     );
@@ -3609,7 +3609,7 @@ impl TypeChecker {
                 let path = "parameter -> default -> list_literal -> element";
                 let decl = DeclaredType::from_implicit_unknown(path);
                 self.record_declared_type(param.span, decl);
-                self.warn_any(
+                self.error(
                     param.span,
                     format!("cannot infer type for parameter `{}`: {}", param.name.as_str(), path),
                 );
@@ -3623,6 +3623,28 @@ impl TypeChecker {
         }
     }
 
+    pub(crate) fn check_required_omitted_parameter(&mut self, param: &Param) {
+        if param.annotation != ParamAnnotation::Omitted
+            || param.kind != crate::parser::ast::ParamKind::Regular
+            || param.default.is_some()
+            || param.pos_only
+            || param.kw_only
+        {
+            return;
+        }
+
+        let path = "parameter -> required -> source_annotation -> omitted";
+        let declared = DeclaredType::from_implicit_unknown(path);
+        self.record_declared_type(param.span, declared);
+        self.error(
+            param.span,
+            format!(
+                "cannot infer type for parameter `{}`: {path}",
+                param.name.as_str()
+            ),
+        );
+    }
+
     pub(crate) fn check_n3_return_inference(
         &mut self,
         declaration_symbol: SymbolId,
@@ -3634,7 +3656,7 @@ impl TypeChecker {
                 let path = "return -> list_literal -> element";
                 let decl = DeclaredType::from_implicit_unknown(path);
                 self.record_declared_type(ret_expr.span, decl);
-                self.warn_any(
+                self.error(
                     ret_expr.span,
                     format!("cannot infer return type for function `{name}`: {path}"),
                 );
@@ -4181,6 +4203,9 @@ impl TypeChecker {
         }
         // #314: TypeVar is compatible with any type (unified during inference)
         if matches!(e, Ty::TypeVar(_)) || matches!(a, Ty::TypeVar(_)) {
+            return true;
+        }
+        if expected == self.tcx.str() && self.tcx.is_nonempty_all_string_literal(actual) {
             return true;
         }
         // SelfType denotes an instance receiver, never the class object.
@@ -6056,9 +6081,8 @@ mod tests {
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
-        assert_eq!(checker.diagnostics.len(), 1);
-        assert!(checker.diagnostics[0].message.contains("cannot infer type for local binding `items`: local_binding -> list_literal -> element"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for local binding `items`: local_binding -> list_literal -> element"));
 
         let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
         let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
@@ -6098,9 +6122,8 @@ mod tests {
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
-        assert_eq!(checker.diagnostics.len(), 1);
-        assert!(checker.diagnostics[0].message.contains("cannot infer type for global binding `items`: global_binding -> list_literal -> element"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for global binding `items`: global_binding -> list_literal -> element"));
 
         let Stmt::Assign { target, .. } = &module.stmts[0].node else { panic!() };
         let decl = checker.get_declared_type(target.span).expect("aggregate recorded at target span");
@@ -6160,9 +6183,8 @@ mod tests {
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
-        assert_eq!(checker.diagnostics.len(), 1);
-        assert!(checker.diagnostics[0].message.contains("cannot infer type for class attribute `items`: class_attribute -> list_literal -> element"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for class attribute `items`: class_attribute -> list_literal -> element"));
 
         let Stmt::ClassDef { body, .. } = &module.stmts[0].node else { panic!() };
         let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
@@ -6225,9 +6247,8 @@ mod tests {
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
-        assert_eq!(checker.diagnostics.len(), 1);
-        assert!(checker.diagnostics[0].message.contains("cannot infer type for local binding `items`: local_binding -> list_literal -> element"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for local binding `items`: local_binding -> list_literal -> element"));
 
         let Stmt::ClassDef { body, .. } = &module.stmts[0].node else { panic!() };
         let Stmt::FnDef { body: method_body, .. } = &body[0].node else { panic!() };
@@ -6309,9 +6330,8 @@ mod tests {
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
-        assert_eq!(checker.diagnostics.len(), 1);
-        assert!(checker.diagnostics[0].message.contains("cannot infer type for parameter `items`: parameter -> default -> list_literal -> element"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for parameter `items`: parameter -> default -> list_literal -> element"));
 
         let Stmt::FnDef { params, .. } = &module.stmts[0].node else { panic!() };
         let decl = checker.get_declared_type(params[0].span).expect("aggregate recorded at param span");
@@ -6366,15 +6386,35 @@ mod tests {
     }
 
     #[test]
-    fn test_n3_p1_omitted_parameter_without_default_unchanged() {
+    fn test_n3_p1_omitted_parameter_without_default_is_force_typed_error() {
         use crate::source::span::FileId;
         let src = "def collect(items):\n    pass\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
         let Stmt::FnDef { params, .. } = &module.stmts[0].node else { panic!() };
-        assert!(checker.get_declared_type(params[0].span).is_none());
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            MambaError::Type { span, message } => {
+                assert_eq!(*span, params[0].span);
+                assert_eq!(
+                    message,
+                    "cannot infer type for parameter `items`: parameter -> required -> source_annotation -> omitted"
+                );
+            }
+            other => panic!("expected exact parameter Type error, got {other:?}"),
+        }
+        let declared = checker
+            .get_declared_type(params[0].span)
+            .expect("omitted required parameter declaration recorded");
+        assert_eq!(*declared.source(), SourceAnnotation::Omitted);
+        assert_eq!(declared.normalized(), None);
+        assert_eq!(
+            *declared.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "parameter -> required -> source_annotation -> omitted".to_string()
+            }
+        );
     }
 
     #[test]
@@ -6393,12 +6433,12 @@ mod tests {
     #[test]
     fn test_n3_p1_decorated_form_negative_control() {
         use crate::source::span::FileId;
-        let src = "def dec(f): return f\n@dec\ndef collect(items = []):\n    pass\n";
+        let src = "from typing import Any\ndef dec(f: Any) -> Any: return f\n@dec\ndef collect(items = []):\n    pass\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
         assert!(errors.is_empty());
-        let Stmt::FnDef { params, .. } = &module.stmts[1].node else { panic!() };
+        let Stmt::FnDef { params, .. } = &module.stmts[2].node else { panic!() };
         assert!(checker.get_declared_type(params[0].span).is_none());
     }
 
@@ -6421,9 +6461,8 @@ mod tests {
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
-        assert_eq!(checker.diagnostics.len(), 1);
-        assert!(checker.diagnostics[0].message.contains("cannot infer type for parameter `items`: parameter -> default -> list_literal -> element"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for parameter `items`: parameter -> default -> list_literal -> element"));
     }
 
     #[test]
@@ -6433,9 +6472,8 @@ mod tests {
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
-        assert!(errors.is_empty());
-        assert_eq!(checker.diagnostics.len(), 1);
-        assert!(checker.diagnostics[0].message.contains("cannot infer return type for function `collect`: return -> list_literal -> element"));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer return type for function `collect`: return -> list_literal -> element"));
 
         let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
         let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
@@ -6535,12 +6573,12 @@ mod tests {
     #[test]
     fn test_n3_r1_decorated_form_negative_control() {
         use crate::source::span::FileId;
-        let src = "def dec(f): return f\n@dec\ndef collect():\n    return []\n";
+        let src = "from typing import Any\ndef dec(f: Any) -> Any: return f\n@dec\ndef collect():\n    return []\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
         assert!(errors.is_empty());
-        let Stmt::FnDef { body, .. } = &module.stmts[1].node else { panic!() };
+        let Stmt::FnDef { body, .. } = &module.stmts[2].node else { panic!() };
         let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
         assert!(checker.get_declared_type(ret_expr.span).is_none());
     }
@@ -6626,7 +6664,7 @@ mod tests {
     #[test]
     fn test_n3_r1_conditional_return_negative_control() {
         use crate::source::span::FileId;
-        let src = "def collect(cond):\n    if cond:\n        return [1]\n    return []\n";
+        let src = "def collect(cond: bool):\n    if cond:\n        return [1]\n    return []\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);

@@ -61,7 +61,9 @@ fn float_hash_i64(f: f64) -> i64 {
 }
 
 pub fn mb_hash(val: MbValue) -> MbValue {
-    let val = super::int_enum_like_value(val).unwrap_or(val);
+    let val = super::int_enum_like_value(val)
+        .or_else(|| super::numeric_subclass_unary_operand(val, "__hash__"))
+        .unwrap_or(val);
     // Python 3.12: slice is hashable, with `hash(slice(a,b,c)) ==
     // hash((a,b,c))`. Delegating to the tuple hash also reproduces CPython's
     // error for an unhashable component — `hash(slice(1,2,[]))` raises
@@ -119,7 +121,7 @@ pub fn mb_hash(val: MbValue) -> MbValue {
             match &(*ptr).data {
                 ObjData::Str(_) => super::super::string_ops::mb_str_hash(val),
                 ObjData::Tuple(_) => super::super::tuple_ops::mb_tuple_hash(val),
-                ObjData::FrozenSet(items) => MbValue::from_int(frozenset_hash(items)),
+                ObjData::FrozenSet(_) => super::super::set_ops::mb_frozenset_hash(val),
                 // Heap-boxed BigInt (magnitude beyond the inline 48-bit
                 // range): without this arm it fell through to the generic
                 // pointer-identity fallback below, producing allocation-order
@@ -211,6 +213,9 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                     // (int | str and typing.Union[int, str] are equal).
                     if class_name == "UnionType" {
                         return super::super::stdlib::typing_mod::alias_hash_value(val);
+                    }
+                    if super::super::set_ops::is_frozenset_like(val) {
+                        return super::super::set_ops::mb_frozenset_hash(val);
                     }
                     // __hash__ dunder dispatch. Explicit `__hash__ = None`
                     // is not a miss: it makes instances unhashable.

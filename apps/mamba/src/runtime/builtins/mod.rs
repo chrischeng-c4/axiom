@@ -6489,6 +6489,10 @@ fn adapt_value_for_entry_abi(value: MbValue, entry_abi: &str) -> MbValue {
     }
 }
 
+fn has_explicit_any_license(param: &super::closure::MbParamInfo) -> bool {
+    param.dynamic_boundary_license == Some(crate::types::DynamicBoundaryLicense::ExplicitAny)
+}
+
 /// Enforce the declared scalar wall after Python binding and adapt once to the
 /// actual JIT entry representation. Missing/unknown contracts remain dynamic;
 /// an ABI conversion is best effort and is never an independent rejection.
@@ -6509,6 +6513,15 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
             // participate in scalar entry-ABI adaptation, even when their
             // element contract is absent or unsupported.
             2 => {
+                if matches!(param.annotation.as_deref(), Some("Any" | "typing.Any"))
+                    && !has_explicit_any_license(param)
+                {
+                    raise_type_error(format!(
+                        "{fname}() argument '{}' requires an explicit Any dynamic-boundary license",
+                        param.name
+                    ));
+                    return false;
+                }
                 if let Some(contract) = contract {
                     let elements = value.as_ptr().and_then(|ptr| unsafe {
                         match &(*ptr).data {
@@ -6538,6 +6551,15 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
             // Likewise, inspect values in the packed kwargs dict without
             // rebuilding or unboxing the entry-frame container.
             4 => {
+                if matches!(param.annotation.as_deref(), Some("Any" | "typing.Any"))
+                    && !has_explicit_any_license(param)
+                {
+                    raise_type_error(format!(
+                        "{fname}() argument '{}' requires an explicit Any dynamic-boundary license",
+                        param.name
+                    ));
+                    return false;
+                }
                 if let Some(contract) = contract {
                     if let Some((key, actual)) = kwargs_dict_pairs(*value)
                         .into_iter()
@@ -6567,6 +6589,14 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
                 ));
                 return false;
             }
+        } else if matches!(param.annotation.as_deref(), Some("Any" | "typing.Any"))
+            && !has_explicit_any_license(param)
+        {
+            raise_type_error(format!(
+                "{fname}() argument '{}' requires an explicit Any dynamic-boundary license",
+                param.name
+            ));
+            return false;
         }
         *value = adapt_value_for_entry_abi(*value, &param.entry_abi);
     }
@@ -7507,6 +7537,32 @@ mod tests {
         ]))
     }
 
+    fn strict_param_sig_with_license(
+        name: &str,
+        kind: i64,
+        annotation: Option<&str>,
+        entry_abi: &str,
+        contract: Option<&str>,
+        license: Option<&str>,
+    ) -> MbValue {
+        let base = strict_param_sig(name, kind, annotation, entry_abi, contract);
+        let Some(ptr) = base.as_ptr() else {
+            unreachable!("parameter signature must be a tuple");
+        };
+        let mut fields = unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(fields) => fields.clone(),
+                _ => unreachable!("parameter signature must be a tuple"),
+            }
+        };
+        fields.push(
+            license
+                .map(|value| MbValue::from_ptr(MbObject::new_str(value.to_string())))
+                .unwrap_or_else(MbValue::none),
+        );
+        MbValue::from_ptr(MbObject::new_tuple(fields))
+    }
+
     fn assert_str_result(value: MbValue, expected: &str) {
         let Some(ptr) = value.as_ptr() else {
             panic!("expected a str object");
@@ -7774,14 +7830,105 @@ mod tests {
         let five = super::super::closure::func_params(legacy_five).unwrap();
         assert_eq!(five[0].entry_abi, "boxed");
         assert!(five[0].contract.is_none());
+        assert!(five[0].dynamic_boundary_license.is_none());
         let six = super::super::closure::func_params(legacy_six).unwrap();
         assert_eq!(six[0].entry_abi, "raw-int");
         assert!(six[0].contract.is_none());
+        assert!(six[0].dynamic_boundary_license.is_none());
 
         let dynamic = MbValue::from_ptr(MbObject::new_str("dynamic".to_string()));
         let mut frame = vec![dynamic];
         assert!(validate_and_adapt_declared_frame(legacy_six, &mut frame));
         assert_eq!(frame[0].to_bits(), dynamic.to_bits());
+        super::super::closure::cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_dynamic_ingress_license_round_trip_and_fail_closed_unknown() {
+        super::super::closure::cleanup_all_closures();
+        let licensed = MbValue::from_func(995);
+        let malformed = MbValue::from_func(996);
+        let missing = MbValue::from_func(997);
+        super::super::closure::mb_func_set_name(
+            licensed,
+            MbValue::from_ptr(MbObject::new_str("licensed_target".to_string())),
+        );
+        super::super::closure::mb_func_set_name(
+            malformed,
+            MbValue::from_ptr(MbObject::new_str("malformed_target".to_string())),
+        );
+        super::super::closure::mb_func_set_name(
+            missing,
+            MbValue::from_ptr(MbObject::new_str("missing_target".to_string())),
+        );
+        super::super::closure::mb_func_set_params(
+            licensed,
+            MbValue::from_ptr(MbObject::new_list(vec![strict_param_sig_with_license(
+                "value",
+                1,
+                Some("Any"),
+                "boxed",
+                None,
+                Some("explicit-any"),
+            )])),
+        );
+        super::super::closure::mb_func_set_params(
+            malformed,
+            MbValue::from_ptr(MbObject::new_list(vec![strict_param_sig_with_license(
+                "value",
+                1,
+                Some("Any"),
+                "boxed",
+                None,
+                Some("not-a-license"),
+            )])),
+        );
+        super::super::closure::mb_func_set_params(
+            missing,
+            MbValue::from_ptr(MbObject::new_list(vec![strict_param_sig(
+                "value",
+                1,
+                Some("Any"),
+                "boxed",
+                None,
+            )])),
+        );
+
+        let licensed_params = super::super::closure::func_params(licensed).unwrap();
+        assert_eq!(
+            licensed_params[0].dynamic_boundary_license,
+            Some(crate::types::DynamicBoundaryLicense::ExplicitAny)
+        );
+        let malformed_params = super::super::closure::func_params(malformed).unwrap();
+        assert!(malformed_params[0].dynamic_boundary_license.is_none());
+        let missing_params = super::super::closure::func_params(missing).unwrap();
+        assert!(missing_params[0].dynamic_boundary_license.is_none());
+
+        let mut int_frame = vec![MbValue::from_int(21)];
+        assert!(validate_and_adapt_declared_frame(licensed, &mut int_frame));
+        let mut str_frame = vec![MbValue::from_ptr(MbObject::new_str("ab".to_string()))];
+        assert!(validate_and_adapt_declared_frame(licensed, &mut str_frame));
+
+        let mut malformed_frame = vec![MbValue::from_int(21)];
+        assert!(!validate_and_adapt_declared_frame(
+            malformed,
+            &mut malformed_frame
+        ));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+        let mut missing_frame = vec![MbValue::from_int(21)];
+        assert!(!validate_and_adapt_declared_frame(
+            missing,
+            &mut missing_frame
+        ));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
         super::super::closure::cleanup_all_closures();
     }
 
@@ -11572,3 +11719,4 @@ def f():
     }
     // HANDWRITE-END
 }
+

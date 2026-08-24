@@ -430,8 +430,10 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
                 f.init = truthy_flag(marker_get(d, "init"), true);
                 f.repr = truthy_flag(marker_get(d, "repr"), true);
                 f.compare = truthy_flag(marker_get(d, "compare"), true);
-                if truthy_flag(marker_get(d, "kw_only"), false) {
-                    f.kw_only = true;
+                if let Some(kw_val) = marker_get(d, "kw_only") {
+                    if !kw_val.is_none() && extract_str(kw_val).as_deref() != Some("MISSING") {
+                        f.kw_only = truthy_flag(Some(kw_val), kw_only_zone);
+                    }
                 }
                 unsafe {
                     release_if_ptr(d);
@@ -785,7 +787,7 @@ fn split_init_call_args(args_list: MbValue) -> (Vec<MbValue>, HashMap<String, Mb
         .as_ptr()
         .map(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().iter().copied().collect()
+                lock.read().unwrap().to_vec()
             } else {
                 Vec::new()
             }
@@ -1019,6 +1021,32 @@ unsafe extern "C" fn dispatch_field(args_ptr: *const MbValue, nargs: usize) -> M
                     }
                 }
             }
+            let is_missing = |v: MbValue| v.is_none() || extract_str(v).as_deref() == Some("MISSING");
+            let has_def = f.get("default").copied().map_or(false, |v| !is_missing(v));
+            let has_fac = f.get("default_factory").copied().map_or(false, |v| !is_missing(v));
+            if has_def && has_fac {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "cannot specify both default and default_factory".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            if let Some(meta) = f.get("metadata").copied() {
+                if !meta.is_none() && !is_missing(meta) {
+                    let is_mapping = meta.as_ptr().map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
+                    if !is_mapping {
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "metadata must be a mapping or None".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
+                    }
+                }
+            }
         }
     }
     MbValue::from_ptr(marker)
@@ -1172,7 +1200,7 @@ fn convert_value(v: MbValue, as_tuple: bool) -> MbValue {
                         .read()
                         .unwrap()
                         .iter()
-                        .map(|x| convert_value(*x, as_tuple))
+                        .map(|x| convert_value(x, as_tuple))
                         .collect();
                     return MbValue::from_ptr(MbObject::new_list(items));
                 }
@@ -1420,7 +1448,7 @@ fn parse_make_dataclass_fields(fields_v: MbValue) -> Vec<(String, String, Option
                 .read()
                 .unwrap()
                 .iter()
-                .filter_map(|v| parse_make_dataclass_field_spec(*v))
+                .filter_map(|v| parse_make_dataclass_field_spec(v))
                 .collect(),
             ObjData::Tuple(items) => items
                 .iter()

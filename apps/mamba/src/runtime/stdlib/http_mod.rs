@@ -100,7 +100,7 @@ unsafe extern "C" fn dispatch_empty_str(_a: *const MbValue, _n: usize) -> MbValu
     MbValue::from_ptr(MbObject::new_str(String::new()))
 }
 
-unsafe extern "C" fn dispatch_quote(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_quote(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // quote(string, safe='/', encoding=None, errors=None). Keyword args arrive
     // as a trailing kwargs dict (quote/unquote are in the native-kwargs
@@ -128,7 +128,7 @@ unsafe extern "C" fn dispatch_quote(args_ptr: *const MbValue, nargs: usize) -> M
     )
 }
 
-unsafe extern "C" fn dispatch_quote_from_bytes(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_quote_from_bytes(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_urllib_quote_from_bytes(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -136,7 +136,7 @@ unsafe extern "C" fn dispatch_quote_from_bytes(args_ptr: *const MbValue, nargs: 
     )
 }
 
-unsafe extern "C" fn dispatch_quote_plus(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_quote_plus(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_urllib_quote_plus(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -144,7 +144,7 @@ unsafe extern "C" fn dispatch_quote_plus(args_ptr: *const MbValue, nargs: usize)
     )
 }
 
-unsafe extern "C" fn dispatch_unquote(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_unquote(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // unquote(string, encoding='utf-8', errors='replace'). Keyword args arrive
     // as a trailing kwargs dict; fall back to positional slots otherwise.
@@ -166,12 +166,12 @@ unsafe extern "C" fn dispatch_unquote(args_ptr: *const MbValue, nargs: usize) ->
     )
 }
 
-unsafe extern "C" fn dispatch_unquote_plus(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_unquote_plus(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_urllib_unquote_plus(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
-unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // Trailing kwargs dict carries safe= / quote_via= / doseq=. The params
     // mapping itself is usually a dict too, so only a SECOND dict (the last
@@ -243,7 +243,7 @@ fn mixed_str_bytes(a: MbValue, b: MbValue) -> bool {
     (a_bytes && b_str) || (a_str && b_bytes)
 }
 
-unsafe extern "C" fn dispatch_urlparse(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_urlparse(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let url = a.first().copied().unwrap_or_else(MbValue::none);
     if let Some(scheme) = a.get(1).copied() {
@@ -254,7 +254,7 @@ unsafe extern "C" fn dispatch_urlparse(args_ptr: *const MbValue, nargs: usize) -
     mb_urllib_urlparse(url)
 }
 
-unsafe extern "C" fn dispatch_urlunparse(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_urlunparse(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let parts = a.get(0).copied().unwrap_or_else(MbValue::none);
     // Mixed str/bytes components are a CPython TypeError.
@@ -279,7 +279,7 @@ unsafe extern "C" fn dispatch_urlunparse(args_ptr: *const MbValue, nargs: usize)
     mb_urllib_urlunparse(parts)
 }
 
-unsafe extern "C" fn dispatch_urljoin(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_urljoin(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_urllib_urljoin(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -342,19 +342,19 @@ fn qs_options(a: &[MbValue]) -> QsOptions {
     opts
 }
 
-unsafe extern "C" fn dispatch_parse_qs(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_parse_qs(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let opts = qs_options(a);
     mb_urllib_parse_qs_opts(a.get(0).copied().unwrap_or_else(MbValue::none), &opts)
 }
 
-unsafe extern "C" fn dispatch_parse_qsl(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_parse_qsl(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let opts = qs_options(a);
     mb_urllib_parse_qsl_opts(a.get(0).copied().unwrap_or_else(MbValue::none), &opts)
 }
 
-unsafe extern "C" fn dispatch_urlsplit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_urlsplit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let url = a.first().copied().unwrap_or_else(MbValue::none);
     if let Some(scheme) = a.get(1).copied() {
@@ -380,12 +380,12 @@ unsafe extern "C" fn dispatch_proxy_bypass(args_ptr: *const MbValue, nargs: usiz
     MbValue::from_bool(false)
 }
 
-unsafe extern "C" fn dispatch_urldefrag(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_urldefrag(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_urllib_urldefrag(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
-unsafe extern "C" fn dispatch_unquote_to_bytes(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_unquote_to_bytes(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_urllib_unquote_to_bytes(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
@@ -407,7 +407,7 @@ unsafe extern "C" fn dispatch_url2pathname(args_ptr: *const MbValue, nargs: usiz
 
 /// urllib.parse.unwrap(url) → strip surrounding `<URL:...>` / leading-trailing
 /// whitespace and angle brackets, mirroring CPython's `unwrap`. Returns a str.
-unsafe extern "C" fn dispatch_unwrap(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub(crate) unsafe extern "C" fn dispatch_unwrap(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let arg = a.get(0).copied().unwrap_or_else(MbValue::none);
     let s = extract_str(arg).unwrap_or_default();
@@ -1615,7 +1615,7 @@ fn sequence_elements(v: MbValue) -> Option<Vec<MbValue>> {
     let ptr = v.as_ptr()?;
     unsafe {
         match &(*ptr).data {
-            ObjData::List(ref lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::List(ref lock) => Some(lock.read().unwrap().to_vec()),
             ObjData::Tuple(ref t) => Some(t.to_vec()),
             ObjData::Dict(_) => dict_key_elements(v),
             ObjData::Set(ref lock) => Some(lock.read().unwrap().iter().copied().collect()),
@@ -1662,7 +1662,7 @@ fn urlencode_pairs(params: MbValue) -> Vec<(MbValue, MbValue)> {
             ObjData::List(ref lock) => {
                 let items = lock.read().unwrap();
                 for item in items.iter() {
-                    if let Some((k, v)) = two_elem(*item) {
+                    if let Some((k, v)) = two_elem(item) {
                         out.push((k, v));
                     }
                 }
@@ -1689,7 +1689,7 @@ fn two_elem(item: MbValue) -> Option<(MbValue, MbValue)> {
             ObjData::List(ref lock) => {
                 let v = lock.read().unwrap();
                 if v.len() == 2 {
-                    Some((v[0], v[1]))
+                    Some((v.get(0).unwrap(), v.get(1).unwrap()))
                 } else {
                     None
                 }
@@ -2359,7 +2359,7 @@ fn extract_parse_tuple(v: MbValue) -> (String, String, String, String, String, S
                     );
                 }
                 ObjData::List(ref lock) => {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     return (
                         gi(&items, 0),
                         gi(&items, 1),
@@ -2574,8 +2574,8 @@ mod tests {
                         if let ObjData::List(ref lk) = (*lp).data {
                             let items = lk.read().unwrap();
                             assert_eq!(items.len(), 2);
-                            assert_eq!(extract_str(items[0]).unwrap(), "1");
-                            assert_eq!(extract_str(items[1]).unwrap(), "3");
+                            assert_eq!(extract_str(items.get(0).unwrap()).unwrap(), "1");
+                            assert_eq!(extract_str(items.get(1).unwrap()).unwrap(), "3");
                         }
                     }
                 }
@@ -2591,7 +2591,7 @@ mod tests {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     let items = lock.read().unwrap();
                     assert_eq!(items.len(), 3);
-                    if let Some(tp) = items[0].as_ptr() {
+                    if let Some(tp) = items.get(0).unwrap().as_ptr() {
                         if let ObjData::Tuple(ref t) = (*tp).data {
                             assert_eq!(extract_str(t[0]).unwrap(), "z");
                         }

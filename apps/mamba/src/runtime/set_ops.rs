@@ -22,10 +22,7 @@ fn build_set_like_left(left: MbValue, items: Vec<MbValue>) -> MbValue {
     for item in &items {
         super::rc::store_owned(*item);
     }
-    let is_frozen = left
-        .as_ptr()
-        .map(|p| unsafe { matches!((*p).data, ObjData::FrozenSet(_)) })
-        .unwrap_or(false);
+    let is_frozen = is_frozenset_like(left);
     if is_frozen {
         MbValue::from_ptr(MbObject::new_frozenset(items))
     } else {
@@ -33,7 +30,7 @@ fn build_set_like_left(left: MbValue, items: Vec<MbValue>) -> MbValue {
     }
 }
 
-fn is_frozenset_like(value: MbValue) -> bool {
+pub(crate) fn is_frozenset_like(value: MbValue) -> bool {
     if let Some(("frozenset", _)) = super::class::builtin_data_payload(value) {
         return true;
     }
@@ -41,6 +38,41 @@ fn is_frozenset_like(value: MbValue) -> bool {
         .as_ptr()
         .map(|p| unsafe { matches!((*p).data, ObjData::FrozenSet(_)) })
         .unwrap_or(false)
+}
+
+/// Return current version for a set object.
+pub fn mb_set_version(set_val: MbValue) -> u64 {
+    if let Some(ptr) = set_val.as_ptr() {
+        unsafe {
+            if let ObjData::Set(ref lock) = (*ptr).data {
+                return lock.read().unwrap().version();
+            }
+        }
+    }
+    0
+}
+
+/// Compute order-independent content-based hash of a frozenset.
+pub fn mb_frozenset_hash(fs: MbValue) -> MbValue {
+    let items = extract_set_items(fs);
+    fn shuffle_bits(h: u64) -> u64 {
+        ((h ^ 89_869_747_u64) ^ (h << 16)).wrapping_mul(3_644_798_167_u64)
+    }
+    let mut hash: u64 = 0;
+    for &item in &items {
+        let h_val = super::builtins::mb_hash(item);
+        if super::exception::has_current_exception() {
+            return MbValue::none();
+        }
+        let eh = h_val.as_int().unwrap_or(0) as u64;
+        hash ^= shuffle_bits(eh);
+    }
+    hash ^= ((items.len() as u64).wrapping_add(1)).wrapping_mul(1_927_868_237_u64);
+    hash ^= (hash >> 11) ^ (hash >> 25);
+    hash = hash.wrapping_mul(69_069_u64).wrapping_add(907_133_923_u64);
+    let signed_hash = (hash & 0x0000_7FFF_FFFF_FFFF) as i64;
+    let res = if signed_hash == -1 { -2 } else { signed_hash };
+    MbValue::from_int(res)
 }
 
 /// Create a new empty set.
@@ -93,6 +125,13 @@ pub fn mb_set_from_list(list: MbValue) -> MbValue {
 /// set.add(elem) — add an element (no-op if already present). O(1) amortized
 /// via the hash index in `MbSet`.
 pub fn mb_set_add(set_val: MbValue, elem: MbValue) {
+    if is_frozenset_like(set_val) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return;
+    }
     // A mutable container can't be a set member (CPython: unhashable type).
     if let Some(tn) = unhashable_type_name(elem) {
         super::exception::mb_raise(
@@ -113,6 +152,13 @@ pub fn mb_set_add(set_val: MbValue, elem: MbValue) {
 
 /// set.remove(elem) — remove an element; raises KeyError if not present.
 pub fn mb_set_remove(set_val: MbValue, elem: MbValue) {
+    if is_frozenset_like(set_val) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return;
+    }
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
@@ -135,6 +181,7 @@ pub fn mb_set_remove(set_val: MbValue, elem: MbValue) {
                         }
                     })
                     .unwrap_or_default();
+                super::rc::release_owned(str_val);
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(str_s)),
@@ -146,6 +193,13 @@ pub fn mb_set_remove(set_val: MbValue, elem: MbValue) {
 
 /// set.discard(elem) — remove if present, no error if absent.
 pub fn mb_set_discard(set_val: MbValue, elem: MbValue) {
+    if is_frozenset_like(set_val) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return;
+    }
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
@@ -260,6 +314,13 @@ pub fn mb_set_symmetric_difference(a: MbValue, b: MbValue) -> MbValue {
 
 /// set.pop() — remove and return an arbitrary element; raises KeyError on empty set.
 pub fn mb_set_pop(receiver: MbValue) -> MbValue {
+    if is_frozenset_like(receiver) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return MbValue::none();
+    }
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
@@ -286,6 +347,13 @@ pub fn mb_set_pop(receiver: MbValue) -> MbValue {
 
 /// set.update(other) — in-place union; adds all elements from other (set, list, or tuple).
 pub fn mb_set_update(receiver: MbValue, other: MbValue) -> MbValue {
+    if is_frozenset_like(receiver) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return MbValue::none();
+    }
     // CPython `set.update(*others)` accepts ANY iterable (range, dict→keys,
     // str→chars, generators, …). Delegate to the shared iterable-collection
     // path instead of an inline Set/List/Tuple-only match (which silently
@@ -297,8 +365,13 @@ pub fn mb_set_update(receiver: MbValue, other: MbValue) -> MbValue {
             if let ObjData::Set(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
                 for elem in new_items {
-                    // `set_insert` retains only on a newly-added element.
+                    if super::exception::current_exception_type().is_some() {
+                        break;
+                    }
                     items.set_insert(elem);
+                    if super::exception::current_exception_type().is_some() {
+                        break;
+                    }
                 }
             }
         }
@@ -308,6 +381,13 @@ pub fn mb_set_update(receiver: MbValue, other: MbValue) -> MbValue {
 
 /// set.intersection_update(other) — in-place; keep only elements also in `other`.
 pub fn mb_set_intersection_update(receiver: MbValue, other: MbValue) -> MbValue {
+    if is_frozenset_like(receiver) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return MbValue::none();
+    }
     let other_items = extract_set_items(other);
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
@@ -330,6 +410,13 @@ pub fn mb_set_intersection_update(receiver: MbValue, other: MbValue) -> MbValue 
 
 /// set.difference_update(other) — in-place; remove every element also in `other`.
 pub fn mb_set_difference_update(receiver: MbValue, other: MbValue) -> MbValue {
+    if is_frozenset_like(receiver) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return MbValue::none();
+    }
     let other_items = extract_set_items(other);
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
@@ -348,6 +435,13 @@ pub fn mb_set_difference_update(receiver: MbValue, other: MbValue) -> MbValue {
 
 /// set.symmetric_difference_update(other) — in-place; keep elements in exactly one set.
 pub fn mb_set_symmetric_difference_update(receiver: MbValue, other: MbValue) -> MbValue {
+    if is_frozenset_like(receiver) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return MbValue::none();
+    }
     // Dedup `other` first: a symmetric-difference toggle must be applied once
     // per *distinct* element, so a duplicate-containing iterable (e.g.
     // `[2, 2, 4]`) cannot toggle the same element twice. (CPython coerces
@@ -372,6 +466,22 @@ pub fn mb_set_symmetric_difference_update(receiver: MbValue, other: MbValue) -> 
     MbValue::none()
 }
 
+pub fn mb_set_iand(receiver: MbValue, other: MbValue) -> MbValue {
+    mb_set_intersection_update(receiver, other)
+}
+
+pub fn mb_set_ior(receiver: MbValue, other: MbValue) -> MbValue {
+    mb_set_update(receiver, other)
+}
+
+pub fn mb_set_isub(receiver: MbValue, other: MbValue) -> MbValue {
+    mb_set_difference_update(receiver, other)
+}
+
+pub fn mb_set_ixor(receiver: MbValue, other: MbValue) -> MbValue {
+    mb_set_symmetric_difference_update(receiver, other)
+}
+
 /// Deduplicate a vector of values with `eq_py` semantics. Used to coerce an
 /// arbitrary iterable's items to set-distinct elements before a symmetric
 /// toggle. Order-preserving; keeps the first occurrence.
@@ -387,13 +497,21 @@ fn dedup_items(items: Vec<MbValue>) -> Vec<MbValue> {
 
 /// set.clear()
 pub fn mb_set_clear(set_val: MbValue) {
+    if is_frozenset_like(set_val) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("'frozenset' object is immutable".to_string())),
+        );
+        return;
+    }
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
-                // Match the pre-index behavior: drop items + index together.
-                // (Element refs are reclaimed when the set object itself is
-                // released — mirroring the original `MbList::clear()`.)
-                lock.write().unwrap().clear_all();
+                let mut guard = lock.write().unwrap();
+                for item in guard.to_vec() {
+                    super::rc::release_owned(item);
+                }
+                guard.clear_all();
             }
         }
     }
@@ -402,16 +520,7 @@ pub fn mb_set_clear(set_val: MbValue) {
 /// set.copy() / frozenset.copy() — return shallow copy preserving receiver kind.
 pub fn mb_set_copy(set_val: MbValue) -> MbValue {
     let items = extract_set_items(set_val);
-    let is_frozen = if let Some(ptr) = set_val.as_ptr() {
-        unsafe { matches!((*ptr).data, ObjData::FrozenSet(_)) }
-    } else {
-        false
-    };
-    if is_frozen {
-        MbValue::from_ptr(MbObject::new_frozenset(items))
-    } else {
-        MbValue::from_ptr(MbObject::new_set(items))
-    }
+    build_set_like_left(set_val, items)
 }
 
 /// set.issubset(other)
@@ -467,7 +576,6 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                         .read()
                         .unwrap()
                         .get(i)
-                        .copied()
                         .unwrap_or(MbValue::none());
                 }
             }
@@ -511,6 +619,27 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             }
         }
     }
+    let check_arity = |min_args: usize, max_args: usize| -> bool {
+        let n = args_len();
+        if n < min_args || n > max_args {
+            let msg = if min_args == max_args {
+                format!("{name}() takes exactly {min_args} argument ({n} given)")
+            } else if max_args == usize::MAX {
+                format!("{name}() takes at least {min_args} argument ({n} given)")
+            } else if min_args == 0 {
+                format!("{name}() takes at most {max_args} argument ({n} given)")
+            } else {
+                format!("{name}() takes between {min_args} and {max_args} arguments ({n} given)")
+            };
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(msg)),
+            );
+            false
+        } else {
+            true
+        }
+    };
     match name {
         "__init__" => {
             if is_frozenset_like(receiver) {
@@ -525,22 +654,29 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             MbValue::none()
         }
         "add" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             mb_set_add(receiver, arg(0));
             MbValue::none()
         }
         "remove" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             mb_set_remove(receiver, arg(0));
             MbValue::none()
         }
         "discard" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             mb_set_discard(receiver, arg(0));
             MbValue::none()
         }
         "clear" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
             mb_set_clear(receiver);
             MbValue::none()
         }
-        "copy" => mb_set_copy(receiver),
+        "copy" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_set_copy(receiver)
+        }
         // Variadic: `s.union(a, b, ...)` folds every iterable (n==0 → copy).
         "union" => {
             let n = args_len();
@@ -549,7 +685,9 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             }
             let mut acc = mb_set_union(receiver, arg(0));
             for i in 1..n {
-                acc = mb_set_union(acc, arg(i));
+                let next_acc = mb_set_union(acc, arg(i));
+                super::rc::release_owned(acc);
+                acc = next_acc;
             }
             acc
         }
@@ -560,7 +698,9 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             }
             let mut acc = mb_set_intersection(receiver, arg(0));
             for i in 1..n {
-                acc = mb_set_intersection(acc, arg(i));
+                let next_acc = mb_set_intersection(acc, arg(i));
+                super::rc::release_owned(acc);
+                acc = next_acc;
             }
             acc
         }
@@ -571,20 +711,59 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             }
             let mut acc = mb_set_difference(receiver, arg(0));
             for i in 1..n {
-                acc = mb_set_difference(acc, arg(i));
+                let next_acc = mb_set_difference(acc, arg(i));
+                super::rc::release_owned(acc);
+                acc = next_acc;
             }
             acc
         }
-        "symmetric_difference" => mb_set_symmetric_difference(receiver, arg(0)),
-        "pop" => mb_set_pop(receiver),
-        "update" => mb_set_update(receiver, arg(0)),
-        "intersection_update" => mb_set_intersection_update(receiver, arg(0)),
-        "difference_update" => mb_set_difference_update(receiver, arg(0)),
-        "symmetric_difference_update" => mb_set_symmetric_difference_update(receiver, arg(0)),
-        "issubset" => mb_set_issubset(receiver, arg(0)),
-        "issuperset" => mb_set_issuperset(receiver, arg(0)),
-        "isdisjoint" => mb_set_isdisjoint(receiver, arg(0)),
+        "symmetric_difference" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_set_symmetric_difference(receiver, arg(0))
+        }
+        "pop" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_set_pop(receiver)
+        }
+        "update" => {
+            let n = args_len();
+            for i in 0..n {
+                mb_set_update(receiver, arg(i));
+            }
+            MbValue::none()
+        }
+        "intersection_update" => {
+            let n = args_len();
+            for i in 0..n {
+                mb_set_intersection_update(receiver, arg(i));
+            }
+            MbValue::none()
+        }
+        "difference_update" => {
+            let n = args_len();
+            for i in 0..n {
+                mb_set_difference_update(receiver, arg(i));
+            }
+            MbValue::none()
+        }
+        "symmetric_difference_update" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_set_symmetric_difference_update(receiver, arg(0))
+        }
+        "issubset" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_set_issubset(receiver, arg(0))
+        }
+        "issuperset" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_set_issuperset(receiver, arg(0))
+        }
+        "isdisjoint" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_set_isdisjoint(receiver, arg(0))
+        }
         "__contains__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             let elem = arg(0);
             if let Some(tn) = unhashable_type_name(elem) {
                 super::exception::mb_raise(
@@ -1663,5 +1842,108 @@ mod tests {
         let sub_result = dispatch_set_method("issubset", fs_a, make_args(vec![fs_b]));
         // {1,2} is NOT a subset of {2,3}
         assert_eq!(sub_result.as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_frozenset_content_based_hashing() {
+        let fs1 = MbValue::from_ptr(MbObject::new_frozenset(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+        ]));
+        let fs2 = MbValue::from_ptr(MbObject::new_frozenset(vec![
+            MbValue::from_int(3),
+            MbValue::from_int(2),
+            MbValue::from_int(1),
+        ]));
+        let h1 = mb_frozenset_hash(fs1);
+        let h2 = mb_frozenset_hash(fs2);
+        assert_eq!(h1.as_int(), h2.as_int());
+
+        let h_builtin1 = super::super::builtins::mb_hash(fs1);
+        let h_builtin2 = super::super::builtins::mb_hash(fs2);
+        assert_eq!(h_builtin1.as_int(), h_builtin2.as_int());
+    }
+
+    #[test]
+    fn test_frozenset_direct_mutation_raises_type_error() {
+        super::super::exception::mb_clear_exception();
+        let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![MbValue::from_int(1)]));
+
+        mb_set_add(fs, MbValue::from_int(2));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        mb_set_remove(fs, MbValue::from_int(1));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        mb_set_discard(fs, MbValue::from_int(1));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        mb_set_pop(fs);
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+
+        mb_set_clear(fs);
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_set_version_and_iterator_mutation() {
+        let set = mb_set_new();
+        let v0 = mb_set_version(set);
+        mb_set_add(set, MbValue::from_int(1));
+        let v1 = mb_set_version(set);
+        assert_ne!(v0, v1);
+
+        super::super::exception::mb_clear_exception();
+        let it = super::super::iter::mb_iter(set);
+        mb_set_add(set, MbValue::from_int(2));
+        let _ = super::super::iter::mb_next(it);
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("RuntimeError")
+        );
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_set_and_frozenset_algebra_left_operand_type() {
+        let s = mb_set_new();
+        mb_set_add(s, MbValue::from_int(1));
+        mb_set_add(s, MbValue::from_int(2));
+
+        let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+        ]));
+
+        // set & frozenset -> set
+        let res_sf = mb_set_intersection(s, fs);
+        assert!(!is_frozenset_like(res_sf));
+        assert_eq!(mb_set_len(res_sf).as_int(), Some(1));
+
+        // frozenset & set -> frozenset
+        let res_fs = mb_set_intersection(fs, s);
+        assert!(is_frozenset_like(res_fs));
+        assert_eq!(mb_set_len(res_fs).as_int(), Some(1));
     }
 }

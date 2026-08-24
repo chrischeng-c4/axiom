@@ -563,7 +563,7 @@ unsafe extern "C" fn dispatch_basicconfig(args_ptr: *const MbValue, nargs: usize
         if let Some(hlist) = handlers_kw {
             if let Some(ptr) = hlist.as_ptr() {
                 let items: Vec<MbValue> = match &(*ptr).data {
-                    ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                    ObjData::List(lock) => lock.read().unwrap().to_vec(),
                     ObjData::Tuple(items) => items.iter().copied().collect(),
                     _ => Vec::new(),
                 };
@@ -1029,7 +1029,7 @@ fn collect_effective_handlers(start: MbValue) -> Vec<MbValue> {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
                         for h in lock.read().unwrap().iter() {
-                            handlers.push(*h);
+                            handlers.push(h);
                         }
                     }
                 }
@@ -1463,9 +1463,9 @@ extern "C" fn m_bufferingformatter_format(_this: MbValue, records: MbValue) -> M
             match &(*ptr).data {
                 ObjData::List(lock) => {
                     for r in lock.read().unwrap().iter() {
-                        let m = extract_str(field_get(*r, "message"));
+                        let m = extract_str(field_get(r, "message"));
                         let m = if m.is_empty() {
-                            extract_str(field_get(*r, "msg"))
+                            extract_str(field_get(r, "msg"))
                         } else {
                             m
                         };
@@ -1531,14 +1531,25 @@ unsafe extern "C" fn dispatch_manager(_args_ptr: *const MbValue, _nargs: usize) 
 }
 
 // Manager.setLoggerClass(self, klass): klass must derive from Logger.
-extern "C" fn m_manager_setloggerclass(this: MbValue, klass: MbValue) -> MbValue {
+extern "C" fn m_manager_setloggerclass(this: MbValue, args: MbValue) -> MbValue {
+    let klass = args
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                let guard = lock.read().unwrap();
+                guard.first()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(args);
     let name = resolve_class_arg(klass);
     match name {
         Some(cn) if cn == "Logger" || is_logger_subclass(&cn) => {
             field_set(this, "loggerClass", new_str(cn));
             MbValue::none()
         }
-        _ => raise("TypeError", "logger not derived from logging.Logger: "),
+        _ => raise("TypeError", "logger not derived from logging.Logger"),
     }
 }
 
