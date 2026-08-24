@@ -265,19 +265,6 @@ fn lumen_output(args: &[&str]) -> (bool, String) {
 /// flag, which is the form such an instruction always took.
 #[test]
 fn no_llm_topic_or_help_page_directs_a_google_credential_at_lumen() {
-    const TOPICS: [&str; 11] = [
-        "outline",
-        "local-search",
-        "model-schema",
-        "select-query",
-        "integrate-source-db",
-        "authenticate",
-        "connect-kubernetes",
-        "deploy-kubernetes",
-        "backup-restore",
-        "generate-client",
-        "diagnose",
-    ];
     const HELP: [&[&str]; 12] = [
         &["--help"],
         &["query", "--help"],
@@ -301,8 +288,25 @@ fn no_llm_topic_or_help_page_directs_a_google_credential_at_lumen() {
     ];
 
     let mut pages: Vec<(String, String)> = Vec::new();
-    for topic in TOPICS {
-        let (ok, text) = lumen_output(&["llm", "--topic", topic]);
+    let (ok, outline) = lumen_output(&["llm", "--topic", "outline", "--format", "json"]);
+    assert!(ok, "`lumen llm --topic outline` failed:\n{outline}");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&outline).expect("LLM outline JSON parses");
+    let mut topics = vec!["outline".to_string()];
+    topics.extend(
+        manifest["tasks"]
+            .as_array()
+            .expect("LLM outline has tasks")
+            .iter()
+            .map(|task| {
+                task["topic"]
+                    .as_str()
+                    .expect("LLM task topic is a string")
+                    .to_string()
+            }),
+    );
+    for topic in topics {
+        let (ok, text) = lumen_output(&["llm", "--topic", &topic]);
         assert!(ok, "`lumen llm --topic {topic}` failed:\n{text}");
         pages.push((format!("llm --topic {topic}"), text));
     }

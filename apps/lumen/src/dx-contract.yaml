@@ -17,6 +17,20 @@ artifacts:
 llm_protocol:
   protocol: cclab.llm.v2
   tasks:
+    - id: run-standalone
+      use_when: "start one local development or test runtime without Kubernetes"
+      requires: ["A writable local data directory."]
+      reads: ["lumen serve --help", "apps/lumen/docs/deployment.md"]
+      produces: ["one loopback-only Standalone runtime"]
+      risk: local_write
+      purpose: "Run the app-owned Standalone path for local development, tests, and one-host use."
+      preconditions: ["Choose a writable data directory before enabling persistence."]
+      inputs:
+        - { name: data_dir, type: path, description: "local persistent data directory", required: true }
+      constraints: ["A bare binary defaults to 127.0.0.1 and in-memory ephemeral storage when no data directory is set.", "A container listens on 0.0.0.0 inside the container. Publish its host port only on 127.0.0.1.", "No mount and no data directory means replacement loses state.", "For container persistence, mount a named volume at /var/lib/lumen/data and set LUMEN_WAL=embedded, LUMEN_DATA_DIR=/var/lib/lumen/data, and LUMEN_PERSISTENCE=segment.", "Stop the old container cleanly before attaching its named volume to a replacement.", "The image creates a non-root writable mount point. It declares no Docker VOLUME and does not select persistence for the caller.", "Auth off is safe only behind a trusted local network boundary.", "Standalone is not Managed, Fleet, or a production HA claim."]
+      instruction: "Start one persistent Standalone runtime on the loopback address."
+      command_template: "lumen serve --host 127.0.0.1 --data-dir {data_dir} --wal embedded --persistence segment"
+      verification: ["Confirm /healthz and /readyz respond through the loopback endpoint.", "Restart the runtime and confirm indexed data remains available."]
     - id: local-search
       use_when: "inspect the offline Lumen search contract before issuing a request"
       requires: []
@@ -169,18 +183,19 @@ llm_protocol:
     - id: generate-client
       use_when: "generate a typed Rust, Python, or TypeScript client"
       requires: ["An output directory and target language."]
-      reads: ["lumen spec --format openapi"]
+      reads: ["lumen spec --format openapi", "apps/lumen/clients/codegen.toml"]
       produces: ["typed client source"]
+      providers: ["openapi-codegen"]
       risk: local_write
       purpose: "Generate from the canonical OpenAPI document; never hand-maintain an SDK wrapper."
       preconditions: ["Choose the consuming language and an empty or dedicated output directory."]
       inputs:
         - { name: lang, type: enum, description: "ts, py, or rust", required: true }
         - { name: out, type: path, description: "client output directory", required: true }
-      constraints: ["The generated output is disposable and must be regenerated after an API release.", "Every generated client takes a private trust anchor and the name it expects the server to assert (PrivateTrust in all three languages), verifies against that anchor instead of the public roots, and refuses to construct when the verified name is not the host the base URL addresses. None of them exposes a way to skip verification."]
+      constraints: ["The generated output is disposable and must be regenerated after an API release.", "Lumen selects the default target from apps/lumen/clients/codegen.toml; --target is an explicit one-run compatibility override.", "Lumen supplies its canonical OpenAPI document and does not publish the generated source as a language package."]
       instruction: "Generate the selected typed client."
       command_template: "lumen spec gen --lang {lang} --out {out}"
-      verification: ["Confirm the generated entrypoint is the CLI-reported next artifact."]
+      verification: ["Confirm the output includes .openapi-codegen.json, the resolved target, and the CLI-reported next entrypoint."]
     - id: diagnose
       use_when: "inspect readiness, metrics, OpenAPI, or version data from a running service"
       requires: ["A reachable Lumen base URL."]

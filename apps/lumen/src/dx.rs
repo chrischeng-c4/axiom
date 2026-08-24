@@ -114,16 +114,38 @@ pub fn llm_protocol() -> ProtocolDocument {
         cli_std::llm::v2::PROTOCOL,
         "DX contract must declare the supported LLM protocol"
     );
-    ProtocolDocument::new(
-        "lumen",
-        contract
-            .llm_protocol
-            .tasks
-            .into_iter()
-            .map(task_from_contract)
-            .collect(),
-    )
-    .expect("Lumen DX contract is internally valid")
+    let mut provider_bindings = Vec::new();
+    let topics = contract
+        .llm_protocol
+        .tasks
+        .into_iter()
+        .map(|task| {
+            provider_bindings.extend(
+                task.providers
+                    .iter()
+                    .cloned()
+                    .map(|provider| (task.id.clone(), provider)),
+            );
+            task_from_contract(task)
+        })
+        .collect();
+    let mut document =
+        ProtocolDocument::new("lumen", topics).expect("Lumen DX contract is internally valid");
+    for (topic, provider_id) in provider_bindings {
+        let provider = shared_provider(&provider_id)
+            .unwrap_or_else(|err| panic!("Lumen DX provider binding is invalid: {err}"));
+        document = document
+            .with_topic_provider(&topic, provider)
+            .expect("Lumen DX provider binding is internally valid");
+    }
+    document
+}
+
+fn shared_provider(id: &str) -> anyhow::Result<&'static cli_std::llm::Topic> {
+    match id {
+        "openapi-codegen" => Ok(openapi_codegen::llm::topic()),
+        other => anyhow::bail!("unknown LLM provider `{other}`"),
+    }
 }
 
 pub fn render_llm(topic: &str, format: cli_std::llm::Format) -> anyhow::Result<String> {
@@ -151,6 +173,8 @@ struct TaskContract {
     reads: Vec<String>,
     #[serde(default)]
     produces: Vec<String>,
+    #[serde(default)]
+    providers: Vec<String>,
     risk: String,
     purpose: String,
     #[serde(default)]
@@ -222,6 +246,14 @@ fn task_from_contract(contract: TaskContract) -> Topic {
             verification: contract.verification,
             references: vec![DX_CONTRACT_REF.into()],
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unknown_shared_provider_is_rejected() {
+        assert!(super::shared_provider("unknown-provider").is_err());
     }
 }
 // HANDWRITE-END

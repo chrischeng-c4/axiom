@@ -779,6 +779,8 @@ struct SnapshotImportArgs {
 enum LlmTopic {
     /// Typed task map for agent context selection (default).
     Outline,
+    /// Start one local development or test runtime without Kubernetes.
+    RunStandalone,
     /// Inspect the offline search contract before issuing a request.
     LocalSearch,
     /// Declare or review a collection schema.
@@ -812,6 +814,7 @@ impl LlmTopic {
     const fn id(self) -> &'static str {
         match self {
             Self::Outline => "outline",
+            Self::RunStandalone => "run-standalone",
             Self::LocalSearch => "local-search",
             Self::ModelSchema => "model-schema",
             Self::SelectQuery => "select-query",
