@@ -1,7 +1,7 @@
 //! Deterministic contract and smoke tests for Lumen Docker named-volume persistence.
 
 use reqwest::{Client, StatusCode};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -173,7 +173,7 @@ fn test_checked_in_and_rendered_dockerfiles_satisfy_contract() {
     );
     let targets = [
         ("apps/lumen/Dockerfile", "builder", CC_BASE),
-        ("apps/lumen/Dockerfile.release", "fetch", STATIC_BASE),
+        ("apps/lumen/Dockerfile.release", "seed", STATIC_BASE),
         ("apps/lumen/Dockerfile.test", "seed", STATIC_BASE),
     ];
     for (rel, seed, base) in targets {
@@ -182,7 +182,7 @@ fn test_checked_in_and_rendered_dockerfiles_satisfy_contract() {
     }
     for (v, seed, base) in [
         ("source", "builder", CC_BASE),
-        ("release", "fetch", STATIC_BASE),
+        ("release", "seed", STATIC_BASE),
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_lumen"))
             .args(["dockerfile", "render", "--variant", v])
