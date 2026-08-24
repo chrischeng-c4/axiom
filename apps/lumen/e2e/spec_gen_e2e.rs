@@ -4,12 +4,161 @@
 //!
 
 use std::net::TcpListener;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
 fn lumen() -> Command {
     Command::new(env!("CARGO_BIN_EXE_lumen"))
+}
+
+fn run_generated_python(
+    manifest_or_dir: &Path,
+    python_args: &[&str],
+    uv_bin: Option<&Path>,
+    envs: &[(&str, &str)],
+) -> Result<std::process::Output, String> {
+    let manifest_path = if manifest_or_dir.is_file() {
+        manifest_or_dir.to_path_buf()
+    } else {
+        manifest_or_dir.join(".openapi-codegen.json")
+    };
+
+    let manifest_raw = std::fs::read_to_string(&manifest_path).map_err(|err| {
+        format!(
+            "generated Python toolchain: failed to read manifest at {}: {err}",
+            manifest_path.display()
+        )
+    })?;
+
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_raw).map_err(|err| {
+        format!(
+            "generated Python toolchain: failed to parse manifest at {}: {err}",
+            manifest_path.display()
+        )
+    })?;
+
+    let target = manifest
+        .get("target")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "generated Python toolchain: manifest missing 'target'".to_string())?;
+
+    let language = manifest
+        .get("language")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!("generated Python toolchain ({target}): manifest missing 'language'")
+        })?;
+
+    let compiler = manifest
+        .get("compiler")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!("generated Python toolchain ({target}): manifest missing 'compiler'")
+        })?;
+
+    let minimum_version = manifest
+        .get("minimum_version")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!("generated Python toolchain ({target}): manifest missing 'minimum_version'")
+        })?;
+
+    let language_standard = manifest
+        .get("language_standard")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!("generated Python toolchain ({target}): manifest missing 'language_standard'")
+        })?;
+
+    let runtime_dependencies = manifest
+        .get("runtime_dependencies")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            format!(
+                "generated Python toolchain ({target}): manifest missing 'runtime_dependencies'"
+            )
+        })?;
+
+    if language != "python" {
+        return Err(format!(
+            "generated Python toolchain ({target}): invalid manifest language {language:?}"
+        ));
+    }
+    if compiler != "python" {
+        return Err(format!(
+            "generated Python toolchain ({target}): invalid manifest compiler {compiler:?}"
+        ));
+    }
+    let expected_target = format!("python-{minimum_version}");
+    if target != expected_target {
+        return Err(format!(
+            "generated Python toolchain ({target}): manifest target does not match minimum_version {minimum_version:?}"
+        ));
+    }
+    if language_standard != minimum_version {
+        return Err(format!(
+            "generated Python toolchain ({target}): manifest language_standard {language_standard:?} does not match minimum_version {minimum_version:?}"
+        ));
+    }
+
+    let mut runtime_deps = Vec::new();
+    for dep in runtime_dependencies {
+        let dep_str = dep.as_str().ok_or_else(|| {
+            format!(
+                "generated Python toolchain ({target}): non-string runtime dependency in manifest: {dep:?}"
+            )
+        })?;
+        runtime_deps.push(dep_str);
+    }
+    if runtime_deps.as_slice() != ["pydantic>=2"] {
+        return Err(format!(
+            "generated Python toolchain ({target}): unexpected runtime_dependencies {runtime_deps:?}"
+        ));
+    }
+
+    let uv = uv_bin.unwrap_or_else(|| Path::new("uv"));
+    let mut cmd = Command::new(uv);
+    cmd.arg("run")
+        .arg("--python")
+        .arg(minimum_version)
+        .arg("--no-project");
+
+    for dep in &runtime_deps {
+        cmd.arg("--with");
+        cmd.arg(dep);
+    }
+
+    cmd.arg("python");
+    for arg in python_args {
+        cmd.arg(arg);
+    }
+
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.env("UV_MANAGED_PYTHON", "1");
+
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(err) => {
+            return Err(format!(
+                "generated Python toolchain ({target}): failed to start uv: {err}"
+            ));
+        }
+    };
+
+    if !output.status.success() {
+        return Err(format!(
+            "generated Python toolchain ({target}) failed with status: {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(output)
 }
 
 /// R1: `spec gen --lang py` writes pydantic + generated sync/async HTTP/2 runtime.
@@ -65,20 +214,18 @@ fn gen_py_writes_pydantic_h2c_client() {
         "reference alias must be emitted after its concrete model"
     );
     let model_path = dir.path().join("models.py");
-    let python = Command::new("python3")
-        .args([
+    let model_path_str = model_path.to_str().unwrap();
+    run_generated_python(
+        dir.path(),
+        &[
             "-c",
-            "import pathlib, sys; path = pathlib.Path(sys.argv[1]); exec(compile(path.read_text(), str(path), 'exec'))",
-        ])
-        .arg(&model_path)
-        .output()
-        .unwrap();
-    assert!(
-        python.status.success(),
-        "generated models.py failed at import time\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&python.stdout),
-        String::from_utf8_lossy(&python.stderr)
-    );
+            "import pathlib, sys, pydantic; assert sys.version_info[:2] == (3, 14), f'expected Python 3.14, got {sys.version_info}'; assert int(pydantic.__version__.split('.')[0]) >= 2; path = pathlib.Path(sys.argv[1]); exec(compile(path.read_text(), str(path), 'exec'))",
+            model_path_str,
+        ],
+        None,
+        &[],
+    )
+    .expect("generated models.py failed execution under pinned Python toolchain");
     let runtime = std::fs::read_to_string(dir.path().join("h2c_runtime.py")).unwrap();
     assert!(
         runtime.contains("class H2CClient"),
@@ -183,19 +330,159 @@ fn generated_client_live_h2c_public_api_journey() {
 
     let script = dir.path().join("generated_client_live_smoke.py");
     std::fs::write(&script, GENERATED_CLIENT_LIVE_SMOKE).unwrap();
-    let output = Command::new("python3")
-        .arg(&script)
-        .arg(format!("http://127.0.0.1:{port}"))
-        .env("PYTHONPATH", dir.path())
-        .output()
-        .unwrap();
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let python_dir_str = dir.path().to_str().unwrap();
+    let script_str = script.to_str().unwrap();
+
+    let result = run_generated_python(
+        &package_dir,
+        &[script_str, &endpoint],
+        None,
+        &[("PYTHONPATH", python_dir_str)],
+    );
 
     child.stop();
+    result.expect("generated Python client live smoke failed");
+}
+
+#[test]
+fn generated_python_toolchain_ignores_ambient_python3() {
+    let dir = tempfile::tempdir().unwrap();
+    let status = lumen()
+        .args(["spec", "gen", "--lang", "py", "--out"])
+        .arg(dir.path())
+        .status()
+        .unwrap();
+    assert!(status.success(), "spec gen --lang py failed");
+
+    let fake_bin_dir = tempfile::tempdir().unwrap();
+    let sentinel = dir.path().join("ambient_python3_sentinel.txt");
+    let fake_content = format!(
+        "#!/bin/sh\necho ambient-python-invoked > \"{}\"\nexit 1\n",
+        sentinel.display()
+    );
+    for name in ["python", "python3"] {
+        let fake_python = fake_bin_dir.path().join(name);
+        std::fs::write(&fake_python, &fake_content).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&fake_python).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_python, perms).unwrap();
+        }
+    }
+
+    let ambient_path = std::env::var("PATH").unwrap_or_default();
+    let overridden_path = format!("{}:{}", fake_bin_dir.path().display(), ambient_path);
+
+    let res = run_generated_python(
+        dir.path(),
+        &[
+            "-c",
+            "import sys, pydantic; assert sys.version_info[:2] == (3, 14)",
+        ],
+        None,
+        &[("PATH", &overridden_path), ("UV_MANAGED_PYTHON", "0")],
+    );
+
     assert!(
-        output.status.success(),
-        "generated Python client live smoke failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        res.is_ok(),
+        "manifest-derived Python execution failed: {:?}",
+        res.err()
+    );
+    assert!(
+        !sentinel.exists(),
+        "ambient python3 sentinel was created; ambient interpreter was executed instead of uv-managed Python"
+    );
+}
+
+#[test]
+fn generated_python_toolchain_reports_missing_uv() {
+    let dir = tempfile::tempdir().unwrap();
+    let status = lumen()
+        .args(["spec", "gen", "--lang", "py", "--out"])
+        .arg(dir.path())
+        .status()
+        .unwrap();
+    assert!(status.success(), "spec gen --lang py failed");
+
+    let nonexistent_uv = Path::new("/nonexistent/uv_binary_for_lumen_negative_test");
+    let res = run_generated_python(
+        dir.path(),
+        &["-c", "print('hello')"],
+        Some(nonexistent_uv),
+        &[],
+    );
+
+    let err = res.expect_err("missing uv must report toolchain failure, not success");
+    assert!(
+        err.contains("failed to start uv"),
+        "error missing 'failed to start uv': {err}"
+    );
+    assert!(
+        err.contains("python-3.14"),
+        "error missing target 'python-3.14': {err}"
+    );
+    assert!(
+        err.contains("generated Python toolchain"),
+        "error missing 'generated Python toolchain': {err}"
+    );
+}
+
+#[test]
+fn generated_python_toolchain_reports_missing_interpreter() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_json = r#"{
+  "schema_version": 1,
+  "generator": "openapi-codegen",
+  "compiler": "python",
+  "target": "python-3.99",
+  "language": "python",
+  "minimum_version": "3.99",
+  "language_standard": "3.99",
+  "module_system": null,
+  "module_resolution": null,
+  "strict": null,
+  "transport": "generated-h2c-and-tls-alpn-h2",
+  "runtime_dependencies": [
+    "pydantic>=2"
+  ]
+}"#;
+    std::fs::write(dir.path().join(".openapi-codegen.json"), manifest_json).unwrap();
+
+    let res = run_generated_python(
+        dir.path(),
+        &["-c", "print('hello')"],
+        None,
+        &[("UV_PYTHON_DOWNLOADS", "never")],
+    );
+
+    let err = res.expect_err("missing interpreter 3.99 must report toolchain failure, not success");
+    assert!(
+        err.contains("3.99"),
+        "error diagnostic missing version '3.99': {err}"
+    );
+    assert!(
+        err.contains("No interpreter found for Python 3.99"),
+        "error diagnostic does not prove the selected interpreter is missing: {err}"
+    );
+    assert!(
+        err.contains("generated Python toolchain"),
+        "error diagnostic missing 'generated Python toolchain': {err}"
+    );
+    assert!(
+        err.contains("status"),
+        "error diagnostic missing exit status: {err}"
+    );
+    assert!(
+        err.contains("stderr:"),
+        "error diagnostic missing captured stderr block: {err}"
+    );
+    assert!(
+        !err.contains("SyntaxError"),
+        "missing interpreter failure must not report SyntaxError: {err}"
     );
 }
 
