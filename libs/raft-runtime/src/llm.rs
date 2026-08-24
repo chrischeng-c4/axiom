@@ -60,9 +60,8 @@ epoch so stale completions fail deterministically. Read-only services do not
 need this layer.
 
 ## Implementor release gate
-Every workspace `RaftStateMachine` implementation must map to a compile command
-that reaches its crate and feature boundary. Run the slow migration gate from
-the workspace root:
+Every current workspace `RaftStateMachine` implementation is registered to one
+declared compile command. Run the slow migration gate from the workspace root:
 
 ```text
 scripts/raft-implementor-build.sh
@@ -71,10 +70,12 @@ scripts/raft-implementor-build.sh
 The script compiles the default workspace, Keep with `raft`, Lumen with
 `raft-wal`, and the `raft-runtime` test targets. It then runs the named
 `implementor_build_coverage` inventory test. The inventory rejects an
-unregistered implementation, a stale registry row, a wrong command mapping,
-script drift, and a missing Cargo or CONTRIBUTING registration. A cold run can
-compile most of the workspace. Keep this gate in release verification, not in a
-hot edit loop.
+unregistered implementation, a stale registry row, a path mapped to the wrong
+declared command, script drift, and a missing Cargo or CONTRIBUTING
+registration. It does not infer arbitrary future `cfg` or feature reachability.
+A new feature-gated implementation must add a matching compile command and a
+negative compile proof. A cold run can compile most of the workspace. Keep this
+gate in release verification, not in a hot edit loop.
 "#,
 };
 
@@ -93,6 +94,7 @@ mod tests {
         assert!(topic.body.contains("REPLICAS_PER_SHARD > 1"));
         assert!(topic.body.contains("scripts/raft-implementor-build.sh"));
         assert!(topic.body.contains("implementor_build_coverage"));
+        assert!(topic.body.contains("does not infer arbitrary future `cfg`"));
     }
 }
 // CODEGEN-END

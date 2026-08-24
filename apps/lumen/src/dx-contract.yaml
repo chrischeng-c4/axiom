@@ -213,7 +213,7 @@ llm_protocol:
     - id: verify-release
       use_when: "verify one Lumen release candidate before landing, tagging, or publication"
       requires: ["A clean release worktree at the exact candidate commit.", "The project toolchains, Docker, and kind for the maintained release gates."]
-      reads: ["apps/lumen/CONTRIBUTING.md", ".github/workflows/lumen-release.yml", "apps/lumen/e2e/release_artifacts.rs", "apps/lumen/scripts/kind-e2e.sh", "apps/lumen/scripts/verify-release-artifacts.sh", "libs/raft-runtime/CONTRIBUTING.md"]
+      reads: ["apps/lumen/CONTRIBUTING.md", ".github/workflows/lumen-release.yml", "apps/lumen/e2e/release_artifacts.rs", "apps/lumen/install.sh", "apps/lumen/scripts/kind-e2e.sh", "apps/lumen/scripts/verify-release-artifacts.sh", "libs/raft-runtime/CONTRIBUTING.md"]
       produces: ["commit-bound local, kind, and public artifact evidence"]
       providers: ["raft-runtime"]
       risk: remote_write
@@ -223,4 +223,4 @@ llm_protocol:
       constraints: ["Run all maintained targeted, Lumen, library, document, and end-to-end gates on the candidate commit; a skipped gate is not a pass.", "Run the library-owned raft implementor migration gate and keep its command inventory in raft-runtime, not in Lumen.", "Run kind before publication. The release workflow repeats prebuilt-image kind proof for linux/amd64 and linux/arm64 by digest.", "Land each release to main exactly once before creating its tag.", "After the tag, verify the GitHub Release assets and checksums, the GHCR root and platform digests, keyless signature, provenance, SBOM attestations, and downloaded binary version.", "Do not close the release epic until the published release and GHCR evidence resolve to the landed main commit."]
       instruction: "Record the installed candidate version before running the commit-bound release inventory."
       command: "lumen --version"
-      verification: ["Confirm local and kind gates name the exact candidate commit.", "Confirm the tag resolves to the one landed main commit.", "Confirm the published GitHub Release, checksums, GHCR digest, attestations, and downloaded binary all agree on that version and commit."]
+      verification: ["Confirm local and kind gates name the exact candidate commit.", "Confirm the tag, merged main commit, GHCR digest, and attestations agree on the exact commit.", "Confirm every binary/checksum pair exists once, and the downloaded host archive passes its checksum and reports the tag version."]

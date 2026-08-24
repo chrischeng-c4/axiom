@@ -6,6 +6,126 @@ usage() {
   exit 1
 }
 
+verify_downloaded_binary_assets() {
+  local download_dir="$1"
+  local host_target="$2"
+  local tag="$3"
+  local target asset checksum expected listed extra actual
+
+  for target in \
+    aarch64-apple-darwin \
+    x86_64-unknown-linux-gnu \
+    aarch64-unknown-linux-gnu \
+    x86_64-unknown-linux-musl \
+    aarch64-unknown-linux-musl
+  do
+    asset="lumen-${target}.tar.gz"
+    checksum="${asset}.sha256"
+    [[ -f "$download_dir/$asset" && -f "$download_dir/$checksum" ]] || {
+      echo "downloaded release pair is incomplete: $asset" >&2
+      return 1
+    }
+    if ! read -r expected listed extra <"$download_dir/$checksum"; then
+      echo "cannot read checksum sidecar: $checksum" >&2
+      return 1
+    fi
+    [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$listed" == "$asset" && -z "${extra:-}" ]] || {
+      echo "invalid checksum sidecar: $checksum" >&2
+      return 1
+    }
+    expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual="$(sha256sum "$download_dir/$asset" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+      actual="$(shasum -a 256 "$download_dir/$asset" | awk '{print $1}')"
+    else
+      echo "missing sha256sum or shasum" >&2
+      return 1
+    fi
+    [[ "$actual" == "$expected" ]] || {
+      echo "release checksum mismatch: $asset" >&2
+      return 1
+    }
+
+    local expected_members actual_members binary_mode
+    expected_members="$(printf '%s\n' \
+      "lumen-${target}/" \
+      "lumen-${target}/README.md" \
+      "lumen-${target}/lumen" | LC_ALL=C sort)"
+    if ! actual_members="$(tar -tzf "$download_dir/$asset" | LC_ALL=C sort)"; then
+      echo "release archive cannot be listed: $asset" >&2
+      return 1
+    fi
+    [[ "$actual_members" == "$expected_members" ]] || {
+      echo "release archive members changed: $asset" >&2
+      return 1
+    }
+    if ! binary_mode="$(tar -tvzf "$download_dir/$asset" | awk -v path="lumen-${target}/lumen" '$NF == path { print $1 }')"; then
+      echo "release binary metadata cannot be read: $asset" >&2
+      return 1
+    fi
+    [[ "$binary_mode" =~ ^-.{2}x ]] || {
+      echo "release archive binary is not a regular executable: $asset" >&2
+      return 1
+    }
+  done
+
+  local host_asset="lumen-${host_target}.tar.gz"
+  local unpack_dir="$download_dir/unpacked"
+  local downloaded_binary downloaded_version expected_version
+  if ! mkdir "$unpack_dir" || ! tar -xzf "$download_dir/$host_asset" -C "$unpack_dir"; then
+    echo "release host archive cannot be extracted: $host_asset" >&2
+    return 1
+  fi
+  downloaded_binary="$unpack_dir/lumen-${host_target}/lumen"
+  [[ -f "$downloaded_binary" && -x "$downloaded_binary" ]] || {
+    echo "release archive does not contain an executable lumen binary" >&2
+    return 1
+  }
+  if ! downloaded_version="$("$downloaded_binary" --version)"; then
+    echo "downloaded binary did not report a version" >&2
+    return 1
+  fi
+  expected_version="lumen ${tag#lumen@}"
+  [[ "$downloaded_version" == "$expected_version" ]] || {
+    echo "downloaded binary version mismatch: expected '$expected_version', got '$downloaded_version'" >&2
+    return 1
+  }
+  printf '%s\n' "$downloaded_version"
+}
+
+verify_release_asset_inventory() {
+  local release_json="$1"
+  local target expected_binary_assets actual_binary_assets
+
+  expected_binary_assets="$({
+    for target in \
+      aarch64-apple-darwin \
+      x86_64-unknown-linux-gnu \
+      aarch64-unknown-linux-gnu \
+      x86_64-unknown-linux-musl \
+      aarch64-unknown-linux-musl
+    do
+      printf 'lumen-%s.tar.gz\nlumen-%s.tar.gz.sha256\n' "$target" "$target"
+    done
+  } | LC_ALL=C sort)"
+  if ! actual_binary_assets="$(
+    jq -er '.assets[].name | select(test("^lumen-.*\\.tar\\.gz(\\.sha256)?$"))' \
+      <<<"$release_json" | LC_ALL=C sort
+  )"; then
+    echo "release binary asset inventory cannot be read" >&2
+    return 1
+  fi
+  [[ "$actual_binary_assets" == "$expected_binary_assets" ]] || {
+    echo "release binary asset set is not the exact five archive/checksum pairs" >&2
+    return 1
+  }
+}
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 REPO=""
 TAG=""
 COMMIT=""
@@ -76,8 +196,24 @@ expected_cert_id="https://github.com/${REPO}/.github/workflows/lumen-release.yml
 expected_issuer="https://token.actions.githubusercontent.com"
 expected_signer_workflow="${REPO}/.github/workflows/lumen-release.yml"
 
+case "$(uname -s):$(uname -m)" in
+  Darwin:arm64|Darwin:aarch64)
+    host_target="aarch64-apple-darwin"
+    ;;
+  Linux:x86_64|Linux:amd64)
+    host_target="x86_64-unknown-linux-gnu"
+    ;;
+  Linux:aarch64|Linux:arm64)
+    host_target="aarch64-unknown-linux-gnu"
+    ;;
+  *)
+    echo "unsupported verifier host: $(uname -s) $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
 echo ">> verifying GitHub release identity and state"
-release_json="$(gh release view "$TAG" --repo "$REPO" --json isDraft,tagName)"
+release_json="$(gh release view "$TAG" --repo "$REPO" --json assets,isDraft,tagName)"
 release_tag="$(jq -er '.tagName | select(type == "string")' <<<"$release_json")"
 is_draft="$(jq -er '.isDraft | select(type == "boolean") | tostring' <<<"$release_json")"
 
@@ -91,6 +227,22 @@ fi
 tag_commit="$(gh api "repos/${REPO}/commits/${TAG}" --jq '.sha')"
 [[ "$tag_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "tag did not resolve to a commit" >&2; exit 1; }
 [[ "$tag_commit" == "$COMMIT" ]] || { echo "tag commit mismatch" >&2; exit 1; }
+
+echo ">> verifying published binary asset inventory"
+if ! verify_release_asset_inventory "$release_json"; then
+  exit 1
+fi
+
+download_dir="$(mktemp -d)"
+trap 'rm -rf "$download_dir"' EXIT
+gh release download "$TAG" \
+  --repo "$REPO" \
+  --pattern 'lumen-*.tar.gz' \
+  --pattern 'lumen-*.tar.gz.sha256' \
+  --dir "$download_dir"
+if ! downloaded_version="$(verify_downloaded_binary_assets "$download_dir" "$host_target" "$TAG")"; then
+  exit 1
+fi
 
 echo ">> verifying keyless root signature"
 cosign verify \
@@ -180,6 +332,7 @@ verify_attestation \
   "https://spdx.dev/Document/v2.3"
 
 echo "Artifact verification PASS"
+echo "  binaries: five archives verified; host reports $downloaded_version"
 echo "  identity: $expected_cert_id"
 echo "  root: $root_digest (keyless signature and SLSA v1 provenance)"
 echo "  linux/amd64: $amd64_digest (SPDX 2.3 SBOM)"

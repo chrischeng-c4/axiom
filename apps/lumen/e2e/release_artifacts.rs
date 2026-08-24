@@ -1,7 +1,11 @@
 //! Deterministic oracle for the Lumen release supply chain.
 use serde_yaml::Value as Yaml;
 use std::{
-    collections::BTreeMap, fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command,
+    collections::BTreeMap,
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::{Command, Output},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +36,7 @@ struct Inputs {
     kind: String,
     docs: String,
     dockerfile: String,
+    installer: String,
     cargo: String,
     verifier_mode: u32,
     rendered: String,
@@ -244,9 +249,34 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     for call in ["\"root provenance\" \\\n  \"$IMAGE\" \\\n  \"$root_digest\" \\\n  \"https://slsa.dev/provenance/v1\"", "\"linux/amd64 SBOM\" \\\n  \"${image_repo}@${amd64_digest}\" \\\n  \"$amd64_digest\" \\\n  \"https://spdx.dev/Document/v2.3\"", "\"linux/arm64 SBOM\" \\\n  \"${image_repo}@${arm64_digest}\" \\\n  \"$arm64_digest\" \\\n  \"https://spdx.dev/Document/v2.3\""] {
         require!(verifier.contains(call), "VERIFIER_SUBJECT", "attestation call binding changed");
     }
-    for needle in ["gh release view \"$TAG\" --repo \"$REPO\" --json isDraft,tagName", "gh api \"repos/${REPO}/commits/${TAG}\"", "\"$tag_commit\" == \"$COMMIT\"", "--certificate-identity \"$expected_cert_id\"", "--certificate-oidc-issuer \"$expected_issuer\"", ".manifests | type == \"array\" and length == 2", "(.digest | type == \"string\")", "sort == [\"amd64\", \"arm64\"]", "digests must be pairwise distinct"] {
+    for needle in ["gh release view \"$TAG\" --repo \"$REPO\" --json assets,isDraft,tagName", "gh api \"repos/${REPO}/commits/${TAG}\"", "\"$tag_commit\" == \"$COMMIT\"", "--certificate-identity \"$expected_cert_id\"", "--certificate-oidc-issuer \"$expected_issuer\"", ".manifests | type == \"array\" and length == 2", "(.digest | type == \"string\")", "sort == [\"amd64\", \"arm64\"]", "digests must be pairwise distinct"] {
         require!(verifier.contains(needle), "VERIFIER_IDENTITY", format!("verifier proof missing: {needle}"));
     }
+    let binary_verifier = shell_fn(verifier, "verify_downloaded_binary_assets");
+    let binary_inventory = shell_fn(verifier, "verify_release_asset_inventory");
+    for target in ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"] {
+        require!(binary_verifier.contains(target), "PUBLIC_BINARY", format!("downloaded verifier target missing: {target}"));
+        require!(binary_inventory.contains(target), "PUBLIC_BINARY", format!("release inventory target missing: {target}"));
+    }
+    for needle in ["Darwin:arm64|Darwin:aarch64", "Linux:x86_64|Linux:amd64", "Linux:aarch64|Linux:arm64", "verify_release_asset_inventory \"$release_json\"", "gh release download \"$TAG\"", "--pattern 'lumen-*.tar.gz'", "--pattern 'lumen-*.tar.gz.sha256'", "verify_downloaded_binary_assets \"$download_dir\" \"$host_target\" \"$TAG\""] {
+        require!(verifier.contains(needle), "PUBLIC_BINARY", format!("public binary proof missing: {needle}"));
+    }
+    for needle in ["expected_binary_assets=", "actual_binary_assets=", "^lumen-.*\\\\.tar\\\\.gz(\\\\.sha256)?$", "\"$actual_binary_assets\" == \"$expected_binary_assets\""] {
+        require!(binary_inventory.contains(needle), "PUBLIC_BINARY", format!("release inventory proof missing: {needle}"));
+    }
+    for needle in ["read -r expected listed extra", "[[ \"$expected\" =~ ^[0-9a-fA-F]{64}$", "\"$listed\" == \"$asset\"", "sha256sum \"$download_dir/$asset\"", "shasum -a 256 \"$download_dir/$asset\"", "\"$actual\" == \"$expected\"", "tar -tzf \"$download_dir/$asset\"", "\"$actual_members\" == \"$expected_members\"", "tar -tvzf \"$download_dir/$asset\"", "\"$binary_mode\" =~ ^-.{2}x", "tar -xzf \"$download_dir/$host_asset\"", "if ! downloaded_version=", "\"$downloaded_version\" == \"$expected_version\""] {
+        require!(binary_verifier.contains(needle), "PUBLIC_BINARY", format!("downloaded binary verifier missing: {needle}"));
+    }
+    require!(!binary_verifier.contains("true ||") && !binary_verifier.contains("|| true") && !binary_verifier.contains("if false"), "PUBLIC_BINARY", "downloaded binary verifier contains a bypass");
+
+    let installer = &input.installer;
+    for needle in ["|| die \"checksum download failed: ${sha_url}\"", "awk 'NR == 1 { print $1; exit }'", "[ \"${#expected}\" -eq 64 ]", "missing required checksum tool", "[ \"${actual}\" != \"${expected}\" ]", "actual_version=\"$(\"${bin}\" --version 2>/dev/null)\"", "[ \"${actual_version}\" = \"${expected_version}\" ]"] {
+        require!(installer.contains(needle), "INSTALLER_INTEGRITY", format!("installer integrity proof missing: {needle}"));
+    }
+    require!(!installer.contains("Best-effort integrity check"), "INSTALLER_INTEGRITY", "installer must fail closed when the checksum is missing");
+    let installer_checksum = between(installer, "# ---- download + verify", "# ---- extract + install");
+    let installer_version = between(installer, "bin=\"${tmpdir}/lumen-${target}/lumen\"", "mkdir -p \"${INSTALL_DIR}\"");
+    require!(!installer_checksum.contains("true ||") && !installer_checksum.contains("|| true") && !installer_version.contains("true ||") && !installer_version.contains("|| true"), "INSTALLER_INTEGRITY", "installer integrity control flow contains a bypass");
 
     let prebuilt = between(&input.kind, "if [[ \"$IMAGE_MODE\" == \"prebuilt\" ]]; then", "elif [[ \"$IMAGE_MODE\" != \"local\" ]]");
     for needle in ["requires LUMEN_E2E_MODE=operator", "^ghcr\\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$", "^sha256:[0-9a-f]{64}$", "^[0-9a-f]{8}$", "EXPECTED_RUNTIME_DIGEST\" != \"$ROOT_DIGEST", "cargo_ver=\"$(grep"] {
@@ -278,7 +308,7 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
     for needle in ["{{json .Manifest}}' | jq -er '.digest'", "[[ \"$RAW_DIGEST\" =~ ^sha256:[0-9a-f]{64}$ ]]", "IMAGE=\"ghcr.io/chrischeng-c4/lumen@${RAW_DIGEST}\"", "--release-state published", "discovery-only", "native amd64 and arm64 kind runs before publication"] {
         require!(input.docs.contains(needle), "DEPLOYMENT_DIGEST", format!("deployment proof missing: {needle}"));
     }
-    let verify_docs = between(&input.docs, "Verify release signatures and supply chain attestations before deployment:", "Each release image carries");
+    let verify_docs = between(&input.docs, "Verify the host binary checksum and version, release identity, image signature,\nand supply chain attestations before deployment:", "Each release image carries");
     require!(verify_docs.contains("--image \"$IMAGE\""), "DEPLOYMENT_DIGEST", "published verifier must use the retained digest");
     let fetch = between(&input.dockerfile, "FROM debian:bookworm-slim AS binary-source-fetch", "FROM debian:bookworm-slim AS binary-source-staged");
     let staged = between(&input.dockerfile, "FROM debian:bookworm-slim AS binary-source-staged", "FROM binary-source-${SOURCE} AS binary-source");
@@ -308,7 +338,7 @@ fn live() -> Inputs {
     let root = root();
     let read = |path: &str| fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("read {path}: {e}"));
     let verifier = root.join("apps/lumen/scripts/verify-release-artifacts.sh");
-    Inputs { workflow: read(".github/workflows/lumen-release.yml"), verifier: read("apps/lumen/scripts/verify-release-artifacts.sh"), kind: read("apps/lumen/scripts/kind-e2e.sh"), docs: read("apps/lumen/docs/deployment.md"), dockerfile: read("apps/lumen/Dockerfile.release"), cargo: read("apps/lumen/Cargo.toml"), verifier_mode: fs::metadata(verifier).unwrap().permissions().mode(), rendered: render_release() }
+    Inputs { workflow: read(".github/workflows/lumen-release.yml"), verifier: read("apps/lumen/scripts/verify-release-artifacts.sh"), kind: read("apps/lumen/scripts/kind-e2e.sh"), docs: read("apps/lumen/docs/deployment.md"), dockerfile: read("apps/lumen/Dockerfile.release"), installer: read("apps/lumen/install.sh"), cargo: read("apps/lumen/Cargo.toml"), verifier_mode: fs::metadata(verifier).unwrap().permissions().mode(), rendered: render_release() }
 }
 #[rustfmt::skip]
 fn replace_once(source: &str, from: &str, to: &str) -> String {
@@ -350,6 +380,326 @@ fn function_replace(source: &str, name: &str, from: &str, to: &str) -> String {
 fn expect(mutated: Inputs, code: &'static str) {
     let finding = validate(&mutated).expect_err("negative mutation passed");
     assert_eq!(finding.code, code, "wrong finding: {finding:?}");
+}
+
+const RELEASE_TARGETS: [&str; 5] = [
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+];
+
+fn release_host_target() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
+        _ => None,
+    }
+}
+
+fn sha256_file(path: &Path) -> String {
+    for (program, args) in [
+        ("sha256sum", vec![path.as_os_str()]),
+        (
+            "shasum",
+            vec![
+                std::ffi::OsStr::new("-a"),
+                std::ffi::OsStr::new("256"),
+                path.as_os_str(),
+            ],
+        ),
+    ] {
+        let Ok(output) = Command::new(program).args(args).output() else {
+            continue;
+        };
+        if output.status.success() {
+            return String::from_utf8(output.stdout)
+                .expect("checksum output is UTF-8")
+                .split_whitespace()
+                .next()
+                .expect("checksum output has a digest")
+                .to_string();
+        }
+    }
+    panic!("sha256sum or shasum is required for the release fixture");
+}
+
+fn write_checksum_sidecar(dir: &Path, target: &str) {
+    let asset_name = format!("lumen-{target}.tar.gz");
+    let digest = sha256_file(&dir.join(&asset_name));
+    fs::write(
+        dir.join(format!("{asset_name}.sha256")),
+        format!("{digest}  {asset_name}\n"),
+    )
+    .expect("write checksum sidecar");
+}
+
+fn binary_fixture(version: &str, exit_code: i32) -> (tempfile::TempDir, &'static str) {
+    let host = release_host_target().expect("release verifier runs on a supported host");
+    let dir = tempfile::tempdir().expect("create release fixture");
+    for target in RELEASE_TARGETS {
+        let asset_name = format!("lumen-{target}.tar.gz");
+        let asset = dir.path().join(&asset_name);
+        let package = dir.path().join("stage").join(format!("lumen-{target}"));
+        fs::create_dir_all(&package).expect("create release package");
+        fs::write(package.join("README.md"), "release fixture\n").unwrap();
+        let binary = package.join("lumen");
+        fs::write(
+            &binary,
+            format!("#!/bin/sh\nprintf 'lumen {version}\\n'\nexit {exit_code}\n"),
+        )
+        .expect("write fixture binary");
+        let mut permissions = fs::metadata(&binary).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary, permissions).unwrap();
+        let status = Command::new("tar")
+            .arg("-C")
+            .arg(dir.path().join("stage"))
+            .arg("-czf")
+            .arg(&asset)
+            .arg(format!("lumen-{target}"))
+            .status()
+            .expect("run tar");
+        assert!(status.success(), "tar fixture failed");
+        write_checksum_sidecar(dir.path(), target);
+    }
+    (dir, host)
+}
+
+fn run_downloaded_binary_verifier(dir: &Path, host: &str) -> Output {
+    Command::new("bash")
+        .arg("-c")
+        .arg("source \"$1\"; verify_downloaded_binary_assets \"$2\" \"$3\" lumen@9.9.9")
+        .arg("release-binary-fixture")
+        .arg(root().join("apps/lumen/scripts/verify-release-artifacts.sh"))
+        .arg(dir)
+        .arg(host)
+        .output()
+        .expect("run downloaded binary verifier")
+}
+
+fn binary_asset_names() -> Vec<String> {
+    RELEASE_TARGETS
+        .into_iter()
+        .flat_map(|target| {
+            let archive = format!("lumen-{target}.tar.gz");
+            [archive.clone(), format!("{archive}.sha256")]
+        })
+        .collect()
+}
+
+fn run_release_asset_inventory(names: &[String]) -> Output {
+    let release_json = serde_json::json!({
+        "assets": names.iter().map(|name| serde_json::json!({ "name": name })).collect::<Vec<_>>()
+    })
+    .to_string();
+    Command::new("bash")
+        .arg("-c")
+        .arg("source \"$1\"; verify_release_asset_inventory \"$2\"")
+        .arg("release-inventory-fixture")
+        .arg(root().join("apps/lumen/scripts/verify-release-artifacts.sh"))
+        .arg(release_json)
+        .output()
+        .expect("run release asset inventory")
+}
+
+fn write_executable(path: &Path, body: &str) {
+    fs::write(path, body).expect("write executable fixture");
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+fn run_installer_fixture(assets: &Path, host: &str) -> (tempfile::TempDir, Output) {
+    let run = tempfile::tempdir().expect("create installer run dir");
+    let mock = run.path().join("mock");
+    fs::create_dir(&mock).unwrap();
+    write_executable(
+        &mock.join("curl"),
+        r#"#!/bin/sh
+set -eu
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -H) shift 2 ;;
+    -fsSL) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+[ -n "$out" ]
+cp "$LUMEN_TEST_ASSET_DIR/${url##*/}" "$out"
+"#,
+    );
+    write_executable(&mock.join("gh"), "#!/bin/sh\nexit 1\n");
+    let (os, arch) = match host {
+        "aarch64-apple-darwin" => ("Darwin", "arm64"),
+        "x86_64-unknown-linux-gnu" => ("Linux", "x86_64"),
+        "aarch64-unknown-linux-gnu" => ("Linux", "aarch64"),
+        other => panic!("unsupported installer fixture host: {other}"),
+    };
+    write_executable(
+        &mock.join("uname"),
+        &format!(
+            "#!/bin/sh\ncase \"${{1:-}}\" in\n  -s) printf '{os}\\n' ;;\n  -m) printf '{arch}\\n' ;;\n  *) exit 2 ;;\nesac\n"
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        mock.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = Command::new("sh")
+        .arg(root().join("apps/lumen/install.sh"))
+        .env("PATH", path)
+        .env("LUMEN_VERSION", "lumen@9.9.9")
+        .env("LUMEN_INSTALL", run.path().join("install"))
+        .env("LUMEN_REPO", "chrischeng-c4/axiom")
+        .env("LUMEN_TEST_ASSET_DIR", assets)
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .output()
+        .expect("run installer fixture");
+    (run, output)
+}
+
+#[test]
+fn installer_executes_checksum_and_version_failure_paths() {
+    let (valid, host) = binary_fixture("9.9.9", 0);
+    let (run, output) = run_installer_fixture(valid.path(), host);
+    assert!(
+        output.status.success(),
+        "valid installer fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let installed = run.path().join("install/lumen");
+    assert!(installed.is_file());
+    let output = Command::new(&installed).arg("--version").output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "lumen 9.9.9\n");
+
+    let (bad_checksum, host) = binary_fixture("9.9.9", 0);
+    let sidecar = bad_checksum
+        .path()
+        .join(format!("lumen-{host}.tar.gz.sha256"));
+    fs::write(
+        &sidecar,
+        format!("{}  lumen-{host}.tar.gz\n", "0".repeat(64)),
+    )
+    .unwrap();
+    let (run, output) = run_installer_fixture(bad_checksum.path(), host);
+    assert!(!output.status.success(), "bad installer checksum passed");
+    assert!(!run.path().join("install/lumen").exists());
+
+    let (missing_checksum, host) = binary_fixture("9.9.9", 0);
+    fs::remove_file(
+        missing_checksum
+            .path()
+            .join(format!("lumen-{host}.tar.gz.sha256")),
+    )
+    .unwrap();
+    let (run, output) = run_installer_fixture(missing_checksum.path(), host);
+    assert!(!output.status.success(), "missing checksum passed");
+    assert!(!run.path().join("install/lumen").exists());
+
+    let (wrong_version, host) = binary_fixture("9.9.8", 0);
+    let (run, output) = run_installer_fixture(wrong_version.path(), host);
+    assert!(!output.status.success(), "wrong installer version passed");
+    assert!(!run.path().join("install/lumen").exists());
+
+    let (nonzero_version, host) = binary_fixture("9.9.9", 17);
+    let (run, output) = run_installer_fixture(nonzero_version.path(), host);
+    assert!(
+        !output.status.success(),
+        "non-zero installer version passed"
+    );
+    assert!(!run.path().join("install/lumen").exists());
+}
+
+#[test]
+fn release_asset_inventory_requires_exact_five_pairs() {
+    let names = binary_asset_names();
+    assert!(run_release_asset_inventory(&names).status.success());
+
+    let mut missing = names.clone();
+    missing.pop();
+    assert!(!run_release_asset_inventory(&missing).status.success());
+
+    let mut duplicate = names.clone();
+    duplicate.push(names[0].clone());
+    assert!(!run_release_asset_inventory(&duplicate).status.success());
+
+    let mut extra = names;
+    extra.push("lumen-s390x-unknown-linux-gnu.tar.gz".into());
+    extra.push("lumen-s390x-unknown-linux-gnu.tar.gz.sha256".into());
+    assert!(!run_release_asset_inventory(&extra).status.success());
+}
+
+#[test]
+fn downloaded_binary_verifier_executes_success_and_failure_paths() {
+    let (valid, host) = binary_fixture("9.9.9", 0);
+    let output = run_downloaded_binary_verifier(valid.path(), host);
+    assert!(
+        output.status.success(),
+        "valid fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "lumen 9.9.9\n");
+
+    for other in RELEASE_TARGETS.into_iter().filter(|target| *target != host) {
+        let (corrupt, host) = binary_fixture("9.9.9", 0);
+        fs::write(
+            corrupt.path().join(format!("lumen-{other}.tar.gz")),
+            b"corrupted",
+        )
+        .unwrap();
+        let output = run_downloaded_binary_verifier(corrupt.path(), host);
+        assert!(!output.status.success(), "{other} corruption passed");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("release checksum mismatch"));
+    }
+
+    let (redirected, host) = binary_fixture("9.9.9", 0);
+    let sidecar = redirected
+        .path()
+        .join(format!("lumen-{host}.tar.gz.sha256"));
+    let digest = fs::read_to_string(&sidecar)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string();
+    fs::write(&sidecar, format!("{digest}  /dev/null\n")).unwrap();
+    let output = run_downloaded_binary_verifier(redirected.path(), host);
+    assert!(!output.status.success(), "redirected checksum passed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid checksum sidecar"));
+
+    let (invalid_archive, host) = binary_fixture("9.9.9", 0);
+    let other = RELEASE_TARGETS
+        .into_iter()
+        .find(|target| *target != host)
+        .unwrap();
+    fs::write(
+        invalid_archive.path().join(format!("lumen-{other}.tar.gz")),
+        b"not a tar archive",
+    )
+    .unwrap();
+    write_checksum_sidecar(invalid_archive.path(), other);
+    let output = run_downloaded_binary_verifier(invalid_archive.path(), host);
+    assert!(!output.status.success(), "invalid archive passed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be listed"));
+
+    let (wrong_version, host) = binary_fixture("9.9.8", 0);
+    let output = run_downloaded_binary_verifier(wrong_version.path(), host);
+    assert!(!output.status.success(), "wrong binary version passed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("downloaded binary version mismatch"));
+
+    let (nonzero_version, host) = binary_fixture("9.9.9", 17);
+    let output = run_downloaded_binary_verifier(nonzero_version.path(), host);
+    assert!(!output.status.success(), "non-zero version command passed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("did not report a version"));
 }
 
 #[test]
@@ -415,6 +765,15 @@ fn scoped_negative_mutations_fail_with_stable_findings() {
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "step \"6c. assert cluster identity and /version post-recovery\" assert_cluster_identity", "echo post-restart-identity-omitted"); expect(fixture, "KIND_POST_RESTART");
     let mut fixture = live(); fixture.verifier = replace_once(&fixture.verifier, "    --source-digest \"$COMMIT\" \\\n", ""); expect(fixture, "VERIFIER_FLAGS");
     let mut fixture = live(); fixture.cargo = replace_once(&fixture.cargo, "name = \"release_artifacts\"", "name = \"release_artifacts_disabled\""); expect(fixture, "CARGO_REGISTRATION");
+    let mut fixture = live(); fixture.verifier = replace_once(&fixture.verifier, "gh release download \"$TAG\"", "true # gh release download disabled"); expect(fixture, "PUBLIC_BINARY");
+    let mut fixture = live(); fixture.verifier = function_replace(&fixture.verifier, "verify_downloaded_binary_assets", "    aarch64-unknown-linux-musl\n", ""); expect(fixture, "PUBLIC_BINARY");
+    let mut fixture = live(); fixture.verifier = function_replace(&fixture.verifier, "verify_release_asset_inventory", "[[ \"$actual_binary_assets\" == \"$expected_binary_assets\" ]]", "true"); expect(fixture, "PUBLIC_BINARY");
+    let mut fixture = live(); fixture.verifier = replace_once(&fixture.verifier, "[[ \"$downloaded_version\" == \"$expected_version\" ]]", "true"); expect(fixture, "PUBLIC_BINARY");
+    let mut fixture = live(); fixture.verifier = replace_once(&fixture.verifier, "[[ \"$actual\" == \"$expected\" ]]", "true || [[ \"$actual\" == \"$expected\" ]]"); expect(fixture, "PUBLIC_BINARY");
+    let mut fixture = live(); fixture.installer = replace_once(&fixture.installer, "|| die \"checksum download failed: ${sha_url}\"", "|| true"); expect(fixture, "INSTALLER_INTEGRITY");
+    let mut fixture = live(); fixture.installer = replace_once(&fixture.installer, "expected=\"$(awk 'NR == 1 { print $1; exit }' \"${tmpdir}/${asset}.sha256\")\"", "expected=\"$(cat \"${tmpdir}/${asset}.sha256\")\""); expect(fixture, "INSTALLER_INTEGRITY");
+    let mut fixture = live(); fixture.installer = replace_once(&fixture.installer, "[ \"${actual_version}\" = \"${expected_version}\" ]", "true"); expect(fixture, "INSTALLER_INTEGRITY");
+    let mut fixture = live(); fixture.installer = replace_once(&fixture.installer, "[ \"${actual_version}\" = \"${expected_version}\" ]", "true || [ \"${actual_version}\" = \"${expected_version}\" ]"); expect(fixture, "INSTALLER_INTEGRITY");
     let mut fixture = live(); fixture.verifier_mode = 0o644; expect(fixture, "VERIFIER_MODE");
     let mut fixture = live(); fixture.dockerfile = replace_once(&fixture.dockerfile, "ARG SOURCE=fetch", "ARG SOURCE=staged"); expect(fixture, "DOCKERFILE_CONTRACT");
 }

@@ -35,7 +35,8 @@ IMAGE="ghcr.io/chrischeng-c4/lumen@${RAW_DIGEST}"
 printf '%s\n' "$IMAGE" > lumen-image.ref
 ```
 
-Verify release signatures and supply chain attestations before deployment:
+Verify the host binary checksum and version, release identity, image signature,
+and supply chain attestations before deployment:
 
 ```bash
 apps/lumen/scripts/verify-release-artifacts.sh \

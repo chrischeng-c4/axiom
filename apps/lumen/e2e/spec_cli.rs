@@ -1434,6 +1434,11 @@ fn dx_llm_composes_library_owned_provider_content() {
         .unwrap()
         .iter()
         .any(|source| source == "apps/lumen/e2e/release_artifacts.rs"));
+    assert!(release_value["task"]["reads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "apps/lumen/install.sh"));
     assert_eq!(release_value["providers"].as_array().unwrap().len(), 1);
     assert_eq!(release_value["providers"][0]["id"], "raft-runtime");
     let raft_provider = raft_runtime::llm::topic();
@@ -1446,6 +1451,7 @@ fn dx_llm_composes_library_owned_provider_content() {
         "Run kind before publication",
         "Land each release to main exactly once",
         "GHCR root and platform digests",
+        "downloaded host archive passes its checksum",
         "scripts/raft-implementor-build.sh",
     ] {
         assert!(
