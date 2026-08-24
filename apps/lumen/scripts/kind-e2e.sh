@@ -67,6 +67,31 @@ BATCH_SIZE=10000
 
 FIXTURE_FILE=""
 IMAGE_TAG="${LUMEN_E2E_IMAGE:-lumen:latest}"
+IMAGE_MODE="${LUMEN_E2E_IMAGE_MODE:-local}"
+
+die() {
+  echo "!! $*" >&2
+  exit 1
+}
+
+if [[ "$IMAGE_MODE" == "prebuilt" ]]; then
+  [[ "$E2E_MODE" == "operator" ]] || die "prebuilt image mode requires LUMEN_E2E_MODE=operator"
+  [[ -n "${LUMEN_E2E_IMAGE:-}" ]] || die "missing LUMEN_E2E_IMAGE"
+  [[ ! "$IMAGE_TAG" =~ [[:space:][:cntrl:]] ]] || die "LUMEN_E2E_IMAGE contains whitespace or control characters"
+  [[ "$IMAGE_TAG" =~ ^ghcr\.io/chrischeng-c4/lumen@sha256:[0-9a-f]{64}$ ]] || die "invalid LUMEN_E2E_IMAGE: expected ghcr.io/chrischeng-c4/lumen@sha256:<64 hex>"
+  [[ "${IMAGE_TAG#*@}" != *"@"* ]] || die "multiple @ in LUMEN_E2E_IMAGE"
+  cargo_ver="$(grep '^version = ' "$LUMEN_DIR/Cargo.toml" | head -n1 | cut -d'"' -f2)"
+  EXPECTED_VER="${LUMEN_E2E_EXPECTED_VERSION:-}"
+  [[ -n "$EXPECTED_VER" && "$EXPECTED_VER" == "$cargo_ver" ]] || die "LUMEN_E2E_EXPECTED_VERSION mismatch (expected $cargo_ver)"
+  EXPECTED_GIT_SHA="${LUMEN_E2E_EXPECTED_GIT_SHA:-}"
+  [[ "$EXPECTED_GIT_SHA" =~ ^[0-9a-f]{8}$ ]] || die "invalid LUMEN_E2E_EXPECTED_GIT_SHA: expected 8 lowercase hex"
+  EXPECTED_RUNTIME_DIGEST="${LUMEN_E2E_EXPECTED_RUNTIME_DIGEST:-}"
+  [[ "$EXPECTED_RUNTIME_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "invalid LUMEN_E2E_EXPECTED_RUNTIME_DIGEST: expected sha256:<64 hex>"
+  ROOT_DIGEST="${IMAGE_TAG##*@}"
+  [[ "$EXPECTED_RUNTIME_DIGEST" != "$ROOT_DIGEST" ]] || die "runtime child digest must differ from root index digest"
+elif [[ "$IMAGE_MODE" != "local" ]]; then
+  die "invalid LUMEN_E2E_IMAGE_MODE: $IMAGE_MODE (must be local or prebuilt)"
+fi
 
 # ---------------------------------------------------------------------------
 # Timing helper
@@ -139,6 +164,10 @@ wait_lumen_ready() {
 # imagePullPolicy: IfNotPresent, so once `kind load` has injected the image
 # into the node it is used without a registry pull.
 build_and_load_image() {
+  if [[ "$IMAGE_MODE" == "prebuilt" ]]; then
+    echo "   prebuilt mode: skipping docker build and kind load for $IMAGE_TAG"
+    return 0
+  fi
   docker build -f "$LUMEN_DIR/Dockerfile" -t "$IMAGE_TAG" "$REPO_ROOT"
   kind load docker-image "$IMAGE_TAG" --name "$CLUSTER_NAME"
 }
@@ -157,10 +186,62 @@ deploy_lumen() {
 # serving StatefulSet. WAL remains `auto`: one replica per shard uses embedded
 # WAL, while replicated shards use raft when the image includes raft-wal.
 deploy_via_operator() {
-  kubectl apply -k "${LUMEN_DIR}/k8s/operator"
-  # Pin the operator to the freshly-built image (the manifest hard-codes
-  # lumen:latest; honor a custom $IMAGE_TAG).
-  kubectl -n "$OPERATOR_NS" set image deploy/lumen-operator operator="$IMAGE_TAG"
+  if [[ "$IMAGE_MODE" == "prebuilt" ]]; then
+    local tmp_op tmp_pinned mutable_image
+    tmp_op="$(mktemp -t lumen-op.XXXXXX.yaml)"
+    tmp_pinned="${tmp_op}.pinned"
+    mutable_image="ghcr.io/chrischeng-c4/lumen:${cargo_ver}"
+    kubectl kustomize "${LUMEN_DIR}/k8s/operator" > "$tmp_op"
+    awk -v old="$mutable_image" -v new="$IMAGE_TAG" '
+      function finish_document() {
+        if (api_version == "apps/v1" && kind == "Deployment" && object_name == "lumen-operator" && object_namespace == "lumen-system") {
+          deployments++
+          if (containers != 1 || operator_names != 1 || old_images != 1) invalid = 1
+        }
+      }
+      function reset_document() {
+        api_version = ""; kind = ""; object_name = ""; object_namespace = ""
+        in_metadata = 0; in_containers = 0
+        containers = 0; operator_names = 0; old_images = 0
+      }
+      BEGIN { reset_document() }
+      /^---$/ { finish_document(); reset_document(); print; next }
+      /^apiVersion: / { api_version = $2 }
+      /^kind: / { kind = $2 }
+      /^metadata:$/ { in_metadata = 1; print; next }
+      in_metadata && /^  name: / { object_name = $2 }
+      in_metadata && /^  namespace: / { object_namespace = $2 }
+      /^spec:$/ { in_metadata = 0 }
+      in_containers && /^      [A-Za-z]/ { in_containers = 0 }
+      api_version == "apps/v1" && kind == "Deployment" && object_name == "lumen-operator" && object_namespace == "lumen-system" && /^      containers:$/ { in_containers = 1 }
+      in_containers && /^      - / { containers++ }
+      in_containers && /^        name: operator$/ { operator_names++ }
+      in_containers && $0 == "        image: " old {
+          print "        image: " new
+          old_images++
+          changed++
+          next
+      }
+      { print }
+      END {
+        finish_document()
+        if (deployments != 1 || changed != 1 || invalid) exit 42
+      }
+    ' "$tmp_op" > "$tmp_pinned" || die "operator manifest did not contain exactly one expected mutable image scalar"
+    awk -v expected="$IMAGE_TAG" '
+      /^[[:space:]]*image:[[:space:]]+/ {
+        image = $2
+        if (image == expected) seen++
+        if (image ~ /(^|\/)lumen([:@]|$)/ && image != expected) bad++
+      }
+      END { exit bad == 0 && seen == 1 ? 0 : 1 }
+    ' "$tmp_pinned" || die "mutable Lumen image remains in rendered operator manifest"
+    kubectl apply -f "$tmp_pinned"
+    rm -f "$tmp_op" "$tmp_pinned"
+  else
+    kubectl apply -k "${LUMEN_DIR}/k8s/operator"
+    kubectl -n "$OPERATOR_NS" set image deploy/lumen-operator operator="$IMAGE_TAG"
+  fi
   echo "   waiting for the Lumen CRD to be Established"
   kubectl wait --for=condition=established crd/lumens.lumen.dev --timeout=60s
   echo "   waiting for the operator Deployment to roll out"
@@ -352,6 +433,68 @@ api_search_probe() {
 }
 
 # ---------------------------------------------------------------------------
+# Prebuilt identity assertion helper
+# ---------------------------------------------------------------------------
+
+normalize_runtime_image_id() {
+  local raw="$1"
+  if [[ "$raw" =~ ^docker-pullable://ghcr\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^(containerd|cri-o|docker)://(sha256:[0-9a-f]{64})$ ]]; then
+    echo "${BASH_REMATCH[2]}"
+  else
+    return 1
+  fi
+}
+
+assert_named_pods() {
+  local namespace="$1" label="$2" container="$3" desired="$4"
+  local pods pod_count named_specs desired_specs named_statuses image_ids runtime_id normalized
+  pods="$(kubectl -n "$namespace" get pods -l "$label" -o json)"
+  pod_count="$(jq -er '.items | length' <<<"$pods")"
+  named_specs="$(jq --arg name "$container" '[.items[].spec.containers[] | select(.name == $name)] | length' <<<"$pods")"
+  desired_specs="$(jq --arg name "$container" --arg image "$IMAGE_TAG" '[.items[].spec.containers[] | select(.name == $name and .image == $image)] | length' <<<"$pods")"
+  named_statuses="$(jq --arg name "$container" '[.items[] | (.status.containerStatuses // [])[] | select(.name == $name)] | length' <<<"$pods")"
+  image_ids="$(jq --arg name "$container" '[.items[] | (.status.containerStatuses // [])[] | select(.name == $name and (.imageID | type) == "string" and (.imageID | length) > 0)] | length' <<<"$pods")"
+  [[ "$pod_count" -eq "$desired" ]] || die "$container pod count $pod_count != desired replicas $desired"
+  [[ "$named_specs" -eq "$desired" && "$desired_specs" -eq "$desired" ]] || die "$container desired-image container count mismatch"
+  [[ "$named_statuses" -eq "$desired" && "$image_ids" -eq "$desired" ]] || die "$container runtime imageID count mismatch"
+  while IFS= read -r runtime_id; do
+    normalized="$(normalize_runtime_image_id "$runtime_id")" || die "unrecognized $container runtime imageID: $runtime_id"
+    [[ "$normalized" == "$EXPECTED_RUNTIME_DIGEST" ]] || die "$container runtime imageID $runtime_id != expected $EXPECTED_RUNTIME_DIGEST"
+  done < <(jq -r --arg name "$container" '.items[] | .status.containerStatuses[] | select(.name == $name) | .imageID' <<<"$pods")
+}
+
+assert_cluster_identity() {
+  if [[ "$IMAGE_MODE" != "prebuilt" ]]; then
+    return 0
+  fi
+  echo "   verifying prebuilt cluster desired state and runtime image identities"
+  local op_json op_replicas op_named op_image cr_img sset_json sset_replicas sset_named sset_image ver_json
+  op_json="$(kubectl -n "$OPERATOR_NS" get deploy/lumen-operator -o json)"
+  op_replicas="$(jq -er '.spec.replicas | select(type == "number" and . > 0 and . == floor)' <<<"$op_json")" || die "operator replicas must be a positive integer"
+  op_named="$(jq '[.spec.template.spec.containers[] | select(.name == "operator")] | length' <<<"$op_json")"
+  op_image="$(jq --arg image "$IMAGE_TAG" '[.spec.template.spec.containers[] | select(.name == "operator" and .image == $image)] | length' <<<"$op_json")"
+  [[ "$op_named" -eq 1 && "$op_image" -eq 1 ]] || die "operator Deployment template must contain one named operator container at $IMAGE_TAG"
+  assert_named_pods "$OPERATOR_NS" "app.kubernetes.io/name=lumen-operator" operator "$op_replicas"
+  cr_img="$(kubectl -n "$NAMESPACE" get lumen/"${LUMEN_CR_NAME}" -o jsonpath='{.spec.image}')"
+  [[ "$cr_img" == "$IMAGE_TAG" ]] || die "Lumen CR spec.image $cr_img != $IMAGE_TAG"
+  sset_json="$(kubectl -n "$NAMESPACE" get statefulset/"${LUMEN_CR_NAME}" -o json)"
+  sset_replicas="$(jq -er '.spec.replicas | select(type == "number" and . > 0 and . == floor)' <<<"$sset_json")" || die "serving replicas must be a positive integer"
+  sset_named="$(jq '[.spec.template.spec.containers[] | select(.name == "server")] | length' <<<"$sset_json")"
+  sset_image="$(jq --arg image "$IMAGE_TAG" '[.spec.template.spec.containers[] | select(.name == "server" and .image == $image)] | length' <<<"$sset_json")"
+  [[ "$sset_named" -eq 1 && "$sset_image" -eq 1 ]] || die "StatefulSet template must contain one named server container at $IMAGE_TAG"
+  assert_named_pods "$NAMESPACE" "$APP_LABEL" server "$sset_replicas"
+  ver_json="$(curl -fsS --max-time 10 "http://127.0.0.1:${PORT_LOCAL}/version")"
+  jq -e --arg version "$EXPECTED_VER" --arg sha "$EXPECTED_GIT_SHA" '
+    (.version | type) == "string" and (.git_sha | type) == "string" and
+    .version != "unknown" and .git_sha != "unknown" and
+    .version == $version and .git_sha == $sha
+  ' <<<"$ver_json" >/dev/null || die "/version identity is missing, non-string, unknown, or mismatched"
+  echo "   prebuilt identity verified: version=$EXPECTED_VER git_sha=$EXPECTED_GIT_SHA runtime_digest=$EXPECTED_RUNTIME_DIGEST"
+}
+
+# ---------------------------------------------------------------------------
 # 1. Create kind cluster
 # ---------------------------------------------------------------------------
 
@@ -386,7 +529,7 @@ step "3. wait for serving pods Ready" wait_lumen_ready 240
 # ---------------------------------------------------------------------------
 
 step "4a. expose lumen on NodePort :${NODE_PORT} → host :${PORT_LOCAL}" expose_nodeport
-
+step "4a2. assert cluster identity and /version" assert_cluster_identity
 step "4b. PUT /collections/users" api_put_collection
 
 FIXTURE_FILE="$(mktemp -t lumen-fixture.XXXXXX.json)"
@@ -459,6 +602,7 @@ step "6. wait for serving pods Ready (post restart)" wait_lumen_ready 240
 # The NodePort mapping survives pod churn, but the new Service endpoints need a
 # moment to register; re-confirm the API is reachable before fresh writes.
 step "6b. re-confirm API reachable post-recovery" expose_nodeport
+step "6c. assert cluster identity and /version post-recovery" assert_cluster_identity
 
 # ---------------------------------------------------------------------------
 # 7. Re-create the collection and assert fresh writes work after restart.

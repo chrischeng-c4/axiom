@@ -23,6 +23,34 @@ Add `--data-dir <path>` when the index must survive a process restart.
 
 ### Container
 
+Every Lumen release publishes multi-arch container images to GitHub Packages (GHCR)
+at `ghcr.io/chrischeng-c4/lumen`. Semver and `latest` tags are discovery-only
+references. Production and verifiable environments should resolve and pin the
+immutable root image index digest:
+
+```bash
+RAW_DIGEST="$(docker buildx imagetools inspect ghcr.io/chrischeng-c4/lumen:<version> --format '{{json .Manifest}}' | jq -er '.digest')"
+[[ "$RAW_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid digest" >&2; exit 1; }
+IMAGE="ghcr.io/chrischeng-c4/lumen@${RAW_DIGEST}"
+printf '%s\n' "$IMAGE" > lumen-image.ref
+```
+
+Verify release signatures and supply chain attestations before deployment:
+
+```bash
+apps/lumen/scripts/verify-release-artifacts.sh \
+  --repo chrischeng-c4/axiom \
+  --tag lumen@<version> \
+  --commit <commit> \
+  --image "$IMAGE" \
+  --release-state published
+```
+
+Each release image carries a keyless Cosign signature and SLSA v1 provenance on the
+root index, with per-platform SPDX 2.3 JSON SBOM attestations. The release workflow
+verifies artifacts and runs native amd64 and arm64 kind runs before publication. These
+local kind runs do not prove GKE, Regional HA, Fleet, or autoscaling.
+
 Shipped container images set `LUMEN_HOST=0.0.0.0` by default so published
 ports are reachable from the host without extra environment variables. The bare
 binary continues to default to `127.0.0.1`. Omitting both the volume mount and
@@ -32,7 +60,7 @@ on container replacement:
 ```bash
 docker run --rm -p 127.0.0.1:7373:7373 \
   -e LUMEN_AUTH=off \
-  ghcr.io/chrischeng-c4/lumen:<version>
+  "$IMAGE"
 ```
 
 Use a named volume mounted directly at `/var/lib/lumen/data` when local data must
@@ -48,7 +76,7 @@ docker run -d --name lumen -p 127.0.0.1:7373:7373 \
   -e LUMEN_DATA_DIR=/var/lib/lumen/data \
   -e LUMEN_PERSISTENCE=segment \
   -e LUMEN_GRACE_SECS=1 \
-  ghcr.io/chrischeng-c4/lumen:<version>
+  "$IMAGE"
 ```
 
 Stop the container cleanly before replacing it with the same named volume:
@@ -64,7 +92,7 @@ docker run -d --name lumen -p 127.0.0.1:7373:7373 \
   -e LUMEN_DATA_DIR=/var/lib/lumen/data \
   -e LUMEN_PERSISTENCE=segment \
   -e LUMEN_GRACE_SECS=1 \
-  ghcr.io/chrischeng-c4/lumen:<version>
+  "$IMAGE"
 ```
 
 The container process listens on every container interface by default. The
@@ -132,7 +160,7 @@ mkdir -p /tmp/lumen-install
 lumen k8s crd render --out /tmp/lumen-install
 lumen k8s operator render \
   --namespace lumen-system \
-  --image ghcr.io/chrischeng-c4/lumen:<version> \
+  --image "$IMAGE" \
   --out /tmp/lumen-install
 
 kubectl apply -f /tmp/lumen-install/crd.yaml
@@ -167,7 +195,7 @@ metadata:
 spec:
   prunePolicy: Retain
   defaults:
-    image: ghcr.io/chrischeng-c4/lumen:<version>
+    image: ghcr.io/chrischeng-c4/lumen@sha256:<64-lowercase-root-digest>
     auth: required
     servingTlsSecret: search-serving-tls
     serving:
