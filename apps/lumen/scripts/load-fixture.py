@@ -82,7 +82,7 @@ def main() -> int:
     out_ndjson = Path(args.output)
     # `<output>.req.json` if output ends with .json, else `<output>.req.json`.
     if out_ndjson.suffix == ".json":
-        out_req = out_ndjson.with_suffix("").with_suffix(".req.json")
+        out_req = out_ndjson.with_suffix(".req.json")
     else:
         out_req = out_ndjson.with_name(out_ndjson.name + ".req.json")
 

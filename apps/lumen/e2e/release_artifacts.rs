@@ -303,6 +303,10 @@ fn validate(input: &Inputs) -> Result<(), Finding> {
         require!(capacity.contains(needle), "KIND_CAPACITY", format!("kind capacity fixture missing: {needle}"));
     }
     require!(input.kind.lines().any(|line| line == "BATCH_SIZE=1000") && input.kind.contains("MAX_INDEX_BATCH_SIZE=1000") && input.kind.contains("    --items-per-batch \"$BATCH_SIZE\" \\\n"), "KIND_INDEX_BATCH", "kind fixture generator must use the public HTTP index-batch cap");
+    let fixture_cleanup = shell_fn(&input.kind, "cleanup");
+    require!(fixture_cleanup.lines().any(|line| line.trim() == "cleanup_fixture_files \"$FIXTURE_FILE\""), "FIXTURE_CLEANUP_PATH", "cleanup must call the tested fixture cleanup helper");
+    let fixture_flow = between(&input.kind, "# The fixture script emits one NDJSON doc per line", "index_all_batches() {");
+    require!(fixture_flow.matches("\ndiscover_fixture_bodies\n").count() == 1, "FIXTURE_BATCH_PATH", "the index flow must call the tested fixture discovery helper once");
     let normalize = shell_fn(&input.kind, "normalize_runtime_image_id");
     for line in ["if [[ \"$raw\" =~ ^ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then", "elif [[ \"$raw\" =~ ^docker-pullable://ghcr\\.io/chrischeng-c4/lumen@(sha256:[0-9a-f]{64})$ ]]; then", "elif [[ \"$raw\" =~ ^(containerd|cri-o|docker)://(sha256:[0-9a-f]{64})$ ]]; then"] {
         require!(normalize.lines().any(|got| got.trim() == line), "KIND_RUNTIME_ID", format!("anchored runtime imageID form missing: {line}"));
@@ -418,6 +422,159 @@ fn run_runtime_image_id_fixture(kind: &str, raw: &str, root: &str, child: &str) 
         .arg(child)
         .output()
         .expect("run runtime imageID fixture")
+}
+
+fn run_fixture_discovery(kind: &str, output: &Path) -> Result<Vec<PathBuf>, Finding> {
+    let body = shell_fn(kind, "discover_fixture_bodies");
+    require!(
+        !body.is_empty(),
+        "FIXTURE_BATCH_PATH",
+        "discover_fixture_bodies is missing"
+    );
+    let script = format!(
+        "discover_fixture_bodies() {{\n{body}\n}}\n\
+         FIXTURE_FILE=\"$1\"\n\
+         INDEX_BODIES=()\n\
+         discover_fixture_bodies\n\
+         if (( ${{#INDEX_BODIES[@]}} > 0 )); then printf '%s\\n' \"${{INDEX_BODIES[@]}}\"; fi"
+    );
+    let discovered = Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .arg("fixture-discovery")
+        .arg(output)
+        .output()
+        .map_err(|e| Finding {
+            code: "FIXTURE_BATCH_PATH",
+            detail: e.to_string(),
+        })?;
+    require!(
+        discovered.status.success(),
+        "FIXTURE_BATCH_PATH",
+        String::from_utf8_lossy(&discovered.stderr)
+    );
+    Ok(String::from_utf8(discovered.stdout)
+        .map_err(|e| Finding {
+            code: "FIXTURE_BATCH_PATH",
+            detail: e.to_string(),
+        })?
+        .lines()
+        .map(PathBuf::from)
+        .collect())
+}
+
+fn run_fixture_cleanup(kind: &str, output: &Path) -> Result<(), Finding> {
+    let body = shell_fn(kind, "cleanup_fixture_files");
+    require!(
+        !body.is_empty(),
+        "FIXTURE_CLEANUP_PATH",
+        "cleanup_fixture_files is missing"
+    );
+    let script = format!("cleanup_fixture_files() {{\n{body}\n}}\ncleanup_fixture_files \"$1\"");
+    let cleaned = Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .arg("fixture-cleanup")
+        .arg(output)
+        .output()
+        .map_err(|e| Finding {
+            code: "FIXTURE_CLEANUP_PATH",
+            detail: e.to_string(),
+        })?;
+    require!(
+        cleaned.status.success(),
+        "FIXTURE_CLEANUP_PATH",
+        String::from_utf8_lossy(&cleaned.stderr)
+    );
+    let remaining = fs::read_dir(output.parent().expect("fixture output has a parent"))
+        .map_err(|e| Finding {
+            code: "FIXTURE_CLEANUP_PATH",
+            detail: e.to_string(),
+        })?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path == output
+                || path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".req.") && name.ends_with(".json"))
+        })
+        .collect::<Vec<_>>();
+    require!(
+        remaining.is_empty(),
+        "FIXTURE_CLEANUP_PATH",
+        format!("fixture cleanup left {remaining:?}")
+    );
+    Ok(())
+}
+
+fn verify_fixture_batch_paths(kind: &str, script: &Path, output: &Path) -> Result<(), Finding> {
+    let generated = Command::new("python3")
+        .arg(script)
+        .args(["--count", "2", "--items-per-batch", "2", "--output"])
+        .arg(output)
+        .output()
+        .map_err(|e| Finding {
+            code: "FIXTURE_GENERATOR",
+            detail: e.to_string(),
+        })?;
+    require!(
+        generated.status.success(),
+        "FIXTURE_GENERATOR",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let output_text = output.to_string_lossy();
+    let stem = output_text.strip_suffix(".json").unwrap_or(&output_text);
+    let mut expected = (0..2)
+        .map(|batch| PathBuf::from(format!("{stem}.req.{batch:03}.json")))
+        .collect::<Vec<_>>();
+    expected.sort();
+
+    let mut actual = run_fixture_discovery(kind, output)?;
+    actual.sort();
+    require!(
+        actual == expected,
+        "FIXTURE_BATCH_PATH",
+        format!("expected {expected:?}, found {actual:?}")
+    );
+
+    let mut request_ids = Vec::new();
+    for path in actual {
+        let body: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).map_err(|e| Finding {
+                code: "FIXTURE_BATCH_BODY",
+                detail: format!("read {}: {e}", path.display()),
+            })?)
+            .map_err(|e| Finding {
+                code: "FIXTURE_BATCH_BODY",
+                detail: format!("parse {}: {e}", path.display()),
+            })?;
+        require!(
+            body["items"]
+                .as_array()
+                .is_some_and(|items| items.len() == 2),
+            "FIXTURE_BATCH_BODY",
+            format!("{} does not contain two items", path.display())
+        );
+        request_ids.push(
+            body["request_id"]
+                .as_str()
+                .ok_or_else(|| Finding {
+                    code: "FIXTURE_BATCH_BODY",
+                    detail: format!("{} has no request_id", path.display()),
+                })?
+                .to_string(),
+        );
+    }
+    require!(
+        request_ids.len() == 2 && request_ids[0] != request_ids[1],
+        "FIXTURE_BATCH_BODY",
+        "fixture batches must use distinct request IDs"
+    );
+    run_fixture_cleanup(kind, output)?;
+    Ok(())
 }
 
 fn expect(mutated: Inputs, code: &'static str) {
@@ -791,6 +948,68 @@ fn runtime_image_id_allowlist_and_digest_binding_are_executable() {
 }
 
 #[test]
+fn fixture_batch_paths_cover_gnu_and_bsd_mktemp_shapes() {
+    let script = root().join("apps/lumen/scripts/load-fixture.py");
+    let kind = fs::read_to_string(root().join("apps/lumen/scripts/kind-e2e.sh"))
+        .expect("read kind e2e script");
+    for name in [
+        "lumen-fixture.ABCDEF.json",
+        "lumen-fixture.XXXXXX.json.ABCDEF",
+    ] {
+        let dir = tempfile::tempdir().expect("create fixture path test dir");
+        verify_fixture_batch_paths(&kind, &script, &dir.path().join(name))
+            .unwrap_or_else(|finding| panic!("{name}: {finding:?}"));
+    }
+
+    let source = fs::read_to_string(&script).expect("read fixture generator");
+    let mutated = replace_once(
+        &source,
+        "out_req = out_ndjson.with_suffix(\".req.json\")",
+        "out_req = out_ndjson.with_suffix(\"\").with_suffix(\".req.json\")",
+    );
+    let dir = tempfile::tempdir().expect("create mutated fixture path test dir");
+    let mutated_script = dir.path().join("load-fixture.py");
+    fs::write(&mutated_script, mutated).expect("write mutated fixture generator");
+    let finding = verify_fixture_batch_paths(
+        &kind,
+        &mutated_script,
+        &dir.path().join("lumen-fixture.ABCDEF.json"),
+    )
+    .expect_err("old chained with_suffix path passed");
+    assert_eq!(finding.code, "FIXTURE_BATCH_PATH", "{finding:?}");
+
+    let mutated_discovery = function_replace(
+        &kind,
+        "discover_fixture_bodies",
+        "\"${FIXTURE_FILE%.json}\".req.*.json",
+        "\"$FIXTURE_FILE\".req.*.json",
+    );
+    let dir = tempfile::tempdir().expect("create mutated discovery test dir");
+    let finding = verify_fixture_batch_paths(
+        &mutated_discovery,
+        &script,
+        &dir.path().join("lumen-fixture.ABCDEF.json"),
+    )
+    .expect_err("wrong production discovery glob passed");
+    assert_eq!(finding.code, "FIXTURE_BATCH_PATH", "{finding:?}");
+
+    let mutated_cleanup = function_replace(
+        &kind,
+        "cleanup_fixture_files",
+        "\"${fixture%.json}\".req.*.json",
+        "\"$fixture\".req.*.json",
+    );
+    let dir = tempfile::tempdir().expect("create mutated cleanup test dir");
+    let finding = verify_fixture_batch_paths(
+        &mutated_cleanup,
+        &script,
+        &dir.path().join("lumen-fixture.ABCDEF.json"),
+    )
+    .expect_err("wrong production cleanup glob passed");
+    assert_eq!(finding.code, "FIXTURE_CLEANUP_PATH", "{finding:?}");
+}
+
+#[test]
 #[rustfmt::skip]
 fn scoped_negative_mutations_fail_with_stable_findings() {
     let cases = [
@@ -850,6 +1069,8 @@ fn scoped_negative_mutations_fail_with_stable_findings() {
     let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "prepare_operator_capacity_fixture", "\"value\": \"${machine_type}\"", "\"value\": \"wrong-machine\""); expect(fixture, "KIND_CAPACITY");
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "BATCH_SIZE=1000\n", "BATCH_SIZE=10000\n"); expect(fixture, "KIND_INDEX_BATCH");
     let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "    --items-per-batch \"$BATCH_SIZE\" \\\n", "    --items-per-batch 10000 \\\n"); expect(fixture, "KIND_INDEX_BATCH");
+    let mut fixture = live(); fixture.kind = function_replace(&fixture.kind, "cleanup", "  cleanup_fixture_files \"$FIXTURE_FILE\"\n", "  : cleanup_fixture_files omitted\n"); expect(fixture, "FIXTURE_CLEANUP_PATH");
+    let mut fixture = live(); fixture.kind = replace_once(&fixture.kind, "\ndiscover_fixture_bodies\nif [[ ${#INDEX_BODIES[@]} -eq 0 ]]; then", "\n: discover_fixture_bodies omitted\nif [[ ${#INDEX_BODIES[@]} -eq 0 ]]; then"); expect(fixture, "FIXTURE_BATCH_PATH");
     for (from, to) in [
         ("  op_json=\"$(kubectl -n \"$OPERATOR_NS\" get deploy/lumen-operator -o json)\"", "  op_json=\"$(jq -nc --arg image \"$IMAGE_TAG\" '{spec:{replicas:1,template:{spec:{containers:[{name:\"operator\",image:$image}]}}}}')\""),
         ("  cr_img=\"$(kubectl -n \"$NAMESPACE\" get lumen/\"${LUMEN_CR_NAME}\" -o jsonpath='{.spec.image}')\"", "  cr_img=\"$IMAGE_TAG\""),
